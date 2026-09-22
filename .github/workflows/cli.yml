@@ -27,13 +27,7 @@ on:
       - 'cli/**'
       - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'cli/**'
-      - 'backend/tests/fixtures/wire/**'
-      - '.github/workflows/cli.yml'
-
+  workflow_call:
 permissions:
   contents: read
 
@@ -103,7 +97,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          # Go already keeps its module and build caches on this persistent runner.
+
+          cache: false
 
       # node is NOT ambient on the ci pool (first run: `npm: command not
       # found`) — it arrives via setup-node exactly as frontend.yml does.

@@ -27,10 +27,13 @@ from app.domain.cx_space.models import Space, SpaceKind
 from sqlalchemy import text
 
 from app.core.db import async_session_factory
-from app.domain.alert.models import Alert, AlertKind, AlertLevel
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
+from app.domain.notification.models import (
+    Notification,
+    NotificationLevel,
+    NotificationType,
+)
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -167,23 +170,6 @@ async def seed() -> None:
             ]
         )
 
-        # --- Project memory (so @芝士 answers with memory, eval C1) ---
-        facts = [
-            "本项目技术栈：后端 FastAPI + PostgreSQL，前端 Vue 3。",
-            "决策：推荐算法先用协同过滤（item-based）做 MVP，下一阶段再试深度模型。",
-            "分工：林组长负责后端与算法，王同学负责前端与交互，张老师是导师。",
-            "中期汇报定在 2026-06-20，需导师验收。",
-            "数据来源：教务处脱敏的历史选课数据，已签数据使用协议。",
-        ]
-        for f in facts:
-            s.add(
-                MemoryEntry(
-                    scope=MemoryScope.project,
-                    scope_id=str(project.id),
-                    content=f,
-                )
-            )
-
         # --- Root topic (总览) ---
         root = Topic(
             project_id=project.id,
@@ -195,6 +181,28 @@ async def seed() -> None:
         s.add(root)
         await s.flush()
         project.root_topic_id = root.id
+
+        # --- 项目总览的实况文档：人和芝士共同看的那一份（结论 7）---
+        # 这几条以前种在一个项目共享记忆池里，而那个池子没有了：大家都该知道的
+        # 东西是文档，每一轮都整份读到它。
+        s.add(
+            Block(
+                project_id=project.id,
+                topic_id=root.id,
+                kind=BlockKind.doc,
+                author_type=AuthorType.participant,
+                author="cheese",
+                content=(
+                    "## 技术栈\n后端 FastAPI + PostgreSQL，前端 Vue 3。\n\n"
+                    "## 决策\n推荐算法先用协同过滤（item-based）做 MVP，"
+                    "下一阶段再试深度模型。\n\n"
+                    "## 分工\n林组长负责后端与算法，王同学负责前端与交互，"
+                    "张老师是导师。\n\n"
+                    "## 节点\n中期汇报定在 2026-06-20，需导师验收。\n\n"
+                    "## 数据\n教务处脱敏的历史选课数据，已签数据使用协议。"
+                ),
+            )
+        )
 
         # --- Work topic with a conversation + a doc ---
         topic = Topic(
@@ -288,15 +296,18 @@ async def seed() -> None:
 
         # --- A decision-request notification + an accept card (待处理) ---
         s.add(
-            Alert(
+            Notification(
                 project_id=project.id,
                 topic_id=topic.id,
-                level=AlertLevel.light,
-                kind=AlertKind.decision_request,
-                target_handle="user-1",
+                level=NotificationLevel.light.value,
+                type=NotificationType.DECISION_REQUEST,
+                recipient_handle="user-1",
                 title="评测集怎么切分？",
                 body="按时间切分还是随机切分训练/测试集？",
-                payload={"options": ["按时间切分", "随机切分"]},
+                metadata_payload={"options": ["按时间切分", "随机切分"]},
+                read=False,
+                created_at=now,
+                updated_at=now,
             )
         )
         s.add(
@@ -314,7 +325,6 @@ async def seed() -> None:
         print(f"  Project: {project.name} ({project.id})")
         print(f"  Root topic:  {root.id}")
         print(f"  Work topic:  {topic.id}")
-        print(f"  Memory facts: {len(facts)}")
 
 
 if __name__ == "__main__":

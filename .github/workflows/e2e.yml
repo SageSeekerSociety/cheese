@@ -8,14 +8,7 @@ on:
       - 'frontend/**'
       - 'e2e/**'
       - '.github/workflows/e2e.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - 'e2e/**'
-      - '.github/workflows/e2e.yml'
-
+  workflow_call:
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine). test.yml and build.yml already do
 # this; e2e.yml was the one workflow still missing it — any backend/frontend
@@ -49,11 +42,9 @@ jobs:
   # See test.yml: merged squash commits contain the exact PR tree already gated.
   # The cheap API decision preserves full CI for direct main pushes.
   scope:
-    # On the cheese-ci pool, not a hosted runner: identical `gh api`-only job as
-    # test.yml's scope, moved for the same reason — the org's Actions billing
-    # lapsed on 2026-08-13, so every ubuntu-latest job is refused before it
-    # starts. The pool has no `gh`, so a step below installs it per-machine.
-    runs-on: [self-hosted, cheese-ci]
+    # This API-only decision must not wait for the finite E2E runner pool.
+    # Hosted Ubuntu includes gh; the repository is public.
+    runs-on: ubuntu-latest
     # Same job as test.yml's scope: measured median 0.2m, wide margin.
     timeout-minutes: 5
     permissions:
@@ -63,28 +54,12 @@ jobs:
     outputs:
       run_heavy: ${{ steps.decide.outputs.run_heavy }}
     steps:
-      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
-      # it once per machine into a dir that survives actions/checkout's
-      # workspace reset, then prepend it to PATH — same trick test.yml's scope
-      # uses. (No `working-directory` override needed: this workflow sets no
-      # `backend` default.)
-      - name: Ensure gh CLI
-        run: |
-          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
-          if [ ! -x "$gh_dir/bin/gh" ]; then
-            gh_version=2.63.2
-            mkdir -p "$gh_dir"
-            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
-              | tar -xz -C "$gh_dir" --strip-components=1
-          fi
-          echo "$gh_dir/bin" >> "$GITHUB_PATH"
-          "$gh_dir/bin/gh" --version
-
       - name: Decide whether this commit already passed PR CI
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
-          WORKFLOW_FILE: e2e.yml
+          # PR runs now belong to the caller, not this reusable workflow.
+          WORKFLOW_FILE: required-ci.yml
         run: |
           run_heavy=true
           if [ "$GITHUB_EVENT_NAME" = push ]; then
@@ -212,10 +187,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: |
-            frontend/pnpm-lock.yaml
-            e2e/pnpm-lock.yaml
 
       # The venv is built per job out of uv's cache, which is the thing worth
       # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
@@ -254,13 +225,15 @@ jobs:
         working-directory: backend
         run: uv run python -m scripts.seed_fusion_demo
 
+      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+
       - name: Install frontend deps
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install E2E deps
         working-directory: e2e
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install Playwright browsers
         working-directory: e2e

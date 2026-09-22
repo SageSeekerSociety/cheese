@@ -454,7 +454,6 @@ def _screen_launch(
     hook_token="tok",
     home_dir="/dev/home",
     work_dir="/dev/work",
-    model=None,
     resume_session_id=None,
     extra_env=None,
     topic_id="",
@@ -481,9 +480,7 @@ def _screen_launch(
         remote_control=remote_control,
         ca_pem=ca_pem,
     )
-    plan = ClaudeLaunch(
-        system_prompt="", model=model, resume_session_id=resume_session_id
-    )
+    plan = ClaudeLaunch(system_prompt="", resume_session_id=resume_session_id)
     command, env = machine_launcher.screen_launch(
         place, plan.on(place), hook_url=hook_url, token=hook_token
     )
@@ -497,7 +494,6 @@ def test_build_screen_launch_shapes_command_and_env():
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="glm-5.2",
         extra_env={"ANTHROPIC_BASE_URL": "http://gw"},
     )
     assert command[0] == "bash" and command[1] == "-lc"
@@ -514,11 +510,12 @@ def test_build_screen_launch_shapes_command_and_env():
     # picker as the local pane is — same deny, carried on the launch line.
     assert "--disallowedTools AskUserQuestion" in script
     assert "CHEESE_HOOK_SPOOL" in script
-    # Env carries the hook wiring, home/work, model, and the gateway var.
+    # Env carries the hook wiring and home/work — no model (结论 46: the binding
+    # is resolved at admission and written into the request body by the proxy).
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
-    assert env["CLAUDE_MODEL"] == "glm-5.2"
+    assert "CLAUDE_MODEL" not in env
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
     assert "CHEESE_CLAUDE_GATES" not in env
 
@@ -532,7 +529,6 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
         hook_token="test",
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
-        model="test",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -560,11 +556,25 @@ def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
         home_dir="/dev/home",
         work_dir="/dev/work",
     )
-    # Work does not split further: a grandchild binds to no card and no person
-    # can address it.
+    # 深度的默认值。
     assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
-    # How many pieces of work a room runs at once, sharing one worktree.
+    # How many pieces of work a room runs at once, sharing one tree.
     assert env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "4"
+
+
+def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
+    """深度是部署设的，不是写死的设计约束（结论 33）。
+
+    活在房间里是平的、谁都能开活，所以这个数字挡的只是一台机器上的进程层数。部署
+    把它抬高，启动环境里就该是抬高后的那个值 —— 写死的时候，改它得改代码。
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "claude_code_max_subagent_spawn_depth", 3)
+
+    _, env = _screen_launch()
+
+    assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "3"
 
 
 def test_forwarder_posts_hook_json_with_token():
@@ -1221,7 +1231,6 @@ def _launch_with_tunnel(**overrides):
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="",
         extra_env=env,
     )
     return command[2]
@@ -1969,7 +1978,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     script = device_launch.build_launch_script(
         remote_execution=True,
         system_prompt="x",
-        model=None,
         resume_session_id=None,
         topic_id="t",
     )

@@ -76,7 +76,9 @@ def _create_payload(**overrides):
 
 def _mock_space_repo(session=None):
     async def get_by_id(space_id):
-        return SimpleNamespace(id=space_id, default_category_id=5)
+        return SimpleNamespace(
+            id=space_id, default_category_id=5, review_status="APPROVED"
+        )
 
     return SimpleNamespace(get_by_id=get_by_id)
 
@@ -277,6 +279,12 @@ class TestCreateTaskEntityDomainResolution:
                 "app.api.routes.tasks.TaskRepository",
                 return_value=_mock_task_repo(),
             ),
+            # 这两个用例测的是 domain group 的解析，不是权限；发布收权那道门在这里
+            # 直接放行，免得拿 AsyncMock 的 session 去撞它。
+            patch(
+                "app.api.routes.tasks.may_publish_in_space",
+                new=AsyncMock(return_value=True),
+            ),
             patch(
                 "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
                 return_value=SimpleNamespace(
@@ -337,6 +345,11 @@ class TestCreateTaskEntityDomainResolution:
             patch(
                 "app.api.routes.tasks.TaskRepository",
                 return_value=_mock_task_repo(),
+            ),
+            # 与上一个用例同理：这里是解析逻辑的单元测试，不是权限测试。
+            patch(
+                "app.api.routes.tasks.may_publish_in_space",
+                new=AsyncMock(return_value=True),
             ),
             patch(
                 "app.api.routes.tasks.TaskAccessDomainRepository",

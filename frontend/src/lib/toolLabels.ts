@@ -55,7 +55,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_worktree: '准备工作目录',
   cheese_sync: '同步任务代码',
   cheese_recover: '恢复任务备份',
-  cheese_bind: '认领任务',
   cheese_close_task: '关闭任务',
   cheese_push_fix: '更新任务 PR',
   cheese_fetch: '读取网页',
@@ -82,6 +81,9 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
   cheese_feedback_propose: '提交反馈提案',
+  cheese_machine: '要一台机器',
+  cheese_note: '留一张便条',
+  cheese_deliver_at: '设定时投递',
   cheese_api: '调用平台接口',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: '启动后台任务',

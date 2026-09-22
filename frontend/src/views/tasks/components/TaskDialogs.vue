@@ -18,9 +18,9 @@
       <v-card-text class="pa-4 pt-2">
         <div class="text-body-1 mb-4">
           <template v-if="taskData?.requireRealName">
-            此赛题要求实名参与。为确保赛题相关通知能够及时送达，同时便于身份认证和项目认证，请补充您的联系方式。
+            此题目要求实名参与。为确保题目相关通知能够及时送达，同时便于身份认证和项目认证，请补充您的联系方式。
           </template>
-          <template v-else> 为确保赛题相关通知能够及时送达，请至少提供一种联系方式。 </template>
+          <template v-else> 为确保题目相关通知能够及时送达，请至少提供一种联系方式。 </template>
         </div>
 
         <!-- 信息获取提示卡片 - 仅在需要实名时显示 -->
@@ -40,7 +40,7 @@
               <div>
                 <div class="text-subtitle-2 font-weight-medium mb-1">实名信息确认</div>
                 <p class="text-body-2 mb-0">
-                  您的真实姓名和学籍信息将从已认证的信息中获取。参与此赛题表示您同意向赛题组织者提供您的实名信息，用于身份验证和项目认证。
+                  您的真实姓名和学籍信息将从已认证的信息中获取。参与此题目表示您同意向题目组织者提供您的实名信息，用于身份验证和项目认证。
                 </p>
               </div>
             </div>
@@ -63,7 +63,7 @@
                   </v-avatar>
                   <div class="flex-grow-1">
                     <span class="text-body-2"
-                      >此赛题设置了<strong>审核通过后锁定</strong>策略，队伍一旦确认参与将无法变更成员
+                      >此题目设置了<strong>审核通过后锁定</strong>策略，队伍一旦确认参与将无法变更成员
                     </span>
                   </div>
                   <v-icon size="small" color="info">mdi-information-outline</v-icon>
@@ -75,7 +75,7 @@
             <div class="text-subtitle-2 font-weight-medium mb-1">队伍成员锁定说明</div>
             <p class="text-body-2 mb-0">
               • 参与申请被审核通过后，队伍成员将被<strong>锁定</strong>，无法添加或移除成员<br />
-              • 成员锁定将在任务完成后解除（提交被接受或赛题截止日期结束后）<br />
+              • 成员锁定将在任务完成后解除（提交被接受或题目截止日期结束后）<br />
               • 系统将以审核通过时的队伍成员名单为准进行最终评估和认证
             </p>
           </div>
@@ -137,7 +137,7 @@
                   <template #activator="{ props }">
                     <v-icon size="small" color="primary" class="ms-1" v-bind="props"> mdi-information-outline </v-icon>
                   </template>
-                  <span>您的实名信息和联系方式仅供赛题组织者查看，受到严格保护</span>
+                  <span>您的实名信息和联系方式仅供题目组织者查看，受到严格保护</span>
                 </v-tooltip>
               </div>
             </template>

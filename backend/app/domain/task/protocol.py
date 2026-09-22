@@ -1,15 +1,16 @@
 """机构协议 (spec §4.2) — what a 赛题 offers and what it requires in return.
 
-An institution publishes a 项目集/活动 (`space_categories`: 创研课 2026 秋,
-黑客松第三期) holding 赛题 (`task`). Linking a project to a 赛题 accepts a
-protocol: the institution provides a 资源包 (compute credits, a default expert
-role), the project accepts 条件 (e.g. 结题答辩 must be accepted by a mentor).
+An institution publishes a 题目板 (`space`, a course / an activity) whose
+题目分组 (`space_categories`: 作业, 实验, 小测) hold 题目 (`task`). Linking a
+project to a 题目 accepts a protocol: the institution provides a 资源包 (compute
+credits, a default expert role), the project accepts 条件 (e.g. 结题答辩 must be
+accepted by a mentor).
 
-**Where the protocol lives (#370, decided 2026-08-17).** On the 项目集, with an
-optional per-赛题 override — option (c). The reason is the real usage: 创研课 has
-twenty 赛题 and one set of terms, so a teacher configures it once. Putting it
-only on the 赛题 would mean twenty copies to keep in step; putting it only on the
-项目集 would leave no way to say "this one 赛题 gets more compute". The override
+**Where the protocol lives (#370, decided 2026-08-17).** On the 题目分组, with
+an optional per-题目 override — option (c). The reason is the real usage: 作业
+has twenty 题目 and one set of terms, so a teacher configures it once. Putting it
+only on the 题目 would mean twenty copies to keep in step; putting it only on the
+分组 would leave no way to say "this one 题目 gets more compute". The override
 is a whole-key replacement, not a deep merge — a half-inherited resource pack is
 harder to reason about than either source alone.
 
@@ -17,19 +18,28 @@ This replaces the cheesex `task_templates` table, which held these same four
 fields for a parallel 题目 hierarchy nobody could create from the UI. The 知是
 side already had the levels; it was missing only the protocol.
 
-**教学配置 (#8d772257).** A 创研课 is not a 黑客松: the institution does not only
-supply credits, it teaches. The `teaching` key carries that — this week's scope,
-a course-level system prompt, and the 课件 the week leans on. It rides the SAME
-three levels as the other keys (项目集 → 赛题 override → 项目 settings) because a
-second inheritance rule for education fields would be a second thing to keep in
-step, and the two would disagree the first time someone edited one of them.
+Prose elsewhere still calls the 题目分组 a 项目集 — the name this level carried
+when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
+
+**教学配置 (#8d772257).** 一门课不只是给额度，它还教。`teaching` 键承载这件事 ——
+本周范围、课程级 system prompt、本周要用的课件。它走**和其他键完全相同的三级**
+（题目分组 → 题目 `protocol_override` 整键覆盖 → 项目 `settings` 覆盖），因为给
+教育字段另起一套继承规则，就等于多一份要同步的规则，第一次有人只改其中一处就会
+两边不一致。
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Keys a level may override. Anything else on the category is inherited as-is.
-_OVERRIDABLE = ("resource_pack", "conditions", "default_role", "teaching")
+#: Keys a 题目 may override. Anything else on the 分组 is inherited as-is.
+#: `shell` rides the same chain on purpose: whether a 项目集 is a 创研课 or an
+#: 办公 workspace is the same kind of statement as what it provides, and it
+#: needs the same "configure it once, override this one 题目" behaviour. See
+#: `app.domain.shell` for what the value means; here it is only a name.
+#: `teaching` rides it for the same reason, with one more: a second inheritance
+#: rule for the course's fields would be a second thing to keep in step, and the
+#: two would disagree the first time someone edited one of them.
+_OVERRIDABLE = ("resource_pack", "conditions", "default_role", "shell", "teaching")
 
 
 def _text(value: Any) -> str | None:
@@ -174,6 +184,13 @@ class Protocol:
     conditions: list[dict[str, Any]] = field(default_factory=list)
     #: Expert role a project inherits when it has none of its own (spec §8.2).
     default_role: str | None = None
+    #: Which 壳 the projects under this protocol run: a NAME, resolved against
+    #: `app.domain.shell.catalog.CATALOG`. The declaration is platform-owned and
+    #: the institution only picks one, so a 项目集 cannot grow a private 壳 that
+    #: no other 项目集 can use — and cannot ship code, which is the same rule
+    #: (`app.domain.shell`). None = nobody said, so `default` is in force.
+    shell: str | None = None
+
     #: 课程级教学配置 — what the course wants its agents to know THIS week. Empty
     #: for anything that is not a course, which is every project that existed
     #: before this key did.
@@ -204,18 +221,21 @@ class Protocol:
 
 
 def _project_override(project: Any | None) -> dict[str, Any]:
-    """A project's own protocol overrides, from `Project.settings["protocol"]`.
+    """A project's own protocol overrides, read off `Project.settings`.
+
+    The keys are the protocol's own names, written FLAT — the same place, and
+    the same key, `app.domain.shell.service.SHELL_KEY` reads for a project's 壳.
+    A nested `settings["protocol"]` was the alternative; it lost because the
+    project level is one level, not one per key, and 壳 already says so in a
+    flat key. Two spellings of the same level is the drift this chain exists to
+    have exactly once.
 
     `settings` is free-form and holds unrelated keys (`forge_kind`, the compute
-    profile), so anything that is not a dict under `protocol` is treated as
-    absent rather than as an error: the caller is a per-turn read of every
-    project in the product, not the form that wrote it.
+    profile), so anything not named in `_OVERRIDABLE` is never read: a stranger
+    key cannot be mistaken for a protocol field.
     """
     settings = getattr(project, "settings", None)
-    if not isinstance(settings, dict):
-        return {}
-    override = settings.get("protocol")
-    return override if isinstance(override, dict) else {}
+    return settings if isinstance(settings, dict) else {}
 
 
 def resolve(
@@ -223,24 +243,25 @@ def resolve(
 ) -> Protocol:
     """The terms in force for one project: three levels, most specific last.
 
-    项目集 → 赛题 (`protocol_override`) → 项目 (`settings["protocol"]`). Every
-    key takes the same trip, including `teaching`: the levels are a property of
-    the protocol, not of any one field in it, so a field added here is
-    overridable at all three the day it is added rather than when someone
-    remembers to wire it up again.
+    题目分组 → 题目 (`protocol_override`) → 项目 (`settings`). Every key takes the
+    same trip, `shell` and `teaching` included: the levels are a property of the
+    protocol, not of any one field in it, so a field added here is overridable
+    at all three the day it is added rather than when someone remembers to wire
+    it up again.
 
-    Each level replaces a key WHOLE — no deep merge, for the reason the 项目集
+    Each level replaces a key WHOLE — no deep merge, for the reason the 分组
     placement was chosen: a half-inherited resource pack is harder to reason
     about than either source alone.
 
-    All three arguments are optional so callers do not have to branch: a 赛题
-    with no category, or a project with no 赛题 at all, resolves to an empty
-    protocol — which is the 项目自治 default (spec §4), not an error.
+    All three arguments are optional so callers do not have to branch: a 题目
+    with no 分组, or a project with no 题目 at all, resolves to an empty protocol
+    — which is the 项目自治 default (spec §4), not an error.
     """
     values: dict[str, Any] = {
         "resource_pack": getattr(category, "resource_pack", None) or {},
         "conditions": getattr(category, "conditions", None) or [],
         "default_role": getattr(category, "default_role", None),
+        "shell": getattr(category, "shell", None),
         "teaching": getattr(category, "teaching", None) or {},
     }
     for source in (
@@ -254,5 +275,6 @@ def resolve(
         resource_pack=dict(values["resource_pack"] or {}),
         conditions=list(values["conditions"] or []),
         default_role=values["default_role"] or None,
+        shell=values["shell"] or None,
         teaching=Teaching.from_json(values["teaching"]),
     )

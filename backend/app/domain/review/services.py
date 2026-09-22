@@ -46,6 +46,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -81,6 +82,7 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -934,7 +936,12 @@ class AcceptService:
             else {
                 "id": str(declared.id),
                 "name": declared.name,
-                "version": declared.version,
+                # 这张卡自己是第几版。`ArtifactSummary.version` 数的是已采纳的卡
+                # （`artifacts._claims`），所以还没采纳的这一张要自己加上一版：人
+                # 正在决定的是「这一版要不要成为《报告》的当前版本」，卡上写着前
+                # 一版的号码等于把他要定的那件事写错。
+                "version": declared.version
+                + (0 if card.status is AcceptStatus.accepted else 1),
             }
         )
         # 这一版交出去的是什么。卡面上要有它，因为验收的人要审的正是这一份：文件
@@ -1817,6 +1824,9 @@ class AcceptService:
                 f"PR #{number} 的 head 在采纳瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再采纳"
             )
+        if result.queued:
+            await self._record_queue_entry(card, decided_by)
+            return card
         if result.sha is None:
             # A faithful 405: GitHub (or its enforced protection) said no.
             reason = result.blocked_reason or "未说明原因"
@@ -1837,6 +1847,33 @@ class AcceptService:
         await self._mark_task_merged(card, delivered_head=seen)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         return await self._conclude_pr_accept(card, topic, decided_by)
+
+    async def _record_queue_entry(self, card: AcceptCard, decided_by: str) -> None:
+        card.decided_by = decided_by
+        card.decided_at = datetime.now(UTC)
+        card.auto_merge_armed_by = None
+        card.auto_merge_armed_at = None
+        await self._repo.add_approval(card.id, decided_by)
+        self._write_merge_mirror(
+            card,
+            MergeVerdict(
+                state="blocked",
+                reasons=(
+                    merge_state.MergeReason(
+                        kind="ci_running", detail="等待合并队列检查"
+                    ),
+                ),
+            ),
+            "ci",
+            card.pr_head_sha or "",
+        )
+        notes.record(
+            card,
+            notes.NoteCode.waiting_merge_queue,
+            f"PR #{card.pr_number} 已进入合并队列，等待队列检查和实际合并。",
+        )
+        await self._session.flush()
+        await self._session.refresh(card)
 
     async def _conclude_pr_accept(
         self,
@@ -1949,7 +1986,7 @@ class AcceptService:
         onto the card, send the events the 「谁的活」 table names (deduped
         through the nudge ledger), and merge a card whose auto-merge is armed
         once the rules are satisfied. Called by
-        SchedulerService.poll_open_prs(); never raises for a transient GitHub
+        `review/pr_poll.py::poll_open_prs`; never raises for a transient GitHub
         hiccup — the next poll just retries."""
         # A webhook and the reconciliation clock may observe the same card.
         # Only one transaction may advance it or emit its notifications.
@@ -2293,7 +2330,7 @@ class AcceptService:
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on
-        something other than a GitHub error (the scheduler's own catch-all).
+        something other than a GitHub error (the poller's own catch-all).
 
         Its caller rolled the failed tick back, so this runs on a fresh session
         and is a no-op for a card that has since settled or lost its PR.
@@ -2379,6 +2416,23 @@ class AcceptService:
             return
         if status.state == "closed":
             await self._note_pr_closed_unmerged(card=card, topic=topic)
+            await self._session.flush()
+            return
+
+        if card.note_code == notes.NoteCode.waiting_merge_queue:
+            if await client.merge_queue_entry(
+                owner=owner, repo=repo, number=number, token=creds.read
+            ):
+                return
+            # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+            card.auto_merge_armed_by = None
+            card.auto_merge_armed_at = None
+            notes.record(
+                card,
+                notes.NoteCode.merge_refused,
+                f"PR #{number} 已离开合并队列但尚未确认合并，"
+                "请检查 GitHub 后重新采纳。",
+            )
             await self._session.flush()
             return
 
@@ -2746,6 +2800,9 @@ class AcceptService:
             # head 在这一拍里又动了 —— 下一拍镜像到新 head，作废条款接手。
             await self._session.flush()
             return
+        if result.queued:
+            await self._record_queue_entry(card, armer)
+            return
         if result.sha is None:
             await self._note_merge_blocked(
                 card=card,
@@ -2824,7 +2881,11 @@ class AcceptService:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
             card.pr_head_sha = status.merge_commit_sha
-        await self._finish_pr_accept(card=card, topic=topic, merged_externally=True)
+        await self._finish_pr_accept(
+            card=card,
+            topic=topic,
+            merged_externally=card.note_code != notes.NoteCode.waiting_merge_queue,
+        )
 
     async def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
         """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
@@ -2926,7 +2987,15 @@ class AcceptService:
                 f"```\n{reason[:1500]}\n```\n"
                 f"{action}"
             ),
-            summon=actionable,
+            # 合不上这件事点的是芝士的名：活还开着，改在它手上。活关了就谁也没点到，
+            # 房间里照样看得见这一行，只是不会有人被叫起来（I13）。
+            addressed=addressed_to_agent(
+                await TopicMemberService(self._session).addressable_agent_handle(
+                    topic.id
+                )
+                if actionable
+                else None
+            ),
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
@@ -3138,6 +3207,11 @@ class AcceptService:
             await TaskService(self._session).get(card.task_id) if card.task_id else None
         )
         actionable = task is not None and task.status == TaskStatus.open
+        seat = (
+            await TopicMemberService(self._session).addressable_agent_handle(topic.id)
+            if actionable
+            else None
+        )
         for nudge in fresh:
             if nudge.capped:
                 continue
@@ -3152,7 +3226,7 @@ class AcceptService:
                     else f"{nudge.event}。原任务已关闭或不存在；"
                     "如需继续修改，请由新任务承接。"
                 ),
-                summon=actionable,
+                addressed=addressed_to_agent(seat),
                 nudge_event=nudge.event,
                 nudge_meta=notice(
                     nudge.event_type,
@@ -3454,6 +3528,26 @@ class AcceptService:
         except Exception:  # noqa: BLE001
             logger.exception("could not record the PR-open failure on card %s", card_id)
 
+    async def _cancel_queued_accept(self, card: AcceptCard) -> None:
+        if card.note_code != notes.NoteCode.waiting_merge_queue:
+            return
+        assert card.pr_number is not None
+        topic = await self._topic_or_404(card.topic_id)
+        creds, why = await self._pr_poll_credentials(card, topic)
+        if creds is None:
+            raise ValidationError(f"无法退出合并队列：{why}")
+        owner, repo = await self._pr_repo_of(card, topic)
+        client = await self._status_client(topic.project_id)
+        dequeue = getattr(client, "dequeue_pull_request", None)
+        if dequeue is None:
+            raise ValidationError("当前仓库连接无法退出合并队列，请检查仓库连接。")
+        await dequeue(owner=owner, repo=repo, number=card.pr_number, token=creds.write)
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+        )
+        if status.merged:
+            raise ValidationError("PR 已经合并，不能撤销队列中的合并请求，请刷新卡片。")
+
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
     ) -> AcceptCard:
@@ -3463,6 +3557,7 @@ class AcceptService:
         if decided_by != card.reviewer_handle:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权驳回")
 
+        await self._cancel_queued_accept(card)
         card.status = AcceptStatus.rejected
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
@@ -3645,6 +3740,9 @@ class AcceptService:
                 f"PR #{number} 的 head 在放行瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再放行"
             )
+        if result.queued:
+            await self._record_queue_entry(card, decided_by)
+            return card
         if result.sha is None:
             raise ValidationError(
                 f"GitHub 拒绝合并 PR #{number}：{result.blocked_reason or '未说明原因'}"
@@ -3723,6 +3821,7 @@ class AcceptService:
         if decided_by not in allowed:
             raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
 
+        await self._cancel_queued_accept(card)
         was = card.status
         reason = f" 理由：{note.strip()}" if note.strip() else ""
         headline = (

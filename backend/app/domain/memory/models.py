@@ -2,7 +2,9 @@
 
 Per spec §8.4, the block tree (DB) is the source of truth; memory is a
 projection for fast AI recall, rebuildable from blocks. Memory is stored as
-plain entries scoped to a project or a user.
+plain entries, each in one pool, and every pool belongs to a single agent
+instance inside a single project (结论 8). 项目没有池：人和 agent 共同看的东西
+是文档（结论 7）。
 """
 
 import enum
@@ -26,8 +28,11 @@ from app.domain.common import Timestamps, UuidPk
 
 
 class MemoryScope(enum.StrEnum):
-    project = "project"  # 项目记忆: 章程/决策/进展 (spec §8.4)
-    user = "user"  # 个人记忆: 跨项目, 跟着人走
+    # 关于某个人的记忆: 某个项目里的某个 agent 实例对这个人的认识。它属于那个实
+    # 例, 不属于那个人, 也不跟着人跨项目走 (结论 8) —— A 项目的芝士对他的判断,
+    # B 项目的芝士读不到。scope_id 是 `<项目>:<agent handle>:<这个人的 handle>`,
+    # 见 `user_scope_id`。
+    user = "user"
     skill = "skill"  # 技能记忆: 领域知识/文档模板/场景包配置
     # 芝士 记忆: 一个 agent 在一个项目里学到的东西。People working on a project
     # each remember their own things; agents do too. Keyed per agent so a
@@ -58,12 +63,14 @@ class MemoryLayer(enum.StrEnum):
     fact = "fact"
 
 
-def agent_project_scope_prefix(project_id: str | uuid.UUID) -> str:
-    """The ``scope_id`` prefix shared by every agent pool of one project.
+def project_scope_prefix(project_id: str | uuid.UUID) -> str:
+    """The ``scope_id`` prefix shared by every pool of one project.
 
     Listing "what did the 芝士 in this project remember" is a prefix scan over
     this, which is why the composite key's shape lives here rather than being
-    re-spelled at each call site.
+    re-spelled at each call site. Both composite scopes start with it, which is
+    also the whole of 结论 8's isolation: a pool of another project cannot be
+    named without naming that project's id.
     """
     return f"{project_id}:"
 
@@ -71,11 +78,34 @@ def agent_project_scope_prefix(project_id: str | uuid.UUID) -> str:
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
     """scope_id for :attr:`MemoryScope.agent_project`.
 
-    ``scope_id`` is a plain 128-char string shared by every scope, so the two
-    parts are joined rather than given columns of their own. A handle cannot
-    contain ``:`` (it is a username), so the split is unambiguous.
+    ``scope_id`` is one plain string shared by every scope, so the two parts
+    are joined rather than given columns of their own. A handle cannot contain
+    ``:`` (it is a username), so the split is unambiguous.
     """
-    return f"{agent_project_scope_prefix(project_id)}{agent_handle}"
+    return f"{project_scope_prefix(project_id)}{agent_handle}"
+
+
+def user_scope_id(
+    project_id: str | uuid.UUID, agent_handle: str, person_handle: str
+) -> str:
+    """scope_id for :attr:`MemoryScope.user` — one agent's notes on one person.
+
+    Three parts, because all three are needed to say whose knowledge this is:
+    the instance owns it, and an instance only exists inside its project
+    (结论 8). Neither a handle nor a project id can contain ``:``, so the split
+    stays unambiguous.
+    """
+    return f"{agent_project_scope_id(project_id, agent_handle)}:{person_handle}"
+
+
+def user_scope_about(person_handle: str) -> str:
+    """The tail every :attr:`MemoryScope.user` pool about this person ends with.
+
+    A person's own profile page asks the one question that is not about a
+    single pool — "what has been learned about me, anywhere" — and a suffix is
+    the only way to ask it without enumerating every project and every agent.
+    """
+    return f":{person_handle}"
 
 
 class MemoryDream(UuidPk, Timestamps, Base):
@@ -117,8 +147,14 @@ class MemoryEntry(UuidPk, Timestamps, Base):
     scope: Mapped[MemoryScope] = mapped_column(
         Enum(MemoryScope, native_enum=False, length=16), index=True
     )
-    # Project id or user handle, depending on scope.
-    scope_id: Mapped[str] = mapped_column(String(128), index=True)
+    # Which pool: the composite keys built by `agent_project_scope_id` /
+    # `user_scope_id`, or a skill name. 200 because the longest key
+    # this can hold is `user_scope_id`: a uuid (36) plus an agent handle and a
+    # person handle (64 each, `agent_instance.handle` / `topic_memberships.
+    # member_handle`) plus two separators — 166. A key that does not fit is not
+    # a truncated pool, it is a 500 out of `cheese remember` and a failed
+    # migration, so the column has to outrun the widest key by construction.
+    scope_id: Mapped[str] = mapped_column(String(200), index=True)
     content: Mapped[str] = mapped_column(Text)
     # Default `fact`: a memory earns its permanent seat, it is not born with
     # one. Anything written without saying otherwise is something learned.

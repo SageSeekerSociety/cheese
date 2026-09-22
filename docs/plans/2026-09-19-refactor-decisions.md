@@ -7,13 +7,7 @@
 ## 一、参与者与身份
 1. [已定] 人和 agent 是同一种参与者：唯一身份 + 席位。不同的只是谁拥有它：人拥有自己，被邀请到哪就去哪；agent 实例由建它的项目拥有，只在那个项目有席位，别的项目不能邀请它。
 2. [已定] agent 分「类型」和「实例」。类型 = 出厂设置（人设提示词、技能），不属于任何项目，像岗位说明书，可跨项目复用；实例 = 某个项目从某个类型建出来的参与者，唯一身份、自己的记忆、只在该项目有席位。今天 `agent_types` + `agent_instances` 已是这个形状；差别是类型里要拿掉 model 和 harness（见 3、28）。
-3. [已定] agent 只按 role 分，模型不是 agent 的属性，也不是分参与者的理由（用第二个 agent 换模型是错放）。模型是**工作的资源绑定**，与机器（地点）同形，卡上并排显示「在哪台机器、用哪个模型、现在在做什么、花了多少」。
-   - 聊天（房间主线程）用一个稳定的模型：项目默认，普通成员不碰；主线程不换模型，缓存一直热。
-   - 做事按活配脑子：agent 派一条活时自己选（难的强、粗活便宜），在项目策略允许的档位内；超档要人点头就提议（投递规则，下一步在人手上）。人可以在卡上改或打断。「解不了」永远是交给一条活去解，不在聊天里换脑子。
-   - 一个 role 最多声明对脑子的要求（如需要看图），解析时满足，不钉型号。
-   - 部署决定可选列表（按 harness 筛）；项目定默认和档位策略；供给降级只能拒绝或可见等待，不悄悄换模型（否掉网关按可用性换模型那种 fallback）。
-   - 每一轮实际用的模型随用量记在卡上，显示从记录算，不是被 set 的状态。改绑定下一轮生效、同一份 transcript、一条事件；换脑子的一次性预填代价在改的地方亮出来。
-   - 用户接触模型的地方只有卡，看多于设；类型和实例里不再有 model/harness 字段。
+3. Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
 4. [已定] 没有跨项目的「平台芝士」参与者：每个项目自动有一个芝士类型的实例（今天的默认 `cheese`），是完整参与者，记忆全部关在项目里。
 5. [已定] 判据（搬自 8 月多 agent 设计文档）：两个 agent 的区别只是 system prompt 就不该是两个 agent；区别必须是能力/凭据、记忆/专长、责任之一。记录里没有「一个房间两个 agent」的真实需求，只有用第二个 agent 换模型这种错放；一房多队友是 #1180 之后的能力，不是要求。
 6. [已定] 将来「人带自己的助理进各项目」= 人拥有实例、席位跟着人，模型里不加新概念，本轮不做。
@@ -44,7 +38,7 @@
 21. [已定] 平台的 MCP 永远在 claude 进程所在的机器上（会话侧）：chat_send、cheese ask、反馈、要一台机器、同 handle 便条、定时投递。
 22. [已定] 其他一切工具一定在开出来的手上：Read/Edit/Write/Bash、项目 `.mcp.json` 的 MCP、项目 CLI。地点没了它们就是不可用，如实标出来，不在会话侧做替身，也不把项目工具搬到中心机。
 23. [已定] 机器离线：agent 收到的是一条事件（「这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用」），那一轮的工具表里项目工具直接标不可用，不让它们各自超时。机主按第 12 条被通知。agent 换机器是通过平台工具向平台提请求：Cloud 平台自己开；另一台自托管要那台机器主人点头；换成功后告知丢了什么（收据）。
-24. [已定] 机器随时可回收：地点是有期限、可归还的租约；回收前三张收据（transcript 落库、记忆整理跑过、未提交工作已推）。#442 第 3 条是旧模型的决定，不再是设计约束。
+24. [已定] 机器随时可回收：地点是可归还的租约；回收前三张收据（transcript 落库、记忆整理跑过、未提交工作已推）。#442 第 3 条是旧模型的决定，不再是设计约束。
 25. [已定] hosted machine 没有独立用途；三档只差物理事实。
 26. [已定] 源仓库永远在平台（每个项目恰好一个），资料库和引用型产物在它之外；办公文件走资料库进、产物出；「本地文件」只是连接器的输入输出通道，agent 不在用户文件系统里就地改。
 27. [已定] 平台是唯一副本时，导出和备份是架构义务。
@@ -69,12 +63,12 @@
 
 ## 十一、与 Cursor 对照后补定（2026-09-19 晚）
 38. [已定，已由第 60 条整条修订：手是 agent 的，租约挂在会话上] 活永远用房间的机器；子 agent 不声明独立环境。要另一台机器就是另一个房间。
-39. [已定] 租约有第三态「休眠」（只对 Cloud）：闲置快照后停机，reconnect window 内恢复同一台、工作区原样；归还前收据规则不变。
+39. [Decided] Cloud supports explicit suspend/resume. LXC retains disks and restarts processes; VM saves memory and restores processes. Resume reuses the same machine and workspace. Cloud is on-demand, with no fixed expiry, Spot eviction or automatic idle shutdown. Returning a machine still requires the receipts in decision 24.
 40. [已定] 机器离线由 agent 处理：平台把机器状态作为事件送到它面前，「开一台机器 / 换到 Cloud」是平台 MCP 上的工具；策略闸门（自托管要机主同意、超费用档位要人点头）让这个工具调用自动变成给人的提议。平台不设等待超时器。
 41. [已定] 验证过程的截图/录像走 skill：验证型的活由 skill 要求 agent 录下验证过程，作为引用型产物挂在卡上；平台不为它造机制。
 42. [已定] agent 的私有记忆是**文件**：一个事实一个文件（带「关于谁、何时观察到」的元数据）加自动索引，每个实例一个目录，按关于谁分三个子目录（这个项目 / 某个人 / 自己）。存在平台侧，不进项目 git 仓库，平台给版本；通过平台工具在任何地点可读；整理 = agent 重写自己的文件；回忆规则本条不动（那条规则已由第 54 条改成「关于人的池随时可读」）。可见性：在该 agent 的 profile 里一个「记忆」页，项目成员可看、可翻历史、可删、可标记；**关于某个人的只对当事人可见**；不进房间、不进时间线、改了不通知、搜索不默认覆盖。写入分类规则：任何提到某个人的判断只能进那个人的池。备选（未选）：项目/自己两池仅管理员可见。与「关于你的资料」（人写的、关于自己、跨项目、给同项目所有 agent 读）是两样东西。
 43. [已定] 派活是 agent 对骨架原生 subagent 的工具调用，不走平台；骨架契约硬性要求：能起子 agent并指定模型、子 agent 事件带可归到卡的线程标识、父线程能改指令和停止。平台只认卡：agent 先开卡再起子 agent；hook 按线程标识归卡；结束写结论；人对卡的操作投递给父线程执行。子 agent 与父进程同生同死，恢复靠从分支重派，「边干边 push」是 skill 硬要求（第 52 条：只 commit 活不过这台机器）。（本条取代第 30 条里「后台分身应当支持」的措辞。）
-44. [已定] 模型不是分参与者的理由，判据是 role；模型作为工作的资源绑定见第 3 条；项目级只有默认模型和启用列表。
+44. Teammates remain distinct by role and identity. Project main and native subagent defaults are separate; saved teammates may override the main model as described in decision 3.
 
 ## 十二、2026-09-19 深夜补定
 45. [已定] 功能层不为师生分档。存在的是按席位角色开的看板：出题者看自己题目下的项目、空间管理员看空间，属于按授权范围的视图（#945 那种），不是第二套流程。

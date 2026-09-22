@@ -1,6 +1,7 @@
 import asyncio
 import re
 from collections.abc import Iterable, Sequence
+from datetime import date, datetime
 
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,37 @@ _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
+
+
+async def handles_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> tuple[str, ...]:
+    """用户 id -> handle，按传进来的顺序；查不到的那些不在里面。
+
+    收件人在投递那一侧是 handle（I11），而社交那几处调用点手里是自己算出来的一组
+    用户 id —— 申请的管理员名单、邀请人、被 @ 的那几个人。翻译只此一处：与
+    ``user_by_handle`` 一样，账号叫什么是 `User` 的事实，而调用点自己拼一遍
+    ``select(User.username)`` 就要各自再答一遍「删掉的账号算不算」。
+
+    一次查完，不按人 N+1：一条讨论可以 @ 一屋子人。
+    """
+    ids = list(dict.fromkeys(int(i) for i in user_ids if int(i) > 0))
+    users = await UserRepository(session).get_by_ids(ids)
+    return tuple(users[i].username for i in ids if i in users)
+
+
+async def search_accounts(
+    session: AsyncSession, q: str, limit: int
+) -> Sequence[tuple[str, str]]:
+    """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
+
+    Lives beside the other two rather than in the calling domain, for the reason
+    ``chosen_avatars_by_handle`` states: what an account is called is a fact about
+    `User`/`UserProfile`, and the two rules that are easy to get wrong — a missing
+    profile must not hide the account, and agents are not candidates — are written
+    once, in ``UserRepository.search_accounts``.
+    """
+    return await UserRepository(session).search_accounts(q, limit)
 
 
 async def chosen_avatars_by_handle(
@@ -85,6 +117,32 @@ class UserService:
 
     async def get_users_by_ids(self, ids: Sequence[int]) -> dict[int, UserProfile]:
         return await self._repo.get_profiles_by_user_ids(ids)
+
+
+class AccountService:
+    """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。
+
+    **Why this one takes a session and its three neighbours take a repository:**
+    它们三个的调用点只有用户自己的路由，而路由手里本来就已经握着那几个仓储（它们
+    还要用它做别的事），把仓储传进来省一次构造。这一个开给的是**别的领域**，而那些
+    领域不许 import `UserRepository` —— 建仓储这一步留在门里面，越界才不成立。所以
+    它拿 session，和 `FeedbackService` / `AdminService` 同一个形状。
+
+    它面对的是账号表而不是 profile：旁边三个类全是「资料」那一侧（昵称、头像、
+    关注、实名），而账号的存量与新增问的是 `User` 自己的行。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._repo = UserRepository(session)
+
+    async def count_accounts(self) -> int:
+        return await self._repo.count_accounts()
+
+    async def accounts_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
+        return await self._repo.accounts_series(since=since, until=until)
 
 
 class UserProfileService:

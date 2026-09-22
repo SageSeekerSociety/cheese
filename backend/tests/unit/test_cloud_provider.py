@@ -70,7 +70,7 @@ async def test_running_machine_waits_until_ai_and_connector_are_ready():
     )
 
     assert ready is False
-    assert "正在创建" in message
+    assert "正在准备" in message
     ensure.assert_awaited_once_with(topic_id, actor)
 
     ready, _ = await provider.prepare_topic(
@@ -130,7 +130,7 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
     monkeypatch.setattr(
         "app.domain.agent.cloud_provider.IdentityService",
         lambda _session: SimpleNamespace(
-            ensure_topic_agent_user=AsyncMock(
+            ensure_room_agent_user=AsyncMock(
                 return_value=SimpleNamespace(id=7, username="cheese-room")
             )
         ),
@@ -145,11 +145,14 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
         ),
     )
 
+    provider._session_agent = AsyncMock(
+        return_value=SimpleNamespace(id=8, username="ada-seat")
+    )
     resolved = await provider.precheck(
-        SessionRef(project_id, topic_id, "ada", "claude-code"), needs_place=True
+        SessionRef(project_id, topic_id, "ada", harness="claude-code"), needs_place=True
     )
 
-    assert resolved == ("own-cloud", 7, "cheese-room", True)
+    assert resolved == ("own-cloud", 8, "ada-seat", True)
     devices.bind_topic_device.assert_awaited_once()
 
 

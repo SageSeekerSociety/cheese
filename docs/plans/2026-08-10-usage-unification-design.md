@@ -14,11 +14,11 @@ A turn's model traffic takes one of two routes:
   OAuth token and forwards via ccproxy. Metered per project/topic in the proxy's
   `usage.jsonl`. Tokens only, no USD price.
 
-Whether a turn's spend reaches the platform's books is currently decided by
-`SUBSCRIPTION_ENABLED` — a deployment flag — in `ChatService._model_kwargs`:
-when true, **every** turn is treated as non-gateway, including device turns
-whose traffic demonstrably flows through `/llm` → LiteLLM. Their spend sits in
-the gateway's log and is never drained. Subscription turns' spend sits in the
+Whether a turn's spend reaches the platform's books was once decided by a
+deployment flag in `ChatService._model_kwargs`: when it was on, **every** turn
+was treated as non-gateway, including device turns whose traffic demonstrably
+flowed through `/llm` → LiteLLM. Their spend sat in the gateway's log and was
+never drained. Subscription turns' spend sits in the
 proxy's log, which nothing reads. The transcript usage reader (#153) ships on
 devices but its consumer (`usage_from_hook`) has no caller, and the spool
 reconcile deletes its parked events. Net: `resource_usage` records zeros while
@@ -41,15 +41,14 @@ consults the same numbers.**
 
 | provider | condition | route | meter |
 |---|---|---|---|
-| device | always (machines require the gateway) | `gateway` | gateway spend-log drain |
-| tmux | `subscription_enabled` | `subscription` | proxy usage.jsonl ingest |
+| device | the project's own supply, resolved per request at admission | `subscription` or `gateway` | proxy usage.jsonl ingest / gateway spend-log drain |
 | tmux / sdk | pool profile | `gateway` | gateway spend-log drain |
 | sdk | native/testing profile | `native` | SDK-reported usage |
 
-The subscription branch applies only to the provider that implements it (tmux).
-The sdk provider under `subscription_enabled` previously fell through with no
-env — inheriting the backend's own gateway credentials — and is now routed by
-profile like before, closing that hole.
+A channel that builds its own model environment carries no pool: a machine has
+one launch shape, and which pool serves one request is answered at
+`/llm/admission`. A channel that does NOT build one is routed by profile, which
+is what keeps it off the backend's own inherited gateway credentials.
 
 `resource_usage` gains a `route` column (`gateway|subscription|native|""`), so
 every row names the supply that produced it.

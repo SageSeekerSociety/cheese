@@ -27,7 +27,6 @@ Runner 自己起一个**隔离后端**（真实 `app.main:app`）：
 | 端口 | 8097（`--port` 可换），启动前检查占用 |
 | 数据库 | 每 run 一个全新 sqlite（`results/<run>/eval.db`，schema 由 `lib/bootstrap_db.py` create_all） |
 | 工作区 | `WORKSPACE_ROOT` 指到 run 目录（含 in-flight turn registry，绝不碰 dev 后端） |
-| 调度器 | `SCHEDULER_INTERVAL_SECONDS=0` |
 | 沙箱 | `AGENT_SANDBOX_ENABLED=false`（见下"沙箱模式"） |
 | 模型 | 走 `backend/.env` 的真实网关（真 agent turn，不 mock） |
 

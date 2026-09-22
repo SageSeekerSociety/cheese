@@ -12,10 +12,14 @@ Everything a route must not be trusted to remember lives here:
 Three product decisions the user had not ruled on are taken here as defaults,
 each in one place, each revertible without touching a route:
 
-1. **Who is an admin** — `settings.feedback_admin_handles`, same shape as
-   `dogfood_owner_handles`. No new role system: there is no production path that
-   assigns `SystemRole.SUPER_ADMIN` today, so a role check would read as
-   "nobody" and lock the surface for everyone.
+1. **Who is an admin** — **not decided here.** The judge is
+   `AdminService.is_admin` in `app/domain/admin/services.py`: 根 ∪ 页面上加的,
+   i.e. `settings.platform_admin_handles` (deploy-required, not removable from
+   the page) and the `platform_admins` table (`/admin/admins`, the 成员管理
+   screen). This module only *asks* — `FeedbackService.admins` and the three thin
+   delegates below exist so a feedback route does not have to know where the
+   answer lives, not because the answer is feedback's. It never was: the same
+   list is what opens every other admin screen.
 2. **`security` is a subtype of `private`, not a second axis.** A security report
    is invisible to non-admins exactly as a private one is; the flag only routes
    it into the admin's security tab. So `security=True` narrows visibility, and
@@ -33,21 +37,23 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.auth.project_access import may_read_topic
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
     PreconditionFailedError,
 )
+from app.domain.admin.services import AdminService
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
+    FeedbackKind,
     FeedbackStatus,
     FeedbackVisibility,
 )
@@ -67,6 +73,13 @@ ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
 #: The public tabs, in the order the tab bar draws them.
 PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "active", "resolved")
 
+#: The two orderings any list can be asked for. `new` is the default everywhere;
+#: `supports` is what the public `hot` tab implies and what the admin console's
+#: 最新/最热 toggle asks for by name. One tuple because the serializer
+#: (`_list_stmt`) has exactly two branches: a third name here would be a value
+#: that silently means `new`.
+SORTS: tuple[str, ...] = ("new", "supports")
+
 #: Movement order shown by the status ladder. One rung per thing the person who
 #: filed it can see happen: 收录 → 处理 → 解决 → 部署. `resolved` and `deployed`
 #: are reachable from any state, and a reopen (resolved → in_progress) is
@@ -81,38 +94,80 @@ STATUS_LADDER: tuple[FeedbackStatus, ...] = (
 )
 
 
-def admin_handles() -> frozenset[str]:
-    """The platform-admin set, frozen once per call.
-
-    Frozen rather than a module constant so a settings change takes effect
-    without a restart in tests, matching how `profiles.py` consumes
-    `dogfood_owner_handles`.
-    """
-    return frozenset(settings.feedback_admin_handles)
-
-
 class FeedbackService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = repo.FeedbackRepository(session)
+        #: 平台管理员那份名单与判据 —— 一个请求一个实例，两边共用同一个 memo。
+        self._admins = AdminService(session)
 
     # --- 权限 ---------------------------------------------------------------
+    #
+    # 「谁算平台管理员」不在这个域里：它是平台级的事实（`app/domain/admin/`），
+    # 反馈只是**用**它 —— 私密条目谁能看见、评论能不能删，问的都是同一个答案。
+    # 这里留一层薄委托，是因为反馈自己的可见性判断（`may_see` / `visible_row` /
+    # `detail`）每一步都要问它，而让每个调用点各自去构造一个 `AdminService` 等于
+    # 把同一个请求拆成几份各读一遍库。
 
-    def is_admin(self, handle: str | None) -> bool:
-        return bool(handle) and handle in admin_handles()
+    @property
+    def admins(self) -> AdminService:
+        """平台管理员那一半（名单、判据、页面上加删）—— 路由过的是它那道门。"""
+        return self._admins
 
-    def may_see(self, row: Feedback, *, handle: str | None, is_admin: bool) -> bool:
-        """The visibility union, in one line — 公开 + 私密 + 是我提的.
+    async def admin_handles(self) -> frozenset[str]:
+        """谁算平台管理员：**根 ∪ 页面上加的**。见 `AdminService.admin_handles`。"""
+        return await self._admins.admin_handles()
+
+    async def is_admin(self, handle: str | None) -> bool:
+        return await self._admins.is_admin(handle)
+
+    async def require_admin(self, handle: str | None) -> str:
+        return await self._admins.require_admin(handle)
+
+    async def may_see(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """The visibility union — 公开 + 管理员 + 是我提的 + **提它的那个房间**.
+
+        结论 47 的三档：开发者（管理员）看得见，提出它的那个房间的成员看得见，反馈
+        中心里其他人看不见。前两档一直在这里；第三档是房间这一档，它补的是同一条结
+        论的第二句——agent 提的内容在它的房间里全部留痕，所以对那个房间的人藏起来，
+        藏掉的只是追踪它的那条路，藏不掉内容。
 
         A private report is visible to admins **and to the person who filed it**:
         the reporter must be able to follow their own report, and the agent that
         filed on their behalf counts as them. Everyone else cannot, and gets 404
         rather than 403 — see `visible_row`.
 
+        房间这一档取的是**反馈提出那一刻**的名册（`filed_in_a_room_of`），不是现在
+        的：按现在取的话，把谁加进这个房间就等于把这个房间历史上的每一条私密反馈一
+        并交给他，而加人的那个人并不知道自己在授权。
+
+        它**还要**今天读得到那个房间（`may_read_topic`），两句都成立才开门。少了后
+        一句，这一档就是一扇撤不回的门：退房间是硬删名册行，所以撤得掉；退项目不是
+        —— `MemberService.remove` 只删 `ProjectMember` 一行，被移出项目的人从此进
+        不了这个项目的任何房间，而他在各房间的名册行原地不动。那些行今天是惰性的
+        （房间门读的是项目读权，`may_read_topic`），本档把它们变成门，于是「一次加
+        人变成一次授权」在离场那一侧原样长了回来。判据留在这里而不是靠名册干净：
+        退项目、退队、不再是出题者是三条路，只有「今天还读得到吗」一句话同时管住。
+
+        问的是**房间自己的项目**（`may_read_topic` 从 topic 解出来），不是
+        `row.project_id`：这一档的授权键只有一个，就是 `topic_id`，那么项目也必须从它
+        解出来。读第二列等于让两个可以各自漂开的字段回答同一个问题——房间被移去别的项
+        目、或者哪天 `project_id` 换个来源，两列就不再说同一件事，而鉴权只能有一个答案。
+
         `security` narrows the public arm, so it is checked in the same breath:
         a row an admin flagged as a security matter is not public even though the
         reporter left `visibility` at its default. That flag is set on triage, by
         someone other than the reporter, and it is the one that must not leak.
+        It does **not** narrow the room arm, for the same reason the author keeps
+        access to a row that was flagged: 「不能泄露」说的是泄露给没看过它的人，而
+        那个房间的人看过。
+
+        Async because the roster and the project's claims are tables — the three
+        arms above are on the row, this one is not. Those queries are reached
+        only by a row the three cheap arms already refused, and `topic_id is
+        None` (报在沙箱里、或房间已删) turns both of them off before either runs.
         """
         if row.visibility == FeedbackVisibility.public and not row.security:
             return True
@@ -120,7 +175,13 @@ class FeedbackService:
             return True
         if not handle:
             return False
-        return handle in (row.author_handle, row.submitted_by_handle)
+        if handle in (row.author_handle, row.submitted_by_handle):
+            return True
+        if row.topic_id is None:
+            return False
+        if not await self._repo.filed_in_a_room_of_mine(row.id, handle):
+            return False
+        return await may_read_topic(self._session, topic_id=row.topic_id, handle=handle)
 
     async def visible_row(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool
@@ -132,18 +193,9 @@ class FeedbackService:
         makes this the rule for every id-taking feedback endpoint.
         """
         row = await self._repo.get(feedback_id)
-        if row is None or not self.may_see(row, handle=handle, is_admin=is_admin):
+        if row is None or not await self.may_see(row, handle=handle, is_admin=is_admin):
             raise NotFoundError("反馈不存在")
         return row
-
-    async def require_admin(self, handle: str | None) -> str:
-        if not handle:
-            raise ForbiddenError("需要登录")
-        if not self.is_admin(handle):
-            # 403 here and not 404: /admin/feedback is documented as existing, so
-            # its existence is not a secret — only its contents are.
-            raise ForbiddenError("需要平台管理员")
-        return handle
 
     def may_delete_comment(
         self, row: FeedbackComment, *, handle: str | None, is_admin: bool
@@ -163,13 +215,71 @@ class FeedbackService:
         """
         return is_admin or (handle is not None and row.author_handle == handle)
 
+    def may_delete_feedback(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """谁可以删掉**一整条反馈** —— 提它的人，或者平台管理员。
+
+        和评论那条判据（`may_delete_comment`）同一个形状，但作者那一档多算一个人：
+        一条反馈有**两个**都算「我提的」的 handle —— 写它的（agent 提案时是那个 agent）
+        和按下发送的（人）。只认前者的话，从提案卡提交的人删不掉自己刚提交的东西；
+        只认后者的话，agent 自己经手的那条谁也删不掉（`submitted_by_handle` 在那种
+        情况下可能是别人）。
+
+        管理员这一档是需求方要的（「不然我怕有人恶意刷」）：删除是**事后清理**，
+        挡不住刷 —— 那要在提交侧限流。这里给的只是「× 掉一条」的能力，而这正是
+        管理员今天没有的那一个。
+
+        判据只有这一处：`delete_feedback` 删之前问它，`detail_of` 拿它填
+        `can_delete`。两处各写一遍就是「按钮画得出来、点下去 403」的来源，这个功能
+        已经为那个形状付过一次学费（见 `may_delete_comment` 的 docstring）。
+        """
+        if is_admin:
+            return True
+        if handle is None:
+            return False
+        return handle in (row.author_handle, row.submitted_by_handle)
+
     # --- 读 -----------------------------------------------------------------
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
+        """公开列表，四个可选的筛选叠在栏位之上。
+
+        **不认识的取值一律 400，不退回「全不筛」** —— 和 `tab` / `sort` 同一条规矩：
+        猜错一个筛选会让人以为「没有这样的反馈」，而它其实只是被别的条件挡住了。
+        反馈中心那几个筛选是**控件**，控件里的值只能来自这份词表（服务端随 meta 下发
+        的 `statuses` / `kinds`），所以走到这里的一定是客户端版本落后了，而不是有人
+        手打了什么。
+        """
+        # 「办完了」那一栏装的是两级（修复 + 上线），而状态筛选是**单级**的。两者
+        # 不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
+        # `_tab_where` 合并，只保证两边都成立。
+        if status is not None and status not in {s.value for s in FeedbackStatus}:
+            raise BadRequestError(f"未知的状态：{status}")
+        if kind is not None and kind not in {k.value for k in FeedbackKind}:
+            raise BadRequestError(f"未知的类型：{kind}")
         return await self._repo.list_public(
-            tab=tab, q=q, sort=sort, limit=limit, offset=offset
+            tab=tab,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            author=author,
+            status=status,
+            kind=kind,
+            since=since,
         )
 
     async def list_admin(
@@ -178,24 +288,65 @@ class FeedbackService:
         tab: str,
         assignee: str | None,
         q: str | None,
+        sort: str = "new",
         limit: int,
         offset: int,
+        since: datetime | None = None,
+        resolved_since: datetime | None = None,
+        deployed_since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         if tab not in ADMIN_TABS:
             raise BadRequestError(f"未知的管理视图：{tab}")
+        if sort not in SORTS:
+            # Refused rather than coerced to `new`, same reasoning as `tab` above
+            # and it bites harder here: a client asking for `hottest` and getting
+            # `new` reads the top of the page as "the most supported reports".
+            # The ordering is the answer, so answering in a different order is
+            # answering a different question under the same heading.
+            raise BadRequestError(f"未知的排序：{sort}")
         return await self._repo.list_admin(
-            tab=tab, assignee=assignee, q=q, limit=limit, offset=offset
+            tab=tab,
+            assignee=assignee,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            since=since,
+            resolved_since=resolved_since,
+            deployed_since=deployed_since,
         )
 
     async def list_mine(
         self, *, handle: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        return await self._repo.list_related_to(
+        """「我的反馈」：清单里的每一条，详情页都开得了。
+
+        两步，因为规则只有一份拼写。SQL 那一步（`visible_to`）把「指派给我的」收
+        窄到一个**超集**——它带不动「今天还读得到那个房间」那半句，那是四张表四条
+        主张，抄进 WHERE 就是第二份迟早漂开的答案。最后一刀在这里，用的就是详情页
+        那个 `may_see`，所以清单和它自己的行不会各说一套。
+
+        挡下来的是哪一条：被移出项目、又恰好是某条私密反馈的负责人、而那条反馈提
+        出时他在那个房间里。详情页早就对他 404 了；少了这一步，清单还在把它的标题
+        和状态递给他。
+
+        总数跟着减这一页挡下的条数。一页装不下时它仍可能偏大（别的页上挡下的那几
+        条还算在里面），但只会偏大、不会偏小，而且它是一个数字不是一条能点开的行
+        ——前端拿它写「共 N 条」，一次只取一页。
+        """
+        is_admin = await self.is_admin(handle)
+        rows, total = await self._repo.list_related_to(
             handle,
-            is_admin=self.is_admin(handle),
+            is_admin=is_admin,
             limit=limit,
             offset=offset,
         )
+        kept = [
+            row
+            for row in rows
+            if await self.may_see(row, handle=handle, is_admin=is_admin)
+        ]
+        return kept, total - (len(rows) - len(kept))
 
     async def counts(
         self, *, handle: str | None, is_admin: bool = False
@@ -211,6 +362,9 @@ class FeedbackService:
         unresolved row nobody has picked up, private and security included, so
         answering it to an anonymous caller would publish a number that describes
         rows they cannot open. It rides on `/admin/feedback` and nowhere else.
+
+        `deployed` rides along from `public_counts` — a separate number beside
+        `resolved`, which keeps meaning 修复 + 上线 as a pair. See `_tab_where`.
         """
         counts = await self._repo.public_counts()
         if is_admin:
@@ -218,10 +372,40 @@ class FeedbackService:
         if handle:
             state = await self._repo.get_read_state(handle)
             since = state.last_read_at if state else None
-            counts["unread"] = await self._repo.count_activity_since([handle], since)
+            # 这里**再问一次** `is_admin`，而不是用调用方传进来的那一位。
+            #
+            # 「指派给我的」那条胳膊要靠它收窄（见 `count_activity_since`），而
+            # 收窄必须知道这个人是不是管理员：管理员对任何一行都不收窄，非管理员
+            # 只能看见公开的。铃铛轮询的那条路（`GET /feedback/counts`）没有身份、
+            # 也不该给 `unassigned`，所以它调的 `counts(handle=…)` 里 `is_admin`
+            # 永远是默认的 False —— 只信那一位的话，管理员会因为这次收窄反过来丢掉
+            # 自己的未读数。两处对同一个人的判断，宁可多一次（实例上已经 memo 过，
+            # `list_related_to` 在同一个请求里问的是同一份）。
+            counts["unread"] = await self._repo.count_activity_since(
+                [handle], since, is_admin=is_admin or await self.is_admin(handle)
+            )
         else:
             counts["unread"] = 0
         return counts
+
+    # --- 平台看板的两个时间读 -------------------------------------------------
+    #
+    # 谁要看这两条折线（现在是 `platform_stats`）都得从这道门走：窗口读的判据
+    # ——「到过」问的是时间线而不是列、同一个状态可以有多行所以数的是
+    # `distinct feedback_id`——都写在仓储的 docstring 里，调用点自己拼一遍
+    # `select` 就是各自重答一遍，而两处答出两个口径时两边看着都「对」。
+
+    async def created_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 UTC 的天新建的反馈数，稀疏；补 0 由调用方做。"""
+        return await self._repo.created_series(since=since, until=until)
+
+    async def reached_series(
+        self, *, status: FeedbackStatus, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内「到过」这个状态的反馈数，稀疏；`resolved` / `deployed` 各一条。"""
+        return await self._repo.reached_series(status=status, since=since, until=until)
 
     async def support_counts(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         return await self._repo.supports_counts(ids)
@@ -379,6 +563,8 @@ class FeedbackService:
         """
         page = await self._repo.page_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
+        # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
+        can_delete = self.may_delete_feedback(row, handle=handle, is_admin=is_admin)
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.
         notes = await self._repo.list_notes(row.id) if is_admin else []
@@ -417,6 +603,7 @@ class FeedbackService:
             thread_next_cursor=page.next_cursor,
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
+            can_delete=can_delete,
         )
 
     async def mark_read(self, *, handle: str) -> datetime:
@@ -497,8 +684,11 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=None,
             submitted_by_user_id=None,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 没有房间来源，而且不是「客户端这次没填」：请求体里根本没有这个字段
+            # （`FeedbackCreate`）。人从反馈中心提的一条不是在任何房间里说的话，
+            # 所以房间那一档对它关着——`may_see` 的 `row.topic_id is None` 早退。
+            topic_id=None,
+            project_id=None,
             priority=body.priority,
             tags=body.tags,
         )
@@ -535,8 +725,10 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=submitted_by_handle,
             submitted_by_user_id=submitted_by_user_id,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 从卡上取，不从请求体取——和作者同一条理由，而房间比作者更要紧：它是
+            # 可见性并集里「提出它的那个房间」那一档的授权键（`may_see`）。
+            topic_id=proposal.topic_id,
+            project_id=proposal.project_id,
             priority=body.priority,
             tags=body.tags,
         )
@@ -745,6 +937,24 @@ class FeedbackService:
         if not self.may_delete_comment(comment, handle=handle, is_admin=is_admin):
             raise ForbiddenError("只能删除自己的评论")
         await self._repo.soft_delete_comment(comment)
+
+    async def delete_feedback(
+        self,
+        feedback_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> None:
+        """软删一条反馈（连带它的评论）。
+
+        `visible_row` 先过一遍**可见性**：看不见的东西回 404 而不是 403 —— 私人反馈
+        存不存在本身就不该被一个看不见它的人问出来。可见之后再判「能不能删」，
+        那是 403：这时候他已经知道这条存在了，再说「不存在」是另一句假话。
+        """
+        row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+        if not self.may_delete_feedback(row, handle=handle, is_admin=is_admin):
+            raise ForbiddenError("只能删除自己提交的反馈")
+        await self._repo.soft_delete_feedback(row)
 
     async def note(
         self, feedback_id: uuid.UUID, body: str, *, author_handle: str

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestTaskSubmissionIntegration:
@@ -28,8 +28,8 @@ class TestTaskSubmissionIntegration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Submission Test Space ({suffix})",
                 "intro": "Test space for submissions",
@@ -1074,8 +1074,8 @@ class TestTaskSubmissionIntegration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Team Submission Space ({suffix})",
                 "intro": "Test space for team submissions",

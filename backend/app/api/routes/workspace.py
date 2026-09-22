@@ -1,5 +1,6 @@
 """Workspace routes — files, git log, git diff (Phase 4 执行面板)."""
 
+import asyncio
 import mimetypes
 import uuid
 from typing import Annotated, Literal
@@ -12,7 +13,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
@@ -97,7 +98,9 @@ async def list_files(
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
-    files, actual_source = await ProjectFiles(db, project_id, task).files(source)
+    files, actual_source = await ProjectFiles(
+        db, project_id, task, release_session=True
+    ).files(source)
     return ok({**page(files, len(files)), "source": actual_source})
 
 
@@ -118,7 +121,11 @@ async def read_file(
     `version` is what a later write echoes back so a lost race is caught.
     """
     await ProjectService(db).get_or_404(project_id)
-    return ok(await ProjectFiles(db, project_id, task).text(path, source))
+    return ok(
+        await ProjectFiles(db, project_id, task, release_session=True).text(
+            path, source
+        )
+    )
 
 
 @router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
@@ -134,7 +141,9 @@ async def read_file_raw(
     """Raw bytes of a worktree file — the 文件 panel renders images as images
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
-    data, actual_source = await ProjectFiles(db, project_id, task).raw(path, source)
+    data, actual_source = await ProjectFiles(
+        db, project_id, task, release_session=True
+    ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
     download = download or not mime.startswith("image/")
@@ -178,7 +187,9 @@ async def write_file(
         raise ValidationError("path is required")
     if task is None:
         raise ValidationError("请选择要修改的任务")
-    saved = await ProjectFiles(db, project_id, task).write(path, content, version)
+    saved = await ProjectFiles(db, project_id, task, release_session=True).write(
+        path, content, version
+    )
     return ok({"path": path, "version": saved["version"], "source": "live"})
 
 
@@ -192,7 +203,7 @@ async def git_log(
     await ProjectService(db).get_or_404(project_id)
     # A topic asks about ITS commits (its branch minus the base), never the
     # project's — the project log is other topics' work.
-    rows = await ProjectFiles(db, project_id, task).history()
+    rows = await ProjectFiles(db, project_id, task, release_session=True).history()
     return ok(page(rows, len(rows)))
 
 
@@ -206,7 +217,13 @@ async def git_diff(
     source: Literal["live", "committed"] = "committed",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    return ok({"diff": await ProjectFiles(db, project_id, task).diff(source, ref)})
+    return ok(
+        {
+            "diff": await ProjectFiles(db, project_id, task, release_session=True).diff(
+                source, ref
+            )
+        }
+    )
 
 
 @router.get(
@@ -233,10 +250,18 @@ async def topic_work_summary(
     await ProjectService(db).get_or_404(project_id)
     place = await TopicService(db).place_or_404(topic_id)
     tasks = await TaskService(db).list_in_room(place.room_id)
-    paths = set()
-    for work in tasks:
-        if work.branch_name and work.status == "open":
-            paths.update(await ProjectFiles(db, project_id, work.id).changed_files())
-    # 跑过没有 = 这个地点有没有哪个 agent 留下过会话。
     has_run = await AgentSessionService(db).has_run(place.room_id)
+    paths = set()
+    try:
+        # Bound the whole summary, including all task comparisons.
+        async with asyncio.timeout(15):
+            for work in tasks:
+                if work.branch_name and work.status == "open":
+                    paths.update(
+                        await ProjectFiles(
+                            db, project_id, work.id, release_session=True
+                        ).changed_files()
+                    )
+    except TimeoutError as exc:
+        raise GatewayUnavailableError("改动摘要加载超时，请稍后刷新") from exc
     return ok({"changed_files": sorted(paths), "has_run": has_run})

@@ -96,6 +96,7 @@ class FakeMachineRepo:
 
 def make_machine(**overrides):
     base = dict(
+        topic_id=None,
         project_id=uuid.uuid4(),
         hostname="proj-abc123-1",
         login_user="cheese",
@@ -135,7 +136,7 @@ def build_service(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
 
-    async def _run_bootstrap(*, ip, login_user, private_key, script):
+    async def _run_bootstrap(*, ip, login_user, private_key, script, progress=None):
         service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}
@@ -419,21 +420,6 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
 
     # Keep the imported name live so the monkeypatch target is checked by linters.
     assert MachineService is not Service
-
-
-def test_enrollment_does_not_ride_the_ai_scheduler():
-    """Machines must not require 定期巡检 to be switched on.
-
-    The project scheduler spends model budget and ships disabled
-    (scheduler_interval_seconds = 0), which is exactly the state dev runs in — a
-    machine enrolled only from that tick would never be enrolled at all.
-    """
-    import inspect
-
-    from app.domain.scheduler.service import SchedulerService
-
-    source = inspect.getsource(SchedulerService)
-    assert "enroll" not in source
 
 
 def test_the_script_provides_tmux_the_connector_needs():

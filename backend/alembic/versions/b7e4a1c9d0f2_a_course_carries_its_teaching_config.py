@@ -14,7 +14,7 @@ Additive only, with a server default: an existing 项目集 has no teaching conf
 which is exactly what "not a course" already meant, so nothing to backfill.
 
 Revision ID: b7e4a1c9d0f2
-Revises: d3b8f1c72a94
+Revises: 16f4e85e5971
 """
 
 from collections.abc import Sequence
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b7e4a1c9d0f2"
-down_revision: str | Sequence[str] | None = "d3b8f1c72a94"
+down_revision: str | Sequence[str] | None = "16f4e85e5971"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -102,27 +102,14 @@ watch(
        Teleport resolves it after App has rendered the new mobile bar. -->
   <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
-      <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
-         390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
+      <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title">{{ topic.title }}</span>
-        <span v-if="!mdAndUp" class="topic-header__meta t-meta">
-          <template v-if="isWorkTopic">#{{ shortId }}</template>
+        <span class="topic-header__title t-title" :title="topic.title">{{ topic.title }}</span>
+        <span class="topic-header__meta">
           <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-          <template v-if="!connected">未连接</template>
+          <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>
       </div>
-      <template v-if="mdAndUp">
-        <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
-        <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-        <span
-          class="status-dot"
-          :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-          :title="connected ? '已连接' : '未连接'"
-        />
-      </template>
-
-      <v-spacer />
 
       <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
            「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
@@ -131,27 +118,26 @@ watch(
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-      <TopicMembers
-        v-if="isWorkTopic"
-        :topic-id="topic.id"
-        :project-id="topic.project_id"
-        :project-members="members"
-        :me="me"
-      />
+      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
 
       <!-- 用量: was the 资源 drawer. -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
-            icon="mdi-chart-box-outline"
+            icon="mdi-dots-horizontal"
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="用量"
+            title="详情与用量"
+            aria-label="详情与用量"
           />
         </template>
         <v-card min-width="280" class="usage-card">
+          <div class="usage-details">
+            <span v-if="isWorkTopic" class="t-meta" :title="topic.id">#{{ shortId }}</span>
+            <span class="t-meta">{{ connected ? '已连接' : '未连接' }}</span>
+          </div>
           <div v-if="usageLoading" class="d-flex justify-center py-6">
             <v-progress-circular indeterminate color="primary" size="24" />
           </div>
@@ -227,6 +213,8 @@ watch(
 }
 /* 填进顶栏的那一份不画自己的高度、底色和底线——那三样归顶栏。 */
 .topic-header--bar {
+  flex: 1 1 0;
+  min-width: 0;
   height: 100%;
   padding: 0;
   background: none;
@@ -234,15 +222,15 @@ watch(
 }
 .topic-header__text {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
   /* 这一块吃掉整行剩下的宽度，标题才有得截断；不写 min-width 的话 flex 子项
      以内容为最小宽度，右边的按钮会被挤出去。 */
   min-width: 0;
   flex: 1 1 auto;
-  gap: 1px;
+  gap: 10px;
 }
 .topic-header__title {
+  min-width: 0;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -251,13 +239,24 @@ watch(
 .topic-header__meta {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 6px;
   line-height: 1.2;
   overflow: hidden;
   white-space: nowrap;
 }
-.topic-header__num {
-  font-weight: 400;
+.topic-header--bar .topic-header__text {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+}
+.topic-header--bar .topic-header__title {
+  max-width: 100%;
+}
+.topic-header__disconnected {
+  color: var(--warn-ink);
+  font-size: 12px;
   flex: 0 0 auto;
 }
 .topic-header__on {
@@ -275,11 +274,8 @@ watch(
   border-radius: 6px;
 }
 .pr-state--open {
-  /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where
-     white ink drops to 2.34:1. --surface IS #fff in light, so the badge looks
-     exactly as it does today, and flips to near-black ink on dark. */
-  color: var(--surface);
-  background: var(--ok);
+  color: var(--muted);
+  background: var(--fill);
 }
 .pr-state--merged {
   color: var(--muted);
@@ -303,6 +299,13 @@ watch(
 }
 .usage-card {
   border: 1px solid var(--line);
+}
+.usage-details {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
 }
 .usage-grid {
   display: grid;

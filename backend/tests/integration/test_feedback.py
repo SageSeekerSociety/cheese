@@ -15,12 +15,10 @@
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
@@ -34,7 +32,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
 #: of anything: platform admin is a platform-level fact, not a project role.
@@ -42,6 +40,13 @@ ADMIN = "fb-admin"
 
 STRANGER = "fb-stranger"
 REPORTER = "fb-reporter"
+
+#: 结论 47 第二档的三个角色：和提交者同在一个房间的人、同项目但不在那个房间的人、
+#: 以及反馈提出之后才被加进那个房间的人。
+ROOMMATE = "fb-roommate"
+OUTSIDER = "fb-outsider"
+LATECOMER = "fb-latecomer"
+DEPARTED = "fb-departed"
 
 #: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
 #: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
@@ -59,7 +64,7 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     `admin_handles()` re-reads settings on every call precisely so this works
     without a restart (see `services.admin_handles`).
     """
-    monkeypatch.setattr(settings, "feedback_admin_handles", [ADMIN])
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
     return ADMIN
 
 
@@ -77,10 +82,55 @@ def _topic(client, project: str, handle: str, title: str = "反馈话题") -> st
     ).json()["data"]["id"]
 
 
+def _join_room(client, topic: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/topics/{topic}/members",
+        json={"handle": handle},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _join_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/projects/{project}/members",
+        json={"user_handle": handle, "role": "member"},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _remove_from_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.delete(
+        f"/projects/{project}/members/{handle}",
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
 def _report(client, handle: str, **body) -> dict:
     """File a report as ``handle`` and return the created detail."""
     payload = {"title": "按钮点了没反应", **body}
     r = client.post("/feedback", json=payload, headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _report_in_room(client, project: str, topic: str, handle: str, **body) -> dict:
+    """在一个房间里提一条反馈，并返回创建出来的详情。
+
+    为什么不是 `_report(..., topic_id=...)`：请求体里没有 `topic_id` 这个字段。
+    它是可见性并集里「提出它的那个房间」那一档的授权键，所以由服务端从 URL 解出
+    来，客户端填不了（`FeedbackCreate`）。于是「带房间来源的反馈」在产品里只有一
+    种造法——agent 落一张提案卡，人按发送——测试里也只有这一种。
+    """
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    r = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "按钮点了没反应", **body},
+        headers=session_auth_headers(handle),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -196,6 +246,122 @@ def test_security_is_a_subclass_of_private(client, as_admin):
     assert (
         client.get(
             f"/feedback/{row['id']}", headers=session_auth_headers(STRANGER)
+        ).status_code
+        == 404
+    )
+
+
+def test_the_room_that_filed_it_can_see_it(client):
+    """结论 47 的第二档：提出它的那个房间的成员看得见，别人看不见。
+
+    反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404。但它是在某个房间里
+    提出来的，而那个房间的人本来就看过它的内容——agent 提的东西在它的房间里全部留痕。
+    对他们藏起来，藏掉的只是追踪它的那条路。
+
+    四条一起写，因为它们钉的是同一条规则的四个边：**在那个房间里**（不是同项目就
+    行），**当时在**（不是现在在），**今天还读得到那个房间**（不是当时在就永远算），
+    而不满足的人拿到的是 404 而不是 403——藏起来的条目不确认自己存在。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：这一条要排除的正是「同项目就算数」那种读法。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+    # 提出的那一刻两样都满足，之后被移出项目：这一档撤得回来吗。
+    _join_project(client, project, DEPARTED, by=REPORTER)
+    _join_room(client, topic, DEPARTED, by=REPORTER)
+
+    # 提出之后才进这个房间的人：除了入房时刻，他和 ROOMMATE 处处相同——同一个项
+    # 目、同一个房间。不先把他加进项目的话，他的 404 有两个成因（名册时刻不对、
+    # 以及压根读不到这个项目的房间），删掉名册时刻那一句也照样绿。
+    _join_project(client, project, LATECOMER, by=REPORTER)
+
+    row = _report_in_room(client, project, topic, REPORTER, visibility="private")
+
+    # 加人不是授权：他进来时这条已经提完了。
+    _join_room(client, topic, LATECOMER, by=REPORTER)
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+    assert opened(LATECOMER) == 404
+    assert opened(STRANGER) == 404
+
+    # 负向对照：移出项目就读不到了。断言分两步——先证明这个人此刻确实开得了，
+    # 再移出、再开——否则一条永远 404 的断言也能绿，而那正是要排除的。
+    assert opened(DEPARTED) == 200
+    _remove_from_project(client, project, DEPARTED, by=REPORTER)
+    assert opened(DEPARTED) == 404
+
+
+def test_security_does_not_narrow_the_room_arm(client, as_admin):
+    """管理员标了安全问题之后，提出它的那个房间的人照样打得开。
+
+    `security` 收窄的是**公开那一档**（§8.3）：它把一条公开反馈从「所有登录用户」缩回
+    到私密那套鉴权。房间那一档不在它的收窄范围里，理由和「作者保住自己那条」是同一
+    条——「不能泄露」说的是泄露给没看过它的人，而那个房间的人看过：这条反馈的全文本来
+    就落在他们的对话流里。
+
+    两条断言一起才是负向对照。只断房间那一档，把这一档整个删掉也照样绿；只断外人那一
+    条，往房间那一档上加一句 `and not row.security` 也照样绿。外人的 200 先断一次，是
+    为了让他后面那个 404 确实由这次 PATCH 造成，而不是他本来就看不见。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：他手上只有公开那一档，所以他是被收窄的那一侧。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+
+    row = _report_in_room(client, project, topic, REPORTER)
+    assert row["visibility"] == "public"
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    # 标之前：公开那一档对两个人都开着。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 200
+
+    patched = client.patch(
+        f"/admin/feedback/{row['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert patched.status_code == 200, patched.text
+
+    # 标之后：公开那一档关了，房间那一档没有。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+
+
+def test_a_report_filed_outside_any_room_opens_no_second_door(client):
+    """没有房间来源的反馈，房间这一档就关着。
+
+    `topic_id` 是可空的（沙箱里撞到墙的那一类根本没有房间），而且是 `ON DELETE SET
+    NULL`——房间被删掉以后这一列变 NULL。两种情况下这条规则都必须退化成「谁也不是
+    那个房间的成员」，而不是退化成「NULL 匹配上了谁」。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    # 项目也要进：不进的话他读不到这个项目的任何房间，那条 404 就变成「他不是项目
+    # 成员」的结论，而这条用例要钉的是「这条反馈没有房间来源」。挡住他的必须只有
+    # 这一件事。
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+
+    row = _report(client, REPORTER, visibility="private")
+
+    assert (
+        client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(ROOMMATE)
         ).status_code
         == 404
     )
@@ -1332,6 +1498,63 @@ def test_the_unread_cursor_counts_activity_and_clears_when_read(client):
     assert cleared < after
 
 
+def test_the_unread_number_counts_only_what_the_list_would_show(client, as_admin):
+    """数字和列表答的是同一个问题，所以走的是同一处收窄。
+
+    「我的反馈」把 指派给我的 那一条胳膊 AND 上 `visible_to`：被派活是工作，不是
+    权限。未读计数以前没有收窄，于是「一条私密反馈指派给了一个非管理员」的后果就是
+    铃铛上多一个数——而这个数指着一条列表会滤掉、详情接口回 404 的反馈。读不到就清
+    不掉，所以它是一个永远亮着、又永远点不出东西的角标。
+
+    钉住它是因为这条胳膊除了列表只有这一个读者，两处漂开时没有别的地方会说话。用例
+    本身要防的还有一个反向的错法：收窄的判据如果写成「调用方传进来的 `is_admin`」，
+    铃铛轮询的 `/feedback/counts` 上没有身份、也不传这一位，于是管理员会因为这次收窄
+    反过来丢掉自己的未读数——最后一段就是钉这个的。
+    """
+    private = _report(
+        client, REPORTER, title="指给非管理员的私密", visibility="private"
+    )
+    public = _report(client, REPORTER, title="指给同一个人的公开")
+    for row in (private, public):
+        r = client.patch(
+            f"/admin/feedback/{row['id']}",
+            json={"assignee_handle": STRANGER},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 200, r.text
+
+    headers = session_auth_headers(STRANGER)
+    client.post("/feedback/read", headers=headers)
+
+    # 私密那条上的活动：列表会滤掉它，所以数字也不该看见。
+    _comment(client, REPORTER, private["id"], "补充一下复现步骤")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] == 0
+
+    # 同一个人的同一条胳膊上，公开的那条照旧算数——上面那个 0 不是「这个人没有
+    # 身份」或者「计数根本没在跑」。
+    _comment(client, REPORTER, public["id"], "这条也补一句")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] >= 1
+
+    # 数字和列表一致：列表是这条胳膊的另一个读者。
+    mine = {card["id"] for card in _mine(client, STRANGER)}
+    assert private["id"] not in mine
+    assert public["id"] in mine
+
+    # 管理员反过来不能被这次收窄伤到：他看得见私密，所以同一条反馈改派给他，
+    # 数字照旧有。
+    r = client.patch(
+        f"/admin/feedback/{private['id']}",
+        json={"assignee_handle": as_admin},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    _comment(client, REPORTER, private["id"], "管理员也在看")
+    admin = client.get(
+        "/feedback/counts", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    assert admin["unread"] >= 1
+
+
 def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
     anon = client.get("/feedback/meta").json()["data"]
     assert anon["is_admin"] is False
@@ -1347,7 +1570,12 @@ def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
         "resolved",
         "deployed",
     ]
-    assert anon["hot_supports"] == 5
+    # 「热门」的规则是**三个**数一起下发的，不是一个门槛：客户端要把这一栏说给人听
+    # （「两周前的一票算今天半票 · 至少 5 条」）。只发一个 `hot_supports` 时那句话
+    # 说不出来，而这一栏的排序就成了一件读者无法解释的事。
+    assert anon["hot_score"] == 2.0
+    assert anon["hot_half_life_days"] == 14.0
+    assert anon["hot_min_items"] == 5
 
     mine = client.get("/feedback/meta", headers=session_auth_headers(as_admin)).json()[
         "data"
@@ -1364,7 +1592,7 @@ def test_a_report_can_point_at_the_topic_it_came_from(client):
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
-    row = _report(client, REPORTER, topic_id=topic, project_id=project)
+    row = _report_in_room(client, project, topic, REPORTER)
     assert row["topic_id"] == topic
     assert uuid.UUID(row["id"])
 
@@ -1376,7 +1604,8 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     """「我的反馈」 是一份**能打开的**清单：里面有的都能开，能开的都在里面。
 
     Being *assigned* a report is not access to it. §8.9 gives the assignee no
-    management power, and §4.3's visibility union is 提交者 ∪ 管理员. The list used
+    management power, and the visibility union is
+    提交者 ∪ 管理员 ∪ 提出它的房间. The list used
     to include the assignee arm unfiltered, so a third party was handed the title
     and status of a private report on one endpoint while the detail endpoint
     answered 404 for it — one rule, two answers, depending on which one you asked.
@@ -1386,6 +1615,12 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     Written as an agreement over a table of rows rather than as one case: every
     row below is checked with the same two questions, so a future edit that widens
     or narrows either side lands here.
+
+    房间那一档在表里占两行，一开一关：在我还在的房间里提的（开），和在我已经离场
+    的那个项目的房间里提的（关）。后一行钉的是清单的收窄分两步——SQL 的
+    `visible_to` 带不动「今天还读得到那个房间」，`FeedbackService.list_mine` 用
+    `may_see` 补最后一刀。少了那一刀，被移出项目的负责人仍拿得到标题和状态，而详
+    情页对他是 404。
     """
     mine_private = _report(client, STRANGER, title="我提的私密", visibility="private")
     mine_public = _report(client, STRANGER, title="我提的公开")
@@ -1394,8 +1629,44 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     )
     theirs_public = _report(client, REPORTER, title="别人提的公开")
     theirs_security = _report(client, REPORTER, title="别人提的安全")
+    # 第四档也要在这张表里：别人提的私密，但是在我在的那个房间里提的。它是 `visible_to`
+    # 和 `may_see` 各自新长出来的那条手臂，两边同时长错的话只有这里看得见。
+    project = _project(client, REPORTER)
+    room = _topic(client, project, REPORTER, title="我也在的房间")
+    _join_project(client, project, STRANGER, by=REPORTER)
+    _join_room(client, room, STRANGER, by=REPORTER)
+    theirs_in_my_room = _report_in_room(
+        client,
+        project,
+        room,
+        REPORTER,
+        title="别人在我房间里提的私密",
+        visibility="private",
+    )
+    # 第五档是第四档的离场那一侧，单独一个项目，免得撤销把上面那条也撤了：提出它
+    # 的那一刻我在那个房间里，今天我已经被移出那个项目。详情页对我 404（`may_see`
+    # 的房间那一档还要问「今天还读得到那个房间」），所以清单里也不能有它的标题
+    # ——SQL 那半句（`visible_to`）带不动这个判据，最后一刀在 `list_mine` 里。
+    left_project = _project(client, REPORTER)
+    left_room = _topic(client, left_project, REPORTER, title="我待过的房间")
+    _join_project(client, left_project, STRANGER, by=REPORTER)
+    _join_room(client, left_room, STRANGER, by=REPORTER)
+    theirs_in_a_room_i_left = _report_in_room(
+        client,
+        left_project,
+        left_room,
+        REPORTER,
+        title="别人在我待过的房间里提的私密",
+        visibility="private",
+    )
 
-    for row in (theirs_private, theirs_public, theirs_security):
+    for row in (
+        theirs_private,
+        theirs_public,
+        theirs_security,
+        theirs_in_my_room,
+        theirs_in_a_room_i_left,
+    ):
         patched = client.patch(
             f"/admin/feedback/{row['id']}",
             json={"assignee_handle": STRANGER},
@@ -1410,6 +1681,9 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         headers=session_auth_headers(as_admin),
     )
     assert flagged.status_code == 200, flagged.text
+
+    # 指派落完之后才离场，否则测的是「指派给一个非成员」而不是「离场撤掉了它」。
+    _remove_from_project(client, left_project, STRANGER, by=REPORTER)
 
     listed = {card["id"] for card in _mine(client, STRANGER)}
 
@@ -1427,8 +1701,16 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         theirs_private,
         theirs_public,
         theirs_security,
+        theirs_in_my_room,
+        theirs_in_a_room_i_left,
     ):
         assert (row["id"] in listed) == openable(row), row["title"]
+    # …and the two room rows sit on **opposite** sides of the agreement, each one
+    # named: an agreement both halves get wrong the same way still passes the
+    # loop, and it would pass it twice if both rows happened to land closed.
+    assert openable(theirs_in_my_room)
+    assert not openable(theirs_in_a_room_i_left)
+    assert theirs_in_a_room_i_left["id"] not in listed
 
     # The third arm — 我提的和 agent 替我提的 — is checked from the other side:
     # the reporter did not write this row (the agent did), and it is still theirs,
@@ -1500,15 +1782,17 @@ def test_unassigned_is_the_admin_queues_number_and_appears_nowhere_else(
 def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     """The number on a tab and the rows behind it are one query's answer.
 
-    `hot` means 「支持数 ≥ 5」, and it does not sink resolved *suggestions* — only
+    `hot` means 「热度 ≥ 2 分」, and it does not sink resolved *suggestions* — only
     resolved bugs sink (§8.23). The count used a bare `status != resolved`, so a
     resolved suggestion was in the list and not in the number, and the tab read
     「4」 over five cards. One predicate, or the two drift.
     """
     idea = _report(client, REPORTER, title="已实现的建议", kind="suggestion")
-    # The threshold the UI reads, not a 5 typed twice.
-    hot_supports = client.get("/feedback/meta").json()["data"]["hot_supports"]
-    for n in range(hot_supports):
+    # The rule the UI reads, not a number typed twice. 今天的一票就是一分，所以「够线」
+    # 需要的票数正好是 `hot_score` 向上取整 —— 但这里不去算它，直接给足：这条用例问的
+    # 是「数字和行对不对得上」，不是「门槛是多少」。
+    hot_score = client.get("/feedback/meta").json()["data"]["hot_score"]
+    for n in range(int(hot_score) + 1):
         r = client.post(
             f"/feedback/{idea['id']}/supports",
             headers=session_auth_headers(f"fb-supporter-{n}"),
@@ -1526,9 +1810,150 @@ def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     assert page["counts"]["hot"] == len(page["data"])
 
 
-def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
-    client, db_session: AsyncSession, _portal: BlockingPortal
-):
+def _backdate(client, days: int, *feedback_ids: str) -> None:
+    """把几条反馈按到 ``days`` 天前 —— 在 **`client` 那个 app 真正读的库**里。
+
+    不能用 `db_session`：那个夹具绑的是 `settings.database_url`（集成库），而 `client`
+    绑的是 `TEST_DATABASE_URL`（客户端库）—— **是两个库**。所以「用 `db_session` 把一行
+    改老、再用 `client` 读回来」改的是一份没有任何请求会看到的拷贝：改动静静地落空，而
+    用例通过还是失败取决于它本来要钉的那个顺序之外的东西。（本文件里原来那条并列排序的
+    用例就是这么写的，它的 docstring 只说到「这条断言本身不足以证明 tiebreak 在」，
+    没说到底为什么。）
+
+    `client.test_factory` 是那个正确的把手，`client` 夹具把它挂在 client 上就是给这种
+    用例用的。`asyncio.run` + `NullPool` 是夹具自己建库时的同一套办法：每次一个新的
+    连接、一个新的循环，不跟 TestClient 那个循环共用 asyncpg 连接（连接是绑循环的）。
+    """
+    ids = [uuid.UUID(x) for x in feedback_ids]
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback)
+                .where(Feedback.id.in_(ids))
+                .values(created_at=datetime.now(UTC) - timedelta(days=days))
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
+def test_a_stale_pile_loses_the_hot_tab_to_a_fresh_one(client):
+    """「热门」读的是此刻。第一版没有时间因素，于是它读的是「曾经」。
+
+    `supports >= 5` 是一个**累计**量：一条三个月前攒够票的反馈从此常驻这一栏，而这一栏
+    的名字承诺的是现在。一条不再更新的榜单最坏的地方不是排序差，是**读者看不出它已经
+    停止更新** —— 他以为自己看到的是这个平台此刻最热的东西。
+
+    两条路摆在一起：旧的攒了 6 票、放在 90 天前；新的五条各有 1 票、放在今天。按累计数
+    排老的赢（6 > 1）；按热度排老的只有 `6 × 0.5^6.43 ≈ 0.07` 分，而五条新的各 1 分。
+    **「热门」里应该是那五条只有 1 票的。**
+
+    这一条同时压着两件事：衰减在起作用，以及「补足」那一段在起作用 —— 五条新的都没够
+    2 分那条线，它们出现在这里是因为这一栏被补到了 `hot_min_items` 条。
+    """
+    stale = _report(client, REPORTER, title="三个月前大家都在喊的那条")
+    for n in range(6):
+        r = client.post(
+            f"/feedback/{stale['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    fresh = [
+        _report(client, f"fb-fresh-{n}", title=f"今天刚提的第 {n} 条") for n in range(5)
+    ]
+    for n, card in enumerate(fresh):
+        r = client.post(
+            f"/feedback/{card['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-fresh-{n}"),
+        )
+        assert r.status_code == 200, r.text
+
+    _backdate(client, 90, stale["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    shown = {card["id"] for card in page["data"]}
+    assert stale["id"] not in shown, "90 天前的 6 票不该压过今天的 1 票"
+    assert shown == {card["id"] for card in fresh}
+    assert page["counts"]["hot"] == len(page["data"])
+
+
+def test_the_hot_tab_orders_by_heat_and_not_by_raw_supports(client):
+    """判据用哪个分，排序就得用哪个分 —— 否则上一行那句人话当场被推翻。
+
+    有衰减之后「支持数」和「热度」不是一回事了。这里两条：一条今天的 3 票（3.0 分），
+    一条 60 天前的 10 票（`10 × 0.5^4.29 ≈ 0.51` 分）。按支持数排，旧的在前；按热度排，
+    新的在前。这一栏的判据是热度，排序也必须是热度，不然「两周前的 4 票和今天的 2 票
+    一样热」这句话在这一栏里读起来是错的。
+    """
+    old_pile = _report(client, REPORTER, title="两个月前攒的十票")
+    for n in range(10):
+        client.post(
+            f"/feedback/{old_pile['id']}/supports",
+            headers=session_auth_headers(f"fb-order-old-{n}"),
+        )
+    fresh = _report(client, STRANGER, title="今天刚攒的三票")
+    for n in range(3):
+        client.post(
+            f"/feedback/{fresh['id']}/supports",
+            headers=session_auth_headers(f"fb-order-new-{n}"),
+        )
+
+    _backdate(client, 60, old_pile["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [fresh["id"], old_pile["id"]]
+
+
+def test_the_hot_tab_has_something_in_it_on_a_young_board(client):
+    """门槛是**稳态标定**，而新板子不在稳态。
+
+    5 票这个量级是按一个已经跑起来的平台定的，可平台头一两个月到不了 —— 需求方问的正是
+    这件事。一栏空的「热门」教给读者的是**这一栏坏了**，而它在开板后的整段时间里都会是
+    空的。一条 0 票的新反馈当然算不上「热门」，但**什么都不显示**更差：这一栏至少应该是
+    「现在最值得看的几条」，即使排序还没有东西越过那条线。
+
+    数字和行来自同一个子查询。补足这一段最容易在这里出岔子：只数够线的会印 0，而这一栏
+    明明开着一条。
+    """
+    only = _report(client, REPORTER, title="开板第一条")
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [only["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_the_hot_floor_picks_from_the_rows_the_tab_would_show(client):
+    """补足要在**这一栏自己那批行**里挑，不是在整个表里挑。
+
+    这里的五条私密各 9 票、一条公开的 0 票。补足的窗口如果不受可见性约束，被选中的正好
+    是那五条私密 —— 于是这一栏补足出来的五条全是**它自己不会显示的行**，公开那条一条都
+    没补上，**「热门」当场变成空的**：补足那一段是为了「新板子上这一栏也要有东西」，而
+    算错集合之后它连这个都做不到。
+
+    （实测确认过的失败形态就是这个，不是「私密反馈漏出来」：外层那句 `PUBLIC_ONLY` 早就
+    把它们挡住了，所以泄露这条路上本来就有一道闸。真正没有闸的是**补足的窗口**——它算的
+    是「哪些行分高」，而它该算的是「这一栏里哪些行分高」。）
+
+    所以这条用例要的不是「私密的不出现」（`PUBLIC_ONLY` 保证了），而是**它们连补足那段
+    都进不去** —— 那一段是新加的，而新加的那一段是唯一没有闸的地方。
+    """
+    public = _report(client, REPORTER, title="公开的，还没人理")
+    for n in range(5):
+        hidden = _report(
+            client, f"fb-hidden-{n}", title=f"私密的第 {n} 条", visibility="private"
+        )
+        for m in range(9):
+            client.post(
+                f"/feedback/{hidden['id']}/supports",
+                headers=session_auth_headers(f"fb-hidden-{n}-{m}"),
+            )
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [public["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(client):
     """An ordering two rows can tie on is not an ordering.
 
     `sort=supports` ordered by `count(supports) DESC, created_at DESC` and stopped
@@ -1550,12 +1975,13 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     newer = _report(client, REPORTER, title="后建的")
 
     async def _pin_both_to_one_instant() -> None:
-        await db_session.execute(
-            update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
-        )
-        await db_session.flush()
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
+            )
+            await session.commit()
 
-    _portal.call(_pin_both_to_one_instant)
+    asyncio.run(_pin_both_to_one_instant())
 
     def page(start: int) -> list[dict]:
         r = client.get(
@@ -1568,6 +1994,82 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     assert [card["id"] for card in page(0)] == [newer["id"]]
     # …and paging sees each of them once, in the one order it just promised.
     assert [card["id"] for card in page(1)] == [older["id"]]
+
+
+def _admin_cards(client, handle: str, **params) -> list[dict]:
+    r = client.get(
+        "/admin/feedback", params=params, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_the_admin_queue_orders_by_the_sort_it_was_asked_for(client, as_admin):
+    """管理端的「最新 / 最热」是两个真会换位置的顺序。
+
+    这一条钉的是一个**看不见**的坏法：路由和仓储都收 `sort`，中间的服务层把它
+    写死成 `new`，于是排序控件按下去、高亮也换、请求也发了，列表一动不动 ——
+    而每一层单看都对，界面上没有任何东西报错。
+
+    所以这里要求的不是「两种 sort 返回的列表不同」（那样一个随机的顺序也能过），
+    而是**同一个两行的清单在两种 sort 下给出相反的第一行**：先提的那条赢在支持
+    数上，后提的那条赢在时间上。谁被写死成另一个，两行里必有一行对不上。
+    """
+    early = _report(client, REPORTER, title="提得早，大家都在撞")
+    for n in range(3):
+        r = client.post(
+            f"/feedback/{early['id']}/supports",
+            headers=session_auth_headers(f"fb-sort-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    late = _report(client, STRANGER, title="刚提的，还没人理")
+
+    newest_first = [card["id"] for card in _admin_cards(client, ADMIN, sort="new")]
+    most_supported_first = [
+        card["id"] for card in _admin_cards(client, ADMIN, sort="supports")
+    ]
+
+    # 默认与显式传 `new` 是同一个东西 —— 控件没动的时候发出去的就是这一份。
+    assert [card["id"] for card in _admin_cards(client, ADMIN)] == newest_first
+
+    assert newest_first[:2] == [late["id"], early["id"]]
+    assert most_supported_first[:2] == [early["id"], late["id"]]
+
+
+def test_the_admin_queue_refuses_an_ordering_it_does_not_have(client, as_admin):
+    """不认识的 `sort` 报 400，而不是悄悄退回 `new`。
+
+    和 `tab` 同一条规矩，但这里更咬人：客户端写的是 `hottest`、拿到的是
+    `new`，读的人会把页面顶部当成「支持最多的几条」—— 排序**就是**这一页的答案，
+    换一种排法等于用同一个标题回答了另一个问题，而屏幕上没有一处看得出来。
+    """
+    r = client.get(
+        "/admin/feedback",
+        params={"sort": "hottest"},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert r.status_code == 400, r.text
+    assert "hottest" in r.text
+
+
+def test_the_public_route_still_forgives_an_unknown_sort(client, as_admin):
+    """公开那条路**不**报错，这是有意留下的不对称，别顺手统一掉。
+
+    公开列表不接受用户输入的排序：`sort` 只有 `hot` 那一栏隐含的 `supports`，
+    以及默认的 `new`，都是服务端自己填的。所以一个不认识的词到那里只可能是旧
+    客户端留下的，答成最新-first 不会把谁骗到 —— 而管理端那个顺序是**画在屏幕
+    上的一个控件**，同一个词在那边就有意义了。
+
+    真正要挡住的是 `_list_stmt` 从「任何不是 supports 的都当 new」变成「不认识的
+    就不排序」（那会变成数据库的任意顺序）。这里顺带把这条总函数性也钉住。
+    """
+    _report(client, REPORTER, title="先提的")
+    late = _report(client, REPORTER, title="后提的")
+
+    r = client.get("/feedback", params={"sort": "hottest"})
+    assert r.status_code == 200, r.text
+    cards = r.json()["data"]["data"]
+    assert [card["id"] for card in cards][0] == late["id"]
 
 
 # --- agent 与提案卡 ---------------------------------------------------------
@@ -1590,7 +2092,7 @@ def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     about the credential alone; the binding half is the test below.
     """
     agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
     screen = _register_screen(handle=agent)
     try:
         allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
@@ -1631,7 +2133,7 @@ def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkey
     )
     assert made.status_code == 200, made.text
     agent = agent_instance_handle(made.json()["data"]["id"])
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent, REPORTER])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
 
     refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
     assert refused.status_code == 403, refused.text
@@ -1798,7 +2300,7 @@ def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
 
     所以这里比的不是「都非空」，是**同一份答案**：挑过的人在两边拿到同一个 id，
     没挑过的人在两边都拿到 null。判据本身在 `chosen_avatar_ids` 和
-    `ProjectRepository.list_members`，两处都按 `Avatar.avatar_type` 认默认图 ——
+    `ProjectRepository.people`，两处都按 `Avatar.avatar_type` 认默认图 ——
     两边都写了、都写了注释，这个用例是唯一能拦住它们漂开的东西。
     """
     ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})
@@ -1916,3 +2418,437 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
         headers=session_auth_headers(ADMIN),
     ).json()["data"]["data"]
     assert {card["id"] for card in listed} == {mine["id"]}
+
+
+def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
+    """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
+
+    这两个字符在 `LIKE` 里是通配符，而搜索框收到的永远是**字面量**。不转义的
+    后果不会报错、也不会看起来像坏了：`%` 变成「任意长的一串」，于是搜一个百分号
+    得到整个列表；`_` 变成「任意一个字符」，于是搜一个下划线得到一堆根本不含它的
+    行。两种都是**看起来成功了的错误答案**，所以没有人会把它当 bug 报上来——只能
+    在这里钉住。
+
+    反斜杠是转义字符本身，必须第一个换，否则读者打的那个反斜杠会把后面的字符
+    再变成语法一次。
+    """
+    percent = _report(client, REPORTER, title="导入进度停在 99%", problem="一直不动")
+    underscore = _report(client, REPORTER, title="导出_csv_挂了", problem="点了没反应")
+    plain = _report(client, REPORTER, title="深色模式对比度不够", problem="看不太清")
+
+    def ids(**params: str) -> set[str]:
+        return {card["id"] for card in _cards(client, REPORTER, **params)}
+
+    assert ids(q="%") == {percent["id"]}, "搜一个百分号不该把整个列表倒出来"
+    assert ids(q="_") == {underscore["id"]}, "搜一个下划线不该匹配任意字符"
+    assert plain["id"] not in ids(q="_")
+    # 转义之后，带着通配符的正常词照旧搜得到，而且只搜得到真正含它的那条。
+    assert ids(q="99%") == {percent["id"]}
+    assert ids(q="_csv_") == {underscore["id"]}
+    # 反斜杠本身：读者打一个，不该把它后面的字符变成语法。
+    assert ids(q="\\") == set()
+
+
+# --- 成员管理：名单两份来源、加进去的人当场生效、根删不掉 --------------------
+#
+# 这里建的是**真账号**（`seed_user` 直接落库并提交），不是 `session_auth_headers`
+# 那种只带 handle 的令牌：能加进名单的前提是平台里真有这个人，而「有」与「没有」
+# 正是这几条用例要分开的两件事。
+
+
+def _admins(client, handle: str) -> dict:
+    r = client.get("/admin/admins", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _add_admin(client, *, by: str, target: str):
+    return client.post(
+        "/admin/admins", json={"handle": target}, headers=session_auth_headers(by)
+    )
+
+
+def _searched(client, handle: str, q: str) -> list[dict]:
+    """加人那个选择器看到的候选（`GET /admin/users`）。"""
+    r = client.get(
+        "/admin/users", params={"q": q}, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["items"]
+
+
+def _nickname_user(client, handle: str, nickname: str) -> None:
+    """给一个真人写上昵称，选择器「按名字搜」的那一半才有东西可搜。
+
+    直接写库：注册那条路要邮箱验证码，而这里要的只是「user_profile 里有一行」
+    这一件事（`seed_user` 建人的时候也没写 profile，所以这里自己补一条）。
+    """
+    from app.domain.user.models import UserProfile
+    from app.domain.user.repositories import UserRepository
+
+    async def _write() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            now = datetime.now(UTC)
+            session.add(
+                UserProfile(
+                    user_id=user.id,
+                    nickname=nickname,
+                    intro="",
+                    avatar_id=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_write())
+
+
+def test_the_roster_is_two_lists_and_only_the_added_one_can_be_edited(client, as_admin):
+    """配置里那份列得出来、删不掉；页面上加的那份可删，删一个不在名单里的不是错。"""
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    assert _admins(client, as_admin) == {"root": [ADMIN], "added": []}
+
+    added = _add_admin(client, by=as_admin, target="fb-hired")
+    assert added.status_code == 200, added.text
+    body = added.json()["data"]
+    assert body["created"] is True
+    assert [(row["handle"], row["added_by_handle"]) for row in body["added"]] == [
+        ("fb-hired", as_admin)
+    ]
+    # `root` 那一份不受影响：加一个人不会把他挪成根管理员。
+    assert body["root"] == [ADMIN]
+
+    # 根管理员删不掉 —— 它是部署配置，改它要有服务器权限。409 而不是静默不动：
+    # 真按到了说明页面和服务端对不上，那就该说出来。
+    refused = client.delete(
+        f"/admin/admins/{as_admin}", headers=session_auth_headers(as_admin)
+    )
+    assert refused.status_code == 409, refused.text
+    assert _admins(client, as_admin)["root"] == [ADMIN]
+
+    gone = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["data"]["removed"] is True
+    assert gone.json()["data"]["added"] == []
+
+    # 删一个已经不在名单里的人不是错误：他要的结果（这个人不在名单里）已经成立。
+    again = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert again.status_code == 200
+    assert again.json()["data"]["removed"] is False
+
+
+def test_whoever_the_page_added_is_an_admin_on_their_next_request(client, as_admin):
+    """加完就生效，不重启也不再改配置 —— 判据是「根 ∪ 表」，不是只有根。
+
+    这条钉的是**两个来源真的合成了一个答案**：只读配置的话，页面上加的人会出现在
+    名单里却什么也打不开（名单说他在，接口说他不是）；只读表的话，根管理员反而
+    进不去。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    private = _report(client, REPORTER, visibility="private")
+
+    def is_admin(handle: str) -> bool:
+        r = client.get("/feedback/meta", headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return bool(r.json()["data"]["is_admin"])
+
+    def open_private(handle: str):
+        return client.get(
+            f"/feedback/{private['id']}", headers=session_auth_headers(handle)
+        )
+
+    assert is_admin("fb-hired") is False
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 403
+    assert open_private("fb-hired").status_code == 404
+
+    assert _add_admin(client, by=as_admin, target="fb-hired").status_code == 200
+
+    assert is_admin("fb-hired") is True
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 200
+    # 私密反馈对他是真的打开了：名单生效不只是改了一个布尔值。
+    assert open_private("fb-hired").status_code == 200
+
+
+def test_the_page_refuses_names_that_would_leave_the_roster_wrong(client, as_admin):
+    """三种拒绝，各自对应一种「名单上有他但他进不来 / 进得来而名单骗人」。"""
+    # 空白：名单按 handle 精确匹配，空串谁也匹配不上。
+    assert _add_admin(client, by=as_admin, target="   ").status_code == 400
+    # 平台上没有这个账号：写进去的表现是「名单里有人」而那个人根本不存在。
+    assert _add_admin(client, by=as_admin, target="fb-nobody-at-all").status_code == 400
+    # 根管理员不用再在页面上加一遍：加进去会落一行删不掉的重复，页面上显示两遍。
+    assert _add_admin(client, by=as_admin, target=ADMIN).status_code == 409
+
+
+def test_an_agent_is_a_refusal_in_the_add_form_and_absent_from_the_picker(
+    client, as_admin
+):
+    """agent 当不了管理员（管理动作 agent 不能做），选择器里也不该出现它。
+
+    这两件事要一起钉：只钉「加它是 400」的话，写错成「平台里没有这个账号」也照样
+    绿 —— 而那条提示会把人送去查拼写，真正的原因却是这个身份不能有权限。
+    """
+    from tests.conftest import seed_user
+
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    agent = room_agent_seat(client, topic)
+
+    refused = _add_admin(client, by=as_admin, target=agent)
+    assert refused.status_code == 400, refused.text
+    assert "agent" in refused.json()["message"]
+
+    # 同一个搜索找得到真人，却找不到 agent —— 否则上面那条「搜不到」是空搜索在过关。
+    seed_user(client, "cheese-human")
+    hits = {row["handle"] for row in _searched(client, as_admin, "cheese")}
+    assert "cheese-human" in hits
+    assert agent not in hits
+
+
+def test_the_roster_is_not_something_a_stranger_can_read_or_change(client, as_admin):
+    """四个端点全部要管理员。
+
+    拒的理由不是「这个页面不该被看见」，而是**这份名单决定了谁能看见私密反馈和
+    安全问题** —— 能读它就知道谁能看所有人的私密条目，能改它就能给自己开门。
+    """
+    calls = [
+        ("GET", "/admin/admins", None),
+        ("GET", "/admin/users?q=a", None),
+        ("POST", "/admin/admins", {"handle": STRANGER}),
+        ("DELETE", f"/admin/admins/{ADMIN}", None),
+    ]
+    for method, path, body in calls:
+        theirs = client.request(
+            method, path, json=body, headers=session_auth_headers(STRANGER)
+        )
+        assert theirs.status_code == 403, (method, path, theirs.text)
+        # 没登录也一样：这不是「页面看不见」，是名单本身不给外人看。
+        anonymous = client.request(method, path, json=body)
+        assert anonymous.status_code in (401, 403), (method, path, anonymous.text)
+
+    # 空搜索词是 400：空串搜出的是「平台的前 20 个账号」，那不是搜索结果。
+    assert (
+        client.get(
+            "/admin/users", params={"q": ""}, headers=session_auth_headers(as_admin)
+        ).status_code
+        == 400
+    )
+
+
+def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
+    """选择器的搜索在 SQL 里、按两列搜，页面上的「搜不到」只有两种意思。
+
+    复用 `GET /users?q=` 是不行的：那条接口先把一页 profile 取出来再在 Python 里
+    过滤，所以搜索只在那一页里成立 —— 加人的时候「搜不到」就成了第三件事（这个人
+    在，只是不在这一页），而界面上三件事长得一模一样。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-peng")
+    _nickname_user(client, "fb-peng", "彭文博")
+    seed_user(client, "fb-cat")
+
+    by_name = _searched(client, as_admin, "彭文博")
+    assert [(row["handle"], row["nickname"]) for row in by_name] == [
+        ("fb-peng", "彭文博")
+    ]
+    assert by_name[0]["already_admin"] is False
+    # 只记得 handle 也搜得到。
+    assert [row["handle"] for row in _searched(client, as_admin, "fb-cat")] == [
+        "fb-cat"
+    ]
+    assert _searched(client, as_admin, "这个人肯定没有") == []
+
+    # 已经在名单里的人**照常出现**，带 already_admin —— 选择器据此画「已选中」，
+    # 而不是画成「没有这个人」：后者会让人以为名单已经变了。
+    assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
+    assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True
+
+
+# --- 删掉一条反馈 -------------------------------------------------------------
+
+
+def _delete(client, feedback_id: str, handle: str):
+    return client.delete(
+        f"/feedback/{feedback_id}", headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_deletes_their_own_report_and_it_leaves_every_list(client):
+    """作者删自己的：删完之后**详情 404、列表里没有、公开计数也跟着少**。
+
+    「连列表和计数一起」不是多余的断言：只把详情那一行藏起来的话，列表里还挂着
+    一条点不开的反馈，计数也还说它在那 —— 那比不删更糟。
+
+    删除是**软删**（`deleted_at`），所以这里断言的每一件都是**读侧过滤**的结果，
+    而不是「那一行没了」。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    _comment(client, STRANGER, row["id"], "我也遇到了")
+
+    before = client.get("/feedback/counts").json()["data"]["all"]
+
+    deleted = _delete(client, row["id"], REPORTER)
+    assert deleted.status_code == 200, deleted.text
+
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 404
+    assert row["id"] not in {c["id"] for c in _cards(client, REPORTER)}
+    assert row["id"] not in {c["id"] for c in _mine(client, REPORTER)}
+    assert client.get("/feedback/counts").json()["data"]["all"] == before - 1
+
+
+def test_deleting_a_report_takes_its_comments_with_it(client):
+    """评论跟着走：楼还在、帖子没了的话，「这栋楼在回哪条反馈」永远查不出来。
+
+    判据取的是**评论那一层**的读法（`GET /feedback/{id}/comments`）—— 详情页 404
+    只说明帖子没了，说明不了它下面那些行怎么了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    comment = _comment(client, STRANGER, row["id"], "我也遇到了")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        headers=session_auth_headers(REPORTER),
+    )
+    # 反馈本身已经读不到了，所以这条路径回 404 而不是空列表 —— 两种都不该是
+    # 「还有一条评论」。
+    assert r.status_code == 404, r.text
+    assert comment["id"] not in r.text
+
+
+def test_a_stranger_cannot_delete_someone_elses_report(client):
+    """看得见但删不掉 → **403**（不是 404）。两种情况分得很清楚：
+
+    * 看不见（私人反馈）→ 404：存不存在这件事不该被一个看不见它的人问出来。
+    * 看得见但不是自己的 → 403：这时候他已经知道它存在了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    r = _delete(client, row["id"], STRANGER)
+    assert r.status_code == 403, r.text
+    # 没删掉。
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 200
+
+
+def test_an_admin_deletes_anyones_report(client, as_admin):
+    """管理员删任何一条 —— 需求方要的那一档（「不然我怕有人恶意刷」）。
+
+    删除是**事后清理**，挡不住刷；它给的是「× 掉一条」的能力。
+    """
+    row = _report(client, REPORTER, body="垃圾内容")
+    assert _delete(client, row["id"], as_admin).status_code == 200
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(as_admin))
+    ).status_code == 404
+
+
+def test_can_delete_is_the_servers_answer_and_matches_the_permission(client, as_admin):
+    """每一条上的 `can_delete` 与真删一次的结果必须一致。
+
+    这条断言的是**判据只有一处**：`detail_of` 填 `can_delete`、`delete_feedback`
+    删之前再问一遍，问的是同一个 `may_delete_feedback`。两处各写一遍就是「按钮画得
+    出来、点下去 403」的来源 —— 而这个功能在 `deployed` 那次已经为同一个形状付过
+    学费（按钮亮着、服务端回 412）。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    url = f"/feedback/{row['id']}"
+
+    def can_delete(handle: str) -> bool:
+        r = client.get(url, headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["can_delete"]
+
+    assert can_delete(REPORTER) is True
+    assert can_delete(as_admin) is True
+    assert can_delete(STRANGER) is False
+
+    # 判为不能删的那一位，真删也是 403 —— 两边不会分家。
+    assert _delete(client, row["id"], STRANGER).status_code == 403
+
+
+def test_an_unauthenticated_delete_is_refused(client):
+    """没登录的人连「能不能删」都不该问出来（401，不是 403）。"""
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    assert client.delete(f"/feedback/{row['id']}").status_code == 401
+
+
+# --- 公开列表的四个筛选 --------------------------------------------------------
+
+
+def test_the_four_filters_narrow_the_list(client, as_admin):
+    """作者 / 状态 / 类型 / 起始时间：四个都能把结果收窄，而且**缺省即不筛**。
+
+    「缺省即不筛」那半也要断言：老的调用方一个都不传，行为必须一字不变 —— 加筛选最
+    容易出的事就是把某个条件写成必填。
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    bug = _report(client, REPORTER, kind=FeedbackKind.bug, title="按钮点了没反应")
+    idea = _report(client, STRANGER, kind=FeedbackKind.suggestion, title="希望支持导出")
+    old = _report(client, REPORTER, kind=FeedbackKind.bug, title="很老的一条")
+
+    # 把一个状态推到第二级，用来验状态筛选。
+    client.post(
+        f"/admin/feedback/{idea['id']}/status",
+        json={"status": "in_progress"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.id == uuid.UUID(old["id"]))
+                .values(created_at=datetime.now(UTC) - timedelta(days=30))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, REPORTER, **params)}
+
+    # 不传就是全部（缺省即不筛）。
+    assert ids() == {bug["id"], idea["id"], old["id"]}
+
+    # 四个各收各的。
+    assert ids(author=REPORTER) == {bug["id"], old["id"]}
+    assert ids(kind="suggestion") == {idea["id"]}
+    assert ids(status="in_progress") == {idea["id"]}
+    since = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    assert ids(since=since) == {bug["id"], idea["id"]}
+
+    # 叠起来是**与**，不是或。
+    assert ids(author=REPORTER, kind="bug") == {bug["id"], old["id"]}
+    assert ids(author=STRANGER, kind="bug") == set()
+
+
+def test_an_unknown_status_or_kind_is_refused_rather_than_ignored(client):
+    """不认识的取值报 **400**，不退回「全不筛」。
+
+    和 `tab` / `sort` 同一条规矩：猜错一个筛选会让人以为「没有这样的反馈」，而它其实
+    只是被别的条件挡住了 —— 页面上看不出任何异常。
+    """
+    assert client.get("/feedback", params={"status": "shipped"}).status_code == 400
+    assert client.get("/feedback", params={"kind": "complaint"}).status_code == 400
+    assert client.get("/feedback", params={"status": "received"}).status_code == 200
+    assert client.get("/feedback", params={"kind": "bug"}).status_code == 200

@@ -1,5 +1,7 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { Shell } from '@/lib/shell'
+
 export interface Project {
   id: string
   name: string
@@ -18,6 +20,12 @@ export interface Project {
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+  /**
+   * 这个项目生效的壳，服务端已经解析好（项目级设置 → 赛题 整键覆盖 → 项目集 →
+   * default）。**是解析后的声明，不是那个名字**——前端按它画，不自己维护一份
+   * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
+   */
+  shell?: Shell
 }
 
 export interface ProjectSite {
@@ -113,6 +121,9 @@ export interface BlockMeta {
   severity?: string
   title?: string
   retryable?: boolean
+  // 一份周报讲的那一周（kind=weekly）。并排摆着的几份周报，是它把它们分开的。
+  since?: string
+  until?: string
 }
 
 export interface Block {
@@ -299,7 +310,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
   | { type: 'done' }
   | { type: 'turn_started'; turn_id: string }
   | { type: 'turn_finished'; turn_id: string }
@@ -349,8 +360,9 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
-// reply, false (default) just posts the message (spec §7.1 默认不 @).
+// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
+// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
+// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
 export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
 
 export interface WsClientChatMessage {
@@ -359,7 +371,6 @@ export interface WsClientChatMessage {
   // No `author`: the backend takes it from the socket's ?token=. Sending one
   // was never authoritative — it was the forgeable field that let an expired
   // session post as 匿名者 — so the client no longer names itself at all.
-  summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
@@ -386,14 +397,16 @@ export interface ProjectMember {
   role: string
 }
 
-// GET /api/projects/{id}/members → {data:[{user_handle, role, name, avatar_id}], total}
+// GET /api/projects/{id}/members → {data:[{user_handle, role, name, avatar_id, agent, active}], total}
+// 一张名册，AI 队友也在上面：请一个队友进房间和请一个人是同一件事，所以界面不该
+// 再自己把「人」和「队友」两份拼起来——拼出来的那份就是第二份声明。
 export interface ProjectMemberRow {
   user_handle: string
   role: string
-  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人，或者
-  // 项目的所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据）。
-  // 没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
-  source?: 'team' | 'owner'
+  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人、项目的
+  // 所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据），或者它是
+  // 这个项目的 AI 队友。没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
+  source?: 'team' | 'owner' | 'agent'
   team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
@@ -401,9 +414,16 @@ export interface ProjectMemberRow {
   // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
   // /avatars/default，那会让所有没设过头像的人共用同一张脸。
   avatar_id?: number | null
-  // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
-  // execution binding — never from the handle string, which differs per topic.
+  // `agent` marks an AI teammate — server-side it is a row that came from the
+  // project's agent instances, never a guess at the handle string.
   agent?: boolean
+  // 只有队友会是 false：已停用的队友还在名册上（它在已经接手的房间里照常工作），
+  // 只是派新活、请进新房间的地方不该再列出来。
+  active?: boolean
+  // 这个项目的**默认**队友，也就是一间没有 AI 席位的老房间会落到谁身上。名册上
+  // 第一个带 `agent` 的不是这个答案（那是建得最早的那一位），所以要问「这个房间
+  // 归谁」的地方只能读这一位。
+  project_default?: boolean
   [key: string]: unknown
 }
 
@@ -441,20 +461,21 @@ export interface TopicMemberRow {
 
 // GET /api/projects/{id}/inbox?target_handle=
 // 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
-// 字段照抄后端的 AlertOut —— 写成 `read` / `source_handle` 这类界面上顺口的名字，
-// 收到的就永远是 undefined，而界面会把它读成「一条都没读过」。
+// 字段照抄后端的 NotificationOut —— 自己另起一套界面上顺口的名字，收到的就永远是
+// undefined，而界面会把它读成「一条都没读过」。
+// `id` 是数字：两张通知表并成一张之后主键跟的是收件箱那条序列，不再是 uuid。
 export interface InboxItem {
-  id: string
-  project_id: string
+  id: number
+  project_id: string | null
   topic_id: string | null
-  level: string
+  level: string | null
   kind: string
   target_handle: string | null
   title: string
   body: string
   // 决策请求的选项放在 payload.options 里：有选项才答得了。
   payload: { options?: unknown; [key: string]: unknown }
-  read_at: string | null
+  read: boolean
   resolved_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string
@@ -722,6 +743,13 @@ export interface AcceptCard {
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null
+  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
+  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
+  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
+  artifact: { id: string; name: string; version: number } | null
+  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
+  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
+  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
@@ -846,6 +874,9 @@ export type ProjectMachineStatus =
   | 'provisioning'
   | 'starting'
   | 'running'
+  | 'suspending'
+  | 'suspended'
+  | 'resuming'
   | 'stopping'
   | 'stopped'
   | 'deleting'
@@ -1089,9 +1120,6 @@ export interface AgentType {
   body: string
   skills: string[]
   mcp_servers: string[]
-  model: string | null
-  effort: string | null
-  harness: string | null
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1100,13 +1128,12 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+// Saved teammate role and optional project-scoped model override.
 export interface AgentConfiguration {
   body: string
-  model: string
-  harness: string
   skills: string[]
   mcp_servers: string[]
-  effort: string | null
+  model?: string | null
 }
 
 export interface ProjectAgent {
@@ -1250,6 +1277,10 @@ export interface FeedbackDetail extends FeedbackCard {
   thread_next_cursor: string | null
   /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
   notes: FeedbackNote[]
+  /** 调用者能不能删掉**整条反馈**。**服务端算**（作者 —— 写它的那个 handle 或按下
+   *  发送的那个 —— 或平台管理员），和 `DELETE /feedback/{id}` 共用一处判据；客户端
+   *  照它画按钮，不自己拼一遍，否则就是「按钮画得出来、点下去 403」。 */
+  can_delete: boolean
 }
 
 export interface FeedbackCounts {
@@ -1261,6 +1292,9 @@ export interface FeedbackCounts {
   unread: number
   /** 管理端才有：还没指派给任何人的条数。 */
   unassigned?: number
+  /** 管理端才有：已经上线的累计条数。它和 `resolved` 是两条不同的数 —— 解决了不等于
+   *  上线了，看板把这两件事分开显示。 */
+  deployed?: number
 }
 
 export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
@@ -1281,8 +1315,16 @@ export interface FeedbackMeta {
   status_ladder: FeedbackStatus[]
   tabs: string[]
   admin_tabs: string[]
-  /** 「热门」的门槛，前端不写死 5。 */
-  hot_supports: number
+  /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
+   *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
+   *  分、一个支持几天打对折、不够线时至少补几条。
+   *
+   *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
+   *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
+   *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
+  hot_score: number
+  hot_half_life_days: number
+  hot_min_items: number
   is_admin: boolean
 }
 

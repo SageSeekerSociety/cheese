@@ -16,7 +16,6 @@ member has, and refused where a member is refused.
 import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import seed_user
 
 # --- helpers ------------------------------------------------------------------
@@ -54,9 +53,12 @@ def _issued_token(client, project_id: str, owner: str = "alice") -> str:
     assert r.status_code == 200, r.text
     # This fixture explicitly grants ordinary project membership. Issuing a
     # credential itself does not grant a role (covered by test_agent_role_parity).
+    # 看的是它有没有**自己那一行授权行**，不是名册上提没提到它：项目的队友本来就在
+    # 名册上（带 source），而项目级写面那道闸问的是前者。
     handle = r.json()["data"]["agent_handle"]
     members = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    if not any(m["user_handle"] == handle for m in members):
+    granted = {m["user_handle"] for m in members if "source" not in m}
+    if handle not in granted:
         added = client.post(
             f"/projects/{project_id}/members",
             json={"user_handle": handle},
@@ -67,8 +69,14 @@ def _issued_token(client, project_id: str, owner: str = "alice") -> str:
 
 
 def _project_agent(client, project_id: str) -> str:
-    project = client.get(f"/projects/{project_id}").json()["data"]
-    return topic_agent_handle(uuid.UUID(project["root_topic_id"]))
+    """The project's own 芝士 — the participant a project credential acts as.
+
+    Read off the project's agents rather than derived from its root room: the
+    credential names an agent, and an agent's name comes from the agent.
+    """
+    rows = client.get(f"/projects/{project_id}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    return default["seat_handle"]
 
 
 def _cred(token: str) -> dict[str, str]:

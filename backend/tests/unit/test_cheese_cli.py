@@ -54,10 +54,18 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     arguments = {
         "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
-        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
+        "cheese_deliver_at": {"at": "2026-09-21T14:00:00+00:00", "content": "look"},
+        "cheese_machine": {"profile": "cloud", "device_id": None},
+        "cheese_note": {"thread": "other-thread", "content": "note"},
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
+        "cheese_feedback_propose": {
+            "title": "listing came back short",
+            "kind": "bug",
+            "visibility": "team",
+            "user_said": "用户没有就这个问题说过话",
+        },
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -67,17 +75,51 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_tell": {"target": "task", "message": "update"},
         "cheese_title": {"text": "title", "task": None},
     }
-    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    # 平台 MCP 上那六样里的每一个 `cheese_*` 都要有计划：没有计划的那一个，
+    # 会话侧打不出去，而它恰恰是机器离线时唯一还能用的那一批（结论 21）。
+    platform = {t for t in cli.PLATFORM_TOOLS.names() if t.startswith("cheese_")}
+    assert platform <= set(arguments), platform - set(arguments)
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
     }
-    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert all(plan["method"] in {"GET", "POST", "PUT"} for plan in plans.values())
     assert plans["cheese_decision"] == {
         "method": "POST",
         "path": "/topics/room/decision",
         "body": {"decision": "chosen"},
     }
     assert plans["cheese_milestone"]["body"]["due_date"] == ("2026-09-14T00:00:00Z")
+
+
+def test_everyone_outranks_the_private_chats_personal_memory():
+    """私聊里的 `remember --everyone` 写的是文档，不是对这一位的个人记忆。
+
+    说了「所有人」，就不是只记给眼前这一位看的。两路的差别在发出去的那一刻就定
+    了：写错的那一条落进只有这条会话读得到的池子，没人会发现它本该在总览文档里。
+    """
+    cli = _load()
+    env = {
+        "CHEESE_TOPIC": "room",
+        "CHEESE_PROJECT": "project",
+        "CHEESE_MEMORY_SCOPE": "personal",
+        "CHEESE_OWNER": "alice",
+    }
+
+    everyone = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": True}, env
+    )
+    assert everyone["body"] == {"content": "x", "topic": "room", "scope": "everyone"}
+
+    # 对照：同一个私聊里不说「所有人」的那一条，照旧是对 alice 的个人记忆。
+    personal = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": False}, env
+    )
+    assert personal["body"] == {
+        "content": "x",
+        "topic": "room",
+        "scope": "user",
+        "owner": "alice",
+    }
 
 
 def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
@@ -623,3 +665,76 @@ def test_feedback_propose_refuses_locally_when_there_is_no_topic():
     assert plan["method"] == "POST"
     assert plan["path"] == "/topics/room/feedback-proposals"
     assert plan["body"]["title"] == "沙箱里 make 装不上依赖"
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (True, "便条已递给那条线程。"),
+        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+    ],
+)
+def test_note_says_whether_anyone_caught_it(monkeypatch, capsys, delivered, expected):
+    """`delivered` 是这条工具的答案本身，不是一个可以丢掉的状态码。
+
+    便条直接进那条线程正在跑的那一轮，那边这一刻没在跑就没人接住。一律打「已递」
+    的话，用 Bash 调这条命令的那条线程会当作对面已经知道了往下走 —— 而那句话其实
+    掉在地上了，两边都不会有人再提起它。
+    """
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "note", "other-thread", "看一眼 CI"]
+    )
+    monkeypatch.setattr(
+        cli, "_call", lambda *args, **kwargs: {"data": {"delivered": delivered}}
+    )
+
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_the_feedback_tool_says_when_to_use_it():
+    """这个工具**唯一的说明就是那段文字**，所以触发时机必须长在工具自己身上。
+
+    这里钉的是一次真事故：四条触发时机原来写在 `feedback` 那个**父** parser 的
+    `description` 上，而翻 argparse 树的那条路（`cli_worker._tools()`：
+    `leaf.description or leaf.format_usage()`）只产出**叶子** —— 于是那段字一个字都
+    没到过模型。工具建好了、流程接好了、限流也在，而模型从来不知道什么时候该用它。
+
+    两条发现路径各读一处，所以要两边都断言：
+
+    * **会话侧那张常量表**（`PLATFORM_TOOLS`）—— claude_code 读的是它（结论 21：表在
+      会话层，机器离线时它也在）。
+    * **argparse 树的叶子** —— pi 在机器上生成 catalog、codex 从执行器的 `native`
+      服务器发现，两条都读这里。
+
+    只改一处的话，模型看到的是两种说法里的随机一种，而且**是哪个取决于它跑在哪个
+    harness 上** —— 那种 bug 只有对着某一个 harness 复现得出来。
+    """
+    from app.domain.agent import cli_worker
+
+    cli = _load()
+
+    from_table = next(
+        tool
+        for tool in cli.PLATFORM_TOOLS.schemas()
+        if tool["name"] == "cheese_feedback_propose"
+    )["description"]
+
+    from_tree = None
+    for command, leaf in cli_worker._leaf_commands(cli.build_parser()):
+        if cli_worker._tool_name(command) == "cheese_feedback_propose":
+            from_tree = leaf.description or leaf.format_usage()
+
+    assert from_table, "会话侧那张表里没有这一条"
+    assert from_tree, "argparse 树里没有这个叶子"
+
+    for description in (from_table, from_tree):
+        # 什么时候该提（四条触发时机里至少要能读出这些）。
+        assert "反复失败" in description
+        # 什么时候不该提 —— 「平台坏了」和「用户不会用」之间那句话。
+        assert "用户的使用方式" in description
+        # 不要打断：这条卡是提案，不是发布。
+        assert "中途" in description

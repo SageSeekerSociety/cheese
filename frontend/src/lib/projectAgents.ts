@@ -3,13 +3,28 @@
 // 它不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
 // 分不出哪个队友真的在学、哪个是建完就没人用的空壳。所以这里单独成文件，
 // 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
-import type { AgentFieldChoice, MemoryEntryOut } from '../api'
-import type { AgentType, ProjectAgent } from '../cx_types'
+import type { MemoryEntryOut } from '../api'
+import type { AgentType } from '../cx_types'
+
+import { t } from '../i18n'
+
+export function randomTeammateName(current = ''): string {
+  const names = [
+    t('work.teammate.names.moss'),
+    t('work.teammate.names.spark'),
+    t('work.teammate.names.milo'),
+    t('work.teammate.names.bean'),
+    t('work.teammate.names.nova'),
+    t('work.teammate.names.cedar'),
+  ]
+  const choices = names.filter((name) => name !== current)
+  return choices[Math.floor(Math.random() * choices.length)]!
+}
 
 // 每个队友攒下了多少条记忆，按 handle 归。
 //
 // 记忆存的是一个扁平的 `{项目}:{handle}` 字符串，所以只能把 handle 切回来认领；
-// 认不出来的（项目共享池、个人池）不属于任何一个队友，不计入任何一行。
+// 认不出来的（关于某个人的那些池）不属于任何一个队友，不计入任何一行。
 export function memoryCountsByHandle(entries: MemoryEntryOut[], projectId: string): Record<string, number> {
   const counts: Record<string, number> = {}
   const prefix = `${projectId}:`
@@ -49,28 +64,4 @@ export function displayNameError(name: string): string | null {
   if (!trimmed) return '请填写名字'
   if (trimmed.length > 64) return '名字最长 64 个字'
   return null
-}
-
-// ---- 编辑器能提供什么设置 ----
-//
-// 后端那份目录（GET /agent-types/options）说了每个字段能不能设、不能设的理由。
-// 把「怎么读它」放在这里而不是组件里，理由和这个文件开头那条一样：这是这一页
-// 的承诺所在 —— 提供出来的每个值都必须真的会生效 —— 值得被测试直接盯着，而不是
-// 靠在 jsdom 里点开一个浮层去间接验证。
-
-export interface FieldOptionsLike {
-  state: string
-  choices: AgentFieldChoice[]
-  reason: string
-  note: string
-}
-
-export function fieldIsChoosable(options: Record<string, FieldOptionsLike>, name: string): boolean {
-  return options[name]?.state === 'choosable'
-}
-
-export function fieldChoices(options: Record<string, FieldOptionsLike>, name: string): FieldOptionsLike['choices'] {
-  // 只有 choosable 的字段才交出选项。一个 unavailable 的字段哪天带着残留的
-  // choices 回来，也不该被渲染成能选 —— state 是唯一的判据。
-  return fieldIsChoosable(options, name) ? options[name]?.choices ?? [] : []
 }

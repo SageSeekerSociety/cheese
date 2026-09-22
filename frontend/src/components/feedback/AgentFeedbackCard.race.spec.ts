@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import AgentFeedbackCard from './AgentFeedbackCard.vue'
 
+import i18n from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
 function proposal(blockId: string, title: string): FeedbackProposal {
@@ -65,7 +66,9 @@ function setup() {
     history: createWebHashHistory(),
     routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
-  // 卡片末尾挂着提交抽屉（一个 `v-navigation-drawer`），它要 `v-app` 的 layout。
+  // 卡片末尾挂着提交对话框，它自己 `useI18n()`（表单的每一句都在词表里），所以这一份
+  // 挂载必须带上 i18n 插件 —— 少了它报的是「Need to install with app.use function」，
+  // 指向的是 vue-i18n，不是「这里缺一个插件」。
   const Wrapper = {
     components: { AgentFeedbackCard },
     props: { topicId: { type: String, required: true } },
@@ -86,7 +89,7 @@ describe('Agent 反馈卡换话题', () => {
 
     const { baseElement, rerender } = render(Wrapper, {
       props: { topicId: 't-old' },
-      global: { plugins: [vuetify, router, pinia] },
+      global: { plugins: [vuetify, router, pinia, i18n] },
     })
 
     // 人还停在旧话题上、请求在飞，就切到了新话题（同一个组件、只换了参数）。

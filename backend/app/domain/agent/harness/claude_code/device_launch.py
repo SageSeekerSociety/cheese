@@ -25,6 +25,7 @@ from uuid import uuid4
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
+from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
@@ -335,7 +336,6 @@ def launch_holes(
     ca_pem: str = "",
     remote_control: bool = False,
     remote_execution: bool = False,
-    model: str | None = None,
     resume_session_id: str | None = None,
     topic_id: str | None = None,
 ) -> MachineLaunch:
@@ -344,7 +344,7 @@ def launch_holes(
     The platform half is ``machine_launcher``; nothing below belongs to it. It
     reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
     config/home dir), ``CHEESE_WORK`` (cwd), plus the hook wiring
-    (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``) and ``CLAUDE_MODEL`` (optional).
+    (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``).
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
@@ -417,17 +417,29 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
     env: dict[str, str] = {
         # Work is a subagent of the room's session, so these two are the shape
-        # of the room itself. Depth 1: a piece of work does not split further —
-        # its own children would be invisible to the platform (nothing binds
-        # them to a card) and unaddressable by a person. Concurrency 4: how
-        # many pieces of work a room runs at once; they share one worktree, so
-        # the ceiling is about how much simultaneous editing of one tree stays
-        # comprehensible, not about machine capacity.
-        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        # of the room itself. Depth is a harness setting and not a design
+        # constraint (结论 33): work is flat in the room, there are no child
+        # cards, and nothing on the platform branches on this number — a
+        # deployment that wants a piece of work to spawn work of its own raises
+        # it and no code here changes. Concurrency 4: how many pieces of work a
+        # room runs at once; they share one tree, so the ceiling is about how
+        # much simultaneous editing of one tree stays comprehensible, not about
+        # machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(
+            settings.claude_code_max_subagent_spawn_depth
+        ),
         "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
+        # 关掉 Claude Code **自带**的 `/feedback` 与 `SendFeedback` 工具。
+        #
+        # 两个意图相同的工具并排放在同一个清单里，模型会选错那一个：它撞到的毛病是
+        # **这个平台**的，而官方那个入口把草稿写进本机队列、由人自己找地方发出去，
+        # 结果就是「提了、但没到平台的反馈里」——一份谁都看不见的证据。
+        #
+        # 这一条必须是**环境变量**：那个开关按设计只在进程启动时读一次，改
+        # settings.json 不管用（官方的开关就是给部署方这么用的）。
+        # （旧名 `DISABLE_BUG_COMMAND` 官方也还认，用新名。）
+        "DISABLE_FEEDBACK_COMMAND": "1",
     }
-    if model:
-        env["CLAUDE_MODEL"] = model
     if resume_session_id:
         # An OFFER, not an instruction: the launcher takes it only if the
         # transcript is on that machine's disk (see the script). Carried on the
@@ -664,7 +676,6 @@ python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
 CHEESE_NATIVE_CACHE
 cheese_launch_phase cache_restored
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
-[ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
 # nothing to do with the conversation — an expired credential, a `claude` that
 # died, a tunnel helper that went away — and the transcript of what was said
@@ -773,7 +784,6 @@ def on_machine(
     place: MachinePlace,
     *,
     system_prompt: str,
-    model: str | None,
     resume_session_id: str | None,
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
@@ -792,7 +802,6 @@ def on_machine(
         ca_pem=place.ca_pem,
         remote_control=place.remote_control,
         remote_execution=place.execution_target is not None,
-        model=model,
         resume_session_id=resume_session_id,
         topic_id=place.topic_id,
     )

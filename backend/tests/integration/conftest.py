@@ -67,6 +67,25 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
+def create_approved_space(client, **kwargs):
+    """Provision an approved space for tests of tasks and space management."""
+    from app.core.config import settings
+
+    response = client.post("/spaces", **kwargs)
+    if response.status_code != 201:
+        return response
+    space_id = response.json()["data"]["space"]["id"]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "platform_admin_handles", ["space-fixture-reviewer"])
+        reviewed = client.post(
+            f"/admin/spaces/{space_id}/review",
+            json={"approved": True},
+            headers=session_auth_headers("space-fixture-reviewer"),
+        )
+        assert reviewed.status_code == 200, reviewed.text
+    return response
+
+
 def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-scoped session token — the ONLY sanctioned way for a test to
     mint one.
@@ -89,9 +108,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
 
 
 def room_agent_seat(client, topic_id) -> str:
-    """The seat of the one agent seated in this room — the identity a
-    room-scoped credential (a token or a screen naming the room's stand-in)
-    acts as, and the author of everything the room's agent writes."""
+    """The seat of the one agent seated in this room — the identity a per-turn
+    credential that pinned no teammate acts as, and the author of everything
+    the room's agent writes. The roster is asked, never the room's id."""
     rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
     seats = [m["member_handle"] for m in rows if m["agent"]]
     assert len(seats) == 1, seats
@@ -405,7 +424,7 @@ def api_client(
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
     # repeatedly — which would also start every periodic job the platform runs
-    # (scheduler/jobs.py), once per test.
+    # (app/core/background.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     try:
         yield client

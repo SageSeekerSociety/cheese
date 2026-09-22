@@ -20,8 +20,6 @@ from tests.integration.test_file_panel_safety import (
     task_machine,  # noqa: F401
 )
 
-pytest.importorskip("lxml", reason="修订解析要用 lxml")
-
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 OPENXML = "http://schemas.openxmlformats.org"
@@ -145,6 +143,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     task = delivery_task(client, tid)
 
     async def place():
+        from app.domain.agent.harness import deployment_harness
         from app.domain.agent_session.services import AgentSessionService
         from app.domain.topic.models import Topic
 
@@ -159,6 +158,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
                     "channel": "central",
                     "resource_id": str(room.resource_id or room.id),
                 },
+                harness=deployment_harness(),
             )
             await session.commit()
 

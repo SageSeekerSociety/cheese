@@ -4,9 +4,10 @@ Every method takes and returns rows; "who is allowed to see this" is a service
 question, so that a route can never get it right by accident and a test can
 exercise the rule without a database.
 
-`HOT_SUPPORTS = 5` is the prototype's own threshold (`stores/feedback.ts`), kept
-here rather than in a query string: the `hot` tab and the detail card's 「热门」
-badge have to agree, and two copies of a `5` is how they stop agreeing.
+`HOT_SCORE` / `HOT_HALF_LIFE_DAYS` / `HOT_MIN_ITEMS` define the 「热门」 tab and
+live here rather than in a query string: the tab, its count and the detail card's
+「热门」 badge have to agree, and two copies of a threshold is how they stop
+agreeing. `hot_score()` is the single expression behind all three.
 """
 
 from __future__ import annotations
@@ -14,10 +15,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select, true, update
+from sqlalchemy import Select, and_, exists, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -40,10 +41,60 @@ from app.domain.feedback.models import (
 # repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
 # 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
+from app.domain.platform_stats.windows import utc_day
+from app.domain.topic.models import TopicMembership
 
-#: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
-#: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
-HOT_SUPPORTS = 5
+#: 「热门」要多少分 —— 按支持数算，不按浏览量。原型给过理由（「浏览是路过，
+#: 支持是表态」），这里照抄。
+#:
+#: **这是热度分，不是支持数。** 第一版拿 `supports >= 5` 当判据，于是**没有任何时间
+#: 因素**：上周爆的和这周爆的同权，一条三个月前攒够 5 票的反馈永远占着这一栏，而这一
+#: 栏的名字叫「热门」——它读的是**此刻**，不是「曾经」。压着不动的那一栏最后会变成一
+#: 份不再更新的榜单，而读者看不出它已经停止更新。
+#:
+#: 衰减取半衰期，不取 Hacker News 那条 `(v-1)/(age+2)^1.8`：支持数是几个小整数，读者
+#: 应该能自己心算这一栏。半衰期能心算——「两周前的一票算今天半票」——而 `(v-1)/(t+2)^1.8`
+#: 不能，一条解释不了的排序规则，维护它的人只能靠试。
+#:
+#: 这一条线换算成人话（`HOT_HALF_LIFE_DAYS = 14`）：**今天 2 票、一周前 3 票、两周前
+#: 4 票**，一样热。三周前的 5 票（5×0.354=1.77）进不来，今天刚发的 1 票也进不来。
+HOT_SCORE = 2.0
+
+#: 一个支持数打对折要几天。改动它等于同时改上面那句人话，所以写在紧挨着的地方。
+HOT_HALF_LIFE_DAYS = 14.0
+
+#: 「热门」最少显示几条 —— **门槛是稳态标定，而新板子不在稳态**。
+#:
+#: 5 票这个量级是按一个已经跑起来的平台定的，可平台头一两个月根本到不了：需求方问的
+#: 就是这件事（「是不是有点要求太高了？低于一定数量的话应该至少放几个上去」）。一栏
+#: 空的「热门」教给读者的是**这一栏坏了**，而不是「还没有东西够热」——而它在开板后
+#: 的整段时间里都会是空的。所以够线的照常全收，不够线时按热度补到这个数：这一栏至少
+#: 是一个「现在最值得看的几条」，而不是一片空白。
+#:
+#: 补进来的仍然按同一个分数排序，所以它不是「随便填几条」——是新板子上**排序依然成
+#: 立**，只是还没有东西越过那条线。
+HOT_MIN_ITEMS = 5
+
+
+def hot_score() -> Any:
+    """一条反馈的热度：支持数按半衰期打折。**排序和判据共用这一个表达式。**
+
+    写成函数而不是在两处各拼一遍：`list_public` 用它排、`public_counts` 和判据用它筛，
+    三份拷贝迟早会有一处漏掉衰减——那一处的症状是数字和列表对不上，而两边各自看着都对。
+
+    `func.now()` 在 Postgres 里是 `transaction_timestamp()`，**一条语句里对每一行是同一
+    个瞬间**。换成在 Python 里按行取当前时间，同一个查询里每一行会比下一行老一点点，
+    排序就不再是那个查询自己的答案（同一条请求重放两次可以给出不同的顺序，OFFSET 翻页
+    于是漏行或重复）。这个理由和 `created_at` 需要 `display_no` 做二级排序是同一个。
+
+    `count` 走 LEFT JOIN，所以 0 票的行得 0 分而不是整行消失——它们要能出现在「补足」
+    那一段里（新板子上第一条反馈的支持数就是 0）。
+    """
+    age_days = func.extract("epoch", func.now() - Feedback.created_at) / 86400.0
+    return func.count(FeedbackSupport.id) * func.power(
+        0.5, age_days / HOT_HALF_LIFE_DAYS
+    )
+
 
 #: What "public" means, as one reusable predicate. `security` is in here as well
 #: as in `FeedbackService.may_see`, and the duplication is deliberate: the write
@@ -163,18 +214,67 @@ class CommentPage:
     reply_cursors: dict[uuid.UUID, str]
 
 
+def filed_in_a_room_of(handle: str) -> Any:
+    """「这条反馈是在我当时在的那个房间里提的」，写成一条 WHERE 子句。
+
+    结论 47 的第二档。反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404；
+    但它是在某个房间里提出来的，而**那个房间里的人本来就看过它的内容**——agent 提
+    的东西在它的房间里全部留痕（结论 47 第二句）。所以对这些人藏起来只藏掉了追踪它
+    的那条路，藏不掉内容本身。
+
+    名册按**反馈提出的那一刻**取（``created_at <= Feedback.created_at``），和补发
+    投递取名册同一条规则（结论 58）：否则今天把谁加进这个房间，谁就能回头翻出这个
+    房间历史上提过的每一条私密反馈——一次加人变成一次授权，而加人的那个人并不知道
+    自己在授权。
+
+    ``topic_id`` 是 ``ON DELETE SET NULL``（反馈比提它的房间活得久），房间没了这一
+    档就自动关上，**不用额外写一句**：``topic_id`` 是 NULL 的时候
+    ``tm.topic_id = feedback.topic_id`` 恒为 unknown，``EXISTS`` 本来就假。没有房间，
+    就没有「那个房间的成员」。
+
+    这条子句是「当时在不在那个房间里」，**不是**整档判据：门还要问「今天还读得到这
+    个房间」，那一句在 :meth:`FeedbackService.may_see` 里 —— 见那里的理由。
+    """
+    return (
+        select(TopicMembership.id)
+        .where(
+            TopicMembership.topic_id == Feedback.topic_id,
+            TopicMembership.member_handle == handle,
+            TopicMembership.created_at <= Feedback.created_at,
+        )
+        .exists()
+    )
+
+
 def visible_to(handle: str | None, *, is_admin: bool) -> Any:
-    """`FeedbackService.may_see`, spelled as a WHERE clause.
+    """A deliberate **superset** of `FeedbackService.may_see`, as a WHERE clause.
 
     Only one reader needs it: 「我的反馈」 is an `OR` over three columns, and the
     third arm (指派给我的) is not by itself a reason to see a row — so it has to
-    be narrowed in the database rather than row by row.
+    be pre-filtered in the database rather than fetched whole and thrown away.
 
-    A second spelling of one rule is exactly the drift `PUBLIC_ONLY` warns about,
-    so this one is not left to trust. `test_feedback.py` files one row per
-    relation and asserts this predicate and `may_see` return the same verdict for
-    every one of them; the arms here are written in `may_see`'s order so the two
-    read as one sentence.
+    Superset and not equal, on purpose. `may_see`'s room arm also asks 「今天还读
+    得到那个房间」 (`may_read_topic`), which is four claims across four tables
+    (`app/auth/project_access.py`); spelling those in SQL is the second copy that
+    `PUBLIC_ONLY` warns about, and it is the copy that drifts. So the last cut is
+    made in Python instead: `FeedbackService.list_mine` puts every row this
+    clause returns through `may_see` before answering, which is why the rule has
+    exactly one spelling even though this predicate is not all of it.
+
+    What that leaves this clause responsible for: be **wide** enough to lose no
+    row `may_see` would open (a row dropped here is never seen again), and narrow
+    enough that a page is not mostly rows the caller will never be shown. The
+    room arm is here for the first half — without it, a private report filed in
+    my room and assigned to me would never reach `may_see` at all.
+
+    The room arm is also not a second spelling of itself: `may_see` asks this very
+    clause about one row (`FeedbackRepository.filed_in_a_room_of_mine`) rather
+    than re-deciding it in Python, because it needs the roster and the roster is
+    in the database either way.
+
+    A second reader of this predicate has to narrow with `may_see` the same way.
+    Trusting this clause alone hands out the title and status of a report whose
+    detail route answers 404 — 「一条规则两个答案，取决于你问哪一个」.
     """
     if is_admin:
         # may_see's second arm: an admin is never narrowed. Said once here rather
@@ -184,6 +284,7 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     if handle:
         arms.append(Feedback.author_handle == handle)
         arms.append(Feedback.submitted_by_handle == handle)
+        arms.append(filed_in_a_room_of(handle))
     return or_(*arms)
 
 
@@ -244,13 +345,26 @@ def matching(q: str) -> Any:
     rows, so they take the same predicate: a second spelling is how "it comes up
     in the admin queue but not on the centre" gets invented, and the person who
     reports that bug is comparing two screens they believe ask the same question.
+
+    What the reader typed is a **literal**, so the three characters `LIKE` reads
+    as syntax are escaped before they become a pattern. Without this, `%` (the
+    reader asked for a per-cent sign, or mistyped one) is "any run of characters"
+    and the search silently answers with every row; `_` is "any single character"
+    and answers with rows that do not contain the character at all. Both are
+    wrong in the direction that looks like it worked — a full list, or a list of
+    near misses — so neither gets reported as a bug.
+
+    Backslash goes first: it is the escape character, so a reader who typed one
+    would otherwise escape whatever follows it and turn a literal into syntax a
+    second way.
     """
-    pattern = f"%{q}%"
+    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{literal}%"
     return or_(
-        Feedback.title.ilike(pattern),
-        Feedback.summary.ilike(pattern),
-        Feedback.problem.ilike(pattern),
-        Feedback.author_handle.ilike(pattern),
+        Feedback.title.ilike(pattern, escape="\\"),
+        Feedback.summary.ilike(pattern, escape="\\"),
+        Feedback.problem.ilike(pattern, escape="\\"),
+        Feedback.author_handle.ilike(pattern, escape="\\"),
     )
 
 
@@ -323,6 +437,24 @@ class FeedbackRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def filed_in_a_room_of_mine(
+        self, feedback_id: uuid.UUID, handle: str
+    ) -> bool:
+        """:func:`filed_in_a_room_of`, asked about one row.
+
+        `may_see` runs the very clause the list query runs, against this one id,
+        instead of re-deciding the rule in Python: the answer needs the roster,
+        the roster is a table, and a second spelling of a visibility rule is what
+        `PUBLIC_ONLY` and `visible_to` both exist to prevent.
+
+        「当时在不在那个房间里」 only. 「今天还读得到那个房间」 is the other half
+        and stays in `may_see`.
+        """
+        stmt = select(Feedback.id).where(
+            Feedback.id == feedback_id, filed_in_a_room_of(handle)
+        )
+        return (await self._session.scalar(stmt)) is not None
+
     def _list_stmt(
         self,
         *,
@@ -331,8 +463,28 @@ class FeedbackRepository:
         limit: int,
         offset: int,
     ) -> Select[tuple[Feedback]]:
+        # Total on purpose: `supports` is the only non-default branch, so any
+        # other string means newest-first rather than "no ordering". Callers that
+        # must refuse an unknown sort do it before arriving here (`SORTS` in
+        # `services.py`); this function never has to know the vocabulary.
         stmt = select(Feedback).where(Feedback.deleted_at.is_(None), *where)
-        if sort == "supports":
+        if sort == "hot":
+            # 「热门」按**热度**排，不按支持数排。两者在有时间衰减之后不是一回事了：
+            # 一条两周前的 4 票和一条今天的 2 票热度相同（都是 2.0），按原始支持数排会
+            # 把旧的那条放在前面，于是上面那行「两周前的 4 票和今天的 2 票一样热」当场
+            # 被这个排序推翻。判据用哪个分，排序就用哪个分。
+            stmt = (
+                stmt.outerjoin(
+                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+                )
+                .group_by(Feedback.id)
+                .order_by(
+                    hot_score().desc(),
+                    Feedback.created_at.desc(),
+                    Feedback.display_no.desc(),
+                )
+            )
+        elif sort == "supports":
             # `hot` sorts by support count. `GROUP BY feedback.id` rather than a
             # denormalised counter column: MVP lists 20 rows, and this repo has
             # no precedent for a redundant counter (`BlockReaction` has none,
@@ -363,6 +515,44 @@ class FeedbackRepository:
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
+    def _hot_ids(self, base: Sequence[Any]) -> Any:
+        """「热门」那一栏的行集，作为一个子查询——**列表和计数问的是同一个**。
+
+        两段并起来：够线的（热度 ≥ `HOT_SCORE`）全收，再加上按热度排的前
+        `HOT_MIN_ITEMS` 条。后者是补足，不是「随便填几条」：新板子上一条都不够线时，
+        它给出的是这个平台上**现在最值得看的五条**，顺序照样成立。
+
+        `base` 是那一栏自己的可见性与沉底条件（`PUBLIC_ONLY` + `_tab_where("hot")`），
+        补足必须在**同一批行**里挑。把补足写在整个表上，症状是标签上写 5、点开只有 2
+        条——数出来的行和画出来的行来自两个不同的集合。这一段的返回值直接喂给
+        `Feedback.id.in_(...)`，列表和 `public_counts` 各用一次，所以那句「数字和列表
+        不许对不上」不是靠人记住，是靠它们没有第二份定义可用。
+        """
+        scored = (
+            select(
+                Feedback.id.label("id"),
+                hot_score().label("score"),
+                Feedback.created_at.label("created_at"),
+            )
+            .outerjoin(FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id)
+            .where(Feedback.deleted_at.is_(None), *base)
+            .group_by(Feedback.id)
+            .subquery()
+        )
+        above = select(scored.c.id).where(scored.c.score >= HOT_SCORE)
+        # 补足那一段要**确定性**排序：`created_at` 来自应用时钟，同一毫秒建的
+        # 两行比相等，
+        # 而 `LIMIT` 在一个能并列的排序上每次可以给出不同的那几条——翻页时会看到一条
+        # 忽有忽无。`id` 是最后那个不会并列的问题。
+        floor = (
+            select(scored.c.id)
+            .order_by(
+                scored.c.score.desc(), scored.c.created_at.desc(), scored.c.id.desc()
+            )
+            .limit(HOT_MIN_ITEMS)
+        )
+        return above.union(floor)
+
     def _tab_where(self, tab: str) -> list[Any]:
         """The four public tabs, defined once so list and counts cannot drift.
 
@@ -387,6 +577,11 @@ class FeedbackRepository:
         finished suggestion is in both `all` and `resolved`, so the tab numbers
         do not sum to a total. That is the decision, not an accounting bug — if
         it ever needs to be a partition, this is the one line to change.
+
+        `public_counts` now reports a `deployed` count **beside** this one, so
+        the dashboard can draw 「解决」 and 「上线」 as two lines. The tab's own
+        numbers are unchanged: `resolved` still means the pair, and it still
+        overlaps `all`. The extra number narrows nothing.
         """
         if tab == "resolved":
             return [Feedback.status.in_(list(CLOSED_STATUSES))]
@@ -399,24 +594,52 @@ class FeedbackRepository:
         return [sunk]
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
+        # Everything that narrows the tab **except** the hot rule itself. The hot
+        # rule is then expressed against this list rather than appended to it —
+        # `where.append(x(_hot_ids(where)))` reads as if the subquery could see the
+        # append, and the next person to reorder these two lines would make that
+        # true. `q` is part of it too: searching inside 「热门」 asks 「这一栏里哪些
+        # 命中」，而补足的那几条也必须来自同一批命中，否则搜完之后这一栏又会多出几条
+        # 不匹配的行。
         where: list[Any] = list(PUBLIC_ONLY)
         where.extend(self._tab_where(tab))
         if q:
             where.append(matching(q))
-        # `hot` means 「支持数 >= 5」 AND sorted by supports — the filter is part
-        # of the tab's definition, not just its ordering.
+        # 四个筛选**加在栏位之上**，不替换它：它们是同一批行的进一步收窄
+        # （`tab` 说的是「哪一栏」，这四个说的是「那一栏里哪些」）。全部走等值比较
+        # 与 `>=`，所以都能吃到 `ix_feedback_visibility_status_created` 那一组索引的
+        # 前缀；`author` 另有 `ix_feedback_author_created`。
+        if author is not None:
+            where.append(Feedback.author_handle == author)
+        if status is not None:
+            where.append(Feedback.status == status)
+        if kind is not None:
+            where.append(Feedback.kind == kind)
+        if since is not None:
+            where.append(Feedback.created_at >= since)
         if tab == "hot":
-            hot = (
-                select(FeedbackSupport.feedback_id)
-                .group_by(FeedbackSupport.feedback_id)
-                .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
-            )
-            where.append(Feedback.id.in_(hot.scalar_subquery()))
-            sort = "supports"
-        if sort not in ("new", "supports"):
-            sort = "new"
+            # `hot` is a filter **and** an ordering, and both come from
+            # `hot_score()` — the tab's definition, not just its sort.
+            where.append(Feedback.id.in_(self._hot_ids(where)))
+            sort = "hot"
+        # No membership test here: `_list_stmt` is total (anything that is not
+        # `supports` is newest-first), so the vocabulary lives in one place —
+        # `services.SORTS`. The public route keeps accepting an unknown sort
+        # silently; the admin one refuses it, because there it is a control the
+        # client draws and a stale client would render the wrong ordering under
+        # the right heading. See `services.list_admin`.
         rows = list(
             (
                 await self._session.execute(
@@ -438,11 +661,14 @@ class FeedbackRepository:
         all_count = await self._count([*where, *self._tab_where("all")])
         active_count = await self._count([*where, *self._tab_where("active")])
         resolved_count = await self._count([*where, *self._tab_where("resolved")])
-        hot = (
-            select(FeedbackSupport.feedback_id)
-            .group_by(FeedbackSupport.feedback_id)
-            .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
+        # 「上线」那一个数，单独给。`resolved` 那一栏装的是**修复 + 上线**这一对
+        # （见 `_tab_where` 的 docstring），那个口径不改：对提交的人来说那是同一个
+        # 答复的两半。这只是**另外**多报一个数，让看板上「解决」和「上线」两条线画
+        # 得出来 —— 缺了它，「上线了多少」在这个平台上从来没有被数过。
+        deployed_count = await self._count(
+            [*where, Feedback.status == FeedbackStatus.deployed]
         )
+        hot_base = [*where, *self._tab_where("hot")]
         # `_tab_where("hot")`, not a second copy of the condition: this is the
         # number on the tab and the rows behind it, and the two were one status
         # apart — a finished suggestion is in the hot list (it does not sink; see
@@ -454,18 +680,19 @@ class FeedbackRepository:
         #
         # The docstring above promises one definition for list and counts; this is
         # what that costs when it is not kept.
+        # `_hot_ids(hot_base)` — the same subquery `list_public` filters with. The
+        # floor makes this number *not* "how many cleared the bar": on a young board
+        # it is 「这一栏至少有 5 条」, which is what the tab will open to. Counting
+        # only the qualifiers would print 0 on a tab that shows 5 rows.
         hot_count = await self._count(
-            [
-                *where,
-                *self._tab_where("hot"),
-                Feedback.id.in_(hot.scalar_subquery()),
-            ]
+            [*hot_base, Feedback.id.in_(self._hot_ids(hot_base))]
         )
         return {
             "all": all_count,
             "hot": hot_count,
             "active": active_count,
             "resolved": resolved_count,
+            "deployed": deployed_count,
         }
 
     async def list_admin(
@@ -474,8 +701,12 @@ class FeedbackRepository:
         tab: str,
         assignee: str | None,
         q: str | None,
+        sort: str = "new",
         limit: int,
         offset: int,
+        since: datetime | None = None,
+        resolved_since: datetime | None = None,
+        deployed_since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         where: list[Any] = []
         if tab == "private":
@@ -496,16 +727,87 @@ class FeedbackRepository:
             where.append(Feedback.assignee_handle == assignee)
         if q:
             where.append(matching(q))
+        if since is not None:
+            where.append(Feedback.created_at >= since)
+        if resolved_since is not None:
+            where.append(self._reached_since(FeedbackStatus.resolved, resolved_since))
+        if deployed_since is not None:
+            where.append(self._reached_since(FeedbackStatus.deployed, deployed_since))
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort="new", limit=limit, offset=offset)
+                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
                 )
             )
             .scalars()
             .all()
         )
         return rows, await self._count(where)
+
+    # --- 平台看板的两个时间读 --------------------------------------------------
+
+    @staticmethod
+    def _reached_since(status: FeedbackStatus, since: datetime) -> Any:
+        """这条反馈在 `since` 之后**到过**这个状态 —— 一条 `EXISTS`。
+
+        状态变迁只记在 `feedback_timeline` 上，所以这里问的是时间线，`at >= since`
+        走 `ix_feedback_timeline_at`（跨反馈的范围条件，既有那条复合索引的打头列是
+        `feedback_id`，用不上）。
+
+        **不为此给 `feedback` 加 `resolved_at` / `deployed_at`**：那要回填历史（时间线
+        里有、但列上没有），还要在每个写状态的路径上双写，而两处记同一件事迟早会漂开
+        —— 时间线本来就把「什么时候到过这里」记着了（见 `FeedbackTimeline` 的
+        docstring：「什么时候到过这里，不是现在在哪」）。
+        """
+        return exists().where(
+            FeedbackTimeline.feedback_id == Feedback.id,
+            FeedbackTimeline.status == status,
+            FeedbackTimeline.at >= since,
+        )
+
+    async def created_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 **UTC 的天**新建的反馈数，稀疏；补 0 由调用方做。"""
+        day = utc_day(Feedback.created_at)
+        stmt = (
+            select(day.label("day"), func.count(Feedback.id))
+            .where(
+                Feedback.deleted_at.is_(None),
+                Feedback.created_at >= since,
+                Feedback.created_at < until,
+            )
+            .group_by(day)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0].date(): int(row[1]) for row in rows}
+
+    async def reached_series(
+        self, *, status: FeedbackStatus, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 **UTC 的天**「到过」这个状态的反馈数，稀疏。
+
+        `count(DISTINCT feedback_id)` 而不是 `count(*)`：同一个状态可以有第二行
+        （改了又改回来，见 `FeedbackTimeline` 的 docstring），行数是「到过几次」，
+        而这条折线画的是「几条反馈」。
+        """
+        day = utc_day(FeedbackTimeline.at)
+        stmt = (
+            select(
+                day.label("day"),
+                func.count(func.distinct(FeedbackTimeline.feedback_id)),
+            )
+            .where(
+                FeedbackTimeline.status == status,
+                FeedbackTimeline.at >= since,
+                FeedbackTimeline.at < until,
+            )
+            .group_by(day)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0].date(): int(row[1]) for row in rows}
 
     async def list_related_to(
         self, handle: str, *, is_admin: bool, limit: int, offset: int
@@ -517,13 +819,17 @@ class FeedbackRepository:
         serve one arm of it.
 
         The 指派给我的 arm is the only narrowed one. Being handed a report is work,
-        not access — §4.3's visibility union is 提交者 ∪ 管理员, and being the
-        assignee grants no management power (§8.9). So `visible_to` is ANDed onto
-        that arm, and the list answers about a private row exactly what the detail
-        endpoint answers: nothing. Without it this was the one read path that
-        skipped the predicate in the module docstring, handing a third party the
-        title of a report that `may_see` then refused with a 404 — a list that
-        disagrees with its own rows.
+        not access — the visibility union is 提交者 ∪ 管理员 ∪ 提出它的房间, and
+        being the assignee grants no management power (§8.9). So `visible_to` is
+        ANDed onto that arm. Without it this was the one read path that skipped
+        the predicate in the module docstring, handing a third party the title of
+        a report that `may_see` then refused with a 404 — a list that disagrees
+        with its own rows.
+
+        `visible_to` is a superset of `may_see`, not the whole of it, so the rows
+        this returns are **not yet** the answer: `FeedbackService.list_mine` makes
+        the last cut with `may_see` itself. Both halves are needed and neither is
+        optional — see `visible_to` for which half lives where and why.
         """
         where = [
             or_(
@@ -864,6 +1170,32 @@ class FeedbackRepository:
         )
         await self._session.flush()
 
+    async def soft_delete_feedback(self, row: Feedback) -> None:
+        """软删一条反馈，**连同它下面所有还在的评论**。
+
+        和 `soft_delete_comment` 同一个形状、同一个理由：读侧过滤 `deleted_at`
+        （`_public_where` / `_admin_where` 与 `live_comment_clause`），所以打了时间戳
+        的行从列表、详情、计数和搜索里一起消失。
+
+        **评论必须跟着走**：留下的话，它们挂在一条谁也读不到的反馈下面 —— 楼还在、
+        帖子没了，而「这栋楼在回哪条反馈」是永远查不出来的那一半。一条 `UPDATE` 全
+        带走，不做逐条，理由同评论那一处（有人正在等这个请求）。
+
+        **不硬删**。这一动作有两个调用者（作者删自己的、管理员删别人的），而管理员
+        删的是别人写的东西 —— 那是需要留痕的一类动作，`deleted_at` 就是那条痕。
+        """
+        deleted_at = datetime.now(UTC)
+        row.deleted_at = deleted_at
+        await self._session.execute(
+            update(FeedbackComment)
+            .where(
+                FeedbackComment.feedback_id == row.id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .values(deleted_at=deleted_at)
+        )
+        await self._session.flush()
+
     # --- 评论点赞 -------------------------------------------------------------
     #
     # Read side is batched for the whole thread, for the same reason the report
@@ -990,20 +1322,38 @@ class FeedbackRepository:
         return row
 
     async def count_activity_since(
-        self, handles: Sequence[str], since: datetime | None
+        self,
+        handles: Sequence[str],
+        since: datetime | None,
+        *,
+        is_admin: bool = False,
     ) -> int:
         """New comments + status events on the items these handles are party to.
 
         Two event tables, counted separately then summed — a UNION would have to
         dedupe rows that carry no shared id, and the sum of two indexed counts is
         cheaper than the sort that costs.
+
+        The 指派给我的 arm carries `visible_to`, exactly as `list_related_to`
+        does and for the same reason: being handed a report is work, not access.
+        Without it a non-admin assignee of a private row got an unread number for
+        a report that the list filters out and the detail endpoint answers with a
+        404 — a count saying "something happened" about a row they can never
+        open, and that cannot be cleared because there is nothing to read.
         """
         if not handles:
             return 0
+        who = list(handles)
         mine = or_(
-            Feedback.author_handle.in_(list(handles)),
-            Feedback.submitted_by_handle.in_(list(handles)),
-            Feedback.assignee_handle.in_(list(handles)),
+            Feedback.author_handle.in_(who),
+            Feedback.submitted_by_handle.in_(who),
+            *[
+                and_(
+                    Feedback.assignee_handle == handle,
+                    visible_to(handle, is_admin=is_admin),
+                )
+                for handle in who
+            ],
         )
         comments_stmt = (
             select(func.count(FeedbackComment.id))
@@ -1013,7 +1363,7 @@ class FeedbackRepository:
                 Feedback.deleted_at.is_(None),
                 FeedbackComment.deleted_at.is_(None),
                 # My own words are not news to me.
-                FeedbackComment.author_handle.notin_(list(handles)),
+                FeedbackComment.author_handle.notin_(who),
             )
         )
         timeline_stmt = (
@@ -1024,7 +1374,7 @@ class FeedbackRepository:
                 Feedback.deleted_at.is_(None),
                 or_(
                     FeedbackTimeline.by_handle.is_(None),
-                    FeedbackTimeline.by_handle.notin_(list(handles)),
+                    FeedbackTimeline.by_handle.notin_(who),
                 ),
             )
         )
@@ -1063,44 +1413,6 @@ class FeedbackRepository:
                 out[feedback_id] = at
         return out
 
-    async def ids_with_activity_between(
-        self, handles: Sequence[str], since: datetime | None
-    ) -> set[uuid.UUID]:
-        """Which items the unread count is actually about (for the list's dot)."""
-        if not handles:
-            return set()
-        mine = or_(
-            Feedback.author_handle.in_(list(handles)),
-            Feedback.submitted_by_handle.in_(list(handles)),
-            Feedback.assignee_handle.in_(list(handles)),
-        )
-        comment_stmt = (
-            select(FeedbackComment.feedback_id)
-            .join(Feedback, Feedback.id == FeedbackComment.feedback_id)
-            .where(
-                mine,
-                FeedbackComment.deleted_at.is_(None),
-                FeedbackComment.author_handle.notin_(list(handles)),
-            )
-        )
-        event_stmt = (
-            select(FeedbackTimeline.feedback_id)
-            .join(Feedback, Feedback.id == FeedbackTimeline.feedback_id)
-            .where(
-                mine,
-                or_(
-                    FeedbackTimeline.by_handle.is_(None),
-                    FeedbackTimeline.by_handle.notin_(list(handles)),
-                ),
-            )
-        )
-        if since is not None:
-            comment_stmt = comment_stmt.where(FeedbackComment.created_at > since)
-            event_stmt = event_stmt.where(FeedbackTimeline.at > since)
-        ids = set((await self._session.execute(comment_stmt)).scalars().all())
-        ids |= set((await self._session.execute(event_stmt)).scalars().all())
-        return ids
-
     async def unassigned_count(self) -> int:
         """The admin's 「还没人管」 number, asked once per admin list render.
 
@@ -1133,3 +1445,5 @@ class FeedbackRepository:
         return {
             row[0]: int(row[1]) for row in (await self._session.execute(stmt)).all()
         }
+
+    # --- 平台管理员的第二份名单（页面上加的那些） -----------------------------

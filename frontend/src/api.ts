@@ -110,6 +110,7 @@ const GET_RETRY_DELAYS_MS = [250, 750]
 // both say 200 — and, like the statuses above, it is about this second.
 export function isRetryableGetFailure(method: string, status?: number, error?: unknown, errorPage = false): boolean {
   if (method.toUpperCase() !== 'GET') return false
+  if (error instanceof ApiError && error.retryable === false) return false
   if (errorPage) return true
   if (status != null) return RETRYABLE_GET_STATUSES.has(status)
   return !(error instanceof DOMException && error.name === 'AbortError')
@@ -141,10 +142,53 @@ function wait(ms: number): Promise<void> {
 export class ApiError extends Error {
   constructor(
     readonly status: number,
-    message: string
+    message: string,
+    readonly code?: string,
+    readonly requestId?: string,
+    readonly retryable?: boolean
   ) {
     super(message)
     this.name = 'ApiError'
+  }
+}
+
+export class RequestTimeoutError extends Error {
+  constructor() {
+    super('请求等待超时，请重试')
+    this.name = 'RequestTimeoutError'
+  }
+}
+
+export const READ_BUDGET_MS = 20_000
+export const TOKEN_REFRESH_BUDGET_MS = 10_000
+
+async function withinBudget<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  outer?: AbortSignal | null
+): Promise<T> {
+  if (outer?.aborted) throw outer.reason ?? new DOMException('请求已取消', 'AbortError')
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      controller.abort(outer?.reason)
+      reject(outer?.reason ?? new DOMException('请求已取消', 'AbortError'))
+    }
+    if (outer?.aborted) onAbort()
+    else outer?.addEventListener('abort', onAbort, { once: true })
+    timer = setTimeout(() => {
+      const error = new RequestTimeoutError()
+      controller.abort(error)
+      reject(error)
+    }, ms)
+  })
+  try {
+    return await Promise.race([work(controller.signal), cancelled])
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) outer?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -217,14 +261,18 @@ export async function refreshNow(): Promise<void> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
-        const res = await fetch('/api/users/auth/refresh-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-        })
-        if (!res.ok) return
-        const body = (await res.json()) as { data?: { accessToken?: string } }
-        const next = body?.data?.accessToken
+        const next = await withinBudget(async (signal) => {
+          const res = await fetch('/api/users/auth/refresh-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            signal,
+          })
+          if (!res.ok) return undefined
+          const body = (await res.json()) as { data?: { accessToken?: string } }
+          signal.throwIfAborted()
+          return body?.data?.accessToken
+        }, TOKEN_REFRESH_BUDGET_MS)
         if (next) localStorage.setItem('accessToken', next)
       } catch {
         // Offline, or the refresh cookie is gone. Sending the stale token is
@@ -237,8 +285,28 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
+  return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
+}
+
+async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -247,6 +315,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // for some other reason would make every call fire twice.
   let authRetried = false
   for (let attempt = 0; ; attempt += 1) {
+    init?.signal?.throwIfAborted()
     let res: Response
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -289,7 +358,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      if (
+        details.error?.retryable !== false &&
+        attempt < GET_RETRY_DELAYS_MS.length &&
+        isRetryableGetFailure(method, res.status)
+      ) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
@@ -297,16 +371,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
       const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.message || said.error?.message || ''
+      const serverSaid = said.error?.message || said.message || ''
       throw new ApiError(
         res.status,
-        serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`
+        serverSaid || `请求失败（HTTP ${res.status}）`,
+        details.error?.name,
+        res.headers?.get('X-Request-ID') ?? undefined,
+        details.error?.retryable
       )
     }
     const envelope = body as ApiEnvelope<T>
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -507,7 +585,8 @@ export function createProject(
   ownerHandle?: string,
   teamId?: number,
   externalTaskId?: number,
-  forgeKind?: 'forgejo' | 'github_app'
+  forgeKind?: 'forgejo' | 'github_app',
+  agentName?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
@@ -519,6 +598,7 @@ export function createProject(
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
       forge_kind: forgeKind,
+      agent_name: agentName,
     }),
   })
 }
@@ -598,11 +678,15 @@ export type TopicSortOrder = 'asc' | 'desc'
 
 export function listTopics(
   projectId: string,
-  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+  // `activeSince` (ISO 时刻) 只留那一刻之后有动静的话题——「最近活跃的那些」。
+  // 我的工作那一页用它把每个项目的请求收在一个时间窗口里：一个项目可以有上百个
+  // 房间，全量拉回来只为了看有没有在跑，是拿一屏的时间换一个数字。
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder; activeSince?: string }
 ): Promise<ListPayload<Topic>> {
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
+  if (opts?.activeSince) q.set('active_since', opts.activeSince)
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
@@ -622,7 +706,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -791,6 +875,16 @@ export function deleteProjectMachine(
   })
 }
 
+export function changeProjectMachinePower(
+  projectId: string,
+  machineId: string,
+  operation: 'suspend' | 'resume'
+): Promise<import('./cx_types').ProjectMachine> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}/${operation}`, {
+    method: 'POST',
+  })
+}
+
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
@@ -810,10 +904,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -842,32 +945,40 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
 }
 
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
+// Project main and native subagent model defaults.
+export interface ProjectDefaultModel {
+  subagent_model: string | null
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
-  reason: string
-  note: string
+  can_manage: boolean
 }
 
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
 
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
+export function setProjectDefaultModel(
+  projectId: string,
+  model: string | null,
+  subagentModel?: string | null
+): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model, subagent_model: subagentModel }),
+  })
 }
 
 // Built-in starting configurations, copied only when creating an agent.
@@ -1021,20 +1132,20 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
   )
 }
 
-export function markRead(alertId: string): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
+export function markRead(alertId: number): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/read`, { method: 'POST' })
 }
 
 // 拍板。答复之后这一条不再等人，收件箱里就没有它了。
-export function resolveAlert(alertId: string, chosen: string): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+export function resolveAlert(alertId: number, chosen: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ chosen }),
   })
 }
 
-export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/feedback`, {
+export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/feedback`, {
     method: 'POST',
     body: JSON.stringify({ feedback }),
   })
@@ -1483,6 +1594,13 @@ export function getProjectDecisions(projectId: string): Promise<ListPayload<Bloc
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
+// 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block
+// carries the stretch it covers in `meta` (`since`/`until`) and points back to
+// the room it was written in via `topic_id`.
+export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block>> {
+  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
+}
+
 // 选项问题 (cheese ask): one-click answer.
 export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
@@ -1738,6 +1856,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   )
 }
 
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
+}
+
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
 // 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
 // head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
@@ -1840,6 +1964,15 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
   )
 }
 
+// 自己退出项目。路径是 `/membership` 而不是 `/members/me`：`/members/{handle}` 那条
+// 路由先注册，`me` 到了那里就是一个人的名字。同样不传 handle —— 退的恒是当前身份
+// 那个人，后端没有代退的入口（membership/services.py 的 `leave`）。
+export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/membership`, {
+    method: 'DELETE',
+  })
+}
+
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------
 // 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
 // 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册
@@ -1881,7 +2014,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
@@ -1988,16 +2121,29 @@ export function markFeedbackRead(): Promise<{ last_read_at: string }> {
 }
 
 export interface FeedbackListQuery {
+  /** 一页几条。**必填**，不是有默认值的可选项：列表的翻页边界是拿「手上这一页满没
+   *  满」算的（`stores/feedback.ts` 的 `adminHasNext`），而后端的默认值是 20 ——
+   *  漏传时两边对同一个问题的答案不一样，症状是每一页都短一截、而且第二页永远取不到，
+   *  一点都不像报错。 */
+  pageSize: number
   tab?: string
   q?: string
   sort?: string
   pageStart?: number
-  pageSize?: number
+  author?: string | null
+  kind?: string | null
+  status?: string | null
+  /** 起始时间（ISO）。**两条列表都吃**：管理端是「点看板上一个数字，看那一段」，
+   *  反馈中心是「最近 24 小时 / 7 天 / 30 天」那个下拉。客户端只负责把「最近 N 天」
+   *  折成一个时刻，窗口的对齐由服务端那套 UTC 日说。 */
+  since?: string | null
+  resolvedSince?: string
+  deployedSince?: string
 }
 
 /** 公开列表。`tab` 不认识时后端回 400 而不是悄悄退回 `all` —— 猜错栏位会让人
  *  以为「这条反馈不见了」。所以调用方传的 tab 必须来自 `getFeedbackMeta().tabs`。 */
-export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+export function listFeedback(query: FeedbackListQuery): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/feedback${feedbackQuery({
       tab: query.tab,
@@ -2005,12 +2151,17 @@ export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackLis
       sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
+      // 四个筛选。空值由 `feedbackQuery` 丢掉，所以「不限」就是不传。
+      author: query.author,
+      kind: query.kind,
+      status: query.status,
+      since: query.since,
     })}`
   )
 }
 
 /** 「我的反馈」：我提的 + 我替谁提的 + 指派给我的。访客拿空列表，不是 401。 */
-export function listMyFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+export function listMyFeedback(query: FeedbackListQuery): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/feedback/mine${feedbackQuery({ page_start: query.pageStart, page_size: query.pageSize })}`
   )
@@ -2077,6 +2228,18 @@ export function createFeedbackComment(
 /** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
  *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
  *  遍历，多算一次就会和服务端的答案漂开。 */
+/** 删掉**整条反馈**（软删，连带它下面的评论）。
+ *
+ *  **谁能删由服务端说了算**：每一条详情上的 `can_delete` 就是那个答案（作者 —— 写它的
+ *  那个 handle 或按下发送的那个 —— 或平台管理员），客户端不自己拼一遍判据。这个仓库
+ *  已经吃过一次「客户端重算一遍服务端的规则」的亏（`deployed` 那次：按钮亮着、服务端
+ *  回 412），评论那一层也因此把 `can_delete` 交给服务端算。 */
+export function deleteFeedback(feedbackId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/feedback/${encodeURIComponent(feedbackId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
@@ -2099,20 +2262,122 @@ export function unlikeFeedbackComment(feedbackId: string, commentId: string): Pr
 
 /* ---- 管理端 (`/admin/feedback`) ---- */
 
-export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string } = {}): Promise<FeedbackListPayload> {
+export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string }): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/admin/feedback${feedbackQuery({
       tab: query.tab,
       assignee: query.assignee,
       q: query.q,
+      sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
+      since: query.since,
+      resolved_since: query.resolvedSince,
+      deployed_since: query.deployedSince,
     })}`
   )
 }
 
 export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/* ---- 看板：一个分类一条接口 -------------------------------------------
+ *
+ * 服务端把看板拆成三块（`backend/app/api/routes/admin_stats.py`），**切到哪一类才拉
+ * 哪一类**：合成一条的话，切到第二、第三类时读的是几十秒前的数，而这三块里有两块读
+ * 的是全平台增长最快的表（`resource_usage` 每调一次 `/v1/messages` 长一行）。
+ *
+ * `days` 默认 7（就是页头上那句「过去 7 天」）。窗口是**页面**问的问题，所以由调用方
+ * 给，不写死在这里。
+ *
+ * ⚠️ 这里以前是一条 `/admin/feedback/stats`。服务端把它拆成下面这三条之后，前端有
+ * 一段时间还指着老路 —— 而老路上没有路由了，`stats` 就落进 `/admin/feedback/{id}`
+ * 那条动态段，回来的是一句「不是合法 uuid」的 400，报错指向的地方和原因差很远。
+ * 三块各自有名字之后，这种「路径悄悄指向另一个资源」不可能再发生。
+ */
+
+/** 反馈那一块：七个栏位的全量计数，加窗口内按天的新增 / 修复 / 上线。 */
+export interface StatsFeedback {
+  days: number
+  counts: {
+    all: number
+    hot: number
+    active: number
+    resolved: number
+    deployed: number
+    unread: number
+    unassigned: number
+  }
+  /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
+  series: { date: string; created: number; resolved: number; deployed: number }[]
+}
+
+/** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
+ *  算不出价钱」（订阅按月计费，行上的 0 是「没有价」不是「免费」），少了它，几百万
+ *  token 上印一个 `$0.0000` 读起来像「这个月没花钱」。 */
+export interface StatsUsage {
+  days: number
+  totals: { tokens: number; calls: number; cost_usd: number; unpriced_tokens: number }
+  series: { date: string; tokens: number; calls: number; cost_usd: number }[]
+  /** 柱状图的每一根都带 id 和名字。**今天柱子不点得开**（看板上那一张只报数），
+   *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
+   *  只按名字连线，两个同名项目会合成一根柱子。 */
+  top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
+}
+
+/** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
+ *  里，库里没有可以查的那一列。 */
+export interface StatsPlatform {
+  days: number
+  people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
+  machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+}
+
+/** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
+ *
+ *  所以它**没有 `days`**（没有窗口）、重启即清零，而且只覆盖这一个进程 —— 生产上
+ *  业务 API 就一个 backend 进程，dev 栈里那个 device-connection 是另一份。口径写在
+ *  响应里（`routes_total` 与 `routes_shown`），页面照读。
+ *
+ *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
+ *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
+export interface StatsPerformance {
+  /** 采集到耗时的路由**总数**（不是画出来的条数）。 */
+  routes_total: number
+  routes_shown: number
+  routes: {
+    method: string
+    /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */
+    route: string
+    status: string
+    count: number
+    p50: number | null
+    p95: number | null
+    p99: number | null
+  }[]
+  /** 这一刻正在处理的请求数。**探针（`/health`、`/metrics`）不算**，否则读它的那一次
+   *  自己就在里面、这个数恒 ≥1。 */
+  active_requests: number
+  /** 这个进程起来了多久。 */
+  uptime_seconds: number
+  /** 事件循环的滞后：接口慢而 p95 不高时，答案常常在这里。 */
+  loop_lag: { recent_ms: number; worst_ms: number }
+}
+
+/** 分类 → 它那条接口的形状。`getStats` 的返回类型由这个映射查出来，所以调用方
+ *  拿到的永远是它问的那一类，而不是一个四选一的联合（联合要在每个用的地方再窄化
+ *  一次，而那正是「切到用量页却读了反馈的字段」这类错会藏身的地方）。 */
+export interface StatsShapes {
+  feedback: StatsFeedback
+  usage: StatsUsage
+  platform: StatsPlatform
+  performance: StatsPerformance
+}
+export type StatsKind = keyof StatsShapes
+
+export function getStats<K extends StatsKind>(kind: K, opts?: { days?: number }): Promise<StatsShapes[K]> {
+  return request<StatsShapes[K]>(`/admin/stats/${kind}${feedbackQuery({ days: opts?.days ?? 7 })}`)
 }
 
 /** 改了哪几项就传哪几项，`undefined` 表示「别动它」。**没有 visibility**：
@@ -2150,6 +2415,66 @@ export function createAdminFeedbackNote(feedbackId: string, body: string): Promi
 
 export type { FeedbackNote }
 
+/* ---- 平台管理员名单 (`/admin/admins`) ----
+ *
+ * 「谁算平台管理员」是**服务端**的一个判据（配置里的根名单 ∪ 这张表），客户端只画。
+ * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
+ * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
+
+/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
+ *  仍然要说得出是谁加的。 */
+export interface PlatformAdminRow {
+  handle: string
+  added_by_handle: string
+  created_at: string
+}
+
+export interface PlatformAdminsPayload {
+  /** 部署配置里那份。列得出来，删不掉。 */
+  root: string[]
+  added: PlatformAdminRow[]
+}
+
+export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
+  return request<PlatformAdminsPayload>('/admin/admins')
+}
+
+/** 「加一个人」那个选择器的候选：按 handle 或昵称搜账号。
+ *
+ *  单开一条而不是复用用户目录接口：那条只在它取回的那一页里过滤（这个部署上账号
+ *  上千，搜昵称十有八九回空），而这里「搜不到」是要么换个说法要么这个人没有账号。
+ *  `already_admin` 里的人照常返回 —— 选择器要把他们画成已选中，而不是「搜不到」。 */
+export interface AdminCandidate {
+  handle: string
+  nickname: string
+  /** 没挑过头像的人是 null（和反馈卡片、聊天区名册同一条判据），界面画彩色首字母。 */
+  avatar_id: number | null
+  already_admin: boolean
+}
+
+export function searchAdminCandidates(q: string, limit = 20): Promise<{ items: AdminCandidate[] }> {
+  return request<{ items: AdminCandidate[] }>(
+    `/admin/users?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`
+  )
+}
+
+/** 加一个人。回的是**更新后的整份名单**（`created` 说明这次是真加了还是他本来就在）：
+ *  加完之后页面上两块都可能变，让客户端自己再拉一次中间那一下页面是旧的。 */
+export function addPlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { created: boolean }> {
+  return request<PlatformAdminsPayload & { created: boolean }>('/admin/admins', {
+    method: 'POST',
+    body: JSON.stringify({ handle }),
+  })
+}
+
+/** 从名单里移出一个人，同样回整份（`removed` 说这次有没有真删掉一行 —— 删一个不在
+ *  名单里的人不是错误，他的目的已经成立了）。根管理员到这里会拿到 409。 */
+export function removePlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { removed: boolean }> {
+  return request<PlatformAdminsPayload & { removed: boolean }>(`/admin/admins/${encodeURIComponent(handle)}`, {
+    method: 'DELETE',
+  })
+}
+
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
 
 /** 这个话题里**还活着**的提案卡，最新的一张在前。
@@ -2171,7 +2496,7 @@ export function dismissFeedbackProposal(topicId: string, blockId: string): Promi
 
 /** 发送：把卡变成一条正式反馈。
  *
- *  正文走请求体而不是卡上的原文 —— 抽屉是预填的，人可以改完再发，而按下发送的
+ *  正文走请求体而不是卡上的原文 —— 表单是预填的，人可以改完再发，而按下发送的
  *  人为自己发出去的东西负责。作者从卡上取（提案的 agent），提交者取验证过的
  *  调用者，两个字段都不是客户端能填的。 */
 export function acceptFeedbackProposal(

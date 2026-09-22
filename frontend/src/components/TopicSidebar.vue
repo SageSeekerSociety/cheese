@@ -2,11 +2,13 @@
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
+import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
+import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -18,10 +20,13 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
+import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   projects: Project[]
@@ -29,6 +34,7 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
   // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
@@ -80,27 +86,65 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 项目级页面（总览/日历）住在话题列表最上面的置顶行里，和话题行同一种视觉
+// 项目级页面（总览/看板/日历/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 const router = useRouter()
 const route = useRoute()
 
-// 侧栏上常驻的只有**每天都用**的那几样：对话（下面整片话题列表）和资料库。
-// 看板不在这里——它就是首页，项目名那一行点下去就到。
-const pinnedPages = [
+// 这张表是**这一版前端认得**的项目页：key → 它长什么样。露出哪几格、什么顺序、谁
+// 开局收着，全部由这个项目的壳说（catalog.py）。default 壳说的是「今天」的样子：
+// 侧栏上只摆资料库，其余收进项目名旁边那个 ⋯ 菜单——#1330 把这条竖线收窄过一轮，
+// 壳的 default 声明跟着一起收窄，否则这一版会把别人刚挪走的几格又摆回来。
+//
+// 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
+// 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
+const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
+  // 看板就是首页（项目名那一行点下去就到），但它仍然是一页：壳想把它摆回侧栏也行。
+  'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+  calendar: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
-  { key: 'project-library', label: '资料库', icon: 'mdi-folder-outline' },
-] as const
+  'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+  'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+}
+const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 
-// 一年点几次的东西收进项目名旁边那个菜单：它们仍然一次点击可达，只是不再占着
-// 每天都要扫一遍的那条竖线。
-const menuPages = [
-  { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
-  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
-] as const
+// 这个项目生效的壳。壳跟着项目行走（服务端解析好随 ProjectOut 下来），侧栏手上
+// 就有那份清单，所以不额外问一次。
+const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
+const terms = computed(() => termParams(shell.value))
+
+// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里。按 handle
+// 存——这是**这个人**对某一个壳的选择，和 projectOrder 同一个理由。
+const revealed = ref<ReadonlySet<string>>(new Set<string>())
+watch(
+  () => myHandle(),
+  (handle) => {
+    revealed.value = loadRevealedPages(handle)
+  },
+  { immediate: true }
+)
+
+const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value))
+
+// 表里没有的 key 落空：壳比前端新时菜单里会多出一格这一版还不认识的页，那也不该
+// 让侧栏白屏。
+function pageOf(key: string): { label: string; icon: string } {
+  return PROJECT_PAGES[key] ?? { label: key, icon: 'mdi-dots-horizontal' }
+}
+
+// 「一年点几次」的那几页住在项目名旁边那个 ⋯ 菜单里（#1330）：仍然一次点击可达，
+// 只是不再占着每天都要扫一遍的那条竖线。谁在菜单里由壳说——**侧栏上没摆出来的
+// 全部**都在这里，包括壳写错了 key、或这一版前端还不认识的页，所以它们不会凭空
+// 消失。文案和侧栏同一条来源，理由也一样：壳能换词。
+const menuPages = computed(() => plan.value.more.map((key) => ({ key, ...pageOf(key) })))
+
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
+  // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
+  if (plan.value.more.includes(name)) {
+    revealed.value = withRevealedPage(revealed.value, name, myHandle())
+  }
   router.push({ name, params: { projectId: props.selectedProjectId } })
 }
 // 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
@@ -283,6 +327,14 @@ watch(
 // 当前选中话题的祖先链：这条路径无论祖先收没收起来都照常渲染，所以"人正待在
 // 里面的那个话题"永远不会被折叠藏掉。用 reveal 而不是"自动展开"，是为了不把
 // 用户自己设的折叠状态在导航时偷偷改写——离开之后那一支照旧是收起来的。
+watch(
+  () => props.selectedTopicId,
+  async (id) => {
+    if (!id) return
+    await nextTick()
+    document.querySelector(`[data-room-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({ block: 'nearest' })
+  }
+)
 const selectedPath = computed(() => ancestorPathIds(props.topics, props.selectedTopicId))
 
 // 状态查表：折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了
@@ -514,7 +566,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 v-for="p in menuPages"
                 :key="p.key"
                 :prepend-icon="p.icon"
-                :title="p.label"
+                :title="t(p.label, terms)"
                 :active="route.name === p.key"
                 :disabled="!selectedProjectId"
                 @click="openProjectPage(p.key)"
@@ -572,23 +624,29 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             </v-list-item>
 
             <v-list-item
-              v-for="p in pinnedPages"
-              :key="p.key"
-              :active="route.name === p.key"
+              v-for="key in plan.visible"
+              :key="key"
+              :active="route.name === key"
               rounded="lg"
               class="nav-row pinned-row"
-              :class="{ 'is-active': route.name === p.key }"
+              :class="{ 'is-active': route.name === key }"
               :style="ROW_INDENT"
-              @click="openProjectPage(p.key)"
-              @mouseenter="hoverProjectPage(p.key)"
+              @click="openProjectPage(key)"
+              @mouseenter="hoverProjectPage(key)"
               @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
-                  <v-icon size="16" class="row-glyph" :icon="p.icon" />
+                  <v-icon size="16" class="row-glyph" :icon="pageOf(key).icon" />
                 </span>
               </template>
-              <v-list-item-title>{{ p.label }}</v-list-item-title>
+              <v-list-item-title>{{ t(pageOf(key).label, terms) }}</v-list-item-title>
+              <!-- 私聊的未读挂在「成员」这一行上。私聊那一栏撤掉之后，这是
+                   「有人找你」在主导航上唯一会亮的地方，所以它必须在这里；进了
+                   成员页才精确到是谁（每个人的私聊按钮上各带各的）。 -->
+              <template v-if="key === 'project-members' && privateUnreadTotal > 0" #append>
+                <span class="unread-badge">{{ countLabel(privateUnreadTotal) }}</span>
+              </template>
             </v-list-item>
           </v-list>
 
@@ -601,7 +659,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               size="x-small"
               variant="tonal"
               color="primary"
-              title="新建话题"
+              :title="creatingTopic ? '正在创建话题' : '新建话题'"
+              :loading="creatingTopic"
+              :disabled="creatingTopic"
               @click="newTopic()"
             />
           </div>
@@ -643,6 +703,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 <v-list-item
                   v-for="row in section.rows"
                   :key="row.topic.id"
+                  :data-room-id="row.topic.id"
                   :active="row.topic.id === selectedTopicId"
                   rounded="lg"
                   class="topic-row"

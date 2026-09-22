@@ -18,12 +18,15 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'deploy/**'
-      - '.github/workflows/deploy-scripts-test.yml'
-
+      - '.github/workflows/deploy-dev.yml'
+      - '.github/workflows/deploy-drift.yml'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/plan-image-builds.sh'
+      - '.github/scripts/ensure-apt.sh'
+      - '.github/scripts/test-plan-image-builds.sh'
+      - 'backend/scripts/gateway_supply_probe.py'
+      - 'backend/scripts/test_gateway_supply_probe.py'
+  workflow_call:
 permissions:
   contents: read
 
@@ -66,9 +69,20 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Automatic release ordering
+        run: python3 deploy/tests/test_auto_deploy.py
+
+      - name: Persistent ingress survives application switches
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
+          python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/llm-tunnel/verify-sites.py
+
       - name: Gateway release and image planning
         run: |
           python3 deploy/tests/test_gateway_release.py
+          python3 deploy/tests/test_gateway_health_workflow.py
+          python3 backend/scripts/test_gateway_supply_probe.py
           bash .github/scripts/test-plan-image-builds.sh
 
       - name: Cloud control connection lifecycle
@@ -94,6 +108,11 @@ jobs:
       - name: CI runner disk guard
         run: bash deploy/tests/test-ci-runner-disk-guard.sh
 
+      - name: Dev-box cache reclaim
+        run: bash deploy/tests/test-dev-box-disk-cleanup.sh
+
+      - name: CI action archive cache
+        run: python3 deploy/tests/test_action_archive_cache.py
+
       - name: CI runner provisioning
         run: bash deploy/tests/test-ci-runner-provision.sh
-

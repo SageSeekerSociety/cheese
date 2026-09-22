@@ -37,6 +37,9 @@ class MachineStatus(enum.StrEnum):
     provisioning = "provisioning"
     starting = "starting"
     running = "running"
+    suspending = "suspending"
+    suspended = "suspended"
+    resuming = "resuming"
     stopping = "stopping"
     stopped = "stopped"
     deleting = "deleting"
@@ -49,6 +52,8 @@ class MachineStatus(enum.StrEnum):
 TRANSITIONAL = {
     MachineStatus.provisioning,
     MachineStatus.starting,
+    MachineStatus.suspending,
+    MachineStatus.resuming,
     MachineStatus.stopping,
     MachineStatus.deleting,
 }

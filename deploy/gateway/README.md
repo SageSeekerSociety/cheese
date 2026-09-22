@@ -43,6 +43,14 @@ It uses the configuration bundled in the image. If the new container fails its
 health check, the release restores the saved image and configuration and reports
 failure. Both the old and new configurations remain in the release directory.
 
+Kimi K3 uses the native Messages endpoint at
+`https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
+`$HOME/gateway/compose/.env` before releasing a configuration that includes it.
+Its budget prices convert the published CNY rates at the existing RMB 7.1/USD
+convention; they are estimates, not a live exchange rate. The pinned adapter
+keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
+unsupported adaptive-thinking field.
+
 The box's `backend/.env` must contain:
 
 ```
@@ -110,6 +118,30 @@ Check the loaded configuration's request transformation and nonzero token prices
 ```sh
 docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
 ```
+
+## Health checks
+
+The gateway keeps up to five 20 MB log files; recreating its container does not preserve its stdout history.
+
+The scheduled check calls `/health/readiness` and the authenticated model catalog.
+It checks the gateway database and admin authentication without generating tokens;
+provider quota and inference remain untested. For a bounded inference check, run
+the existing supply probe with `--generate --model kimi-k3`:
+
+```sh
+docker exec -i cheese-gateway-litellm-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
+```
+
+It makes one native Messages request with a 512-token output limit and a 60-second
+deadline. A missing terminal event fails the probe, as do authentication, quota,
+rate-limit, and transport errors. Reaching the output limit is reported separately
+from a broken stream. The probe prints categories and token counts, never provider
+error messages or generated text.
+
+Failure records distinguish observed DNS, TLS, timeout, HTTP authentication,
+rate-limit, and documented quota errors; an unknown HTTP 500 is not labeled a
+network cause. Timing completion means HTTP EOF, while the supply probe also
+checks the Messages terminal event.
 
 ## Two things that will bite
 

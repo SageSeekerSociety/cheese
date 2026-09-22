@@ -1,11 +1,7 @@
 name: Build and Push Docker Image
 
-# The build jobs below run on the dev box's own runner, not a GitHub-hosted
-# one: this is a private repo, so hosted minutes are billed per-minute, and
-# these jobs need native amd64 Docker with a warm layer cache across runs — the
-# box already has both for free, and a hosted runner would rebuild every layer
-# from scratch every time. (The org's Actions billing lapsed on 2026-08-13, so
-# even the `plan` job that used to run hosted moved onto the cheese-ci pool.)
+# Build on isolated hosted runners so compilation cannot contend with the app
+# or occupy its deployment runner. Each image keeps a separate external cache.
 on:
   push:
     branches: [main]
@@ -15,42 +11,20 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  # Docker Hub is intermittently unreachable from the dev box. Pin BuildKit in
-  # Google's public Docker Hub cache; the builder config below routes Dockerfile
-  # frontend/base-image resolution through the same cache.
+  # Pin the builder used by every image and cache exporter.
   BUILDKIT_IMAGE: mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
-# The build jobs below stay on the dev box, whose single runner slot is also
-# what deploys use, so superseded runs must not queue behind each other. (The
-# heavy test/e2e jobs moved off to the cheese-ci pool; these did not — see the
-# header comment on why they need the box's warm layer cache.) On main, every
-# push shares one ref, so a plain ref-keyed group would let each merge cancel
-# the previous commit's still-running build — GitHub cancels not just the
-# in-progress run but any run still pending in the group, so even
-# cancel-in-progress: false wouldn't save a pending one queued behind it.
-# Keying the group by commit sha on main gives every commit its own group, so
-# there is never a same-group collision to cancel in the first place. Other
-# refs (tags, workflow_dispatch on non-main) keep the original ref-only
-# grouping, so repeated pushes to the same tag/branch still cancel each other.
+# Keep each main commit's build: deployments consume its immutable image tags.
+# Repeated manual builds of the same non-main ref can replace one another.
 concurrency:
   group: ci-build-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:
   plan:
-    # On the cheese-ci pool, not the dev box: gh api calls + a planning script +
-    # registry-side `buildx imagetools` manifest copies — no docker builds, no
-    # local layer cache, nothing box-local. It gates all three heavy build jobs,
-    # so running it on the dev box meant even "does this need building?" queued
-    # behind whatever else that single slot was doing (measured over 63 runs:
-    # median 0.3m queue, p90 5.9m, max 16.8m). It ran on a hosted runner for
-    # that reason until the org's Actions billing lapsed on 2026-08-13; the
-    # cheese-ci pool is separate three-machine capacity, so it still never queues
-    # behind the dev-box builds it gates (and it does not wait on them — they
-    # `needs: plan`, so there is no deadlock). The pool has no `gh`, so a step
-    # below installs it per-machine; docker/buildx for the imagetools promotion
-    # already ship on the pool (the e2e job uses the pool's docker).
-    runs-on: [self-hosted, cheese-ci]
+    # Keep planning off the shared CI pool so its workload cannot delay builds.
+    # Hosted Ubuntu includes gh and buildx for the registry manifest copies.
+    runs-on: ubuntu-latest
     # gh api calls + a planning script, no docker builds; still bounded well
     # under the jobs it gates.
     timeout-minutes: 10
@@ -71,21 +45,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
-      # it once per machine into a dir that survives actions/checkout's workspace
-      # reset, then prepend it to PATH — same trick test.yml's scope uses.
-      - name: Ensure gh CLI
-        run: |
-          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
-          if [ ! -x "$gh_dir/bin/gh" ]; then
-            gh_version=2.63.2
-            mkdir -p "$gh_dir"
-            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
-              | tar -xz -C "$gh_dir" --strip-components=1
-          fi
-          echo "$gh_dir/bin" >> "$GITHUB_PATH"
-          "$gh_dir/bin/gh" --version
-
       - name: Test image build planning
         run: bash .github/scripts/test-plan-image-builds.sh
 
@@ -97,16 +56,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base_sha=""
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = branch ]; then
-            if ! base_sha="$(gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=success&event=push&per_page=1" \
-                --jq '.workflow_runs[0].head_sha // empty')"; then
-              echo "::warning::Could not resolve the previous successful build; rebuilding every image"
-              base_sha=""
-            fi
-          fi
-          BASE_SHA="$base_sha" \
           CURRENT_SHA="$GITHUB_SHA" \
           EVENT_NAME="$GITHUB_EVENT_NAME" \
           REF_TYPE="$GITHUB_REF_TYPE" \
@@ -194,11 +143,7 @@ jobs:
   build-gateway:
     needs: plan
     if: needs.plan.outputs.gateway == 'true'
-    runs-on: [self-hosted, cheese-dev]
-    # No step-level profiling for this job; sized to comfortably cover a
-    # cold-cache docker build+push while killing the kind of wedged run that
-    # measured 681m in the wild (would otherwise pin the box's one runner for
-    # half a day).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -210,33 +155,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          # This is a persistent, single-runner box. Preserve the named
-          # builder's state volume so unchanged dependency layers survive jobs.
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -268,15 +189,13 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=gateway
+          cache-to: type=gha,version=2,scope=gateway,mode=max
 
   build-backend:
     needs: plan
     if: needs.plan.outputs.backend == 'true'
-    runs-on: [self-hosted, cheese-dev]
-    # No step-level profiling for this job; sized to comfortably cover a
-    # cold-cache docker build+push while killing the kind of wedged run that
-    # measured 681m in the wild (would otherwise pin the box's one runner for
-    # half a day).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -288,33 +207,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          # This is a persistent, single-runner box. Preserve the named
-          # builder's state volume so unchanged dependency layers survive jobs.
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -356,29 +251,13 @@ jobs:
             cli=./cli
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=backend
+          cache-to: type=gha,version=2,scope=backend,mode=max
 
-  # Agent sandbox: the image 芝士 turns run inside (spawned as sibling
-  # containers by the backend through the host docker.sock). Built here so
-  # deploy.sh can `docker pull` it — production has no repo checkout.
-
-      # Building on the box that also SERVES dev means build layers land on the
-      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
-      # is where the original 6GB cap came from. The disk is 252GB now, and at
-      # 6GB the three images' layer caches evict each other (the cap is pruned
-      # to after EVERY image), so most builds ran semi-cold — backend's rust
-      # compile alone pushed a build to 32min against its 45min timeout on
-      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
-      # floors the disk independently. (In-use images are never touched.)
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
   build-sandbox:
     needs: plan
     if: needs.plan.outputs.sandbox == 'true'
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -390,31 +269,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -448,25 +305,13 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=sandbox
+          cache-to: type=gha,version=2,scope=sandbox,mode=max
 
-      # Building on the box that also SERVES dev means build layers land on the
-      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
-      # is where the original 6GB cap came from. The disk is 252GB now, and at
-      # 6GB the three images' layer caches evict each other (the cap is pruned
-      # to after EVERY image), so most builds ran semi-cold — backend's rust
-      # compile alone pushed a build to 32min against its 45min timeout on
-      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
-      # floors the disk independently. (In-use images are never touched.)
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
   build-frontend:
     needs: plan
     if: needs.plan.outputs.frontend == 'true'
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -478,11 +323,6 @@ jobs:
       - name: Test frontend static-asset integrity guard
         run: sh frontend/scripts/test-check-static-assets.sh
 
-      # Without a node of its own, the box's own answers, and it is Debian's:
-      # node 20, whose corepack is too old to load a modern pnpm and links its
-      # shims into /usr/bin, which the runner user cannot write. Same pairing
-      # as frontend.yml — setup-node first, corepack second — because that is
-      # what puts both the node and the shims somewhere writable.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -496,7 +336,6 @@ jobs:
       - name: Build the user manual into the image context
         run: |
           cd docs/manual
-          # The runner cannot install shims beside its root-owned Node binary.
           corepack pnpm@9.15.3 install --frozen-lockfile
           corepack pnpm@9.15.3 exec vitepress build .
           python3 ../../scripts/emit_llms.py ../../frontend/public/docs
@@ -504,31 +343,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -560,26 +377,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=frontend
+          cache-to: type=gha,version=2,scope=frontend,mode=max
 
-      # Building on the box that also SERVES dev means build layers land on the
-      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
-      # is where the original 6GB cap came from. The disk is 252GB now, and at
-      # 6GB the three images' layer caches evict each other (the cap is pruned
-      # to after EVERY image), so most builds ran semi-cold — backend's rust
-      # compile alone pushed a build to 32min against its 45min timeout on
-      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
-      # floors the disk independently. (In-use images are never touched.)
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
 
   build-browser-render:
     needs: plan
     if: needs.plan.outputs.browser_render == 'true'
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: ubuntu-24.04
     # Pulling Playwright's base image is most of this job; nothing compiles.
     timeout-minutes: 30
     permissions:
@@ -592,31 +397,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -650,18 +433,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=browser-render
+          cache-to: type=gha,version=2,scope=browser-render,mode=max
 
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
 
   build-office-render:
     needs: plan
     if: needs.plan.outputs.office_render == 'true'
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: ubuntu-24.04
     # Most of this job is apt installing LibreOffice (~800MB); nothing compiles.
     timeout-minutes: 30
     permissions:
@@ -674,31 +453,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # A stable builder name: the default is per-run, which would throw away
-          # the box's layer cache between builds — the very cache that replaces
-          # the removed type=gha export.
-          name: cheese-box-builder
           driver-opts: |
             image=${{ env.BUILDKIT_IMAGE }}
-          buildkitd-config-inline: |
-            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
-            [dns]
-              nameservers = ["1.1.1.1", "1.0.0.1"]
-              options = ["use-vc"]
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-          keep-state: true
 
-      - name: Retain the BuildKit image
-        run: |
-          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
-          docker create --name cheese-buildkit-image-retainer \
-            --label com.cheese.image-retainer=buildkit \
-            "$BUILDKIT_IMAGE" >/dev/null
-
-      # Retry: the box reaches ghcr through ghg's egress, which resets
-      # connections often enough to have failed a build on the login step alone
-      # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
@@ -732,10 +489,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
+          cache-from: type=gha,version=2,scope=office-render
+          cache-to: type=gha,version=2,scope=office-render,mode=max

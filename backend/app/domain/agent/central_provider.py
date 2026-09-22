@@ -23,11 +23,10 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -102,7 +101,8 @@ class CentralChannel(DeviceChannel):
             # 多一次提交，而答案被丢掉。连接在这个 ``with`` 结束时就还了，不攥着
             # 它去池里要第二条 (#1312 正是并发轮次一起开场互相等到超时)。
             async with self._sessions() as db:
-                await self._resolve_session_host(db, session)
+                host = await self._resolve_session_host(db, session)
+            await self._wait_for_session_host(host, session)
             return await self.executor.precheck(session, needs_place=True)
         # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)：分身身份租手那条
         # 路也只从执行机之外取到，所以这一轮在所有执行机离线时照样跑得起来。
@@ -114,16 +114,26 @@ class CentralChannel(DeviceChannel):
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
         placed = {room_id for _, room_id, _, _, _ in sessions}
+        # 这条通道认领的是「落在我这里的会话」，不是「某个骨架的会话」：同一条
+        # CentralChannel 被 Claude Code 和 Codex 两个 runtime 各包一次
+        # (``compute.build_compute_pool``)，所以通道答不出哪一条是谁的。骨架的名
+        # 字原样交回去当 ``running``，认领由 runtime 拿自己的 ``self.harness`` 去
+        # 做（``Channel.discover`` 的契约就是这么写的）。
+        runs: dict[uuid.UUID, str] = {}
         for project_id, room_id, _handle, harness, place in sessions:
-            if place.channel != self.name or harness != CLAUDE_CODE:
+            if place.channel != self.name:
                 continue
             center = place.machine
             if (device_id is None or center == device_id) and self._hub.is_online(
                 center
             ):
                 self._subscription_devices[room_id] = center
+                runs[room_id] = harness
                 scopes.append((project_id, room_id, center))
-        found = await self.restore_screens(scopes)
+        found = [
+            (project_id, room_id, screen, runs.get(room_id))
+            for project_id, room_id, screen, _ in await self.restore_screens(scopes)
+        ]
         # Finish consuming turns that began before this deployment. Their next
         # opening transfers the transcript; no new prompt starts on the old host.
         for scope in await self.executor.discover(device_id):
@@ -222,11 +232,12 @@ class CentralChannel(DeviceChannel):
         # below.
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
-            # The machine resolver supplies a room identity; the signed launch
-            # credential names the teammate actually taking this turn.
-            # A room-scoped legacy token leaves the precheck identity intact.
+            # The machine resolver supplies the room's agent; the signed launch
+            # credential names the teammate actually taking this turn. A token
+            # that names nobody (a platform capability) leaves the precheck
+            # identity intact.
             actor = token_agent_handle(token)
-            if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+            if actor and actor != agent_handle:
                 user = await user_by_handle(db, actor)
                 if user is None:
                     raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
@@ -249,8 +260,9 @@ class CentralChannel(DeviceChannel):
         ):
             place = None
         center = place.machine if place else settings.agent_session_device_id
-        if not center or not self._hub.is_online(center):
+        if not center:
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
+        await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
         token = bind_resource_token(token, str(resource))
         # 搬历史是把会话文件从租来的那双手搬回会话机；没租手的一轮，它们本来

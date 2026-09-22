@@ -29,15 +29,21 @@ def _store(**pools: list[str]):
     is an ordinary fact, which injection counts and does not carry.
     """
 
-    async def recall_core(scope: MemoryScope, scope_id: str) -> list[str]:
-        return [
-            f.removeprefix("core:") for f in pools[scope_id] if f.startswith("core:")
-        ]
+    async def core_and_counts(asked):
+        return {
+            (scope, scope_id): (
+                len(pools[scope_id]),
+                [
+                    f.removeprefix("core:")
+                    for f in pools[scope_id]
+                    if f.startswith("core:")
+                ],
+            )
+            for scope, scope_id in asked
+            if scope_id in pools
+        }
 
-    async def count(scope: MemoryScope, scope_id: str) -> int:
-        return len(pools[scope_id])
-
-    return SimpleNamespace(recall_core=recall_core, count=count)
+    return SimpleNamespace(core_and_counts=core_and_counts)
 
 
 # --- core: in every turn, whatever the turn is about ----------------------
@@ -46,7 +52,7 @@ def _store(**pools: list[str]):
 async def test_core_is_carried_and_everything_else_is_only_counted():
     store = _store(p=["core:我是芝士", "core:说人话"] + [f"事实{i}" for i in range(5)])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")])
+    got = await recall_pools(store, [(MemoryScope.agent_project, "p")])
 
     assert got.facts == ["我是芝士", "说人话"]
     assert got.omitted == 5
@@ -55,7 +61,9 @@ async def test_core_is_carried_and_everything_else_is_only_counted():
 async def test_core_over_its_own_budget_is_reported_not_silently_dropped():
     store = _store(p=[f"core:核心{i}" + "长" * 200 for i in range(10)])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")], core_char_budget=600)
+    got = await recall_pools(
+        store, [(MemoryScope.agent_project, "p")], core_char_budget=600
+    )
 
     assert 0 < len(got.facts) < 10
     assert got.core_omitted == 10 - len(got.facts)
@@ -69,7 +77,9 @@ async def test_one_core_fact_survives_a_budget_that_fits_none_of_it():
     「你是谁」."""
     store = _store(p=["core:" + "长" * 5000, "core:第二条"])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")], core_char_budget=100)
+    got = await recall_pools(
+        store, [(MemoryScope.agent_project, "p")], core_char_budget=100
+    )
 
     assert got.facts == ["第二条"]
     assert got.core_omitted == 1
@@ -78,7 +88,7 @@ async def test_one_core_fact_survives_a_budget_that_fits_none_of_it():
 async def test_nothing_is_reported_missing_when_the_pool_is_only_core():
     store = _store(p=["core:只有这一条"])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")])
+    got = await recall_pools(store, [(MemoryScope.agent_project, "p")])
 
     assert got.facts == ["只有这一条"]
     assert got.omitted == 0
@@ -87,11 +97,11 @@ async def test_nothing_is_reported_missing_when_the_pool_is_only_core():
 async def test_both_pools_report_into_one_total():
     store = _store(
         own=["core:我是芝士"] + [f"我的{i}" for i in range(30)],
-        shared=[f"共享{i}" for i in range(59)],
+        person=[f"关于这个人{i}" for i in range(59)],
     )
 
     got = await recall_pools(
-        store, [(MemoryScope.agent_project, "own"), (MemoryScope.project, "shared")]
+        store, [(MemoryScope.agent_project, "own"), (MemoryScope.user, "person")]
     )
 
     assert got.facts == ["我是芝士"]
@@ -108,14 +118,14 @@ def test_the_prompt_names_the_pool_it_did_not_bring():
 
     assert "记住这条" in prompt
     assert "9" in prompt
-    assert "cheese_recall" in prompt
+    assert "cheese recall" in prompt
 
 
 def test_no_notice_when_nothing_was_left_out():
     prompt = build_system_prompt("base", "", None, ["记住这条"])
 
     assert "记住这条" in prompt
-    assert "cheese_recall" not in prompt
+    assert "cheese recall" not in prompt
 
 
 def test_core_overflow_gets_its_own_warning():

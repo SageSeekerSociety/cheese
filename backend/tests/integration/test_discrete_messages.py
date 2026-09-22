@@ -36,7 +36,7 @@ def _run_turn(client) -> tuple[str, list[dict]]:
         json={"project_id": p["id"], "title": "话题", "created_by": "alice"},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
-        ws.send_json({"type": "message", "content": "帮我看看", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 帮我看看"})
         frames = []
         while True:
             frames.append(ws.receive_json())

@@ -106,24 +106,26 @@ confirms every previously online managed device reconnects with a new connection
 generation before resuming execution. This maintenance causes one brief device
 reconnection after active calls have finished.
 
-**On dev the backend rolls out without downtime.** The box's **:8081** is
-`cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
-backend upstream comes from an include file (`~/ops/llm-tunnel/active/
-backend.conf`). With `ACTIVE_BACKEND_DIR` set in `~/ops/deploy.env`, the deploy
-script starts the new image as `cheese-backend-next` on **:18082**, waits for
-its `/healthz`, points api-front at it and reloads, recreates the compose
-`backend` (on **:18081**) behind it, points api-front back, and removes the
-temporary container. The frontend container reaches the backend through that
-same host port (`API_UPSTREAM=host.docker.internal:8081`), so its `/api` never
-sees the swap either; the ghg edge (APISIX) proxies to **:8080** (frontend) and
-**:8081** (api-front). What remains is about one second on **:8080** when the
-frontend container itself is recreated. Measured on the first rollout
-(2026-09-04): 0 failed requests on :8081 across the swap, 1 second of refused
-connections on :8080. Before it, every deploy cut the backend for the ~13 s a
-container takes to boot. A box without `ACTIVE_BACKEND_DIR` — prod (RUC),
-etrip — still recreates in place, gap included; the first deploy after
-enabling it on a box pays the old gap once, because the frontend that is still
-running resolves `backend` by compose name.
+**Application switches leave the persistent ingress running.** On boxes with
+`ACTIVE_BACKEND_DIR`, `cheese-api-front` keeps its device, screen, execution,
+model-tunnel and forge-event routes. Business requests pass to the separate
+`cheese-app-router` nginx on loopback **:18085** (backend) and **:18086**
+(frontend). Only app-router reads the changing `backend.conf` and
+`frontend.conf` upstream files and reloads during an ordinary application release.
+
+The deploy starts a healthy successor, switches app-router to it, drains old
+workers, recreates the compose service, switches back and drains again before
+removing the successor. The minimum drain is 31 seconds: the worker shutdown
+deadline is 30 seconds, plus one second for signal delivery. Business streams
+longer than the deadline can reconnect; device and model connections bypass
+these workers. `ACTIVE_FRONTEND_DIR` enables the same procedure for the
+frontend behind the persistent **:18080** entry. Frontends still reach APIs
+through `API_UPSTREAM=host.docker.internal:8081`.
+
+The first pipeline release installing app-router starts and checks it before
+reloading the persistent ingress once. That migration can reconnect existing
+devices; subsequent business releases do not reload their ingress. A box without
+`ACTIVE_BACKEND_DIR` still recreates application containers in place.
 
 ### dev — continuous deploy
 
@@ -161,9 +163,58 @@ without deploying — use it to validate connectivity safely.
 The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
+
+`main` requires the GitHub Actions check `CI required` and the
+[Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
+The ruleset has no bypass actors. Add a green PR through GitHub's merge queue UI
+or the GraphQL `enqueuePullRequest` mutation. Repository auto-merge is enabled
+so `gh pr merge` can request queue entry while required checks are pending.
+The queue tests its changes against the latest main and preceding queued
+changes before merging.
+
+`.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
+It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
+Documentation-only changes run repository guards. Failed scope detection, failed
+or cancelled selected suites, and unexpected skips fail `CI required`. Remote
+execution acceptance remains advisory pending the stability target in #1279; the
+MCP latest-version canary runs on schedule or manual dispatch.
+
+Queue settings: two concurrent merge-group builds, ALLGREEN, squash merge, one
+to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
+That timeout bounds a stalled queue; the feedback-time targets remain those in
+#1279.
+
+PRs opened before the gate was installed need a new pull-request event to report
+`CI required`, for example after updating their branch or reopening the PR.
+
+### Backend test execution
+
+The fixture-derived layers remain `pure`, `contract` and `integration`.
+`test.yml` runs pure and contract on separate hosted runners, integration on four
+deterministic hash partitions, and real Meilisearch integration tests on one
+serial runner with a dedicated service. Each runner uses its own PostgreSQL and
+Valkey containers.
+
+The required gate compares executed JUnit node IDs with an independently
+collected full-suite manifest. Every required case must run once, with no skips.
+Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
+for each partition. Layer floors apply before partitioning. The existing Kotlin
+exclusion and opt-in live Forgejo evaluations remain outside the required set.
+
+Reproduce a partition from `backend/` with the same test services and pinned
+tools as `test.yml`. Use a fresh output directory for each run:
+
+```bash
+uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
+  -k 'not kotlin and not meilisearch_integration' -n 4 \
+  -p scripts.ci_shard --ci-shard 0/4 \
+  --ci-selection-output=../tmp/ci-selection \
+  --junitxml=../tmp/ci-selection/results.xml
+```
+
 ## CI runner pool (cheese-ci)
 
-Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
+Backend CI (`test.yml`) runs on GitHub-hosted Ubuntu runners. E2E runs on the
 **cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
@@ -261,8 +312,28 @@ Two mechanisms, deliberately different in kind:
   installed on the dev/agent boxes** — so on those boxes nothing was watching
   the things that actually fill them.
 - **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
-  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
-  Run by hand — nothing schedules it.
+  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic;
+  `--needed` answers whether the box is above the mark at all and exits 0/1.
+  `deploy/install-disk-cleanup-timer.sh` installs it, and
+  `cheese-disk-cleanup.timer` runs it nightly above 75%.
+
+  It watches **every filesystem it reclaims on, not just `/`** — including each
+  temp root (`$TMPDIR`, `/var/tmp`) when that is a filesystem of its own. Which
+  filesystems those are, and what the mark is, live in this script and nowhere
+  else: the unit asks `--needed` rather than spelling out a `df` of its own.
+
+  That indirection is the fix for 2026-09-22, when the dev box could not open a
+  new topic. `/tmp` is a **32G tmpfs** — RAM, not the disk — and it is where
+  every pytest run leaves its temp tree: 13G of them had accumulated, the
+  largest single tree 5.3G. `/tmp` reached 100% while `/` sat at 51%, so every
+  write under `/tmp` began failing with ENOSPC and the environment-preparation
+  step for each new room died at startup. The nightly unit never ran —
+  `systemctl status` says `Result: exec-condition`, because its condition was
+  `df /` and the filesystem it asked about was healthy. The trees are
+  regenerable by definition and nothing pruned them across runs, so the reclaim
+  takes them now: the newest `CHEESE_PYTEST_TEMP_KEEP` (2) per user are left
+  alone, and the rest must also be older than `CHEESE_PYTEST_TEMP_AGE_MINUTES`
+  (360), so a suite still running is not swept out from under itself.
 - **`deploy/reclaim-room-caches.sh`** is the *room-local* reclaim, and the only
   one of the three a deploy runs on its own (`deploy-docker.sh`, right before
   `DEPLOY OK`). Every room of a project now installs out of one store, so the

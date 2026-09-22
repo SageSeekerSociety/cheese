@@ -468,8 +468,87 @@ export default defineConfig({
     // the whole run on them with "No test suite found" — node:test registers its
     // cases through `node:test`, which vitest's collector never sees.
     exclude: [...configDefaults.exclude, 'scripts/**'],
+    // 并发度不跟着核数走。默认是「可用并行度 - 1」，在一台 384 核的共享开发机上
+    // 那是三百多个 fork，每一个都要自己把 Vuetify 和它的 SCSS 编一遍——彼此抢
+    // CPU，还和机器上别人的活抢。实测一轮里 transform 累计 367 秒、collect 累计
+    // 1907 秒，而墙上时间只有 24 秒，绝大部分花在编译上而不是跑断言，超时也从这里
+    // 来。这个上限对小机器无害（它本来就开不到 8 个），对大机器是实打实的提速。
+    // 上下限必须一起给：两个下限都默认跟着核数走，只压上限的话 vitest 会拿
+    // min=383 / max=8 去构造 worker 池，Tinypool 直接抛 RangeError，一个用例都跑
+    // 不起来。`forks` 是 vitest 2 的默认池，`threads` 一并写上，免得哪天换池子
+    // 这条静默失效。
+    // 16 是量出来的：这台机器上 8 / 16 / 32 / 不限分别是 37.4 / 29.1 / 25.3 /
+    // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
+    // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
+    poolOptions: {
+      forks: { minForks: 1, maxForks: 16 },
+      threads: { minThreads: 1, maxThreads: 16 },
+    },
   },
   optimizeDeps: {
-    include: ['editorjs-parser'],
+    // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport
+    // 生成的是 `vuetify/components/VXxx` 这种深路径，而深路径是按需预打包的 —— 冷启动
+    // 那一次扫不到它，直到某个页面真的渲染出这个组件，vite 才补齐预打包并**整页重载**。
+    // 人工开发时看见的是一次闪动，e2e 里看见的是「Execution context was destroyed」：
+    // 界面刚渲染到一半，页面被换掉了。它只在冷启动的第一轮出现，而 CI 每一轮都是冷的
+    // （`node_modules/.vite` 不在 pnpm store 里），于是**每次跑 e2e 都在赌同一件事**。
+    //
+    // 列在这里的会被启动时一次性打进去，之后不再有中途补打包。原生标签（`<v-combobox>`）
+    // 由插件转成下面这些模块，所以新加组件时要照着补一行；漏了不会坏，只是回到上面那种
+    // 冷启动重载。
+    //
+    // 重新生成这份清单：冷启动一次、把用到的页面都点一遍，然后
+    // `ls node_modules/.vite/deps | grep '^vuetify'`（下划线是路径分隔符）。
+    include: [
+      'editorjs-parser',
+      'vuetify/components/VAlert',
+      'vuetify/components/VApp',
+      'vuetify/components/VAppBar',
+      'vuetify/components/VAutocomplete',
+      'vuetify/components/VAvatar',
+      'vuetify/components/VBadge',
+      'vuetify/components/VBottomNavigation',
+      'vuetify/components/VBtn',
+      'vuetify/components/VBtnToggle',
+      'vuetify/components/VCard',
+      'vuetify/components/VCheckbox',
+      'vuetify/components/VChip',
+      'vuetify/components/VCombobox',
+      'vuetify/components/VDefaultsProvider',
+      'vuetify/components/VDialog',
+      'vuetify/components/VDivider',
+      'vuetify/components/VEmptyState',
+      'vuetify/components/VForm',
+      'vuetify/components/VGrid',
+      'vuetify/components/VIcon',
+      'vuetify/components/VImg',
+      'vuetify/components/VList',
+      'vuetify/components/VMain',
+      'vuetify/components/VMenu',
+      'vuetify/components/VNavigationDrawer',
+      'vuetify/components/VProgressCircular',
+      'vuetify/components/VProgressLinear',
+      'vuetify/components/VRadio',
+      'vuetify/components/VRadioGroup',
+      'vuetify/components/VSelect',
+      'vuetify/components/VSheet',
+      'vuetify/components/VSnackbar',
+      'vuetify/components/VSwitch',
+      'vuetify/components/VSystemBar',
+      'vuetify/components/VTabs',
+      'vuetify/components/VTextField',
+      'vuetify/components/VTextarea',
+      'vuetify/components/VTooltip',
+      'vuetify/components/transitions',
+      // 目录入口（插件也会引它们）与 labs：
+      'vuetify',
+      'vuetify-pro-tiptap',
+      'vuetify-sonner',
+      'vuetify/components',
+      'vuetify/directives',
+      'vuetify/iconsets/mdi',
+      'vuetify/labs/VDateInput',
+      'vuetify/locale',
+    ],
   },
 })

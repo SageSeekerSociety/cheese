@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
@@ -168,7 +169,10 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
 
 
 @pytest.mark.anyio
@@ -386,41 +390,36 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
     assert route == "gateway"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
-    assert app_settings.subscription_enabled is False  # and with the flag on:
-
-    import unittest.mock
-
-    with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        subscription_kwargs, subscription_route = await svc._model_kwargs(
-            pid, _on_a_machine()
-        )
-
-    assert subscription_route == route == "gateway"
-    assert subscription_kwargs == kwargs
-    assert fake.minted == []
 
 
 @pytest.mark.anyio
 async def test_subscription_route_follows_the_capability_not_the_backend_name(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability a backend has to IMPLEMENT — it
-    builds the metering-proxy env itself, so nothing travels from here. A
-    backend without that transport used to fall through under the same flag with
-    no env at all and run on the backend process's own inherited credentials; it
-    must keep its profile/gateway routing instead."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    """A machine builds the metering-proxy env itself, so nothing about the
+    transport travels from here — a channel that does NOT build one must keep
+    its profile/gateway routing rather than fall through with no env at all and
+    run on the backend process's own inherited credentials."""
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == "claude-sonnet-5"
 
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
@@ -442,11 +441,13 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     subscription that does not serve it, and its usage row named the gateway's
     meter while its traffic went through the proxy — counted once in each.
     """
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await session.commit()
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
     cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
@@ -454,7 +455,10 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     assert cloud_route == device_route == "subscription"
     assert cloud_kwargs == device_kwargs
     assert cloud_kwargs["model"] == "claude-sonnet-5"
-    assert set(cloud_kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(cloud_kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert fake.minted == []  # no gateway key is minted for either
 
 
@@ -462,11 +466,9 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     client, tmp_path, monkeypatch
 ):
-    from app.core.config import settings
     from app.domain.agent_instance.configuration import AgentConfiguration
     from app.domain.agent_instance.services import AgentInstanceService
 
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     svc, factory, pid, tid = await _mk_service(
         client.test_factory, tmp_path, FakeGateway()
     )
@@ -477,12 +479,10 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
             handle="reviewer",
             type_name=None,
             display_name="Reviewer",
-            configuration=AgentConfiguration(model="opus", body="Original role"),
+            configuration=AgentConfiguration(body="Original role"),
         )
         snapshot = agents.resolved(agent)
-        await agents.configure(
-            agent, AgentConfiguration(model="fable", body="Edited role")
-        )
+        await agents.configure(agent, AgentConfiguration(body="Edited role"))
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
         # A later turn addressed to the same teammate resolves it afresh.
@@ -501,7 +501,7 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     # 换的是角色，不是模型：一个房间的主线永远走项目默认，谁来答都一样（结论 3）。
     # 这三行在这个测试里的用处正是说明「agent 变了，模型不变」。
     assert current["model"] == following["model"] == default["model"]
-    assert default["model"] == "claude-sonnet-5"
+    assert default["model"] == settings.agent_model
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
     )

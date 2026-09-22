@@ -17,6 +17,7 @@ import app.models  # noqa: F401
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.review.pr_publish import _draft_pr_for_one_task
@@ -139,6 +140,7 @@ async def main():
                     "channel": "central",
                     "resource_id": resource,
                 },
+                harness=deployment_harness(),
             )
             await session.commit()
         print("ready", flush=True)

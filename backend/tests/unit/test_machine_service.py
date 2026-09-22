@@ -119,6 +119,14 @@ class FakeMicroCloud:
         self.deleted.append(machine_id)
         self.machines.pop(machine_id, None)
 
+    async def suspend_machine(self, machine_id):
+        self.machines[machine_id]["status"] = "suspended"
+        return self.machines[machine_id]
+
+    async def resume_machine(self, machine_id):
+        self.machines[machine_id]["status"] = "resuming"
+        return self.machines[machine_id]
+
     async def switch_ai(self, machine_id, mode):
         self.ai_switches.append((machine_id, mode))
         machine = self.machines.get(machine_id)
@@ -160,6 +168,9 @@ class FakeRepo:
 
     async def get(self, row_id):
         return next((r for r in self.rows if r.id == row_id), None)
+
+    async def has_active_turn(self, machine):
+        return False
 
     async def lock_topic(self, _topic_id):
         return None
@@ -384,7 +395,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def ensure_topic_agent_user(self, _topic_id):
+        async def ensure_room_agent_user(self, _topic_id):
             return SimpleNamespace(id=41)
 
     class _Topics:
@@ -411,6 +422,37 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     assert first.topic_id == topic.id
     assert len(client.created) == 1
     authority.assert_awaited_once_with(topic.project_id, actor)
+
+    first.status = MachineStatus.suspended
+    first.last_seen_at = datetime.now(UTC)
+    client.machines[first.machine_id]["status"] = "suspended"
+    resumed = await service.ensure_topic_machine(topic.id)
+    assert resumed.id == first.id
+    assert resumed.status == MachineStatus.resuming
+    assert len(client.created) == 1
+
+
+async def test_suspend_preserves_identity_and_refuses_active_work():
+    from app.core.errors import ConflictError
+
+    cloud = FakeMicroCloud()
+    service = build_service(cloud)
+    machine = await service.provision(project_id=uuid.uuid4(), requested_by="owner")
+    cloud.machines[machine.machine_id].update(status="running", ip="10.0.0.7")
+    await service.refresh(machine)
+    before = (machine.id, machine.machine_id, machine.ip, machine.account_id)
+    service._repo.has_active_turn = AsyncMock(return_value=True)
+    with pytest.raises(ConflictError):
+        await service.suspend(machine)
+    assert cloud.machines[machine.machine_id]["status"] == "running"
+    service._repo.has_active_turn.return_value = False
+    await service.suspend(machine)
+    assert machine.status == MachineStatus.suspended
+    await service.resume(machine)
+    assert machine.status == MachineStatus.resuming
+    assert before == (machine.id, machine.machine_id, machine.ip, machine.account_id)
+    assert len(cloud.created) == 1
+    assert not cloud.deleted
 
 
 async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeypatch):
@@ -483,7 +525,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def ensure_topic_agent_user(self, _topic_id):
+        async def ensure_room_agent_user(self, _topic_id):
             return SimpleNamespace(id=41)
 
     service._session = _Session()

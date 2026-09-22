@@ -21,7 +21,7 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     native.deliver = AsyncMock(return_value=True)
     codex.deliver = AsyncMock(return_value=True)
     pool = ComputePool([native, codex], "device")
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     with pytest.raises(RuntimeError, match="multiple live harnesses"):
         await pool.deliver(session.topic_id, "ambiguous")
     await pool.activate(session, codex)
@@ -270,7 +270,48 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.provisions_machine is True
 
 
-def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
+def _register_pi(monkeypatch):
+    """把 pi 写回注册表，就为这一条测试。
+
+    它今天答不出四条硬性要求，所以不在 `HARNESSES` 里，池子也就不挂它（结论
+    43）。下面两条钉的是另一件事——**一旦它答得出，挂在哪几条通道上由什么判据
+    说**——那条判据是活代码，不能因为今天没有骨架走到它就没人守。
+    """
+    from app.domain.agent.harness import HARNESSES, PI, Harness, SubagentRequirement
+
+    monkeypatch.setitem(
+        HARNESSES,
+        PI,
+        Harness(
+            PI,
+            "pi",
+            subagents=dict.fromkeys(SubagentRequirement, "本条测试里假定它答得出"),
+            draws_on_its_screen=False,
+        ),
+    )
+
+
+def test_the_pool_runs_only_the_harnesses_the_registry_lists():
+    """答不出四条的骨架不在注册表里，也就不在池子里（结论 43）。
+
+    「不在注册表里」如果只是功能矩阵上少一列，它在运行时就还是活的：挂进池子的
+    backend 会被 `recover_sessions` 恢复、被 `bind_events` 交上房间侧的持久化、在
+    没有 owner 的时候被 `deliver` 按 `holds()` 找到。所以这条收缩要在装配那一步
+    可判。
+    """
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, PI
+
+    pool = build_compute_pool()
+
+    assert set(HARNESSES) == {CLAUDE_CODE}
+    for machine in pool.machines():
+        assert pool.select(provider_id=machine, harness=CODEX) is None
+        assert pool.select(provider_id=machine, harness=PI) is None
+        assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is not None
+
+
+def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine(monkeypatch):
     """pi 挂在哪几条通道上，由地点的能力位说。
 
     pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
@@ -278,7 +319,7 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
     上，两条都挂 pi；而每一条被 ``CentralChannel`` 包出来的 backend 手在执行机上，
     一条 pi 都没有。
 
-    这一条只看今天这份池的内容；判据换没换形状由下一条钉。
+    这一条只看这份池的内容；判据换没换形状由下一条钉。
     """
     from unittest.mock import AsyncMock
 
@@ -286,6 +327,7 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.harness import CLAUDE_CODE, PI
 
+    _register_pi(monkeypatch)
     cloud = CloudChannel(
         configured=True,
         ensure_topic_cloud=AsyncMock(),
@@ -302,7 +344,7 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
         assert wrapped.channel.capabilities() == frozenset()
 
 
-def test_a_place_whose_hands_are_elsewhere_gets_no_pi():
+def test_a_place_whose_hands_are_elsewhere_gets_no_pi(monkeypatch):
     """负向对照：把判据换回 ``isinstance(c, DeviceChannel)``，这一条红。
 
     ``hands_here = False`` 的通道进这个池，说的是「会话进程在一台机器上，工具要再
@@ -316,6 +358,8 @@ def test_a_place_whose_hands_are_elsewhere_gets_no_pi():
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import CLAUDE_CODE, PI
+
+    _register_pi(monkeypatch)
 
     class Elsewhere(DeviceChannel):
         name = "elsewhere"

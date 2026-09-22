@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestRankIntegration:
@@ -21,8 +21,8 @@ class TestRankIntegration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Rank Test Space ({suffix})",
                 "intro": "Test space for ranks",
@@ -40,6 +40,16 @@ class TestRankIntegration:
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         default_category_id = space_data["defaultCategoryId"]
+
+        # The participant has to be in the 题目版 to read it at all: a board
+        # answers only the people in it, and that includes the ones ranking up
+        # inside it. The creator puts them in, the way a teacher would.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
@@ -525,8 +535,8 @@ class TestRankIntegration:
         suffix = unique_int(10000000, 99999999)
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Rank Prog Space ({suffix})",
                 "intro": "Test space",
@@ -540,6 +550,15 @@ class TestRankIntegration:
         )
         space_id = space_resp.json()["data"]["space"]["id"]
         default_category_id = space_resp.json()["data"]["space"]["defaultCategoryId"]
+
+        # In the 题目版, or the rank they earn inside it is unreadable to them:
+        # the board answers only the people in it.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         task1_resp = api_client.post(
             "/tasks",
@@ -659,8 +678,8 @@ class TestRankIntegration:
         suffix = unique_int(10000000, 99999999)
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Another Rank Space ({suffix})",
                 "intro": "Test space",
@@ -674,6 +693,15 @@ class TestRankIntegration:
         )
         space_id = space_resp.json()["data"]["space"]["id"]
         default_category_id = space_resp.json()["data"]["space"]["defaultCategoryId"]
+
+        # In the 题目版, or the rank they earn inside it is unreadable to them:
+        # the board answers only the people in it.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         task1_resp = api_client.post(
             "/tasks",

@@ -9,11 +9,13 @@
 在数字身份那一层被当成访客）。要 `require_auth_user` 就会把第二种挡在门外，而
 harness 正是用第二种在敲门。`/awaiting-me` 是同一个先例。
 
-访客能读公开列表，写操作要身份。私密条目的可见性并集（管理员 ∪ 提交者本人）在
-`services.FeedbackService.may_see`，不在这一层 —— 路由拿不到判断权，就不会漏。
+访客能读公开列表，写操作要身份。私密条目的可见性并集（管理员 ∪ 提交者本人 ∪ 提出它
+的那个房间当时的成员、且今天还读得到那个房间）在 `services.FeedbackService.may_see`，
+不在这一层 —— 路由拿不到判断权，就不会漏。
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -101,8 +103,10 @@ async def _detail(
     return view.model_dump(mode="json")
 
 
-def _is_admin(service: feedback_services.FeedbackService, handle: str | None) -> bool:
-    return service.is_admin(handle)
+async def _is_admin(
+    service: feedback_services.FeedbackService, handle: str | None
+) -> bool:
+    return await service.is_admin(handle)
 
 
 @router.get("/meta")
@@ -124,8 +128,10 @@ async def get_feedback_meta(
         status_ladder=list(feedback_services.STATUS_LADDER),
         tabs=list(feedback_services.PUBLIC_TABS),
         admin_tabs=list(feedback_services.ADMIN_TABS),
-        hot_supports=feedback_services.repo.HOT_SUPPORTS,
-        is_admin=_is_admin(service, who.handle if who.authenticated else None),
+        hot_score=feedback_services.repo.HOT_SCORE,
+        hot_half_life_days=feedback_services.repo.HOT_HALF_LIFE_DAYS,
+        hot_min_items=feedback_services.repo.HOT_MIN_ITEMS,
+        is_admin=await _is_admin(service, who.handle if who.authenticated else None),
     )
     return ok(meta.model_dump(mode="json"))
 
@@ -152,6 +158,7 @@ async def get_feedback_counts(
         hot=counts["hot"],
         active=counts["active"],
         resolved=counts["resolved"],
+        deployed=counts["deployed"],
         unread=counts["unread"],
     )
     return ok(payload.model_dump(mode="json"))
@@ -203,6 +210,14 @@ async def list_feedback(
     tab: str = Query(default="all"),
     q: str | None = Query(default=None, max_length=200),
     sort: str = Query(default="new"),
+    #: 四个筛选：作者 / 状态 / 类型 / 起始时间。**都是可选的，缺省即不筛** —— 所以
+    #: 老的调用方（一个都不传）行为一字不变。不认识的 status / kind 报 400（见
+    #: `services.list_public`），`author` 和 `since` 是自由值：前者是个人名，后者是
+    #: 一个时刻，都不该由服务端维护一张词表。
+    author: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, max_length=32),
+    kind: str | None = Query(default=None, max_length=32),
+    since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
@@ -215,7 +230,15 @@ async def list_feedback(
         # so nobody reaches this by hand.
         raise BadRequestError(f"未知的视图：{tab}")
     rows, total = await service.list_public(
-        tab=tab, q=q, sort=sort, limit=page_size, offset=page_start
+        tab=tab,
+        q=q,
+        sort=sort,
+        limit=page_size,
+        offset=page_start,
+        author=author,
+        status=status,
+        kind=kind,
+        since=since,
     )
     items = await _cards(service, rows, handle=handle)
     return ok({**page(items, total), "counts": await service.counts(handle=handle)})
@@ -229,9 +252,9 @@ async def create_feedback(
 ) -> dict:
     """提一条反馈。
 
-    `visibility` 是提交者的选择，只在这一次决定：私密条目只有管理员和提交者本人
-    看得见（并集在 `services.may_see`），而管理员**没有**把它改公开的入口 ——
-    那是唯一一个本人无法撤销的改动，所以不给。
+    `visibility` 是提交者的选择，只在这一次决定：私密条目只有管理员、提交者本人、以及
+    提出它的那个房间当时的成员看得见（并集在 `services.may_see`），而管理员**没有**
+    把它改公开的入口 —— 那是唯一一个本人无法撤销的改动，所以不给。
 
     agent **不能**走这条路：`services.create` 会拒（§5.2）。agent 的入口是
     `cheese feedback propose`，它落的是一张提案卡，由人在卡上按发送 ——
@@ -249,7 +272,7 @@ async def create_feedback(
     )
     return ok(
         await _detail(
-            service, row, handle=who.handle, is_admin=service.is_admin(who.handle)
+            service, row, handle=who.handle, is_admin=await service.is_admin(who.handle)
         )
     )
 
@@ -264,11 +287,42 @@ async def get_feedback(
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
     row = await service.visible_row(
-        feedback_id, handle=handle, is_admin=service.is_admin(handle)
+        feedback_id, handle=handle, is_admin=await service.is_admin(handle)
     )
     return ok(
-        await _detail(service, row, handle=handle, is_admin=service.is_admin(handle))
+        await _detail(
+            service, row, handle=handle, is_admin=await service.is_admin(handle)
+        )
     )
+
+
+@router.delete("/{feedback_id}")
+async def delete_feedback(
+    feedback_id: uuid.UUID,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+) -> dict:
+    """删掉一条反馈 —— **作者删自己的，平台管理员删任何一条**。
+
+    两种 4xx 分得很清楚，因为它们是两件事：
+
+    * **404** 是「你看不见这条」（`visible_row` 的答案）。私人反馈存不存在本身就不该
+      被一个看不见它的人问出来，所以这里不告诉他自己没有权限 —— 那等于确认了它存在。
+    * **403** 是「你看得见，但这不是你的」（`may_delete_feedback` 的答案）。
+
+    删除是**软删**（`deleted_at`，连带评论）。管理员删的是别人写的东西，那是需要留痕
+    的一类动作，而行还在就是那条痕。前端不自己判断能不能删：每一条上都有服务端算好的
+    `can_delete`，按钮照它画。
+    """
+    who = await resolver.resolve(fallback_handle=None)
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError("需要登录")
+    await service.delete_feedback(
+        feedback_id,
+        handle=who.handle,
+        is_admin=await service.is_admin(who.handle),
+    )
+    return ok({"deleted": True})
 
 
 @router.get("/{feedback_id}/comments")
@@ -302,7 +356,7 @@ async def list_feedback_comments(
     """
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
-    is_admin = service.is_admin(handle)
+    is_admin = await service.is_admin(handle)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
     try:
         if parent_id is not None:
@@ -343,7 +397,7 @@ async def create_feedback_comment(
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
-    is_admin = service.is_admin(who.handle)
+    is_admin = await service.is_admin(who.handle)
     comment, _ = await service.comment(
         feedback_id,
         body.body,
@@ -379,7 +433,7 @@ async def delete_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok({"deleted": True})
 
@@ -404,7 +458,7 @@ async def like_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -423,7 +477,7 @@ async def unlike_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -442,7 +496,7 @@ async def support_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.support(
-        feedback_id, handle=who.handle, is_admin=service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
 
@@ -457,6 +511,6 @@ async def unsupport_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.unsupport(
-        feedback_id, handle=who.handle, is_admin=service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))

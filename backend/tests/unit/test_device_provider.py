@@ -1,6 +1,7 @@
 """DeviceChannel: turn orchestration + hook→AgentEvent translation (injected hub)."""
 
 import asyncio
+import json
 import os
 import subprocess
 import time
@@ -32,15 +33,11 @@ from app.domain.device.supply import Supply, Visibility
 
 @pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
-    """Default every test to a device that brings no ccproxy identity.
+    """The backend addresses this device at the base it was built with.
 
-    `_device_ccproxy_upstream` hits the database, and these tests run without
-    one. Tests about the machine-ticket signal override this with a real value."""
-
-    async def none(_self, _device_id):
-        return ""
-
-    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
+    (A device that brings no ccproxy identity is the whole layer's default, in
+    `tests/unit/conftest.py`; the tests about the machine-ticket signal
+    override it with a real value.)"""
 
     async def public_base(self, _device_id):
         return self._public_base
@@ -306,7 +303,7 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     recovered = await provider.recover("dev1")
 
-    assert recovered == [SessionRef(project_id, topic_id)]
+    assert recovered == [SessionRef(project_id, topic_id, harness="claude-code")]
     assert channel._subscription_devices[topic_id] == "dev1"
     await provider.replay(recovered[0], known_texts=set())
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
@@ -421,7 +418,7 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     async def agent(self, topic):
         return SimpleNamespace(id=1, username="agent")
 
-    monkeypatch.setattr(IdentityService, "ensure_topic_agent_user", agent)
+    monkeypatch.setattr(IdentityService, "ensure_room_agent_user", agent)
     monkeypatch.setattr(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )
@@ -432,7 +429,9 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
         result = await central.discover("center")
     screen = hub.screen("survivor")
-    assert result == [(project_id, topic_id, screen, None)]
+    # 第四位是这条会话跑的骨架，从会话行上原样交回来的——中心通道不按骨架挑，
+    # 认领是 runtime 拿自己的骨架去判的（``Channel.discover`` 的契约）。
+    assert result == [(project_id, topic_id, screen, "claude-code")]
     assert screen.resource_id == resource_id
     assert screen.credential_expires == 1234567890
     assert screen.agent_configuration == "original-config"
@@ -812,7 +811,7 @@ async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
     router = HookRouter()
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    session = SessionRef(project_id, topic_id)
+    session = SessionRef(project_id, topic_id, harness="claude-code")
     try:
         if api == "send":
             call = provider.send(
@@ -1408,65 +1407,17 @@ def test_a_device_is_warned_about_a_box_local_model_endpoint(monkeypatch, caplog
 
     with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
         _warn_if_model_endpoint_is_box_local(
-            {"ANTHROPIC_BASE_URL": "http://172.17.0.1:4000"}, "machine-1"
+            {"HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444"}, "machine-1"
         )
     assert any("only resolves on the backend" in r.getMessage() for r in caplog.records)
 
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
         _warn_if_model_endpoint_is_box_local(
-            {"ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic"},
+            {"HTTPS_PROXY": "http://cheese:tok@meter.example:8444"},
             "machine-1",
         )
     assert not caplog.records, "a reachable endpoint must not be flagged"
-
-
-@pytest.mark.anyio
-async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
-    """The credential must stay on the box.
-
-    A machine used to be handed the raw provider key in its environment, in
-    plain sight of anyone on that host — it was readable straight out of a tmux
-    command line — and its spend landed in the invoice under one
-    undifferentiated key, which is why a week of it could not be attributed to
-    anything. It now gets the backend's own model route and its scoped token,
-    and the backend substitutes the project's virtual key on the way through.
-    """
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "anthropic_auth_token", "UPSTREAM-PROVIDER-KEY")
-    monkeypatch.setattr(settings, "anthropic_base_url", "https://provider.example")
-
-    class RecordingHub(FakeHub):
-        def __init__(self) -> None:
-            super().__init__()
-            self.env: dict = {}
-
-        async def open_screen(self, device_id, command, **kw):
-            self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, **kw)
-
-    hub = RecordingHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-
-    await provider._ensure_screen(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
-        token="scoped-token-for-this-topic",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
-    )
-
-    blob = repr(hub.env)
-    assert "UPSTREAM-PROVIDER-KEY" not in blob, "the provider key reached the machine"
-    assert "provider.example" not in blob, "the machine was pointed at the upstream"
-    # The route is root-mounted (`/llm`), like /sandbox and /connector: the
-    # base already maps 1:1 onto the backend root — see routes/llm_proxy.py.
-    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
-    assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-token-for-this-topic"
 
 
 # --- subscription parity (#325 G2): device turns ride the metering proxy --------
@@ -1488,14 +1439,12 @@ class SubRecordingHub(FakeHub):
 
 
 def _subscription_settings(monkeypatch, tmp_path) -> str:
-    """Point the backend at a readable proxy CA and switch the subscription on.
-    Returns the CA text so tests can assert it reaches the device."""
+    """Point the backend at a readable proxy CA whose text a test can assert on."""
     from app.core.config import settings
 
     ca = "-----BEGIN CERTIFICATE-----\nMETERCA\n-----END CERTIFICATE-----\n"
     ca_path = tmp_path / "proxy-ca.pem"
     ca_path.write_text(ca)
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca_path))
     monkeypatch.setattr(settings, "subscription_proxy_host", "172.17.0.1")
     monkeypatch.setattr(settings, "subscription_device_proxy_host", "")
@@ -1521,6 +1470,58 @@ async def _subscription_screen(
         launch=ClaudeLaunch(system_prompt="", model=model),
     )
     return hub, project, topic
+
+
+# --- 一种启动环境，里面没有模型（结论 46、不变量 I17 ④）--------------------
+# Which model a request runs on is decided at one control point — admission,
+# when the request reaches the metering proxy — and the proxy writes the answer
+# into the request body. A model name in the launch environment would be a
+# second declaration of what the card's binding already says, and nobody could
+# write down which of the two wins.
+
+
+@pytest.mark.anyio
+async def test_the_launch_environment_is_the_same_whatever_model_is_bound(
+    monkeypatch, tmp_path
+):
+    """启动环境里没有模型。绑定变了，启动环境一个键都不变。"""
+    _subscription_settings(monkeypatch, tmp_path)
+
+    unbound, _, _ = await _subscription_screen()
+    subscription_bound, _, _ = await _subscription_screen(model="opus")
+    pool_bound, _, _ = await _subscription_screen(model="glm-5.2")
+
+    assert set(unbound.env) == set(subscription_bound.env) == set(pool_bound.env)
+    for hub in (unbound, subscription_bound, pool_bound):
+        # CHEESE_MODEL_PROXY says the meter accepts model hosts; it names none.
+        assert [k for k in hub.env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
+        assert "CLAUDE_MODEL" not in hub.env
+        # And the one transport, whichever pool the project is on: no base URL
+        # (it flips the CLI out of subscription mode), the meter on HTTPS_PROXY.
+        assert "ANTHROPIC_BASE_URL" not in hub.env
+        assert hub.env["HTTPS_PROXY"]
+
+
+def test_a_machine_launch_script_never_names_a_model():
+    """The env is not the only channel: `claude --model` would put the same
+    second declaration on the command line."""
+    from app.domain.agent.harness.claude_code.device_launch import launch_holes
+
+    machine = launch_holes(system_prompt="你是芝士。", remote_control=True)
+
+    assert not [k for k in machine.env if "MODEL" in k], machine.env
+    script = "".join(
+        (
+            machine.command,
+            machine.contract,
+            machine.staging,
+            machine.configure,
+            machine.credentials,
+            machine.prepare,
+        )
+    )
+    assert "--model" not in script
+    assert "CLAUDE_MODEL" not in script
 
 
 @pytest.mark.anyio
@@ -1640,47 +1641,6 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     assert env["SOME_OTHER"] == "kept"
 
 
-# CLI 把模型名写进请求体的全部通道：主回复走 `claude --model`，标题 / 文件建议 /
-# 每一个子 agent 走 family 别名。
-_BODY_MODEL_KEYS = [
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "CLAUDE_MODEL",
-]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("model", "keys"),
-    [
-        # 走网关池：四个键说的是同一件事，所以要么都在，要么都不在。
-        ("deepseek-flash", _BODY_MODEL_KEYS),
-        ("glm-5.2", _BODY_MODEL_KEYS),
-        # 订阅模型到这里已经是 Claude 的全名，CLI 自带的别名默认本来就指着 Claude
-        # 的型号，没有要说的。
-        ("claude-sonnet-5", ["CLAUDE_MODEL"]),
-    ],
-)
-async def test_the_launch_env_says_the_model_once_and_only_into_the_body(
-    monkeypatch, tmp_path, model, keys
-):
-    """一个控制点（结论 46）：走哪个池、用哪个模型，在请求到计量代理问准入的那
-    一刻解析。启动环境里这几个键不是第二份声明，它们是**把解析出来的那个名字送
-    进请求体**的唯一通道 —— LiteLLM 只从请求体读模型名，而代理今天不改写请求体
-    （`_route_to_gateway` 只换 host 和凭据）。
-
-    这条断言锁的是「一共就这几个，一个不多」。它们一起消失在代理改写请求体模型名
-    的那一天（结论 46「要做的两件」，P34）。
-    """
-    _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(model=model)
-    assert "ANTHROPIC_BASE_URL" not in hub.env
-    assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    assert sorted(key for key in hub.env if key.endswith("_MODEL")) == keys
-    assert all(hub.env[key] == model for key in keys)
-
-
 @pytest.mark.anyio
 async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_path):
     """凭据里签一个型号，等于把启动那一刻的选择带到每一次准入 —— 同样是第二份
@@ -1709,34 +1669,6 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
 
     with pytest.raises(ScreenSetupError, match="SUBSCRIPTION_CA_BACKEND_PATH"):
         await _subscription_screen()
-
-
-@pytest.mark.anyio
-async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
-    monkeypatch,
-):
-    """subscription_enabled=False keeps the /llm gateway path byte-for-byte: a
-    deployment without the metering proxy must not lose device compute."""
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
-    monkeypatch.setattr(settings, "agent_model", "glm-4.7")
-    hub = SubRecordingHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    await provider._ensure_screen(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
-        token="scoped-tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
-    )
-    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
-    assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-tok"
-    assert hub.env["CLAUDE_MODEL"] == "glm-4.7"
-    assert "HTTPS_PROXY" not in hub.env
 
 
 def test_a_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
@@ -2073,9 +2005,6 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
 ):
     import time
 
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2113,9 +2042,6 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
 
 @pytest.mark.anyio
 async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2145,9 +2071,6 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
 
 @pytest.mark.anyio
 async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2173,8 +2096,6 @@ async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
     # And the machine is told what it is, so a backend that restarts can
     # ask the connector rather than guess.
     assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
-    assert hub.envs[-1]["CLAUDE_MODEL"] == "requested-model"
-    assert hub.envs[-1]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "requested-model"
 
 
 @pytest.mark.anyio
@@ -2190,9 +2111,6 @@ async def test_a_changed_harness_argv_replaces_the_screen_that_has_the_old_one(
     the executor it is handed, and every reused screen kept running the old
     thing with nothing anywhere saying so.
     """
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2212,9 +2130,12 @@ async def test_a_changed_harness_argv_replaces_the_screen_that_has_the_old_one(
     first = await ensure()
     assert await ensure() is first
 
-    # Same agent configuration, different argv — `--remote-control` is decided
-    # by the harness out of what the room is, not by the caller's config hash.
-    second = await ensure(CHEESE_REMOTE_CONTROL="1")
+    # Same agent configuration, different argv — handing the room's work to an
+    # executor is decided by the harness out of what the room is, not by the
+    # caller's config hash.
+    second = await ensure(
+        CHEESE_EXECUTION_TARGET=json.dumps({"machine": "m1", "workdir": "/w"})
+    )
 
     assert second.sid != first.sid
     assert hub.closed == [first.sid]
@@ -2226,9 +2147,6 @@ async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
     running. Their files are at the old place and their processes are pointed
     there; a deploy that changed the root and reused them would leave each room
     half under each."""
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2368,7 +2286,7 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
     say about it, and the session survives it."""
     hub = FakeHub()
     provider = _provider(hub, HookRouter(), uuid.uuid4())
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     screen = await hub.open_screen(
         "dev1",
         "claude",

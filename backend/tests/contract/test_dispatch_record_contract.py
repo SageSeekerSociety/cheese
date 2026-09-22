@@ -41,6 +41,7 @@ from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import DeviceHub
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.services import ProjectService
@@ -408,6 +409,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
             AgentSession(
                 topic_id=topic.id,
                 agent_handle="cheese",
+                harness=deployment_harness(),
                 runtime_location={
                     "device_id": _MACHINE,
                     "channel": "device",

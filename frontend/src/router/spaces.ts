@@ -26,7 +26,7 @@ export default {
       component: () => import('@/layouts/spaces/SpacesTasks.vue'),
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
-        title: '赛题',
+        title: '题目',
         icon: { type: 'icon', value: 'mdi-cube-outline' },
       },
       children: [
@@ -82,7 +82,7 @@ export default {
             header: () => import('@/components/common/PageHeader.vue'),
           },
           meta: {
-            title: '赛题',
+            title: '题目',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
@@ -91,7 +91,7 @@ export default {
               name: 'TasksDetail',
               component: () => import('@/views/tasks/detail/Overview.vue'),
               meta: {
-                title: '赛题概览',
+                title: '题目概览',
                 disableBreadcrumbLink: true,
               },
             },
@@ -139,7 +139,7 @@ export default {
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
-            title: '编辑赛题',
+            title: '编辑题目',
             backTo: 'TasksDetail',
           },
         },
@@ -208,6 +208,13 @@ export default {
           name: 'SpacesDetailAnalyticsParticipants',
           component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
         },
+        {
+          // 学习读的是学生项目里的对话，上面五格读的是赛题与报名表 —— 两套数据，
+          // 所以筛选那一栏里它只认时间，学生与知识点是这一格自己的。
+          path: 'learning',
+          name: 'SpacesDetailAnalyticsLearning',
+          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
+        },
       ],
     },
     {
@@ -224,6 +231,11 @@ export default {
       path: 'manage/domain-groups',
       name: 'SpacesDetailManageDomainGroups',
       component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
+    },
+    {
+      path: 'manage/invite-codes',
+      name: 'SpacesDetailManageInviteCodes',
+      component: () => import('@/views/spaces/detail/ManageInviteCodes.vue'),
     },
     {
       path: 'discussions',

@@ -157,10 +157,24 @@ def _topic(client, topic_id: str) -> dict:
     return client.get(f"/topics/{topic_id}").json()["data"]
 
 
+def _chat_service():
+    """生产上轮询器拿到的就是这一个 ChatService（`deps.get_chat_service` 的单例）。"""
+    from app.api.deps import get_chat_service
+    from app.main import app
+
+    return app.dependency_overrides[get_chat_service]()
+
+
 def _poll(client) -> dict:
-    r = client.post("/admin/scheduler/poll-open-prs")
-    assert r.status_code == 200
-    return r.json()["data"]
+    """跑一轮合并态轮询。
+
+    在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：轮询会 `submit`
+    真正的轮次，它们得落在 work runner 所在的那个循环上——生产上这一轮也正是
+    从那里跑的（`app/core/background.py` 的 "pr poll"）。
+    """
+    from app.domain.review import pr_poll
+
+    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
 
 
 def _room(client, topic_id: str) -> str:
@@ -692,6 +706,79 @@ def _set_merge_since(client, card_id: str, iso: str) -> None:
 
 
 # ============================ 点击 = 当场合并 ================================
+
+
+@pytest.mark.parametrize("removed", [False, True])
+@pytest.mark.parametrize("action", ["accept", "override", "auto"])
+def test_queued_accept_stays_pending_until_github_merges(
+    client, app_world, monkeypatch, removed, action
+):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+    enqueues = []
+
+    async def enqueue(**kwargs):
+        enqueues.append(kwargs)
+        return github_pr.MergeResult(queued=True)
+
+    async def in_queue(**kwargs):
+        return not removed
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", in_queue, raising=False)
+    if action == "auto":
+        _protect(client, pid, auto_merge_allowed=True)
+        response = _arm(client, cid, "alice")
+        _poll(client)
+    elif action == "override":
+        response = _merge_anyway(client, cid, "alice", reason="test")
+    else:
+        response = _accept(client, cid)
+    assert response.status_code == 200, response.text
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_merged_at"] is None
+    _poll(client)
+    _poll(client)
+    assert len(enqueues) == 1
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    if removed:
+        assert "离开合并队列" in card["note"]
+    else:
+        assert "等待队列检查" in card["note"]
+        fake.merge_externally(number)
+        _poll(client)
+        card = _cards(client, tid)[0]
+        assert card["status"] == "accepted"
+        assert card["decided_by"] == "alice"
+
+
+@pytest.mark.parametrize("action", ["reject", "void"])
+def test_cancelling_queued_card_dequeues_first(client, app_world, monkeypatch, action):
+    fake = app_world["fake"]
+    _pid, tid, cid, _number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+    calls = []
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def dequeue(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "dequeue_pull_request", dequeue, raising=False)
+    assert _accept(client, cid).status_code == 200
+    response = client.post(
+        f"/accept-cards/{cid}/{action}",
+        json={"decided_by": "alice", "note": "cancel"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    assert _cards(client, tid)[0]["status"] in ("rejected", "revoked")
 
 
 @pytest.mark.parametrize("parent_closed", [False, True])

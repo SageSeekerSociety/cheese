@@ -5,7 +5,7 @@ import json
 import uuid
 
 from app.core import sandbox_auth as sa
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 
 
 def test_scoped_token_roundtrip_matches_only_its_claims():
@@ -47,51 +47,84 @@ def test_is_valid_accepts_scoped_or_global():
 
 
 def test_token_payload_has_no_secret():
-    tok = sa.mint_scoped_token(project_id="P", topic_id="T")
+    """项目、地点、谁在做、到期——名单是封闭的，而这四个里没有一个是卡。
+
+    往里加一个卡的 id 是很自然的一步（「这样就能按卡拒绝单个请求了」），而结论 53
+    放弃的正是那件事：账按项目记，拒绝本来就在项目额度这一层，卡上「这条活花了多
+    少」是从 hook 事件的用量按线程标识算出来的，不靠模型请求自己报。签进凭据的东
+    西撤不回来，所以这里多一个键的那一天，就是「请求归卡」回来的那一天。
+    """
+    tok = sa.mint_scoped_token(project_id="P", topic_id="T", agent_handle="cheese-1")
     body = tok.split(".", 1)[0]
     payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     assert set(payload) == {"p", "t", "exp", "a"}
     assert sa.SANDBOX_TOKEN not in body  # the signing secret never ships in the token
 
 
-# --- 分身独立身份: a token says WHO acts, not just where ------------------------
+# --- an agent signs with its own handle: a token says WHO acts, not just where -
 
 
-def test_token_names_the_topics_agent():
-    """Without this claim every 分身 collapsed into one platform account: an
-    action could not be traced to the 分身 that took it."""
-    topic = uuid.uuid4()
-    tok = sa.mint_scoped_token(project_id="P", topic_id=str(topic))
-    assert sa.token_agent_handle(tok) == topic_agent_handle(topic)
+def test_token_names_the_agent_it_was_minted_for():
+    """Without this claim every agent collapsed into one platform account: an
+    action could not be traced to the agent that took it."""
+    agent = agent_instance_handle(uuid.uuid4())
+    tok = sa.mint_scoped_token(project_id="P", topic_id="T", agent_handle=agent)
+    assert sa.token_agent_handle(tok) == agent
 
 
-def test_two_topics_get_two_identities():
-    a, b = uuid.uuid4(), uuid.uuid4()
+def test_two_agents_in_one_room_keep_two_identities():
+    """A room may seat several agents. Anything the room could answer here
+    would give both of them one name — so the room answers nothing, and the two
+    tokens keep the two names they were minted with."""
+    room = str(uuid.uuid4())
     handles = {
-        sa.token_agent_handle(sa.mint_scoped_token(project_id="P", topic_id=str(t)))
-        for t in (a, b)
+        sa.token_agent_handle(
+            sa.mint_scoped_token(project_id="P", topic_id=room, agent_handle=who)
+        )
+        for who in (
+            agent_instance_handle(uuid.uuid4()),
+            agent_instance_handle(uuid.uuid4()),
+        )
     }
     assert len(handles) == 2
 
 
-def test_the_same_topic_always_gets_the_same_identity():
-    """Derived, not allocated — a re-minted token names the same 分身, so its
-    roster seat (and everything authored under it) stays valid across turns."""
-    topic = str(uuid.uuid4())
-    first = sa.mint_scoped_token(project_id="P", topic_id=topic)
-    second = sa.mint_scoped_token(project_id="P", topic_id=topic)
-    assert sa.token_agent_handle(first) == sa.token_agent_handle(second)
+def test_one_agent_keeps_one_identity_across_rooms():
+    """The same agent in two rooms is one collaborator: its seat, and
+    everything authored under it, stays valid wherever it is standing."""
+    agent = agent_instance_handle(uuid.uuid4())
+    minted = {
+        sa.token_agent_handle(
+            sa.mint_scoped_token(
+                project_id="P", topic_id=str(uuid.uuid4()), agent_handle=agent
+            )
+        )
+        for _ in range(2)
+    }
+    assert minted == {agent}
 
 
-def test_project_scoped_token_names_no_agent():
-    """A project-wide capability (git-http / LLM proxy) is not a 分身 acting."""
+def test_a_token_minted_without_an_agent_claims_no_identity():
+    """Minting derives no name: a project-wide capability (git-http / LLM proxy)
+    names nobody because it names no room either, and a room-scoped token that
+    pinned no teammate leaves the answer to that room's roster instead of to a
+    name derived here — which would put writes into an agent's audit trail on
+    the strength of where the token was minted."""
     assert sa.token_agent_handle(sa.mint_scoped_token(project_id="P")) is None
+    assert (
+        sa.token_agent_handle(sa.mint_scoped_token(project_id="P", topic_id="T"))
+        is None
+    )
 
 
 def test_identity_is_signed_not_merely_carried():
     """The claim is inside the HMAC body — swapping it invalidates the token, so
     a sandbox cannot rename itself into another 分身."""
-    tok = sa.mint_scoped_token(project_id="P", topic_id=str(uuid.uuid4()))
+    tok = sa.mint_scoped_token(
+        project_id="P",
+        topic_id=str(uuid.uuid4()),
+        agent_handle=agent_instance_handle(uuid.uuid4()),
+    )
     body, sig = tok.split(".", 1)
     payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     payload["a"] = "cheese-deadbeefcafe"
@@ -104,6 +137,11 @@ def test_identity_is_signed_not_merely_carried():
 
 
 def test_expired_or_garbage_token_names_nobody():
-    expired = sa.mint_scoped_token(project_id="P", topic_id=str(uuid.uuid4()), ttl_s=-1)
+    expired = sa.mint_scoped_token(
+        project_id="P",
+        topic_id=str(uuid.uuid4()),
+        ttl_s=-1,
+        agent_handle=agent_instance_handle(uuid.uuid4()),
+    )
     assert sa.token_agent_handle(expired) is None
     assert sa.token_agent_handle("not-a-token") is None

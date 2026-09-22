@@ -7,12 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.agent.harness import harness_name
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    initial_model,
-    validate_configuration,
-)
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import preset_types
@@ -21,11 +16,11 @@ from app.domain.identity.handles import (
     CHEESE_NAME,
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
-    topic_agent_handle,
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
+from app.domain.topic_membership.services import TopicMemberService
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
 # contain the separator, and it travels through URLs and prompts.
@@ -50,25 +45,25 @@ class ResolvedAgent:
     configuration: dict = field(default_factory=dict)
 
 
+def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
+    """一个新 agent 的出厂设置：这个类型的人设、技能、外部工具。
+
+    不带项目，因为它不再需要一个——它曾经要项目是为了替这个 agent 挑一个模型，
+    而模型不是 agent 的属性了（结论 3）。
+    """
+    preset = preset_types().get(type_name) if type_name else None
+    if preset is None:
+        return AgentConfiguration()
+    return AgentConfiguration(
+        body=preset.body,
+        skills=list(preset.skills),
+        mcp_servers=list(preset.mcp_servers),
+    )
+
+
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
     """The pool this agent's memory lives in, inside this project."""
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
-
-
-def legacy_topic_pool(
-    project_id: uuid.UUID, topic_id: uuid.UUID
-) -> tuple[MemoryScope, str]:
-    """The pool a room's 分身 wrote to while memory was keyed by topic.
-
-    Nothing new lands here — writes go to the agent's own pool — but a room that
-    accumulated facts under its per-topic handle must keep reading them, or the
-    day this shipped is the day 芝士 forgot everything it had learned in that
-    room. Not migrated on purpose: merging the pools is a separate piece of work
-    that has to wait for injection to stop being a flat 50-fact dump.
-    """
-    return MemoryScope.agent_project, agent_project_scope_id(
-        project_id, topic_agent_handle(topic_id)
-    )
 
 
 class AgentInstanceService:
@@ -88,8 +83,8 @@ class AgentInstanceService:
         A room does not have an agent: it seats members, and which of its agents
         answers is decided by who a message addresses. What a room falls back to
         is the project's default. A private 1:1 with a teammate is the one place
-        the topic itself names its other party — its `private_peer` is that
-        teammate's seat, the way a DM with a person names the person.
+        nobody has to address anybody: the room holds two seats, so the teammate
+        is the seat that is not the person's.
         """
         peer = await self._dm_teammate(topic, project)
         if peer is not None:
@@ -101,13 +96,22 @@ class AgentInstanceService:
     ) -> ResolvedAgent | None:
         """The teammate a private 1:1 is with, when it is with a saved one.
 
+        Read off the roster, which is where a private chat's two seats live
+        (结论 19): 「谁被点名」 follows from the room holding exactly two of
+        them, so a DM needs no @ and no second place recording who its other
+        party is.
+
         A DM whose peer is a room-derived seat (opened before teammates had
-        seats of their own, in a project that had no saved default to name)
-        returns None and is answered by the project's default, as it always was.
+        seats of their own, in a project that had no saved default to name),
+        and one whose roster is no longer two seats, return None and are
+        answered by the project's default, as they always were.
         """
         if not topic.is_private:
             return None
-        return await self.for_seat_handle(project, topic.private_peer)
+        seats = await TopicMemberService(self._session).private_seats(topic.id)
+        if seats is None:
+            return None
+        return await self.for_seat_handle(project, seats[1])
 
     async def for_seat_handle(
         self, project: Project, handle: str | None
@@ -159,14 +163,6 @@ class AgentInstanceService:
         """The role instructions saved on this agent."""
         return agent.configuration.get("body") or None
 
-    async def harness(self, agent: ResolvedAgent) -> str:
-        """The execution harness saved on this agent."""
-        return harness_name(agent.configuration.get("harness"))
-
-    async def model(self, agent: ResolvedAgent) -> str | None:
-        """The explicit model saved on this agent."""
-        return agent.configuration.get("model")
-
     # --- management ---------------------------------------------------------
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
@@ -207,9 +203,8 @@ class AgentInstanceService:
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
             raise ValidationError(f"这个项目里已经有 handle 为 {handle!r} 的 agent")
         await self._require_known_type(type_name)
-        project = await self._project(project_id)
-        config = configuration or await self.initial_configuration(project, type_name)
-        validate_configuration(config, project.settings)
+        config = configuration or initial_configuration(type_name)
+        await self._validate_model(project_id, config)
         instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
@@ -242,38 +237,28 @@ class AgentInstanceService:
         self, instance: AgentInstance, type_name: str | None
     ) -> AgentInstance:
         await self._require_known_type(type_name)
-        project = await self._project(instance.project_id)
-        config = await self.initial_configuration(project, type_name)
-        validate_configuration(config, project.settings)
-        instance.configuration = config.model_dump()
+        instance.configuration = initial_configuration(type_name).model_dump()
         instance.type_name = type_name or None
         return instance
-
-    async def initial_configuration(
-        self, project: Project, type_name: str | None = None
-    ) -> AgentConfiguration:
-        preset = preset_types().get(type_name) if type_name else None
-        harness = harness_name(preset.harness if preset else None)
-        return AgentConfiguration(
-            body=preset.body if preset else "",
-            # The harness first, and the model chosen for it: a preset that asks
-            # to run on something other than the default would otherwise start
-            # pointed at a model that harness cannot drive, and fail validation
-            # on the way in for a combination nobody chose.
-            model=(preset.model if preset else None)
-            or initial_model(project.settings, harness),
-            harness=harness,
-            skills=list(preset.skills) if preset else [],
-            mcp_servers=list(preset.mcp_servers) if preset else [],
-            effort=preset.effort if preset else None,
-        )
 
     async def configure(
         self, instance: AgentInstance, config: AgentConfiguration
     ) -> None:
-        project = await self._project(instance.project_id)
-        validate_configuration(config, project.settings)
+        await self._validate_model(instance.project_id, config)
         instance.configuration = config.model_dump()
+
+    async def _validate_model(
+        self, project_id: uuid.UUID, config: AgentConfiguration
+    ) -> None:
+        if config.model is None:
+            return
+        from app.domain.agent_instance.configuration import model_choices
+
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        if config.model not in {item["id"] for item in model_choices(project.settings)}:
+            raise ValidationError("当前项目无法使用该模型，请选择可用模型")
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:
@@ -314,7 +299,9 @@ class AgentInstanceService:
         await self._session.flush()
         return await self.for_project(project)
 
-    async def materialize_default(self, project: Project) -> AgentInstance:
+    async def materialize_default(
+        self, project: Project, *, display_name: str | None = None
+    ) -> AgentInstance:
         """项目的默认 agent，没有就在这里播种——全仓唯一的播种函数。
 
         播种发生在两处：`ProjectService.create`（建项目时，和总览房间同一个事务），
@@ -346,8 +333,10 @@ class AgentInstanceService:
             handle=CHEESE_HANDLE,
             type_name=None,
             display_name=CHEESE_NAME,
-            configuration=(await self.initial_configuration(project)).model_dump(),
+            configuration=initial_configuration().model_dump(),
         )
+        if display_name is not None:
+            await self.rename(instance, display_name)
         # An agent gets its identity when it comes into being, and the project's
         # 芝士 comes into being here rather than in create(). Without it the
         # project's own room could not seat it under its own seat.
@@ -358,9 +347,6 @@ class AgentInstanceService:
         instance.is_active = True
         project.default_agent_instance_id = instance.id
         if project.root_topic_id is not None:
-            # 建项目时 ProjectService 就在这条链上，按调用时导入。
-            from app.domain.topic_membership.services import TopicMemberService
-
             await TopicMemberService(self._session).ensure_agent_seat(
                 project.root_topic_id, agent_instance_handle(instance.id)
             )
@@ -370,12 +356,6 @@ class AgentInstanceService:
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():
             raise ValidationError(f"agent 类型 {type_name!r} 不存在")
-
-    async def _project(self, project_id: uuid.UUID) -> Project:
-        # Project creation also creates its first agent, so import at call time.
-        from app.domain.project.services import ProjectService
-
-        return await ProjectService(self._session).get_or_404(project_id)
 
     @staticmethod
     def resolved(instance: AgentInstance) -> ResolvedAgent:

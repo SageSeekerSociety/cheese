@@ -16,7 +16,9 @@ from app.main import app
 from tests.integration.conftest import chat_ws_url
 
 
-def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_path):
+def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
+    client, tmp_path, monkeypatch
+):
     project_id = client.post("/projects", json={"name": "Cloud wait"}).json()["data"][
         "id"
     ]
@@ -58,7 +60,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
     seen: list[str] = []
     try:
         with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-            ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
+            ws.send_json({"type": "message", "content": "@芝士 不要丢掉我"})
             while True:
                 frame = ws.receive_json()
                 seen.append(frame["type"])
@@ -76,4 +78,24 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             message = next(block for block in blocks if block.kind == BlockKind.message)
             return message.content, prompt_attempts(message), consumed_turn(message)
 
-    assert asyncio.run(_pending_accounting()) == ("不要丢掉我", 0, None)
+    # 落库时 `@芝士` 被规范成这个房间的席位 token（点名归服务端算），人写的那句
+    # 原样跟在后面 —— 这一条要的是它还在、没被任何一轮吃掉。
+    content, attempts, consumed = asyncio.run(_pending_accounting())
+    assert content.endswith(" 不要丢掉我"), content
+    assert (attempts, consumed) == (0, None)
+
+    from app.domain.machine import progress
+
+    monkeypatch.setattr(progress, "async_session_factory", client.test_factory)
+
+    async def observe_startup():
+        await progress.startup_progress(uuid.UUID(topic_id), "正在下载连接器")
+        async with client.test_factory() as session:
+            blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
+            assert any(block.content == "正在下载连接器" for block in blocks)
+        # Progress must not clear the watermark that resumes the held message.
+        assert await override().cloud_waiting_topics([uuid.UUID(topic_id)]) == [
+            uuid.UUID(topic_id)
+        ]
+
+    asyncio.run(observe_startup())

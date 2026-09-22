@@ -40,6 +40,7 @@ class BaseError(Exception):
                 "name": self.name,
                 "message": self.args[0],
                 "data": self.data,
+                "retryable": False,
             },
         }
 
@@ -176,6 +177,7 @@ def format_error_response(status_code: int, message: str, name: str = "Error") -
         "message": f"{name}: {message}",
         "error": {
             "name": name,
+            "retryable": False,
             "message": message,
             "data": None,
         },
@@ -411,7 +413,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.code,
-            content={"code": exc.code, "message": exc.message, "data": None},
+            content={
+                "code": exc.code,
+                "message": exc.message,
+                "data": None,
+                "error": {
+                    "name": type(exc).__name__,
+                    "message": exc.message,
+                    "retryable": False,
+                },
+            },
         )
 
     @app.exception_handler(Exception)

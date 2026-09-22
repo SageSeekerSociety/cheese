@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -9,8 +10,9 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.notification.models import NotificationType
-from app.domain.notification.publisher import publish_notification_event
 from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
@@ -21,6 +23,46 @@ from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
 )
+from app.domain.user.services import handles_by_ids
+
+
+async def _notify(
+    session: AsyncSession,
+    application: TeamMembershipApplication,
+    *,
+    type_: NotificationType,
+    payload: dict[str, Any],
+    handed_to: Iterable[int] = (),
+    outcome_for: int | None = None,
+) -> None:
+    """把这条申请上刚发生的事交给投递账本。
+
+    这里的每一件事都长在一条 `team_membership_application` 上，而参与者和它的关系
+    只有两种：**卡递给了他**（申请等管理员审、邀请等被邀请的人回应），或者**他等
+    的东西有了结果**（申请被批/被拒、邀请被接受/被谢绝/被取消）。两种都是
+    `delivery/addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
+
+    下一步一定在参与者手上：这几件事发生的那一刻，平台这边已经做完了。
+
+    收件人翻成 handle 再交出去（I11）—— 调用点手里是自己算出来的用户 id，而投递
+    那一侧只认名册上的名字。
+    """
+    reviewers = await handles_by_ids(session, handed_to)
+    waiting = await handles_by_ids(session, [outcome_for] if outcome_for else [])
+    await deliver(
+        session,
+        DeliveryEvent(
+            id=event_id_for(type_, application.id),
+            type=type_,
+            payload=payload,
+            # 申请最后一次变化的时刻就是这件事发生的时刻，不是走到这一行的时刻。
+            occurred_at=application.updated_at,
+        ),
+        address(
+            Event(reviewers=reviewers, reporter=waiting[0] if waiting else None),
+            Hand.participant,
+        ),
+    )
 
 
 class TeamMembershipService:
@@ -97,24 +139,22 @@ class TeamMembershipService:
         )
         saved = await self._app_repo.save(app)
 
-        admin_ids = await self._team_repo.list_admin_and_owner_ids(team_id)
-        if admin_ids:
-            payload: dict[str, Any] = {
-                "requester": {"type": "user", "id": str(user_id)},
-                "team": {"type": "team", "id": str(team_id)},
-                "application": {
-                    "type": "team_membership_application",
-                    "id": str(saved.id),
-                },
-                "message": message or "",
-            }
-            await publish_notification_event(
-                self._session,
-                recipient_ids=admin_ids,
-                type_=NotificationType.TEAM_JOIN_REQUEST,
-                payload=payload,
-                actor_id=user_id,
-            )
+        payload: dict[str, Any] = {
+            "requester": {"type": "user", "id": str(user_id)},
+            "team": {"type": "team", "id": str(team_id)},
+            "application": {
+                "type": "team_membership_application",
+                "id": str(saved.id),
+            },
+            "message": message or "",
+        }
+        await _notify(
+            self._session,
+            saved,
+            type_=NotificationType.TEAM_JOIN_REQUEST,
+            payload=payload,
+            handed_to=await self._team_repo.list_admin_and_owner_ids(team_id),
+        )
 
         return saved
 
@@ -181,12 +221,12 @@ class TeamMembershipService:
             "role": saved.role,
             "message": message or "",
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={user_id_to_invite},
+            saved,
             type_=NotificationType.TEAM_INVITATION,
             payload=payload,
-            actor_id=initiator_user_id,
+            handed_to=[user_id_to_invite],
         )
         return saved
 
@@ -230,12 +270,12 @@ class TeamMembershipService:
             },
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={initiator_id},
+            app,
             type_=NotificationType.TEAM_INVITATION_ACCEPTED,
             payload=payload,
-            actor_id=user_id,
+            outcome_for=initiator_id,
         )
 
     async def decline_team_invitation(
@@ -266,12 +306,12 @@ class TeamMembershipService:
             },
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={initiator_id},
+            app,
             type_=NotificationType.TEAM_INVITATION_DECLINED,
             payload=payload,
-            actor_id=user_id,
+            outcome_for=initiator_id,
         )
 
     async def approve_team_join_request(
@@ -319,12 +359,12 @@ class TeamMembershipService:
             },
             "requester": {"type": "user", "id": str(requester_id)},
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={requester_id},
+            app,
             type_=NotificationType.TEAM_REQUEST_APPROVED,
             payload=payload,
-            actor_id=approver_user_id,
+            outcome_for=requester_id,
         )
 
     async def reject_team_join_request(
@@ -364,12 +404,12 @@ class TeamMembershipService:
             },
             "requester": {"type": "user", "id": str(requester_id)},
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={requester_id},
+            app,
             type_=NotificationType.TEAM_REQUEST_REJECTED,
             payload=payload,
-            actor_id=rejector_user_id,
+            outcome_for=requester_id,
         )
 
     async def cancel_team_invitation(
@@ -409,12 +449,12 @@ class TeamMembershipService:
             },
             "invitedUser": {"type": "user", "id": str(invited_user_id)},
         }
-        await publish_notification_event(
+        await _notify(
             self._session,
-            recipient_ids={invited_user_id},
+            app,
             type_=NotificationType.TEAM_INVITATION_CANCELED,
             payload=payload,
-            actor_id=canceler_user_id,
+            outcome_for=invited_user_id,
         )
 
     async def list_my_invitations(

@@ -46,7 +46,9 @@ async def test_recovery_keeps_other_rooms_when_one_subscription_fails(monkeypatc
             raise DeviceCallError("dial unix: no such file")
 
     monkeypatch.setattr(runtime, "ensure_subscription", subscribe)
-    assert await runtime.recover() == [SessionRef(project, healthy)]
+    assert await runtime.recover() == [
+        SessionRef(project, healthy, harness="claude-code")
+    ]
     assert runtime.holds(broken)
 
 
@@ -264,6 +266,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
         e
         async for e in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -304,6 +307,7 @@ async def test_failed_precheck_never_touches_the_router():
         e
         async for e in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=_uuid.uuid4(),
             topic_id=topic_id,
             prompt="x",
@@ -556,6 +560,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -615,6 +620,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -670,6 +676,7 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -716,6 +723,7 @@ async def test_run_refuses_to_clobber_existing_attribution():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="inspect",
@@ -782,6 +790,7 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -831,6 +840,7 @@ async def test_run_turn_stop_drains_a_partial_message():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -1036,6 +1046,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -1128,9 +1139,9 @@ async def test_an_accepted_prompt_survives_a_late_first_receipt():
     provider.bind_events(consume)
     try:
         await provider.send(
-            SessionRef(project_id=project_id, topic_id=topic_id),
+            SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
             "Finish the current command, then answer this message.",
-            Opening(system_prompt=""),
+            Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
             work_id=_uuid.uuid4(),
             on_mark=lambda _work: None,
         )
@@ -1162,7 +1173,7 @@ async def test_session_credential_names_the_selected_agent_and_explicit_scope():
     runtime = ClaudeCodeRuntime(Capture(), router=HookRouter())
     try:
         await runtime.ensure(
-            SessionRef(project_id, topic_id),
+            SessionRef(project_id, topic_id, harness="claude-code"),
             Opening(system_prompt="", agent_handle="selected-agent"),
         )
         claims = scoped_token_claims(issued[0])
@@ -1249,9 +1260,9 @@ async def _let_the_close_reach_its_decision() -> None:
 async def _one_topic_mid_hook(provider, router, project_id, topic_id):
     """Start a turn and hand its Stop to the consumer."""
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1379,9 +1390,9 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     provider.bind_events(consume_and_fail)
 
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1412,9 +1423,9 @@ async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
     import uuid as _uuid
 
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )

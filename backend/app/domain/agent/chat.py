@@ -34,18 +34,20 @@ from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
-from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
+from app.domain.agent.harness import (
+    Opening,
+    SessionRef,
+    harness_for,
+    runtime_for,
+)
 from app.domain.agent.harness.prompt import (
-    KICKOFF_PROMPT,
     attachment_prompt_line,
     build_system_prompt,
-    chipify_paths,
     platform_prompt,
     prompt_line,
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -96,12 +98,9 @@ from app.domain.agent.tool_preview import (
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    legacy_topic_pool,
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.models import AlertKind, AlertLevel
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -120,11 +119,18 @@ from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
+    names_a_person,
 )
+from app.domain.membership.roster import roster_rows
 from app.domain.memory.models import MemoryScope
+from app.domain.memory.pools import pools_for_turn
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
@@ -165,8 +171,6 @@ class _HookWorkState:
     topic_refs: list[dict]
     continuation_id: uuid.UUID | None
     route: str
-    is_private: bool
-    private_owner: str | None
     acting_agent: str
     # Attribution and memory part ways here, deliberately: `acting_agent` is
     # the seat of the agent that ran this turn (who did it), while the pool
@@ -232,7 +236,6 @@ class _TurnContext:
     agent_pool: tuple[MemoryScope, str] | None
     role: str | None
     roster: list[dict]
-    is_private: bool
     private_owner: str | None
     untitled: bool
     # 本周教学范围 (#8d772257). None for every project that is not a course —
@@ -255,9 +258,12 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
+    # 项目总览那一份实况文档：全项目共看的东西住在这里（结论 7）。总览房间自己
+    # 那一轮是 None —— 它的 `doc_text` 就是这一份，说两遍只会让模型以为是两份。
+    overview_doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
-    topic_stage: TopicStage | None
+    topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -267,6 +273,9 @@ class _TurnContext:
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
     provider: ComputeProvider
+    # 这一轮跑在哪个骨架上，解析过一次的那个答案（结论 28）。会话行的键里有它，
+    # 所以执行那一半必须读这里，不能自己再解析一次。
+    harness: str
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
@@ -279,6 +288,19 @@ class _TurnBail:
     machine is still being built."""
 
     frames: list[dict]
+
+
+@dataclass(frozen=True, slots=True)
+class _Proposed:
+    """闸门把这次调用变成了一条提议：那条提议，和它在房间里刚落下的那条事件。
+
+    `landed` 是 `None` 表示这条提议之前就提过了（`policy/proposals.py` 按身份去
+    重）。两个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话
+    来抛。
+    """
+
+    proposal: gate.Proposal
+    landed: dict | None
 
 
 # How long a message's spooled flushes may sit incomplete (no final flush, no
@@ -650,6 +672,49 @@ def _resolve_compute_id(
     from app.domain.agent.compute_configs import project_configs
 
     return topic_compute_profile or project_configs(project_settings).default.profile
+
+
+def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
+    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
+
+    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
+    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
+
+    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
+    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
+    给一个猜出来的人。
+    """
+    choices = binding.catalog(project.settings)
+    bound = binding.resolve(
+        None,
+        choices,
+        agent_model=agent.configuration.get("model")
+        if agent and not subagent
+        else None,
+        default_model=(project.settings or {}).get("default_subagent_model")
+        if subagent
+        else None,
+    )
+    return gate.Call(
+        resource=gate.Resource.model,
+        subject=bound.model,
+        label=choices[bound.model]["label"],
+        tier=choices[bound.model]["tier"],
+        approver=project.owner_handle or "",
+    )
+
+
+def _proposal_frames(landed: dict | None) -> list[dict]:
+    """撞上档位策略的那一轮怎么收场：房间里刚落下的那条提议，然后 done。
+
+    没有 error 帧——这一轮没有发生，但也没有出错，下一步在提议收件人手上（结论
+    40）。`landed` 是 `None` 时这条提议之前就提过了，房间里不再多一句一样的话。
+    """
+    frames: list[dict] = []
+    if landed is not None:
+        frames.append({"type": "event_block", "block": landed})
+    frames.append({"type": "done"})
+    return frames
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -1121,6 +1186,30 @@ def _is_out_of_credit(detail: str | None) -> bool:
     return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
 
 
+def _is_dm(topic: Topic) -> bool:
+    """这间房是不是一间私聊。**这是 `is_private` 在这个文件里唯一的读点。**
+
+    私聊是项目内名册两席的房间（结论 19），这一轮凡是「私聊要不一样」的地方，答
+    案都从这里推出来，不再各自问一遍那个布尔：同一件事问 N 遍，N 遍的判据就会各
+    自漂移，这次退役的正是漂开了的三十处。推出来的是两件事：
+
+    - **这间房没有名册。**私聊不暴露成员列表，`@` 解析不到项目里的第三个人：解
+      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目成员里没有这个 handle」
+      的 ⚠️。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
+      `_notify_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
+    - **这一轮不租地点**（`needs_place`，结论 19、不变量 I2）：不碰仓库文件、不
+      跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。它桌上只有
+      对话、记忆和平台工具，加上会话自己那块 64 MiB 草稿区（不是一个地点，随会
+      话生灭）。
+
+    问的是这间房的性质，**不是名册上此刻坐了几个人**。「两席里的人是哪一位」由
+    `_private_owner` 答，席位不齐时它答 None，而一间私聊的正文不会因为席位不齐
+    就可以广播出去。两个问题分开问，是因为它们答错的后果不同：答不出「对面是
+    谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
+    """
+    return topic.is_private
+
+
 class ChatService:
     def __init__(
         self,
@@ -1255,7 +1344,7 @@ class ChatService:
         topic_id: uuid.UUID,
         author: str,
         content: str,
-        summon: bool = True,
+        summon: bool,
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
@@ -1275,7 +1364,23 @@ class ChatService:
 
         ``continuation_id`` is the logical unit of work this turn belongs to — a
         turn and every auto-resume of it share one, so a message the interrupted
-        attempt already posted is not posted again (④)."""
+        attempt already posted is not posted again (④).
+
+        ``summon`` 没有默认值：这一轮跑不跑是**调用点算出来的一个答案**（由
+        `runtime._a_turn_was_addressed` 从寻址结果读出），不是一个可以不写、写不写
+        都默认「跑」的开关。给它默认值，就等于平台又有了一条不点名也能起轮次的路。
+        """
+        # 谁写了这一轮的正文：不是人写的，就是平台写的。判据是**作者**，不是
+        # 「带没带 nudge」—— 平台那几条投递（机器接入、环境修好、记忆整理、闸门红
+        # 了…）作者一律是 `system`，正文是平台写的一段提示词，把它当人话落进时间
+        # 线就是让平台冒充人说话。房间里那一行由谁写是另一件事，见下面。
+        platform_wrote_this = (
+            is_resume or nudge_event is not None or not names_a_person(author)
+        )
+        # 平台指令那一档：下面 `_converse_impl` 用它保证这段指令不会被房间里的待读
+        # 消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 一段话重新递上来，两边都拼就是同一句说两遍。
+        platform_turn = platform_wrote_this and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
         # If live work ends during either operation, queueing is still a fallback
         # from the user's attempted live handoff and must be reported.
@@ -1285,7 +1390,7 @@ class ChatService:
             and nudge_event is None
             and self.has_running_turn(topic_id)
         )
-        if is_resume or nudge_event:
+        if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
             # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
@@ -1297,14 +1402,19 @@ class ChatService:
             # the长文 (CI 日志 / 检查输出 / 冲突文件清单) so the room stays
             # glanceable while nothing is lost. `content` is untouched: it is
             # still the whole instruction 芝士 gets as its prompt.
-            if not nudge_event:
+            if is_resume and not nudge_event:
                 nudge_event = resume_reason or "平台重发了上一轮的消息"
-            payload = await self.post_system_event(
-                topic_id, nudge_event, turn_id, meta=nudge_meta
-            )
-            if payload is None:
-                raise NotFoundError("Topic not found")
-            yield {"type": "event_block", "block": payload}
+            # 开场白留空 = 调用点已经自己写好了那一行。Cloud 机器接入就是这一种：
+            # 那一行同时是房间的生命周期记录，必须在这一轮排队之前就落库，否则算力
+            # 闸一拒就永远不写（见 api/deps.py 的 `deliver_held`）。这一轮照样不说
+            # 人话 —— 只是这次没有第二句要说。
+            if nudge_event is not None:
+                payload = await self.post_system_event(
+                    topic_id, nudge_event, turn_id, meta=nudge_meta
+                )
+                if payload is None:
+                    raise NotFoundError("Topic not found")
+                yield {"type": "event_block", "block": payload}
             if not summon:
                 yield {"type": "done"}
                 return
@@ -1396,6 +1506,7 @@ class ChatService:
                 is_resume=is_resume,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                platform_turn=platform_turn,
             ):
                 yield frame
 
@@ -1786,33 +1897,6 @@ class ChatService:
         """
         return self._active_turn_ids.get(topic_id) == turn_id
 
-    async def kickoff(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None = None,
-        prompt: str | None = None,
-    ) -> AsyncIterator[dict]:
-        """An agent turn triggered by a PLATFORM EVENT, not a posted message:
-        分身自动开工 after a split/upgrade (default prompt), or the parent
-        digesting a returned conclusion (custom prompt). No fake human block is
-        posted — the instruction is prompt-only, so the visible result is only
-        what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
-        turn_id = turn_id or uuid.uuid4()
-        async with self._prompt_lock(topic_id, turn_id):
-            async for frame in self._converse_impl(
-                topic_id=topic_id,
-                content=prompt or KICKOFF_PROMPT,
-                turn_id=turn_id,
-                user_block_id=None,
-                # Same default converse() applies: the turn is its own unit of
-                # work, so an auto-resume re-saying a message it already posted
-                # is recognized (④) — kickoff turns ran unprotected before.
-                continuation_id=turn_id,
-                platform_turn=True,
-            ):
-                yield frame
-
     async def post_system_event(
         self,
         topic_id: uuid.UUID,
@@ -1847,22 +1931,8 @@ class ChatService:
 
     async def cloud_waiting_topics(self, topic_ids: list[uuid.UUID]) -> list[uuid.UUID]:
         """Topics whose latest durable Cloud lifecycle event is still waiting."""
-        waiting: list[uuid.UUID] = []
         async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            for topic_id in topic_ids:
-                history = await blocks.list_for_topic(topic_id)
-                cloud_events = [
-                    block
-                    for block in history
-                    if (block.meta or {}).get("event_type") == "cloud_provisioning"
-                ]
-                if (
-                    cloud_events
-                    and (cloud_events[-1].meta or {}).get("state") == "waiting"
-                ):
-                    waiting.append(topic_id)
-        return waiting
+            return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         """Admission facts the AgentWorkRunner gates on BEFORE running a turn
@@ -2042,15 +2112,21 @@ class ChatService:
         the broker so open clients see the backfill live."""
         async with self._sessions() as session:
             topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
-            return 0
+            if topic is None:
+                return 0
+            # 这间房的轮次跑在哪个骨架上（结论 28）——读 spool 的那个 ref 得和轮次
+            # 用的是同一个答案，不然读的是另一个骨架的日志。
+            project = await ProjectRepository(session).get(topic.project_id)
+        harness = harness_for(project.settings if project else None)
         from app.domain.agent.runtime import get_broker
 
         broker = get_broker()
         channel = str(topic_id)
         landed = 0
         async with self._lock_for(topic_id):
-            async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
+            async for frame in self._reconcile_spool(
+                topic.project_id, topic_id, None, harness=harness
+            ):
                 await broker.publish(channel, frame)
                 landed += 1
         return landed
@@ -2168,8 +2244,11 @@ class ChatService:
                     if agent_handle is None or harness is None:
                         agent = await self._agent_at(session, place)
                         agent_handle = agent_handle or agent.handle
-                        harness = harness or harness_name(
-                            agent.configuration.get("harness")
+                        # 事件没说骨架（老的 hook 流），就问这个项目跑的是哪
+                        # 个——同一个答法，和开这一轮用的那一个（结论 28）。
+                        owner = await ProjectRepository(session).get(place.project_id)
+                        harness = harness or harness_for(
+                            owner.settings if owner else None
                         )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
@@ -2239,28 +2318,31 @@ class ChatService:
             workers.pop(agent_id, None)
 
     async def _work_of_worker(
-        self, topic_id: uuid.UUID, agent_id: str | None
+        self, topic_id: uuid.UUID, thread_label: str | None
     ) -> uuid.UUID | None:
-        """Which piece of work this event belongs to, when a worker produced it.
+        """Which piece of work this event belongs to, read off the event itself.
 
-        Several workers run inside one session and everything they do arrives on
-        the same pipe as the session's own, told apart only by the id riding on
-        each payload — the main thread's hooks carry no such key at all, which is
-        what makes the id usable as the sole discriminator.
+        Several sub-threads run inside one session and everything they do
+        arrives on the same pipe as the session's own, told apart by the label
+        the agent gave each one when it spawned it (结论 43). The platform minted
+        that label when it opened the card, so this is a lookup and not a guess
+        — nobody has to have reported anything for a sub-thread's very first
+        event to reach its card.
 
-        None for two different situations that want the same handling: the room
-        itself did this, or a worker nobody bound did. Both land where they
-        landed before this existed, on the room's own line. Swallowing the
-        unbound one instead would make an unclaimed worker's whole run invisible,
-        which is worse than the attribution being coarse.
+        None for three situations that want the same handling: the room itself
+        did this, a sub-thread the harness started for its own purposes did, or
+        the label names work that is not open in this room. All land on the
+        room's own line, where they landed before any of this existed —
+        swallowing them instead would make a whole run invisible, which is worse
+        than the attribution being coarse.
         """
         from app.domain.room_task.services import TaskService
 
-        if not agent_id:
+        if not thread_label:
             return None
         async with self._sessions() as session:
-            task = await TaskService(session).open_by_subagent(
-                room_id=topic_id, subagent_id=agent_id
+            task = await TaskService(session).open_by_thread_label(
+                room_id=topic_id, thread_label=thread_label
             )
         return task.id if task is not None else None
 
@@ -2274,6 +2356,10 @@ class ChatService:
         nothing at all — no usage row, no conclusion cards settled, no change
         summary, and no interval to close, because none was ever opened. The
         room could not even tell you the turn had happened.
+
+        署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
+        「会话」两个字，结论 13），不是这条记录 —— 一个 worker 做完唤醒主线程，
+        那是同一个 handle 两条线程之间的一条便条，发件人就在这儿。
 
         Read rather than assembled: there is no prompt to build here, so this
         takes only what turn END needs, and takes it in one transaction. Two
@@ -2301,12 +2387,13 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
-                is_private = topic.is_private
-                private_owner = topic.private_owner
-            await get_work_runner().open_self_started_turn(self, topic_id, turn_id)
+            await get_work_runner().open_turn_the_session_started(
+                self, topic_id, turn_id, author=acting_agent
+            )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
-                "could not open a self-started turn (topic=%s, work=%s)",
+                "could not open the turn a session started for itself "
+                "(topic=%s, work=%s)",
                 topic_id,
                 turn_id,
             )
@@ -2326,8 +2413,6 @@ class ChatService:
             # turn closes next, which is exactly what happened before any of
             # this existed.
             route=self._session_route.get(topic_id, "native"),
-            is_private=is_private,
-            private_owner=private_owner,
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
@@ -2377,7 +2462,9 @@ class ChatService:
         task_id = (
             None
             if isinstance(event, AgentResult)
-            else await self._work_of_worker(topic_id, getattr(event, "agent_id", None))
+            else await self._work_of_worker(
+                topic_id, getattr(event, "thread_label", None)
+            )
         )
         # A thread's own channel is what its view subscribes to, and it is the
         # room's when there is no thread. Attributed frames must not go out on
@@ -2604,7 +2691,7 @@ class ChatService:
                     if state.self_started:
                         # No coroutine owns this one, so there is no `finally`
                         # anywhere else to drop the marks it left in the runner.
-                        get_work_runner().close_self_started_turn(turn_id)
+                        get_work_runner().close_turn_the_session_started(turn_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2794,11 +2881,9 @@ class ChatService:
                 if "@" in content
                 else []
             )
-            # Which agent each seat belongs to. A room may seat several, so one
-            # display name cannot stand for all of them: labelling every seat
-            # with the room's pointed-at agent made the other teammates
-            # unaddressable — their names matched nobody, so no mention token
-            # was written and nobody was ever recorded as addressed (#1192).
+            # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
+            # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
+            # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
             by_seat = (
                 {
                     agent_instance_handle(instance.id): instance
@@ -2809,10 +2894,25 @@ class ChatService:
                 if agent_handles
                 else {}
             )
+            # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
+            # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
+            # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
+            # 服务端算（I13），所以这里自己认下私聊这一档。
+            #
+            # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊
+            # 也是私聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两
+            # 个人的私密对话里说话。对面是谁只有名册一个出处（`private_seats`，
+            # 它答的 owner 那一席恒是人，所以只看 peer）；名册不是恰好两席时它答
+            # None，这条消息就不点名，和这间房其余各处的退路同向。
+            seats = (
+                await TopicMemberService(session).private_seats(topic.id)
+                if _is_dm(topic)
+                else None
+            )
             recipient = {
                 "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
-                "mentioned": False,
+                "mentioned": seats is not None and looks_like_agent_handle(seats[1]),
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -2839,26 +2939,40 @@ class ChatService:
                 # @handle / @话题名" is canonicalized into the structured token
                 # (<@alice> / <#id>) BEFORE the block is stored, so it renders
                 # as a clickable chip instead of leaking raw "@Alice" text.
-                # Private topics have no roster to resolve against (and expose
-                # no member list), so they store the content verbatim.
+                # 私聊没有名册可以解析（也不暴露成员列表），原样存下来。
+                # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
+                # 的名字，所以名字不再另拼一份——拼出来的那份就是第二份声明。
                 roster = (
                     []
-                    if topic.is_private or "@" not in content
-                    else await ProjectRepository(session).list_members(topic.project_id)
+                    if "@" not in content or _is_dm(topic)
+                    else await roster_rows(session, topic.project_id)
                 )
-                # Use the same room seat and display name as the mention picker,
-                # each seat under its own agent's name.
-                roster = [
-                    {
-                        "handle": handle,
-                        "name": (
-                            by_seat[handle].display_name
-                            if handle in by_seat
-                            else agent.display_name
-                        ),
-                    }
-                    for handle in agent_handles
-                ] + [row for row in roster if row["handle"] not in agent_handles]
+                # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
+                # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
+                # 等这间房的 agent 下次动手才迁，见 `migrate_shared_agent_seat`）在
+                # 项目名册上没有对应的行——名册上叫「芝士」的是项目的默认实例，
+                # 「@芝士」展开成它就等于 @ 了一个没坐在这间房里的队友：这一轮起不
+                # 来，通知还发给了它。反过来也成立：成员表里历史上落过的一行
+                # `cheese` 会以人的身份排在名册最前，在**正常**房间里把「@芝士」抢
+                # 成 <@cheese>。谁坐在这间房里，谁先答。
+                # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
+                # 的定位一致。
+                if roster and agent_handles:
+                    row_of = {row["handle"]: row for row in roster}
+                    seated = set(agent_handles)
+                    roster = [
+                        row_of[handle]
+                        if handle in row_of
+                        else {
+                            "handle": handle,
+                            "name": (
+                                by_seat[handle].display_name
+                                if handle in by_seat
+                                else agent.display_name
+                            ),
+                        }
+                        for handle in agent_handles
+                    ] + [row for row in roster if row["handle"] not in seated]
                 if roster:
                     topic_refs = [
                         {"id": str(t.id), "title": t.title}
@@ -3069,18 +3183,6 @@ class ChatService:
             raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
-    async def _agent_memory_pool(
-        self, session: AsyncSession, topic: Topic
-    ) -> tuple[MemoryScope, str]:
-        """Where the agent working in *topic* writes what it learns.
-
-        The AGENT owns the pool, not the room — a 芝士 that works in five rooms
-        of one project has one memory, which is what "the same 芝士" was
-        supposed to mean all along.
-        """
-        agent = await self._resolved_agent(session, topic)
-        return memory_pool(topic.project_id, agent)
-
     async def _recall_agent_memories(
         self,
         memory,
@@ -3091,24 +3193,27 @@ class ChatService:
     ) -> RecallResult:
         """What this 芝士 carries into every turn inside this project.
 
-        Its own pool first, then two read-only tails: what this ROOM learned
-        while memory was keyed by topic, and the shared ``project`` pool from
-        before memory was split per agent at all. Writes only ever go to the
-        first, so neither tail grows — but dropping them would make the day this
-        shipped look, from inside a room, exactly like amnesia.
+        Its own pool and one pool per person sitting with it (`pools_for_turn`
+        picks them; every key starts with this project's id, so nothing another
+        project learned about the same person is reachable from here). That is
+        the whole list — every memory belongs to one agent instance (结论 8),
+        so no pool here is shared with anyone.
+
+        什么都该看见的那些事实不在这里：它们是文档（结论 7），本轮另外读——
+        项目总览那一份和本房间那一份，作为文档进提示词，不冒充记忆。
 
         Only the core layer comes back; everything else is counted, not
         carried, and reached with `recall`. A pool nobody is told is bigger
         than what arrived is how memory quietly stops existing.
         """
-        own = (
-            memory_pool(topic.project_id, agent)
-            if agent is not None
-            else await self._agent_memory_pool(session, topic)
+        resolved = (
+            agent if agent is not None else await self._resolved_agent(session, topic)
         )
-        legacy = legacy_topic_pool(topic.project_id, topic.id)
-        pools = [own] + ([legacy] if legacy != own else [])
-        pools.append((MemoryScope.project, str(topic.project_id)))
+        pools = pools_for_turn(
+            topic.project_id,
+            resolved.handle,
+            await TopicMemberService(session).people_handles(topic.id),
+        )
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
@@ -3126,6 +3231,22 @@ class ChatService:
         if seat in await TopicMemberService(session).agent_handles(topic_id):
             return seat
         return await self._agent_handle(session, topic_id)
+
+    @staticmethod
+    async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
+        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
+
+        个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
+        一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
+
+        答的只是「人是哪一位」。「这间房是不是私聊」是另一个问题，由 `_is_dm` 答
+        （这个文件里 `is_private` 唯一的读点）：席位不齐的时候这里答 None，而那间
+        房仍然是私聊，名册和地点都不因为席位不齐就变回房间的那一套。
+        """
+        if not _is_dm(topic):
+            return None
+        seats = await TopicMemberService(session).private_seats(topic.id)
+        return seats[0] if seats is not None else None
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -3274,8 +3395,8 @@ class ChatService:
                 # as a non-member while silently dropping its notification.
                 roster = (
                     []
-                    if topic is None or topic.is_private
-                    else await ProjectRepository(session).list_members(project_id)
+                    if topic is None or _is_dm(topic)
+                    else await roster_rows(session, project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
@@ -3525,10 +3646,10 @@ class ChatService:
     ) -> dict | None:
         """A worker started, or handed something back — on ITS thread's line.
 
-        Nothing is written for a worker the platform never bound, and that is
-        not tidiness. Measured twice on 2.1.224: after the session's own Stop, a
-        SubagentStop arrives with an id matching no worker we saw, an empty
-        type, and a fragment of a prompt where the closing message should be —
+        Nothing is written for a sub-thread whose label names no card here, and
+        that is not tidiness. Measured twice on 2.1.224: after the session's own
+        Stop, a SubagentStop arrives with an id matching no worker we saw, an
+        empty label, and a fragment of a prompt where the closing message is —
         something inside Claude Code, not work anybody dispatched. Writing those
         would put a stranger's half-sentence in a room as if 芝士 had said it.
 
@@ -3540,6 +3661,10 @@ class ChatService:
         if task_id is None:
             return None
         if isinstance(event, AgentSubagentStart):
+            # 谁在做这张卡，是平台看见它开工的时候记下来的 —— 这条事件是第一个说
+            # 出这个分身 id 的东西（id 在容器里才诞生，派活的时候没有任何东西能提
+            # 前说出它）。卡上从此有一个分身在做，看板也就能问它还活着没有。
+            await self._note_worker(task_id, event.agent_id)
             # The platform's own sentence about a worker, not anybody's words —
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
@@ -3557,13 +3682,13 @@ class ChatService:
                 meta["transcript_path"] = event.transcript_path
             # 结论落在卡上, overwriting the previous stop's — the newest is what
             # the room reads when it decides whether the work is done. Only for
-            # a worker the platform bound (`task_id` is that check, above), so
-            # the fragments Claude Code's own internal agents stop with never
-            # become anybody's conclusion.
+            # a sub-thread whose label names this card (`task_id` is that check,
+            # above), so the fragments Claude Code's own internal agents stop
+            # with never become anybody's conclusion.
             await self._record_conclusion(task_id, event.text.strip())
         meta["agent_id"] = event.agent_id
-        if event.agent_type:
-            meta["agent_type"] = event.agent_type
+        if event.thread_label:
+            meta["thread_label"] = event.thread_label
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
@@ -3578,6 +3703,18 @@ class ChatService:
             # back is the whole reason anybody opens the thread.
             in_room=True,
         )
+
+    async def _note_worker(self, task_id: uuid.UUID, subagent_id: str) -> None:
+        """把做这条活的分身记在卡上。"""
+        from app.domain.room_task.services import TaskService
+
+        async with self._sessions() as session:
+            tasks = TaskService(session)
+            task = await tasks.get(task_id)
+            if task is None:
+                return
+            await tasks.note_worker(task, subagent_id)
+            await session.commit()
 
     async def _record_conclusion(self, task_id: uuid.UUID, text: str) -> None:
         from app.domain.room_task.services import TaskService
@@ -3694,11 +3831,25 @@ class ChatService:
         )
 
     async def _reconcile_spool(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        *,
+        harness: str,
     ) -> AsyncIterator[dict]:
         """Land what a session said while nobody was listening (backend down, or
         no listener during a prior turn) — idempotent by event id, best-effort,
         and never blocking the turn.
+
+        ``harness`` is the one this room's turns run on, resolved by the caller
+        — the ref that reads the spool carries the same answer the turn used,
+        rather than asking again and possibly getting a different one. Nothing
+        downstream reads it today: the spool is addressed by (project, topic)
+        in ``hooks_substrate.read_log``/``acknowledge_log``, and no ``backlog``
+        implementation looks at it — so a spool is NOT partitioned by harness.
+        It is required because ``SessionRef`` has no default harness (不变量
+        I5) and every construction point must be able to state its answer.
 
         The harness's ``backlog`` says WHAT was said; this decides what to do
         about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
@@ -3726,7 +3877,7 @@ class ChatService:
         phases_ms: dict[str, float] = {}
         event_count = 0
         try:
-            session_ref = SessionRef(project_id, topic_id)
+            session_ref = SessionRef(project_id, topic_id, harness=harness)
             backlog = self._compute.backlog(session_ref)
             spooled = backlog.unread()
             event_count = len(spooled)
@@ -3743,8 +3894,8 @@ class ChatService:
                 # like for like — see `_canon`.
                 roster = (
                     []
-                    if topic is None or topic.is_private
-                    else await ProjectRepository(session).list_members(project_id)
+                    if topic is None or _is_dm(topic)
+                    else await roster_rows(session, project_id)
                 )
                 topic_refs, _ = _topic_ref_lists(
                     await TopicRepository(session).list_for_project(project_id),
@@ -3809,7 +3960,7 @@ class ChatService:
                     backfilled=True,
                     at=message.at,
                     author=message.agent_handle,
-                    task_id=await self._work_of_worker(topic_id, message.agent_id),
+                    task_id=await self._work_of_worker(topic_id, message.thread_label),
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
@@ -3894,7 +4045,7 @@ class ChatService:
                             topic_id=topic_id,
                             event=event,
                             task_id=await self._work_of_worker(
-                                topic_id, event.agent_id
+                                topic_id, event.thread_label
                             ),
                             turn_id=turn_id,
                             eid=eid,
@@ -3918,7 +4069,7 @@ class ChatService:
                             eid=eid,
                             backfilled=True,
                             task_id=await self._work_of_worker(
-                                topic_id, event.agent_id
+                                topic_id, event.thread_label
                             ),
                         )
                         seen.add(eid)
@@ -3942,7 +4093,9 @@ class ChatService:
                         turn_id=turn_id,
                         eid=eid,
                         backfilled=True,
-                        task_id=await self._work_of_worker(topic_id, event.agent_id),
+                        task_id=await self._work_of_worker(
+                            topic_id, event.thread_label
+                        ),
                     )
                     seen.add(eid)
                     if block_payload is None:
@@ -3997,6 +4150,43 @@ class ChatService:
                 phases_ms,
             )
 
+    async def _pass_policy_gate(
+        self,
+        session: AsyncSession,
+        topic_id: uuid.UUID | None,
+        call: gate.Call,
+        policy: gate.Policy,
+        *,
+        actor: str,
+    ) -> _Proposed | None:
+        """闸门放行就返回 `None`；变提议就把提议落进房间，交回它和刚落下的那条事
+        件，收场由调用点自己写；拒绝照抛。
+
+        提议**不是报错**（结论 40：产物是一条给人的提议）。所以它不能顺着 `raise`
+        走：轮次那条路上抛出去的东西最后是屏幕上一个红色的 error 帧，而同一个判决
+        在 `PUT /topics/{id}/compute-profile` 上是 200 加一个 `proposal` 字段——一
+        个判决两种形状，人看到的还是「出错了」。拒绝仍然抛：那一档要的就是一次说
+        得出口的拒绝（I27），和「解析不出模型」在调用点是同一种东西。
+
+        交回来的那条事件可能是 `None`：这条提议已经提过了（`propose` 按身份去重）。
+        调用点照样收场，只是房间里不再多一句一样的话。
+
+        提议写在**调用方这条 session** 上，提交也归调用方——`propose` 欠的不变量是
+        「落库之后这次调用必须中止」，而收场的那一步本来就在调用点。
+
+        没有房间（项目级的调用）就落不下这条提议：提议是房间里的一条事件。那种情
+        形下超档只剩拒绝这一条路，闸门照抛。
+        """
+        verdict = gate.check(call, policy, actor)
+        if isinstance(verdict, gate.Allowed):
+            return None
+        if topic_id is None:
+            raise gate.OverTier(verdict.content)
+        block = await propose(session, verdict, place_id=topic_id)
+        return _Proposed(
+            verdict, _block_payload(BlockOut.model_validate(block)) if block else None
+        )
+
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
@@ -4045,33 +4235,53 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
-        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
-        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
-        # 工作占用的资源，不是参与者的属性。
-        #
-        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
-        # 而主线正是最长、最吃缓存的那条对话。
-        bound = binding.resolve(None, binding.catalog(project.settings))
-        supply = bound.supply
-        model = (
-            subscription_model_alias(bound.model)
-            if supply == SUBSCRIPTION
-            else bound.model
+        # A saved teammate may override the project main model.
+        bound = binding.resolve(
+            None,
+            binding.catalog(project.settings),
+            agent_model=agent.configuration.get("model"),
         )
+        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
+        # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
+        # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
+        #
+        # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
+        # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
+        # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
+        async with self._sessions() as session:
+            calls = [_model_policy_call(project, agent)]
+            child_call = _model_policy_call(project, subagent=True)
+            if child_call.subject != calls[0].subject:
+                calls.append(child_call)
+            for call in calls:
+                proposed = await self._pass_policy_gate(
+                    session,
+                    topic_id,
+                    call,
+                    gate.policy_of(project.settings),
+                    actor=acting_agent or agent.handle,
+                )
+                if proposed is not None:
+                    await session.commit()
+                    raise gate.OverTier(proposed.proposal.content)
+        supply = bound.supply
+        model = bound.wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
-            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
-            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
-            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
-            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
-            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
-            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
-            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
-            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
+            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
+            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
+            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
+            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
+            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
+            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
+            #
+            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
+            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
+            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
+            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
+            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
@@ -4079,6 +4289,9 @@ class ChatService:
                         "git_author": acting_agent,
                         "model": model,
                         "supply": supply,
+                        "subagent_model": (project.settings or {}).get(
+                            "default_subagent_model"
+                        ),
                     },
                     sort_keys=True,
                 )
@@ -4095,7 +4308,10 @@ class ChatService:
         ).hexdigest()
         kwargs: dict = {
             "model": model,
-            "env": {"CHEESE_AGENT_CONFIG": config_hash},
+            "env": {
+                "CHEESE_AGENT_CONFIG": config_hash,
+                "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+            },
             # Which conversation the turn belongs to, and so which session's
             # machines it runs on. Separate from `agent_handle` below, which is
             # the SEAT the turn authors under — the two are different strings
@@ -4305,14 +4521,14 @@ class ChatService:
         # Nobody needs a notification for their own message.
         targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
-            notifs = AlertService(session)
+            notifs = ProjectNotificationService(session)
             preview = markdown_preview(text, 200)
             who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
-                    level=AlertLevel.strong,
-                    kind=AlertKind.mention,
+                    level=NotificationLevel.strong,
+                    kind=NotificationType.MENTION,
                     title=f"{who} 在「{topic.title}」@了你",
                     body=preview,
                     target_handle=h,
@@ -4445,22 +4661,21 @@ class ChatService:
                 if b.kind == BlockKind.attachment and b.content
             ]
 
-            is_private = topic.is_private
-            # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
-            private_owner = topic.private_owner
+            # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
+            # 方，问的都是下面两个答案之一，不再各自问一遍那个布尔。
+            #
+            # 一、名册上那两席，人是哪一位（席位不齐时 None）。
+            private_owner = await self._private_owner(session, topic)
+            # 二、这一轮要不要一双手？见 `_is_dm`：不租地点的一轮桌上只有对话、
+            # 记忆和平台工具，加上会话自己那块 64 MiB 草稿区。
+            needs_place = not _is_dm(topic)
             acting_agent = await self._acting_handle(session, topic.id, agent)
-            doc_root = None if is_private else await blocks.doc_root(place.room_id)
+            doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            if is_private and private_owner:
-                # Private chat: the owner's cross-project personal memory.
-                memories = await recall_pools(
-                    memory, [(MemoryScope.user, private_owner)]
-                )
-            else:
-                memories = await self._recall_agent_memories(
-                    memory, session, topic=topic, agent=agent
-                )
+            memories = await self._recall_agent_memories(
+                memory, session, topic=topic, agent=agent
+            )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
@@ -4476,32 +4691,44 @@ class ChatService:
             teaching = await teaching_context.for_project(
                 session=session, project=project
             )
-            # Read the selected agent once so this turn's role and model agree.
+            # 人和 agent 共同看的那一份（结论 7）：项目总览房间的实况文档。它不是
+            # 记忆，所以不走召回那条路——写它的人（或 agent）留了痕，读它的每一间
+            # 房间读到的是同一份，而这正是共享记忆池做不到的两件事。
+            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它。
+            overview_root = (
+                await blocks.doc_root(project.root_topic_id)
+                if project is not None
+                and project.root_topic_id is not None
+                and project.root_topic_id != place.room_id
+                else None
+            )
+            overview_doc_text = overview_root.content if overview_root else None            # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            wanted_harness = await agents.harness(agent)
+            # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
+            # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
+            # 里有骨架，两处各自解析一次就够把一条会话拆成两条。
+            wanted_harness = harness_for(project.settings if project else None)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
+            # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
+            # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
+            # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `_notify_mentions`。
             roster = (
-                [] if is_private else await projects_repo.list_members(topic.project_id)
+                [] if _is_dm(topic) else await roster_rows(session, topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
             # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
-            topic_refs = []
-            topic_refs_for_prompt = []
-            if not is_private:
-                topic_refs, topic_refs_for_prompt = _topic_ref_lists(
-                    await topics.list_for_project(topic.project_id),
-                    exclude_id=topic.id,
-                )
-            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。私聊里不交付，所以
-            # 那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，前者要说话
-            # （第一次交付只能新建），后者一个字都不说，所以这里给的是 None 而不是 []。
+            topic_refs, topic_refs_for_prompt = _topic_ref_lists(
+                await topics.list_for_project(topic.project_id),
+                exclude_id=topic.id,
+            )
+            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
+            # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
+            # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
             artifact_refs = (
-                None
-                if is_private
-                else [
+                [
                     {
                         "id": str(a.id),
                         "name": a.name,
@@ -4512,6 +4739,8 @@ class ChatService:
                         session, topic.project_id
                     )
                 ]
+                if needs_place
+                else None
             )
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
@@ -4524,9 +4753,9 @@ class ChatService:
             resume_session_id = await AgentSessionService(session).resume_token(
                 place.room_id,
                 session_agent.handle,
-                harness=harness_name(session_agent.configuration.get("harness")),
+                harness=wanted_harness,
             )
-            untitled = not is_private and topic.title == PLACEHOLDER_TITLE
+            untitled = topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
@@ -4537,53 +4766,34 @@ class ChatService:
             # Read for the stage derivation below, and for nothing else: what
             # the cards SAY is `cheese_status`'s answer, and restating it in a
             # prompt only froze one turn's copy of it into the whole session.
-            open_cards = []
-            if not is_private:
-                open_cards = [
-                    c
-                    for c in await AcceptCardRepository(session).list_for_topic(
-                        topic_id
-                    )
-                    if c.status in _OPEN_CARD_STATUSES
-                ]
+            open_cards = [
+                c
+                for c in await AcceptCardRepository(session).list_for_topic(topic_id)
+                if c.status in _OPEN_CARD_STATUSES
+            ]
             # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
             # entirely from facts already in hand (kind/status + the open cards
             # just queried above for 盲飞防护) — no extra query.
-            topic_stage = (
-                None
-                if is_private
-                else resolve_stage(
-                    finished=topic.status == TopicStatus.archived,
-                    card_statuses=[c.status for c in open_cards],
-                )
+            topic_stage = resolve_stage(
+                finished=topic.status == TopicStatus.archived,
+                card_statuses=[c.status for c in open_cards],
             )
-            # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库文件、
-            # 不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。私聊
-            # 是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具。
-            needs_place = not is_private
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             compute_id = _resolve_compute_id(
                 project.settings if project else None,
                 topic.compute_profile,
             )
-            if needs_place and compute_id == "device" and topic.compute_config is None:
-                from app.domain.agent.compute_configs import (
-                    bind_room_device_choice,
-                )
-
-                await bind_room_device_choice(
-                    session, topic, project.settings if project else None
-                )
+            # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
+            # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
+            # 收场，房间读到的不是真正的原因。
             provider = self._compute.select(
                 provider_id=compute_id, harness=wanted_harness
             )
             if provider is None:
-                # The machine is fine; what runs on it is not what this agent's
-                # type asked for. Running Claude Code anyway would answer as an
-                # agent nobody configured — say so instead, and leave the type
-                # to be fixed. (One harness ships, so today this needs a row
-                # written before the field was validated at all.)
+                # The machine is fine; what this deployment runs is not
+                # deployed on it. Say so rather than starting something else:
+                # a turn taken on another harness is a turn nobody asked for.
                 return _TurnBail(
                     [
                         {
@@ -4594,13 +4804,67 @@ class ChatService:
                                 turn_id=turn_id,
                                 session=session,
                                 text=(
-                                    f"这个 agent 的类型要求用 {wanted_harness} "
-                                    "跑，而本话题选的机器上没有部署它，本轮没有开始。"
+                                    f"本话题选的机器上没有部署 {wanted_harness}，"
+                                    "本轮没有开始。"
                                 ),
                             ),
                         },
                         {"type": "done"},
                     ]
+                )
+            # 这一轮要占的两样东西 —— 哪台机器、哪个模型 —— 在这里一起过项目的档位
+            # 策略（结论 3 后半、结论 40 后半）。位置是**解析之后、占用之前**：再
+            # 往下就是写绑定、开机器、发请求，撞上策略的调用一旦走到那里，「这一轮
+            # 没有发生」就不再是真的 —— 而那正是提议与拒绝共同的前提。
+            #
+            # 房间从没打开过算力选择器也照样过闸门：决定一个房间占谁的机器的是这
+            # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
+            # 少数情形，它和这里问的是同一个闸门。
+            if project is not None:
+                actor_handle = acting_agent or agent.handle
+                policy = gate.policy_of(project.settings)
+                # 不限档的项目——今天的每一个——在机器这一侧一步也不多走：把「要哪
+                # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
+                # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
+                # 上也得透明，这是每一轮都走的路。
+                if needs_place and not policy.lets_everything_through:
+                    from app.domain.agent.compute_configs import (
+                        machine_policy_call,
+                        room_choice,
+                    )
+
+                    proposed = await self._pass_policy_gate(
+                        session,
+                        topic_id,
+                        await machine_policy_call(
+                            session,
+                            project=project,
+                            topic=topic,
+                            choice=room_choice(topic, project.settings),
+                        ),
+                        policy,
+                        actor=actor_handle,
+                    )
+                    if proposed is not None:
+                        await session.commit()
+                        return _TurnBail(_proposal_frames(proposed.landed))
+                proposed = await self._pass_policy_gate(
+                    session,
+                    topic_id,
+                    _model_policy_call(project, agent),
+                    policy,
+                    actor=actor_handle,
+                )
+                if proposed is not None:
+                    await session.commit()
+                    return _TurnBail(_proposal_frames(proposed.landed))
+            if needs_place and compute_id == "device" and topic.compute_config is None:
+                from app.domain.agent.compute_configs import (
+                    bind_room_device_choice,
+                )
+
+                await bind_room_device_choice(
+                    session, topic, project.settings if project else None
                 )
             # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
             if needs_place and provider.provisions_machine:
@@ -4667,8 +4931,8 @@ class ChatService:
             # never declared the capability keeps the old wording rather than
             # being told, wrongly, that it drops images.
             #
-            # No pending human block ⇒ nobody spoke: this is a resume nudge,
-            # a kickoff or a returned conclusion. Say so, rather than handing
+            # No pending human block ⇒ nobody spoke: this is a resume nudge
+            # or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
             backlog = "\n".join(
@@ -4735,7 +4999,7 @@ class ChatService:
             agent=agent,
             agent_pool=agent_pool,
             doc_text=doc_text,
-            is_private=is_private,
+            overview_doc_text=overview_doc_text,
             memories=memories,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
@@ -4744,6 +5008,7 @@ class ChatService:
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
+            harness=wanted_harness,
             needs_place=needs_place,
             replay_notice=replay_notice,
             resume_session_id=resume_session_id,
@@ -4804,7 +5069,7 @@ class ChatService:
         acting_agent = prepared.acting_agent
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
-        is_private = prepared.is_private
+        overview_doc_text = prepared.overview_doc_text
         memories = prepared.memories
         needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
@@ -4836,10 +5101,12 @@ class ChatService:
         # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
         # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
         # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
+        # 补的那几条说的正是「这一轮没有地点，只有会话自己那块草稿区」，所以
+        # 它跟着 `needs_place` 走，而不是再问一遍这间房是不是私聊。
         skills = (
-            "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
-            if is_private
-            else self._skills
+            self._skills
+            if needs_place
+            else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
         )
         system_prompt = build_system_prompt(
             self._base_prompt,
@@ -4847,10 +5114,15 @@ class ChatService:
             doc_text,
             memories.facts,
             role,
-            roster,
+            # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
+            # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
+            # 接的地方。@ 解析和通知那几路照旧走全量的 `roster`：老房间里已经在的
+            # 它仍要 @ 得到，停用挡的是新的活，不是已经接手的。
+            [m for m in roster if m["active"]],
             topic_refs_for_prompt,
             untitled,
             artifacts=artifact_refs,
+            overview_doc=overview_doc_text,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
             teaching=teaching,
@@ -4858,11 +5130,7 @@ class ChatService:
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
             ),
-            stage_guide=(
-                load_scenario(stage_scenario(topic_stage))
-                if topic_stage is not None
-                else None
-            ),
+            stage_guide=load_scenario(stage_scenario(topic_stage)),
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
@@ -4931,7 +5199,9 @@ class ChatService:
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for an empty spool.
-        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+        async for frame in self._reconcile_spool(
+            project_id, topic_id, turn_id, harness=prepared.harness
+        ):
             yield frame
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
@@ -4975,7 +5245,7 @@ class ChatService:
             for prior_key, prior in list(self._hook_work.items()):
                 if prior_key[0] == topic_id and prior.self_started:
                     self._hook_work.pop(prior_key, None)
-                    get_work_runner().close_self_started_turn(prior_key[1])
+                    get_work_runner().close_turn_the_session_started(prior_key[1])
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(
@@ -4988,8 +5258,6 @@ class ChatService:
                     topic_refs=topic_refs,
                     continuation_id=continuation_id,
                     route=route,
-                    is_private=is_private,
-                    private_owner=private_owner,
                     acting_agent=acting_agent,
                     agent_pool=agent_pool,
                     user_text=prompt_text,
@@ -5018,7 +5286,7 @@ class ChatService:
                 project_id,
                 topic_id,
                 prepared.agent.handle,
-                harness_name(prepared.agent.configuration.get("harness")),
+                harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -5027,8 +5295,8 @@ class ChatService:
                 Opening(
                     system_prompt=system_prompt,
                     resume_token=resume_session_id,
-                    memory_scope="personal" if is_private else None,
-                    owner=private_owner if is_private else None,
+                    memory_scope="personal" if private_owner else None,
+                    owner=private_owner,
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
                     agent_handle=acting_agent,
@@ -5193,7 +5461,10 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
-                    harness=harness_name(agent.configuration.get("harness")),
+                    # 这一轮真正跑在哪个骨架上，问跑它的那个适配器——平台自己起
+                    # 的活没有 agent 类型站在后面，``platform_work`` 给的是这台
+                    # 机器跑的东西（结论 28）。
+                    harness=runtime.harness,
                 )
             await session.commit()
 
@@ -5319,19 +5590,21 @@ class ChatService:
             projects = ProjectRepository(session)
             topics = TopicRepository(session)
             milestones = MilestoneRepository(session)
-            memory = memory_store(session)
 
             project = await projects.get(project_id)
             if project is None:
                 raise NotFoundError("Project not found")
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
-            # Deliberately the shared pool, not any one agent's memory: a project
-            # summary describes the project, and what a 芝士 learned for itself is
-            # not project knowledge.
-            memories = await recall_pools(
-                memory, [(MemoryScope.project, str(project_id))]
+            # 项目的状态在总览那份实况文档里，不在任何一个记忆池里（结论 7）：
+            # 一页纸总结描述的是这个项目，而记忆是某一个芝士自己的观察——拿它当
+            # 项目知识用，等于把一个实例看到的东西当成大家的共识写进总结。
+            overview_root = (
+                await BlockRepository(session).doc_root(project.root_topic_id)
+                if project.root_topic_id is not None
+                else None
             )
+            overview_doc = overview_root.content if overview_root else ""
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
             role = await agents.system_prompt(agent)
@@ -5348,13 +5621,10 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {chipify_paths(m)}" for m in memories.facts)
-        if memories.omitted:
-            mem_lines += f"\n- （另有 {memories.omitted} 条相关性较低的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            f"## 关键记忆\n{mem_lines or '（暂无）'}"
+            f"## 项目总览的实况文档\n{overview_doc.strip() or '（暂无）'}"
         )
         system_prompt = build_system_prompt(
             self._base_prompt,
@@ -5397,3 +5667,20 @@ class ChatService:
             await session.commit()
 
         return {"summary": final_text}
+
+
+async def cloud_waiting_topics(
+    session: AsyncSession, topic_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    waiting: list[uuid.UUID] = []
+    blocks = BlockRepository(session)
+    for topic_id in topic_ids:
+        history = await blocks.list_for_topic(topic_id)
+        events = [
+            b
+            for b in history
+            if (b.meta or {}).get("event_type") == "cloud_provisioning"
+        ]
+        if events and (events[-1].meta or {}).get("state") == "waiting":
+            waiting.append(topic_id)
+    return waiting

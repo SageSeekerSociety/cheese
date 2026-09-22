@@ -15,7 +15,7 @@ import uuid
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.config import settings
-from app.domain.agent.harness import AgentRuntime, runtime_for
+from app.domain.agent.harness import CODEX, HARNESSES, PI, AgentRuntime, runtime_for
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -115,7 +115,7 @@ class ComputePool:
     """
 
     def __init__(self, backends: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import DEFAULT_HARNESS
+        from app.domain.agent.harness import deployment_harness
 
         # Every backend runs a harness. Checked HERE, once, at wiring time: the
         # turn path then reads `runtime_for` as an answer rather than as a
@@ -125,7 +125,9 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
-        self._default = (default_name, DEFAULT_HARNESS)
+        # 部署跑的那个骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，
+        # 而不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
+        self._default = (default_name, deployment_harness())
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
         self._owners: dict[uuid.UUID, AgentRuntime] = {}
@@ -353,13 +355,20 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     backends: list[ComputeProvider] = [
         runs_claude_code(CentralChannel(c)) for c in channels
     ]
-    backends.extend(
-        CodexRuntime(
-            CodexChannel(CentralChannel(c), executor_launch),
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+    # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
+    # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
+    # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
+    # `bind_events` 照样把房间侧的持久化交给它，`deliver` 在没有 owner 的时候照样
+    # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
+    # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
+    if CODEX in HARNESSES:
+        backends.extend(
+            CodexRuntime(
+                CodexChannel(CentralChannel(c), executor_launch),
+                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            )
+            for c in channels
         )
-        for c in channels
-    )
     # pi is the one backend NOT wrapped in CentralChannel: it runs on the
     # machine that holds the workspace, so there is no second machine to assign
     # and no executor to route its tools through. See pi/channel.py.
@@ -371,12 +380,13 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 话的那台机器上（一个会变的事实），不取决于通道的类（一个不会变的事实）。多
     # 一条手在别处的通道进这个池的那天，它声明 `hands_here = False` 就够，这一行不
     # 用跟着改——`tests/unit/test_compute_pool.py` 的 `Elsewhere` 钉的就是这一句。
-    backends.extend(
-        PiRuntime(
-            PiChannel(c),
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+    if PI in HARNESSES:
+        backends.extend(
+            PiRuntime(
+                PiChannel(c),
+                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            )
+            for c in channels
+            if place.HANDS_HERE in c.capabilities()
         )
-        for c in channels
-        if place.HANDS_HERE in c.capabilities()
-    )
     return ComputePool(backends, default_name)

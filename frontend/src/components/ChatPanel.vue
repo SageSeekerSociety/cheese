@@ -12,36 +12,14 @@ const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 const BOTTOM_THRESHOLD = 80
 
 // 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
-// images waiting to go — all belong to the topic they were composed in. Module
-// scope so they survive this component unmounting, same as scrollMemory.
+// images waiting to go — all belong to the topic they were composed in.
 //
 // 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
 // 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
 // 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
 //
-// 这份内存镜像**不是持久的那一份**：service worker 更新触发的刷新没有卸载、没有
-// 切话题，这个 Map 连同页面一起没了。所以同一份内容还写进 localStorage
-// (lib/composerDrafts.ts)，刷新后由 restoreComposer 接回来；内存里这份仍然是
-// 权威——它连发件箱都带着，而发件箱故意不落盘。
-interface ComposerDraft {
-  draft: string
-  reply: Block | null
-  atts: ChatAttachment[]
-  /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
-  outbox: Outgoing[]
-}
-const composerMemory = new Map<string, ComposerDraft>()
-
-/** 发件箱里一条还没落库的消息。 */
-interface Outgoing {
-  clientId: string
-  content: string
-  summon: boolean
-  replyTo?: string
-  atts?: ChatAttachment[]
-  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
-  state: 'queued' | 'sending' | 'failed'
-}
+// 存在哪、分几层、谁清它，全在 lib/composerDrafts.ts —— 这里只有调用。那个 Map
+// 一度住在这个文件里，于是同一个概念有两套规则，换账号只清掉了其中一套。
 </script>
 
 <script setup lang="ts">
@@ -60,7 +38,7 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
-import type { StoredComposerDraft } from '../lib/composerDrafts'
+import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/composerDrafts'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -72,6 +50,7 @@ import {
   attachmentRawUrl,
   chatWsUrl,
   downloadFile,
+  ensureFreshToken,
   getProgress,
   isRetryableGetFailure,
   listBlocks,
@@ -85,10 +64,10 @@ import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
+import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
-import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
+import { fileIcon, fileLabel, IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -107,6 +86,7 @@ import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
 import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
+import CloudStartupStatus from './CloudStartupStatus.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
@@ -261,25 +241,31 @@ function seatOf(row: RosterRow | null | undefined): { handle: string; label: str
   return handle ? { handle, label: row?.name || handle } : null
 }
 
-// 这个房间名册上坐着的 AI 队友。座位是**每个话题一份**的（handle 带话题后缀），
-// 项目名册上那行共用的 `cheese` 不是它。
+// 这个房间名册上坐着的 AI 队友。
 //
-// 名册没到时是 null，不拿项目那位顶：那一位也叫「芝士」，顶上去的后果是消息里那
-// 个 @ 指到另一个身份，读的人以为叫了这个房间的它。
+// 名册没到时是 null，不拿项目那位顶：顶上去的后果是消息里那个 @ 指到另一个队友，
+// 读的人以为叫了这个房间的这位。
 const roomAgentSeat = computed(() => (rosterLoaded.value ? seatOf(roomMembers.value.find((m) => m.agent)) : null))
+
+// 这个项目的默认队友：一间**没有 AI 席位**的老房间，后端解析出来的就是它
+// （`topic_membership/services.py` 的 `_project_agent_seat` 读 `default_agent_instance_id`）。
+// 不能拿「名册上第一个带 AI 标的」代替：那是建得最早的那一位，而停用默认队友时
+// 默认会改判给另一位（`agent_instance/services.py` 的 `deactivate`），于是刚退下去
+// 的那位排在最前——界面写着它的名字，答话的是别人，正是「换人没生效」那个报障。
+const projectDefaultAgent = computed(() => props.members.find((m) => m.agent && m.project_default) ?? null)
 
 // 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
 // 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
 // 就是「换人没生效」——这正是它被报上来的样子。
 //
 // 名册到了、这个房间确实没有 AI 座位（座位是后来才有的，老话题没有）时，退回
-// 项目名册上那行共用的芝士——否则这个话题永远叫不动它。名册还没到时两边都不猜，
-// 就写「芝士」：那一刻界面上任何一处说出的名字，都可能是上一个房间那位。
+// 项目的**默认**队友——否则这个话题永远叫不动它。名册还没到时两边都不猜，就写
+// 「芝士」：那一刻界面上任何一处说出的名字，都可能是上一个房间那位。
 const agentName = computed(() => {
   const seat = roomAgentSeat.value
   if (seat) return seat.label
   if (!rosterLoaded.value) return '芝士'
-  return seatOf(props.members.find((m) => m.agent))?.label || '芝士'
+  return seatOf(projectDefaultAgent.value)?.label || '芝士'
 })
 
 // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
@@ -300,11 +286,12 @@ const mentionPool = computed(() => {
     agent: !!m.agent,
   }))
   const inRoom = new Set(room.map((r) => r.handle))
-  // 这个房间已经有自己的芝士时，项目名册上那种共用的 agent 行就不进名单了：
-  // 两行都叫「芝士」的话，@芝士 展开成哪一个纯看顺序。房间里那位才是会动的那个。
-  const roomHasAgent = room.some((r) => r.agent)
+  // 项目名册上的 AI 队友也 @ 得到：它坐的是自己的那个 handle（房间席位用的是同一
+  // 个），所以上面按 handle 去重就够了——@ 一位还没进这间房的队友，和 @ 一个还没
+  // 进来的人是同一件事。已停用的不列：停用就是为了挡住新的活，补全菜单是派活的
+  // 入口。房间那一半不过这道滤——已经在这间房里的它照常 @ 得到。
   const rest = props.members
-    .filter((m) => !inRoom.has(m.user_handle) && !(roomHasAgent && m.agent))
+    .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
   return [...room, ...rest]
 })
@@ -396,7 +383,10 @@ async function pickOption(m: Block, option: string) {
   try {
     const updated = await answerOptions(m.id, option, AUTHOR)
     const bi = messages.value.findIndex((x) => x.id === m.id)
-    if (bi >= 0) messages.value.splice(bi, 1, updated)
+    if (bi >= 0) {
+      messages.value.splice(bi, 1, updated)
+      historyChanges?.set(updated.id, updated)
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '选择失败'
   } finally {
@@ -411,6 +401,7 @@ const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '
 const reactionPickerFor = ref<string | null>(null)
 
 function applyReactions(blockId: string, reactions: ReactionAgg[]) {
+  historyReactions?.set(blockId, reactions)
   const m = messages.value.find((x) => x.id === blockId)
   if (m) m.reactions = reactions
 }
@@ -797,7 +788,12 @@ useEventListener(window, 'online', reconnectOnOnline)
 // Append a block unless it's already in the timeline: after a switch-away /
 // return, history (DB) and the broker's in-progress-turn replay overlap, and
 // a block must never show up twice (现场不能错).
+let historyChanges: Map<string, Block | null> | null = null
+let historyReactions: Map<string, ReactionAgg[]> | null = null
+let historyGeneration = 0
+
 function pushBlock(b: Block) {
+  historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
     messages.value.push(b)
   }
@@ -847,6 +843,18 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      if (frame.client_id) {
+        const item = outbox.value.find((entry) => entry.clientId === frame.client_id)
+        if (item) {
+          clearEchoTimer(item.clientId)
+          item.state = 'failed'
+          item.error = frame.message
+          if (activeTurnIds.value.size === 0) awaitingReply.value = false
+        } else {
+          errorMsg.value = frame.message
+        }
+        return
+      }
       // The socket was refused at connect — the backend closes right after this
       // frame, so latch the reason and stop the reconnect loop from burying it.
       if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
@@ -874,6 +882,7 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'retract_block':
+      historyChanges?.set(frame.block_id, null)
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'agent_control':
@@ -907,7 +916,13 @@ function handleFrame(frame: WsServerFrame) {
   }
 }
 
-async function loadTopic(topic: Topic) {
+async function loadTopic(topic: Topic, entering = false) {
+  const generation = ++historyGeneration
+  const changes = new Map<string, Block | null>()
+  historyChanges = changes
+  const reactions = new Map<string, ReactionAgg[]>()
+  historyReactions = reactions
+  const stillHere = () => !disposed && generation === historyGeneration && props.topic?.id === topic.id
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
@@ -946,11 +961,17 @@ async function loadTopic(topic: Topic) {
     loadingHistory.value = true
   }
   try {
+    // Allow composer restoration to finish, then authenticate both transports.
+    // Recovery keeps its history-first reconciliation for lost message echoes.
+    await ensureFreshToken()
+    if (!stillHere()) return
+    const parallelSocket = entering && outbox.value.length === 0
+    if (parallelSocket) openSocket(topic.id)
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
     // Only apply if still the active topic (avoid race on fast switching).
-    if (disposed || props.topic?.id !== topic.id) return
+    if (!stillHere()) return
     // Blocks that landed while we were away append at the tail; if the user
     // was parked at the bottom, follow them so the newest message is visible
     // without a manual scroll. Compared on the LAST id, not on length: the
@@ -962,6 +983,18 @@ async function loadTopic(topic: Topic) {
     const merged = cached
       ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
       : { blocks: payload.data, hasMore: payload.has_more }
+    // Live frames can arrive while the HTTP snapshot is pending. Apply them
+    // last, including retractions, so that snapshot cannot erase newer events.
+    const blocks = new Map(merged.blocks.map((block) => [block.id, block]))
+    for (const [id, block] of changes) {
+      if (block) blocks.set(id, block)
+      else blocks.delete(id)
+    }
+    for (const [id, updated] of reactions) {
+      const block = blocks.get(id)
+      if (block) blocks.set(id, { ...block, reactions: updated })
+    }
+    merged.blocks = [...blocks.values()]
     messages.value = merged.blocks
     // A reconnect starts with durable history. Settle sends that landed while
     // their echo was lost before opening the new socket; only absent client ids
@@ -972,17 +1005,22 @@ async function loadTopic(topic: Topic) {
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
-    openSocket(topic.id)
+    if (!parallelSocket && !connectRefused.value) openSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
-    if (disposed || props.topic?.id !== topic.id) return
+    if (!stillHere()) return
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       scheduleReconnect(topic.id)
     }
   } finally {
-    if (props.topic?.id === topic.id) loadingHistory.value = false
+    if (generation === historyGeneration) {
+      historyChanges = null
+      historyReactions = null
+      loadingHistory.value = false
+    }
   }
 }
 
@@ -1012,6 +1050,16 @@ function replySnippet(m: Block): string {
 }
 
 // An image attachment block (图片输入) — drawn in place by AttachmentImage.
+// ---- 芝士摆出来的一份东西 (`cheese show` → kind=artifact) ----
+/** 卡上写的名字：路径的最后一段。整条路径是工作区里的位置，读的人用不上。 */
+function artifactName(m: Block): string {
+  return m.content.split('/').pop() || m.content
+}
+/** 「它是什么」。认不出后缀时退回一句中性的说法，而不是空着。 */
+function artifactKind(m: Block): string {
+  return fileLabel(m.content)
+}
+
 function isImageBlock(m: Block): boolean {
   return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
 }
@@ -1062,11 +1110,10 @@ function markFailed(clientId: string) {
 function flushOutbox() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   for (const item of outbox.value) {
-    if (item.state === 'sending') continue
+    if (item.state !== 'queued') continue
     const msg: WsClientChatMessage = {
       type: 'message',
       content: item.content,
-      summon: item.summon,
       reply_to: item.replyTo,
       attachments: item.atts,
       client_id: item.clientId,
@@ -1096,6 +1143,7 @@ function retrySend(clientId: string) {
   const item = outbox.value.find((o) => o.clientId === clientId)
   if (!item) return
   item.state = 'queued'
+  item.error = undefined
   flushOutbox()
 }
 
@@ -1113,7 +1161,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   outbox.value.push({
     clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     content: trimmed,
-    summon,
     replyTo: replyTarget.value?.id ?? undefined,
     atts,
     state: 'queued',
@@ -1299,7 +1346,7 @@ function onAvatarError(handle: string): void {
 const myName = computed(() => memberByHandle.value.get(AUTHOR)?.name || AUTHOR)
 
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return '未送达'
+  if (item.state === 'failed') return item.error ? '待处理' : '未送达'
   return connected.value ? '发送中…' : '等待连接'
 }
 
@@ -1600,11 +1647,11 @@ function onFilePicked(e: Event) {
 
 // 房间里那位芝士 —— **房间名册**上坐着的那一行，不是项目名册上那行共用的。
 //
-// 名册没到时候没有它（按钮关着，见下面的 `summonReady`）：那时候名单里唯一带 AI
-// 标记的是项目那位，认了它，正文里写下的 @ 就指到另一个身份。名册到了、这个房间
-// 确实没有座位（老话题），才退回项目那一行。
+// 名册没到时候没有它（按钮关着，见下面的 `summonReady`）：那一刻认谁都可能认成上
+// 一个房间那位，正文里写下的 @ 就指到另一个身份。名册到了、这个房间确实没有座位
+// （老话题），才退回项目的**默认**队友——后端给这样一间房解析出来的正是它。
 const agentMention = computed(
-  () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(mentionPool.value.find((m) => m.agent)) : null)
+  () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(projectDefaultAgent.value) : null)
 )
 
 // 叫不叫芝士，由**这条消息 @ 没 @ 它**决定 —— 和 @ 一个人走的是同一条路，
@@ -1725,36 +1772,32 @@ function sendDraft(opts?: { summon?: boolean }) {
 // "just a preference" — each field names something in the topic being left
 // (a block to reply to, files already uploaded to that topic's worktree).
 function rememberComposer(topicId: string) {
-  const hasContent =
-    !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
-  if (!hasContent) {
-    composerMemory.delete(topicId)
-    forgetComposerDraft(topicId)
-  } else {
-    composerMemory.set(topicId, {
-      draft: draft.value,
-      reply: replyTarget.value,
-      atts: uploaded(pendingAtts.value),
-      outbox: outbox.value.slice(),
-    })
-    // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
-    saveComposerDraft(topicId, {
-      draft: draft.value,
-      reply: replyTarget.value,
-      atts: uploaded(pendingAtts.value),
-    })
-  }
+  // 两层各写一次，都不在这里判空——两层的「空」本来就不是同一个定义（内存那层还
+  // 管着发件箱），各自判各自的。在这里判一次再分发，等于替它们决定，而那个判据
+  // 只可能对其中一层是对的。
+  saveComposerMemory(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: uploaded(pendingAtts.value),
+    outbox: outbox.value.slice(),
+  })
+  // 落到磁盘上的那份不含发件箱，见 lib/composerDrafts.ts 的解释。
+  saveComposerDraft(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: uploaded(pendingAtts.value),
+  })
 }
 
 /** 落盘的那份没有发件箱（它不跨刷新，也不该跨）。 */
-function asComposerDraft(stored: StoredComposerDraft | null): ComposerDraft | undefined {
+function asComposerDraft(stored: StoredComposerDraft | null): ComposerMemory | undefined {
   return stored ? { draft: stored.draft, reply: stored.reply, atts: stored.atts, outbox: [] } : undefined
 }
 
 function restoreComposer(topicId: string | undefined) {
   // 内存里那一份优先：它带着发件箱。只有它不在时（刚刷新过、刚开机）才回落到
   // 磁盘上那份。
-  const saved = topicId ? composerMemory.get(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
+  const saved = topicId ? loadComposerMemory(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
   draft.value = saved?.draft ?? ''
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
@@ -1880,7 +1923,7 @@ watch(
     if (props.topic) {
       // loadTopic clears the pending attachments synchronously before its first
       // await, so this topic's own draft has to be restored AFTER the call.
-      loadTopic(props.topic)
+      void loadTopic(props.topic, true)
       restoreComposer(id)
     } else {
       messages.value = []
@@ -1920,7 +1963,7 @@ onBeforeUnmount(() => {
            The root topic (本体) and private chat use the plain header below. -->
       <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2 flex-wrap">
-          <span class="pr-title t-title">{{ topic.title }}</span>
+          <span class="t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
           <v-spacer />
           <span class="pr-state ms-1" :class="prState.cls">{{ prState.label }}</span>
@@ -1946,7 +1989,7 @@ onBeforeUnmount(() => {
           >
             {{ backLabel }}
           </v-btn>
-          <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
+          <span class="t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span
             class="status-dot"
@@ -2000,7 +2043,7 @@ onBeforeUnmount(() => {
             {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
           </div>
 
-          <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
+          <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
                哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
             <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
@@ -2131,15 +2174,7 @@ onBeforeUnmount(() => {
                   <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
                 </div>
               </details>
-              <details v-else-if="notice?.mode === 'agent-status'" class="cloud-status" data-testid="platform-notice">
-                <summary>{{ notice.line }}</summary>
-                <div class="agent-status-history">
-                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
-                    <div>{{ occ.line }}</div>
-                    <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
-                  </div>
-                </div>
-              </details>
+              <CloudStartupStatus v-else-if="notice?.mode === 'agent-status'" :events="run" />
               <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
@@ -2228,6 +2263,27 @@ onBeforeUnmount(() => {
                 >
                   <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
                 </v-btn>
+                <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
+                   写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
+                   分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
+                   和芝士随口说了个路径长得一模一样。
+                   点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+                <button
+                  v-else-if="m.kind === 'artifact'"
+                  type="button"
+                  class="im-artifact"
+                  :title="`打开 ${artifactName(m)}`"
+                  @click="emit('open-file', m.content, m.task_id ?? null)"
+                >
+                  <span class="att-face im-artifact__face">
+                    <v-icon size="20">{{ fileIcon(m.content) }}</v-icon>
+                  </span>
+                  <span class="im-artifact__text">
+                    <span class="im-artifact__name">{{ artifactName(m) }}</span>
+                    <span class="im-artifact__kind t-meta">{{ artifactKind(m) }}</span>
+                  </span>
+                  <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
+                </button>
                 <div v-else-if="isAgentBlock(m)" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
@@ -2348,6 +2404,7 @@ onBeforeUnmount(() => {
                 <span class="im-time">{{ outgoingState(item) }}</span>
               </div>
               <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
+              <p v-if="item.error" class="outbox-error" role="alert">{{ item.error }}</p>
               <div v-if="item.state === 'failed'" class="outbox-actions">
                 <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
                 <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
@@ -2600,7 +2657,7 @@ onBeforeUnmount(() => {
 .sys-row {
   padding: 3px 16px 3px 54px;
   font-size: 13px; /* 13px 是可读下限；平台行比正文低一档，不低于它 */
-  line-height: 1.6;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
 /* 分栏之下，「谁都没说这句话」需要自己的位置：一行字的平台行居中（飞书/微信
@@ -2736,7 +2793,7 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--fill);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: var(--lh-12);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -2750,8 +2807,15 @@ details.sys-row > summary::-webkit-details-marker {
 .im-row--pending .im-name {
   opacity: 0.62;
 }
+.outbox-error {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--danger-ink);
+  overflow-wrap: anywhere;
+}
 .outbox-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 2px;
 }
@@ -2836,7 +2900,7 @@ details.sys-row > summary::-webkit-details-marker {
   gap: 6px;
   align-items: flex-start;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: var(--lh-13);
 }
 /* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
    ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
@@ -2898,7 +2962,7 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
-  line-height: 1.5;
+  line-height: var(--lh-14);
 }
 /* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
    下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
@@ -2953,8 +3017,18 @@ details.sys-row > summary::-webkit-details-marker {
   cursor: default;
   opacity: 0.5;
 }
+/* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
+   描边那一档太轻了——它和没开的状态只差一条 1px 的线，而这一行右边还站着一颗实心
+   的发送按钮，线根本抢不到注意力。所以开态是填充的，用 --accent-wash 那一档做底、
+   --accent-ink 写字（记号色 --accent 当文字在浅色下只有 2.34:1，读不动）。 */
 .summon-btn--on {
-  border-color: var(--accent);
+  border-color: transparent;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.summon-btn--on:hover:not(:disabled) {
+  background: var(--accent-wash);
   color: var(--accent-ink);
 }
 /* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
@@ -3029,7 +3103,7 @@ details.sys-row > summary::-webkit-details-marker {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
   /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
      slate disc is one value in both themes, so its ink must be too. */
@@ -3081,12 +3155,12 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--accent-wash);
 }
 .mention-menu-sub {
-  font-size: 0.75rem;
+  font-size: 12px;
   color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
-  font-size: 0.7rem;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3094,9 +3168,6 @@ details.sys-row > summary::-webkit-details-marker {
 .pr-header {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-}
-.pr-title {
-  line-height: 1.3;
 }
 .pr-num {
   font-weight: 400;
@@ -3144,18 +3215,19 @@ details.sys-row > summary::-webkit-details-marker {
   align-items: flex-start;
   gap: 10px;
   padding: 4px 16px;
-  margin-top: 8px;
+  /* 换一个人说话时空开一档。气泡没了之后，分界全靠这段留白和下面那行名字 ——
+     同一个人连着说的那几条仍然贴在一起（.im-row--cont），两档差出来的就是
+     「这是另一个人开口了」。 */
+  margin-top: 16px;
 }
 /* continuation rows of the same author sit tight under the first */
 .im-row--cont {
   margin-top: 0;
 }
-/* 悬停只改颜色不改位置（设计系统 §9.1）。改的是气泡自己那一档 —— 原来刷的是
-   整行的 --fill，而气泡也是 --fill，鼠标扫过去气泡就消失了。 */
-.im-row:hover .im-text {
-  background: var(--fill-2);
-}
-.im-row--self:hover .im-text {
+/* 悬停只改颜色不改位置（设计系统 §9.1）。刷的是整行 —— 气泡在的时候刷不了，
+   气泡自己就是 --fill，整行一刷它就跟背景融了，只好退而求其次去刷气泡内部那
+   一档。现在这一档腾出来了。 */
+.im-row:hover {
   background: var(--fill);
 }
 .im-gutter {
@@ -3195,98 +3267,88 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .im-name {
   font-size: 13px;
+  line-height: var(--lh-13);
   font-weight: 600;
   color: var(--ink);
+}
+/* 自己说的那几条安静一档。气泡在的时候「是不是我」由左右两侧说，那件事没了之后
+   不必再找一个同样响的说法替它 —— 在一个房间里你要找的是别人说了什么、芝士做了
+   什么，自己说过的话是上下文。所以这里是往下压，不是往上提。 */
+.im-row--self .im-name {
+  font-weight: 500;
+  color: var(--muted);
 }
 .im-time {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
 }
-.cloud-status summary {
-  cursor: pointer;
-}
-.agent-status-history {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.agent-status-detail {
-  margin-top: 3px;
-  color: var(--muted);
-}
-/* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
-   一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：
-   位置、头像在哪边、尖角朝哪边 —— **不能**用颜色说，别家那一格放的是品牌色，
-   而我们这套色板里那个位置是琥珀，按设计系统只留给主操作、激活态和品牌。所以
-   两侧只差一档灰。
-   立面靠描边不靠填充（设计系统 §3.4「卡片只描边，不投影」）：--fill 在白底上
-   只差 3% 亮度，那是「悬停高亮」那一档的强度，单靠它立不起一个面。--line-2 而
-   不是 --line：--line 比 --fill 还浅，描在 --fill 的面上等于没描。 */
+/* ---- 正文平铺，不套气泡 ----
+   气泡是给短句用的。这一栏里最长的一半内容是芝士的产出 —— markdown、代码块、
+   diff、几十行 —— 给一篇文档套个框，框没帮上任何忙：它吃掉宽度，它让一屏出现
+   几十个带描边的灰块（「杂乱」最直接的来源），而代码块自己有底色，外面再压一层
+   灰底就是两层灰贴在一起。
+   判据是内容长度，不是人数：微信群、Telegram 群、飞书以短句为主，气泡成立；
+   Slack、Discord、GitHub 要装代码块和长帖，全是平铺。这一栏属于后者。
+   分界改由留白、头像和名字那一行承担，够用 —— 同一个人连着说的还是合并，
+   只在第一条上出名字（.im-row--cont）。 */
 .im-text {
-  display: inline-block;
   max-width: 100%;
-  padding: 7px 12px;
   font-size: 14px;
-  line-height: 1.62;
+  line-height: var(--lh-14);
   color: var(--text);
   word-break: break-word;
-  background: var(--fill);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  border-top-left-radius: var(--radius-sm); /* 尖角朝说话的那一边 */
-}
-/* 对侧留白。各家常见的是 15%，这里 8% —— 头像在哪边本身已经说明了侧，不需要
-   那么大的空档，省下的宽度还给正文（默认栏宽下 403px 对 365px）。 */
-.im-row {
-  padding-right: calc(16px + 8%);
-}
-.im-row--self {
-  flex-direction: row-reverse;
-  padding-right: 16px;
-  padding-left: calc(16px + 8%);
-}
-.im-row--self .im-meta {
-  flex-direction: row-reverse;
-}
-/* 自己那一侧的所有块级内容（气泡、图片、附件、表情、提示）一起靠右。 */
-.im-row--self .im-main {
-  text-align: right;
-}
-.im-row--self .im-text {
-  text-align: left; /* 气泡靠右，气泡里的字仍然左起 */
-  background: var(--fill-2);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-sm);
-}
-/* 同一个人连着说的第二条：尖角收掉，两条读成一段。分栏之下这是「连续消息」
-   唯一还剩的信号 —— 位置已经被拿去表示「是不是我」了。 */
-.im-row--cont .im-text {
-  border-top-left-radius: var(--radius-lg);
-}
-.im-row--self.im-row--cont .im-text {
-  border-top-right-radius: var(--radius-lg);
-}
-/* 气泡里的行内元素（表情 chip、选项、提示）跟着靠右。 */
-.im-row--self .rx-row,
-.im-row--self .ask-row,
-.im-row--self .summon-hint {
-  justify-content: flex-end;
-}
-/* 悬停条镜像到左上角：自己那侧的右上角被气泡的尖角占着。 */
-.im-row--self .im-actions {
-  right: auto;
-  left: 12px;
-}
-/* 表情面板挂在悬停条上，所以它也得跟着换边 —— 不换的话它从条的右端往右展开，
-   而条已经在这一列的最左边，面板整个滑出聊天栏、盖到侧栏上去（实测点不到）。 */
-.im-row--self .rx-picker {
-  right: auto;
-  left: 0;
 }
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
   white-space: pre-wrap;
+}
+/* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
+   「这不是一句话，是一个可以打开的东西」。 */
+.im-artifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+.im-artifact:hover {
+  background: var(--fill);
+  border-color: var(--faint);
+}
+.im-artifact__face {
+  width: 32px;
+  height: 32px;
+}
+.im-artifact__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.im-artifact__name {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-artifact__kind {
+  text-align: left;
+}
+.im-artifact__go {
+  flex: none;
+  color: var(--faint);
 }
 .im-file-link {
   max-width: 100%;
@@ -3450,6 +3512,8 @@ details.sys-row > summary::-webkit-details-marker {
   border: none;
   background: none;
   border-radius: 6px;
+  /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
+     同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -3487,7 +3551,7 @@ details.sys-row > summary::-webkit-details-marker {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.82rem;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -3527,7 +3591,7 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .rx-count {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -3554,8 +3618,12 @@ details.sys-row > summary::-webkit-details-marker {
   }
 }
 /* Rendered markdown for 芝士's replies (v-html → :deep). */
+/* 渲染出来的 markdown 走 style.css 里 .md-content 那份的行距约定（全局是 1.7），
+   不走 chrome 的 --lh-* 阶梯：这里是连续正文，而阶梯的比例（1.43）是给界面文字
+   定的，用在成段的正文上偏挤。字号折到 14px 是为了让下面那几个 em 的子元素
+   （h1/h2/h3、code）有一个干净的基数。 */
 .md-content {
-  font-size: 0.9rem;
+  font-size: 14px;
   line-height: 1.6;
 }
 .md-content :deep(p) {

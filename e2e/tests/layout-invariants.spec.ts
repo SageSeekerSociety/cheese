@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { login } from './helpers';
+import { api, login } from './helpers';
 
 // 表单字段的几何不变量。
 //
@@ -16,6 +16,86 @@ import { login } from './helpers';
 //
 // 这一份只断言「屏幕上有没有压上/被裁」，不认任何具体的间距数值：改密度、换变体、
 // 把 hide-details 设成别的都不该让它变红，只有真叠上了才该。
+
+
+/** 屏幕上**两个东西有没有画在同一个坐标上**。
+ *
+ *  这一条是补的，起因也是真事：看板「用量」那一类里，柱子底下 9 个项目名横排在
+ *  9px 下互相压住（量到 9×9 像素），窄屏上两张 KPI 卡的标题也压在一起（148px）。
+ *  这一整类缺陷**现有的测试一条都拦不住** —— 单测看的是数据和请求，e2e 看的是文案
+ *  和路径，typecheck / eslint / stylelint 都不看坐标。它们只在屏幕上存在，所以只能在
+ *  屏幕上量。
+ *
+ *  量的是**含文字的元素**（`svg text` 与任何有直接文字子节点的元素），逐对求交：
+ *  两个方向的交叠都超过 2px 才算。2px 是给亚像素和「字与它的容器」留的余量 ——
+ *  容器包着文字当然是重叠的，所以只比**同级或跨块**的文字盒，不比祖先。
+ */
+async function textOverlaps(scope: Locator): Promise<string[]> {
+  return scope.evaluate((root: Element) => {
+    const ownsText = (el: Element) =>
+      [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim().length > 0);
+    const boxes = [...root.querySelectorAll('*')]
+      .filter((el) => el instanceof SVGTextElement || ownsText(el))
+      // **只量真的画出来的东西**。`getBoundingClientRect` 对「不渲染但仍有布局盒」的
+      // 元素照样给坐标：收起状态的 `<details>`（那张「查看数据表」）就是这一类 ——
+      // 它里面的 `<th>`/`<td>` 每一个都有 200×26 的盒子，量出来会跟页面正文报一大堆
+      // 「重叠」，而屏幕上根本没有它们。`checkVisibility()` 是浏览器自己对这个问题的答案。
+      .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter((b) => b.r.width > 0 && b.r.height > 0)
+      // 还有一类盒子是**被裁掉了但坐标还在**：滚动容器里的内容滚出可视区时，它的
+      // `getBoundingClientRect` 照样给一个跑到容器外面的盒子（浏览器只是不画它）。
+      // 不排掉这一类，页面底下任何一条被滚动容器裁住的行都会跟底部导航「重叠」——
+      // 而屏幕上看不见它。判据是「这个盒子有没有越出某个祖先的裁剪框」。
+      .filter((b) => !clippedByAncestor(b.el))
+      // 同一段文字被父子两层都收进来时只留最深的那一层（父层的盒子更大，比出来永远是重叠）。
+      .filter((b) => !elHasTextyAncestor(root, b.el));
+
+    const hits: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+        const ox = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const oy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (ox > 2 && oy > 2) {
+          hits.push(
+            `「${(a.el.textContent || '').trim().slice(0, 20)}」与「${(b.el.textContent || '').trim().slice(0, 20)}」` +
+              `重叠 ${Math.round(ox)}×${Math.round(oy)}px`
+          );
+        }
+      }
+    }
+    return hits;
+
+    /** 这个元素的盒子有没有越出某个祖先的裁剪框（`overflow` 不是 visible 的那些）。
+     *  必须在 evaluate 里声明：这个函数在浏览器里跑，Node 作用域里的东西它看不见。 */
+    function clippedByAncestor(el: Element): boolean {
+      const box = el.getBoundingClientRect();
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        const clips =
+          /auto|scroll|hidden|clip/.test(s.overflowY) || /auto|scroll|hidden|clip/.test(s.overflowX);
+        if (!clips) continue;
+        const r = p.getBoundingClientRect();
+        if (box.bottom > r.bottom + 1 || box.top < r.top - 1 || box.right > r.right + 1 || box.left < r.left - 1) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function elHasTextyAncestor(scopeEl: Element, el: Element): boolean {
+      for (let p = el.parentElement; p && p !== scopeEl.parentElement; p = p.parentElement) {
+        if (p === scopeEl) break;
+        if (p instanceof SVGTextElement) return true;
+        if ([...p.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim())) return true;
+      }
+      return false;
+    }
+  });
+}
 
 type Defect = { kind: string; what: string };
 
@@ -136,11 +216,101 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     const dialog = page.locator('.v-overlay__content').filter({ hasText: '修改 AI 队友' });
     await dialog.waitFor();
-    // 两个下拉的选项是异步取回来的，而「角色设定」是 autoGrow 的文本域——内容灌
-    // 进去之后高度才定下来。等到两个下拉都显示出选中的值，这一屏就不会再动了。
-    // （不等 getByLabel('模型')：v-select 的可访问名来自内部那个 combobox，不是
-    //  描边缺口里的那行字。）
-    await expect(dialog.locator('.v-select__selection')).toHaveCount(2);
+    // 这张表单不再取任何异步选项（模型与运行方式都不是队友的属性了），会动的
+    // 只剩「角色设定」那个 autoGrow 的文本域——内容灌进去之后高度才定下来。
+    // 等到名字和角色设定都是这个队友自己的值，这一屏就不会再动了。
+    await expect(dialog.getByLabel('名字', { exact: true })).toHaveValue(/.+/);
+    await expect(dialog.getByLabel('角色设定（可留空）')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('反馈中心 · 提交反馈页', async ({ page }) => {
+    await login(page);
+    await page.goto('/feedback');
+
+    // 提交是一条**真路由**（`/feedback/new`），不是浮层：页头那颗渲染成链接。
+    await page.getByRole('link', { name: '提交反馈' }).first().click();
+    await expect(page).toHaveURL(/\/feedback\/new$/);
+
+    // 范围取表单本身（`.sb-form`），不取 `body`：这一页的页头和底下那条说明都不是
+    // 字段，喂给 `fieldDefects` 会把不相干的东西放在一起比。等的是表单真的画出来，
+    // 不是地址变了 —— 地址先变、字段在后几帧里。
+    const form = page.locator('.sb-form');
+    await form.waitFor();
+    await expect(form.getByLabel(/^标题/)).toBeVisible();
+    expect(await fieldDefects(form)).toEqual([]);
+  });
+
+  test('管理后台 · 反馈队列里打开一条', async ({ page }) => {
+    await login(page);
+
+    // 这条反馈是**这条用例自己造的**：详情面板上的字段只在某一条被打开之后才
+    // 存在，而 e2e 的库是干净的、用例之间的顺序也不是契约（别指望别的用例留下
+    // 的数据）。标题带一个时间戳是为了搜得到——队列里不止这一条。
+    const stamp = `${Date.now()}`;
+    await api(page, 'post', '/feedback', {
+      kind: 'bug',
+      title: `【e2e】字段几何 ${stamp}`,
+      problem: 'layout-invariants 自己造的，只为了把详情面板的字段画出来。',
+      visibility: 'public',
+    });
+
+    await page.goto('/admin/queue');
+    await page.locator('.qpage__search-input').fill(stamp);
+    await page.locator('.fbrow__link').filter({ hasText: stamp }).first().click();
+
+    // 视口默认 1280 宽，详情是按**页面内**那一套画的（`.qdet`），不是抽屉。
+    //
+    // 用 `getByRole('textbox')` 而不是 `getByLabel('指派给')`：那个字段的
+    // accessible name 是「指派给 指派给」（label 拼上 placeholder），旁边那颗
+    // 清除图标的 aria-label 是「清除 指派给」——两个都被 `getByLabel('指派给')`
+    // 子串命中，locator 当场变成 2 个元素。
+    const detail = page.locator('.qdet');
+    await expect(detail.getByRole('textbox', { name: /指派给/ })).toBeVisible();
+    expect(await fieldDefects(detail)).toEqual([]);
+  });
+
+  test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
+    await login(page);
+    await page.goto('/admin/members');
+
+    // 这一页唯一的一组字段在对话框里：名单本身是张表，一个 `.v-field` 都没有，
+    // 所以这里不能拿 `body` 当范围——`fieldDefects` 会当场炸「这个范围里一个
+    // 字段都没有」，而那正是它该做的（空范围永远返回「没有缺陷」）。
+    await page.getByRole('button', { name: '添加管理员' }).first().click();
+    const dialog = page.locator('.v-overlay__content').filter({ hasText: '搜索账号' });
+    await dialog.waitFor();
+    await expect(dialog.getByLabel('搜索账号')).toBeVisible();
+    expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
+    await login(page);
+
+    // 三个分类都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
+    // 写死 263px 宽，比窗口还宽，直接压到隔壁那张上）。
+    // 三档都要：1440 是设计宽度（四列正好 263），**1100 是四列但比设计窄的那一段**
+    // （每列比 263 小，卡片写死宽度时就是从这里开始压到隔壁），390 是手机（两列）。
+    // 只测设计宽度的话，那个 bug 一次都不会露头 —— 这正是它当初能上线的原因。
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1100, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto('/admin/dashboard');
+      await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+
+      for (const tab of ['反馈', '用量', '平台']) {
+        // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
+        // 而 Playwright 的 `name` 默认按**子串**匹配 —— 不加这一条，'反馈' 那一轮会同时
+        // 命中它和这一页的分类页签，报 strict mode 违规。
+        await page.getByRole('button', { name: tab, exact: true }).click();
+        // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
+        await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
+        await expect(page.locator('.akpi__skel')).toHaveCount(0);
+        expect(await textOverlaps(page.locator('body')), `${size.width}px · ${tab}`).toEqual([]);
+      }
+    }
   });
 });

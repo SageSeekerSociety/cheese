@@ -42,9 +42,10 @@ alive. ``interrupt`` is that missing middle.
 """
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import (
     AgentEvent,
@@ -93,13 +94,72 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
-# The harnesses this deployment can run, by name. Declared here rather than
-# beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them, and
-# a default spelled as a literal is the same fact written down twice. What each
-# of them can be pointed at is further down, under 「which harness」.
+# The harnesses this deployment can run, by name — and the ONLY place in
+# ``backend/app`` where a harness name is written down (不变量 I5). Declared here
+# rather than beside ``HARNESSES`` below because the resolution just under them
+# needs a name before the registry exists. What each of them can be pointed at
+# is further down, under 「which harness」.
+# ``HARNESSES`` further down is the shorter list of what this deployment RUNS
+# (结论 43): a name here buys no registration.
 CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 PI = "pi"
+
+# 部署的设置里没写跑哪个骨架时，跑的就是这个。写在这里而不是写进
+# ``core/config.py`` 的默认值，因为骨架的名字全仓只在这个文件出现（不变量 I5，
+# ``tests/unit/test_harness_boundary.py`` 的字面量守卫盯着这一条）。
+_UNCONFIGURED = CLAUDE_CODE
+
+#: 项目设置里盖过部署设置的那个键（``Project.settings``）。开发者选项，界面上没
+#: 有它——普通用户看不到骨架这回事（结论 28）。
+HARNESS_SETTING = "harness"
+
+
+def _known(name: str, source: str) -> str:
+    """名字得是这个仓库有适配层的一个，否则是写错了。
+
+    不兜底回默认值：兜底的那一版会让一个配错名字的部署安静地跑另一个骨架，而
+    「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
+
+    认的是适配层的名字，不是注册表：注册表只列答得出四条硬性要求、这套部署真跑
+    的骨架（结论 43），而一个项目把设置指向一个有适配层、这套部署却没注册的骨架，
+    是一件轮次开始时要**在房间里说出来**的事（``chat.py`` 的「没有部署」那一
+    句），不是一次配置错误。部署级的那一条另有一问（``deployment_harness``）。
+    """
+    if name not in (CLAUDE_CODE, CODEX, PI):
+        raise ValueError(f"{source} 指定的骨架 {name!r} 没有适配层")
+    return name
+
+
+def deployment_harness() -> str:
+    """这套部署跑的骨架（结论 28）——一条部署设置，不是谁的属性。
+
+    设置在函数里读，不在模块顶上 import：这个文件是 codex runner 那个
+    standard-library-only 归档的一部分（``codex/bundle.py``），而 ``core.config``
+    带着 pydantic-settings 和它整棵依赖树，不在归档里——顶上一行 import 就是
+    runner 进程起不来。runner 自己从不问这个问题，它被告知自己是谁。
+    """
+    from app.core.config import settings
+
+    configured = (settings.agent_harness or "").strip()
+    if not configured:
+        return _UNCONFIGURED
+    # 部署级的这一条要的不只是有适配层，还得注册了：装配 ``ComputePool`` 时就
+    # 会解析，所以配错了是起不来，不是跑到一半才炸。
+    if _known(configured, "agent_harness") not in HARNESSES:
+        raise ValueError(
+            f"agent_harness 指定的骨架 {configured!r} 这套部署没有；"
+            f"有的是 {sorted(HARNESSES)}"
+        )
+    return configured
+
+
+def harness_for(project_settings: Mapping[str, Any] | None) -> str:
+    """这个项目跑的骨架：项目自己的设置盖过部署设置，都没说就是部署的那个。"""
+    wanted = str((project_settings or {}).get(HARNESS_SETTING) or "").strip()
+    if not wanted:
+        return deployment_harness()
+    return _known(wanted, f"项目设置 {HARNESS_SETTING}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,17 +176,24 @@ class SessionRef:
     project — not the seat it authors under. The two differ, and reading under
     one while writing under the other hands back None rather than failing.
 
-    The two halves are left unset by the calls that address a PLACE rather than
-    a conversation: a room's event spool and the screen it is watched in are one
+    It is left unset by the calls that address a PLACE rather than a
+    conversation: a room's event spool and the screen it is watched in are one
     per room, so reading them names no agent. Anything that resolves where a
-    session runs must fill them in — that resolution is per session and there is
+    session runs must fill it in — that resolution is per session and there is
     nothing on the room left to fall back to.
+
+    ``harness`` has none of that leeway: it is keyword-only and has no default.
+    跑的是哪个骨架由部署设置加项目设置答（结论 28），所以一个默认值就是第二个答
+    法——而且是个够不着项目那一层的答法：它只看得见部署设置，于是一个项目盖过了
+    部署的房间，ref 会带着部署那个名字去写会话行，把一条对话拆成两行。每个构造点
+    都说得出一个自己知道的答案：适配器里面是 ``self.harness``（它就是那个
+    runtime），轮次那一路是这一轮解析出来的那个。
     """
 
     project_id: uuid.UUID
     topic_id: uuid.UUID
     agent_handle: str = ""
-    harness: str = CLAUDE_CODE
+    harness: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,9 +249,39 @@ class Opening:
     needs_place: bool = True
 
 
+class SubagentRequirement(StrEnum):
+    """派一条活是 agent 对骨架原生 subagent 的工具调用，不走平台（结论 43）。
+
+    平台这一侧没有「派活」的路径：agent 先开卡，再用骨架自己的工具起一条子线程，
+    hook 按线程标识归卡，结束写结论，人对卡的操作投递给父线程执行。这四条是那条
+    路成立的前提，所以它们是骨架契约的**硬性要求**，不是能力位。
+
+    能力位（``speaks_gateway`` 那几个）答的是「这个骨架做不做得到，做不到就在功能
+    矩阵里填一条差异码」；硬性要求没有那一档——答得出的才进 ``HARNESSES``，答不出
+    的留着代码不注册，矩阵里也就不占一列。``Difference`` 里因此不许有一条码描述这
+    四项中的任何一项：一条能填进来的差异码就是一个「暂缺」，而暂缺的骨架本来就不
+    该在跑。
+    """
+
+    SPAWNS_WITH_A_MODEL = "起子 agent，并指定它跑哪个模型"
+    LABELS_ITS_THREAD = "子 agent 的每个事件带可归到卡的线程标识"
+    PARENT_RETASKS_IT = "父线程能改它的指令"
+    PARENT_STOPS_IT = "父线程能停掉它"
+
+
 @runtime_checkable
 class AgentRuntime(Protocol):
-    """One harness, driven over whatever channel the compute side opened."""
+    """One harness, driven over whatever channel the compute side opened.
+
+    四条硬性要求（``SubagentRequirement``，结论 43）不是这里的第七个动词，因为平台
+    不起子 agent：它们是这个骨架的事实，各写一句「怎么做到的」，落在注册表那一条
+    （``HARNESSES[harness].subagents``）上，和 ``carries_subscription`` 那几个事实
+    同一个地方。写在这里就是同一个事实两份声明。
+
+    平台这一侧只有两个动词参与其中，而且已经在下面了：``deliver`` 把人对卡的操作
+    送进**父**会话，``interrupt`` 停的也是**父**会话——子线程的指令由起它的父线程
+    自己改，子 agent 与父进程同生同死。
+    """
 
     # WHICH harness this is — a key in ``HARNESSES``, and what an agent type's
     # ``harness`` field names. Deliberately not ``name``: the objects that
@@ -432,12 +529,6 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
 
 # --- which harness ----------------------------------------------------------
 #
-# ``AgentType.harness`` has existed as a column for a while with nobody reading
-# it. This is the reader. A type that names a harness this deployment does not
-# have must be refused when it is WRITTEN rather than quietly running Claude
-# Code — a stored value nothing honours is how the column got here in the first
-# place.
-#
 # The names themselves are declared at the top of this module, because
 # ``SessionRef`` defaults to one and a default written as a literal is a second
 # declaration of the same fact.
@@ -455,15 +546,30 @@ class Harness:
     present it. A model has no opinion about any of that.
 
     Written the wrong way round, adding a harness meant editing the model
-    catalogue, an editor had to infer the harness from the model the person
-    picked, and refusing a combination produced an error about the model — the
-    half the person had actually chosen on purpose.
+    catalogue, and refusing a combination produced an error about the model —
+    the half the person had actually chosen on purpose.
     """
 
     name: str
     # What a person would call it. Not a display concern: this is the only
     # place the name a human sees is written down.
     label: str
+    # 四条硬性要求（结论 43），每条一句「怎么做到的」，指得出代码在哪。一句「已支
+    # 持」而指不出是哪一行做的，下一个人没有办法核，也没有办法在它失效的时候发现
+    # ——和 ``capability`` 那张表里的格子同一条规矩。
+    #
+    # 反引号里写的是**本仓库的东西**：带 `/` 的（或者以 `.py`、`.md` 结尾的）是路
+    # 径，从 `app/domain/` 起算；其余的是符号名，每个都要在同一句引的某个文件里找
+    # 得到。规矩不限于代码文件——一条要求的做法写在哪儿就引哪儿，
+    # `agent/skill_library/` 下那几份发给 agent 的说明也算数。
+    # ``test_subagent_requirements.py`` 两样都核，而且核符号那一样要求它**参与了代
+    # 码**：被定义、被赋值、被读。只核「文件里有这串字」是不够的——一张
+    # ``merged.pop`` 的删除名单里也有这串字，而一张删除名单证明的恰好是这句话的反
+    # 面。上游的工具名（Task、Agent）不加反引号：那不是这里能核的东西。
+    #
+    # 值只能是一句话。``Difference`` 是 StrEnum，填进来照样是个 ``str``，所以
+    # ``__post_init__`` 认的是类型本身：硬性要求没有「这个骨架做不到」那一档。
+    subagents: Mapping[SubagentRequirement, str]
     # Does it speak the platform gateway's own shape? Then every model the
     # project can use is one it can drive, and no deployment has to list them.
     # False means it supports only what it has its own adapter for, and an
@@ -486,26 +592,80 @@ class Harness:
     # with no way back to the timeline.
     draws_on_its_screen: bool = True
 
+    def __post_init__(self) -> None:
+        """答不全四条的，根本造不出来——这就是「摘掉」的可判形式。
+
+        判在构造上而不是判在一条守卫测试上：注册表是一个字面量，一个造得出来的
+        条目总会有人写进去。
+        """
+        for requirement in SubagentRequirement:
+            answer = self.subagents.get(requirement)
+            if type(answer) is not str or not answer.strip():
+                raise ValueError(
+                    f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
+                    "答得出的骨架才上注册表，答不出的留着代码不注册。"
+                    "一条差异码也不算答——硬性要求没有「暂缺」那一档。"
+                )
+
 
 HARNESSES: dict[str, Harness] = {
-    CLAUDE_CODE: Harness(CLAUDE_CODE, "Claude Code", carries_subscription=True),
-    # Both of these run a runner as the screen's program and drive the agent
-    # over RPC, so neither has a pane worth attaching to.
-    CODEX: Harness(CODEX, "Codex", speaks_gateway=False, draws_on_its_screen=False),
-    PI: Harness(PI, "pi", draws_on_its_screen=False),
+    CLAUDE_CODE: Harness(
+        CLAUDE_CODE,
+        "Claude Code",
+        subagents={
+            SubagentRequirement.SPAWNS_WITH_A_MODEL: (
+                "Task / Agent 工具起一条子线程，跑哪个模型由起它的那次调用按家族"
+                "（haiku / sonnet / opus）说。平台这边不在启动环境里定模型（结论 "
+                "46）：一台机器只有一种启动形状（`agent/provider_env.py` 的 "
+                "`subscription_provider`），`agent/device_provider.py` 的 "
+                "`_ensure_screen` 把调用方带进来的模型别名删掉；这条活绑的是哪个模"
+                "型在准入时解析（`room_task/binding.py` 的 `WorkBinding.wire_model`"
+                "），计量代理把它写进请求体——订阅池上放过子线程点名 haiku 家族的"
+                "那些请求，网关池上全部改写。"
+            ),
+            SubagentRequirement.LABELS_ITS_THREAD: (
+                "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识由"
+                "`room_task/thread_label.py` 的 `thread_label` 算出来、写在起它的那"
+                "段 prompt 里，PostToolUse 的 tool_response.agentId 把它钉在这个 "
+                "worker 上，此后这条子线程的每条记录都带着它出来。"
+            ),
+            SubagentRequirement.PARENT_RETASKS_IT: (
+                "改指令的是起它的父线程，做法写在 "
+                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程直接给"
+                "这条子线程发消息；已经停了的，在房间会话里用同一个线程标识重新派"
+                "一条——所以换了要求还是那条活、还归那张卡。平台这一侧只有 "
+                "`agent/harness/__init__.py` 上的 `AgentRuntime.deliver`，它把人对"
+                "卡的操作送进**父**会话，父线程读到之后才去做上面那件事；平台不认"
+                "子线程，也不直接对它说话。"
+            ),
+            SubagentRequirement.PARENT_STOPS_IT: (
+                "停的是**一条**子线程，做法和改指令写在同一处 "
+                "`agent/skill_library/stage_delegating.md`：父线程调 TaskStop，按起"
+                "它时给的那个名字停那一条，同一条会话里的其他分身照跑。平台这一侧"
+                "的 `agent/harness/__init__.py` 上 `AgentRuntime.interrupt` 与 "
+                "`AgentRuntime.close` 停的都是整条会话——那是结论 43 的另一句「子 "
+                "agent 与父进程同生同死」，不是这一条，拿它来答这一条等于这条要求"
+                "恒真。这一手在房间里落不落得了地由 "
+                "`agent/harness/claude_code/remote_execution/proxy.js` 决定：一个停"
+                "任务的 id 有两个主人，转给执行器的那条路只认执行机上后台跑着的命"
+                "令，执行器答「不认识」的那个 id 就是一条子线程，放手让骨架自己停；"
+                "`agent/harness/claude_code/remote_execution/client.py` 的 `guarded`"
+                " 把它从那道「插件没接住就拒掉」的闸门里摘出来，这次放手才到得了骨"
+                "架。"
+            ),
+        },
+        carries_subscription=True,
+    ),
 }
 
-# What a type that declines to choose runs on. A type is 出厂设置, not a
-# deployment decision — most of them have no opinion about the harness, and the
-# null they store means "whatever this platform runs", not "none".
-DEFAULT_HARNESS = CLAUDE_CODE
+# Codex 与 pi 今天答不出这四条，所以不在上面（结论 43）。**这是一次产品收缩，不是
+# 一次重构副作用**：它们的适配层原样留在 `agent/harness/codex/` 与
+# `agent/harness/pi/`——契约夹具照跑、行为声明照写、pin 照被守卫管着——只是这套部
+# 署不跑它们，功能矩阵里也不占一列。两个出口里取的是这一个；另一个是给它们各写一
+# 层适配（两家上游都支持多线程），什么时候写出来、什么时候答得出四条，什么时候回
+# 到上面这张表。
 
 
-def harness_name(declared: str | None) -> str:
-    """The harness a type declared, or the default when it declared none."""
-    return declared or DEFAULT_HARNESS
-
-
-def known_harness(declared: str | None) -> bool:
-    """Is this a harness we can actually run? None (undeclared) always is."""
-    return declared is None or declared in HARNESSES
+def harness_name(name: str | None) -> str:
+    """调用方给的 harness 名，没给就是这套部署跑的那个。"""
+    return name or deployment_harness()

@@ -3,7 +3,7 @@
 import hashlib
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The gateway mounts this whole app under `/api` and strips that one segment
@@ -17,8 +17,19 @@ GATEWAY_MOUNT = "/api"
 
 
 class Settings(BaseSettings):
+    # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
+    # it carries a `validation_alias` (so the deploy keeps working through the
+    # env-name change), and in pydantic a field with an alias is otherwise
+    # reachable ONLY by that alias — `Settings(platform_admin_handles=[...])`,
+    # which the unit tests and any in-process caller write, would be silently
+    # dropped by `extra="ignore"` and read back as the empty default. The flag
+    # is per-model, not per-field, but no other field here has an alias, so for
+    # them it changes nothing.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_by_name=True,
     )
 
     # --- Database ---
@@ -148,12 +159,22 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
+    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
+    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
+    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
+    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
+    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harness: str = ""
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
     private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
+    # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
+    # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
+    # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
+    claude_code_max_subagent_spawn_depth: int = 1
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -219,18 +240,37 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
-    # Handles allowed to read and route the whole feedback queue
-    # (`/admin/feedback`). JSON list in env, e.g. '["alice","bob"]'. A settings
-    # list rather than a role because no production path assigns
+    # Handles that are platform administrators — the people who read and route
+    # the whole feedback queue (`/admin/feedback`) and who manage everything else
+    # that turns out to need an admin. JSON list in env, e.g. '["alice","bob"]'.
+    # A settings list rather than a role because no production path assigns
     # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
     # and lock the surface for everyone.
+    #
+    # This is the **root** half of the admin list: the other half is the
+    # `platform_admins` table (the 成员管理 screen), and the judge is their union
+    # (`AdminService.admin_handles`). Rows added on the page can be removed
+    # there; these cannot, because adding admins is itself an admin action — a
+    # list you can empty from the UI is a door that locks from the inside.
+    #
+    # The env name is `PLATFORM_ADMIN_HANDLES`. It used to be
+    # `FEEDBACK_ADMIN_HANDLES`, from when the only thing an admin administered
+    # was feedback; that name is still read (a deployment's env file is not
+    # something a code change can edit), so an unmigrated box keeps booting, but
+    # the new name wins when both are set. Drop the old choice once the deploy
+    # workflow and the boxes carry the new one.
     #
     # REQUIRED on a deployment: an empty list is not "no admins configured yet",
     # it is a feedback queue that accepts submissions and can never be worked —
     # and the users who submit cannot tell the difference from "nobody has
-    # picked this up yet". `_require_feedback_admins_on_deployment` fails the
+    # picked this up yet". `_require_platform_admins_on_deployment` fails the
     # boot instead. Local dev and the test suite keep the empty default.
-    feedback_admin_handles: list[str] = []
+    platform_admin_handles: list[str] = Field(
+        default=[],
+        validation_alias=AliasChoices(
+            "PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"
+        ),
+    )
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese feedback propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
@@ -328,10 +368,11 @@ class Settings(BaseSettings):
     # client would change what the provider sees. The meter is instead a proxy the
     # traffic passes through — same observability, different place.
     #
-    # OFF by default: with no proxy configured a sandbox would resolve
-    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
-    # deployment decision that needs the proxy actually running.
-    subscription_enabled: bool = False
+    # This is the ONE shape a machine is launched in (结论 46): no base URL, the
+    # metering proxy on HTTPS_PROXY, a fake ticket. The proxy asks
+    # `/llm/admission` per request and sends it to the subscription pool or
+    # rewrites it to the gateway. A deployment without a reachable proxy has no
+    # second shape to fall back to — it refuses and says so.
     # Address the SANDBOX reaches the metering proxy at. The docker bridge address
     # (not loopback, which no container can reach; not 0.0.0.0, which would put the
     # subscription on the LAN).
@@ -464,9 +505,7 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Its own switch, NOT the
-    # project scheduler's: that one spends model budget on 定期巡检 and ships
-    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
     # topic's first turn crosses this clock twice (running → switch the AI
     # channel, ready → enroll), and at 60s a person waited up to two minutes on
     # a timer for a machine that was already there. A tick with nothing
@@ -580,10 +619,6 @@ class Settings(BaseSettings):
     # rises with it, until a per-machine gate exists.
     max_concurrent_turns: int = 16
 
-    # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
-    # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
-    # (manual heartbeat only; default off so dev/tests don't burn model calls).
-    scheduler_interval_seconds: int = 0
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -597,10 +632,10 @@ class Settings(BaseSettings):
     # The most one upload may carry. A device that sends more gets 413 and
     # keeps its home; the sweep says so every tick until somebody looks.
     transcripts_max_bytes: int = 512 * 1024 * 1024
-    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
-    # unlike the heartbeat above: it consumes no model calls unless it actually
-    # finds a killed turn, and its whole purpose is catching the case where
-    # nothing else will ever look — a turn dying without the process dying.
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
+    # default: it consumes no model calls unless it actually finds a killed
+    # turn, and its whole purpose is catching the case where nothing else will
+    # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
@@ -660,12 +695,10 @@ class Settings(BaseSettings):
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
     # --- notifications and deadlines ---
-    # Three jobs nothing in a request path can do. An aggregation window that
-    # never closes is a notification written and never delivered; an undrained
-    # email queue is an inbox that never receives; an unswept deadline is a
-    # promise the platform made and quietly did not keep. Each failure is
-    # silent, which is why the intervals are on by default. 0 disables one.
-    notification_finalize_interval_s: int = 60
+    # Two jobs nothing in a request path can do. An undrained email queue is an
+    # inbox that never receives; an unswept deadline is a promise the platform
+    # made and quietly did not keep. Each failure is silent, which is why the
+    # intervals are on by default. 0 disables one.
     notification_email_drain_interval_s: int = 60
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
@@ -933,14 +966,17 @@ class Settings(BaseSettings):
         )
 
     @model_validator(mode="after")
-    def _require_feedback_admins_on_deployment(self) -> "Settings":
+    def _require_platform_admins_on_deployment(self) -> "Settings":
         """Fail the boot when a deployment has nobody who can work the queue.
 
-        ``feedback_admin_handles`` is the ONLY thing that opens
-        ``/admin/feedback``: there is no role behind it, no default member set,
-        no way to promote yourself from the UI. Empty therefore does not read as
-        "we have not got round to appointing an admin yet" — it reads, from
-        every seat in the product, as *nobody is looking at this*:
+        ``platform_admin_handles`` is the **root** admin list, and it is still
+        the only way in: no role behind it, no default member set, nothing in the
+        UI that promotes you. A deployment can now add admins from the page
+        (`platform_admins`, the 成员管理 block) — but **adding one is itself an
+        admin action**, so an empty root list is not "we have not got round to
+        appointing an admin yet". It is a deployment where nobody can ever
+        appoint one. Read from every seat in the product, it says *nobody is
+        looking at this*:
 
         - A submitter writes a report, watches its status stay at 已收录, and has
           no way to tell that apart from "someone will get to it". The feedback
@@ -950,6 +986,11 @@ class Settings(BaseSettings):
           a sentence that names the wrong problem.
         - The agent-side proposal path still spends its daily quota filing
           proposals that no one can act on.
+        - 成员管理 — the screen whose whole job is adding the next admin — is
+          admin-only too, so there is no way back in from the product at all.
+          This is why the root list is the half the page cannot delete: one
+          mis-click on a list that was the only copy would lock everyone out
+          permanently.
 
         Nothing in the running system can detect that state from the inside,
         which is why it is checked at boot (#338/#439's rule: an unset
@@ -968,17 +1009,17 @@ class Settings(BaseSettings):
         # An entry that is empty or whitespace is worse than a missing entry:
         # the list is non-empty, so this guard passes, and the handle it names is
         # one that no account can ever authenticate as.
-        blank = [h for h in self.feedback_admin_handles if not h.strip()]
+        blank = [h for h in self.platform_admin_handles if not h.strip()]
         if blank:
             raise RuntimeError(
-                "FEEDBACK_ADMIN_HANDLES contains an empty entry. Handles are "
+                "PLATFORM_ADMIN_HANDLES contains an empty entry. Handles are "
                 "matched against the account's handle exactly, so an empty "
                 "string can never match anyone — this is a list with a typo in "
                 "it, not a list with an admin in it. Set it to a JSON list of "
-                'handles, e.g. FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\'.'
+                'handles, e.g. PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\'.'
             )
 
-        if self.feedback_admin_handles:
+        if self.platform_admin_handles:
             return self
 
         if not self.deployed_via_compose and self.environment in (
@@ -988,19 +1029,22 @@ class Settings(BaseSettings):
             return self
 
         raise RuntimeError(
-            "FEEDBACK_ADMIN_HANDLES is empty on a deployment ("
+            "PLATFORM_ADMIN_HANDLES is empty on a deployment ("
             f"ENVIRONMENT reads '{self.environment}'"
             + (
                 ", started by the deploy compose file"
                 if self.deployed_via_compose
                 else ""
             )
-            + "). This is the only thing that opens /admin/feedback — with it "
-            "empty, nobody can read or route the feedback queue, and neither a "
-            "submitter nor the agent path can tell that apart from 'nobody has "
-            "picked it up yet'. The whole feedback surface looks healthy and is "
-            "write-only. Set it to the handles that should administer feedback, "
-            'as a JSON list: FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\' (see '
+            + "). This is the only thing that opens /admin/feedback — the page "
+            "itself can add admins, but only an admin can do that, so an empty "
+            "list here is a deployment nobody can get into: no one can read or "
+            "route the feedback queue, and neither a submitter nor the agent "
+            "path can tell that apart from 'nobody has picked it up yet'. The "
+            "whole feedback surface looks healthy and is write-only. Set it to "
+            "the handles that should administer feedback (they are the ones the "
+            "page cannot remove), as a JSON list: "
+            'PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\' (see '
             "deploy/.env.prod.example). If you are sure nobody should administer "
             "feedback, set it to a handle you control rather than leaving it "
             "empty."

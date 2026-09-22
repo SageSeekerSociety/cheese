@@ -9,6 +9,7 @@
     "before": "Base version",
     "oversized": "This file exceeds 1 MB. Preview or download both versions to compare them",
     "binary": "This format has no line-by-line diff. Preview or download both versions to compare them",
+    "document": "This compares the document text, not its layout or tracked changes",
     "unsupported": "This file format or size does not support line-by-line comparison",
     "unavailable": "These versions use different delivery formats, or have no retained content to compare",
     "source": "Comparing the complete project source at the two deliveries",
@@ -31,10 +32,10 @@
     "noPreview": "This version has no file to preview"
   },
   "form": {
-    "taskName": "Challenge name",
+    "taskName": "Problem name",
     "participantType": "Participant type",
     "individual": "Individual",
-    "taskLevel": "Challenge difficulty",
+    "taskLevel": "Problem difficulty",
     "beginner": "Beginner",
     "intermediate": "Intermediate",
     "advanced": "Advanced",
@@ -42,19 +43,19 @@
     "registrationStartAtHint": "Leave empty to open registration right away",
     "deadline": "Registration deadline",
     "defaultDeadline": "Default completion deadline",
-    "taskDescription": "Challenge description",
+    "taskDescription": "Problem description",
     "participantLimitHint": "Leave empty for no limit on participants",
     "accessControl": {
       "title": "Permissions",
       "enableAccessRestriction": "Restrict access",
-      "enableAccessRestrictionHint": "When on, only users with an email from the selected domains can view and join this challenge",
+      "enableAccessRestrictionHint": "When on, only users with an email from the selected domains can view and join this problem",
       "domainGroups": "Domain groups",
-      "domainGroupsHint": "Choose which domain groups can access this challenge. With none selected, everyone can.",
+      "domainGroupsHint": "Choose which domain groups can access this problem. With none selected, everyone can.",
       "noDomainGroups": "No domain groups available"
     }
   },
   "publish": {
-    "title": "Publish challenge",
+    "title": "Publish problem",
     "submit": "Submit"
   },
   "status": {

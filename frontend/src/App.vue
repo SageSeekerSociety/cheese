@@ -60,9 +60,11 @@
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
-        <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
-        <v-card-text class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">来自赛题：{{ sourceTask.name }}</p>
+        <v-card-title class="text-h6 font-weight-bold pb-1">{{
+          newProjectStep === 1 ? '新建项目' : t('work.teammate.title')
+        }}</v-card-title>
+        <v-card-text v-show="newProjectStep === 1" class="pb-2">
+          <p v-if="sourceTask" class="t-body c-muted mb-3">来自题目：{{ sourceTask.name }}</p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
@@ -73,7 +75,7 @@
             autofocus
             hide-details
             :disabled="creatingProject"
-            @keyup.enter="confirmNewProject"
+            @keyup.enter="advanceNewProject"
           />
           <v-select
             v-model="newProjectTeamId"
@@ -116,21 +118,55 @@
             {{ teamLoadError }}
             <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
           </v-alert>
-          <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
-            {{ newProjectError }}
-          </v-alert>
         </v-card-text>
+        <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
+          <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
+          <v-text-field
+            v-model="newProjectAgentName"
+            :label="t('work.teammate.name')"
+            variant="outlined"
+            autocomplete="off"
+            maxlength="64"
+            :disabled="creatingProject"
+            @keyup.enter="confirmNewProject"
+          >
+            <template #append-inner>
+              <v-btn
+                variant="text"
+                icon="mdi-dice-multiple-outline"
+                size="small"
+                :aria-label="t('work.teammate.random')"
+                :title="t('work.teammate.random')"
+                :disabled="creatingProject"
+                @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
+              />
+            </template>
+          </v-text-field>
+          <p class="t-meta c-muted">{{ t('work.teammate.more') }}</p>
+        </v-card-text>
+        <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
+          {{ newProjectError }}
+        </v-alert>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
           <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">取消</v-btn>
+          <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+            t('work.teammate.back')
+          }}</v-btn>
           <v-btn
             color="primary"
             variant="flat"
             :loading="creatingProject"
-            :disabled="!newProjectName.trim() || loadingTeams || newProjectTeamId === null || !!teamLoadError"
-            @click="confirmNewProject"
+            :disabled="
+              !newProjectName.trim() ||
+              loadingTeams ||
+              newProjectTeamId === null ||
+              !!teamLoadError ||
+              (newProjectStep === 2 && !newProjectAgentName.trim())
+            "
+            @click="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
           >
-            创建
+            {{ newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -171,6 +207,7 @@ import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
+import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
@@ -180,7 +217,9 @@ import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
+import { t } from '@/i18n'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
+import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
   applyProjectOrder,
@@ -324,7 +363,16 @@ const navSources = computed<NavSources>(() => ({
   createProject: createNewProject,
 }))
 
-const rail = computed(() => railItems(navSources.value))
+// 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
+// 设置、某个 赛题 页）时是 default——那里没有项目行可读，而 default 就是今天的
+// 样子，所以项目外的一点都没变。按地址取而不是按「上次开过的项目」取：壳是**你
+// 现在待的地方**的长相，走出项目还挂着上一个项目的样子会让人以为走岔了。
+const openProjectId = computed<string | null>(() =>
+  typeof currentRoute.params.projectId === 'string' ? currentRoute.params.projectId : null
+)
+const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
+
+const rail = computed(() => railItems(navSources.value, navShell.value))
 
 // rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
 //
@@ -343,13 +391,15 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   void router.push(to)
 })
-const tabs = computed(() => tabItems(navSources.value))
+const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
+const newProjectStep = ref(1)
+const newProjectAgentName = ref('')
 const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
@@ -389,12 +439,20 @@ async function loadProjectTeams() {
 watch(newProjectDialog, (opened) => {
   if (!opened) return
   newProjectName.value = sourceTask.value?.name ?? ''
+  newProjectStep.value = 1
+  newProjectAgentName.value = randomTeammateName()
   newProjectForgeKind.value = 'forgejo'
   newProjectError.value = null
   void loadProjectTeams()
 })
 
+function advanceNewProject() {
+  if (newProjectName.value.trim() && !loadingTeams.value && !teamLoadError.value && newProjectTeamId.value !== null)
+    newProjectStep.value = 2
+}
+
 async function confirmNewProject() {
+  if (newProjectStep.value !== 2 || !newProjectAgentName.value.trim()) return
   const name = newProjectName.value.trim()
   if (!name || creatingProject.value || loadingTeams.value || teamLoadError.value || newProjectTeamId.value === null)
     return
@@ -406,7 +464,8 @@ async function confirmNewProject() {
       myHandle(),
       newProjectTeamId.value,
       sourceTask.value?.id,
-      newProjectForgeKind.value
+      newProjectForgeKind.value,
+      newProjectAgentName.value.trim()
     )
     await loadCxProjects()
     newProjectDialog.value = false

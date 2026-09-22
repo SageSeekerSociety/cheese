@@ -31,12 +31,14 @@
                   />
                   <v-btn
                     v-if="admin.user.id !== currentUser?.id && isCurrentUserOwner"
-                    icon="mdi-delete"
                     variant="text"
                     color="error"
                     size="small"
+                    prepend-icon="mdi-account-remove"
                     @click="confirmRemoveAdmin(admin.user.id, admin.user.nickname)"
-                  />
+                  >
+                    {{ t('spaces.detail.unsetAsAdmin') }}
+                  </v-btn>
                 </div>
               </template>
             </v-list-item>
@@ -44,27 +46,29 @@
 
           <v-divider class="my-4" />
 
-          <v-form @submit.prevent="addNewAdmin">
-            <v-list-subheader>{{ t('spaces.detail.addNewAdmin') }}</v-list-subheader>
-            <div class="d-flex align-center">
-              <v-text-field
-                v-model="newAdminUserId"
-                type="number"
-                :label="t('spaces.detail.userId')"
-                density="compact"
-                class="me-2"
-              />
-              <v-select
-                v-model="newAdminRole"
-                autocomplete="off"
-                :items="adminRoles"
-                :label="t('spaces.detail.role')"
-                density="compact"
-                class="me-2"
-              />
-              <v-btn color="primary" @click="addNewAdmin">{{ t('spaces.detail.add') }}</v-btn>
-            </div>
-          </v-form>
+          <!-- 成员 → 设为管理员：报名的学生默认只是成员，教师角色由创建者按人授予。
+               后端只认创建者（OWNER）做这件事，所以这一段整块只对创建者可见。 -->
+          <v-list-subheader>{{ t('spaces.detail.members') }}</v-list-subheader>
+          <v-list v-if="memberRows.length">
+            <v-list-item v-for="member in memberRows" :key="member.userId" :title="member.name">
+              <template #prepend>
+                <v-avatar size="36" :image="getAvatarUrl(member.avatarId)" />
+              </template>
+              <template #append>
+                <v-btn
+                  v-if="isCurrentUserOwner"
+                  variant="text"
+                  color="primary"
+                  size="small"
+                  prepend-icon="mdi-account-plus"
+                  @click="promoteToAdmin(member.userId)"
+                >
+                  {{ t('spaces.detail.setAsAdmin') }}
+                </v-btn>
+              </template>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-medium-emphasis pa-2">{{ t('spaces.detail.noMembers') }}</div>
         </v-card-text>
         <v-card-actions>
           <v-btn color="primary" @click="closeManageAdmins">{{ t('spaces.detail.close') }}</v-btn>
@@ -95,7 +99,7 @@
                 <v-text-field v-model="intro" autocomplete="off" :counter="255" v-bind="introProps" />
 
                 <template v-if="isCurrentUserAtLeastAdmin">
-                  <v-list-subheader>每个发布者对普通用户可见的未结项已通过赛题数量上限(M)</v-list-subheader>
+                  <v-list-subheader>每个发布者对普通用户可见的未结项已通过题目数量上限(M)</v-list-subheader>
                   <v-radio-group v-model="visibleLimitMode" inline hide-details class="mb-2">
                     <v-radio label="无限制" value="unlimited" />
                     <v-radio label="限制数量" value="limited" />
@@ -126,7 +130,7 @@
 </template>
 
 <script lang="tsx" setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
@@ -146,7 +150,7 @@ import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
-import { SpaceAdminRoleType, SpaceAnnouncement } from '@/types'
+import { SpaceAdminRoleType, SpaceAnnouncement, SpaceMember } from '@/types'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
@@ -348,8 +352,6 @@ const getAnnouncementPreview = (content: string, length = 120) => {
 }
 
 // 管理员管理相关
-const newAdminUserId = ref<number>()
-const newAdminRole = ref<SpaceAdminRoleType>('ADMIN')
 const adminRoles = [
   { title: t('spaces.detail.owner'), value: 'OWNER' },
   { title: t('spaces.detail.admin'), value: 'ADMIN' },
@@ -361,18 +363,48 @@ const isCurrentUserOwner = computed(() => {
   return space.value?.admins?.some((admin) => admin.user.id === currentUser.value?.id && admin.role === 'OWNER')
 })
 
-const addNewAdmin = async () => {
-  if (!newAdminUserId.value) {
-    toast.error(t('spaces.detail.userIdRequired'))
+// 板里的成员（学生）——「设为管理员」的候选。管理员本来就不在成员表里（授管理员
+// 是往 space_admin_relation 写一行，不是往成员表写），所以这里按 userId 去个重，
+// 免得同一个刚被授过权的人在两段列表里各出现一次。
+const members = ref<SpaceMember[]>([])
+
+const adminUserIds = computed(() => new Set((space.value?.admins ?? []).map((admin) => admin.user.id)))
+
+const memberRows = computed(() =>
+  members.value
+    .filter((member) => !adminUserIds.value.has(member.userId))
+    .map((member) => ({
+      userId: member.userId,
+      name: member.user?.nickname || member.user?.username || `#${member.userId}`,
+      avatarId: member.user?.avatarId ?? undefined,
+    }))
+)
+
+const fetchMembers = async () => {
+  if (!space.value?.id) {
+    members.value = []
     return
   }
-
   try {
-    await spaceStore.addAdmin(newAdminUserId.value, newAdminRole.value)
-    newAdminUserId.value = undefined
-    newAdminRole.value = 'ADMIN'
+    members.value = (await SpacesApi.listMembers(space.value.id)).data.members
   } catch (error) {
-    console.error('添加管理员失败:', error)
+    console.error('加载成员失败:', error)
+    members.value = []
+  }
+}
+
+watch(isManagingAdmins, (open) => {
+  if (open) {
+    void fetchMembers()
+  }
+})
+
+// 通道只有一条：后端 /spaces/{id}/managers，且只认创建者（OWNER）。
+const promoteToAdmin = async (userId: number) => {
+  try {
+    await spaceStore.addAdmin(userId, 'ADMIN')
+  } catch (error) {
+    console.error('设为管理员失败:', error)
   }
 }
 

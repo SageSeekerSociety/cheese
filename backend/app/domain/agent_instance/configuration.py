@@ -1,40 +1,27 @@
-"""Saved agent configuration, and what a project may point an agent at.
-
-Two questions live here, and which one is asked of which thing is the whole
-design: **a harness is what can drive a model**, never the other way round.
-``harness.Harness`` says why that direction, and what it cost when it was
-written backwards.
-
-So ``model_choices`` answers "what can this project run at all" with no opinion
-about harnesses, and ``harness_choices`` answers "what can each harness here be
-pointed at". Adding a harness touches the harness registry and nothing else.
-"""
+"""Saved teammate configuration and the models available to a project."""
 
 from dataclasses import asdict
 
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.errors import ValidationError
 from app.domain.agent import gateway_catalog
-from app.domain.agent.harness import (
-    DEFAULT_HARNESS,
-    HARNESSES,
-    Harness,
-    harness_name,
-    known_harness,
+from app.domain.agent.harness import HARNESSES, Harness, harness_for
+from app.domain.agent.market import (
+    TIER_INCLUDED,
+    subscription_model_ids,
+    subscription_model_listings,
 )
-from app.domain.agent.market import subscription_model_ids, subscription_model_listings
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
 class AgentConfiguration(BaseModel):
+    """A saved role and optional model; None inherits the project main model."""
+
     body: str = ""
-    model: str = Field(min_length=1, max_length=128)
-    harness: str = DEFAULT_HARNESS
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
-    effort: str | None = None
+    model: str | None = None
 
 
 def model_choices(project_settings: dict | None) -> list[dict]:
@@ -45,24 +32,15 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     only one harness can present — and reading it off the id later would mean
     guessing.
     """
-    subscription_default = (
-        resolve_pool(
-            project_settings, subscription_enabled=settings.subscription_enabled
+    subscription_default = resolve_pool(project_settings) == SUBSCRIPTION
+    choices = [
+        dict(
+            asdict(item),
+            default=item.default and subscription_default,
+            supply=SUBSCRIPTION,
         )
-        == SUBSCRIPTION
-    ) and settings.subscription_enabled
-    choices = (
-        [
-            dict(
-                asdict(item),
-                default=item.default and subscription_default,
-                supply=SUBSCRIPTION,
-            )
-            for item in subscription_model_listings()
-        ]
-        if settings.subscription_enabled
-        else []
-    )
+        for item in subscription_model_listings()
+    ]
     # The pool's models come from the gateway, which is the only thing that
     # knows: it needs a route and a price to serve one at all, so a list kept
     # here could only ever be a second copy drifting out of step with the first.
@@ -73,6 +51,12 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "description": "平台模型池",
             "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
+            # The pool's models are 档位 `included`: the gateway only offers what
+            # it can bill (`gateway_catalog.offerable`), and what they cost the
+            # project is already capped by the project key's `max_budget`. The
+            # tiers a policy gates on are about spend a budget does NOT cap —
+            # subscription quota, and a machine that belongs to somebody else.
+            "tier": TIER_INCLUDED,
         }
         for item in gateway_catalog.offerable()
     )
@@ -80,7 +64,8 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # Models an operator named for a harness that brings its own list, and that
     # the platform pool does not already serve. They reach the same gateway;
     # what makes them separate is that only that harness has an adapter for
-    # them, which is exactly what `harness_choices` will say below.
+    # them — which is what the filter below asks of the one this deployment
+    # runs.
     known = {item["id"] for item in choices}
     for named in dict.fromkeys(
         model for models in settings.agent_harness_models.values() for model in models
@@ -94,13 +79,48 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "description": "平台模型池",
                 "default": False,
                 "supply": GATEWAY,
+                "tier": TIER_INCLUDED,
             }
         )
+    # 按这个项目真会跑的骨架筛。跑哪个骨架是部署设置加项目设置答的（结论 28），
+    # 所以这一筛问的是那一份设置，不是任何一个参与者——一个骨架指不到的模型，在
+    # 这个项目里根本不是一个能用的模型，列出来只会让绑上它的那条活在派出去的那
+    # 一刻才失败。
+    #
+    # 问 ``harness_for`` 而不是 ``deployment_harness``：轮次组装（``chat.py`` 的
+    # ``_assemble_turn``）和克隆（``topic/services.py`` 的 ``clone_from``）都按项
+    # 目答，这里再按部署答一遍就是同一个问题的第二个答法。一套部署跑 claude-code、
+    # 某个项目设置成 codex 时，轮次真跑在 codex 上，而目录会按 claude-code 的能力
+    # 位筛——订阅别名是最直接的一类——于是 ``binding.resolve`` 挑得出一个 codex 指
+    # 不到的模型绑上去，正好是这一筛要防的那件事。
+    # 这个项目指向的骨架这套部署没注册（结论 43）时，它没有一个能用的模型：它的
+    # 轮次在开始时就会在房间里说「没有部署」，目录跟着说同一件事——空的。
+    running = HARNESSES.get(harness_for(project_settings))
+    if running is None:
+        return []
+    choices = [item for item in choices if _drives(running, item)]
+    # An explicit, available project model overrides the pool default. Otherwise
+    # use settings.agent_model unless the project explicitly chose subscription.
+    # Unknown historical selections leave that default in place. The room's main
+    # conversation reads this same default through binding.resolve(None, ...).
+    #
+    # 按骨架筛之后才问，所以「目录里有」问的是筛完的目录：项目挑了一个自己这个
+    # 骨架指不到的模型，就按没设处理走部署兜底，而不是把一条派出去才会失败的绑定
+    # 标成默认。
+    chosen = (project_settings or {}).get("default_model")
+    known_ids = {item["id"] for item in choices}
+    if isinstance(chosen, str) and chosen in known_ids:
+        for item in choices:
+            item["default"] = item["id"] == chosen
     return choices
 
 
 def _drives(harness: Harness, model: dict) -> bool:
-    """Can this harness be pointed at this model, in this deployment?"""
+    """Can this harness be pointed at this model, in this deployment?
+
+    ``harness`` is the one this project runs — the deployment's unless the
+    project's own settings say otherwise.
+    """
     if model["supply"] == SUBSCRIPTION:
         # The credential, not the shape: a subscription turn authenticates with
         # something minted for one harness, so no other can carry it even where
@@ -109,89 +129,3 @@ def _drives(harness: Harness, model: dict) -> bool:
     if harness.speaks_gateway:
         return True
     return model["id"] in settings.agent_harness_models.get(harness.name, [])
-
-
-def harness_choices(project_settings: dict | None) -> list[dict]:
-    """每个 harness，以及它在这个项目里能被指向哪些模型。
-
-    A harness with nothing to drive is not offered at all: a deployment that
-    serves no model a harness supports does not have that harness, whatever the
-    registry says, and letting a person pick it would produce a teammate that
-    cannot take a turn.
-    """
-    models = model_choices(project_settings)
-    choices = []
-    for harness in HARNESSES.values():
-        driveable = [item["id"] for item in models if _drives(harness, item)]
-        if not driveable:
-            continue
-        choices.append(
-            {
-                "id": harness.name,
-                "label": harness.label,
-                "description": "",
-                "default": harness.name == DEFAULT_HARNESS,
-                "models": driveable,
-            }
-        )
-    return choices
-
-
-def models_for(harness: str | None, project_settings: dict | None) -> list[str]:
-    """The models this harness can be pointed at here, in preference order."""
-    name = harness_name(harness)
-    for choice in harness_choices(project_settings):
-        if choice["id"] == name:
-            return choice["models"]
-    return []
-
-
-def initial_model(project_settings: dict | None, harness: str | None = None) -> str:
-    """What a new agent on this harness starts pointed at.
-
-    The project's own default when that harness can drive it — a preset asking
-    for a different harness must not silently move the project off the model it
-    picked — and otherwise the first thing that harness CAN drive.
-    """
-    driveable = models_for(harness, project_settings)
-    if not driveable:
-        raise ValidationError(
-            f"当前项目没有 {_label(harness)} 能用的模型，请检查模型服务"
-        )
-    preferred = {
-        item["id"] for item in model_choices(project_settings) if item["default"]
-    }
-    return next((model for model in driveable if model in preferred), driveable[0])
-
-
-def _label(harness: str | None) -> str:
-    entry = HARNESSES.get(harness_name(harness))
-    return entry.label if entry else harness_name(harness)
-
-
-def validate_configuration(
-    config: AgentConfiguration, project_settings: dict | None
-) -> None:
-    """Refuse a configuration this deployment cannot actually run.
-
-    Asked in this order on purpose. Three different things can be wrong — the
-    harness does not exist here, the project cannot use that model at all, the
-    harness cannot drive it — and each has its own answer. Reporting the second
-    for the third is how this read before the direction was fixed: 「当前项目无法
-    使用模型 X」 about a model the project could use perfectly well, sending the
-    person to change the half they had chosen on purpose.
-    """
-    if not known_harness(config.harness):
-        raise ValidationError(f"当前平台无法使用运行方式 {config.harness!r}")
-    if config.model not in {item["id"] for item in model_choices(project_settings)}:
-        raise ValidationError(f"当前项目无法使用模型 {config.model!r}，请选择可用模型")
-    driveable = models_for(config.harness, project_settings)
-    if not driveable:
-        raise ValidationError(
-            f"当前项目没有 {_label(config.harness)} 能用的模型，请检查模型服务"
-        )
-    if config.model not in driveable:
-        raise ValidationError(
-            f"{_label(config.harness)} 不能运行模型 {config.model!r}，"
-            "请换一个模型或运行方式"
-        )

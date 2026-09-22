@@ -55,9 +55,9 @@ if TYPE_CHECKING:
 #: 条活上实测，轮内间隔中位数 8 秒、p90 34 秒。10 分钟是 p90 的十几倍，一段安静的
 #: 工具活动撑不到它；而一条真的停住的活，10 分钟就在看板上现形，不用等两小时。
 #:
-#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**认领分身**那一刻盖一次，之后
-#: 不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条刚被认领、
-#: 还没来得及说第一句话的活，靠的是它。
+#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**平台看见分身开工**那一刻盖一
+#: 次，之后不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条
+#: 刚开工、还没来得及说第一句话的活，靠的是它。
 #:
 #: 这个数只在**没人知道那个分身还在不在**的时候说话。知道的时候听知道的
 #: （`TaskFacts.worker_live`）：一个闷头干了四十分钟、一个 block 都没吐的分身，和
@@ -179,7 +179,7 @@ class CardFacts:
 class TaskFacts:
     status: str
     #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
-    #: block 的时间，没说过话就退回它是什么时候被认领的。
+    #: block 的时间，没说过话就退回平台是什么时候看见它开工的。
     last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
@@ -241,8 +241,8 @@ def facts_for_task(
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
-    两个信号取晚的那个，因为它们各自会缺：一条刚被认领、还没说第一句话的活只有
-    `last_turn_at`；一条干了很久的活，`last_turn_at` 停在认领那一刻，真正在动的
+    两个信号取晚的那个，因为它们各自会缺：一条刚开工、还没说第一句话的活只有
+    `last_turn_at`；一条干了很久的活，`last_turn_at` 停在开工那一刻，真正在动的
     证据在 block 上。取晚的 = 「有任何一个东西确认过它还活着」。
     """
     signals = [t for t in (last_block_at, task.last_turn_at) if t is not None]

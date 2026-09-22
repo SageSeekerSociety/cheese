@@ -1,10 +1,13 @@
 """个人主页 cross-project profile (spec §7.2)."""
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
-from app.domain.memory.models import MemoryScope
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore
+from app.domain.project.services import ProjectService
 from app.domain.user.models import User, UserProfile
 
 
@@ -62,10 +65,18 @@ def test_user_profile_aggregates_across_projects(client, bearer):
         json={"project_id": p1, "title": "我的话题", "created_by": "u1"},
     )
 
-    # 芝士's understanding of u1 (personal memory).
+    # 芝士 对 u1 的理解。这一页问的是「大家对我的认识」，而池已经是 P1 那位芝士
+    # 自己的东西了（结论 8），所以种的是它那一份；这一页要做的就是把每一份都收
+    # 上来。
     async def _seed() -> None:
         async with client.test_factory() as s:
-            await DbMemoryStore(s).remember(MemoryScope.user, "u1", "擅长后端架构")
+            project = await ProjectService(s).get_or_404(uuid.UUID(p1))
+            agent = await AgentInstanceService(s).for_project(project)
+            await DbMemoryStore(s).remember(
+                MemoryScope.user,
+                user_scope_id(project.id, agent.handle, "u1"),
+                "擅长后端架构",
+            )
             await s.commit()
 
     asyncio.run(_seed())

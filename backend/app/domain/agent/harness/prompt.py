@@ -94,6 +94,16 @@ def teaching_section(context: TeachingContext) -> str | None:
         )
     return "\n\n".join(parts)
 
+#: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
+#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
+#: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
+#: 重派一次（结论 43）。只 commit 不 push 的活过不了这台机器。
+ALWAYS_PUSH = (
+    "## 随时 push（所有 agent，主 agent 也一样）\n"
+    "干活期间**随时 push**，不要攒到交付那一下才推。你的工作树在这台机器上，而机器"
+    "随时可能被回收；接着干下去的办法是从分支上重来一次，所以没推上去的改动，到不了"
+    "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
+)
 
 def build_system_prompt(
     base: str,
@@ -105,6 +115,7 @@ def build_system_prompt(
     topics: list[dict] | None = None,
     untitled: bool = False,
     artifacts: list[dict] | None = None,
+    overview_doc: str | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     teaching: TeachingContext | None = None,
@@ -120,11 +131,12 @@ def build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            '`cheese_title(text="<标题>")` 起个 ≤12 字简短标题，'
+            "`cheese title <标题>` 起个 ≤12 字简短标题，"
             "然后再照常回应、干活。"
             "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
         )
+    parts.append(ALWAYS_PUSH)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if teaching is not None and (section := teaching_section(teaching)):
@@ -225,6 +237,17 @@ def build_system_prompt(
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
             "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
         )
+    if overview_doc:
+        # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
+        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。所以「所有人都该
+        # 知道」的事实写这里，而不是记进记忆——记忆是这一个实例自己的观察。
+        parts.append(
+            "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
+            "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
+            "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
+            "（`cheese remember --everyone <事实>`），不要记进只有你自己读得到的"
+            "记忆池。\n" + overview_doc
+        )
     if doc:
         parts.append(
             "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
@@ -246,7 +269,7 @@ def build_system_prompt(
                 f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
                 "**不会自动出现在这里**——核心记忆之外的都要自己查。"
                 "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese_recall(query="<关键词>")` 查一次。'
+                "用 `cheese recall --query <关键词>` 查一次。"
                 "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
             )
         if memories_core_omitted:
@@ -255,7 +278,7 @@ def build_system_prompt(
             block += (
                 f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
                 "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
+                "了——挑几条降级成普通记忆（`cheese remember` 不带 `--core`）。"
             )
         parts.append(block)
     if session_opening:
@@ -267,17 +290,6 @@ def build_system_prompt(
             + "\n".join(session_opening)
         )
     return "\n\n".join(parts)
-
-
-KICKOFF_PROMPT = (
-    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
-    "现在开工：\n"
-    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
-    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
-    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
-)
 
 
 def thread_relay_prompt(
@@ -295,34 +307,10 @@ def thread_relay_prompt(
         f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
         f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
-        "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，新分身的"
+        "prompt 里照旧写这条活的线程标识。"
+        "回话说在这条活上（`cheese tell <这条活> <说明>`），别只在房间里说，"
         "问话的人看的是那边。"
-    )
-
-
-def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
-    """The ROOM's wake-up instruction when one of its messages became a thread.
-
-    Addressed to the room because a thread is a 分身 inside the room's own
-    session and has no session to wake. The platform writes the row, its card
-    block and its brief; raising the worker is the room's, and so is naming the
-    thread — it is created untitled and nothing else is in a position to name it.
-    """
-    return (
-        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
-        f"---\n{source_message}\n---\n\n"
-        "接下来是你的事：\n"
-        f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
-        "——它现在还叫「新话题」，"
-        "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
-        "——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
     )
 
 

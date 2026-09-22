@@ -42,8 +42,11 @@ const routes: RouteRecordRaw[] = [
   // shape and is distinguished only by the id being numeric.
   ...legacyProjectRedirects,
   workspaceRoutes,
-  // 反馈：/feedback、/feedback/mine、/feedback/:id、/admin/feedback。
-  // 四条都是顶层路由，必须挂在下面的 NotFound 通配**之前**，否则会被它吃掉。
+  // 反馈：/feedback、/feedback/mine、/feedback/:id，以及后台壳 /admin/*
+  // （/admin/queue、/admin/dashboard、/admin/members，外加指向队列的旧地址
+  // /admin/feedback）。
+  // 都是顶层路由，必须挂在下面的 NotFound 通配**之前**，否则会被它吃掉
+  // —— 通配吃掉的直接后果是这几页打不开，而「打不开」看起来像后端 404。
   ...FeedbackRoutes,
   {
     name: 'preview-open',

@@ -26,7 +26,7 @@ const props = defineProps<{ projectId: string }>()
 
 const rows = ref<InboxItem[]>([])
 const actionError = ref('')
-const busy = ref('')
+const busy = ref<number | null>(null)
 
 /** 这一叠最多摆几张。第三张已经只剩一道边，再多一张看不出区别，只是多一层渲染。 */
 const DEPTH = 3
@@ -86,7 +86,7 @@ async function act(row: InboxItem, run: () => Promise<unknown>, failed: string) 
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : failed
   } finally {
-    busy.value = ''
+    busy.value = null
   }
 }
 

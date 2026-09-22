@@ -1,9 +1,12 @@
 """End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
 
 import asyncio
+import uuid
 
-from app.domain.memory.models import MemoryLayer, MemoryScope
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
+from app.domain.memory.models import MemoryLayer
 from app.domain.memory.store import DbMemoryStore
+from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
     room_agent_seat,
@@ -66,7 +69,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert r.json()["data"]["total"] == 0
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "你好芝士", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好芝士"})
         frames = _drain_until_done(ws)
 
     # Slack-style: no token deltas — the turn announces itself and terminal
@@ -96,7 +99,9 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert assistant["author"] == agent
 
     user = next(f for f in frames if f["type"] == "user_block")["block"]
-    assert user["content"] == "你好芝士"
+    # 正文里的 @ 在落库前被规范成席位 token，和 @ 一个人完全一样 —— 时间线上那条
+    # 消息因此自己说明了它叫的是谁。
+    assert user["content"] == f"<@{agent}> 你好芝士"
     assert user["author"] == "user-1"
     # Explicit null distinguishes a new pending input from an unmarked legacy
     # block. A later exact receipt replaces it with the consuming turn id.
@@ -115,12 +120,12 @@ def test_blocks_empty_then_populated_after_chat(client):
 def test_session_id_persisted_for_resume(client):
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 hi"})
         _drain_until_done(ws)
 
     # Second turn should resume with the captured session id.
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "again", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 again"})
         _drain_until_done(ws)
 
 
@@ -134,7 +139,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     """
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "开工", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 开工"})
         _drain_until_done(ws)
 
     doc = "# 目标\n\n做推荐\n\n## 验收标准\n\nRecall@10 > 0.15\n"
@@ -152,7 +157,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
         )
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "接着做", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 接着做"})
         _drain_until_done(ws)
 
     said = stub_hooks.last_prompt
@@ -164,7 +169,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     assert "Recall@10 > 0.25" not in said
     # And having been read, it is not said again.
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "继续", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 继续"})
         _drain_until_done(ws)
     assert "实况文档已被" not in (stub_hooks.last_prompt or "")
 
@@ -180,22 +185,20 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
 
     async def _seed() -> None:
         async with client.test_factory() as session:
+            project = await ProjectService(session).get_or_404(uuid.UUID(project_id))
+            agent = await AgentInstanceService(session).for_project(project)
+            pool = memory_pool(project.id, agent)
             store = DbMemoryStore(session)
             await store.remember(
-                MemoryScope.project,
-                project_id,
-                "你是芝士，回答先给结论",
-                layer=MemoryLayer.core,
+                *pool, "你是芝士，回答先给结论", layer=MemoryLayer.core
             )
-            await store.remember(
-                MemoryScope.project, project_id, "项目用 FastAPI 写后端"
-            )
+            await store.remember(*pool, "项目用 FastAPI 写后端")
             await session.commit()
 
     asyncio.run(_seed())
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "技术栈是什么", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 技术栈是什么"})
         _drain_until_done(ws)
 
     prompt = stub_hooks.last_system_prompt
@@ -203,7 +206,7 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
     assert "你是芝士，回答先给结论" in prompt
     assert "项目用 FastAPI 写后端" not in prompt
     assert "记忆池里另有 **1 条**" in prompt
-    assert "cheese_recall" in prompt
+    assert "cheese recall" in prompt
 
 
 def test_empty_content_rejected(client):
@@ -240,22 +243,22 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
         headers=session_auth_headers("alice"),
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "先随便说一句", "summon": False})
+        ws.send_json({"type": "message", "content": "先随便说一句"})
         quiet = _drain_until_done(ws)
         assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
 
     with client.websocket_connect(chat_ws_url(topic_id, "bob")) as ws:
-        ws.send_json({"type": "message", "content": "再补一句", "summon": False})
+        ws.send_json({"type": "message", "content": "再补一句"})
         _drain_until_done(ws)
 
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 芝士看看"})
         _drain_until_done(ws)
 
     prompt = stub_hooks.last_prompt or ""
     assert "[alice]: 先随便说一句" in prompt
     assert "[bob]: 再补一句" in prompt
-    assert "[alice]: 芝士看看" in prompt
+    assert f"[alice]: <@{room_agent_seat(client, topic_id)}> 芝士看看" in prompt
 
 
 def _drain_until_done(ws) -> list[dict]:
@@ -273,7 +276,7 @@ def test_debug_turns_records_lifecycle(client):
     timings, tool counts) without grepping logs."""
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

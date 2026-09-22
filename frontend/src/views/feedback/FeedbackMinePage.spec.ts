@@ -59,7 +59,8 @@ function mountPage() {
     routes: [...FeedbackRoutes, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
   const vuetify = createVuetify({ components, directives })
-  // 提交抽屉是个 `v-navigation-drawer`，它要 `v-app` provide 的 layout。
+  // 套一层 `v-app`：Vuetify 的主题变量与排版挂在它渲染出来的 `.v-application` 上，
+  // 少了这一层，组件还在、主题却不在（底色、字号都不对）。
   const Wrapper = {
     components: { FeedbackMinePage },
     template: '<v-app><FeedbackMinePage /></v-app>',
@@ -91,8 +92,8 @@ describe('我的反馈', () => {
 
     const { queryByText, baseElement } = mountPage()
 
-    // 不用 `findByText`：关着的提交抽屉也在 DOM 里，它画的正是同一个 `store.error`，
-    // 于是会命中两个元素、一路重试到超时。钉页面里**这一处** —— 那才是这次要验的。
+    // 钉页面里**这一处**（`.fb-empty`），不是「树上某处有这句话」：要验的正是失败
+    // 画在空态里，而不是被谁吸收了。
     await waitFor(() => {
       expect(baseElement.querySelector('.fb-page__inner .fb-empty')?.textContent).toContain('「我的反馈」加载失败')
     })
@@ -117,7 +118,9 @@ describe('我的反馈', () => {
     const { findByText, getByRole, baseElement } = mountPage()
     await findByText('导出报表偶发 502')
 
-    getByRole('button', { name: '支持这个反馈' }).click()
+    // 可访问名字里带着当前的人数（`支持这个反馈，当前 3 人支持`）：卡片上只剩图标和
+    // 数字，读屏得从名字里听出「这是什么、现在几个人」。所以按前缀匹配。
+    getByRole('button', { name: /^支持这个反馈/ }).click()
 
     await waitFor(() => {
       expect(supportFeedback).toHaveBeenCalledWith('fb-1')

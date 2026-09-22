@@ -15,12 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.domain.alert.repositories import AlertRepository
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationType
+from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.topic.models import TopicStatus
@@ -33,7 +34,7 @@ class DashboardService:
         self._projects = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
-        self._notifs = AlertRepository(session)
+        self._notifs = NotificationRepository(session)
         self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
 
@@ -102,9 +103,8 @@ class DashboardService:
         waiting on them, their role. Doubles as the portfolio source.
 
         The public half (topics, contributions, role) is the same for everyone;
-        ``waiting_on_you`` is the member's mailbox, so it is intersected with
-        what ``viewer`` may see: broadcasts for any verified viewer, the
-        member's own items only on their own page."""
+        ``waiting_on_you`` is one person's mailbox, so only that person gets it
+        — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
@@ -150,7 +150,14 @@ class DashboardService:
                 )
             )
         ) or 0
-        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
+        # 收件箱是**这个成员自己**的，所以只有他本人打得开；别人的页面上是空的。
+        # 以前广播是一行谁都看得见的记录，于是别人的页面上还剩「也在等他」的那一
+        # 档可以交集；广播现在在写入时就展开成一人一行，没有可交的东西了。
+        inbox = (
+            await self._notifs.list_inbox(project_id, recipient_handle=user_handle)
+            if viewer == user_handle
+            else []
+        )
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
@@ -158,11 +165,12 @@ class DashboardService:
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
             "waiting_on_you": [
-                {"id": str(n.id), "title": n.title, "kind": n.kind.value}
+                {
+                    "id": str(n.id),
+                    "title": n.title,
+                    "kind": NotificationType(n.type).value,
+                }
                 for n in inbox
-                # viewer's slice ∩ this member's: their own mail when they are
-                # looking at their own page, broadcasts for anybody else.
-                if n.target_handle in (None, user_handle)
             ],
         }
 
@@ -170,8 +178,12 @@ class DashboardService:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
         them (个人记忆, §8.4). This is the "项目过程即简历" view."""
-        from app.domain.memory.models import MemoryScope
-        from app.domain.memory.store import memory_store
+        from app.domain.memory.models import (
+            MemoryEntry,
+            MemoryScope,
+            user_scope_about,
+        )
+        from app.domain.memory.store import live_entries
         from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
         from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -228,7 +240,27 @@ class DashboardService:
                 }
             )
 
-        understanding = await memory_store(self._s).recall(MemoryScope.user, handle)
+        # 关于他的记忆已经不是一个跨项目的池了：每个项目里的每位芝士各有一份自己
+        # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
+        # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
+        # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
+        understanding = [
+            row.content
+            for row in (
+                await self._s.scalars(
+                    select(MemoryEntry)
+                    .where(
+                        MemoryEntry.scope == MemoryScope.user,
+                        MemoryEntry.scope_id.endswith(
+                            user_scope_about(handle), autoescape=True
+                        ),
+                        live_entries(),
+                    )
+                    .order_by(MemoryEntry.created_at.desc())
+                    .limit(50)
+                )
+            ).all()
+        ][::-1]
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is

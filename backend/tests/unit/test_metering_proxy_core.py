@@ -28,6 +28,28 @@ spec.loader.exec_module(core)
 SECRET = "test-sandbox-token"
 
 
+def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
+    calls = []
+
+    def admit(url, bearer, timeout, *, subagent=False):
+        calls.append(subagent)
+        return core.Verdict(
+            True,
+            "",
+            pool="gateway" if subagent else "subscription",
+            model="child" if subagent else "main",
+        )
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    assert gate.check("p", "t", "token").model == "main"
+    child = gate.check("p", "t", "token", subagent=True)
+    assert child.model == "child"
+    assert child.pool == "gateway"
+    assert gate.check("p", "t", "token").model == "main"
+    assert gate.check("p", "t", "token", subagent=True).model == "child"
+    assert calls == [False, True]
+
+
 def _mint(claims: dict, secret: str = SECRET) -> str:
     """The backend's exact minting algorithm (sandbox_auth.mint_scoped_token):
     urlsafe-b64 JSON body, HMAC-SHA256 sig, both unpadded."""

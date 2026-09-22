@@ -34,6 +34,118 @@ from tests.integration.conftest import UserCreator, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
+def test_suspend_resume_preserves_machine_and_blocks_an_active_turn(
+    client, monkeypatch
+):
+    from datetime import UTC, datetime
+
+    from app.domain.agent.models import AgentTurn
+    from app.domain.machine.models import AiStatus
+
+    token = seed_user(client, "sleep-owner")
+    headers = {"Authorization": f"Bearer {token}"}
+    pid = _project(client, headers)
+    cloud = FakeMicroCloud()
+    monkeypatch.setattr("app.domain.machine.services.MicroCloudClient", lambda: cloud)
+
+    async def seed():
+        async with client.test_factory() as session:
+            topic = await TopicRepository(session).add(
+                project_id=uuid.UUID(pid), title="Sleeping room"
+            )
+            machine = await _add_topic_machine(
+                session,
+                project_id=uuid.UUID(pid),
+                topic_id=topic.id,
+                machine_id=71,
+                status=MachineStatus.running,
+            )
+            machine.ai_status = AiStatus.ready
+            cloud.machines[71] = {
+                "id": 71,
+                "status": "running",
+                "ip": "10.0.0.71",
+                "aiStatus": "ready",
+            }
+            turn = AgentTurn(
+                id=uuid.uuid4(),
+                topic_id=topic.id,
+                continuation_id=uuid.uuid4(),
+                author="sleep-owner",
+                started_at=datetime.now(UTC),
+            )
+            session.add(turn)
+            await session.commit()
+            return machine.id, turn.id
+
+    machine_id, turn_id = asyncio.run(seed())
+    base = f"/projects/{pid}/machines/{machine_id}"
+    other_pid = _project(client, headers)
+    assert (
+        client.post(
+            f"/projects/{other_pid}/machines/{machine_id}/suspend", headers=headers
+        ).status_code
+        == 422
+    )
+    assert client.post(f"{base}/suspend").status_code == 401
+    assert client.post(f"{base}/suspend", headers=headers).status_code == 409
+    assert cloud.machines[71]["status"] == "running"
+
+    async def finish():
+        async with client.test_factory() as session:
+            turn = await session.get(AgentTurn, turn_id)
+            turn.stopped_at = datetime.now(UTC)
+            await session.commit()
+
+    asyncio.run(finish())
+    sleeping = client.post(f"{base}/suspend", headers=headers)
+    assert sleeping.status_code == 200, sleeping.text
+    assert sleeping.json()["data"]["status"] == "suspended"
+    resumed = client.post(f"{base}/resume", headers=headers)
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["data"]["status"] == "resuming"
+    assert resumed.json()["data"]["id"] == str(machine_id)
+    assert not cloud.created and not cloud.deleted
+
+
+def test_message_arriving_during_suspend_resumes_after_sweep(client):
+    from app.domain.block.models import AuthorType
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.machine.models import AiStatus
+
+    async def run():
+        async with client.test_factory() as session:
+            project = await ProjectRepository(session).add(name="Resume pending input")
+            topic = await TopicRepository(session).add(
+                project_id=project.id, title="Waiting"
+            )
+            machine = await _add_topic_machine(
+                session,
+                project_id=project.id,
+                topic_id=topic.id,
+                machine_id=72,
+                status=MachineStatus.suspending,
+            )
+            machine.ai_status = AiStatus.ready
+            await BlockRepository(session).add(
+                project_id=project.id,
+                topic_id=topic.id,
+                author="system",
+                author_type=AuthorType.platform,
+                content="Waiting for cloud",
+                meta={"event_type": "cloud_provisioning", "state": "waiting"},
+            )
+            cloud = FakeMicroCloud()
+            cloud.machines[72] = {"id": 72, "status": "suspended", "aiStatus": "ready"}
+            service = MachineService(session, cloud)
+            await service.refresh_unsettled()
+            assert machine.status == MachineStatus.resuming
+            assert not cloud.created and not cloud.deleted
+            await session.commit()
+
+    asyncio.run(run())
+
+
 def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
     return client.post(
         "/projects", json={"name": "机器项目"}, headers=headers or {}

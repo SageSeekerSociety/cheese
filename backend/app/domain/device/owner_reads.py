@@ -137,7 +137,6 @@ async def session_places(
         await session.execute(
             select(AgentSession.runtime_location, AgentSession.work_lease).where(
                 AgentSession.topic_id == place_id,
-                AgentSession.task_id.is_(None),
                 AgentSession.runtime_location.is_not(None),
             )
         )

@@ -116,9 +116,12 @@ def test_answer_records_choice_and_posts_reply(client):
                 break
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     debug = [(b["author"], b["kind"], b["content"][:30]) for b in blocks]
-    assert any(b["author"] == "user-1" and b["content"] == "cursor" for b in blocks), (
-        f"choice message never landed: {debug}"
-    )
+    # 选项落成回答者自己的一条消息，并且在正文里点了问问题的那个席位的名 —— 召唤
+    # 写在正文里，时间线上这条消息因此自己说明了它叫的是谁。
+    seat = room_agent_seat(client, tid)
+    assert any(
+        b["author"] == "user-1" and b["content"] == f"<@{seat}> cursor" for b in blocks
+    ), f"choice message never landed: {debug}"
 
 
 def test_answer_validates_option_and_single_shot(client):

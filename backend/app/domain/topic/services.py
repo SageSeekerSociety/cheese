@@ -22,13 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent import clone
-from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.harness import harness_for
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
@@ -45,6 +44,7 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.membership.services import MemberService
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
@@ -225,7 +225,7 @@ class TopicService:
         # asks each through its own service — the roster, the accept cards and
         # the @-notifications each decide for themselves what "mine" means.
         self._cards = AcceptService(session)
-        self._alerts = AlertService(session)
+        self._notifications = ProjectNotificationService(session)
 
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         """Return one topic for cross-domain service callers."""
@@ -478,7 +478,7 @@ class TopicService:
         topic_ids = [t.id for t in topics]
         roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        mentions = await self._alerts.mention_topic_ids(topic_ids, viewer_handle)
+        mentions = await self._notifications.mention_topic_ids(topic_ids, viewer_handle)
         relevance: dict[uuid.UUID, TopicRelevance] = {}
         for topic in topics:
             awaits = cards.get(topic.id, False) or mentions.get(topic.id, False)
@@ -961,9 +961,9 @@ class TopicService:
         (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
 
         No worker is started here, and none is started for us. The caller spawns
-        one in its own session and binds it (`/tasks/{id}/bind`), so a thread
-        exists for a moment with nobody on it — which is also the state a thread
-        stays in if the caller never gets around to it.
+        one in its own session carrying this thread's label, so a thread exists
+        for a moment with nobody on it — which is also the state a thread stays
+        in if the caller never gets around to it.
 
         `place_id` is wherever the splitter was standing, which may itself be a
         thread: 芝士 working on one piece of work often finds a second. Work does
@@ -1072,13 +1072,13 @@ class TopicService:
         sessions = AgentSessionService(self._session)
         source_agent = await self.resolve_agent(source)
         target_agent = await self.resolve_agent(target)
-        agents = AgentInstanceService(self._session)
-        source_harness = await agents.harness(source_agent)
-        target_harness = await agents.harness(target_agent)
-        if source_harness != CLAUDE_CODE or target_harness != CLAUDE_CODE:
-            raise ValidationError("当前运行方式尚不支持克隆会话")
+        # 骨架不是参与者的属性（结论 28），是项目设置加部署设置答的一件事。源和
+        # 目标同属一个项目（上面已经拒了跨项目），所以两边解析出来的是同一个，
+        # 「两边骨架不同」这个问题在这里不存在。
+        owner = await self._projects.get(target.project_id)
+        harness = harness_for(owner.settings if owner else None)
         source_sid = await sessions.resume_token(
-            source.id, source_agent.handle, harness=source_harness
+            source.id, source_agent.handle, harness=harness
         )
         if not source_sid:
             raise ValidationError("源话题还没跑过（没有可克隆的会话）")
@@ -1100,7 +1100,7 @@ class TopicService:
             topic_id=target.id,
             agent_handle=target_agent.handle,
             resume_token=new_sid,
-            harness=target_harness,
+            harness=harness,
         )
         return target
 
@@ -1215,7 +1215,7 @@ class TopicService:
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese doc get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         landed = landing(

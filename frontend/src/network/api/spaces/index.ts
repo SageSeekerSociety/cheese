@@ -1,4 +1,4 @@
-import type { DomainGroup, Space, SpaceCategory, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -13,11 +13,18 @@ import type {
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
+  PostSpaceInviteCodeRequestData,
+  PostSpaceJoinRequestData,
+  PostSpaceMemberRequestData,
   PostSpaceRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPublishers,
+  SpaceLearningFilters,
+  SpaceLearningOutline,
+  SpaceLearningQuestions,
+  SpaceLearningQueues,
   SpaceMyParticipatingOverview,
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
@@ -28,9 +35,83 @@ import type {
 import { NewApiInstance } from '../index'
 
 export namespace SpacesApi {
+  export const applications = (offset = 0) =>
+    NewApiInstance.request<{ items: import('./types').SpaceApplication[] }>({
+      url: '/space-applications',
+      method: 'GET',
+      params: { offset, limit: 50 },
+    })
+  export const resubmit = (id: number, data: PostSpaceRequestData) =>
+    NewApiInstance.request({
+      url: `/space-applications/${id}/resubmit`,
+      method: 'POST',
+      data,
+    })
+  export const reviews = (status: string, offset = 0) =>
+    NewApiInstance.request<{ items: import('./types').SpaceApplication[] }>({
+      url: '/admin/spaces',
+      method: 'GET',
+      params: { status, offset, limit: 50 },
+    })
+  export const review = (id: number, approved: boolean, reason = '') =>
+    NewApiInstance.request({
+      url: `/admin/spaces/${id}/review`,
+      method: 'POST',
+      data: { approved, reason },
+    })
+
+  /**
+   * Creating a 凭码 space hands back the code it was born holding, so the
+   * creator does not have to ask for one separately.
+   */
   export const create = (data: PostSpaceRequestData) =>
-    NewApiInstance.request<{ space: Space }>({
+    NewApiInstance.request<{ space: Space; inviteCode: SpaceInviteCode | null }>({
       url: '/spaces',
+      method: 'POST',
+      data,
+    })
+
+  export const join = (data: PostSpaceJoinRequestData) =>
+    NewApiInstance.request<{ space: Space }>({
+      url: '/spaces/join',
+      method: 'POST',
+      data,
+    })
+
+  export const listMembers = (spaceId: number) =>
+    NewApiInstance.request<{ members: SpaceMember[] }>({
+      url: `/spaces/${spaceId}/members`,
+      method: 'GET',
+    })
+
+  export const addMember = (spaceId: number, data: PostSpaceMemberRequestData) =>
+    NewApiInstance.request<{ member: SpaceMember }>({
+      url: `/spaces/${spaceId}/members`,
+      method: 'POST',
+      data,
+    })
+
+  export const removeMember = (spaceId: number, userId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/members/${userId}`,
+      method: 'DELETE',
+    })
+
+  export const leave = (spaceId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/leave`,
+      method: 'POST',
+    })
+
+  export const listInviteCodes = (spaceId: number) =>
+    NewApiInstance.request<{ inviteCodes: SpaceInviteCode[] }>({
+      url: `/spaces/${spaceId}/invite-codes`,
+      method: 'GET',
+    })
+
+  export const createInviteCode = (spaceId: number, data: PostSpaceInviteCodeRequestData = {}) =>
+    NewApiInstance.request<{ inviteCode: SpaceInviteCode }>({
+      url: `/spaces/${spaceId}/invite-codes`,
       method: 'POST',
       data,
     })
@@ -143,6 +224,51 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/analytics/participants`,
       method: 'GET',
       params,
+    })
+
+  // 学习维度。筛选那一维的 knowledgePoint 是**分类 id**（知识点今天就是课程分类），
+  // 返回的每条发言里的 knowledgePoint 是**分类名**，两者不要混用。
+  export const getLearningFilters = (spaceId: number) =>
+    NewApiInstance.request<SpaceLearningFilters>({
+      url: `/spaces/${spaceId}/analytics/learning/filters`,
+      method: 'GET',
+    })
+
+  export const getLearningQuestions = (
+    spaceId: number,
+    params?: Partial<{
+      from: number
+      to: number
+      student: string
+      knowledgePoint: number
+    }>
+  ) =>
+    NewApiInstance.request<SpaceLearningQuestions>({
+      url: `/spaces/${spaceId}/analytics/learning/questions`,
+      method: 'GET',
+      params,
+    })
+
+  export const getLearningQueues = (
+    spaceId: number,
+    params?: Partial<{
+      from: number
+      to: number
+      student: string
+    }>
+  ) =>
+    NewApiInstance.request<SpaceLearningQueues>({
+      url: `/spaces/${spaceId}/analytics/learning/queues`,
+      method: 'GET',
+      params,
+    })
+
+  // POST 而不是 GET: 勾的是哪几条会随人一直变，而且可能几十个 id。
+  export const buildLearningOutline = (spaceId: number, data: { blockIds: string[] }) =>
+    NewApiInstance.request<SpaceLearningOutline>({
+      url: `/spaces/${spaceId}/analytics/learning/outline`,
+      method: 'POST',
+      data,
     })
 
   export const getMyPublishingOverview = (spaceId: number) =>

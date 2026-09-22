@@ -448,7 +448,7 @@ class PiRuntime:
         self.queues[work] = queue
         try:
             await self.send(
-                SessionRef(project_id, topic_id, session_agent, self.harness),
+                SessionRef(project_id, topic_id, session_agent, harness=self.harness),
                 prompt,
                 Opening(
                     system_prompt,

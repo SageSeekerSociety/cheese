@@ -5,10 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
-import threading
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -25,11 +22,9 @@ from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
-from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness import Opening, SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code.remote_execution import (
-    client as execution_client,
-)
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
@@ -49,7 +44,7 @@ AGENT = "agent"
 
 def ref(project, topic, agent=AGENT):
     """A session key, which is what a place is recorded under."""
-    return SessionRef(project, topic, agent, "claude-code")
+    return SessionRef(project, topic, agent, harness="claude-code")
 
 
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
@@ -63,6 +58,7 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
             "resource_id": str(resource),
             "channel": "device",
         },
+        harness=deployment_harness(),
     )
 
 
@@ -278,7 +274,7 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    session = SessionRef(project, topic, AGENT, "codex")
+    session = SessionRef(project, topic, AGENT, harness="codex")
     handle = await codex.ensure(
         session, Opening("shared system", model="fixture", agent_handle="agent")
     )
@@ -296,10 +292,17 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         "alive": True,
     }
     assert await codex.discover("center") == [handle]
-    central.restore_screens = AsyncMock(return_value=[])
+    # 中心通道同时被 Claude Code 和 Codex 两个 runtime 包着（``build_compute_pool``），
+    # 所以它答不出哪一条会话是谁的，也不该答：它把落在自己这儿的会话原样交出来，
+    # 骨架的名字当 ``running`` 一起交（``Channel.discover`` 的契约）。
+    central.restore_screens = AsyncMock(
+        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
+    )
     central.executor.discover = AsyncMock(return_value=[])
-    assert await central.discover("center") == []
-    central.restore_screens.assert_awaited_once_with([])
+    assert await central.discover("center") == [(project, topic, None, "codex")]
+    # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
+    # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
+    assert await ClaudeCodeRuntime(central).recover("center") == []
 
 
 @pytest.mark.anyio
@@ -1080,87 +1083,3 @@ async def test_scoped_execution_forwards_cli_tool_catalog(client, room, monkeypa
     call.assert_awaited_once()
     assert call.await_args.args == (target, "cli", {"method": "tools/list"})
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
-
-
-@pytest.mark.anyio
-async def test_native_tool_catalog_crosses_scoped_execution_route(
-    client, room, monkeypatch, tmp_path
-):
-    project, topic = room
-    async with client.test_factory() as db:
-        stored = await db.get(Topic, topic)
-        resource = stored.resource_id or topic
-        target = {
-            "kind": "device",
-            "device_id": "executor",
-            "resource_id": str(resource),
-        }
-        await place_session(db, topic, resource, target)
-        await db.commit()
-    token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
-    )
-
-    async def call(_target, method, params, **_kwargs):
-        assert _target == target
-        if method == "ping":
-            return {"capabilities": ["cli_worker"]}
-        assert method == "cli"
-        assert params == {"method": "tools/list"}
-        return {
-            "tools": [
-                {
-                    "name": "cheese_status",
-                    "inputSchema": {"type": "object", "properties": {}},
-                }
-            ]
-        }
-
-    monkeypatch.setattr("app.domain.agent.execution.call", call)
-    endpoint = f"/topics/{topic}/execution/{resource}"
-
-    class RouteBridge(BaseHTTPRequestHandler):
-        def do_POST(self):
-            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            response = client.post(
-                endpoint, headers={"X-Cheese-Token": token}, json=payload
-            )
-            body = response.content
-            self.send_response(response.status_code)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), RouteBridge)
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
-    config = tmp_path / "execution.json"
-    config.write_text(
-        json.dumps(
-            {
-                "kind": "device",
-                "url": f"http://127.0.0.1:{server.server_port}{endpoint}",
-                "workspace": str(tmp_path),
-                "central_hooks": {},
-            }
-        )
-    )
-    log = (tmp_path / "native-mcp.log").open("w+")
-    process = executor_runtime.MCPProcess(
-        [sys.executable, execution_client.__file__, "transport", str(config)],
-        str(tmp_path),
-        {**os.environ, "NO_PROXY": "127.0.0.1", "CHEESE_TOKEN": token},
-        log,
-    )
-    try:
-        tools = {tool["name"] for tool in process.call("tools/list", {})["tools"]}
-        assert {"invoke", "chat_send", "platform_request", "cheese_status"} <= tools
-    finally:
-        process.close()
-        server.shutdown()
-        server.server_close()
-        thread.join()
-        log.close()

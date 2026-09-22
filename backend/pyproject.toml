@@ -141,8 +141,8 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
-# The suite runs as three layers, one pytest per layer. Nothing writes these on
-# a test: tests/conftest.py's pytest_collection_modifyitems derives the layer
+# Collection assigns three layers before CI partitions them across runners.
+# Nothing writes these on a test: pytest_collection_modifyitems derives the layer
 # from where the test lives and what its fixture closure reaches for. A test
 # that declares one of these itself aborts the collection; a test that declares
 # none has one added, and there is no third case, because that hook's

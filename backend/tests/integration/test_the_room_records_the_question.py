@@ -31,7 +31,9 @@ def place(client):
         "/topics",
         json={"project_id": project["id"], "title": "RC record", "created_by": "alice"},
     ).json()["data"]
-    return project["id"], topic["id"]
+    rows = client.get(f"/projects/{project['id']}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    return project["id"], topic["id"], default["seat_handle"]
 
 
 def _events(worker, uid):
@@ -59,11 +61,13 @@ def _events(worker, uid):
 def test_the_question_lands_in_the_room_once_and_the_answer_after_it(client, place):
     from app.api.routes.remote_control import store
 
-    project, topic = place
+    project, topic, agent = place
 
+    # WHICH agent is asking: `rc_create` settles that when the session opens and
+    # records it, and the question voiced into the room is signed with it.
     async def start():
         session = await store().create(
-            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+            {"p": project, "t": topic, "a": agent, "exp": int(time.time()) + 3600}, {}
         )
         return session["id"], await store().bridge(session)
 
@@ -109,7 +113,7 @@ def test_the_question_lands_in_the_room_once_and_the_answer_after_it(client, pla
 
         async def cleanup():
             await store().redis.delete(
-                key(sid), key(topic, "current"), key(sid, "voiced")
+                key(sid), key(topic, f"current:{agent}"), key(sid, "voiced")
             )
 
         client.portal.call(cleanup)
@@ -125,11 +129,11 @@ def test_the_question_it_asked_is_not_an_input_it_has_to_read(client, place):
     """
     from app.api.routes.remote_control import store
 
-    project, topic = place
+    project, topic, agent = place
 
     async def start():
         session = await store().create(
-            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+            {"p": project, "t": topic, "a": agent, "exp": int(time.time()) + 3600}, {}
         )
         return session["id"], await store().bridge(session)
 
@@ -155,6 +159,64 @@ def test_the_question_it_asked_is_not_an_input_it_has_to_read(client, place):
     finally:
 
         async def cleanup():
+            await store().redis.delete(
+                key(sid), key(topic, f"current:{agent}"), key(sid, "voiced")
+            )
+
+        client.portal.call(cleanup)
+
+
+def test_a_session_that_never_recorded_its_agent_still_reports(client, place):
+    """#1185 之前开的那批会话，Redis 里那一行没有 ``agent_handle``，而保留期是七天，
+    所以它们还在。没有名字就没法把那句话署出去——从房间派生一个来签字，正是这次退役
+    掉的那个答案。
+
+    但这一档只让这句话不写进房间，不让它决定这条上报接口的返回码：事件在这一步之前
+    就已经落库了，在这里失败会把 ``announce`` 一起跳过，于是面板——这些会话仅剩的那
+    个 surface——再也不刷新，而 worker 每一批都撞进同一个失败，pending 又只有被人按
+    下按钮才清得掉。
+    """
+    from app.api.routes.remote_control import store
+    from app.domain.agent.runtime import get_broker
+
+    project, topic, _ = place
+
+    async def start():
+        session = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+        )
+        return session["id"], await store().bridge(session)
+
+    sid, worker = client.portal.call(start)
+    subscription = get_broker().subscribe(str(topic), replay=False)
+    queue = client.portal.call(subscription.__aenter__)
+    try:
+        reported = client.post(
+            f"/v1/code/sessions/{sid}/worker/events",
+            headers={"Authorization": f"Bearer {worker['worker_jwt']}"},
+            json=_events(worker, "event-1"),
+        )
+        assert reported.status_code == 200, reported.text
+
+        async def drain():
+            frames = []
+            while not queue.empty():
+                frames.append(queue.get_nowait())
+            return frames
+
+        frames = client.portal.call(drain)
+        control = [f for f in frames if f.get("type") == "agent_control"]
+        assert control, f"面板没刷新：{[f.get('type') for f in frames]}"
+        assert "ask-1" in control[-1]["state"]["pending"]
+
+        blocks = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+        assert not [b for b in blocks if "Bash" in (b.get("content") or "")], (
+            "答不出是谁问的，就不该替它署一个名字"
+        )
+    finally:
+
+        async def cleanup():
+            await subscription.__aexit__(None, None, None)
             await store().redis.delete(
                 key(sid), key(topic, "current"), key(sid, "voiced")
             )

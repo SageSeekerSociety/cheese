@@ -5,36 +5,13 @@
 # browser which will not start cannot hold back a backend that would have
 # served. The result read as a working deployment on every check we have.
 #
-# A small Python base plus Chromium, NOT mcr.microsoft.com/playwright/python.
-# That image is the obvious choice and it was the first one here, because it
-# ships the browser together with the ~20 system libraries Chromium needs, which
-# is where a browser container usually fails: apt-get succeeds, then Chromium
-# refuses to start over a missing libnss and the error names a file rather than
-# the cause. Two things make it the wrong trade here:
-#
-#   - It carries Firefox and WebKit as well, and this service drives only
-#     Chromium — 755MB of one layer, for browsers nothing launches.
-#   - It comes from mcr.microsoft.com, and the BuildKit config in build.yml
-#     mirrors `docker.io` only, so that pull crosses the same network the
-#     workflow's own header calls intermittently unreachable. Measured: 18
-#     minutes for this job on CI against 1m14s for the sandbox image, and the
-#     box has ONE runner slot, so the backend and frontend images queued behind
-#     all 18 of them.
-#
-# `playwright install --with-deps chromium` is not the hand-installation the old
-# comment warned about — it is Playwright's own command, which knows the exact
-# package list for this distribution. Measured end to end on a developer box:
-# 2m38s total, against a base-image pull alone that was tracking to two hours.
+# A small Python base plus Chromium avoids shipping Firefox and WebKit, which
+# this service never launches. Playwright installs Chromium's system libraries.
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-# Debian's CDN is unreachable from the machines that build this; the mirror
-# substitution persists into the layers below, which is what lets
-# `playwright install --with-deps` reach its packages later.
-RUN sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' \
-      /etc/apt/sources.list.d/debian.sources \
- && apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # Browsers go somewhere every user can read. The default is $HOME/.cache, which

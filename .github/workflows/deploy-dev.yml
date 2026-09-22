@@ -80,7 +80,34 @@ jobs:
     # The first Forge cutover archives workspaces and builds a recovery bundle per task.
     timeout-minutes: 180
     steps:
+      # The candidate may predate this guard. Read policy from the workflow's
+      # default-branch commit before checking out that candidate's deploy code.
+      - name: Check out automatic deployment policy
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Keep automatic deployments from going backwards
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          # A manual dispatch is an explicit release or rollback, including a
+          # commit that predates the automatic guard itself.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -f "$HOME/ops/deploy.env" ]; then
+            . "$HOME/ops/deploy.env"
+          fi
+          export PROJECT="${PROJECT:-cheese}"
+          python3 deploy/check-auto-deploy.py "$CANDIDATE_SHA"
+
       - name: Check out the built commit (for the deploy scripts + compose)
+        if: steps.release.outputs.skip != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # workflow_run checks out the DEFAULT branch unless told otherwise, so
@@ -93,7 +120,13 @@ jobs:
       # people are talking to, even though its images were rebuilt.
       - name: Skip docs-only commits
         id: scope
+        env:
+          RELEASE_SKIP: ${{ steps.release.outputs.skip }}
         run: |
+          if [ "$RELEASE_SKIP" = true ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           files="$(git diff --name-only HEAD^ HEAD 2>/dev/null || echo '')"
           echo "$files" | sed 's/^/  changed: /'
           if [ -n "$files" ] && ! echo "$files" | grep -qvE '(\.md$|^docs/)'; then
@@ -115,10 +148,33 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
 
-      - name: Configure feedback administrators
+      # The configured half of the admin roster, out of a repo variable. It is
+      # MERGED with what the box's env file already names, and this is the point
+      # of the step: the variable used to overwrite the file whenever it was
+      # non-empty, which made a hand edit to the file temporary — it granted
+      # access now, and the next deploy silently took it back — which is the
+      # shape of the `/admin/feedback` lockout on 2026-09-21: the box's file had
+      # been edited to name the requester, and the roster the deploy wrote back
+      # did not.
+      #
+      # Merging makes both sides additive: adding works from either place, and
+      # removing means removing from both. Day-to-day add/remove is the page's
+      # (`platform_admins`, batch four); this is the root list that must not be
+      # lost, and losing it costs server access to repair.
+      #
+      # Two variables are read because the setting was renamed
+      # (`FEEDBACK_ADMIN_HANDLES` → `PLATFORM_ADMIN_HANDLES`; admins administer
+      # the platform, not one feature): a repo variable is a GitHub setting, not
+      # something this file can rename, so until someone renames it in the
+      # repository, the old name is what carries the roster. The new one wins
+      # when both exist. The env file is written with the new name and the old
+      # spelling is swept out — the backend reads both, so a leftover old line
+      # would be configuration that does nothing.
+      - name: Configure platform administrators
         if: steps.scope.outputs.skip != 'true'
         env:
-          FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
+          NEW_PLATFORM_ADMIN_HANDLES: ${{ vars.PLATFORM_ADMIN_HANDLES }}
+          OLD_FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
         run: |
           python3 - <<'PY'
           import json
@@ -126,16 +182,59 @@ jobs:
           from pathlib import Path
           import runpy
 
-          value = os.environ["FEEDBACK_ADMIN_HANDLES"]
-          if value:
-              handles = json.loads(value)
-              if not isinstance(handles, list) or not handles or any(
+          def handle_list(raw, source):
+              handles = json.loads(raw)
+              if not isinstance(handles, list) or any(
                   not isinstance(handle, str) or not handle.strip() for handle in handles
               ):
-                  raise ValueError("FEEDBACK_ADMIN_HANDLES must name at least one account")
+                  raise ValueError(f"{source} must be a JSON list of account handles")
+              return handles
+
+          path = Path(
+              os.environ.get(
+                  "BACKEND_ENV_FILE", "/home/nictheboy/cheese-backend-py/backend/.env"
+              )
+          )
+
+          # What the box already names, under either spelling. Written by hand or
+          # by an earlier deploy; both count, because neither is more correct.
+          named: dict[str, str] = {}
+          if path.exists():
+              for line in path.read_text().splitlines():
+                  key, separator, value = line.strip().removeprefix("export ").partition("=")
+                  if separator and key in ("PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"):
+                      named[key] = value
+          existing = handle_list(
+              named.get("PLATFORM_ADMIN_HANDLES")
+              or named.get("FEEDBACK_ADMIN_HANDLES")
+              or "[]",
+              "PLATFORM_ADMIN_HANDLES in the env file",
+          )
+
+          value = os.environ["NEW_PLATFORM_ADMIN_HANDLES"] or os.environ[
+              "OLD_FEEDBACK_ADMIN_HANDLES"
+          ]
+          from_variable = handle_list(value, "PLATFORM_ADMIN_HANDLES") if value else []
+          # A variable that is set but names nobody is a typo, not an instruction
+          # to contribute nothing — the way to say the latter is to leave it
+          # unset. The list still has to fail closed the way it always did.
+          if value and not from_variable:
+              raise ValueError("PLATFORM_ADMIN_HANDLES must name at least one account")
+
+          # Order is the file's first, so a deploy that changes nothing changes
+          # nothing; `save_environment` skips a write when the text is identical.
+          handles = list(existing)
+          handles += [handle for handle in from_variable if handle not in handles]
+
+          # Nothing anywhere: leave the file alone. Writing an empty list would
+          # be a box that cannot boot, which is worse than a box with no roster.
+          if handles:
               save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
-              save(Path(os.environ.get("BACKEND_ENV_FILE", "/home/nictheboy/cheese-backend-py/backend/.env")),
-                   {"FEEDBACK_ADMIN_HANDLES": json.dumps(handles)})
+              save(
+                  path,
+                  {"PLATFORM_ADMIN_HANDLES": json.dumps(handles)},
+                  remove=["FEEDBACK_ADMIN_HANDLES"],
+              )
           PY
 
       - name: Docker deploy this commit

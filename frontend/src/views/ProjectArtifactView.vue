@@ -36,6 +36,7 @@ function comparisonNote(note: string | null): string {
   const messages: Record<string, string> = {
     oversized: t('tasks.artifactComparison.oversized'),
     binary: t('tasks.artifactComparison.binary'),
+    document: t('tasks.artifactComparison.document'),
     unsupported: t('tasks.artifactComparison.unsupported'),
     unavailable: t('tasks.artifactComparison.unavailable'),
     source: t('tasks.artifactComparison.source'),

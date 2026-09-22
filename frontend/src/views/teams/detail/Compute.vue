@@ -9,6 +9,7 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import {
+  changeProjectMachinePower,
   createProjectMachine,
   deleteProjectMachine,
   getTeamResourceQuotas,
@@ -63,7 +64,9 @@ const projectOptions = computed(() => projects.value.map((project) => ({ title: 
 const cloudMoving = computed(() =>
   cloudMachines.value.some(
     (machine) =>
-      ['provisioning', 'starting', 'stopping', 'deleting', 'unknown'].includes(machine.status) ||
+      ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
+        machine.status
+      ) ||
       ['provisioning', 'unknown'].includes(machine.ai_status) ||
       (machine.status === 'running' &&
         machine.ai_status === 'ready' &&
@@ -76,11 +79,14 @@ const statusLabel: Record<ProjectMachine['status'], string> = {
   provisioning: '正在创建',
   starting: '正在启动',
   running: '运行中',
+  suspending: '正在休眠',
+  suspended: '已休眠',
+  resuming: '正在恢复',
   stopping: '正在停止',
   stopped: '已停止',
   deleting: '正在释放',
   deleted: '已释放',
-  error: '创建失败',
+  error: '操作失败',
   unknown: '状态未知',
 }
 
@@ -212,6 +218,25 @@ async function destroyCloud(machine: CloudMachine) {
   }
 }
 
+async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume') {
+  if (
+    operation === 'suspend' &&
+    !window.confirm(`休眠「${machine.hostname}」？磁盘会保留；LXC 恢复时进程重新启动，VM 恢复原进程。请先保存工作。`)
+  )
+    return
+  busy.value = machine.id
+  error.value = null
+  try {
+    await changeProjectMachinePower(machine.project_id, machine.id, operation)
+    await loadCloud()
+  } catch (cause) {
+    error.value = errorMessage(cause, operation === 'suspend' ? '休眠失败' : '恢复失败')
+  } finally {
+    busy.value = null
+    schedulePoll()
+  }
+}
+
 onMounted(load)
 watch(teamId, load)
 watch(cloudMoving, schedulePoll)
@@ -335,7 +360,11 @@ onBeforeUnmount(() => {
                 <span class="text-subtitle-2 font-weight-medium text-truncate">{{ machine.hostname }}</span>
                 <v-spacer />
                 <v-progress-circular
-                  v-if="['provisioning', 'starting', 'stopping', 'deleting', 'unknown'].includes(machine.status)"
+                  v-if="
+                    ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
+                      machine.status
+                    )
+                  "
                   indeterminate
                   size="15"
                   width="2"
@@ -370,10 +399,20 @@ onBeforeUnmount(() => {
               </v-alert>
               <div v-if="canManage" class="mt-3 d-flex justify-end">
                 <v-btn
+                  v-if="machine.status === 'running' || machine.status === 'suspended'"
+                  size="small"
+                  variant="text"
+                  :disabled="busy !== null"
+                  @click="changePower(machine, machine.status === 'running' ? 'suspend' : 'resume')"
+                >
+                  {{ machine.status === 'running' ? '休眠' : '恢复' }}
+                </v-btn>
+                <v-btn
                   size="small"
                   variant="text"
                   color="error"
                   :loading="busy === machine.id"
+                  :disabled="['suspending', 'resuming'].includes(machine.status)"
                   @click="destroyCloud(machine)"
                 >
                   释放

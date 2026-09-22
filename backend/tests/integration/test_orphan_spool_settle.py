@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
@@ -107,7 +108,9 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
+        resumes_by = await AgentSessionService(session).resume_token(
+            tid, CHEESE_HANDLE, harness=deployment_harness()
+        )
     finals = [
         b
         for b in rows
@@ -151,7 +154,9 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     assert await svc.settle_spool(tid) == 1
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
+        resumes_by = await AgentSessionService(session).resume_token(
+            tid, CHEESE_HANDLE, harness=deployment_harness()
+        )
     finals = [b for b in rows if b.content == "只有Stop带回来的结论"]
     assert len(finals) == 1
     assert finals[0].kind == BlockKind.event
@@ -344,7 +349,7 @@ def test_completed_live_turn_settles_before_another_prompt(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
     with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
-        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        socket.send_json({"type": "message", "content": "@芝士 hello"})
         while True:
             frame = socket.receive_json()
             assert frame["type"] != "error", frame

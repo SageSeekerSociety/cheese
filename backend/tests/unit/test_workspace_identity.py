@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.repository import identity
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -109,6 +108,10 @@ def _topic(
     )
 
 
+# 房间里坐着的那个 agent，署名署的就是它自己的 handle——不是从房间派生的名字。
+_SEATED_AGENT = "cheese-a7a0268b96ff"
+
+
 def _roster_owner(monkeypatch, answer):
     """Stand in for the room's roster. `answer` is a handle, None, an exception to
     raise, or a dict mapping a topic id to any of those (for the parent/child pair
@@ -123,7 +126,7 @@ def _roster_owner(monkeypatch, answer):
     monkeypatch.setattr(TopicMemberService, "owner_of", _owner_of)
 
     async def _agent_of(_self, topic_id):
-        return topic_agent_handle(topic_id)
+        return _SEATED_AGENT
 
     monkeypatch.setattr(TopicMemberService, "resolve_agent_handle", _agent_of)
 
@@ -208,7 +211,7 @@ async def test_the_parent_rooms_owner_is_credited_when_the_child_is_someone_else
     assert who.requester == identity.GitIdentity(
         "bob", "42+bob@users.noreply.github.com"
     )
-    assert who.author == identity.agent_identity(topic_agent_handle(child.id))
+    assert who.author == identity.agent_identity(_SEATED_AGENT)
     assert who.coauthors == ()
 
 
@@ -375,8 +378,8 @@ async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_work_nobody_was_bound_to_keeps_its_place_in_the_batch(monkeypatch):
-    """`subagent_id` is NULL until a worker is bound, and a room can write a
+async def test_work_no_worker_started_keeps_its_place_in_the_batch(monkeypatch):
+    """`subagent_id` is NULL until a worker starts, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
     than the batch the room declared."""
     mine = _task(None, "人自己动手改的")
@@ -462,4 +465,4 @@ async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers
     assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in parsed
     assert "Co-authored-by: coder <42+coder@users.noreply.github.com>" in parsed
     assert "Co-authored-by: requester" not in parsed
-    assert who.author == identity.agent_identity(topic_agent_handle(topic.id))
+    assert who.author == identity.agent_identity(_SEATED_AGENT)

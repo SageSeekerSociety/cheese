@@ -60,6 +60,13 @@ class FeedbackCreate(BaseModel):
     caller, never a string the client chose. On the accept path the author comes
     from the card instead (the agent that found it) and the caller is recorded
     as the submitter — the route reads both, so the body still carries neither.
+
+    ``topic_id`` / ``project_id`` are not here either, and for the same reason:
+    自从「提出它的那个房间」成为可见性并集的一档（结论 47），``topic_id`` 就是那一
+    档的**授权键**——客户端说了算的键就是客户端填得错的键。给一条反馈安上房间的路
+    只有一条：发送提案卡，而它从自己的 URL 解出房间（``AcceptedProposal``）。于是
+    「这条反馈有房间来源」和「它是那个房间里的一张卡发出来的」是同一件事，而后者正
+    是「那个房间的人本来就看过它的内容」成立的那个条件。
     """
 
     kind: FeedbackKind = FeedbackKind.bug
@@ -76,8 +83,6 @@ class FeedbackCreate(BaseModel):
     logs: str | None = Field(default=None, max_length=20000)
     session_id: str | None = Field(default=None, max_length=64)
     environment: str | None = Field(default=None, max_length=255)
-    topic_id: uuid.UUID | None = None
-    project_id: uuid.UUID | None = None
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -268,6 +273,10 @@ class FeedbackCounts(BaseModel):
     hot: int
     active: int
     resolved: int
+    #: 「上线」单独一个数。`resolved` 装的是**修复 + 上线**这一对（`_tab_where` 的
+    #: docstring 写着那条决定），这里只是**另外**多给一个，栏位口径不变 —— 看板上
+    #: 「解决」和「上线」要画成两条线，缺了它「上线了多少」在这个平台上没被数过。
+    deployed: int = 0
     #: 「我的反馈」的未读数 —— 我的条目上别人留下的评论或状态变化。同一次请求返回，
     #: 因为铃铛和列表永远同时出现在管理页上。
     unread: int = 0
@@ -357,6 +366,11 @@ class FeedbackDetail(FeedbackCard):
     #: Admin-only; empty for everyone else. The field is present either way so
     #: the frontend has one shape, and the service is what empties it.
     notes: list[NoteOut] = Field(default_factory=list)
+    #: 调用者能不能删掉**整条反馈**。**服务端算**，和 `DELETE /feedback/{id}` 共用
+    #: `may_delete_feedback` 一处判据 —— 作者（写它的那个 handle，或按下发送的那个）
+    #: 与平台管理员各一档。客户端自己拼一遍 `handle == mine || isAdmin` 就是「按钮
+    #: 画得出来、点下去 403」的来源，评论那一层已经为此付过学费。
+    can_delete: bool = False
 
     @classmethod
     def from_row(
@@ -372,6 +386,7 @@ class FeedbackDetail(FeedbackCard):
         thread: list[CommentOut] | None = None,
         thread_next_cursor: str | None = None,
         notes: list[FeedbackNote] | None = None,
+        can_delete: bool = False,
     ) -> FeedbackDetail:
         card = FeedbackCard.from_row(
             row,
@@ -408,6 +423,7 @@ class FeedbackDetail(FeedbackCard):
             thread=list(thread or []),
             thread_next_cursor=thread_next_cursor,
             notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
+            can_delete=can_delete,
         )
 
 
@@ -428,7 +444,17 @@ class FeedbackMeta(BaseModel):
     status_ladder: list[FeedbackStatus]
     tabs: list[str]
     admin_tabs: list[str]
-    hot_supports: int
+    #: 「热门」这一栏的规则，三个数——为什么是三个而不是一个，见
+    #: `repositories.HOT_SCORE`：门槛、半衰期、补足条数各管一件事，而客户端要能把这
+    #: 一栏**说给人听**（「两周前的一票算今天半票 · 至少 5 条」）。规则留在一个数字
+    #: 里的话，读者看到的是一栏他无法解释的排序。
+    #:
+    #: 这三个数**不是**给客户端自己算热度的：排序和筛选都在服务端（`hot_score()`），
+    #: 客户端拿到的是已经排好的行。它们只用来把规则写出来——客户端算第二遍的话，
+    #: 屏幕上就会出现两套热度。
+    hot_score: float
+    hot_half_life_days: float
+    hot_min_items: int
     #: Whether the caller may see the admin surface. The client asks instead of
     #: guessing from a role string it can only get wrong.
     is_admin: bool

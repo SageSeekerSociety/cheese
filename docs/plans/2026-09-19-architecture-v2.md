@@ -39,12 +39,12 @@
 
 | # | 概念 | 层 | 一句话 |
 |---|---|---|---|
-| 1 | **参与者 Actor** | L0 | 能说话、被点名、被通知、被署名的一个 handle。人和 agent 是它的两种到达方式，不是两个类。**只按岗位（role）分，模型不是它的属性** [已定] 结论 3、44 |
+| 1 | **参与者 Actor** | L0 | 能说话、被点名、被通知、被署名的一个 handle。人和 agent 是它的两种到达方式，不是两个类。**Teammates have distinct roles and may override the project main model** [已定] 结论 3、44 |
 | 2 | **席位 Seat** | L0 | 「某个参与者在某个房间担某个角色」。**全系统唯一的授权载体**，凭证只负责认证 [已定] `agent-principles` 二、三 |
 | 3 | **项目 Project** | L0 | 一个源仓库、一个资料库、一份产物清单、一份名册、一套配置。**每个项目恰好有一个源仓库（git），但不是项目里的每样东西都进它** [已定] 结论 26 |
 | 4 | **房间 Room** | L0 | 一条时间线的容器，里面坐着若干成员，其中一些是 agent。**它不指向任何 agent**。私聊和项目总览是它的两种特例，不占槽位 [已定方向] #1180 |
 | 5 | **活 Work** | L0 | 一件要交付的工作：一条分支、一张提案卡、一个唯一负责人。**房间里是平的，没有子卡**。工作树是它在某个地点的缓存。**它用做它的那个 agent 的手，不声明自己的环境** [已定] 结论 33、38（按结论 60 修订） |
-| 6 | **会话 Session** | L1 | 一个 agent 在一个**线程位**（房间主线，或房间里的一条活）的连续 transcript。**权威副本在平台**，它不拥有机器 [已定] 结论 29 |
+| 6 | **会话 Session** | L1 | 一个 agent 在一个**房间**的连续 transcript（一个 handle 一条）。**权威副本在平台**，它不拥有机器 [已定] 结论 29 |
 | 7 | **地点 Place** | L2 | 一段**有期限、可归还、可休眠**的机器使用权。agent 的一双手，不是它的身体 [已定] 结论 24、39 |
 | 8 | **骨架 Harness** | — | 在一个地点上驱动一个 agent 的程序。**开发者选项，不是产品概念**，它不拥有任何产品语义 [已定] 结论 28 |
 | 9 | **托管方 Forge** | — | 改动最后落在哪，以及谁回答「能不能合」。平台自己的仓库也是一个实现 [已定] #363 |
@@ -144,7 +144,7 @@
 | **I14** | **同一个 handle 在一个项目里是一个参与者**：它在各条线程上共享身份与记忆，线程之间只走内部便条；**不同 handle 之间只走 chat，agent 对 agent 也是**（结论 11、12） | 两条：①同 handle 的两条线程读到的是同一个记忆目录（按实例取，不按线程取）；②守卫：向另一个 handle 送话的路径只有 chat 一条，「便条」那条通道的收件人必须与发件人同 handle |
 | **I15** | **没有项目记忆池**（结论 7）；**记忆是平台侧的文件**（结论 42） | 三条：①`MemoryScope.project` 在全仓零命中；②人和 agent 共同看的东西全部是 1.12 那几份文档，每一份都有一个指名的所有者；③一条记忆是一个文件，**自带「关于谁」「何时观察到」两项元数据**，落在「一个实例一个目录、目录下按关于谁分三个子目录」那棵树上，项目源仓库里零命中，版本由平台给，**索引由平台维护**，**读它的路径走平台工具、不经过工作区那双手** |
 | **I16** | **agent 关于每个人的知识在任何房间都可读，怎么用是它的判断**（结论 54 修订结论 9）；**写入按「关于谁」归目录**（结论 42） | 六条：①读关于某个人的池不以「他在不在这个房间」为条件——守卫：取记忆的代码里没有一处按在场名册过滤池；②跨项目仍然读不到：池按 (实例, 项目) 关着（I15），放开的是房间这一层，不是项目这一层；③agent 对人记了什么，这个人在这个 agent 的 profile「记忆」页上读得到、翻得了历史、标得了、删得掉；④任何提到某个人的判断只能落进那个人的那个子目录，落在项目或自己那两个目录里就是写错；⑤关于某个人的文件只对当事人可见——另一个项目成员在同一个记忆页上列不出它，**这是隐私那一侧仅剩的一条**（结论 54）；⑥记忆的改动不进房间时间线、不产生通知，搜索默认不覆盖它 |
-| **I17** | 模型不是参与者的属性，是**工作的资源绑定**（结论 3） | 四条：①agent 类型与实例的数据模型里没有 `model` / `harness` 字段，`effort` 也不在实例上（它随这条活的模型绑定走，1.1）；②房间主线程的模型在一轮里不可改，一条活的模型可改且下一轮生效；③卡上显示的模型**从用量记录算出来**，不是一个被 set 的状态字段；④项目配置对象上与模型有关的字段只有默认模型和启用列表两样（结论 44） |
+| **I17** | Project and teammate model selection | Project main and native subagent defaults are separate. Teammates may override the main default with an available model. The prepared turn keeps its model; configuration changes apply at the next task boundary. Reported usage records the actual model. Harness and effort remain outside teammate configuration. |
 | **I18** | 会话可迁移，而迁移是搬运不是重开；**transcript 的权威副本在平台** | 把一个房间的会话搬到另一台机器，下一轮 agent 能引用上一轮自己说过的话；恢复的源是平台副本，不是另一台机器 |
 | **I18b** | **活与子 agent 不声明自己的地点**（结论 38，按结论 60 修订） | 活与子 agent 不声明自己的地点——它们用**做这条活的那个 agent 的会话**解析出的租约（原生子 agent 用父进程那一份，结论 43）；活、轮次与子 agent 的数据结构上没有 place / placement 字段 |
 | **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到三张收据：transcript 已落库、记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这三张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
@@ -196,13 +196,11 @@ agent 实例由建它的项目拥有，只在那个项目有席位，别的项�
 | 跟着谁走 | 跟着参与者 | 跟着 (参与者, 房间) |
 | 谁能改 | 只有它自己/它的拥有者 | 房间的 owner/admin |
 
-今天 `identity/handles.py` 铸两种 agent handle：
-`agent_instance_handle`（**身份级**，从实例 id 派生，docstring 逐字说明了为什么不能从房间派生——
-「A room is a collaboration space and may seat several agents, so an agent's identity cannot be
-derived from a room — the same derivation would give two agents in one room the same name,
-and the same agent two names in two rooms.」）
-和 `topic_agent_handle`（**房间派生**，`cheese-<12 位 hex>`）。
-后者是 `cheese split` 那个第二身份的来源，按结论 31 要退场（1.5）。
+`identity/handles.py` 只铸一种 agent handle：`agent_instance_handle`（**身份级**，从实例 id
+派生，docstring 逐字说明了为什么不能从房间派生——「A room is a collaboration space and may
+seat several agents, so an agent's identity cannot be derived from a room — the same derivation
+would give two agents in one room the same name, and the same agent two names in two rooms.」）。
+房间派生的那一种是 `cheese split` 第二身份的来源，按结论 31 已随 P11 退场（1.5）。
 
 #### agent 的类型与实例
 
@@ -228,15 +226,9 @@ and the same agent two names in two rooms.」）
 这条要求是**类型的出厂设置的一部分**，实例继承它，一条活在绑模型时必须满足它——
 所以它不是上面那两行「删」的例外：它声明的是能力要求，不是一个型号。
 
-#### 模型不是 agent 的属性
+#### Project and teammate models
 
-[已定] 结论 3、44。**分参与者的判据是岗位（role）。模型不是 agent 的属性，也不是分参与者的理由——用第二个 agent 换模型是错放。**
-模型是**工作的资源绑定**，与机器（地点）同形：
-卡上并排显示「在哪台机器、用哪个模型、现在在做什么、花了多少」。展开是 2.5、4.6 与 8.1。
-
-**项目级只有两样：默认模型和启用列表** [已定] 结论 44。
-「超档要人点头」不是第三样配置，它是启用列表之外那一档在投递上的形状（结论 3，8.1）；
-**「档位策略」也不是第三样——它就是启用列表按费用分出来的那几档**，本稿凡说「档位」都指这个。
+Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
 
 #### 什么时候才该是两个 agent
 
@@ -273,7 +265,7 @@ and the same agent two names in two rooms.」）
 （一个 agent 类型所描述的 role，如设计、测试，住在类型上，1.1）是两个词，英文里都叫 role。
 本文一律分称「席位角色」与「岗位」。
 **分 agent 的判据只有岗位一个** [已定] 结论 44：席位角色管的是它在这个房间能做什么，岗位管的是它是干什么的，
-模型两边都不在——它在这条活上（1.5、4.6）。
+A teammate may store an optional model override; a seat does not configure a model.
 
 - **拥有**：席位角色（owner / admin / member）、加入时间。
 - **不拥有**：身份（在参与者上）、**出厂设置**（在 agent 类型上，1.1）、**资源绑定**（在这条活上，1.5）。
@@ -372,7 +364,7 @@ a message in a private chat becomes a room」）。`cheese split` **不**建房�
 [已定] 结论 19、20。落成五句可判定的话：
 
 - **名册恰好两席**（一人一 agent，或两个人）。「谁被点名」由此推出：不是说话的那个就是被点名的那个，不需要 @。
-  今天这两席住在 `topic/models.py:109-110` 的 `private_owner` / `private_peer` 两列上，它们就是两席名册，应当住在 `topic_memberships` 里。
+  这两席住在 `topic_memberships` 上，只此一处（`TopicMemberService.private_seats`）。
 - **一轮不租地点**：`needs_place` 为假，没有项目检出，所以开不了活；要交付就把那条消息升格成房间（今天已如此）。
   今天那个 64 MiB 可写区（`harness/claude_code/remote_execution/client.py:53` 逐字「This chat has 64 MiB of temporary scratch space at /work」）
   **不是一个地点**，它是**会话自己的草稿区**，归 L1，随会话生灭，不进地点接口、不占功能矩阵的一列。
@@ -402,7 +394,8 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 
 **是什么**：房间里一件要交付的工作：一条分支、一张提案卡、一个唯一负责人。
 
-- **拥有**：分支名、提案卡与它的合并状态、负责人、自己的会话、自己的进度清单、**它这一轮绑的模型**。
+- **拥有**：分支名、提案卡与它的合并状态、负责人、自己的进度清单、**它这一轮绑的模型**。
+  **不含会话**：做它的是房间某条会话里的一个原生子 agent，一条活不另开会话 [已定] 结论 43。
   **不含地点**：这一轮跑在哪里的唯一声明处是会话（1.6），而**它用的就是做它的那个 agent 那条会话的手** [已定] 结论 60（修订结论 38）。
 - **不拥有**：自己的名册（**房间有名册，活只有唯一负责人**——今天已经写对了，
   `topic/services.py:956-959` 逐字：「A thread does NOT get one: 唯一的主 is the whole difference between
@@ -418,8 +411,8 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 #### 活是平的
 
 [已定] 结论 33。**房间里的活没有子卡；谁能开活不受限。**
-`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`（今天 `harness/claude_code/device_launch.py:403` 写死 `"1"`）
-是**骨架设置**，不是设计约束——它管的是一个骨架进程里能起几层子进程，不是产品里活能嵌几层。
+`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` 是**骨架设置**，不是设计约束——它管的是一个骨架
+进程里能起几层子进程，不是产品里活能嵌几层，所以它从部署配置里读（`core/config.py`）。
 
 #### 活用做它的那个 agent 的手
 
@@ -440,7 +433,7 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 
 | 今天有 | 在哪 | 按结论 31 |
 |---|---|---|
-| 第二身份 `cheese-<hex12>` | `identity/handles.py:37 topic_agent_handle`（`TOPIC_AGENT_PREFIX = "cheese-"`，`_TOPIC_AGENT_HEX = 12`），`runtime.py:512` 逐字「`cheese split` under her own `cheese-<hex12>` handle」 | **无**。分身不是第二个参与者 |
+| 第二身份 `cheese-<hex12>` | 已随 P11 退场：房间派生的铸造函数和它的 20 个调用点都没有了，名字只从 agent 自己来 | **无**。分身不是第二个参与者 |
 | 第二会话 / 屏幕 / 地点 | 分身自己的 screen 与租约 | **无** |
 | kickoff | `runtime.py:784-806`（`author="system"`，内容是 `KICKOFF_PROMPT`，`summon=True`） | **无**。平台不发起一轮（I12） |
 | `cheese_bind` | `harness/prompt.py:152/176` 两处提示词教它「起完分身立刻 `cheese_bind`」 | **无** |
@@ -539,30 +532,30 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 也不动同一个房间里别人的任何一条。
 
 **地点解析的入口是会话，不是房间** [已定] 结论 60：一个房间里同时跑着 N 条会话
-（主线一条、有人被点名的每条活各一条），就解析出 N 份租约，两个队友可以在不同机器上（4.1、6.1）。
-**唯一共用一双手的是原生子 agent**——它不是第二条会话，用的是父进程那一份（结论 43）。
+（一个 handle 一条），就解析出 N 份租约，两个队友可以在不同机器上（4.1、6.1）。
+**活不是分会话的理由**——做一条活的是某条会话里的原生子 agent，它不是第二条会话，
+用的是父进程那一份（结论 43）。
 
 **同一个 handle 的多条线程是一个参与者** [已定] 结论 11：
-它在房间主线、在每一条活上各有一条会话，**这些线程共享身份和记忆**，
+它在每个房间有一条会话，会话里的子 agent 是它的线程，**这些线程共享身份和记忆**，
 线程之间走**内部便条**（5.5）。会话是线程的载体，不是第二个身份。
 
 **agent 自己起的子 agent 不建第二条会话** [已定] 结论 43：
 它是父会话里的一条线程，靠线程标识归到卡上（1.5），**与父进程同生同死**。
-一条活上有独立会话，是有人在那条活上被点名的时候；
-子 agent 跑掉的那条活，恢复靠从分支重派，不靠接回一条会话。
+在一条活上点名另一个人，多出来的那条会话是那个 handle 自己的，一个房间一条，
+不是这条活的；子 agent 跑掉的那条活，恢复靠从分支重派，不靠接回一条会话。
 
 [已定] `agent-principles` 十四「续跑就是把 transcript 接回来，平台自己不续」。
 
 **这条地基今天就在库里，而且上游按错的那一份写**：
 
-- `agent_session/models.py` 已经把会话做成后端的一行，键是 `(topic_id, task_id, agent_handle, harness)`，
-  两条 partial unique index，注释逐字（`:44`）「One session per agent per PLACE,
-  and a place is a room's main line or one thread in it」——这句里的 place 是线程位，不是概念 7 的地点。
+- `agent_session/models.py` 已经把会话做成后端的一行，键是 `(topic_id, agent_handle, harness)`，
+  一条不带谓词的 unique index：一个 agent 在一个房间里一条会话，活不在这个键里。
 - `device/models.py:153 DeviceTopicRow` 的 docstring 仍然逐字写着
   「the topic's work tree + **resumable claude session live on that one machine**,
   so every later turn MUST return to it」。
 
-**两段 docstring 字面互斥，而目标形状的那张表已经在库里。**
+**这张表和那段 docstring 字面互斥，而目标形状的那张表已经在库里。**
 所以这不是「造一个新架构」，是「把箭头掉过来，让上游读已经对的那张表」。
 
 **「权威副本在平台」今天为什么是个空壳，机械原因在这里**：
@@ -1047,10 +1040,10 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 **结论：它不是第四个提供者接口。** 理由是它的决定变量里没有「在哪跑」：
 [已定] 他 2026-09-09T21:44「model」「和harness」「是分开的吧」——
 **供给按 `(骨架, 模型)` 决定，不按机器形状决定**。
-今天 `agent_instance/configuration.py` 的模块 docstring 已经把这个方向写对了：
-「**a harness is what can drive a model**, never the other way round……
-`model_choices` 答『这个项目能跑什么』，`harness_choices` 答『每个 harness 能被指向哪些模型』」。
-这句里的 `model_choices` 就是结论 44 那份**启用列表**在代码里的位置——项目级只有它和默认模型两样（1.1）。
+方向只能是这一个：**a harness is what can drive a model**, never the other way round
+（`agent/harness/__init__.py` 写了它，`agent_instance/configuration.py` 的 `model_choices`
+按这套部署跑的那个骨架筛出这个项目能用的模型）。`model_choices` 就是结论 44 那份
+**启用列表**在代码里的位置——项目级只有它和默认模型两样（1.1）。
 
 所以它分成三块，各归各的主人：
 
@@ -1103,7 +1096,8 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 
 **机器状态也是一条事件，而且收件人里有 agent** [已定] 结论 40：
 平台把「这台机器够不着了」送到 agent 面前（6.3 那条能力事件），处理它的是 agent 不是平台。
-落点按同一条规则：机器是**某一条会话**的手（结论 60），所以它落在那条会话的线程位上——房间主线的会话 → 房间时间线，一条活的会话 → 那张卡。
+落点按同一条规则：机器是**某一条会话**的手（结论 60），所以它落在那条会话所在的房间的时间线上；
+做这条活的是父会话里的原生子 agent，它产生的事件按线程标识归到那张卡（1.5）。
 
 **一次打断也是一条事件**（1.11、4.2 的 `interrupt`），按同一条规则落点：
 打断的是卡上那条活的一轮 → 落那张卡；打断的是房间主线的一轮 → 落房间时间线。
@@ -1135,7 +1129,7 @@ agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另�
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
-`address()` 给出收件人。`chat.py` 里的 @ 仍然自己发一条 `AlertKind.mention`，它随 `alert/` 整包删除一起归拢。
+`address()` 给出收件人。`chat.py` 里的 @ 仍然自己往收件箱写一行 `MENTION`，没有过 `address()`。
 
 ### 5.3 总览与调度
 
@@ -1619,10 +1613,10 @@ so check there and not in the menu, the contract or the doc**」。
 | **参与者** | `identity/`、`user/`、`agent_instance/`、`agent_type/`。`ensure_identity` 已给 agent 建 user 行 | `actor.py:48` 的 `is_agent` 字段给了分岔的钩子；`AgentConfiguration` 与 `agent_type/schemas.py:19/21` 带 `model`/`harness` | ①`Actor` 上没有 `is_agent` 列，授权/收件人/署名三类决策里 `is_agent`/`looks_like_agent_handle`/`names_a_person` 零命中；②`AgentConfiguration` 与类型 schema 里没有 `model`/`harness`/`effort` 三个字段（`effort` 移到活的资源绑定上，1.1），而选模型的代码改读「这条活的绑定」 |
 | **席位** | `topic/models.py:252 TopicMembership` + `topic_membership/` + `membership/`（两个包只有 service/repo，model 在 `topic/` 里） | 第二条授权线：`Actor.via` + 路由级 cheese-gate（`api/auth.py`） | ①认证路径只答「这张凭证是真的吗」；「它能干什么」全仓只有一个答法，入参是一条席位行；②往另一个项目的房间插一个 agent 实例的 handle 被拒，人没有这条限制（I9b）；③`resolve_agent_handle`（定义在 `topic_membership/services.py`，10 个调用点，其中 `api/auth.py:234` **在认证路径里**）零命中；④一个坐两个 AI 队友的房间，不带 @ 的消息不启动任何一轮；⑤认证路径上的改动有一条独立的回归测试：一张过期或张冠李戴的沙箱 token 仍然被拒 |
 | **项目** | `project/`、`workspace/`。`workspace/service.py:236 ensure_repo` 无条件建平台侧 git 仓 | `workspace/` 现在同时是「项目的 git 源」和「项目的资料库」（`:860 write_library_file`，#1209 合进来的；#1247 又给资料库加了页面和 `:887 delete_library_file`），两样不同的东西挤一个包；建项目不播种 agent 实例，`agent_instance/services.py:53 IMPLICIT_DEFAULT` 是一个 `instance_id=None` 的隐式默认 | ①产品判断不再读「项目有没有绑外部仓库」这个布尔，只读 4.5 的能力位；②建任意一个项目，断言存在一行芝士实例与它在根房间的席位行，`IMPLICIT_DEFAULT` 这种无实例行的隐式默认不存在 |
-| **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at`、`private_owner`/`private_peer` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
+| **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
-| **└ 私聊** | `private_owner`/`private_peer` 两列 + 52 处 `is_private` 分支（30 处在 `chat.py`） | 两席名册没住在 `topic_memberships`；`chat.py:2476` 自动发布 + `prompt.py:196-197` 配套提示词；`chat.py:4398-4405` 把算力钉成 `"device"` | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
-| **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | `cheese split` 的四样：第二身份（`handles.py:37`）、第二会话/地点、kickoff（`runtime.py:784-806`）、`cheese_bind`（`prompt.py:152/176`） | ①`topic_agent_handle` 零调用点；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
+| **└ 私聊** | `topic_memberships` 上的两席（`TopicMemberService.private_seats`）+ `chat.py` 里一处 `is_private` 读点（`_is_dm`，两类答案都从它推出来） | — | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
+| **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | 只剩一处：`prompt.py:217` 的 `thread_relay_prompt` 还在让房间起一个替补执行者去调 `cheese_bind`，而那个工具 #1378 已经删了。第二身份随 P11、kickoff 随 P26、第二会话/地点随 #1396 都已退场 | ①房间派生的 agent handle 零命中（`repo-guards.yml` 守着）；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
 | **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；③**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `agent_sessions` 的 `work_lease`/`runtime_location`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑤地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
@@ -1646,12 +1640,6 @@ so check there and not in the menu, the contract or the doc**」。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
-- **走账本的投递**（结论 58，5.7）：账本已经落在 `delivery/ledger.py` 与 `deliveries` 表上，
-  只覆盖走 `deliver()` 的那两处调用点；仍走 `publish_notification_event` 的 8 处
-  （team 7、discussion 1）既没有记录也没有去重，把它们搬上账本还没有人做。
-- **两张通知表并成一张**（结论 58）：`alert/` 那个包和 `alerts` 表原样还在，账本只管
-  `notification/` 这一张；把 `alerts` 的行幂等地搬进 `notification` 也还没有人做，
-  在那之前 `alerts` 不能 drop。
 - **同 handle 便条的写侧**（读侧的通道已经有了：`chat.py:1605 notify_running_turn`）。
 - **定时投递原语**（今天由 `scheduler/` 替它做，而那是另一件事）。
 - **反馈通道**：全仓一行都没有。
@@ -1683,7 +1671,6 @@ so check there and not in the menu, the contract or the doc**」。
 | 通知 | `alert/` vs `notification/` | 一个人被 @ 了而人不在页面上，什么都收不到 |
 | 「下一步在谁手上」 | `room_task/presentation.py`、`agent/platform_notices.py`、`ChatPanel.vue` 三处互不引用 | 看板显示「待处理」而没人被通知到 |
 | 名册 | 项目名册（`ProjectMember`，无 agent） vs 房间名册（`topic_memberships`，有 agent 席位） | agent 对 agent 不可见（结论 12 今天不可执行） |
-| agent handle 的铸造 | `identity/handles.py:37 topic_agent_handle` 与 `:47 agent_instance_handle` | 署名键与记忆键不相等（#1200）。按结论 31，前者退场，这条两份自然消失 |
 | 「认不出的失败」政策 | `chat.py` 的一条出口 vs `runtime.py` 的另一条 | 两条出口两种政策 |
 | 模型这一轮是什么 | 实例配置里的 `model` 字段 vs 用量记录 | 卡上显示的可能不是实际用的（I17 第三条） |
 
@@ -1760,17 +1747,15 @@ so check there and not in the menu, the contract or the doc**」。
 ③ 提供不了关闭动作的项，4.3 的矩阵那一格标「暂缺」，谁都看得见。
 4.2 末尾那条「关掉这个动作在接口上不存在」由此有了落点：它是声明里的一项，不是各适配层各自记得的事。
 
-### 已定三：模型供给由后端统管，入口形态沿用 #218 已落地的两种传输（结论 46）
+### 已定三：模型供给由后端统管，入口只有 #218 已落地的计量代理一种（结论 46）
 
 [已定] 这是 2026-08-10 #218 的重申，不是新决定：后端看到每一个请求，在唯一必经点做准入、记账、拒绝；ccproxy 只是容量池。
 **入口不是一个 base URL**：订阅流量不能设 `ANTHROPIC_BASE_URL`（Claude Code 会退出订阅模式；后端若重发请求，指纹不符会触发订阅风控），
 所以它走 `HTTPS_PROXY` 的 CONNECT 到平台的透明计量代理（`deploy/metering-proxy/`），代理向后端 `/llm/admission` 问准入后**原样转发**给 ccproxy；
-API-key 供应商走 `ANTHROPIC_BASE_URL` 指向的网关（`provider_env.py` 的两组环境变量互不重叠）。一个控制点，两种传输，都不重发请求。
+API-key 供应商那一路不是第二个入口：机器不带 base URL，分流在代理里按请求答，代理按 admission 的答复把这一路改写到网关。一个控制点，一种入口，都不重发请求。
 机器上只有平台签发的、可撤销的 ccproxy 假票，真凭据既不在机器也不在后端（他 2026-08-15）。
 I27 的拒绝点就是 `/llm/admission`：卡上的模型绑定在这里解析，选不到就拒绝并说出来，不换池。
-**目标是只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
-还留着的第二种形状——`device_provider.py:1421` 按 API-key 供给以 base URL 起 Claude Code——要删；它存在的唯一原因是订阅形状的启动依赖 Anthropic 的非模型端点（设置、策略、额度、事件上报）能应答，没有真订阅时会 401。
-处置是让代理自己应答这些端点（不碰 Anthropic，无风控问题），并实测 Claude Code 在固定应答下行为正常；这是这条统一上唯一未验证的事实。
+**只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
 
 ### 已定四：反馈隐私部分的可见范围（结论 47）
 

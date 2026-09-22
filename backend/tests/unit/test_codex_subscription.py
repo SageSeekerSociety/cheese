@@ -55,7 +55,7 @@ async def test_failed_persistence_replays_reply_without_restarting_model_work(tm
     call = AsyncMock(return_value={"events": rows})
     consumer = AsyncMock(side_effect=RuntimeError("database disconnected"))
     activity = AsyncMock()
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex")
     path = tmp_path / "events.sqlite"
     first = Subscription(session, path, call, consumer, activity)
     with pytest.raises(RuntimeError, match="database disconnected"):
