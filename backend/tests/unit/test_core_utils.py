@@ -390,6 +390,41 @@ def test_histogram_observe_bucket_assignment():
     assert h._counts == [2, 1, 1, 1]
 
 
+def test_histogram_quantile_reads_per_bucket_counts():
+    """分位数要在**样本落在多个桶里**的时候也对 —— 那才是正常情况。
+
+    这一条是补的，起因是一次真错：`observe` 每个样本只往「它落进去的那一个桶」加一
+    （见上面那条断言：`[2, 1, 1, 1]` 是逐桶的，不是累加的），而 `quantile` 第一版
+    直接拿逐桶的计数去跟 `q * count` 比。于是只要样本分布在两个以上的桶里，那个
+    条件**永远不成立**，函数走完循环、返回最后一个桶的上界 —— 每条忙一点的接口
+    p95 都报 **10 秒**，而它长得像一个读数，不像一个故障。
+
+    断言的是**手算出来的数**，不是「有这个键」：原来那条后端用例只看形状，所以
+    10000ms 一路绿着进了 main。
+    """
+    from app.core.metrics import Histogram
+
+    h = Histogram(name="test_quantile", buckets=[0.005, 0.01, 0.025, 0.05, 0.1])
+    for _ in range(60):
+        h.observe(0.003)  # 桶 0
+    for _ in range(30):
+        h.observe(0.02)  # 桶 2
+    for _ in range(10):
+        h.observe(0.08)  # 桶 4
+
+    # 100 个样本：p50 落在桶 0 里（第 50 个），p95 落在桶 4 里（第 95 个）。
+    assert h._counts[:5] == [60, 0, 30, 0, 10]
+    # 桶内线性插值：桶 0 覆盖 0..0.005，第 50 个样本是其中的 50/60 → 0.0041667。
+    # （**桶级近似**：同一个桶里的样本被当作均匀分布，所以这个数不等于真值 0.003，
+    # 而这是这一层明确接受的口径 —— 桶宽 5ms..10s，报的是量级。）
+    assert h.quantile(0.5) == pytest.approx(0.005 * 50 / 60)
+    # 桶 4 覆盖 0.05..0.1，第 95 个是其中的第 5 个 → 0.075。
+    assert h.quantile(0.95) == pytest.approx(0.075)
+    assert h.quantile(0.99) == pytest.approx(0.095)
+    # 没有样本时是 None，不是 0 —— 0 是一个读数，None 是「没有数据」。
+    assert Histogram(name="empty", buckets=[1.0]).quantile(0.5) is None
+
+
 def test_histogram_observe_all_overflow():
     from app.core.metrics import Histogram
 

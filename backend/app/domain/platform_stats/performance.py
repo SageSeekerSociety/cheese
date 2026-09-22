@@ -60,7 +60,10 @@ def performance_snapshot() -> dict:
         "routes_shown": len(shown),
         "routes": shown,
         # 进程内存里的东西，所以这两个数必须写清口径，不然会被当成「平台的」数。
-        "active_requests": registry.gauge("http_requests_active").value,
+        # **读这个数的那一条请求自己也在里面**：中间件在 `call_next` 外面一进一出，
+        # 而这个快照只能从请求里画出来，读到它的时候它正好被算进了那个 +1。不扣掉的
+        # 话平台空着的时候这一格也写 1，读起来像「有一条请求一直没处理完」。
+        "active_requests": max(0, registry.gauge("http_requests_active").value - 1),
         "uptime_seconds": registry.export()["uptime_seconds"],
         # 事件循环的滞后（`core/loop_lag.py` 一直在测）：接口慢而 p95 不高时，答案
         # 常常在这里 —— 循环被什么东西占住了，谁都得排队。

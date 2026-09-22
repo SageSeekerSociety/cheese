@@ -400,10 +400,8 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
 
 _http_log = get_logger("http")
 
-# 路径里哪些段是「一个标识」而不是「一段固定路由」。UUID 与纯数字都要折成 `{id}`。
-_UUID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
+#: 没进路由表的那一类请求（404、扫描器、拼错的地址）共用的标签。
+_UNMATCHED_ROUTE = "(unmatched)"
 
 
 def _route_label(request: Request) -> str:
@@ -414,17 +412,19 @@ def _route_label(request: Request) -> str:
     **永久**留在进程内存里的。`/metrics` 会变成一份读不完、也画不出来的东西。
 
     Starlette 把匹配到的路由挂在 `scope["route"]` 上，中间件在 `call_next` 之后能读到
-    （路由匹配发生在它里面）。读不到时——404、静态资源、任何没进路由表的东西——退回
-    一条把「看着像标识」的段折成 `{id}` 的路径。两个都是**有界**的。
+    （路由匹配发生在它里面）。路由模板来自路由表，所以这一支**天然有界**。
+
+    读不到时**不许退回原始路径**：404 那一支看着也能折，其实折不住 —— 只有 UUID 和
+    纯数字的段会被折成 `{id}`，`/random-word/inspect.php` 这种原样留着。而 404 的路
+    径**是请求方随手写的**（扫描器、爬虫、别人拼错的链接），于是标签空间由外部输入
+    决定，还是那条老路：内存里的时间序列随外面的请求长。退回一个常量，这一支就只剩
+    一条序列，它出现在「最慢的路由」里也照样说明问题（404 慢是真慢）。
     """
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     if isinstance(path, str) and path:
         return path
-    return "/".join(
-        "{id}" if (_UUID_RE.match(seg) or seg.isdigit()) else seg
-        for seg in request.url.path.split("/")
-    )
+    return _UNMATCHED_ROUTE
 
 
 @app.middleware("http")

@@ -82,21 +82,30 @@ class Histogram:
         数据」。看板上把两者画成同一个数，就等于用一条平线宣布平台健康，而那可能
         只是这一刻还没有人访问过。
 
-        插值是桶级的近似 —— 桶宽在 5ms..10s 之间，所以 p95 落在最后一个有限桶里时
-        报的是那个桶的上界，不会去追 +Inf。
+        **`_counts` 是逐桶的，不是累加的。** `observe` 每个样本只往「它落进去的那
+        一个桶」加一就返回（看它的循环），所以这里必须自己把前面的桶累起来。第一版
+        直接拿逐桶的计数去跟 `q * count` 比，落进两个以上桶的分布永远比不过 ——
+        于是循环走完、返回最后一个桶的上界：**每条忙一点的接口 p95 都报 10 秒**，
+        而且它长得像一个读数，不像一个故障。
+
+        插值是桶级的近似 —— 桶宽在 5ms..10s 之间，所以分位落在最后一个有限桶里时
+        报的是那个桶的上界，不去追 +Inf。
         """
         if self._count == 0:
             return None
         target = q * self._count
+        seen = 0
         prev_bound = 0.0
-        prev_count = 0
         for bound, count in zip(self.buckets, self._counts, strict=False):
-            if count >= target:
-                if count == prev_count:
+            if seen + count >= target:
+                # 这个桶里没有样本（前一个桶刚好够）：分位就落在它的上界上。
+                if count == 0:
                     return bound
-                frac = (target - prev_count) / (count - prev_count)
+                frac = (target - seen) / count
                 return prev_bound + (bound - prev_bound) * frac
-            prev_bound, prev_count = bound, count
+            seen += count
+            prev_bound = bound
+        # 全落在 +Inf 那一格：报最后一个**有限**上界。
         return self.buckets[-1] if self.buckets else None
 
 
