@@ -595,14 +595,20 @@ _STORE_VARS = (
 
 def _installer_env(tmp_path, env, dump):
     """Run one launch whose "agent" reports the environment an install sees."""
-    result = _run(
-        tmp_path,
-        env,
-        prepare=_harness(
-            tmp_path,
-            "".join(f'printf "%s=%s\\n" {v} "${v}" >> "{dump}"\n' for v in _STORE_VARS),
-        ),
-        command="$AGENT",
+    launcher = machine_launcher.launch_script(command=":")
+    start = launcher.index('CS="${CHEESE_STORE:-}"')
+    end = launcher.index("\nfi\n", start) + len("\nfi\n")
+    probe = "".join(
+        f'printf "%s=%s\\n" {name} "${name}" >> "{dump}"\n' for name in _STORE_VARS
+    )
+    # Exercise the synchronous store contract without starting unrelated
+    # drainer and detached maintenance processes.
+    result = subprocess.run(
+        ["sh", "-c", f'REAL_HOME="$HOME"\n{launcher[start:end]}{probe}'],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stderr
     seen = dict(

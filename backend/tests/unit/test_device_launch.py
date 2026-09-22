@@ -1003,9 +1003,22 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         CHEESE_API="https://fixture.invalid",
         CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
     )
+    # Keep this skills/Claude contract from starting the independent detached
+    # document-tool fetch after the assertions have finished.
+    chain = owner / ".cheese/toolchain"
+    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        target = chain / (
+            "fonts/" + machine_launcher.toolchain.fonts_pin()
+            if kind == "font"
+            else f"{tool}/{version}"
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_text("fixture")
+        (target / name).chmod(0o755)
+    curl_calls = tmp_path / "curl.calls"
     curl = tmp_path / "bin/curl"
     curl.write_text(
-        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        f'#!/bin/sh\necho call >> "{curl_calls}"\nwhile [ "$#" -gt 0 ]; do\n'
         'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
         "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
         'if [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
@@ -1019,6 +1032,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
     )
     assert result.returncode == 0, result.stderr
+    assert curl_calls.read_text().splitlines() == ["call"]
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
