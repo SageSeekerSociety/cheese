@@ -34,7 +34,12 @@ const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
 async function sendUserFile($, tool_use_id, args) {
   const files = [];
   for (const entry of args.files || []) {
-    const path = typeof entry === "string" ? entry : String(entry);
+    if (typeof entry !== "string") {
+      return {
+        deny: "SendUserFile cannot deliver a pre-resolved {file_uuid, file_name, size, is_image} object; pass a file path instead",
+      };
+    }
+    const path = entry;
     const name = path.replace(/\\/g, "/").split("/").pop() || "file";
     let data_b64;
     let upload_error;

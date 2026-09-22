@@ -282,7 +282,7 @@ def test_send_user_file_a_file_this_host_cannot_read_still_reaches_the_transport
     """)
 
 
-def test_send_user_file_a_nameless_oversize_file_is_refused_before_it_is_read():
+def test_send_user_file_an_oversize_file_is_refused_before_it_is_read():
     """The room's own limit is 10MB (`/topics/{id}/shown`). Asking `$.fs` for
     more than that is a transfer nobody accepts on the far side.
     """
@@ -315,6 +315,46 @@ def test_send_user_file_a_nameless_oversize_file_is_refused_before_it_is_read():
         assert.equal(read, false);
         assert.equal(called.files[0].data_b64, undefined);
         assert.match(called.files[0].upload_error, /10MB/);
+    """)
+
+
+def test_send_user_file_names_the_object_form_it_cannot_take():
+    """The tool text also allows a pre-resolved {file_uuid, file_name, size,
+    is_image} entry — a file already in Anthropic's filestore. This room has no
+    such filestore to pull it from, and stringifying the object used to name it
+    `[object Object]` and fail later on that name. Refuse the form outright, and
+    say which form it was.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let delivered = false;
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async () => {throw new Error('must not stat');},
+            read: async () => {throw new Error('must not read');},
+          },
+          mcp: {call: async (server, tool, args) => {
+            delivered = true;
+            const text = JSON.stringify({result: {attachments: []}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+
+        const outcome = await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send',
+          files: [{file_uuid: 'f-1', file_name: 'shot.png', size: 3, is_image: true}],
+          status: 'normal',
+        }, async () => 'next');
+
+        assert.equal(delivered, false);
+        assert.equal(typeof outcome.deny, 'string');
+        assert.match(outcome.deny, /file_uuid/);
+        assert.match(outcome.deny, /path/);
     """)
 
 

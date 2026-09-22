@@ -90,9 +90,11 @@ ARTIFACT_KIND_BY_SUFFIX = {
     ".png": "png",
     ".jpg": "jpg",
     ".jpeg": "jpg",
+    ".gif": "gif",
+    ".webp": "webp",
 }
 ARTIFACT_KINDS = frozenset(ARTIFACT_KIND_BY_SUFFIX.values())
-BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg"})
+BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"})
 
 
 def artifact_kind_for(path: str) -> str:

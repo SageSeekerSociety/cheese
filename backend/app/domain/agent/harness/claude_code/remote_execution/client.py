@@ -673,23 +673,8 @@ def _publish_spooled_hook(command, payload):
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 
-# Mirrors the room's artifact table (`topics._ARTIFACT_KIND_BY_SUFFIX`) and the
-# sandbox CLI's copy of it: the only kinds `POST /topics/{id}/shown` renders.
-_SEND_KIND_BY_SUFFIX = {
-    ".html": "html",
-    ".htm": "html",
-    ".svg": "svg",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".pptx": "pptx",
-    ".xlsx": "xlsx",
-    ".md": "md",
-    ".markdown": "md",
-    ".csv": "csv",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpg",
-}
+# What the tool result promises the caller about the file. Kept in step with
+# `topics._ARTIFACT_MIME`, which is what the room actually renders each kind as.
 _SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _SEND_MEDIA_TYPE = {
     ".png": "image/png",
@@ -752,35 +737,29 @@ def send_user_file_entry(path, name, size, upload_error=None):
     return entry
 
 
-def send_user_file_body(name, raw):
+def send_user_file_body(raw):
     """The `POST /topics/{id}/shown` body for one file's bytes.
 
     `content_b64` for every kind, not just the binary ones: the room route
     already takes office and PDF bytes that way, and a caller that decoded to
-    text first cannot carry them.
+    text first cannot carry them. The kind is not declared here — the route
+    reads it off `path`, so this and the room's table cannot drift.
     """
-    suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
-    kind = _SEND_KIND_BY_SUFFIX.get(suffix, "html")
-    return {
-        "as": kind,
-        "content_b64": base64.b64encode(raw).decode("ascii"),
-    }
+    return {"content_b64": base64.b64encode(raw).decode("ascii")}
 
 
-def read_file_on_the_machine(client, path, request_id):
-    """One file's bytes, from the machine that holds them.
+def _from_the_machine(invoke, command, request_id):
+    """One command's stdout, from the machine that holds the file.
 
     The transport's own host only sees a forwarded workspace, so a private
-    container's file (or one over the plugin's read cap) is read the same way
-    every other project file is: a command on the executor.
+    container's file (or one over the plugin's read cap) is reached the same way
+    every other project file is: a command on the executor, through
+    `invoke_on_the_machine` — the one exit that trips the unreachable breaker
+    instead of each call waiting out the executor's read timeout on its own.
     """
-    receipt = client.call(
-        "invoke",
-        {
-            "id": request_id,
-            "tool": "Bash",
-            "args": {"command": f"base64 < {shlex.quote(path)}", "timeout": 60000},
-        },
+    receipt = invoke(
+        {"id": request_id, "tool": "Bash"},
+        {"command": command, "timeout": 60000},
     )
     if "error" in receipt:
         raise RuntimeError(receipt["error"])
@@ -792,16 +771,32 @@ def read_file_on_the_machine(client, path, request_id):
         # A command that exits non-zero is not an executor failure; the build
         # hands back its own error text as stdout, with the exit code on top.
         raise RuntimeError(stdout.strip())
+    return stdout
+
+
+def stat_file_on_the_machine(invoke, path, request_id):
+    """The file's size on the machine, without walking its bytes across."""
+    stdout = _from_the_machine(invoke, f"wc -c < {shlex.quote(path)}", request_id)
+    return int("".join(stdout.split()))
+
+
+def read_file_on_the_machine(invoke, path, request_id):
+    """One file's bytes, from the machine that holds them."""
+    stdout = _from_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
     return base64.b64decode("".join(stdout.split()), validate=True)
 
 
-def deliver_send_user_file(client, config, payload, args):
+def deliver_send_user_file(client, config, payload, args, invoke):
     """Hand each file to this room, and the caption beside them.
 
     Delivery is `POST /topics/{id}/shown` — the route `cheese show` already
     publishes through (SKILL.md), which lands an artifact the room renders and
     offers for download. `POST /topics/{id}/attachments` is the input bar's
     staging area: a file parked there is waiting on a message that never comes.
+
+    Each result entry keeps the filesystem path in `path`, what `SendUserFile`
+    promises the caller. The room-relative pointer is the `path` on the POST
+    body — a different field, for a different reader.
     """
     topic = os.environ.get("CHEESE_TOPIC", "")
     if not topic:
@@ -821,13 +816,30 @@ def deliver_send_user_file(client, config, payload, args):
             )
             continue
         try:
-            raw = (
-                base64.b64decode(item["data_b64"], validate=True)
-                if item.get("data_b64")
-                else read_file_on_the_machine(
-                    client, machine, f"{payload['id']}-file-{index}"
+            if item.get("data_b64"):
+                raw = base64.b64decode(item["data_b64"], validate=True)
+            else:
+                # The plugin's stat never saw this file; refuse an oversize one
+                # before `base64` walks it across the executor connection.
+                size = stat_file_on_the_machine(
+                    invoke, machine, f"{payload['id']}-file-{index}-stat"
                 )
-            )
+                if size > MAX_SEND_USER_FILE_BYTES:
+                    attachments.append(
+                        send_user_file_entry(
+                            path,
+                            name,
+                            size,
+                            upload_error=(
+                                f"文件太大（上限 "
+                                f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB）"
+                            ),
+                        )
+                    )
+                    continue
+                raw = read_file_on_the_machine(
+                    invoke, machine, f"{payload['id']}-file-{index}"
+                )
         except Exception as exc:
             attachments.append(
                 send_user_file_entry(path, name, 0, upload_error=str(exc))
@@ -856,7 +868,7 @@ def deliver_send_user_file(client, config, payload, args):
                 {
                     "method": "POST",
                     "path": f"/topics/{topic}/shown",
-                    "body": {"path": rel, **send_user_file_body(name, raw)},
+                    "body": {"path": rel, **send_user_file_body(raw)},
                 }
             )
         except Exception as exc:
@@ -864,9 +876,7 @@ def deliver_send_user_file(client, config, payload, args):
                 send_user_file_entry(path, name, len(raw), upload_error=str(exc))
             )
             continue
-        entry = send_user_file_entry(path, name, len(raw))
-        entry["path"] = rel
-        attachments.append(entry)
+        attachments.append(send_user_file_entry(path, name, len(raw)))
         delivered = True
     caption = args.get("caption")
     if delivered and isinstance(caption, str) and caption.strip():
@@ -1155,7 +1165,7 @@ def transport(config, target_path):
                     )
                     if tool == "send_user_file":
                         receipt = deliver_send_user_file(
-                            client, config, payload, args
+                            client, config, payload, args, invoke_on_the_machine
                         )
                     else:
                         receipt = (
