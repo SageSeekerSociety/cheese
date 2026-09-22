@@ -2401,6 +2401,8 @@ _ARTIFACT_MIME = {
     "csv": "text/csv",
     "png": "image/png",
     "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
     # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
     # lives on, reached over the preview tunnel that machine dialled out. HOW to
     # run it — and on which port — is the agent's judgment; the platform only
@@ -2429,6 +2431,8 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".png": "png",
     ".jpg": "jpg",
     ".jpeg": "jpg",
+    ".gif": "gif",
+    ".webp": "webp",
 }
 
 #: Ceiling on a published artifact, matching the chat attachment limit below —

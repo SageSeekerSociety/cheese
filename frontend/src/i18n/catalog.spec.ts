@@ -75,7 +75,7 @@ const callSite = new RegExp(`(?:\\$?t|te|tm)\\(\\s*['"\`](${NS})\\.${PATH}['"\`]
 // A key named in a comment is not a call site, and a commented-out call does not
 // show the user a raw key. Strip comments before looking for references, so this
 // scan reports what the running code actually asks for.
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/gm, '$1')
+const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/gm, '$1')
 
 const sourceText = new Map(
   sourceFiles(SRC)
@@ -150,6 +150,11 @@ describe('locale catalogs', () => {
 })
 
 describe('source and catalog agree', () => {
+  it('does not start a block comment inside a line comment', () => {
+    const source = "// The response has image/* content.\nt('tasks.preview.unavailable')\n/* style */"
+    expect(stripComments(source)).toContain("t('tasks.preview.unavailable')")
+  })
+
   it('resolves every key the source calls by name', () => {
     const unknown = [...calledLiterally].filter((id) => !zhById.has(id)).sort()
     expect(unknown, '源码里调用了 catalog 中不存在的键（或调用了子树而非叶子）').toEqual([])

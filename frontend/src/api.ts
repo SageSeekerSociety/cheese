@@ -1973,6 +1973,17 @@ export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
   })
 }
 
+// 转让项目给名册上的另一个人。所有者自己退不掉（后端会拒，得先转让），这是他
+// 离得开的那条路的第一步。新所有者必须已经在名册上（后端会验，不在就退回来一句
+// 「请先把 TA 加进项目成员」）；他接手之后，原所有者就只剩成员身份，再退出一次
+// 才真的走（membership/services.py 的 leave）。
+export function setProjectOwner(projectId: string, ownerHandle: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/owner`, {
+    method: 'PUT',
+    body: JSON.stringify({ owner_handle: ownerHandle }),
+  })
+}
+
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------
 // 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
 // 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册
