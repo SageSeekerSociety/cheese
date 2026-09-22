@@ -100,7 +100,7 @@ class CloudChannel(DeviceChannel):
         )
         if ready:
             return True, ""
-        return False, "Cloud 机器正在创建并接入"
+        return False, "Cloud 机器正在准备并接入"
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
@@ -108,7 +108,12 @@ class CloudChannel(DeviceChannel):
         lease = await self._read_topic_cloud(topic_id)
         if lease is None or lease.project_id != project_id:
             raise ScreenSetupError("本话题没有自己的 Cloud 机器")
-        if lease.device_id is None or not self._hub.is_online(lease.device_id):
+        if (
+            not lease.machine_ready
+            or not lease.ai_ready
+            or lease.device_id is None
+            or not self._hub.is_online(lease.device_id)
+        ):
             return None
         async with self._sessions() as session:
             devices = sql_device_service(session)

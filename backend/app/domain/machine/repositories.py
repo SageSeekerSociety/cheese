@@ -72,6 +72,35 @@ class ProjectMachineRepository:
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
         return await self._session.get(ProjectMachine, machine_row_id)
 
+    async def has_active_turn(self, machine: ProjectMachine) -> bool:
+        from app.domain.agent.models import AgentTurn
+        from app.domain.agent_session.models import AgentSession
+
+        topics = select(DeviceTopicRow.topic_id).where(
+            DeviceTopicRow.device_id == machine.device_id
+        )
+        sessions = select(AgentSession.topic_id).where(
+            or_(
+                AgentSession.runtime_location["device_id"].as_string()
+                == machine.device_id,
+                AgentSession.work_lease["device_id"].as_string() == machine.device_id,
+            )
+        )
+        affected = [AgentTurn.topic_id == machine.topic_id] if machine.topic_id else []
+        if machine.device_id:
+            affected.extend(
+                [AgentTurn.topic_id.in_(topics), AgentTurn.topic_id.in_(sessions)]
+            )
+        if not affected:
+            return False
+        return (
+            await self._session.scalar(
+                select(AgentTurn.id)
+                .where(AgentTurn.stopped_at.is_(None), or_(*affected))
+                .limit(1)
+            )
+        ) is not None
+
     async def lock_team_quota(self, team_id: int) -> None:
         """Hold the team's last slot through the provider call and DB commit."""
         await self._session.execute(
@@ -319,7 +348,7 @@ class ProjectMachineRepository:
         result = await self._session.execute(
             select(ProjectMachine)
             .where(
-                ProjectMachine.status.not_in(GONE),
+                ProjectMachine.status.not_in((*GONE, MachineStatus.suspended)),
                 or_(
                     ProjectMachine.status.in_(TRANSITIONAL),
                     ProjectMachine.status == MachineStatus.unknown,
@@ -330,7 +359,16 @@ class ProjectMachineRepository:
             .order_by(ProjectMachine.created_at)
             .limit(limit)
         )
-        return list(result.scalars())
+        moving = list(result.scalars())
+        suspended = await self._session.scalars(
+            select(ProjectMachine).where(
+                ProjectMachine.status == MachineStatus.suspended,
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.topic_id.is_not(None),
+            )
+        )
+        # Dormant machines need no provider poll and must not consume the poll budget.
+        return moving + list(suspended)
 
     async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
         """Use the model session host's credential, independently of execution.

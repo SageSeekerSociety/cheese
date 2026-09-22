@@ -187,3 +187,9 @@ class MicroCloudClient:
             # Already gone is the outcome the caller wanted.
             if exc.status != 404:
                 raise
+
+    async def suspend_machine(self, machine_id: int) -> dict[str, Any]:
+        return await self._call("POST", f"/machine/{machine_id}/suspend")
+
+    async def resume_machine(self, machine_id: int) -> dict[str, Any]:
+        return await self._call("POST", f"/machine/{machine_id}/resume")

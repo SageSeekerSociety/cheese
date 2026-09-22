@@ -1,7 +1,7 @@
 """Project machine routes — a project's compute, provisioned from MicroCloud."""
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,5 +178,30 @@ async def delete_machine(
         await service.forget(machine)
         await db.commit()
         return ok(None)
+    await db.commit()
+    return ok(MachineOut.model_validate(machine).model_dump(mode="json"))
+
+
+@router.post("/{project_id}/machines/{machine_row_id}/{operation}")
+async def change_machine_power(
+    project_id: uuid.UUID,
+    machine_row_id: uuid.UUID,
+    operation: Literal["suspend", "resume"],
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    await _require_project_access(project_id, db, resolver, mutate=True)
+    service = _service(db)
+    machine = await service.get_or_404(machine_row_id)
+    if machine.project_id != project_id:
+        raise ValidationError("machine does not belong to this project")
+    try:
+        machine = await (
+            service.suspend(machine)
+            if operation == "suspend"
+            else service.resume(machine)
+        )
+    except MicroCloudError as exc:
+        raise ValidationError(f"MicroCloud rejected the request: {exc}") from exc
     await db.commit()
     return ok(MachineOut.model_validate(machine).model_dump(mode="json"))
