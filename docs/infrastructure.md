@@ -187,9 +187,34 @@ That timeout bounds a stalled queue; the feedback-time targets remain those in
 PRs opened before the gate was installed need a new pull-request event to report
 `CI required`, for example after updating their branch or reopening the PR.
 
+### Backend test execution
+
+The fixture-derived layers remain `pure`, `contract` and `integration`.
+`test.yml` runs pure and contract on separate hosted runners, integration on four
+deterministic hash partitions, and real Meilisearch integration tests on one
+serial runner with a dedicated service. Each runner uses its own PostgreSQL and
+Valkey containers.
+
+The required gate compares executed JUnit node IDs with an independently
+collected full-suite manifest. Every required case must run once, with no skips.
+Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
+for each partition. Layer floors apply before partitioning. The existing Kotlin
+exclusion and opt-in live Forgejo evaluations remain outside the required set.
+
+Reproduce a partition from `backend/` with the same test services and pinned
+tools as `test.yml`. Use a fresh output directory for each run:
+
+```bash
+uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
+  -k 'not kotlin and not meilisearch_integration' -n 4 \
+  -p scripts.ci_shard --ci-shard 0/4 \
+  --ci-selection-output=../tmp/ci-selection \
+  --junitxml=../tmp/ci-selection/results.xml
+```
+
 ## CI runner pool (cheese-ci)
 
-Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
+Backend CI (`test.yml`) runs on GitHub-hosted Ubuntu runners. E2E runs on the
 **cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
