@@ -284,6 +284,8 @@ const userMenu = useUserMenu()
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
+    // Keep fixed controls aligned with projects when the list has a scrollbar.
+    scrollbar-gutter: stable;
   }
 
   .v-navigation-drawer__content {
