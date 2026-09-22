@@ -483,8 +483,6 @@ components:
     # Space schemas
     Space:
       $ref: './domains/space/schemas.yaml#/Space'
-    SpaceVisibility:
-      $ref: './domains/space/schemas.yaml#/SpaceVisibility'
     SpaceMember:
       $ref: './domains/space/schemas.yaml#/SpaceMember'
     SpaceInviteCode:

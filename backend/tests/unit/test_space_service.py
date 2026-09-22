@@ -140,12 +140,10 @@ class TestListSpaces:
         repo.list_spaces.return_value = spaces
 
         svc = _build_service(repo=repo)
-        result = await svc.list_spaces(limit=20, offset=5, viewer_user_id=42)
+        result = await svc.list_spaces(limit=20, offset=5, member_user_id=42)
 
         assert result == spaces
-        repo.list_spaces.assert_awaited_once_with(
-            limit=20, offset=5, visible_to_user_id=42
-        )
+        repo.list_spaces.assert_awaited_once_with(limit=20, offset=5, member_user_id=42)
 
 
 class TestCountSpaces:
@@ -155,8 +153,8 @@ class TestCountSpaces:
         repo.count_spaces.return_value = 42
 
         svc = _build_service(repo=repo)
-        assert await svc.count_spaces(viewer_user_id=42) == 42
-        repo.count_spaces.assert_awaited_once_with(visible_to_user_id=42)
+        assert await svc.count_spaces(member_user_id=42) == 42
+        repo.count_spaces.assert_awaited_once_with(member_user_id=42)
 
 
 class TestListCategories:

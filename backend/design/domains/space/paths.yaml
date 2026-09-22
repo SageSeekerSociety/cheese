@@ -346,9 +346,9 @@
   post:
     summary: Join a space with an invite code
     description: |
-      Redeem one of the space's invite codes and become a member. Only a CODE
-      space accepts a code: a PRIVATE one is joined by being added, and a
-      PUBLIC one needs no door. Redeeming twice is a no-op, not an error.
+      Redeem one of the 题目版's invite codes and become a member — which is
+      what makes the 题目版 visible to you at all. Redeeming twice is a no-op,
+      not an error.
     operationId: joinSpace
     tags: [Spaces]
     security:
@@ -362,7 +362,7 @@
       '200':
         description: Joined; the space is returned
       '400':
-        description: The code is exhausted, expired, or the space is not CODE
+        description: The code is exhausted or expired
       '404':
         description: No such invite code
 
@@ -370,8 +370,8 @@
   get:
     summary: List space members
     description: |
-      404 when the caller cannot see the space at all, so a PRIVATE space is
-      not confirmed to exist through this route either.
+      404 when the caller is not in the 题目版, so a board nobody invited
+      them to is not confirmed to exist through this route either.
     operationId: listSpaceMembers
     tags: [Spaces]
     security:
@@ -386,7 +386,7 @@
   post:
     summary: Add a space member
     description: |
-      The owner and admins may add. This is the only way into a PRIVATE space.
+      The owner and admins may add someone without a code.
     operationId: addSpaceMember
     tags: [Spaces]
     security:

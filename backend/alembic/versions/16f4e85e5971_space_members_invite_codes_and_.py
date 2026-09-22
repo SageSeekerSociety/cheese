@@ -1,11 +1,11 @@
-"""space members, invite codes and visibility
+"""space members and invite codes
 
 Autogenerate also proposed dropping and recreating `users`, `invite_code`,
 `llm_call_log`, `agent_types_archive`, `agent_configuration_migration_backup`
 and the gin/fts indexes, and adding a foreign key on `task_access_domain`.
 All of that is drift: those objects were created by raw SQL inside older
 migrations, so they exist in the database but not in the models autogenerate
-compares against. Only the four operations below belong to this change.
+compares against. Only the operations below belong to this change.
 
 Revision ID: 16f4e85e5971
 Revises: b2f4d81a3c07
@@ -30,9 +30,9 @@ def upgrade() -> None:
     op.execute(sa.schema.CreateSequence(sa.Sequence("space_member_seq")))
     op.execute(sa.schema.CreateSequence(sa.Sequence("space_invite_code_seq")))
 
-    # Who is in a space. Separate from space_admin_relation, which answers
-    # who may *manage* it: a space's owner and admins stay visible without a
-    # row here.
+    # Who is in a 题目版. Separate from space_admin_relation, which answers
+    # who may *manage* it: the creator and any admins see their own board
+    # without a row here.
     op.create_table(
         "space_member",
         sa.Column(
@@ -86,17 +86,9 @@ def upgrade() -> None:
         op.f("ix_space_invite_code_code"), "space_invite_code", ["code"], unique=True
     )
 
-    # PUBLIC for every row that already exists, which is exactly what they
-    # were: visible to anyone signed in.
-    op.add_column(
-        "space",
-        sa.Column("visibility", sa.SmallInteger(), server_default="0", nullable=False),
-    )
-
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column("space", "visibility")
     op.drop_index(op.f("ix_space_invite_code_code"), table_name="space_invite_code")
     op.drop_table("space_invite_code")
     op.drop_index("ix_space_member_space_user", table_name="space_member")

@@ -29,21 +29,6 @@ space_member_seq = Sequence("space_member_seq")
 space_invite_code_seq = Sequence("space_invite_code_seq")
 
 
-class SpaceVisibility(int, Enum):
-    """Who can see that a space exists — chosen once, when it is created.
-
-    PUBLIC: every signed-in user sees it, exactly like every space before
-    this existed. CODE: invisible until you redeem one of the space's invite
-    codes, and redeeming one makes you a member — which is what makes it
-    visible. PRIVATE: invisible until someone inside adds you; a code does
-    not help.
-    """
-
-    PUBLIC = 0
-    CODE = 1
-    PRIVATE = 2
-
-
 class Space(Base):
     __tablename__ = "space"
 
@@ -64,12 +49,8 @@ class Space(Base):
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False
     )
-    # Who can see this space exists (SpaceVisibility). PUBLIC is both the
-    # default and what every pre-existing row means, so the column lands
-    # without changing any current behaviour.
-    visibility: Mapped[int] = mapped_column(
-        "visibility", SmallInteger, nullable=False, default=0, server_default="0"
-    )
+    # There is no visibility tier. Who can see a 题目版 exists is answered by
+    # membership and nothing else — see ``SpaceMember``.
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
     )
@@ -253,14 +234,14 @@ class SpaceClassificationTagRelation(Base):
 
 
 class SpaceMember(Base):
-    """A user who is *in* a space — the thing a private space gates on.
+    """A user who is *in* a 题目版 — the whole of who can see it.
 
     Membership and the admin relation are two different questions: this row
-    says "this space is visible to me and I can be listed among its members",
-    ``SpaceAdminRelation`` says "I may manage it". A space's owner and admins
-    therefore keep seeing it without a row here (the visibility predicate
-    accepts either), and removing a member here takes nothing else away —
-    not their tasks, not their submissions, not their projects.
+    says "this 题目版 is mine to see and I am counted among its members",
+    ``SpaceAdminRelation`` says "I may manage it". The creator and any admins
+    therefore keep seeing it without a row here, and removing a member here
+    takes nothing else away — not their tasks, not their submissions, not
+    their projects.
     """
 
     __tablename__ = "space_member"
@@ -302,7 +283,11 @@ class SpaceMember(Base):
 
 
 class SpaceInviteCode(Base):
-    """A code that, when redeemed, makes the redeemer a member of a space.
+    """A code that, when redeemed, makes the redeemer a member of a 题目版.
+
+    Every 题目版 is created holding one, because a 题目版 nobody else can
+    reach is not much use: the creator hands the code out and the people who
+    take it are the ones who can see the board at all.
 
     Deliberately NOT the platform's ``invite_code`` table (that one admits a
     person to the platform at registration and has nothing to do with any

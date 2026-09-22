@@ -152,7 +152,7 @@ class TestSpaceRepository:
         session.execute.return_value = _mock_scalars([sp])
         repo = SpaceRepository(session)
 
-        result = await repo.list_spaces(limit=10, offset=0, visible_to_user_id=42)
+        result = await repo.list_spaces(limit=10, offset=0, member_user_id=42)
         assert list(result) == [sp]
 
     @pytest.mark.anyio
@@ -161,7 +161,7 @@ class TestSpaceRepository:
         session.execute.return_value = _mock_scalar_one(5)
         repo = SpaceRepository(session)
 
-        assert await repo.count_spaces(visible_to_user_id=42) == 5
+        assert await repo.count_spaces(member_user_id=42) == 5
 
     @pytest.mark.anyio
     async def test_exists_by_name_true(self):

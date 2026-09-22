@@ -1,9 +1,10 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, or_, select, update
+from sqlalchemy import Select, and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domain.space.models import (
     Space,
@@ -17,7 +18,6 @@ from app.domain.space.models import (
     SpaceMember,
     SpaceUserRank,
 )
-from app.domain.space.visibility_service import SpaceVisibilityService
 from app.domain.tag.models import Tag
 
 
@@ -32,37 +32,73 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_spaces(
-        self, *, limit: int, offset: int = 0, visible_to_user_id: int
-    ) -> Sequence[Space]:
-        """Spaces this user is allowed to see — see SpaceVisibilityService.
+    async def is_member(self, *, space_id: int, user_id: int) -> bool:
+        """The single-space form of ``build_membership_predicate``.
 
-        There is deliberately no unfiltered variant: a caller that forgets
-        the viewer would hand back another person's private space, and the
-        list page is the easiest place to never notice. A space still under
-        review is not visible however it is tiered — approval gates everyone.
+        A direct link and the list ask one question, so a board cannot be
+        hidden from the list and still answer at its own address.
+        """
+        stmt = select(Space.id).where(
+            Space.id == space_id,
+            Space.deleted_at.is_(None),
+            self.build_membership_predicate(user_id=user_id),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def list_spaces(
+        self, *, limit: int, offset: int = 0, member_user_id: int
+    ) -> Sequence[Space]:
+        """The 题目版 this user is in — created, administered, or joined.
+
+        There is deliberately no unfiltered variant: a caller that forgets the
+        viewer would hand back a board nobody invited them to, and the list
+        page is the easiest place to never notice. A 题目版 still under review
+        is in nobody's list — approval gates everyone, the creator included,
+        who watches it through ``/space-applications`` instead.
         """
         stmt: Select[tuple[Space]] = select(Space).where(
             Space.deleted_at.is_(None),
             Space.review_status == "APPROVED",
-            SpaceVisibilityService.build_visibility_predicate(
-                user_id=visible_to_user_id
-            ),
+            SpaceRepository.build_membership_predicate(user_id=member_user_id),
         )
         stmt = stmt.order_by(Space.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_spaces(self, *, visible_to_user_id: int) -> int:
+    async def count_spaces(self, *, member_user_id: int) -> int:
         stmt = select(func.count(Space.id)).where(
             Space.deleted_at.is_(None),
             Space.review_status == "APPROVED",
-            SpaceVisibilityService.build_visibility_predicate(
-                user_id=visible_to_user_id
-            ),
+            SpaceRepository.build_membership_predicate(user_id=member_user_id),
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    @staticmethod
+    def build_membership_predicate(*, user_id: int) -> ColumnElement[bool]:
+        """「这个题目版是不是他的」, as a SQL predicate over Space.
+
+        The one rule, in one place: a list query filters by it and a direct
+        link is refused by it, so hiding a board and refusing to read it are
+        the same answer rather than two that agree today.
+
+        Both branches are needed and neither is redundant. The member row is
+        what joining writes; the admin relation is how a board's creator and
+        its managers see their own board without anyone having had to write
+        one — which is also every board that predates membership existing.
+        """
+        member_exists = exists().where(
+            SpaceMember.space_id == Space.id,
+            SpaceMember.user_id == user_id,
+            SpaceMember.deleted_at.is_(None),
+        )
+        admin_exists = exists().where(
+            SpaceAdminRelation.space_id == Space.id,
+            SpaceAdminRelation.user_id == user_id,
+            SpaceAdminRelation.deleted_at.is_(None),
+        )
+        return or_(member_exists, admin_exists)
 
     async def exists_by_name(self, name: str) -> bool:
         stmt = select(Space.id).where(
@@ -82,7 +118,6 @@ class SpaceRepository:
         announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
-        visibility: int = 0,
     ) -> Space:
         now = datetime.now(UTC)
         space = Space(
@@ -92,7 +127,6 @@ class SpaceRepository:
             avatar_id=avatar_id,
             enable_rank=enable_rank,
             visible_task_limit=visible_task_limit,
-            visibility=visibility,
             announcements=announcements,
             task_templates=task_templates,
             created_at=now,

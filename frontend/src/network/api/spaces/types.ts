@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceVisibilityType, TaskSubmitterType } from '@/types'
+import type { Page, Space, TaskSubmitterType } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -21,8 +21,6 @@ export type PostSpaceRequestData = {
   announcements?: string
   taskTemplates?: string
   visibleTaskLimit?: number | null
-  /** Chosen once, at creation: 公开 / 凭码 / 私人. Defaults to 公开. */
-  visibility?: SpaceVisibilityType
 }
 
 export type PostSpaceJoinRequestData = {

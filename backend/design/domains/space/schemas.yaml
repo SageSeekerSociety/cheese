@@ -44,18 +44,6 @@ Space:
     updatedAt:
       type: integer
       format: int64
-    visibility:
-      $ref: './schemas.yaml#/SpaceVisibility'
-
-SpaceVisibility:
-  type: string
-  enum: [PUBLIC, CODE, PRIVATE]
-  description: |
-    Who can see that the space exists, chosen once when it is created.
-    PUBLIC: every signed-in user, which is what every space was before this
-    tier existed. CODE: invisible until one of the space's invite codes is
-    redeemed. PRIVATE: invisible until someone inside adds you.
-
 SpaceCategory:
   type: object
   properties:
@@ -115,8 +103,6 @@ CreateSpaceRequest:
           items:
             type: object
       description: Same shape as announcements.
-    visibility:
-      $ref: './schemas.yaml#/SpaceVisibility'
   required:
     - name
 

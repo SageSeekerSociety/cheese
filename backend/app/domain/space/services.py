@@ -12,7 +12,6 @@ from app.domain.space.models import (
     SpaceDomainGroup,
     SpaceInviteCode,
     SpaceMember,
-    SpaceVisibility,
 )
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -105,14 +104,14 @@ class SpaceService:
         return await self._repo.exists_by_name(name)
 
     async def list_spaces(
-        self, *, limit: int, offset: int = 0, viewer_user_id: int
+        self, *, limit: int, offset: int = 0, member_user_id: int
     ) -> Sequence[Space]:
         return await self._repo.list_spaces(
-            limit=limit, offset=offset, visible_to_user_id=viewer_user_id
+            limit=limit, offset=offset, member_user_id=member_user_id
         )
 
-    async def count_spaces(self, *, viewer_user_id: int) -> int:
-        return await self._repo.count_spaces(visible_to_user_id=viewer_user_id)
+    async def count_spaces(self, *, member_user_id: int) -> int:
+        return await self._repo.count_spaces(member_user_id=member_user_id)
 
     async def list_categories(
         self,
@@ -151,7 +150,6 @@ class SpaceService:
         announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
-        visibility: int = SpaceVisibility.PUBLIC.value,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
@@ -169,7 +167,6 @@ class SpaceService:
             announcements=normalized_announcements,
             task_templates=normalized_templates,
             visible_task_limit=visible_task_limit,
-            visibility=visibility,
         )
 
         # Default category "General"
@@ -189,12 +186,10 @@ class SpaceService:
                 role=SpaceAdminRole.OWNER,
             )
 
-        # A 凭码 space is unusable without a code, so the creator leaves
-        # creation holding one instead of having to ask for it next.
-        if (
-            visibility == SpaceVisibility.CODE.value
-            and self._invite_code_repo is not None
-        ):
+        # Every 题目版 is created holding a code: membership is the only way
+        # in, so a board whose creator has no code to hand out is a board
+        # nobody can ever reach. Minting it here saves that first step.
+        if self._invite_code_repo is not None:
             await self._invite_code_repo.create_code(
                 space_id=space.id,
                 code=await self._generate_invite_code(),
@@ -471,9 +466,9 @@ class SpaceService:
     async def join_space(self, *, code: str, user_id: int) -> Space:
         """Redeem a space invite code, becoming a member.
 
-        Only 凭码 spaces can be joined this way: for a 私人 space the code
-        is not a door (that is the whole difference between the two tiers),
-        and a 公开 space already needs no door.
+        The code is the ordinary way in: a 题目版 carries one from the moment
+        it is created (see ``create_space``), and the creator hands it to
+        whoever should be able to see the board.
         """
         invite_repo = self._require_invite_code_repo()
         member_repo = self._require_member_repo()
@@ -485,12 +480,6 @@ class SpaceService:
         space = await self._repo.get_by_id(invite.space_id)
         if space is None:
             raise NotFoundError.for_resource("space", invite.space_id)
-
-        if space.visibility != SpaceVisibility.CODE.value:
-            raise BadRequestError(
-                "This space does not accept invite codes",
-                data={"spaceId": space.id, "visibility": space.visibility},
-            )
 
         if invite.expires_at is not None and invite.expires_at <= datetime.now(UTC):
             raise BadRequestError(
@@ -575,9 +564,9 @@ class SpaceService:
     ) -> SpaceMember:
         """Put someone in the space directly.
 
-        This is the only way into a 私人 space — a code is not a door there,
-        and 私人 means「只有被加进来的人可见」, so without this the tier would
-        be a room nobody can be invited into.
+        The owner's way to bring someone in without handing out a code —
+        useful when the code has been spent or when only one person should
+        have it.
         """
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)

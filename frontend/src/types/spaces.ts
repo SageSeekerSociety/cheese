@@ -1,7 +1,5 @@
 import type { Topic, User } from '.'
 
-export type SpaceVisibilityType = 'PUBLIC' | 'CODE' | 'PRIVATE'
-
 export type Space = {
   id: number
   intro: string
@@ -13,8 +11,6 @@ export type Space = {
   classificationTopics: Topic[]
   defaultCategoryId?: number
   visibleTaskLimit?: number | null
-  /** 公开 / 凭码 / 私人. Absent only on payloads predating the tier. */
-  visibility?: SpaceVisibilityType
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */

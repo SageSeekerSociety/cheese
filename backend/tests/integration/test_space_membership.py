@@ -1,14 +1,16 @@
-"""Space visibility tiers, membership and invite codes, end to end.
+"""Membership in a 题目版, and the invite codes that hand it out, end to end.
 
-Walks the acceptance list for the 空间成员与邀请码 task:
+There is no visibility tier. Who can see a 题目版 exists is answered by
+membership and nothing else, so the acceptance list is short:
 
-- a 凭码 space is invisible in the list and through a direct link until the
-  code is redeemed, and shows up on the redeemer's list right after;
-- leaving hides it again and leaves the leaver's projects alone;
-- a manager whose role was revoked is refused when removing a member;
-- a 私人 space refuses non-members on both /spaces/{id} and /spaces/{id}/managers;
-- 公开 spaces answer exactly as they did before (regression);
-- and the writes behind all of it hold up when the same request arrives twice:
+- a 题目版 you did not create and have not joined is absent from your list
+  and 404 through a direct link, including every sub-resource;
+- every 题目版 is created holding a code, and redeeming one is the ordinary
+  way in — the board shows up on the redeemer's list immediately after;
+- the owner can also put someone in without a code;
+- leaving (or being removed) hides it again and takes nothing else away — not
+  the leaver's projects;
+- and the writes behind「加入」hold up when the same request arrives twice:
   one live membership row per person, one invite-code use spent for one join,
   and a roster whose hydration does not grow with the roster.
 """
@@ -40,30 +42,24 @@ def _login(user_client: UserCreator, api_client: TestClient, user) -> str:
     return user_client.login(api_client, user.username, user.password)
 
 
-def _create_space(
-    api_client: TestClient,
-    token: str,
-    *,
-    visibility: str,
-) -> dict:
-    """A space that has cleared review: its tier is what is under test here.
+def _create_space(api_client: TestClient, token: str) -> dict:
+    """A 题目版 that has cleared review.
 
-    Review is the other axis and it gates everyone — a PENDING space is
-    invisible however it is tiered — so these tests must start from an
-    approved one or they would be measuring the review gate instead.
+    Review is a separate axis and it gates everyone — a PENDING board is in
+    nobody's list — so these tests start from an approved one or they would be
+    measuring the review gate instead.
     """
     suffix = unique_int(10000000, 99999999)
     resp = create_approved_space(
         api_client,
         json={
-            "name": f"Visibility Space {visibility} ({suffix})",
-            "intro": "Tier test.",
+            "name": f"Membership Space ({suffix})",
+            "intro": "Membership test.",
             "description": "A lengthy text. " * 100,
             "avatarId": 1,
             "enableRank": False,
             "announcements": [],
             "taskTemplates": [],
-            "visibility": visibility,
         },
         headers=_auth(token),
     )
@@ -163,10 +159,10 @@ def _selects(statements: list[str]) -> int:
     return sum(1 for s in statements if s.lstrip().upper().startswith("SELECT"))
 
 
-class TestCodeSpaceVisibility:
-    """凭码: the space is a stranger to everyone who has not redeemed a code."""
+class TestABoardIsInvisibleUntilYouAreInIt:
+    """The whole rule: not a member, not in the list, not at its address."""
 
-    def test_code_space_is_invisible_until_the_code_is_redeemed(
+    def test_it_is_a_stranger_to_everyone_who_did_not_join(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
@@ -174,15 +170,13 @@ class TestCodeSpaceVisibility:
         outsider = user_client.create_user()
         outsider_token = _login(user_client, api_client, outsider)
 
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        invite = created["inviteCode"]
-        assert invite is not None, "a 凭码 space must come with a code"
-        code = invite["code"]
-        assert created["space"]["visibility"] == "CODE"
 
-        # Not in the list, and not through a direct link either.
+        # The creator runs it without anyone having written a member row.
         assert space_id in _listed_space_ids(api_client, creator_token)
+
+        # Nobody else sees it, by either route.
         assert space_id not in _listed_space_ids(api_client, outsider_token)
         for path in (
             f"/spaces/{space_id}",
@@ -193,69 +187,66 @@ class TestCodeSpaceVisibility:
             assert resp.status_code == 404, f"{path} -> {resp.status_code}"
             assert _error_name(resp) == "NotFoundError", resp.text
 
-        # Redeem.
-        join = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(outsider_token)
-        )
-        assert join.status_code == 200, join.text
-        assert join.json()["data"]["space"]["id"] == space_id
+    def test_every_board_is_born_holding_a_code(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """Membership is the only way in, so a board with no code to hand out
+        would be one nobody could ever reach."""
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
 
-        # Visible at once, and on their list (the home page).
-        detail = api_client.get(f"/spaces/{space_id}", headers=_auth(outsider_token))
-        assert detail.status_code == 200, detail.text
-        assert space_id in _listed_space_ids(api_client, outsider_token)
-        managers = api_client.get(
-            f"/spaces/{space_id}/managers", headers=_auth(outsider_token)
-        )
-        assert managers.status_code == 200, managers.text
+        created = _create_space(api_client, creator_token)
 
-        code_row = api_client.get(
-            f"/spaces/{space_id}/invite-codes", headers=_auth(creator_token)
-        )
-        assert code_row.status_code == 200, code_row.text
-        assert code_row.json()["data"]["inviteCodes"][0]["useCount"] == 1
+        invite = created["inviteCode"]
+        assert invite is not None
+        assert invite["code"]
 
-    def test_leaving_hides_the_space_but_keeps_the_projects(
+    def test_redeeming_the_code_is_what_puts_it_on_your_list(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        member = user_client.create_user()
-        member_token = _login(user_client, api_client, member)
+        joiner = user_client.create_user()
+        joiner_token = _login(user_client, api_client, joiner)
 
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = created["inviteCode"]["code"]
-        api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(member_token)
-        )
-        assert space_id in _listed_space_ids(api_client, member_token)
+        assert space_id not in _listed_space_ids(api_client, joiner_token)
 
-        # A project of their own, made while a member.
-        project = api_client.post(
-            "/projects",
-            json={"name": f"Kept Project ({unique_int(1000, 9999)})"},
-            headers=session_auth_headers(member.username),
+        join = api_client.post(
+            "/spaces/join", json={"code": code}, headers=_auth(joiner_token)
         )
-        assert project.status_code == 200, project.text
-        project_id = project.json()["data"]["id"]
+        assert join.status_code == 200, join.text
+        assert join.json()["data"]["space"]["id"] == space_id
 
-        leave = api_client.post(
-            f"/spaces/{space_id}/leave", headers=_auth(member_token)
+        assert space_id in _listed_space_ids(api_client, joiner_token)
+        detail = api_client.get(f"/spaces/{space_id}", headers=_auth(joiner_token))
+        assert detail.status_code == 200, detail.text
+        assert (
+            api_client.get(
+                f"/spaces/{space_id}/managers", headers=_auth(joiner_token)
+            ).status_code
+            == 200
         )
-        assert leave.status_code == 204, leave.text
 
-        assert space_id not in _listed_space_ids(api_client, member_token)
-        gone = api_client.get(f"/spaces/{space_id}", headers=_auth(member_token))
-        assert gone.status_code == 404, gone.text
+        assert _use_count(api_client, creator_token, space_id, code) == 1
 
-        # The project is not the space's to take away.
-        listed = api_client.get(
-            "/projects", headers=session_auth_headers(member.username)
+    def test_an_unknown_code_is_a_404(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        seeker = user_client.create_user()
+        seeker_token = _login(user_client, api_client, seeker)
+
+        resp = api_client.post(
+            "/spaces/join", json={"code": "NOPE-NOPE-NOPE"}, headers=_auth(seeker_token)
         )
-        assert listed.status_code == 200, listed.text
-        ids = [p["id"] for p in listed.json()["data"]["data"]]
-        assert project_id in ids, listed.text
+        assert resp.status_code == 404, resp.text
+        assert _error_name(resp) == "NotFoundError", resp.text
+
+
+class TestInviteCodes:
+    """Exhausted and expired codes, and the use counter behind them."""
 
     def test_exhausted_and_expired_codes_are_refused(
         self, user_client: UserCreator, api_client: TestClient
@@ -263,7 +254,7 @@ class TestCodeSpaceVisibility:
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
 
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
 
         single = api_client.post(
@@ -304,48 +295,68 @@ class TestCodeSpaceVisibility:
         )
         assert expired.status_code == 400, expired.text
 
-    def test_a_code_does_not_open_a_space_that_is_not_凭码(
+
+class TestLeavingAndBeingRemoved:
+    """Both take the board away, and neither takes anything else."""
+
+    def test_leaving_hides_the_space_but_keeps_the_projects(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        outsider = user_client.create_user()
-        outsider_token = _login(user_client, api_client, outsider)
+        member = user_client.create_user()
+        member_token = _login(user_client, api_client, member)
 
-        created = _create_space(api_client, creator_token, visibility="PUBLIC")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        assert created["inviteCode"] is None
-
-        minted = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 5},
-            headers=_auth(creator_token),
+        code = created["inviteCode"]["code"]
+        api_client.post(
+            "/spaces/join", json={"code": code}, headers=_auth(member_token)
         )
-        assert minted.status_code == 201, minted.text
-        code = minted.json()["data"]["inviteCode"]["code"]
+        assert space_id in _listed_space_ids(api_client, member_token)
 
-        resp = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(outsider_token)
+        # A project of their own, made while a member.
+        project = api_client.post(
+            "/projects",
+            json={"name": f"Kept Project ({unique_int(1000, 9999)})"},
+            headers=session_auth_headers(member.username),
         )
-        assert resp.status_code == 400, resp.text
-        assert _error_name(resp) == "BadRequestError", resp.text
+        assert project.status_code == 200, project.text
+        project_id = project.json()["data"]["id"]
+
+        leave = api_client.post(
+            f"/spaces/{space_id}/leave", headers=_auth(member_token)
+        )
+        assert leave.status_code == 204, leave.text
+
+        assert space_id not in _listed_space_ids(api_client, member_token)
+        gone = api_client.get(f"/spaces/{space_id}", headers=_auth(member_token))
+        assert gone.status_code == 404, gone.text
+
+        # The project is not the board's to take away.
+        listed = api_client.get(
+            "/projects", headers=session_auth_headers(member.username)
+        )
+        assert listed.status_code == 200, listed.text
+        ids = [p["id"] for p in listed.json()["data"]["data"]]
+        assert project_id in ids, listed.text
 
 
-class TestPrivateSpaceVisibility:
-    """私人: only the people who were added."""
+class TestTheOwnerCanAddWithoutACode:
+    """The other way in, for when only one person should have the code."""
 
-    def test_a_private_space_refuses_non_members_on_detail_and_managers(
+    def test_an_added_member_sees_it_and_a_stranger_still_does_not(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
         guest = user_client.create_user()
         guest_token = _login(user_client, api_client, guest)
+        stranger = user_client.create_user()
+        stranger_token = _login(user_client, api_client, stranger)
 
-        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        assert created["space"]["visibility"] == "PRIVATE"
-        assert created["inviteCode"] is None, "私人 has no code to hand out"
         assert space_id not in _listed_space_ids(api_client, guest_token)
 
         for path in (f"/spaces/{space_id}", f"/spaces/{space_id}/managers"):
@@ -353,8 +364,6 @@ class TestPrivateSpaceVisibility:
             assert resp.status_code == 404, f"{path} -> {resp.status_code}"
             assert _error_name(resp) == "NotFoundError", resp.text
 
-        # The creator adds them; now both routes answer — and their own
-        # managers listing is the creator's doing, not theirs.
         added = api_client.post(
             f"/spaces/{space_id}/members",
             json={"userId": guest.user_id},
@@ -369,32 +378,15 @@ class TestPrivateSpaceVisibility:
             ).status_code
             == 200
         )
-        assert (
-            api_client.get(
-                f"/spaces/{space_id}/managers", headers=_auth(guest_token)
-            ).status_code
-            == 200
-        )
         assert space_id in _listed_space_ids(api_client, guest_token)
 
-    def test_a_stranger_cannot_ask_to_be_added(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        creator = user_client.create_user()
-        creator_token = _login(user_client, api_client, creator)
-        stranger = user_client.create_user()
-        stranger_token = _login(user_client, api_client, stranger)
-
-        created = _create_space(api_client, creator_token, visibility="PRIVATE")
-        space_id = created["space"]["id"]
-
+        # Adding is the owner's call, not anyone's.
         resp = api_client.post(
             f"/spaces/{space_id}/members",
             json={"userId": stranger.user_id},
             headers=_auth(stranger_token),
         )
-        assert resp.status_code == 403, resp.text
-        assert _error_name(resp) == "ForbiddenError", resp.text
+        assert resp.status_code == 404, resp.text
 
 
 class TestSpaceManagerPermissions:
@@ -409,7 +401,7 @@ class TestSpaceManagerPermissions:
         manager_token = _login(user_client, api_client, manager)
         member = user_client.create_user()
 
-        created = _create_space(api_client, creator_token, visibility="PUBLIC")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
 
         granted = api_client.post(
@@ -444,12 +436,15 @@ class TestSpaceManagerPermissions:
         )
         assert revoked.status_code == 204, revoked.text
 
+        # Revoked means out, not merely demoted: a 题目版 a former admin no
+        # longer administers is not one they can see at all, so the refusal
+        # arrives as 404 rather than 403.
         refused = api_client.delete(
             f"/spaces/{space_id}/members/{member.user_id}",
             headers=_auth(manager_token),
         )
-        assert refused.status_code == 403, refused.text
-        assert _error_name(refused) == "ForbiddenError", refused.text
+        assert refused.status_code == 404, refused.text
+        assert _error_name(refused) == "NotFoundError", refused.text
 
         # And nothing happened: the member is still there.
         listed = api_client.get(
@@ -467,7 +462,7 @@ class TestSpaceManagerPermissions:
         first_token = _login(user_client, api_client, first)
         second = user_client.create_user()
 
-        created = _create_space(api_client, creator_token, visibility="PUBLIC")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         for user in (first, second):
             resp = api_client.post(
@@ -485,70 +480,11 @@ class TestSpaceManagerPermissions:
         assert _error_name(resp) == "ForbiddenError", resp.text
 
 
-class TestPublicSpaceRegression:
-    """公开: exactly what it was before this change."""
-
-    def test_a_public_space_still_answers_any_signed_in_user(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        creator = user_client.create_user()
-        creator_token = _login(user_client, api_client, creator)
-        passerby = user_client.create_user()
-        passerby_token = _login(user_client, api_client, passerby)
-
-        created = _create_space(api_client, creator_token, visibility="PUBLIC")
-        space_id = created["space"]["id"]
-        assert created["space"]["visibility"] == "PUBLIC"
-
-        assert space_id in _listed_space_ids(api_client, passerby_token)
-        assert (
-            api_client.get(
-                f"/spaces/{space_id}", headers=_auth(passerby_token)
-            ).status_code
-            == 200
-        )
-        managers = api_client.get(
-            f"/spaces/{space_id}/managers", headers=_auth(passerby_token)
-        )
-        assert managers.status_code == 200, managers.text
-        assert [m["userId"] for m in managers.json()["data"]["managers"]] == [
-            creator.user_id
-        ]
-        members = api_client.get(
-            f"/spaces/{space_id}/members", headers=_auth(passerby_token)
-        )
-        assert members.status_code == 200, members.text
-        assert members.json()["data"]["members"] == []
-
-    def test_visibility_defaults_to_public_when_unstated(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        creator = user_client.create_user()
-        token = _login(user_client, api_client, creator)
-        suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
-            json={
-                "name": f"Legacy Payload Space ({suffix})",
-                "intro": "No visibility field at all.",
-                "description": "A lengthy text. " * 100,
-                "avatarId": 1,
-                "enableRank": False,
-                "announcements": [],
-                "taskTemplates": [],
-            },
-            headers=_auth(token),
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["data"]["space"]["visibility"] == "PUBLIC"
-        assert resp.json()["data"]["inviteCode"] is None
-
-
 class TestSideDoors:
     """Hiding the list is not enough — a direct link must not read either.
 
-    Every space-scoped read route, not just the three the tier was written
-    on: a 私人 space that answers /spaces/{id}/topics to a stranger is
+    Every space-scoped read route, not just the three the rule was written
+    on: a 题目版 that answers /spaces/{id}/topics to an outsider is
     「只藏列表」with extra steps.
     """
 
@@ -576,7 +512,7 @@ class TestSideDoors:
             )
             assert _error_name(resp) == "NotFoundError", resp.text
 
-    def test_a_private_space_leaks_through_no_sub_resource(
+    def test_an_outsider_leaks_through_no_sub_resource(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
@@ -584,12 +520,12 @@ class TestSideDoors:
         outsider = user_client.create_user()
         outsider_token = _login(user_client, api_client, outsider)
 
-        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
 
         self._assert_every_door_is_shut(api_client, space_id, outsider_token)
 
-        # And the owner is not shut out of their own space by the same gate.
+        # And the owner is not shut out of their own board by the same gate.
         for suffix in ("/categories", "/topics"):
             resp = api_client.get(
                 f"/spaces/{space_id}{suffix}", headers=_auth(creator_token)
@@ -598,7 +534,7 @@ class TestSideDoors:
                 f"{suffix} -> {resp.status_code}: {resp.text}"
             )
 
-    def test_a_code_space_leaks_through_no_sub_resource_before_redemption(
+    def test_joining_opens_every_door(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
@@ -606,7 +542,7 @@ class TestSideDoors:
         outsider = user_client.create_user()
         outsider_token = _login(user_client, api_client, outsider)
 
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = created["inviteCode"]["code"]
 
@@ -617,7 +553,7 @@ class TestSideDoors:
         )
         assert joined.status_code == 200, joined.text
 
-        # Redeeming the code is the door: the same routes now answer.
+        # Joining is the door: the same routes now answer.
         for suffix in ("/categories", "/topics"):
             resp = api_client.get(
                 f"/spaces/{space_id}{suffix}", headers=_auth(outsider_token)
@@ -629,13 +565,13 @@ class TestSideDoors:
     def test_a_removed_member_stops_seeing_the_space(
         self, user_client: UserCreator, api_client: TestClient
     ):
-        """剔除 only decides who the space is visible to — and that it decides."""
+        """剔除 only decides who the board is visible to — and that it decides."""
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
         member = user_client.create_user()
         member_token = _login(user_client, api_client, member)
 
-        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
 
         added = api_client.post(
@@ -740,17 +676,16 @@ class TestMembershipIsOneRow:
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = _mint_code(api_client, creator_token, space_id, max_uses=5)
 
         joiner = user_client.create_user()
         joiner_token = _login(user_client, api_client, joiner)
 
-        # The double tap the tier was written for. The second redemption is a
-        # no-op, and「no-op」has to include the use counter — otherwise a code
-        # runs out because people were enthusiastic, which is the one thing a
-        # no-op must not do.
+        # The double tap. The second redemption is a no-op, and「no-op」has to
+        # include the use counter — otherwise a code runs out because people
+        # were enthusiastic, which is the one thing a no-op must not do.
         _join(api_client, joiner_token, code)
         _join(api_client, joiner_token, code)
 
@@ -771,7 +706,7 @@ class TestMembershipIsOneRow:
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = _mint_code(api_client, creator_token, space_id, max_uses=5)
 
@@ -812,7 +747,7 @@ class TestMembershipIsOneRow:
         """
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = created["inviteCode"]["code"]
 
@@ -841,7 +776,7 @@ class TestMembershipIsOneRow:
         """
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         member = user_client.create_user()
 
@@ -892,7 +827,7 @@ class TestMembershipIsOneRow:
         """
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         stale = _mint_code(
             api_client,
@@ -919,7 +854,7 @@ class TestMembershipIsOneRow:
         """
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token, visibility="CODE")
+        created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
         code = _mint_code(api_client, creator_token, space_id, max_uses=20)
 

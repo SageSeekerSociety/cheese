@@ -17,22 +17,16 @@ import type { Project } from '@/cx_types'
 import type { ActivityPart, SpaceRef, WorkCard, WorkSignal } from '@/lib/myWork'
 
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, listTopics } from '@/api'
 import { t } from '@/i18n'
-import {
-  activityParts,
-  awaitingByProject,
-  joinedSpaces,
-  NO_SIGNAL,
-  sortCards,
-  topicsSignal,
-  workGroups,
-} from '@/lib/myWork'
+import { activityParts, awaitingByProject, NO_SIGNAL, topicsSignal, workGroups } from '@/lib/myWork'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
+import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -52,6 +46,7 @@ defineOptions({ name: 'MyWork' })
 const ACTIVITY_WINDOW_DAYS = 30
 
 const store = useWorkspaceStore()
+const router = useRouter()
 const { mdAndUp } = useDisplay()
 const { show: showNewProjectDialog } = useNewProjectDialog()
 
@@ -67,10 +62,60 @@ const cards = computed<WorkCard[]>(() =>
   }))
 )
 const groups = computed(() => workGroups(cards.value))
-/** 顶部那一横排：我加入的空间 = 我的项目所在的那几个空间。 */
-const spaces = computed(() => joinedSpaces(sortCards(cards.value)))
 /** 清单到货之前不画「一个项目都没有」——那是两件事。 */
 const settled = computed(() => store.projectsSettled)
+
+/**
+ * 顶部那一横排：**我加入的题目版**，由服务端回答。
+ *
+ * 以前它是从项目反推的（项目挂的赛题 → 赛题所属的空间），那样一来「加入了但还没
+ * 在里面建项目」的题目版一个都不会出现——而加入的下一步本来就是进去看看，于是
+ * 刚用邀请码进来的人看到的是一排没变化的东西，像是没加入成功。榜单上的
+ * `GET /spaces` 现在只返回「我建的 + 我加入的」，直接用它，两者就不会打架。
+ */
+const spaces = ref<{ id: number; name: string }[]>([])
+
+async function loadSpaces() {
+  try {
+    const { data } = await SpacesApi.list({
+      pageSize: 50,
+      sort_by: 'created_at',
+      sort_order: 'desc',
+    })
+    spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
+  } catch {
+    // 问不到就不画这一排，卡片照常。这一排是导航，不是内容。
+  }
+}
+
+/**
+ * 用邀请码加入 —— 这一页的主入口。
+ *
+ * 加入之后**进那个题目版**，而不是留在这儿：这一页列的是项目，而一个刚加入的
+ * 题目版里通常还没有他的项目，留在这里等于什么都没发生。列表也重取一遍，回来时
+ * 那一排里就有它了。
+ */
+const joinOpen = ref(false)
+const joinCode = ref('')
+const joinError = ref('')
+const joining = ref(false)
+
+async function submitJoin() {
+  const code = joinCode.value.trim()
+  if (!code || joining.value) return
+  joining.value = true
+  joinError.value = ''
+  try {
+    const { data } = await SpacesApi.join({ code })
+    joinOpen.value = false
+    joinCode.value = ''
+    await router.push(`/spaces/${data.space.id}`)
+  } catch {
+    joinError.value = t('work.joinFailed')
+  } finally {
+    joining.value = false
+  }
+}
 
 function entryOf(project: Project): string {
   return `/projects/${project.id}`
@@ -165,6 +210,7 @@ onMounted(async () => {
   // 清单先到：卡片（名字、总结）立刻画出来，动静随后一个个填进去——等全部到齐
   // 再画第一帧，就是拿最慢的那个项目当整页的速度。
   await store.refreshProjects()
+  void loadSpaces()
   void loadAwaiting()
   void eachProject(store.projects, async (project) => {
     await Promise.all([loadActivity(project), loadSpace(project)])
@@ -175,8 +221,10 @@ onMounted(async () => {
 <template>
   <div class="my-work">
     <div class="my-work__inner">
-      <!-- 我加入的空间：横排一行。空间列表降级成这一页的一块，不再是一页。 -->
-      <section v-if="spaces.length > 0" class="my-work__spaces">
+      <!-- 我加入的题目版：横排一行。这一排**总是**画，因为「用邀请码加入」就挂在
+           它上面——一个新账号正好是一个题目版都没有的人，把入口藏起来等于把入口
+           藏给了唯一需要它的人。 -->
+      <section class="my-work__spaces">
         <h2 class="t-eyebrow mb-2">{{ t('work.mySpaces') }}</h2>
         <div class="my-work__chips">
           <v-chip
@@ -189,11 +237,46 @@ onMounted(async () => {
           >
             {{ space.name }}
           </v-chip>
+          <v-chip
+            variant="text"
+            size="small"
+            rounded="lg"
+            prepend-icon="mdi-ticket-confirmation-outline"
+            @click="joinOpen = true"
+          >
+            {{ t('work.joinAction') }}
+          </v-chip>
           <v-chip :to="{ name: 'HomeSpaces' }" variant="text" size="small" rounded="lg">
             {{ t('work.allSpaces') }}
           </v-chip>
         </div>
       </section>
+
+      <!-- 用邀请码加入 -->
+      <v-dialog v-model="joinOpen" max-width="440">
+        <v-card rounded="lg">
+          <v-card-title class="t-title">{{ t('work.joinTitle') }}</v-card-title>
+          <v-card-text>
+            <p class="t-body c-muted mb-3">{{ t('work.joinBody') }}</p>
+            <v-text-field
+              v-model="joinCode"
+              :label="t('work.joinLabel')"
+              :error-messages="joinError"
+              autocomplete="off"
+              autofocus
+              hide-details="auto"
+              @keyup.enter="submitJoin"
+            />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="joinOpen = false">{{ t('work.joinCancel') }}</v-btn>
+            <v-btn color="primary" variant="flat" :loading="joining" @click="submitJoin">
+              {{ t('work.joinSubmit') }}
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <!-- 一个项目都没有（新账号）：给出唯一有意义的下一步，而不是一屏空白。
            空间那一排还在上面——那是他还没加入任何空间时唯一看得见的东西。 -->

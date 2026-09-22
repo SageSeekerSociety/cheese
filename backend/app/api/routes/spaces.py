@@ -33,7 +33,6 @@ from app.domain.space.models import (
     SpaceDomainGroup,
     SpaceInviteCode,
     SpaceMember,
-    SpaceVisibility,
 )
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -49,7 +48,6 @@ from app.domain.space.repositories import (
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
-from app.domain.space.visibility_service import SpaceVisibilityService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -78,7 +76,6 @@ class CreateSpaceRequest(BaseModel):
         default=None, alias="classificationTopics"
     )
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
-    visibility: str = "PUBLIC"
 
     @field_validator("visible_task_limit", mode="before")
     @classmethod
@@ -88,18 +85,6 @@ class CreateSpaceRequest(BaseModel):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError("visibleTaskLimit must be null or a non-negative integer")
         return value
-
-    @field_validator("visibility", mode="before")
-    @classmethod
-    def _validate_visibility(cls, value: object) -> object:
-        if value is None:
-            return "PUBLIC"
-        if not isinstance(value, str):
-            raise ValueError("visibility must be PUBLIC, CODE or PRIVATE")
-        name = value.strip().upper()
-        if name not in _VISIBILITY_BY_NAME:
-            raise ValueError("visibility must be PUBLIC, CODE or PRIVATE")
-        return name
 
 
 class PatchSpaceRequest(BaseModel):
@@ -222,13 +207,6 @@ router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
 )
 
-_VISIBILITY_BY_NAME = {
-    "PUBLIC": SpaceVisibility.PUBLIC.value,
-    "CODE": SpaceVisibility.CODE.value,
-    "PRIVATE": SpaceVisibility.PRIVATE.value,
-}
-_VISIBILITY_NAME_BY_VALUE = {v: k for k, v in _VISIBILITY_BY_NAME.items()}
-
 
 def _expect_list(value: list | str | None, field: str) -> list:
     if value is None:
@@ -323,14 +301,13 @@ async def get_space_user_realname_service(
 
 
 async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
-    """404 rather than 403 — a space you may not see is not confirmed to exist.
+    """404 rather than 403 — a 题目版 you are not in is not confirmed to exist.
 
     Same answer the task routes give for an invisible task, and the same
-    question ``SpaceVisibilityService`` answers for the list query, so a
-    direct link and the list cannot drift apart.
+    question ``list_spaces`` asks for the list query: one rule, so a direct
+    link and the list cannot drift apart.
     """
-    visibility = SpaceVisibilityService(session=db)
-    if not await visibility.can_view_space(space_id=space_id, user_id=user_id):
+    if not await SpaceRepository(db).is_member(space_id=space_id, user_id=user_id):
         raise NotFoundError(
             "Resource space not found", data={"type": "space", "id": space_id}
         )
@@ -354,7 +331,6 @@ def _space_to_api_model(space: Space) -> dict:
         "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
-        "visibility": _VISIBILITY_NAME_BY_VALUE.get(space.visibility, "PUBLIC"),
     }
 
 
@@ -621,13 +597,13 @@ async def get_spaces(
 ) -> dict:
     offset = pageStart or 0
     viewer_id = auth_user.user_id if auth_user.user_id > 0 else None
-    # A private or 凭码 space this viewer is not in is not merely hidden from
+    # A 题目版 this viewer is not in is not merely hidden from
     # the page — it is not in the page, because the same predicate the detail
     # route refuses by is the one that removes the row here.
     spaces = await service.list_spaces(
-        limit=pageSize, offset=offset, viewer_user_id=auth_user.user_id
+        limit=pageSize, offset=offset, member_user_id=auth_user.user_id
     )
-    total = await service.count_spaces(viewer_user_id=auth_user.user_id)
+    total = await service.count_spaces(member_user_id=auth_user.user_id)
 
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -709,7 +685,6 @@ async def create_space(
         announcements=announcements,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
-        visibility=_VISIBILITY_BY_NAME[payload.visibility],
     )
     if classification_topic_ids:
         await service.replace_classification_topics(
@@ -720,7 +695,7 @@ async def create_space(
     space.review_status = "PENDING"
     await db.flush()
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    # A 凭码 space is created holding a code (see SpaceService.create_space),
+    # Every 题目版 is created holding a code (see SpaceService.create_space),
     # so hand it back here rather than making the creator come and ask.
     codes = await service.list_invite_codes(
         space_id=space.id, actor_user_id=auth_user.user_id
@@ -844,6 +819,9 @@ async def add_space_member(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
+    # Visibility first: otherwise an outsider probing this route is told 403,
+    # which confirms the 题目版 exists — the thing a 404 is here to avoid.
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     user_repo = UserRepository(session=db)
     if await user_repo.get_by_id(payload.user_id) is None:
         raise NotFoundError(
@@ -872,7 +850,9 @@ async def delete_space_member(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> Response:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     await service.remove_member(
         space_id=space_id,
         target_user_id=user_id,
@@ -1845,8 +1825,8 @@ async def list_space_admins(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    # Public spaces keep answering to any signed-in user, exactly as before;
-    # 凭码 and 私人 ones answer only to someone who can see the space at all.
+    # The managers list answers only to someone who can see the 题目版 — an
+    # outsider must not learn who runs a board they were never invited to.
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     admins = await service.list_admins(space_id)
     return {
