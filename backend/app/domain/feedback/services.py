@@ -396,6 +396,19 @@ class FeedbackService:
     # `distinct feedback_id`——都写在仓储的 docstring 里，调用点自己拼一遍
     # `select` 就是各自重答一遍，而两处答出两个口径时两边看着都「对」。
 
+    async def admin_board_counts(self) -> dict[str, dict[str, int]]:
+        """管理看板那一块的计数 —— **全量口径**。
+
+        和 :meth:`counts` 的分工：`counts` 是反馈中心那一行标签页的数（用户侧，被
+        `PUBLIC_ONLY` 收窄，因为匿名读者不该从一个数字里得知私密反馈有多少）；
+        这一条是管理看板问的「现在一共有多少事」，四栏、四级状态、总量一起给，
+        一条私密反馈也要算进去。
+
+        两个口径**不能互相替代**，这正是看板此前的 bug：它拿 `counts` 去填 KPI，
+        于是卡片写的是公开那一臂、旁边那条曲线写的是全量，两边各自都看着对。
+        """
+        return await self._repo.admin_counts()
+
     async def created_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:

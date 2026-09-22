@@ -2297,18 +2297,34 @@ export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
  * 三块各自有名字之后，这种「路径悄悄指向另一个资源」不可能再发生。
  */
 
-/** 反馈那一块：七个栏位的全量计数，加窗口内按天的新增 / 修复 / 上线。 */
+/** 反馈那一块：**全量口径**的总量 / 四栏 / 四级状态，加窗口内按天的三条曲线。
+ *
+ *  口径是这个类型的全部内容：看板数的是**整个板子**，不是公开那一臂。此前
+ *  `counts` 走的是反馈中心那一行标签页的数（被 `PUBLIC_ONLY` 收窄，因为匿名读者
+ *  不该从一个数字里得知私密反馈有多少），而旁边的 `series` 是全量 —— 卡片和曲线
+ *  各答各的问题。现在两边都是全量，形状上也把三个切口分开写，不再挤在一个扁平的
+ *  字典里让人猜哪个是哪个。
+ *
+ *  `columns` 的四个是**筛选，不是划分**（`agent` 是来源，和公开/私密重叠），所以
+ *  它们**加起来不等于** `total.all` —— 和队列那四栏是同一批判据。
+ */
 export interface StatsFeedback {
   days: number
-  counts: {
+  /** 一句话答完的几个数。`open`/`closed` 用的是和别处同一个 `CLOSED_STATUSES`。 */
+  total: {
     all: number
-    hot: number
-    active: number
-    resolved: number
-    deployed: number
-    unread: number
+    open: number
+    closed: number
     unassigned: number
+    /** 压着没人管的急件（high/urgent 且未办完）—— 分诊台最该先动的一格。 */
+    urgent_open: number
   }
+  /** 队列那四栏，重拼成计数。**加起来不等于 `total.all`**，理由见上。 */
+  columns: { public: number; private: number; agent: number; security: number }
+  /** 梯子上的每一级，全量。这是四处里唯一并排展示四级状态的地方。 */
+  status: { received: number; in_progress: number; resolved: number; deployed: number }
+  /** 这个管理员自己的未读数 —— 人各一份，和板子有多大无关。 */
+  unread: number
   /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
   series: { date: string; created: number; resolved: number; deployed: number }[]
 }
@@ -2324,6 +2340,23 @@ export interface StatsUsage {
    *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
    *  只按名字连线，两个同名项目会合成一根柱子。 */
   top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
+  /** 按模型拆。和 `by_route` 是两个正交的切口：「贵的是模型还是计费方式」要两个一起看。 */
+  by_model: {
+    model: string
+    tokens: number
+    calls: number
+    cost_usd: number
+    /** 同一行上的「算不出价钱」的那部分。订阅按月计费，0 是「没有价」不是「免费」。 */
+    unpriced_tokens: number
+  }[]
+  /** 按供给通路拆：gateway（网关）/ subscription（订阅）/ native（自带凭据）/ ''（旧数据）。 */
+  by_route: {
+    route: string
+    tokens: number
+    calls: number
+    cost_usd: number
+    unpriced_tokens: number
+  }[]
 }
 
 /** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
@@ -2332,6 +2365,11 @@ export interface StatsPlatform {
   days: number
   people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+  /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
+  health: {
+    overall: 'healthy' | 'degraded' | 'unknown'
+    checks: Record<string, { status: string; detail?: string | number | null }>
+  }
 }
 
 /** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
