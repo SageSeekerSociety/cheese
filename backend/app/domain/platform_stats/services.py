@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.admin.services import AdminService
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
+from app.domain.platform_stats.gaps import GapRepository
+from app.domain.platform_stats.integrations import IntegrationsRepository
+from app.domain.platform_stats.pipeline import PipelineRepository
+from app.domain.platform_stats.product import ProductHealthRepository
 from app.domain.platform_stats.repositories import MachineInventoryRepository
 from app.domain.platform_stats.windows import dense_series, utc_day_window
 from app.domain.usage.services import UsageService
@@ -40,6 +44,10 @@ class PlatformStatsService:
         self._users = AccountService(session)
         self._feedback = FeedbackService(session)
         self._machines = MachineInventoryRepository(session)
+        self._pipeline = PipelineRepository(session)
+        self._product = ProductHealthRepository(session)
+        self._integrations = IntegrationsRepository(session)
+        self._gaps = GapRepository(session)
 
     async def feedback(self, *, days: int, handle: str) -> dict:
         """反馈那一块：**全量口径**的总量/四栏/四级状态，加窗口内的三条曲线。
@@ -107,6 +115,10 @@ class PlatformStatsService:
             "top_projects": top,
             "by_model": models,
             "by_route": routes,
+            # 额度燃尽：三个项目同时停摆时，上面那条 token 曲线只是「今天用量下降」，
+            # 看起来像好消息。`credits` 把「已耗尽 / 快烧完 / unlimited」三个互斥
+            # 名单分开给 —— 理由见 `gaps.py` 模块 docstring 第 2 条。
+            "credits": await self._gaps.credits_burnout(days=days),
         }
 
     async def platform(self, *, days: int) -> dict:
@@ -137,7 +149,59 @@ class PlatformStatsService:
             # 检查），不在这里另写一份「什么算健康」：两处各写一份的话，看板说健康、
             # readyz 说不健康，而两边各自都看着对。
             "health": await _health_snapshot(),
+            # 三样缺口：磁盘压力（**只覆盖后端这一台**）、预览连接（**进程内存**）、
+            # 机器状态普查（**没有容器清单**）。各自的口径写在 `gaps.py` 上。
+            "extras": await self._gaps.platform_extras(),
         }
+
+    async def performance(self) -> dict:
+        """性能那一块：**这一刻**的接口耗时 + 投递与事件积压。
+
+        前半在 `performance_snapshot()`（进程内存，重启即清零，只有这一个进程）。
+        后半是新加的：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。
+        """
+        from app.domain.platform_stats.performance import performance_snapshot
+
+        snap = performance_snapshot()
+        snap["reliability"] = await self._gaps.reliability()
+        return snap
+
+    async def pipeline(self, *, days: int) -> dict:
+        """交付管线那一块：积压、停留时长、待人动手、轮次失败。
+
+        这是产品自己的主链（「AI 干活、人验收」），也是看板上第一次有它的数字。
+        口径的三条硬事实（闸门已退役 / `void` 不是状态 / `decided_at` 会被覆写）写在
+        `pipeline.py` 的模块 docstring 里，页面上的注脚对应的是它们。
+        """
+        since, until, _ = utc_day_window(days)
+        return {
+            "days": days,
+            "backlog": await self._pipeline.backlog(),
+            "stuck_cards": await self._pipeline.stuck_cards(),
+            "dwell": await self._pipeline.dwell(since=since, until=until),
+            "needs_you": await self._pipeline.needs_you(),
+            "turn_failures": await self._pipeline.turn_failures(
+                since=since, until=until
+            ),
+            "host_health": await self._pipeline.host_health(),
+            "unsettled_dispatches": await self._pipeline.unsettled_dispatches(),
+        }
+
+    async def product(self, *, days: int) -> dict:
+        """产品健康那一块：北极星 + 护栏。
+
+        `unavailable` 里那两条**今天根本算不出来**（缺 `summon` 落库、缺
+        `exhausted_at` 与活跃心跳），响应里带着理由而不是一个假 0。
+        """
+        return await self._product.snapshot(days=days)
+
+    async def integrations(self) -> dict:
+        """集成与凭据那一块：静默降级。
+
+        能查的直接出数；不能查的进 `unavailable`。**没有窗口**（凭据与投递都是
+        存量问题，不是「这七天怎么变的」）。
+        """
+        return await self._integrations.snapshot()
 
 
 async def _health_snapshot() -> dict:
