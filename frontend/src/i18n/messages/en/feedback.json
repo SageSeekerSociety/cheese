@@ -145,9 +145,9 @@
       "title": "Needs action · {count}"
     },
     "cost": {
-      "label": "Cost · last 7 days",
-      "value": "{calls} calls · {usd} · no daily breakdown",
-      "unpriced": "{tokens} more tokens have no unit price (subscription plans bill monthly) and are not in the figure above"
+      "kpi": "Cost",
+      "unpricedLabel": "Unpriced tokens",
+      "note": "Priced by the gateway's per-token rate. Unpriced tokens come from plans billed monthly, so they carry no rate and are not in that figure."
     },
     "empty": {
       "title": "No data yet",
@@ -156,10 +156,6 @@
     "error": {
       "title": "Couldn't load the dashboard",
       "desc": "Check your connection and try again."
-    },
-    "partial": {
-      "title": "Cost data is unavailable",
-      "hint": "The usage endpoint didn't respond"
     },
     "tab": {
       "feedback": "Feedback",

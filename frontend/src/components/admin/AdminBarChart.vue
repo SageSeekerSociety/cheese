@@ -2,15 +2,25 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-// 看板上的柱状图（§6.3 第 14 项「按天新增成员」这一类只有一个量、按天分桶的数）。
-//
-// 和 `AdminLineChart` 共用同一份配色规则（§7.5）：**一个量就用一档中性色**（`--text`），
-// 网格 `--line`，轴标签 `--muted` 12px。这里没有第二条柱子，所以没有线型/色相要分 ——
-// 也正因如此不能给它编一个颜色：琥珀留给主操作（§7.4），随手上一个色相就多一处
-// 「这是不是能点」的误读。§10.2 提到的 `--chart-1` / `--chart-2` 已经删掉了（F-04）。
-//
-// 手写 SVG，不引图表库，理由同 `AdminLineChart`。坐标按设计尺寸 628×180 算再等比缩放。
+import { fmtNum } from '@/lib/usageFormat'
 
+// 看板上的「最花 token 的项目」。
+//
+// 这一张一度是**竖向柱状图**（手写 SVG，项目名横排在每根柱子底下）。那一版在真浏览器里
+// 是坏的：名字是长短不一的中文，每个名字只分到约 65px 的一格，字号压到 9px 之后仍然
+// **相邻重叠**（量到过 9×9 像素；1100px 宽下 26×17）。名字横着排不下这件事，换个方向
+// 就没了：
+//
+//   * **横向**：名字在左（可以长、装不下走省略号并挂 `title`），条在中间，数值在最右。
+//   * **排行**：这一份数据本来就是 top-N，**顺序本身是信息**，横排正好把它读出来。
+//   * 名字和数值都用真尺寸（12–13px），不为塞下而缩字号。
+//
+// 于是它也不再需要「只有 ≤12 行才画标签」那条妥协，也不再需要一张折叠的数据表孪生体：
+// 这一版的**每一行本身就是文字**（名字和数值都是真文本，条是装饰），读屏直接读得到 ——
+// 上一版整块 SVG 是 `aria-hidden`，数据只能从那张表里拿。
+//
+// 手写 DOM 而不是 SVG：这一版没有任何需要按坐标算的东西（条长就是百分比），而 DOM 里的
+// 文字可以省略号、可以换行、可以被读屏读到，SVG 里的 `<text>` 三样都做不到。
 const props = withDefaults(
   defineProps<{
     title: string
@@ -22,112 +32,50 @@ const props = withDefaults(
 
 const { t } = useI18n()
 
-const VIEW_W = 628
-const VIEW_H = 180
-const PAD_LEFT = 32
-const PAD_RIGHT = 8
-const PAD_TOP = 8
-const PAD_BOTTOM = 20
-const PLOT_W = VIEW_W - PAD_LEFT - PAD_RIGHT
-const PLOT_H = VIEW_H - PAD_TOP - PAD_BOTTOM
-
-/** 柱子最宽 32px。再宽就成色块了 —— 柱状图靠空隙分组，不靠颜色。 */
-const MAX_BAR_W = 32
-/** 每根柱子底下都写标签的上限。超过这个数，标签会互相压成一团黑，那时宁可不写。 */
-const LABEL_LIMIT = 12
-
 const empty = computed(() => props.rows.length === 0)
 
-const maxValue = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
+/** 条的相对长度。全 0 时取 1（否则每一根都算成 NaN）。 */
+const max = computed(() => Math.max(1, ...props.rows.map((row) => row.value)))
 
-const slot = computed(() => (props.rows.length > 0 ? PLOT_W / props.rows.length : PLOT_W))
-
-const barW = computed(() => Math.min(MAX_BAR_W, slot.value * 0.6))
-
-const centerX = (i: number): number => PAD_LEFT + slot.value * (i + 0.5)
-
-const barH = (v: number): number => (v / maxValue.value) * PLOT_H
-
-const barY = (v: number): number => PAD_TOP + PLOT_H - barH(v)
-
-const gridLines = computed(() => [0, 1, 2, 3].map((i) => PAD_TOP + (PLOT_H * i) / 3))
+/** 条占轨道的百分比。**下限 2%**：一个 0（或者极小值）会让「这一项在榜上」这件事在
+ *  屏幕上消失，而它确实在 —— 榜上最后一名和「没有这一项」是两件事。 */
+function widthOf(value: number): string {
+  return `${Math.max(2, (value / max.value) * 100)}%`
+}
 </script>
 
 <template>
-  <div class="abc">
-    <div class="abc__head">
-      <span class="abc__title t-eyebrow-read">{{ title }}</span>
+  <div class="abr">
+    <div class="abr__head">
+      <span class="abr__title t-eyebrow-read">{{ title }}</span>
     </div>
 
-    <div v-if="loading" class="abc__skeleton">
-      <v-skeleton-loader type="text" class="abc__skel abc__skel--title" />
-      <v-skeleton-loader type="image" class="abc__skel abc__skel--plot" />
+    <div v-if="loading" class="abr__skeleton">
+      <v-skeleton-loader type="text" class="abr__skel abr__skel--title" />
+      <v-skeleton-loader type="image" class="abr__skel abr__skel--plot" />
     </div>
 
-    <p v-else-if="empty" class="abc__none">
-      <span class="abc__none-title">{{ t('feedback.dashboard.empty.title') }}</span>
-      <span class="abc__none-desc">{{ t('feedback.dashboard.empty.desc') }}</span>
+    <p v-else-if="empty" class="abr__none">
+      <span class="abr__none-title">{{ t('feedback.dashboard.empty.title') }}</span>
+      <span class="abr__none-desc">{{ t('feedback.dashboard.empty.desc') }}</span>
     </p>
 
-    <template v-else>
-      <svg class="abc__plot" :viewBox="`0 0 ${VIEW_W} ${VIEW_H}`" aria-hidden="true">
-        <line
-          v-for="(gy, i) in gridLines"
-          :key="`grid-${i}`"
-          class="abc__grid"
-          :x1="PAD_LEFT"
-          :x2="VIEW_W - PAD_RIGHT"
-          :y1="gy"
-          :y2="gy"
-        />
-        <rect
-          v-for="(row, i) in rows"
-          :key="i"
-          class="abc__bar"
-          :x="centerX(i) - barW / 2"
-          :y="barY(row.value)"
-          :width="barW"
-          :height="barH(row.value)"
-        />
-        <text class="abc__ink" :x="PAD_LEFT - 4" :y="PAD_TOP + 4" text-anchor="end">{{ maxValue }}</text>
-        <text class="abc__ink" :x="PAD_LEFT - 4" :y="PAD_TOP + PLOT_H" text-anchor="end">0</text>
-        <template v-if="rows.length <= LABEL_LIMIT">
-          <text
-            v-for="(row, i) in rows"
-            :key="`label-${i}`"
-            class="abc__ink"
-            :x="centerX(i)"
-            :y="VIEW_H - 4"
-            text-anchor="middle"
-          >
-            {{ row.label }}
-          </text>
-        </template>
-      </svg>
-
-      <details class="abc__data">
-        <summary class="abc__toggle">{{ t('feedback.chart.dataTable') }}</summary>
-        <table class="abc__table">
-          <thead>
-            <tr>
-              <th scope="col">{{ t('feedback.chart.date') }}</th>
-              <th scope="col">{{ title }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, i) in rows" :key="i">
-              <th scope="row" class="abc__rowhead">{{ row.label }}</th>
-              <td class="abc__cell t-num">{{ row.value }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </details>
-    </template>
+    <ol v-else class="abr__rows">
+      <li v-for="(row, i) in rows" :key="i" class="abr__row">
+        <!-- 名字可能很长（项目名是用户起的）。省略号 + `title`：屏幕上先保住「这是哪几个
+             项目」的可扫读性，完整名字鼠标停一下就有，读屏念的是全文。 -->
+        <span class="abr__label" :title="row.label">{{ row.label }}</span>
+        <span class="abr__track" aria-hidden="true">
+          <span class="abr__bar" :style="{ width: widthOf(row.value) }" />
+        </span>
+        <span class="abr__value t-num">{{ fmtNum(row.value) }}</span>
+      </li>
+    </ol>
   </div>
 </template>
 
 <style scoped>
-.abc {
+.abr {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -141,102 +89,112 @@ const gridLines = computed(() => [0, 1, 2, 3].map((i) => PAD_TOP + (PLOT_H * i) 
   border-bottom-left-radius: var(--radius-lg);
 }
 
-/* 轴标签与图例共用一个类，同 `AdminLineChart`：`fill` 取 `currentColor`，颜色只有一个
-   来源（`color`），SVG 文字不认 `color` 这件事只在这里处理一次。 */
-.abc__ink {
-  font-size: 12px;
-  color: var(--muted);
-  fill: currentColor;
+/* 每一行：名字 | 轨道 | 数值。三列用 grid 而不是 flex：名字和数值都要能对齐成一条竖线，
+   而 flex 的 `auto` 宽度会让每一行各算一遍，长名字那一行的数值就跑到别处去了。 */
+.abr__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.abc__plot {
+.abr__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 22px;
+}
+
+.abr__label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 轨道只画底色，不画刻度：这一栏要比的是条与条的长短，不是绝对值（绝对值在右边）。 */
+.abr__track {
   display: block;
-  width: 100%;
-  height: auto;
+  min-width: 0;
+  height: 10px;
+  background: var(--fill);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
-.abc__grid {
-  stroke: var(--line);
-  stroke-width: 1;
+.abr__bar {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
 }
 
-.abc__bar {
-  fill: var(--text);
-}
-
-.abc__toggle {
-  color: var(--muted);
+/* 数值右对齐、等宽字：一列数字竖着看要对得上位。 */
+.abr__value {
   font-size: 12.5px;
   line-height: var(--lh-12);
-  cursor: pointer;
-}
-
-.abc__table {
-  width: 100%;
-  margin-top: 8px;
-  border-collapse: collapse;
-  font-size: 12.5px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-}
-
-.abc__table th,
-.abc__table td {
-  padding: 4px 8px;
+  color: var(--ink);
   text-align: right;
-  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
 }
 
-.abc__table th:first-child,
-.abc__table td:first-child {
-  text-align: left;
-}
-
-.abc__table tr:last-child th,
-.abc__table tr:last-child td {
-  border-bottom: 0;
-}
-
-.abc__rowhead {
-  font-weight: 400;
-}
-
-/* 空态照 §9.2 那一套（主 15/600/--ink，副 13/--muted，中间 8px）。 */
-.abc__none {
+.abr__none {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 0;
 }
 
-.abc__none-title {
+.abr__none-title {
   font-size: 15px;
   font-weight: 600;
   line-height: var(--lh-15);
   color: var(--ink);
 }
 
-.abc__none-desc {
+.abr__none-desc {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
 }
 
-.abc__skel--title {
+.abr__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.abr__skel--title {
   width: 96px;
 }
 
-.abc__skel--plot {
+.abr__skel--plot {
   width: 100%;
 }
 
-.abc__skel :deep(.v-skeleton-loader__text) {
+/* `v-skeleton-loader` 的骨头默认带 16px 外边距和 12px 高，在一张 16px 内边距的卡里会
+   把两条挤成一条；尺寸改成本地的。底色 `--fill-2` 是 §7.1 给骨架条指定的那一档，
+   Vuetify 默认的 `--v-theme-on-surface` 在深浅两个主题里都不是这一档。 */
+.abr__skel :deep(.v-skeleton-loader__text) {
   height: 12px;
   margin: 0;
   background: var(--fill-2);
 }
 
-.abc__skel--plot :deep(.v-skeleton-loader__image) {
+.abr__skel--plot :deep(.v-skeleton-loader__image) {
   height: 180px;
   margin: 0;
   background: var(--fill-2);

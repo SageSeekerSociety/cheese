@@ -17,6 +17,86 @@ import { api, login } from './helpers';
 // 这一份只断言「屏幕上有没有压上/被裁」，不认任何具体的间距数值：改密度、换变体、
 // 把 hide-details 设成别的都不该让它变红，只有真叠上了才该。
 
+
+/** 屏幕上**两个东西有没有画在同一个坐标上**。
+ *
+ *  这一条是补的，起因也是真事：看板「用量」那一类里，柱子底下 9 个项目名横排在
+ *  9px 下互相压住（量到 9×9 像素），窄屏上两张 KPI 卡的标题也压在一起（148px）。
+ *  这一整类缺陷**现有的测试一条都拦不住** —— 单测看的是数据和请求，e2e 看的是文案
+ *  和路径，typecheck / eslint / stylelint 都不看坐标。它们只在屏幕上存在，所以只能在
+ *  屏幕上量。
+ *
+ *  量的是**含文字的元素**（`svg text` 与任何有直接文字子节点的元素），逐对求交：
+ *  两个方向的交叠都超过 2px 才算。2px 是给亚像素和「字与它的容器」留的余量 ——
+ *  容器包着文字当然是重叠的，所以只比**同级或跨块**的文字盒，不比祖先。
+ */
+async function textOverlaps(scope: Locator): Promise<string[]> {
+  return scope.evaluate((root: Element) => {
+    const ownsText = (el: Element) =>
+      [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim().length > 0);
+    const boxes = [...root.querySelectorAll('*')]
+      .filter((el) => el instanceof SVGTextElement || ownsText(el))
+      // **只量真的画出来的东西**。`getBoundingClientRect` 对「不渲染但仍有布局盒」的
+      // 元素照样给坐标：收起状态的 `<details>`（那张「查看数据表」）就是这一类 ——
+      // 它里面的 `<th>`/`<td>` 每一个都有 200×26 的盒子，量出来会跟页面正文报一大堆
+      // 「重叠」，而屏幕上根本没有它们。`checkVisibility()` 是浏览器自己对这个问题的答案。
+      .filter((el) => el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter((b) => b.r.width > 0 && b.r.height > 0)
+      // 还有一类盒子是**被裁掉了但坐标还在**：滚动容器里的内容滚出可视区时，它的
+      // `getBoundingClientRect` 照样给一个跑到容器外面的盒子（浏览器只是不画它）。
+      // 不排掉这一类，页面底下任何一条被滚动容器裁住的行都会跟底部导航「重叠」——
+      // 而屏幕上看不见它。判据是「这个盒子有没有越出某个祖先的裁剪框」。
+      .filter((b) => !clippedByAncestor(b.el))
+      // 同一段文字被父子两层都收进来时只留最深的那一层（父层的盒子更大，比出来永远是重叠）。
+      .filter((b) => !elHasTextyAncestor(root, b.el));
+
+    const hits: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+        const ox = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const oy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (ox > 2 && oy > 2) {
+          hits.push(
+            `「${(a.el.textContent || '').trim().slice(0, 20)}」与「${(b.el.textContent || '').trim().slice(0, 20)}」` +
+              `重叠 ${Math.round(ox)}×${Math.round(oy)}px`
+          );
+        }
+      }
+    }
+    return hits;
+
+    /** 这个元素的盒子有没有越出某个祖先的裁剪框（`overflow` 不是 visible 的那些）。
+     *  必须在 evaluate 里声明：这个函数在浏览器里跑，Node 作用域里的东西它看不见。 */
+    function clippedByAncestor(el: Element): boolean {
+      const box = el.getBoundingClientRect();
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        const clips =
+          /auto|scroll|hidden|clip/.test(s.overflowY) || /auto|scroll|hidden|clip/.test(s.overflowX);
+        if (!clips) continue;
+        const r = p.getBoundingClientRect();
+        if (box.bottom > r.bottom + 1 || box.top < r.top - 1 || box.right > r.right + 1 || box.left < r.left - 1) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function elHasTextyAncestor(scopeEl: Element, el: Element): boolean {
+      for (let p = el.parentElement; p && p !== scopeEl.parentElement; p = p.parentElement) {
+        if (p === scopeEl) break;
+        if (p instanceof SVGTextElement) return true;
+        if ([...p.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim())) return true;
+      }
+      return false;
+    }
+  });
+}
+
 type Defect = { kind: string; what: string };
 
 async function fieldDefects(scope: Locator): Promise<Defect[]> {
@@ -202,5 +282,35 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await dialog.waitFor();
     await expect(dialog.getByLabel('搜索账号')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
+    await login(page);
+
+    // 三个分类都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
+    // 写死 263px 宽，比窗口还宽，直接压到隔壁那张上）。
+    // 三档都要：1440 是设计宽度（四列正好 263），**1100 是四列但比设计窄的那一段**
+    // （每列比 263 小，卡片写死宽度时就是从这里开始压到隔壁），390 是手机（两列）。
+    // 只测设计宽度的话，那个 bug 一次都不会露头 —— 这正是它当初能上线的原因。
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1100, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto('/admin/dashboard');
+      await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+
+      for (const tab of ['反馈', '用量', '平台']) {
+        // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
+        // 而 Playwright 的 `name` 默认按**子串**匹配 —— 不加这一条，'反馈' 那一轮会同时
+        // 命中它和这一页的分类页签，报 strict mode 违规。
+        await page.getByRole('button', { name: tab, exact: true }).click();
+        // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
+        await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
+        await expect(page.locator('.akpi__skel')).toHaveCount(0);
+        expect(await textOverlaps(page.locator('body')), `${size.width}px · ${tab}`).toEqual([]);
+      }
+    }
   });
 });
