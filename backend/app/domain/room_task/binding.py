@@ -1,39 +1,4 @@
-"""这条活用哪个模型 —— 绑在活上，不绑在参与者上（结论 3、44）。
-
-模型曾经是 agent 的一个属性：想换模型就再建一个 agent。那是把「资源」当成了
-「参与者」——同一个人换了把锤子，不会变成另一个人。分参与者的判据是 role，
-模型和机器一样，是**一件工作占用的资源**，所以它落在活上：卡是用户接触模型的
-唯一地方，卡上并排写着在哪台机器、用哪个模型。
-
-## 次序只有两级，而且第一级可以没有
-
-    这条活自己的绑定  →  项目默认
-
-房间主线没有第一级 —— 它不是一条活，`resolve(None, …)` 拿到的永远是项目默认。
-这是特意的（结论 3 第一句）：主线程一轮一换模型，等于每一轮都把 prompt 缓存
-打掉，而主线程正是那条最长、最吃缓存的对话。
-
-## 答不出就拒绝，不换池
-
-一条活绑了本项目用不了的模型，这里**报错**，不悄悄退回项目默认（不变量 I27）。
-静默换池正是 #325 G2 要杀掉的那种失败：屏幕上写着 Claude，跑的是别的东西，而
-谁也不知道什么时候换的。
-
-拒绝是给**执行**用的答案。渲染一张卡不是执行：看板要能把一条绑坏的活照原样显示
-出来，否则唯一能看见、进而改掉这条绑定的那一屏，自己先打不开
-（`presentation.card_model`）。
-
-## 今天谁按活读它
-
-只有卡片渲染。轮次组装（`agent/chat.py`）和准入（`api/routes/llm_proxy.py`）问的
-都是房间主线，传的是 `None`。按活解析模型的那一刻是平台派子 agent 的那一刻，而
-平台今天根本没有派活的路径 —— 它在 P33（骨架的子 agent 四条硬性要求）里出生，
-那条 PR 依赖本条。
-
-## 它只答「用哪个模型」
-
-档位策略（超档变成给人的提议）不在这里，在 P38。这里答完就完。
-"""
+"""Resolve a work binding, teammate override, or project default against one catalog."""
 
 from dataclasses import dataclass
 
@@ -84,9 +49,16 @@ def catalog(project_settings: dict | None) -> dict[str, dict]:
     return {choice["id"]: choice for choice in model_choices(project_settings)}
 
 
-def resolve(task: Task | None, choices: dict[str, dict]) -> WorkBinding:
-    """这一轮用哪个模型。``task=None`` 是房间主线，它永远走项目默认。"""
+def resolve(
+    task: Task | None,
+    choices: dict[str, dict],
+    *,
+    agent_model: str | None = None,
+    default_model: str | None = None,
+) -> WorkBinding:
+    """Explicit work, then teammate, then supplied default, then project main model."""
     bound = (task.model or "").strip() if task is not None else ""
+    bound = bound or agent_model or default_model or ""
     effort = task.effort if task is not None else None
     if not bound:
         default = next(

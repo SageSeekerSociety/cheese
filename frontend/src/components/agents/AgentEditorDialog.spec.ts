@@ -1,8 +1,4 @@
-// 新建 / 修改队友的表单。三件事值得被盯着：
-//   1. 名字空着、标识写错，不能一路发到后端再收一个 422 —— 人得当场看见
-//   2. 只是改了个名字，不能顺手把一个被别的项目共用的类型也重写一遍
-//   3. 存下去的只有角色 —— 模型和运行方式不在这张表单上，也不在它发出去的
-//      payload 里（模型绑在活上，运行方式是部署的开发者选项）
+// Teammate validation and optional project-scoped model overrides.
 import type { AgentType, ProjectAgent } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -21,6 +17,7 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
+    getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'deepseek-flash', label: 'DeepSeek' }] }),
     createProjectAgent: (...a: unknown[]) => createProjectAgent(...a),
     updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
     updateAgentType: (...a: unknown[]) => updateAgentType(...a),
@@ -28,6 +25,8 @@ vi.mock('../../api', async (importOriginal) => {
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
   }
 })
+
+import { setLocale } from '../../i18n'
 
 import AgentEditorDialog from './AgentEditorDialog.vue'
 
@@ -89,12 +88,14 @@ beforeAll(() => {
 })
 
 const CONFIG = {
+  model: null,
   body: 'Review code',
   skills: [],
   mcp_servers: [],
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   createProjectAgent.mockReset().mockResolvedValue({})
   updateProjectAgent.mockReset().mockResolvedValue({})
   updateAgentType.mockReset().mockResolvedValue(CUSTOM_TYPE)
@@ -155,10 +156,7 @@ describe('新建时的校验', () => {
     })
   })
 
-  // 存下去的是一个角色。模型和运行方式不在这张表单上 —— 也就不该从这里被写进
-  // 任何一行 configuration：这两样各有自己的归处（活、部署），从两个地方都能
-  // 设的东西，人最后看到的是哪一个说了算就没人答得上来了。
-  it('新建时既不显示也不提交模型和运行方式', async () => {
+  it('inherits the main model until the user opts into an override', async () => {
     mountDialog(null)
     expect(screen.queryByLabelText('模型')).toBeNull()
     expect(screen.queryByLabelText('运行方式')).toBeNull()
@@ -166,7 +164,27 @@ describe('新建时的校验', () => {
     await clickSave()
     await waitFor(() => expect(createProjectAgent).toHaveBeenCalled())
     const [, payload] = createProjectAgent.mock.calls[0] as [string, { configuration: object }]
-    expect(Object.keys(payload.configuration).sort()).toEqual(['body', 'mcp_servers', 'skills'])
+    expect(payload.configuration).toMatchObject({ model: null })
+  })
+
+  it('saves an available model after opting in', async () => {
+    mountDialog(null)
+    await fireEvent.update(field('名字'), 'Spark')
+    await fireEvent.input(await screen.findByRole('checkbox', { name: '为这个队友指定模型' }), {
+      target: { checked: true },
+    })
+    await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2))
+    await fireEvent.mouseDown((await screen.findAllByRole('combobox'))[1]!)
+    await fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    await clickSave()
+    await waitFor(() =>
+      expect(createProjectAgent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({
+          configuration: expect.objectContaining({ model: 'deepseek-flash' }),
+        })
+      )
+    )
   })
 })
 

@@ -2,8 +2,8 @@
 
 这是「模型搬出参与者」之后必须还成立的那件事。从前换模型的办法是**再建一个
 agent**——两个 role 一模一样的队友，区别只有背后那个型号。模型搬到活上以后，
-同一个类型建出来的两个实例是**同一份出厂设置**（连模型这一栏都没有了），而两条
-活各绑各的模型，互不影响。
+同一个类型建出来的两个实例是**同一份出厂设置**（模型这一栏默认空着，继承项目
+主模型），而两条活各绑各的模型，互不影响。
 
 「一个 agent 一个模型」如果偷偷活着，这条会红在第一个断言上：两份 configuration
 不再相等。
@@ -18,7 +18,7 @@ from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 
-RETIRED = {"model", "harness", "effort"}
+RETIRED = {"harness", "effort"}
 
 
 @pytest.mark.anyio
@@ -43,6 +43,7 @@ async def test_one_type_two_instances_and_two_works_on_two_models(client):
         first, second = (row.configuration for row in instances)
         assert first == second, "同一个类型建出来的两个实例是同一份出厂设置"
         assert not RETIRED & set(first)
+        assert first["model"] is None, "实例默认不预设模型，继承项目主模型"
 
         for handle, model in bound.items():
             work = Task(

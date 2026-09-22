@@ -1,16 +1,4 @@
-"""架构守卫：模型、骨架、思考深度都读不出一个类型或一个实例。
-
-结论 3「模型不是 agent 的属性，是**工作的资源绑定**」、结论 28「harness 是部署
-级的开发者设置，不在类型上也不在实例上」，ARCH §9.1「参与者」行判据②。
-
-**为什么是一条守卫而不是一条功能测试**：这三个字段没有了读者，也就没有了行为可
-以断言——一个字段被悄悄读回去，不会有任何一条测试变红，只会让「用哪个模型」重新
-有两个住处。能看见它的只有「全仓零读点」这一条。
-
-字段本身也已经不在 schema 上了（P15b），所以这里盯两样东西：**读点**——全仓再没
-有一处从一份 configuration 上取出这三样；以及**字段集合**——类型和实例各自能带
-什么是一张封闭清单，三个字段回不来，换个名字也回不来。
-"""
+"""Harness and effort stay outside teammate configuration; presets carry roles only."""
 
 import ast
 import re
@@ -26,7 +14,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 APP = BACKEND / "app"
 FRONTEND_SRC = BACKEND.parent / "frontend/src"
 
-RETIRED = ("model", "harness", "effort")
+RETIRED = ("harness", "effort")
 
 
 def _holds_a_configuration(expr: ast.expr, aliases: set[str]) -> bool:
@@ -124,7 +112,7 @@ def _frontend_reads(text: str) -> list[str]:
     """界面上把这三样东西读出来的行。
 
     三种写法都认：属性（``a.configuration.model``）、下标（``cfg['model']``），
-    以及解构（``const { model } = agent.configuration``）。第三种是这条守卫最容
+    以及解构（``const { harness } = agent.configuration``）。第三种是这条守卫最容
     易漏的一种——它读出来的名字就叫 ``model``，之后每一处用它的地方都不再提持有
     它的东西，所以只有解构那一行能看见这是一个读点。
     """
@@ -132,10 +120,10 @@ def _frontend_reads(text: str) -> list[str]:
     named = "|".join(sorted(holders))
     reads = re.compile(
         r"\b(" + named + r")(\.value)?\??"
-        r"(\.(model|harness|effort)\b|\[['\"](model|harness|effort)['\"]\])"
+        r"(\.(harness|effort)\b|\[['\"](harness|effort)['\"]\])"
     )
     destructured = re.compile(
-        r"(?:const|let|var)\s*\{[^}]*\b(?:model|harness|effort)\b[^}]*\}\s*="
+        r"(?:const|let|var)\s*\{[^}]*\b(?:harness|effort)\b[^}]*\}\s*="
         r"[^=]*\b(" + named + r")\b"
     )
     return [
@@ -170,12 +158,12 @@ def test_no_frontend_code_reads_the_three_fields_off_a_type_or_an_instance() -> 
 # 要命中，不该红的喂进去要放过（误红更坏，它把下一个人导去改一处本来对的代码）。
 
 _BACKEND_MUST_CATCH = {
-    "subscript": "agent.configuration['model']\n",
+    "subscript": "agent.configuration['harness']\n",
     "get": "agent.configuration.get('harness')\n",
     "through-the-schema": (
         "AgentConfiguration.model_validate(agent.configuration).effort\n"
     ),
-    "renamed-first": "cfg = agent.configuration\nx = cfg.get('model')\n",
+    "renamed-first": "cfg = agent.configuration\nx = cfg.get('effort')\n",
 }
 
 _BACKEND_MUST_PASS = {
@@ -203,9 +191,9 @@ def test_self_test_the_backend_guard_lets_through(source: str) -> None:
 
 
 _FRONTEND_MUST_CATCH = {
-    "attribute": "const name = agent.configuration.model\n",
+    "attribute": "const name = agent.configuration.harness\n",
     "subscript": "const name = agent.configuration['harness']\n",
-    "destructured": "const { model } = agent.configuration\n",
+    "destructured": "const { harness } = agent.configuration\n",
     "destructured-several": "const { body, effort } = draft.value\n",
     "renamed-first": "const cfg = a.configuration\nconst h = cfg.harness\n",
 }
@@ -251,10 +239,9 @@ _A_TYPE = {
 } | _A_ROLE
 
 
-def test_a_saved_configuration_carries_a_role_and_nothing_else() -> None:
-    assert set(AgentConfiguration.model_fields) == _A_ROLE, (
-        "一个实例存的是角色：人设、技能、外部工具。模型绑在活上（结论 3），"
-        "骨架是部署设置（结论 28）——两样都不是这张 schema 上的字段。"
+def test_a_saved_configuration_carries_a_role_and_optional_model() -> None:
+    assert set(AgentConfiguration.model_fields) == _A_ROLE | {"model"}, (
+        "A teammate stores its role and optional model override, not harness or effort."
     )
 
 

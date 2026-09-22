@@ -35,6 +35,7 @@ class ProjectService:
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
         agent_type: str | None = None,
+        agent_name: str | None = None,
         team_id: int | None = None,
         external_task_id: int | None = None,
         forge_kind: str = "forgejo",
@@ -69,7 +70,7 @@ class ProjectService:
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
         agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project)
+        instance = await agents.materialize_default(project, display_name=agent_name)
         if agent_type:
             # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，
             # 只有 agent 自己知道这套人设是从哪个记忆池里说话的。

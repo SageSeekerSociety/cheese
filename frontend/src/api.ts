@@ -585,7 +585,8 @@ export function createProject(
   ownerHandle?: string,
   teamId?: number,
   externalTaskId?: number,
-  forgeKind?: 'forgejo' | 'github_app'
+  forgeKind?: 'forgejo' | 'github_app',
+  agentName?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
@@ -597,6 +598,7 @@ export function createProject(
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
       forge_kind: forgeKind,
+      agent_name: agentName,
     }),
   })
 }
@@ -952,9 +954,9 @@ export interface AgentFieldChoice {
   default: boolean
 }
 
-// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
-// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
+// Project main and native subagent model defaults.
 export interface ProjectDefaultModel {
+  subagent_model: string | null
   /** 项目显式设的模型；null = 没设，走 deployment_default */
   model: string | null
   /** 没设显式默认时，部署兜底算出来的那个 */
@@ -968,10 +970,14 @@ export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaul
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
 }
 
-export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+export function setProjectDefaultModel(
+  projectId: string,
+  model: string | null,
+  subagentModel?: string | null
+): Promise<ProjectDefaultModel> {
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
     method: 'PUT',
-    body: JSON.stringify({ model }),
+    body: JSON.stringify({ model, subagent_model: subagentModel }),
   })
 }
 

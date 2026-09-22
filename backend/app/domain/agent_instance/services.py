@@ -204,6 +204,7 @@ class AgentInstanceService:
             raise ValidationError(f"这个项目里已经有 handle 为 {handle!r} 的 agent")
         await self._require_known_type(type_name)
         config = configuration or initial_configuration(type_name)
+        await self._validate_model(project_id, config)
         instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
@@ -243,7 +244,21 @@ class AgentInstanceService:
     async def configure(
         self, instance: AgentInstance, config: AgentConfiguration
     ) -> None:
+        await self._validate_model(instance.project_id, config)
         instance.configuration = config.model_dump()
+
+    async def _validate_model(
+        self, project_id: uuid.UUID, config: AgentConfiguration
+    ) -> None:
+        if config.model is None:
+            return
+        from app.domain.agent_instance.configuration import model_choices
+
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        if config.model not in {item["id"] for item in model_choices(project.settings)}:
+            raise ValidationError("当前项目无法使用该模型，请选择可用模型")
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:
@@ -284,7 +299,9 @@ class AgentInstanceService:
         await self._session.flush()
         return await self.for_project(project)
 
-    async def materialize_default(self, project: Project) -> AgentInstance:
+    async def materialize_default(
+        self, project: Project, *, display_name: str | None = None
+    ) -> AgentInstance:
         """项目的默认 agent，没有就在这里播种——全仓唯一的播种函数。
 
         播种发生在两处：`ProjectService.create`（建项目时，和总览房间同一个事务），
@@ -318,6 +335,8 @@ class AgentInstanceService:
             display_name=CHEESE_NAME,
             configuration=initial_configuration().model_dump(),
         )
+        if display_name is not None:
+            await self.rename(instance, display_name)
         # An agent gets its identity when it comes into being, and the project's
         # 芝士 comes into being here rather than in create(). Without it the
         # project's own room could not seat it under its own seat.

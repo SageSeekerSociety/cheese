@@ -4,6 +4,7 @@ import type { ProjectDefaultModel } from '../api'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
+import { t } from '../i18n'
 
 // 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
 // catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
@@ -17,6 +18,7 @@ const busy = ref(false)
 
 // 本地编辑态：用户在下拉里选了一个值但还没保存。null = 清掉显式设置（回落部署默认）。
 const draft = ref<string | null | undefined>(undefined)
+const subagentDraft = ref<string | null>(null)
 
 const effective = computed({
   get() {
@@ -33,13 +35,14 @@ const dirty = computed(() => {
   if (!state.value) return false
   const server = state.value.model ?? null
   const now = draft.value !== undefined ? draft.value : server
-  return now !== server
+  return now !== server || subagentDraft.value !== (state.value.subagent_model ?? null)
 })
 
 async function load() {
   error.value = ''
   try {
     state.value = await getProjectDefaultModel(props.projectId)
+    subagentDraft.value = state.value.subagent_model ?? null
     draft.value = undefined
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载默认模型失败'
@@ -52,7 +55,7 @@ async function save() {
   error.value = ''
   try {
     const target = draft.value !== undefined ? draft.value : state.value.model
-    state.value = await setProjectDefaultModel(props.projectId, target)
+    state.value = await setProjectDefaultModel(props.projectId, target, subagentDraft.value)
     draft.value = undefined
   } catch (e) {
     error.value = e instanceof Error ? e.message : '保存默认模型失败'
@@ -72,11 +75,11 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <h3 class="text-subtitle-1 mb-2">默认模型</h3>
-    <p class="text-body-2 text-medium-emphasis mb-4">房间主线直接使用项目默认；已运行的房间保留原绑定</p>
+    <h3 class="text-subtitle-1 mb-2">{{ t('work.models.title') }}</h3>
+    <p class="text-body-2 text-medium-emphasis mb-4">{{ t('work.models.description') }}</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
-      <div class="d-flex align-center" style="gap: 12px">
+      <div class="d-flex flex-column" style="gap: 24px; max-width: 480px">
         <v-select
           v-model="effective"
           :items="state.choices"
@@ -87,31 +90,45 @@ watch(() => props.projectId, load)
           density="compact"
           variant="outlined"
           hide-details
-          label="项目默认模型"
-          style="max-width: 360px"
+          :label="t('work.models.main')"
         />
-        <v-btn
-          v-if="state.can_manage"
-          color="primary"
-          variant="flat"
-          density="comfortable"
-          :disabled="busy || !dirty"
-          @click="save"
-        >
-          保存
-        </v-btn>
-        <v-btn
-          v-if="state.can_manage && state.model !== null"
-          variant="text"
-          density="comfortable"
-          :disabled="busy"
-          @click="resetToDeploymentDefault"
-        >
-          恢复部署默认
-        </v-btn>
+        <v-select
+          v-model="subagentDraft"
+          :items="[{ id: null, label: t('work.models.inheritMain') }, ...state.choices]"
+          item-title="label"
+          item-value="id"
+          :disabled="busy || !state.can_manage"
+          autocomplete="off"
+          density="compact"
+          variant="outlined"
+          :label="t('work.models.subagent')"
+          :hint="t('work.models.subagentHint')"
+          persistent-hint
+        />
+        <div class="d-flex align-center" style="gap: 12px">
+          <v-btn
+            v-if="state.can_manage"
+            color="primary"
+            variant="flat"
+            density="comfortable"
+            :disabled="busy || !dirty"
+            @click="save"
+          >
+            保存
+          </v-btn>
+          <v-btn
+            v-if="state.can_manage && state.model !== null"
+            variant="text"
+            density="comfortable"
+            :disabled="busy"
+            @click="resetToDeploymentDefault"
+          >
+            恢复部署默认
+          </v-btn>
+        </div>
       </div>
       <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">
-        项目负责人管理默认模型；你仍可在房间中临时选择
+        {{ t('work.models.readOnly') }}
       </p>
     </template>
   </div>

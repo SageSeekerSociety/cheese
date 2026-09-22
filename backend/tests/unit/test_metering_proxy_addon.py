@@ -136,6 +136,30 @@ def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
     )
 
 
+def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False):
+        calls.append(subagent)
+        return _verdict(model="claude-opus-5" if subagent else "claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+        }
+    )
+    asyncio.run(mod.requestheaders(flow))
+    assert calls == [True]
+    assert flow.response is None
+    body = flow.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert json.loads(body)["model"] == "claude-opus-5"
+
+
 def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
     """No credential on the host → a local 503 BEFORE forwarding. The caller's
     scoped bearer must NOT be rewritten (nothing is sent upstream)."""

@@ -109,13 +109,10 @@ async def test_the_rooms_main_line_runs_on_the_project_default(client, tmp_path)
 
 
 @pytest.mark.anyio
-async def test_editing_the_agent_does_not_move_the_rooms_main_line(client, tmp_path):
-    """模型不是参与者的属性（结论 3、44）。把这个 agent 存着的模型改掉，房间主线
-    照旧走项目默认 —— 「想换模型就再建一个 agent」正是这次拆掉的形状。
-
-    这同时是「一轮里改不动」：一轮的模型是开轮那一刻取的快照，之后改什么都不会
-    回头改它。
-    """
+async def test_editing_the_agent_changes_the_next_turn_not_the_prepared_turn(
+    client, tmp_path
+):
+    """A teammate override changes its next turn without mutating a prepared turn."""
     ids = await _room(client)
     chat = _chat(client, tmp_path)
 
@@ -136,7 +133,7 @@ async def test_editing_the_agent_does_not_move_the_rooms_main_line(client, tmp_p
             .first()
         )
         assert instance is not None, "项目应当自带它的芝士"
-        instance.configuration = {**instance.configuration, "model": "glm-5.2"}
+        instance.configuration = {**instance.configuration, "model": "sonnet"}
         await session.commit()
 
     later, _route = await chat._model_kwargs(
@@ -144,7 +141,7 @@ async def test_editing_the_agent_does_not_move_the_rooms_main_line(client, tmp_p
     )
 
     assert in_flight["model"] == "deepseek-flash"
-    assert later["model"] == in_flight["model"]
+    assert later["model"] == "claude-sonnet-5"
 
 
 @pytest.mark.anyio

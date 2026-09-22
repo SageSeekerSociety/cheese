@@ -1,16 +1,4 @@
-"""一个 agent 存着的角色，和这个项目能用哪些模型。
-
-**模型不在这里。** 它是一件工作占用的资源，绑在活上（结论 3、44，
-``room_task/binding.py``），不是参与者的属性——「想换模型就再建一个 agent」是
-把资源当成了参与者，同一个人换了把锤子不会变成另一个人。**骨架也不在这里**：
-它是部署设置加项目设置里的开发者选项，普通用户看不见（结论 28）。
-
-所以这里只剩一个问题：``model_choices`` 答「这个项目能被指向哪些模型」。**按骨架
-筛不是参与者这一级的事**（结论 3：「部署决定可选列表（按 harness 筛）；项目定
-默认和档位策略」）——能不能拿订阅凭据、说不说网关那套话，是骨架的事实，不是模型
-的；``harness.Harness`` 写了这个方向为什么只能是这一个。筛用的是这个项目真会跑
-的那个骨架（``harness_for``），跟轮次组装和克隆问的是同一个问题、同一个答法。
-"""
+"""Saved teammate configuration and the models available to a project."""
 
 from dataclasses import asdict
 
@@ -28,15 +16,12 @@ from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
 class AgentConfiguration(BaseModel):
-    """一个 agent 存着的角色：人设、技能、外部工具。
-
-    就这三样。「用哪个模型」写在一条活的绑定上，「跑哪个骨架」写在部署设置加项目
-    设置里，两处都不在这里——一个字段加回来，那个问题就又有了两个答得出来的地方。
-    """
+    """A saved role and optional model; None inherits the project main model."""
 
     body: str = ""
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
+    model: str | None = None
 
 
 def model_choices(project_settings: dict | None) -> list[dict]:
