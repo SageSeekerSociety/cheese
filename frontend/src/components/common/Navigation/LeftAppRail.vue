@@ -14,6 +14,7 @@
   >
     <template #prepend>
       <RailItem v-if="homeItem" :item="homeItem" />
+      <RailItem v-if="homeDivider" :item="homeDivider" />
     </template>
     <RailItem
       v-for="item in scrollingItems"
@@ -198,7 +199,8 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 
 const { items } = toRefs(navBarProps)
 const homeItem = computed(() => items.value.find((item) => item.key === 'Home'))
-const scrollingItems = computed(() => items.value.filter((item) => item.key !== 'Home'))
+const homeDivider = computed(() => items.value.find((item) => item.type === 'divider'))
+const scrollingItems = computed(() => items.value.filter((item) => item.key !== 'Home' && item.type !== 'divider'))
 
 const emit = defineEmits<{
   /** 把 `movedId` 放到 `targetId` 的这一边。顺序归 App.vue 保管，rail 只报告动作。 */
