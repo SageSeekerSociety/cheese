@@ -36,6 +36,25 @@ class CourseRosterService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def my_group(self, space_id: int, handle: str | None) -> dict[str, Any]:
+        """学生自己视角的那一行：我在这门课里的项目、我挂在哪个组上。
+
+        学生看不到花名册（那要教师），但他至少要知道自己在哪个组、组里还有谁 ——
+        这两个问题的答案都只关于他自己，所以按 handle 过滤，不用管理员那道门。
+        """
+        if not handle:
+            return {"teamId": None, "projectId": None}
+        projects = [
+            project
+            for project in await ProjectService(self._session).list_for_space(space_id)
+            if project.owner_handle == handle
+        ]
+        team_id = next((p.team_id for p in projects if p.team_id is not None), None)
+        return {
+            "teamId": team_id,
+            "projectId": str(projects[0].id) if projects else None,
+        }
+
     async def roster(self, space_id: int) -> dict[str, Any]:
         """这门课的结构：成员、项目、小队，各是一串平表。
 

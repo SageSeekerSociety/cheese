@@ -172,7 +172,58 @@ def test_a_teacher_reads_the_students_their_projects_and_their_teams(
     }
 
 
-# --- 2. 门只对教师开 -----------------------------------------------------------
+# --- 2. 学生看得到自己那一行，看不到全班 ---------------------------------------
+
+
+def test_a_student_reads_their_own_group(
+    api_client: TestClient, user_client: UserCreator
+):
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="这门课的题")
+
+    alice = user_client.create_user()
+    alice_token = _login(user_client, api_client, alice)
+    team_id = _create_team(api_client, alice_token, name="第一组")
+    project_id = _create_project(
+        api_client, alice_token, owner=alice.username, task_id=task_id, team_id=team_id
+    )
+    assert (
+        api_client.post(
+            f"/spaces/{board['space_id']}/members",
+            json={"userId": alice.user_id},
+            headers=_auth(board["creator_token"]),
+        ).status_code
+        == 201
+    )
+
+    resp = api_client.get(
+        f"/spaces/{board['space_id']}/course/my-group", headers=_auth(alice_token)
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["projectId"] == project_id
+    assert data["team"]["id"] == team_id
+    assert data["team"]["name"] == "第一组"
+    assert [row["id"] for row in data["team"]["members"]] == [alice.user_id]
+
+    # 什么项目都还没有的人：答得出来，但两样都是空的 —— 不是 404，也不是别人的组。
+    dave = user_client.create_user()
+    dave_token = _login(user_client, api_client, dave)
+    assert (
+        api_client.post(
+            f"/spaces/{board['space_id']}/members",
+            json={"userId": dave.user_id},
+            headers=_auth(board["creator_token"]),
+        ).status_code
+        == 201
+    )
+    empty = api_client.get(
+        f"/spaces/{board['space_id']}/course/my-group", headers=_auth(dave_token)
+    ).json()["data"]
+    assert empty == {"projectId": None, "team": None}
+
+
+# --- 3. 门只对教师开 -----------------------------------------------------------
 
 
 def test_a_student_member_cannot_read_the_roster(

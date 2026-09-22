@@ -52,6 +52,7 @@ from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.team.services import team_service
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -897,6 +898,54 @@ async def get_course_roster(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     data = await _build_course_roster_payload(space_id=space_id, service=service, db=db)
     return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
+    "/{spaceId}/course/my-group",
+    summary="My Course Group (student)",
+)
+async def get_my_course_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """学生自己那一行：我在这个课里的项目，以及我挂在哪个组上。
+
+    与花名册（``/course/roster``）分开是因为门不同：那张表把全班列在一起，只有
+    教师能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    viewer = await UserRepository(session=db).get_by_id(auth_user.user_id)
+    data = await CourseRosterService(db).my_group(
+        space_id, viewer.username if viewer else None
+    )
+
+    team = None
+    team_id = data["teamId"]
+    if team_id is not None:
+        teams = team_service(db)
+        row = await teams.get_team(team_id)
+        relations = await teams.get_team_members(team_id)
+        people = await _hydrate_people(
+            [relation.user_id for relation in relations],
+            user_repo=UserRepository(session=db),
+            profile_repo=UserProfileRepository(session=db),
+        )
+        team = {
+            "id": team_id,
+            "name": row.name if row else "",
+            "members": [
+                people[relation.user_id]
+                for relation in relations
+                if relation.user_id in people
+            ],
+        }
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"projectId": data["projectId"], "team": team},
+    }
 
 
 @router.post(
