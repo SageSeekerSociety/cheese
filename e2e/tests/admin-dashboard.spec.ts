@@ -112,7 +112,10 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
   await expect(page.getByText('待分诊')).toHaveCount(0);
 
   const before = seen.length;
-  await page.getByRole('button', { name: '反馈' }).click();
+  // `exact: true`：顶栏那颗「帮助与反馈」的可访问名字里也含「反馈」，而 Playwright 的
+  // `name` 默认是**子串**匹配 —— 不加这一条，这一行会同时命中它和这一页的分类页签，
+  // 报 strict mode 违规。
+  await page.getByRole('button', { name: '反馈', exact: true }).click();
   await expect(page.getByText('待分诊')).toBeVisible();
   // 那一份已经在手上了：再拉一次只是重复读那两张最长的表。
   expect(seen.length).toBe(before);
