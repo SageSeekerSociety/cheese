@@ -8,6 +8,12 @@ name: MCP serve contract
 # here instead of being discovered during an upgrade.
 
 on:
+  # Seed caches on main so later PRs and merge groups can restore them.
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/remote_execution/package-lock.json'
+      - '.github/workflows/mcp-contract.yml'
   workflow_call:
   schedule:
     # Anthropic publishes most days; a morning report is soon enough to learn
@@ -36,6 +42,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: scripts/remote_execution/package-lock.json
       - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
       # The script and what it imports are standard library only, so this job
       # skips `uv sync` and its several minutes.
@@ -70,9 +78,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - run: >-
+      - name: Resolve the current Claude release
+        id: claude
+        run: echo "version=$(npm view @anthropic-ai/claude-code version)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-mcp-latest-${{ runner.os }}-${{ runner.arch }}-${{ steps.claude.outputs.version }}
+      - name: Install the current Claude release
+        env:
+          CLAUDE_VERSION: ${{ steps.claude.outputs.version }}
+        run: >-
           npm install --no-save --no-audit --no-fund
-          --prefix scripts/remote_execution @anthropic-ai/claude-code@latest
+          --prefix scripts/remote_execution "@anthropic-ai/claude-code@$CLAUDE_VERSION"
       - run: >-
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"

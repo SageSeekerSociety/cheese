@@ -44,40 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # Persist backend/srp_rs's Cargo build cache and the uv venv outside the
-      # checkout, keyed to this job — same reasoning as migration-heads/test
-      # (checkout wipes an in-workspace target/ and .venv every run). No
-      # setup-uv enable-cache: it helps only ephemeral hosted runners; on a
-      # persistent pool machine these dirs are the cache.
-      - name: Point Cargo at the persistent target dir
+      - name: Set the Cargo target directory
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/lint" >> "$GITHUB_ENV"
 
-      # The venv is built per job out of uv's cache, which is the thing worth
-      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
-      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
-      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
-      # that cache is already shared by every slot on the machine.
-      #
-      # Keeping the venv between runs instead is what cost the disk: it stops
-      # sharing the moment the cache is rebuilt under it, and never repairs
-      # itself. All eight venvs found on one box had a link count of 1 on every
-      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
-      # supposed to be views of. The seconds this used to save are a COLD cache;
-      # the cache is what makes it fast, and the cache is not in the workspace
-      # checkout wipes.
-      - name: Point uv at a venv built from the shared cache
+      - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
-      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
-      # See the note in test.yml's migration-heads job.
-      - name: Point uv's cache outside the per-job temp
-        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
-
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
-          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -125,79 +107,25 @@ jobs:
     # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
     # a cold uv cache without leaving a stuck run to sit for hours.
     timeout-minutes: 10
-    # `uv sync` builds backend/srp_rs (a Rust/pyo3 extension) via maturin/cargo.
-    # actions/checkout resets the workspace before every run, wiping any
-    # in-tree target/ dir, so without this the crate fully recompiles every
-    # time (measured 41-44s). runner.temp/.. is a sibling of the per-run temp
-    # dir and of this repo's checkout dir inside the runner's _work root, so
-    # (like microcloud-smoke.yml's state dir) it survives the checkout reset —
-    # already proven on this same box. It's also outside Docker's storage
-    # entirely, so `docker image/builder prune` in deploy-docker.sh (which only
-    # ever touches Docker's own image/build-cache store) cannot sweep it.
-    #
-    # Keyed per job name (migration-heads/test/e2e each get their own
-    # subdirectory) rather than one shared dir: any two of them can land on the
-    # same pool machine and, across successive runs, share its disk — and
-    # Cargo's own target-dir lock would then serialize them (best case) or
-    # corrupt a partial build (worst case, e.g. a crash mid-write). Separate
-    # directories make that scenario impossible outright — there is nothing to
-    # lock over. The cost is that each job's cache warms up independently
-    # (three cold builds the first time, ~1-2GB combined thereafter for this
-    # small crate) instead of one job ever reusing another's freshly-built
-    # cache — but the two jobs already never shared a cache before this
-    # change, so no existing benefit is lost, and each job still gets full
-    # warm-cache savings on every run after its own first one.
-    #
-    # Now that the pool has three machines, these paths live on each machine's
-    # own local disk, so every machine cold-starts its own copy of each job's
-    # cache once and stays warm from then on — no cross-machine contention,
-    # because the caches were never a shared filesystem to begin with. The one
-    # scenario this does NOT cover is two instances of the *same* job (e.g. two
-    # `test` runs) executing concurrently on the *same* machine — that needs
-    # multiple runner processes against one disk, and provision.sh registers
-    # exactly one slot per machine; flagging it rather than assuming it away.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Point Cargo at the persistent target dir
+      - name: Set the Cargo target directory
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
 
-      # The venv is built per job out of uv's cache, which is the thing worth
-      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
-      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
-      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
-      # that cache is already shared by every slot on the machine.
-      #
-      # Keeping the venv between runs instead is what cost the disk: it stops
-      # sharing the moment the cache is rebuilt under it, and never repairs
-      # itself. All eight venvs found on one box had a link count of 1 on every
-      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
-      # supposed to be views of. The ~93s this used to save is a COLD cache;
-      # the cache is what makes it fast, and the cache is not in the workspace
-      # checkout wipes.
-      - name: Point uv at a venv built from the shared cache
+      - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
-      # The cache the venv above is built from has to outlive the job, and it
-      # did not. setup-uv exports UV_CACHE_DIR unconditionally, and with
-      # `cache-local-path` empty it points at $RUNNER_TEMP/setup-uv-cache —
-      # inside the per-job temp the runner wipes. So every job resolved against
-      # an empty cache: 31 wheels, 356 MiB off the network, `Prepared 196
-      # packages in 2m 11s` (runner-2, run 35178186973), where a warm cache
-      # syncs in about a second. Setting UV_CACHE_DIR in GITHUB_ENV cannot fix
-      # it — the action overwrites it — so the input is the way in.
-      #
-      # $HOME rather than a literal path: `cheese-ci-any` also reaches the ARM
-      # runner, where the user is not `ci`. One cache per machine is deliberate;
-      # uv's cache is append-only and file-locked, so both slots can share it.
-      - name: Point uv's cache outside the per-job temp
-        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
-
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
-          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -217,13 +145,6 @@ jobs:
             exit 1
           fi
 
-  # ruff + pyright pulled OUT of the test job into their own job: the most
-  # common failure class (format/lint/type) reds on its own without dragging
-  # the heavier test job with it, and the test job sheds the ~25s it spent on
-  # them. This ran on a hosted runner until the org's Actions billing lapsed
-  # (2026-08-13); it now runs on the cheese-ci pool like the other jobs, using
-  # the persistent Cargo/venv trick below instead of setup-uv's enable-cache
-  # (which helps only ephemeral hosted runners — see migration-heads).
   test:
     runs-on: ubuntu-latest
     # Shared by the three layer steps at the bottom of this job. DATABASE_URL
@@ -272,10 +193,6 @@ jobs:
     # rather than a layer's is a hang in the setup steps, which have none of
     # their own; either way the run reports as a failure with no test results.
     timeout-minutes: 40
-    # Persists backend/srp_rs's Cargo build cache outside the checkout — see
-    # the migration-heads job above for the full reasoning (why this path,
-    # why it's immune to docker prune, and why it's job-keyed rather than
-    # shared with migration-heads/e2e).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -304,39 +221,26 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
-      - name: Point Cargo at the persistent target dir
+      - name: Set the Cargo target directory
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
 
       - name: Ensure the worktree retirement dependency
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof
 
-      # The venv is built per job out of uv's cache, which is the thing worth
-      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
-      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
-      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
-      # that cache is already shared by every slot on the machine.
-      #
-      # Keeping the venv between runs instead is what cost the disk: it stops
-      # sharing the moment the cache is rebuilt under it, and never repairs
-      # itself. All eight venvs found on one box had a link count of 1 on every
-      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
-      # supposed to be views of. The seconds this used to save are a COLD cache;
-      # the cache is what makes it fast, and the cache is not in the workspace
-      # checkout wipes.
-      - name: Point uv at a venv built from the shared cache
+      - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
-      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
-      # See the note in test.yml's migration-heads job.
-      - name: Point uv's cache outside the per-job temp
-        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
-
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
-          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -384,6 +288,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: backend/app/domain/agent/harness/claude_code/remote_execution/client.py
       - name: Install the pinned Claude Code build
         run: |
           version="$(python3 - <<'PY'
