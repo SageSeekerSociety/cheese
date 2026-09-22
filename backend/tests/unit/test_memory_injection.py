@@ -52,7 +52,7 @@ def _store(**pools: list[str]):
 async def test_core_is_carried_and_everything_else_is_only_counted():
     store = _store(p=["core:我是芝士", "core:说人话"] + [f"事实{i}" for i in range(5)])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")])
+    got = await recall_pools(store, [(MemoryScope.agent_project, "p")])
 
     assert got.facts == ["我是芝士", "说人话"]
     assert got.omitted == 5
@@ -61,7 +61,9 @@ async def test_core_is_carried_and_everything_else_is_only_counted():
 async def test_core_over_its_own_budget_is_reported_not_silently_dropped():
     store = _store(p=[f"core:核心{i}" + "长" * 200 for i in range(10)])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")], core_char_budget=600)
+    got = await recall_pools(
+        store, [(MemoryScope.agent_project, "p")], core_char_budget=600
+    )
 
     assert 0 < len(got.facts) < 10
     assert got.core_omitted == 10 - len(got.facts)
@@ -75,7 +77,9 @@ async def test_one_core_fact_survives_a_budget_that_fits_none_of_it():
     「你是谁」."""
     store = _store(p=["core:" + "长" * 5000, "core:第二条"])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")], core_char_budget=100)
+    got = await recall_pools(
+        store, [(MemoryScope.agent_project, "p")], core_char_budget=100
+    )
 
     assert got.facts == ["第二条"]
     assert got.core_omitted == 1
@@ -84,7 +88,7 @@ async def test_one_core_fact_survives_a_budget_that_fits_none_of_it():
 async def test_nothing_is_reported_missing_when_the_pool_is_only_core():
     store = _store(p=["core:只有这一条"])
 
-    got = await recall_pools(store, [(MemoryScope.project, "p")])
+    got = await recall_pools(store, [(MemoryScope.agent_project, "p")])
 
     assert got.facts == ["只有这一条"]
     assert got.omitted == 0
@@ -93,11 +97,11 @@ async def test_nothing_is_reported_missing_when_the_pool_is_only_core():
 async def test_both_pools_report_into_one_total():
     store = _store(
         own=["core:我是芝士"] + [f"我的{i}" for i in range(30)],
-        shared=[f"共享{i}" for i in range(59)],
+        person=[f"关于这个人{i}" for i in range(59)],
     )
 
     got = await recall_pools(
-        store, [(MemoryScope.agent_project, "own"), (MemoryScope.project, "shared")]
+        store, [(MemoryScope.agent_project, "own"), (MemoryScope.user, "person")]
     )
 
     assert got.facts == ["我是芝士"]

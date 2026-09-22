@@ -9,6 +9,7 @@
 """
 
 import importlib.util
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,8 +17,6 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory import redundant
-from app.domain.memory.models import MemoryScope
-from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import chat_ws_url
@@ -244,6 +243,31 @@ async def _run_migration(db_session: AsyncSession) -> None:
     await db_session.flush()
 
 
+async def _legacy_memory(db_session, project_id, content):
+    await db_session.execute(
+        sa.text(
+            "INSERT INTO memory_entries "
+            "(id, scope, scope_id, content, layer, created_at, updated_at) "
+            "VALUES (:id, 'project', :pool, :content, 'fact', now(), now())"
+        ),
+        {"id": uuid.uuid4(), "pool": str(project_id), "content": content},
+    )
+
+
+async def _legacy_contents(db_session, project_id):
+    return list(
+        (
+            await db_session.execute(
+                sa.text(
+                    "SELECT content FROM memory_entries "
+                    "WHERE scope = 'project' AND scope_id = :pool"
+                ),
+                {"pool": str(project_id)},
+            )
+        ).scalars()
+    )
+
+
 def test_the_migration_lands_every_project_pool_row_in_that_document(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ) -> None:
@@ -265,10 +289,9 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
             author="andyl",
             expected_version=0,
         )
-        store = memory_store(db_session)
         facts = ["数据来源是教务处脱敏数据", FACT]
         for fact in facts:
-            await store.remember(MemoryScope.project, str(project.id), fact)
+            await _legacy_memory(db_session, project.id, fact)
         await db_session.flush()
 
         for _ in range(2):
@@ -281,9 +304,9 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
             # 人自己写的那一段还在，被搬进来的那几条排在它后面。
             assert "做课程推荐系统" in doc.content
             # 只搬不删：窗口里旧镜像还在写这个池，删了就是孤儿。
-            assert sorted(
-                await store.recall(MemoryScope.project, str(project.id))
-            ) == sorted(facts)
+            assert sorted(await _legacy_contents(db_session, project.id)) == sorted(
+                facts
+            )
 
     _portal.call(run)
 
@@ -302,10 +325,9 @@ def test_the_migration_builds_the_first_document_for_a_project_that_has_none(
         project = await ProjectService(db_session).create(
             name="没有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
         )
-        store = memory_store(db_session)
         assert project.root_topic_id is not None
         assert await TopicService(db_session).get_doc(project.root_topic_id) is None
-        await store.remember(MemoryScope.project, str(project.id), FACT)
+        await _legacy_memory(db_session, project.id, FACT)
         await db_session.flush()
 
         await _run_migration(db_session)
@@ -316,7 +338,7 @@ def test_the_migration_builds_the_first_document_for_a_project_that_has_none(
         # 建出来的第一版从标题开始，前面不带空行。
         assert doc.content.startswith("## ")
         # 只搬不删，和有文档的那一条一样。
-        assert await store.recall(MemoryScope.project, str(project.id)) == [FACT]
+        assert await _legacy_contents(db_session, project.id) == [FACT]
 
         # 窗口里原样再跑一遍：不再建第二份文档，也不再追加同一条。
         await _run_migration(db_session)
