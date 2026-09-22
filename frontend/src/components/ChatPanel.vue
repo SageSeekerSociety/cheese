@@ -58,6 +58,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import { useChatScroll } from './room/composables/useChatScroll'
+import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
 import AgentControls from './AgentControls.vue'
@@ -447,7 +448,7 @@ const {
     emit('state-changed', 'doc')
     flushOutbox() // 断线期间打的字，连上就自己走
   },
-  onDrop: requeueSending,
+  onDrop: () => requeueSending(),
   reconnect: (topicId) => {
     if (props.topic?.id === topicId) void loadTopic(props.topic)
   },
@@ -459,15 +460,6 @@ const {
 function connectSocket(topicId: string) {
   beginCatchUp()
   openSocket(topicId)
-}
-
-function requeueSending() {
-  for (const item of outbox.value) {
-    if (item.state === 'sending') {
-      clearEchoTimer(item.clientId)
-      item.state = 'queued'
-    }
-  }
 }
 
 // Append a block unless it's already in the timeline: after a switch-away /
@@ -529,11 +521,7 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'error':
       if (frame.client_id) {
-        const item = outbox.value.find((entry) => entry.clientId === frame.client_id)
-        if (item) {
-          clearEchoTimer(item.clientId)
-          item.state = 'failed'
-          item.error = frame.message
+        if (failOutgoing(frame.client_id, frame.message)) {
           if (activeTurnIds.value.size === 0) awaitingReply.value = false
         } else {
           errorMsg.value = frame.message
@@ -766,79 +754,19 @@ function scrollToMessage(id: string) {
   document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-// ---- 发件箱 (§14.1 实时) ----
-// 「人发的消息立即显示，绝不排在 AI turn 后面。别的都可以错，现场不能错」——
-// 而在这之前，发送是把帧塞进 socket 就完了：屏幕上什么都没有，要等后端落库
-// （名册查询、mention 解析、通知写入）再广播回来才显示。快的时候看不出，慢的
-// 时候你会以为自己的消息发丢了；socket 没开时更直接：输入框本身是禁用的。
-//
-// 现在消息立刻出现在时间线末尾，再去对账：后端把 client_id 原样戳回块上，回声
-// 一到就把本地这条换成真的。对不上账的那条不会消失，它变成一条能重试的行。
-const outbox = ref<Outgoing[]>([])
-// 等回声等多久算没送到。宁可长一点：误报「未送达」比晚一点显示更伤——房间里
-// 已经有过一次这种误报（#539）。
-const ECHO_TIMEOUT_MS = 30_000
-const echoTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
-function clearEchoTimer(clientId: string) {
-  const t = echoTimers.get(clientId)
-  if (t) clearTimeout(t)
-  echoTimers.delete(clientId)
-}
-
-function markFailed(clientId: string) {
-  clearEchoTimer(clientId)
-  const item = outbox.value.find((o) => o.clientId === clientId)
-  if (!item || item.state !== 'sending') return
-  // No durable echo for the full timeout: the link is gone whatever OPEN says.
-  if (!replaceStaleSocket()) item.state = 'failed'
-}
-
-/** Hand one queued message to the socket, if there is one to hand it to. */
-function flushOutbox() {
-  if (!connected.value) return
-  for (const item of outbox.value) {
-    if (item.state !== 'queued') continue
-    const msg: WsClientChatMessage = {
-      type: 'message',
-      content: item.content,
-      reply_to: item.replyTo,
-      attachments: item.atts,
-      client_id: item.clientId,
-    }
-    if (!postFrame(msg)) return
-    item.state = 'sending'
-    clearEchoTimer(item.clientId)
-    echoTimers.set(
-      item.clientId,
-      setTimeout(() => markFailed(item.clientId), ECHO_TIMEOUT_MS)
-    )
-  }
-}
-
-/** The echo came home — this local copy has a real block now. */
-function settleOutbox(block: Block): boolean {
-  const clientId = (block.meta as Record<string, unknown> | null)?.client_id
-  if (typeof clientId !== 'string') return false
-  const i = outbox.value.findIndex((o) => o.clientId === clientId)
-  if (i < 0) return false
-  clearEchoTimer(clientId)
-  outbox.value.splice(i, 1)
-  return true
-}
-
-function retrySend(clientId: string) {
-  const item = outbox.value.find((o) => o.clientId === clientId)
-  if (!item) return
-  item.state = 'queued'
-  item.error = undefined
-  flushOutbox()
-}
-
-function dropSend(clientId: string) {
-  clearEchoTimer(clientId)
-  outbox.value = outbox.value.filter((o) => o.clientId !== clientId)
-}
+// 发件箱：已经打出去、库里还没有的那几条 —— 见 room/composables/useOutbox。
+// 「发出去之后房间该有什么反应」留在这里（下面的 `send`）。
+const {
+  outbox,
+  enqueue,
+  flush: flushOutbox,
+  settle: settleOutbox,
+  fail: failOutgoing,
+  requeueSending,
+  retry: retrySend,
+  drop: dropSend,
+  cancelTimers: cancelEchoTimers,
+} = useOutbox({ post: postFrame, connected, onStale: () => replaceStaleSocket() })
 
 function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
   const trimmed = content.trim()
@@ -846,15 +774,8 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // An image-only send (no text) is a valid message (图片输入).
   if (!trimmed && !atts) return false
   errorMsg.value = null
-  outbox.value.push({
-    clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    content: trimmed,
-    replyTo: replyTarget.value?.id ?? undefined,
-    atts,
-    state: 'queued',
-  })
+  enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts })
   replyTarget.value = null
-  flushOutbox()
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack, before anything has been delivered anywhere yet.
   if (summon) {
@@ -1555,7 +1476,7 @@ watch(
     if (oldId) rememberScroll(oldId)
     if (oldId) {
       rememberComposer(oldId)
-      for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
+      cancelEchoTimers()
     }
     if (props.topic) {
       // loadTopic clears the pending attachments synchronously before its first
@@ -1575,8 +1496,7 @@ onBeforeUnmount(() => {
   // persist position across an unmount (e.g. leaving the view)
   rememberScroll(props.topic?.id)
   if (props.topic) rememberComposer(props.topic.id)
-  for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
-  closeSocket()
+  // 链路和回声计时器由各自的 composable 在 scope 停掉时收，这里不重复一遍。
 })
 </script>
 
