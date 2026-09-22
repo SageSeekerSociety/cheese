@@ -7,6 +7,10 @@
 // 展开 affordance at all. Asking the DOM for a measured height would mean
 // reading layout during render; asking the text is deterministic and testable.
 
+import type { Block } from '../cx_types'
+
+import { toolLabel } from './toolLabels'
+
 /** Collapsed height for a long entry, in lines of the 现场 monospace type. */
 export const SITE_CLAMP_LINES = 12
 
@@ -134,4 +138,40 @@ export function formatSpan(seconds: number): string {
   const rest = seconds % 60
   if (minutes < 60) return `${minutes} 分 ${String(rest).padStart(2, '0')} 秒`
   return `${Math.floor(minutes / 60)} 小时 ${String(minutes % 60).padStart(2, '0')} 分`
+}
+
+// 工具事件那一行：backend stores "verb\npreview"; legacy rows are "🔧 toolname".
+// Split into the action verb and an optional argument preview. 现场和卡片详情都按
+// 这一份翻译，同一步操作在两处写成同一个词。
+const LEGACY_VERB: Record<string, string> = {
+  update_doc: '更新文档',
+  remember: '记入记忆',
+  notify: '发送通知',
+  request_accept: '提交验收卡',
+  pin_milestone: '添加里程碑',
+  write_file: '写入文件',
+  record_decision: '记录决策',
+}
+
+// Meta-first rendering: an event block with structured meta ({tool, arg}) is
+// translated at DISPLAY time via the full toolLabels table — so a verb missing
+// from the table at write time is never frozen untranslated. Rows without meta
+// (pre-meta data) fall back to the baked content text.
+export function eventVerb(b: Block): string {
+  // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
+  // tool 仍然如实记着真正跑的是哪个工具。
+  if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
+  const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
+  return LEGACY_VERB[first] ?? first
+}
+
+export function eventArg(b: Block): string {
+  if (b.meta?.tool) return b.meta.arg ?? ''
+  const nl = b.content.indexOf('\n')
+  return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
+}
+
+// 这一步挂了没有。后端只在挂了的时候写这个字段，所以「没有」就是「没挂」。
+export function eventFailed(b: Block): boolean {
+  return b.meta?.failed === true
 }

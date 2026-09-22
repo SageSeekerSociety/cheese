@@ -17,9 +17,7 @@ import { useDisplay } from 'vuetify'
 import { listProjectLibrary } from '../../api'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
-import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentTile from '../AttachmentTile.vue'
-import CheeseAvatar from '../CheeseAvatar.vue'
 
 const props = defineProps<{
   topic: Topic | null

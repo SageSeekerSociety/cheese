@@ -90,17 +90,51 @@ function decline() {
 </script>
 
 <template>
-  <div v-if="shown" class="push-ask">
-    <span class="push-ask__text">本轮运行时间可能较长，完成后通知你</span>
-    <div class="push-ask__actions">
-      <v-btn variant="text" size="small" color="primary" :loading="busy" @click="accept"> 开启通知 </v-btn>
-      <v-btn variant="text" size="small" :disabled="busy" @click="decline">暂不开启</v-btn>
+  <!-- 它插在话题头和面板之间，出现时下面整个房间让出一条。0.2s 折叠，看得出是
+       这里多了一条，而不是整页往下跳了一截；外边距在折叠的那一层里面，跟着一起长。 -->
+  <Transition name="push-fold">
+    <div v-if="shown" class="push-fold">
+      <div class="push-fold__inner">
+        <div class="push-ask">
+          <span class="push-ask__text">本轮运行时间可能较长，完成后通知你</span>
+          <div class="push-ask__actions">
+            <v-btn variant="text" size="small" color="primary" :loading="busy" @click="accept"> 开启通知 </v-btn>
+            <v-btn variant="text" size="small" color="medium-emphasis" :disabled="busy" @click="decline"
+              >暂不开启</v-btn
+            >
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
+  </Transition>
 </template>
 
 <style scoped>
+.push-fold {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-rows: 1fr;
+}
+.push-fold__inner {
+  min-height: 0;
+}
+.push-fold-enter-active,
+.push-fold-leave-active {
+  transition:
+    grid-template-rows 0.2s ease,
+    opacity 0.2s ease;
+}
+.push-fold-enter-active .push-fold__inner,
+.push-fold-leave-active .push-fold__inner {
+  overflow: hidden;
+}
+.push-fold-enter-from,
+.push-fold-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
 .push-ask {
+  margin: 8px 12px 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

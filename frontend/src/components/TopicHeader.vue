@@ -89,8 +89,18 @@ watch(
     topicUsage.value = null
     projectUsage.value = null
     usageOpen.value = false
+    machineNotice.value = null
   }
 )
+
+// 这个房间能看到整台机器。算力选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
+// 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
+const machineNotice = ref<string | null>(null)
+
+function toggleFocus() {
+  usageOpen.value = false
+  emit('toggle-focus')
+}
 </script>
 
 <template>
@@ -107,21 +117,34 @@ watch(
         <span class="topic-header__title t-title" :title="topic.title">{{ topic.title }}</span>
         <span class="topic-header__meta">
           <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+          <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
+            <span class="status-dot status-dot--warn" />整台机器
+          </span>
           <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>
       </div>
-
-      <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
-           「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
-           手机上这一行没有它的位置，它浮在对话上方（TopicChatColumn）。 -->
-      <TopicComputePicker v-if="mdAndUp && isWorkTopic" :key="topic.id" :topic-id="topic.id" />
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
 
-      <!-- 用量: was the 资源 drawer. -->
-      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+      <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
+           「你现在在专注模式里」的那句话。进去的入口在 ⋯ 里。 -->
+      <v-btn
+        v-if="mdAndUp && focus"
+        icon="mdi-arrow-collapse"
+        size="small"
+        variant="text"
+        class="topic-header__on"
+        title="退出专注模式"
+        aria-label="退出专注模式"
+        @click="emit('toggle-focus')"
+      />
+
+      <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的：编号、用量、
+           算力（首轮之后就锁死了）、专注模式。eager：算力选择器要在菜单合着的时候
+           就挂上，才能说出「整台机器」。 -->
+      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end" eager>
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
@@ -129,8 +152,8 @@ watch(
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="详情与用量"
-            aria-label="详情与用量"
+            title="更多"
+            aria-label="更多"
           />
         </template>
         <v-card min-width="280" class="usage-card">
@@ -138,6 +161,18 @@ watch(
             <span v-if="isWorkTopic" class="t-meta" :title="topic.id">#{{ shortId }}</span>
             <span class="t-meta">{{ connected ? '已连接' : '未连接' }}</span>
           </div>
+          <!-- 算力：这个话题的轮次在哪儿跑。它是话题的属性（发完第一条就锁死），
+               不是某条消息的动作，所以不在输入区。 -->
+          <div v-if="isWorkTopic" class="menu-row">
+            <span class="t-meta">运行环境</span>
+            <TopicComputePicker :key="topic.id" :topic-id="topic.id" @machine-access="machineNotice = $event" />
+          </div>
+          <!-- 专注模式：面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
+               永远只有一个窗格，没有第二栏可以让开。 -->
+          <button v-if="mdAndUp" type="button" class="menu-row menu-row--action" @click="toggleFocus">
+            <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
+            <span>{{ focus ? '退出专注模式' : '专注模式' }}</span>
+          </button>
           <div v-if="usageLoading" class="d-flex justify-center py-6">
             <v-progress-circular indeterminate color="primary" size="24" />
           </div>
@@ -181,18 +216,6 @@ watch(
           </div>
         </v-card>
       </v-menu>
-
-      <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
-         永远只有一个窗格，没有第二栏可以让开。 -->
-      <v-btn
-        v-if="mdAndUp"
-        :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-        size="small"
-        variant="text"
-        :class="focus ? 'topic-header__on' : 'c-muted'"
-        :title="focus ? '退出专注模式' : '专注模式'"
-        @click="emit('toggle-focus')"
-      />
     </div>
   </Teleport>
 </template>
@@ -259,6 +282,14 @@ watch(
   font-size: 12px;
   flex: 0 0 auto;
 }
+.topic-header__machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: var(--warn-ink);
+  font-size: 12px;
+}
 .topic-header__on {
   color: var(--ink);
 }
@@ -306,6 +337,29 @@ watch(
   gap: 12px;
   padding: 12px;
   border-bottom: 1px solid var(--line);
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.menu-row--action {
+  justify-content: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.menu-row--action:hover {
+  background: var(--fill);
 }
 .usage-grid {
   display: grid;
