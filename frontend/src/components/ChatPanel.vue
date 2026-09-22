@@ -59,6 +59,7 @@ import { getAvatarUrl } from '../utils/materials'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import { useChatScroll } from './room/composables/useChatScroll'
 import { useRoomRoster } from './room/composables/useRoomRoster'
+import { useRoomSocket } from './room/composables/useRoomSocket'
 import AgentControls from './AgentControls.vue'
 import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
@@ -225,7 +226,6 @@ watch(
 
 const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
-const connected = ref(false)
 
 // Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
@@ -348,8 +348,6 @@ function onMessagesClick(e: MouseEvent) {
   }
 }
 
-let socket: WebSocket | null = null
-
 // 滚动位置、跟不跟新消息、重放期间不抖 —— 见 room/composables/useChatScroll。
 // 往回翻历史留在这里：它碰 messages / 缓存 / 错误横幅，不是滚动的事。
 const {
@@ -426,62 +424,41 @@ async function loadOlder() {
   if (!failed) await fillViewportIfNeeded()
 }
 
-// Auto-reconnect (协作软件语义): a backend deploy/restart must be a blip, not a
-// frozen pane needing a manual refresh. An UNEXPECTED close schedules a
-// reconnect with backoff; every deliberate teardown funnels through
-// closeSocket(), which cancels it. The reconnect re-runs loadTopic so history
-// gaps from the outage are refetched (pushBlock dedups the overlap).
-let retryTimer: ReturnType<typeof setTimeout> | null = null
-let retryDelayMs = 1000
-let disposed = false
-
-function cancelRetry() {
-  if (retryTimer) {
-    clearTimeout(retryTimer)
-    retryTimer = null
-  }
-}
-
-// Every way the backend can refuse a socket AT CONNECT (app/api/routes/chat.py):
-// no token, a token it could not verify, and a verified token whose owner is not
-// on this topic's roster. The set is the point — `forbidden` was left out once
-// and behaved exactly like the bug this latch exists to fix, because a refusal
-// the client doesn't recognise falls through to the reconnect path below.
-const CONNECT_REFUSAL_CODES = new Set(['auth_required', 'auth_expired', 'forbidden'])
-
-// A connect refusal is not an outage: the backend closes the socket after one
-// error frame, so retrying just reopens and gets refused again. And it does not
-// even back off — the HANDSHAKE succeeds, the refusal arrives as a frame, so
-// onopen has already cleared the banner and reset retryDelayMs to 1s before the
-// reason lands. Measured with `forbidden` unlatched: 9 connections in 8 seconds,
-// the green dot flickering and the reason blinking with it, forever. So we latch
-// it: stop retrying and keep the reason on screen until they act.
-const connectRefused = ref(false)
-
-function scheduleReconnect(topicId: string) {
-  if (retryTimer || connectRefused.value) return
-  const delay = retryDelayMs
-  retryDelayMs = Math.min(retryDelayMs * 2, 15000)
-  retryTimer = setTimeout(() => {
-    retryTimer = null
-    // Only if the user is still on this topic (switching cancels via closeSocket,
-    // but double-check against races).
+// 这条房间 socket 的连接、重连退避、心跳、换掉假活的那条 —— 见
+// room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
+const {
+  connected,
+  connectRefused,
+  open: openSocket,
+  close: closeSocket,
+  isConnectRefusal,
+  retryLater,
+  post: postFrame,
+  replaceStale: replaceStaleSocket,
+} = useRoomSocket({
+  topicId: () => props.topic?.id,
+  onFrame: (frame) => {
+    handleFrame(frame)
+    noteFrame()
+  },
+  onOpen: () => {
+    // State frames are transient. A doc saved while disconnected may have no
+    // remaining turn to replay it; refresh through the panel's conflict guard.
+    emit('state-changed', 'doc')
+    flushOutbox() // 断线期间打的字，连上就自己走
+  },
+  onDrop: requeueSending,
+  reconnect: (topicId) => {
     if (props.topic?.id === topicId) void loadTopic(props.topic)
-  }, delay)
-}
+  },
+  errorMsg,
+})
 
-function closeSocket() {
-  cancelRetry()
-  stopHeartbeat()
-  if (socket) {
-    socket.onopen = null
-    socket.onmessage = null
-    socket.onerror = null
-    socket.onclose = null
-    socket.close()
-    socket = null
-  }
-  connected.value = false
+// 每次连上，broker 都会把一轮进行中的帧一次性重放出来——先进追赶模式，这一阵里
+// 不逐帧滚动。
+function connectSocket(topicId: string) {
+  beginCatchUp()
+  openSocket(topicId)
 }
 
 function requeueSending() {
@@ -492,120 +469,6 @@ function requeueSending() {
     }
   }
 }
-
-// OPEN is only the browser's last observation: a socket whose path stopped
-// carrying frames stays OPEN until TCP gives up, which took 6.5 minutes once.
-// Whoever decides the link is gone (no echo for a sent message, no answer to a
-// ping) comes here: drop that socket without telling it, queue what it was
-// carrying, and let loadTopic reconcile history and open a fresh one.
-function replaceStaleSocket() {
-  const topic = props.topic
-  const stale = socket
-  if (!topic || !stale) return false
-  requeueSending()
-  stopHeartbeat()
-  socket = null
-  stale.onopen = null
-  stale.onmessage = null
-  stale.onerror = null
-  stale.onclose = null
-  stale.close()
-  connected.value = false
-  void loadTopic(topic)
-  return true
-}
-
-// Liveness probe. A page that is only waiting for 芝士's reply sends nothing,
-// so without this a dead link is noticed only when the next message goes
-// unanswered. Any frame counts as an answer — the reply is traffic too.
-const HEARTBEAT_INTERVAL_MS = 15_000
-const HEARTBEAT_TIMEOUT_MS = 10_000
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-let pongTimer: ReturnType<typeof setTimeout> | null = null
-
-function noteHeartbeatAnswer() {
-  if (pongTimer) clearTimeout(pongTimer)
-  pongTimer = null
-}
-
-function stopHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer)
-  heartbeatTimer = null
-  noteHeartbeatAnswer()
-}
-
-function startHeartbeat(ws: WebSocket) {
-  stopHeartbeat()
-  heartbeatTimer = setInterval(() => {
-    if (socket !== ws || ws.readyState !== WebSocket.OPEN || pongTimer) return
-    const ping: WsClientMessage = { type: 'ping' }
-    ws.send(JSON.stringify(ping))
-    pongTimer = setTimeout(() => {
-      pongTimer = null
-      if (socket === ws) replaceStaleSocket()
-    }, HEARTBEAT_TIMEOUT_MS)
-  }, HEARTBEAT_INTERVAL_MS)
-}
-
-function openSocket(topicId: string) {
-  beginCatchUp()
-  closeSocket()
-  const ws = new WebSocket(chatWsUrl(topicId))
-  socket = ws
-
-  ws.onopen = () => {
-    connected.value = true
-    retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
-    errorMsg.value = null
-    startHeartbeat(ws)
-    // State frames are transient. A doc saved while disconnected may have no
-    // remaining turn to replay it; refresh through the panel's conflict guard.
-    emit('state-changed', 'doc')
-    flushOutbox() // 断线期间打的字，连上就自己走
-  }
-  ws.onclose = () => {
-    if (socket === ws) {
-      connected.value = false
-      stopHeartbeat()
-      // Anything still waiting for an echo lost its channel — queue it again
-      // rather than let its timer call it undelivered while we reconnect.
-      requeueSending()
-      scheduleReconnect(topicId)
-    }
-  }
-  ws.onerror = () => {
-    // The close handler owns retry; the banner just explains the grey dot.
-    if (!connectRefused.value) errorMsg.value = '连接断开，正在自动重连…'
-  }
-  ws.onmessage = (ev: MessageEvent) => {
-    // Guard against frames from a stale socket after topic switch.
-    if (socket !== ws) return
-    let frame: WsServerFrame
-    try {
-      frame = JSON.parse(ev.data as string) as WsServerFrame
-    } catch {
-      return
-    }
-    noteHeartbeatAnswer()
-    if (frame.type === 'pong') return
-    handleFrame(frame)
-    noteFrame()
-  }
-}
-
-// 有网就自动转出来 (owner spec): the offline→online transition is our cue to
-// reconnect NOW rather than wait out the backoff, and to refetch history so
-// messages that landed during the outage are pulled in — loadTopic re-runs the
-// history fetch and reopens the socket, and pushBlock dedups the overlap. Guards:
-// a connect refusal is an auth problem, not an outage (leave it latched); a
-// still-healthy socket needs nothing; no active topic, nothing to do.
-function reconnectOnOnline() {
-  if (connectRefused.value || connected.value || !props.topic) return
-  cancelRetry()
-  retryDelayMs = 1000 // recovered → next outage starts backoff fresh
-  void loadTopic(props.topic)
-}
-useEventListener(window, 'online', reconnectOnOnline)
 
 // Append a block unless it's already in the timeline: after a switch-away /
 // return, history (DB) and the broker's in-progress-turn replay overlap, and
@@ -679,7 +542,7 @@ function handleFrame(frame: WsServerFrame) {
       }
       // The socket was refused at connect — the backend closes right after this
       // frame, so latch the reason and stop the reconnect loop from burying it.
-      if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
+      if (isConnectRefusal(frame.code)) {
         connectRefused.value = true
         errorMsg.value = frame.message
         awaitingReply.value = false
@@ -738,6 +601,9 @@ function handleFrame(frame: WsServerFrame) {
   }
 }
 
+// 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
+let disposed = false
+
 async function loadTopic(topic: Topic, entering = false) {
   const generation = ++historyGeneration
   const changes = new Map<string, Block | null>()
@@ -788,7 +654,7 @@ async function loadTopic(topic: Topic, entering = false) {
     await ensureFreshToken()
     if (!stillHere()) return
     const parallelSocket = entering && outbox.value.length === 0
-    if (parallelSocket) openSocket(topic.id)
+    if (parallelSocket) connectSocket(topic.id)
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
@@ -827,7 +693,7 @@ async function loadTopic(topic: Topic, entering = false) {
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
-    if (!parallelSocket && !connectRefused.value) openSocket(topic.id)
+    if (!parallelSocket && !connectRefused.value) connectSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
     if (!stillHere()) return
@@ -835,7 +701,7 @@ async function loadTopic(topic: Topic, entering = false) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
-      scheduleReconnect(topic.id)
+      retryLater(topic.id)
     }
   } finally {
     if (generation === historyGeneration) {
@@ -930,7 +796,7 @@ function markFailed(clientId: string) {
 
 /** Hand one queued message to the socket, if there is one to hand it to. */
 function flushOutbox() {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  if (!connected.value) return
   for (const item of outbox.value) {
     if (item.state !== 'queued') continue
     const msg: WsClientChatMessage = {
@@ -940,7 +806,7 @@ function flushOutbox() {
       attachments: item.atts,
       client_id: item.clientId,
     }
-    socket.send(JSON.stringify(msg))
+    if (!postFrame(msg)) return
     item.state = 'sending'
     clearEchoTimer(item.clientId)
     echoTimers.set(
