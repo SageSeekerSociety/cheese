@@ -3,7 +3,7 @@
  *
  * 和 `composerDrafts.ts`（聊天输入框）是同一件事的第二个例子，理由也一样：**每次
  * 发版，开着的页面都会自己刷新**（service worker 换新 → `window.location.reload()`，
- * 见 pwa.ts）。刷新没有「关掉抽屉」这一步，`onBeforeUnmount` 一个都不会跑，于是
+ * 见 pwa.ts）。刷新没有「关掉表单」这一步，`onBeforeUnmount` 一个都不会跑，于是
  * 写了一半的反馈在用户眼皮底下消失 —— 而反馈表单比聊天输入框长得多（标题、正文、
  * 复现步骤、期望），丢一次就是几百字。
  *

@@ -73,7 +73,8 @@ describe('反馈中心的错误', () => {
       // 一画出来就会踩到。
       routes: [...FeedbackRoutes, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
     })
-    // 提交抽屉是个 `v-navigation-drawer`，它要 `v-app` provide 的 layout。
+    // 套一层 `v-app`：Vuetify 的主题变量与排版挂在它渲染出来的 `.v-application` 上，
+    // 少了这一层，组件还在、主题却不在（底色、字号都不对）。
     const Wrapper = {
       components: { FeedbackCenterPage },
       template: '<v-app><FeedbackCenterPage /></v-app>',
@@ -88,9 +89,8 @@ describe('反馈中心的错误', () => {
     // 这一条是「点了支持、服务端拒了」之后 store 里的样子。
     useFeedbackStore().error = ERR
 
-    // 这里不用 `findByText(ERR)`：关着的提交抽屉也在 DOM 里，它画的是同一个
-    // `store.error`，于是会命中两个元素、报 "Found multiple elements"（findByText
-    // 会一路重试到超时）。钉的是页面里**这一条**的位置 —— 那才是这次修的东西。
+    // 钉的是页面里**这一条**的位置，不是「树上某处有这句话」：这条用例要验的正是
+    //  「失败画在列表这一页上」，而不是被谁吸收了。
     await waitFor(() => {
       expect(baseElement.querySelector('.fb-page__inner > .v-alert')?.textContent).toContain(ERR)
     })

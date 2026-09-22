@@ -5,7 +5,7 @@ import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { KIND_LABEL } from '@/lib/feedbackMeta'
-import { EXPECTATION_KINDS, MAX_TAGS, REPRO_KINDS, cleanTags, useFeedbackStore } from '@/stores/feedback'
+import { cleanTags, EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
 
 // 提交反馈的**那一份表单**。它有两个壳，字段只有这一份：
 //
@@ -65,13 +65,39 @@ const askRepro = computed(() => REPRO_KINDS.includes(store.draft.kind))
 const askExpectation = computed(() => EXPECTATION_KINDS.includes(store.draft.kind))
 
 /** 提交按钮能不能按。查的是**同一个门槛**，见文件头。 */
-const canSubmit = computed(
-  () => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting
-)
+const canSubmit = computed(() => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting)
 
-/** 说明那一栏的标题和占位语跟着类型走：建议类问「哪里不好用」比问「发生了什么」贴题。 */
-const bodyLabel = computed(() => t(`feedback.submit.field.body.${store.draft.kind}.label`))
-const bodyPlaceholder = computed(() => t(`feedback.submit.field.body.${store.draft.kind}.placeholder`))
+/** 说明那一栏的标题、占位语和类型说明**跟着类型走**。三份都写成**字面量的表**，不拼键：
+ *  i18n 的闸门（`src/i18n/catalog.spec.ts`）是照着源码里的字面量认「这个键有人用」的，
+ *  拼出来的键既不会被算作一次调用，真正那三个叶子又会被判成「没有任何文件引用」——
+ *  一边报「键不存在」、一边报「没人用」，两句话都不指向真正的原因。
+ *
+ *  表值写成**函数**而不是字符串：`t()` 要在求值的那一刻读当前语言。写成常量会在 setup
+ *  时求值一次，之后切语言这一栏就不跟着变了（而语言是可以在这一页上切的）。 */
+const BODY_COPY: Record<FeedbackKind, () => { label: string; placeholder: string }> = {
+  bug: () => ({
+    label: t('feedback.submit.field.body.bug.label'),
+    placeholder: t('feedback.submit.field.body.bug.placeholder'),
+  }),
+  suggestion: () => ({
+    label: t('feedback.submit.field.body.suggestion.label'),
+    placeholder: t('feedback.submit.field.body.suggestion.placeholder'),
+  }),
+  other: () => ({
+    label: t('feedback.submit.field.body.other.label'),
+    placeholder: t('feedback.submit.field.body.other.placeholder'),
+  }),
+}
+const bodyLabel = computed(() => BODY_COPY[store.draft.kind]().label)
+const bodyPlaceholder = computed(() => BODY_COPY[store.draft.kind]().placeholder)
+
+/** 每一类下面那句后果说明，同样是字面量表，理由同上。 */
+const KIND_HINT: Record<FeedbackKind, () => string> = {
+  bug: () => t('feedback.submit.kind.hint.bug'),
+  suggestion: () => t('feedback.submit.kind.hint.suggestion'),
+  other: () => t('feedback.submit.kind.hint.other'),
+}
+const kindHint = computed(() => KIND_HINT[store.draft.kind]())
 
 /** 标签候选：**从已经加载到的那两份列表里**出现的标签汇总。数据现成，不引新依赖、
  *  也不为它加一个后端接口 —— 候选只是省打字，拿不到候选时这个输入框照样能用。
@@ -148,13 +174,7 @@ onMounted(() => {
         :label="t('feedback.submit.agent.attach')"
         @update:model-value="store.touchDraft()"
       />
-      <v-alert
-        v-if="store.draft.attachContext"
-        type="warning"
-        density="compact"
-        variant="tonal"
-        class="mt-2"
-      >
+      <v-alert v-if="store.draft.attachContext" type="warning" density="compact" variant="tonal" class="mt-2">
         {{ t('feedback.submit.agent.attachHint') }}
       </v-alert>
     </section>
@@ -183,7 +203,7 @@ onMounted(() => {
       >
         <v-btn v-for="kind in kinds" :key="kind" :value="kind" size="small">{{ KIND_LABEL[kind] }}</v-btn>
       </v-btn-toggle>
-      <p class="sb-hint t-meta">{{ t(`feedback.submit.kind.hint.${store.draft.kind}`) }}</p>
+      <p class="sb-hint t-meta">{{ kindHint }}</p>
     </div>
 
     <!-- 必填/选填的分界。这一行是整张表单的骨架：以前每一栏平铺在同一屏、只有标题

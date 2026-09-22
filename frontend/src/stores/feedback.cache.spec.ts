@@ -371,7 +371,9 @@ describe('提交', () => {
     await store.loadList()
 
     createFeedback.mockResolvedValueOnce(detail('fb-new'))
-    store.openSubmit({ title: '新的一条' })
+    // 正文是必填的第二栏（见 stores/feedback.ts 的 `submit`）：只给标题的话提交会直接
+    // 被挡回来，而这两条用例要的正是「提交真的落地了」之后的行为。
+    store.openSubmit({ title: '新的一条', body: '点了没反应' })
     await store.submit()
 
     // 下次挂载必须是**真的重拉**：只清屏幕上那份而留着缓存的话，这里会先画回
@@ -389,7 +391,9 @@ describe('提交', () => {
   it('落地的那条顺手进了详情缓存：紧接着打开它不闪骨架', async () => {
     createFeedback.mockResolvedValueOnce(detail('fb-new'))
     const store = useFeedbackStore()
-    store.openSubmit({ title: '新的一条' })
+    // 正文是必填的第二栏（见 stores/feedback.ts 的 `submit`）：只给标题的话提交会直接
+    // 被挡回来，而这两条用例要的正是「提交真的落地了」之后的行为。
+    store.openSubmit({ title: '新的一条', body: '点了没反应' })
     expect(await store.submit()).toBe('fb-new')
 
     const stuck = deferred<FeedbackDetail>()

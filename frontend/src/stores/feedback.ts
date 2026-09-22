@@ -197,9 +197,13 @@ export function resetFeedbackCaches(): void {
 
 const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 }
 
-/** 提交抽屉里那一份表单。提交流程有两处（中心页的按钮、会话里的 Agent 卡片），
- *  它们打开的是同一个抽屉，所以「抽屉开着、内容是什么」放在 store 里而不是某个
- *  页面的 ref 上 —— 否则 AgentFeedbackCard 得把抽屉再实现一遍。 */
+/** 提交表单里那一份**内容**。三个入口共用它：反馈中心和「我的反馈」走独立页面
+ *  （`/feedback/new`），会话里那张提案卡走对话框，而字段只有这一份
+ *  （`SubmitFeedbackForm` 的两个壳）—— 各写一遍的话，「可见范围」这种后来才加的字段
+ *  必然只会加进其中一份。
+ *
+ *  **「表单开着没有」不在这里**：壳自己知道自己在不在屏幕上（路由在不在、对话框开不
+ *  开），store 里再留一个布尔就是同一个事实的第二份拷贝。 */
 export interface FeedbackDraft {
   kind: FeedbackKind
   title: string
@@ -224,7 +228,7 @@ export interface FeedbackDraft {
     sessionId?: string
     environment?: string
   }
-  /** 这张抽屉是从哪张提案卡打开的。有值走「发送」那条路（`accept`），
+  /** 这一份是从哪张提案卡打开的。有值走「发送」那条路（`accept`），
    *  没有就是人自己新提一条。 */
   proposal?: { topicId: string; blockId: string }
 }
@@ -977,7 +981,7 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 表单里改了任何一栏，调用方在字段的 `update:model-value` 上打一下这里。
      *
      *  **落盘要防抖**：每敲一个字写一次 `localStorage` 是不必要的（而且中文输入法
-     *  在候选阶段就会发事件）。防抖窗口是 `DRAFT_SAVE_DEBOUNCE_MS`，关抽屉和提交
+     *  在候选阶段就会发事件）。防抖窗口是 `DRAFT_SAVE_DEBOUNCE_MS`，关表单和提交
      *  各会额外收一次尾（见 `closeSubmit` / `submit`），所以窗口里那几下不会漏。
      *
      *  **不传内容进来**：读的是 `this.draft` 那一刻的值。让调用方把值传进来就等于

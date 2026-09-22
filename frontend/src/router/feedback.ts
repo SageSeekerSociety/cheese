@@ -6,9 +6,14 @@ import type { RouteRecordRaw } from 'vue-router'
  * 用户侧三条都是**顶层**的，没有一个挂在 /projects/:id 下面 —— 反馈说的是平台本身，
  * 跟「我现在在哪个项目里」没有关系，挂在项目下面会让人以为这条反馈只属于那个项目。
  *
- * `/feedback/mine` 写在 `/feedback/:id` **前面**：vue-router 4 的排序本来就把静态段
- * 排在参数段前面（所以顺序其实不决定谁赢），但写在这里读起来是「固定段先声明的」，
- * 以后加 `/feedback/counts` 之类的时候不会有人担心被 `:id` 吃掉。
+ * `/feedback/mine` 和 `/feedback/new` 写在 `/feedback/:id` **前面**：vue-router 4 的排序
+ * 本来就把静态段排在参数段前面（所以顺序其实不决定谁赢），但写在这里读起来是「固定段
+ * 先声明的」，以后加 `/feedback/counts` 之类的时候不会有人担心被 `:id` 吃掉。
+ *
+ * `/feedback/new` 是提交表单的**页面壳**（`FeedbackSubmitPage`）。它是一条真路由而不是
+ * 一个浮层，理由写在 `SubmitFeedbackPage.vue` 的文件头：刷新之后人还停在表单上、地址
+ * 可以分享出去。会话里那张 agent 提案卡不走它 —— 那条走对话框，因为从对话里跳走会把
+ * 「我刚看到的那张卡」留在身后。两个壳共用同一份表单（`SubmitFeedbackForm`）。
  *
  * 后台走 `/admin/*` 前缀，对应需求里的「类似 admin.okcheese.com 的独立后台」。
  * 现在它是同构里的一条普通路由（同一个 SPA、同一个构建），因为重点是那两套界面
@@ -47,10 +52,21 @@ export default [
     meta: { title: '我的反馈', isFullPage: true },
   },
   {
+    path: '/feedback/new',
+    name: 'FeedbackSubmit',
+    component: () => import('@/views/feedback/FeedbackSubmitPage.vue'),
+    // `hideTabs`：这一页和详情页都是**页面栈里的一层**（从反馈中心推进来的），按仓库
+    // 自己的移动端规范（`docs/plans/2026-08-18-mobile-shell-design.md` §4 第 4 条）层级
+    // 进页面栈、不进底栏；去掉底栏那 56px，底部留给表单自己那条黏底的操作条。
+    meta: { title: '提交反馈', isFullPage: true, hideTabs: true },
+  },
+  {
     path: '/feedback/:id',
     name: 'FeedbackDetail',
     component: () => import('@/views/feedback/FeedbackDetailPage.vue'),
-    meta: { title: '反馈详情', isFullPage: true },
+    // 同上：栈里的一层。详情页底部本来就叠着「评论框 + 操作栏」两层，再挂一条 56px
+    // 的一级导航，手机上近三成屏幕被底部吃掉。
+    meta: { title: '反馈详情', isFullPage: true, hideTabs: true },
   },
   {
     path: '/admin',
@@ -71,11 +87,12 @@ export default [
         meta: { title: '看板', isFullPage: true },
       },
       {
-        // main 后加的这一块（题目板审核），地址与分区名都跟着它自己的 PR 走。
+        // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
+        // 地址与分区名都跟着它自己的 PR 走。名字改过一次 —— 见 AdminLayout 里那条注释。
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
-        meta: { title: '题目板审核', isFullPage: true },
+        meta: { title: '开板申请', isFullPage: true },
       },
       {
         // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字
