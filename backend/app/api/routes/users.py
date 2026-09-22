@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -453,6 +452,15 @@ async def _spend_sudo_ticket(
         raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
     if not spent:
         raise SudoRequiredError("Re-authentication required for this operation")
+
+
+def _reject_overlong_password(password: str) -> None:
+    """Refused before anything is consumed: bcrypt cannot hash it, and failing
+    after the email code or reset token is spent would cost the user both."""
+    from app.domain.user.passwords import MAX_PASSWORD_BYTES, password_too_long
+
+    if password_too_long(password):
+        raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
 def _normalize_registration_invite_code(
@@ -1370,6 +1378,7 @@ async def register_user(
             raise UnprocessableEntityError(
                 "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
             )
+        _reject_overlong_password(password)
 
     # Always verify email code, regardless of invite code
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
@@ -2184,7 +2193,7 @@ async def sudo_auth(
                 "Password authentication not available for this account"
             )
 
-        import bcrypt
+        from app.domain.user.passwords import check_password
 
         hashed_password = user.hashed_password
 
@@ -2193,11 +2202,7 @@ async def sudo_auth(
             await _spend_sudo_password_attempt(
                 redis,
                 auth_user.user_id,
-                lambda: asyncio.to_thread(
-                    bcrypt.checkpw,
-                    password.encode("utf-8"),
-                    hashed_password.encode("utf-8"),
-                ),
+                lambda: check_password(password, hashed_password),
                 message="Invalid password",
             )
         finally:
@@ -2671,6 +2676,7 @@ async def reset_password(
 
     if len(new_password) < 6:
         raise BadRequestError("Password must be at least 6 characters")
+    _reject_overlong_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2779,6 +2785,8 @@ async def recover_password_verify(
 
     if not has_password and not has_srp:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_password:
+        _reject_overlong_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -3987,11 +3995,9 @@ async def oauth_verify_conflict(
             hashed = user.hashed_password or ""
             if hashed.startswith("SRP:") or not hashed or not password:
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
-            import bcrypt
+            from app.domain.user.passwords import check_password
 
-            if not await asyncio.to_thread(
-                bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
-            ):
+            if not await check_password(password, hashed):
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
         else:
             success, _proof = _srp_verify_session(
@@ -4112,11 +4118,9 @@ async def oauth_bind_user(
         # SRP accounts must use the bind/srp/init + verify pair.
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
 
-    import bcrypt
+    from app.domain.user.passwords import check_password
 
-    if not password or not await asyncio.to_thread(
-        bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
-    ):
+    if not password or not await check_password(password, hashed):
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
 
     try:
