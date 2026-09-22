@@ -48,15 +48,38 @@
       "assignments": {
         "title": "作业与验收",
         "body": "这一屏收作业、做验收：老师看到等批的提交，学生看到这一周要交的东西。内容由「作业与验收」那条任务填。"
-      },
-      "people": {
-        "title": "学生与分组",
-        "body": "这一屏是名册与分组：谁在这门课里、谁和谁一组。组队机制已经在，界面由「学生与分组」那条任务填。"
-      },
-      "team": {
-        "title": "我的小组",
-        "body": "这一屏是我的小组：和谁一组、组里现在做到哪。内容由「组队」那条任务填。"
       }
+    },
+    "people": {
+      "title": "学生与分组",
+      "count": "{n} 名学生",
+      "groups": "分组",
+      "memberCount": "{n} 人",
+      "emptyGroup": "这个组还没有成员。",
+      "noGroups": "这门课还没有分组。学生自己建组、自己加入，组里共用一个项目。",
+      "ungrouped": "还没有组的学生",
+      "allGrouped": "每个人都进组了。",
+      "noProject": "还没有项目",
+      "howGroupingWorks": "今天组队由学生自己做：他建一个组，别人申请或被邀请进来，组里共用一个项目。老师这一屏是看结果。要让老师直接给学生分组，得先给「本版管理员」开团队管理的权限 —— 那是一条新的授权，还没做。"
+    },
+    "team": {
+      "title": "我的小组",
+      "noGroupYet": "你在这门课里还没有组。",
+      "howToJoin": "自己建一个组，或者等同学邀请你、你去申请加入别人的组。",
+      "create": "建一个组",
+      "invitations": "邀请我加入",
+      "invitedBy": "{name} 邀请你加入",
+      "accept": "加入",
+      "decline": "拒绝",
+      "requests": "我在等的申请",
+      "waiting": "等对方确认",
+      "withdraw": "撤回",
+      "myTeams": "我加入的组",
+      "thisCourseGroup": "这门课的组",
+      "noTeams": "你还没有加入任何组。",
+      "nameLabel": "组名",
+      "cancel": "取消",
+      "confirmCreate": "建组"
     },
     "units": {
       "title": "教学单元",

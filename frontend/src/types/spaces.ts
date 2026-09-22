@@ -95,3 +95,36 @@ export type DomainGroup = {
   createdAt: number
   updatedAt: number
 }
+
+/** 课程里的人：学生、他的项目、他的组（`SpacesApi.getCourseRoster`，教师可见）。 */
+export type CourseRosterPerson = {
+  id: number
+  username: string
+  nickname?: string
+  avatarId?: number | null
+  intro?: string
+}
+
+export type CourseRosterStudent = {
+  user: CourseRosterPerson
+  projects: { id: string; name: string; teamId: number | null }[]
+  /** 他挂在哪几个组上。一组一项目，正常只有一个；没有组就是空数组。 */
+  teamIds: number[]
+}
+
+export type CourseRosterTeam = {
+  id: number
+  name: string
+  members: CourseRosterPerson[]
+}
+
+export type CourseRoster = {
+  students: CourseRosterStudent[]
+  teams: CourseRosterTeam[]
+}
+
+/** 学生自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
+export type MyCourseGroup = {
+  projectId: string | null
+  team: { id: number; name: string; members: CourseRosterPerson[] } | null
+}

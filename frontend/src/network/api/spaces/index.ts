@@ -1,4 +1,13 @@
-import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type {
+  CourseRoster,
+  DomainGroup,
+  MyCourseGroup,
+  Space,
+  SpaceCategory,
+  SpaceInviteCode,
+  SpaceMember,
+  Topic,
+} from '@/types'
 import type { Quiz, QuizQuestion } from './types'
 import type {
   AnalyticsApproveType,
@@ -114,6 +123,23 @@ export namespace SpacesApi {
   export const listMembers = (spaceId: number) =>
     NewApiInstance.request<{ members: SpaceMember[] }>({
       url: `/spaces/${spaceId}/members`,
+      method: 'GET',
+    })
+
+  /**
+   * 这门课的人、项目与组 —— 教师版面的「学生与分组」那一屏。
+   * 只对本版管理员（教师）开放：学生读这条是 403。
+   */
+  export const getCourseRoster = (spaceId: number) =>
+    NewApiInstance.request<CourseRoster>({
+      url: `/spaces/${spaceId}/course/roster`,
+      method: 'GET',
+    })
+
+  /** 学生自己那一行：我在这个课里的项目与我的组（谁都能读，只关于自己）。 */
+  export const getMyCourseGroup = (spaceId: number) =>
+    NewApiInstance.request<MyCourseGroup>({
+      url: `/spaces/${spaceId}/course/my-group`,
       method: 'GET',
     })
 
