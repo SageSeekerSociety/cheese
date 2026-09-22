@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { LibraryFile } from '../api'
 import type {
   AgentControlState,
   Block,
@@ -9,53 +8,38 @@ import type {
   RoomTask,
   TodoItem,
   Topic,
-  TopicMemberRow,
-  WsClientChatMessage,
-  WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
 import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/composerDrafts'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import {
   answerOptions,
   ApiError,
   attachmentRawUrl,
-  chatWsUrl,
   downloadFile,
   ensureFreshToken,
   getProgress,
   isRetryableGetFailure,
   listBlocks,
-  listProjectLibrary,
   listRoomTasks,
-  listTopicMembers,
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
-import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../lib/blockDisplay'
+import { replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
-import { parseDiffLines } from '../lib/diff'
 import { mentionsHandle } from '../lib/expandMentions'
-import { fileIcon, IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
-import {
-  coalesceSplitFencedCodeBlocks,
-  renderMarkdown as renderMarkdownWith,
-  renderPlain as renderPlainWith,
-} from '../lib/renderMessage'
+import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
-import { avatarColor, avatarInitial } from '../utils/avatar'
-import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import { useChatScroll } from './room/composables/useChatScroll'
@@ -66,37 +50,20 @@ import RoomComposer from './room/RoomComposer.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
 import AgentControls from './AgentControls.vue'
-import AgentNoticeFrame from './AgentNoticeFrame.vue'
-import AttachmentImage from './AttachmentImage.vue'
-import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
-import CloudStartupStatus from './CloudStartupStatus.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
-// Message rendering (markdown / plain / reference chips) lives in
-// ../lib/renderMessage so it's unit-testable; here we just bind the
-// handle→name and id→title maps filled from the roster / topics props.
 // The room's session state as the socket last reported it. Null until the first
 // frame lands, and passing it at all is what puts AgentControls on the frames.
 const agentControl = ref<AgentControlState | null>(null)
 
+// Message rendering (markdown / plain / reference chips) lives in
+// ../lib/renderMessage and happens in the row components; here we only fill the
+// handle→name and id→title maps they render with, from the roster / topics props.
 const mentionNames = reactive<Record<string, string>>({})
 const topicTitles = reactive<Record<string, string>>({})
 const refMaps = { mentionNames, topicTitles }
-
-function renderMarkdown(text: string): string {
-  return renderMarkdownWith(text, refMaps)
-}
-
-function docDiffText(line: string): string {
-  const text = line.slice(1)
-  return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
-}
-
-function renderPlain(text: string): string {
-  return renderPlainWith(text, refMaps)
-}
 
 const props = withDefaults(
   defineProps<{
@@ -252,20 +219,6 @@ const todoItems = ref<TodoItem[]>([])
 // progress — labelled differently so nobody reads a stale half-circle as
 // "running now".
 const todoRestored = ref(false)
-// Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
-// event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
-// 只有按钮文案在这里。动作行那句话由后端写进块内容（`_ACTION_LABEL` /
-// `编辑了文档`），这里曾经并排放着一份 `verb` 副本，谁都没读过它，改了也不会
-// 生效——两份会漂移的文案里，看不见的那份最危险。
-const ACTION_META: Record<string, { btn: string }> = {
-  doc: { btn: '查看文档' },
-  decision: { btn: '查看决策记录' },
-  topics: { btn: '' },
-  milestone: { btn: '查看日历' },
-  accept: { btn: '前往验收' },
-  notify: { btn: '' },
-}
-
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
 // 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
 // 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
@@ -304,10 +257,6 @@ function applyReactions(blockId: string, reactions: ReactionAgg[]) {
   historyReactions?.set(blockId, reactions)
   const m = messages.value.find((x) => x.id === blockId)
   if (m) m.reactions = reactions
-}
-
-function myReacted(r: ReactionAgg): boolean {
-  return r.authors.includes(AUTHOR)
 }
 
 async function onReact(m: Block, emoji: string) {
