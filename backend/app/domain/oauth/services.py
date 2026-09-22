@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 logger = logging.getLogger(__name__)
@@ -680,6 +680,40 @@ class OAuthService:
         ]
 
     async def delete_connection(self, connection_id: int, user_id: int) -> bool:
+        """Remove a connection unless it is the user's last way to sign in.
+
+        Password, passkey and every other sign-in connection each count as a
+        way in; link-only connections never produce a session, so they neither
+        count nor are ever protected. Raises ``ConflictError`` when refused.
+        """
+        from sqlalchemy import select
+
+        from app.domain.passkey.repositories import PasskeyRepository
+        from app.domain.user.models import User
+
+        conn = await self._repo.get(connection_id)
+        if conn is None or conn.user_id != user_id:
+            return False
+        if conn.provider_id not in LINK_ONLY_PROVIDERS:
+            session = self._repo.session
+            # Row lock: two concurrent unbinds must not each see the other's
+            # connection as the one that remains.
+            user = (
+                await session.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+            ).scalar_one()
+            other_sign_in = any(
+                c.id != connection_id and c.provider_id not in LINK_ONLY_PROVIDERS
+                for c in await self._repo.list_by_user(user_id)
+            )
+            has_passkey = bool(
+                await PasskeyRepository(session=session).list_by_user(user_id)
+            )
+            if not (user.hashed_password or has_passkey or other_sign_in):
+                raise ConflictError(
+                    "这是你唯一的登录方式，请先设置密码或添加通行密钥后再解绑"
+                )
         return await self._repo.delete_by_id(connection_id, user_id)
 
     def _connection_to_dict(self, conn) -> dict:

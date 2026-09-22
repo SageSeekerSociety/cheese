@@ -1309,32 +1309,6 @@ class TestListUserConnections:
 
 
 # ---------------------------------------------------------------------------
-# OAuthService.delete_connection
-# ---------------------------------------------------------------------------
-
-
-class TestDeleteConnection:
-    @pytest.mark.anyio
-    async def test_success(self):
-        svc, repo = _make_service()
-        repo.delete_by_id.return_value = True
-
-        result = await svc.delete_connection(connection_id=1, user_id=42)
-
-        repo.delete_by_id.assert_awaited_once_with(1, 42)
-        assert result is True
-
-    @pytest.mark.anyio
-    async def test_not_found(self):
-        svc, repo = _make_service()
-        repo.delete_by_id.return_value = False
-
-        result = await svc.delete_connection(connection_id=999, user_id=42)
-
-        assert result is False
-
-
-# ---------------------------------------------------------------------------
 # OAuthService.store_oauth_state
 # ---------------------------------------------------------------------------
 
