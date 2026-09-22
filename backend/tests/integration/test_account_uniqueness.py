@@ -140,6 +140,50 @@ async def test_concurrent_registrations_of_one_name_let_exactly_one_through(
     assert await _count_users(python_client.test_factory, username="racer01") == 1
 
 
+@pytest.mark.parametrize(
+    ("username", "status"),
+    [("abc", 422), ("abcd", 200), ("a" * 32, 200), ("a" * 33, 422)],
+)
+async def test_registration_username_length_bounds(client, username, status):
+    resp = client.post(
+        "/users", json=await _registration(username, f"{username}@example.com")
+    )
+
+    assert resp.status_code == status, resp.text
+
+
+@pytest.mark.parametrize(
+    ("username", "error_code"),
+    [
+        ("abc", "INVALID_USERNAME"),
+        ("abcd", None),
+        ("b" * 32, None),
+        ("b" * 33, "INVALID_USERNAME"),
+    ],
+)
+async def test_oauth_create_username_length_bounds(client, username, error_code):
+    params = _oauth_create(client, provider_uid=f"len-{username}", username=username)
+
+    assert params.get("error_code") == error_code, params
+
+
+async def test_oauth_suggestion_passes_the_username_rule(client):
+    token = _mint_oauth_state_token(
+        "ruc",
+        {"id": "suggest-1", "email": None, "name": "张三", "preferredUsername": "张三"},
+    )
+    suggested = client.get(f"/users/auth/oauth/state?token={token}").json()["data"]
+
+    params = _oauth_create(
+        client,
+        provider_uid="suggest-1",
+        username=suggested["suggestedUsername"],
+        nickname=suggested["suggestedNickname"],
+    )
+
+    assert "error_code" not in params, params
+
+
 async def test_oauth_create_for_a_linked_identity_leaves_no_second_account(client):
     first = _oauth_create(client, provider_uid="linked-1", username="linked_first")
     assert "error_code" not in first, first

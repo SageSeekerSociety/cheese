@@ -17,6 +17,12 @@ from app.domain.user.repositories import (
     UserStatisticsRepository,
 )
 
+USERNAME_MIN_LENGTH = 4
+USERNAME_MAX_LENGTH = 32
+_USERNAME_RE = re.compile(
+    rf"[a-zA-Z0-9_-]{{{USERNAME_MIN_LENGTH},{USERNAME_MAX_LENGTH}}}"
+)
+
 NICKNAME_MAX_LENGTH = 50
 
 # A nickname must carry at least one letter, digit or CJK ideograph, so that a
@@ -88,6 +94,11 @@ async def chosen_avatars_by_handle(
     return {
         handle: chosen[user.id] for handle, user in users.items() if user.id in chosen
     }
+
+
+def is_valid_username(username: str) -> bool:
+    """The one username rule every registration entry point applies."""
+    return _USERNAME_RE.fullmatch(username) is not None
 
 
 def normalize_nickname(raw: str) -> str:

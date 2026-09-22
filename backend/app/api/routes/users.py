@@ -75,7 +75,14 @@ from app.domain.user.repositories import (
     UserRepository,
     UserStatisticsRepository,
 )
-from app.domain.user.services import UserAuthService, UserProfileService
+from app.domain.user.services import (
+    NICKNAME_MAX_LENGTH,
+    USERNAME_MAX_LENGTH,
+    UserAuthService,
+    UserProfileService,
+    is_valid_username,
+    normalize_nickname,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -1342,8 +1349,7 @@ async def register_user(
     if not email_code:
         raise BadRequestError("emailCode is required")
 
-    username_pattern = r"^[a-zA-Z0-9_-]+$"
-    if not re.match(username_pattern, username):
+    if not is_valid_username(username):
         raise UnprocessableEntityError("Invalid username format")
     # Next to the format check, not down in the service (#345): the service
     # runs after email-code verification, so a reserved name would only be
@@ -1353,9 +1359,7 @@ async def register_user(
     if is_reserved_username(username):
         raise UnprocessableEntityError("该用户名是平台保留字，请换一个")
 
-    nickname_pattern = r"^[^\s]+$"
-    if not re.match(nickname_pattern, nickname):
-        raise UnprocessableEntityError("Invalid nickname format")
+    nickname = normalize_nickname(nickname)
 
     has_srp = srp_salt and srp_verifier
     has_password = bool(password)
@@ -3694,15 +3698,9 @@ async def _pop_oauth_pending(session_id: str) -> dict | None:
         await redis.aclose()
 
 
-def _clean_nickname(raw: str) -> str:
-    cleaned = "".join(
-        ch if (ch.isalnum() or ch == "_" or "一" <= ch <= "龥") else "_" for ch in raw
-    )
-    return cleaned[:16] or "user"
-
-
 async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
-    """(suggestedUsername, suggestedNickname) — username de-duplicated."""
+    """(suggestedUsername, suggestedNickname), both passing the rules the
+    create form is checked against, the username de-duplicated."""
     import secrets as _secrets
 
     base_raw = (
@@ -3711,18 +3709,30 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
         or user_info.get("name")
         or f"user_{user_info.get('id')}"
     )
-    base = "".join(ch for ch in str(base_raw) if ch.isalnum() or ch in "_-") or "user"
+    suffix_length = 7  # "_" + token_hex(3)
+    base = (
+        "".join(
+            ch for ch in str(base_raw) if ch.isascii() and (ch.isalnum() or ch in "_-")
+        )[: USERNAME_MAX_LENGTH - suffix_length]
+        or "user"
+    )
     username = base
     # A reserved name is suggested exactly as readily as a taken one — the
     # provider's `preferredUsername` could be "system" — so treat it the same
     # way here instead of letting the user hit the wall on submit (#345).
-    while await auth_service.is_username_taken(username) or is_reserved_username(
-        username
+    while (
+        not is_valid_username(username)
+        or await auth_service.is_username_taken(username)
+        or is_reserved_username(username)
     ):
         username = f"{base}_{_secrets.token_hex(3)}"
-    nickname = _clean_nickname(
-        str(user_info.get("name") or user_info.get("preferredUsername") or username)
+    raw_nickname = str(
+        user_info.get("name") or user_info.get("preferredUsername") or username
     )
+    try:
+        nickname = normalize_nickname(raw_nickname[:NICKNAME_MAX_LENGTH])
+    except UnprocessableEntityError:
+        nickname = username
     return username, nickname
 
 
@@ -4050,15 +4060,17 @@ async def oauth_create_user(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
-    import re
-
     try:
         provider_id, user_info = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{4,32}", username):
+    if not is_valid_username(username):
         return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
+    try:
+        nickname = normalize_nickname(nickname)
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
     if passwordMode not in ("none", "srp"):
         return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
     if passwordMode == "srp" and not (srpSalt and srpVerifier):
@@ -4091,7 +4103,7 @@ async def oauth_create_user(
             user, _profile = await auth_service.register_oauth_decision(
                 email=email,
                 username=username,
-                nickname=_clean_nickname(nickname),
+                nickname=nickname,
                 srp_salt=srpSalt if passwordMode == "srp" else None,
                 srp_verifier=srpVerifier if passwordMode == "srp" else None,
             )

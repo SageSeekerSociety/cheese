@@ -76,7 +76,7 @@
               variant="outlined"
               :rules="usernameRules"
               class="mb-4"
-              hint="3-20个字符，字母开头，可包含字母、数字、下划线、连字符"
+              hint="4-32个字符，可包含字母、数字、下划线、连字符"
               persistent-hint
             />
 
@@ -161,7 +161,7 @@
               name="bindUsername"
               label="用户名"
               variant="outlined"
-              :rules="usernameRules"
+              :rules="bindUsernameRules"
               class="mb-4"
               @input="debouncedCheckAuthMethods(bindUsername)"
             />
@@ -230,6 +230,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { debounce } from 'lodash-es'
 
+import { REGEX_USERNAME } from '@/utils/form'
+
 import { UserApi } from '@/network/api/users'
 
 const route = useRoute()
@@ -265,8 +267,11 @@ const bindFormRef = ref()
 // Validation rules
 const usernameRules = [
   (v: string) => !!v || '请输入用户名',
-  (v: string) => /^[a-zA-Z][a-zA-Z0-9_-]{2,19}$/.test(v) || '用户名格式不正确',
+  (v: string) => REGEX_USERNAME.test(v) || '用户名格式不正确',
 ]
+
+// Binding names an account that already exists, so only presence is checked.
+const bindUsernameRules = [(v: string) => !!v || '请输入用户名']
 
 const nicknameRules = [
   (v: string) => !!v || '请输入昵称',
