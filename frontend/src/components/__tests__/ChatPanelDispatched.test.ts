@@ -22,6 +22,9 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
+    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     // 一件活不再是话题列表里的一行，标记要从房间的支线里读。
     listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
