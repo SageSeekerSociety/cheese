@@ -78,6 +78,12 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.groups.services", "app.domain.user.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
         ("app.domain.dashboard.services", "app.domain.notification.repositories"),
+        # --- platform_stats（看板的读模型聚合，和 dashboard 同构，单独还）。
+        #     block 领域**没有** service 层（只有 repositories / models），
+        #     pipeline 那一块问的是「哪几条活/房间停在未回答的提问上」——
+        #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
+        #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
+        ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
         ("app.domain.dashboard.services", "app.domain.membership.repositories"),
         ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
@@ -222,6 +228,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.recruitment", "app.domain.user.repositories"),
         ("app.api.routes.spaces", "app.domain.space.repositories"),
         ("app.api.routes.spaces", "app.domain.task.repositories"),
+        # 教学单元的读写在 teaching 领域，路由按本文件通篇的写法自己组 service
+        # （route → 自己的 service，教学那半边在 teaching.services 里）。
+        ("app.api.routes.spaces", "app.domain.teaching.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks", "app.domain.llm.repositories"),

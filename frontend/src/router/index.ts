@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
+import CourseJoinRoutes from './courseJoin'
 import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
@@ -23,6 +24,7 @@ const routes: RouteRecordRaw[] = [
   UserRoutes,
   ProjectsRoutes,
   QuestionRoutes,
+  CourseJoinRoutes,
   SpacesRoutes,
   TeamsRoutes,
   // --- CheeseX (agent workspace) routes ---------------------------------

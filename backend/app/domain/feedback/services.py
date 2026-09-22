@@ -37,11 +37,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_topic
+from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -395,6 +396,19 @@ class FeedbackService:
     # `distinct feedback_id`——都写在仓储的 docstring 里，调用点自己拼一遍
     # `select` 就是各自重答一遍，而两处答出两个口径时两边看着都「对」。
 
+    async def admin_board_counts(self) -> dict[str, dict[str, int]]:
+        """管理看板那一块的计数 —— **全量口径**。
+
+        和 :meth:`counts` 的分工：`counts` 是反馈中心那一行标签页的数（用户侧，被
+        `PUBLIC_ONLY` 收窄，因为匿名读者不该从一个数字里得知私密反馈有多少）；
+        这一条是管理看板问的「现在一共有多少事」，四栏、四级状态、总量一起给，
+        一条私密反馈也要算进去。
+
+        两个口径**不能互相替代**，这正是看板此前的 bug：它拿 `counts` 去填 KPI，
+        于是卡片写的是公开那一臂、旁边那条曲线写的是全量，两边各自都看着对。
+        """
+        return await self._repo.admin_counts()
+
     async def created_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:
@@ -660,6 +674,27 @@ class FeedbackService:
                 proposal=proposal,
                 submitted_by_handle=actor_handle,
                 submitted_by_user_id=actor_user_id,
+            )
+        # The author's daily cap, and it sits HERE rather than above the proposal
+        # branch on purpose: that branch is already limited (per topic, per
+        # fingerprint, and against what was dismissed), and its author is the
+        # agent that found the problem, not the person who sent it. This cap is
+        # about a person or a script writing straight into a public list.
+        #
+        # Lock first, then count: the pair is a read-then-insert, and the whole
+        # point is the moment somebody is at the cap. See `lock_author`.
+        await self._repo.lock_author(actor_handle)
+        # Rolling 24 hours, not a calendar day — the same choice, for the same
+        # reason, as the proposal cap: a calendar day resets at midnight, so two
+        # minutes either side of it fit twice the limit.
+        recent = await self._repo.count_author_since(
+            actor_handle, datetime.now(UTC) - timedelta(days=1)
+        )
+        cap = settings.feedback_reports_per_author_per_day
+        if recent >= cap:
+            raise PreconditionFailedError(
+                f"你 24 小时内提了 {recent} 条反馈，达到上限（{cap} 条 / 24 小时）。"
+                "这是防刷的上限，不是对你的评价——过几个小时再提。"
             )
         visibility = body.visibility
         row = await self._repo.add(

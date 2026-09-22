@@ -82,7 +82,8 @@ afterEach(cleanup)
 const routes = [
   { path: '/work', name: 'HomeWork', component: MyWork },
   { path: '/spaces', name: 'HomeSpaces', component: { template: '<div>空间列表</div>' } },
-  { path: '/spaces/:spaceId', name: 'SpaceDetail', component: { template: '<div>空间</div>' } },
+  // 名字照真路由：`spaceEntryRoute` 按名字解析，不是课就落在这条上。
+  { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div>空间</div>' } },
   {
     path: '/projects/:projectId',
     name: 'workspace-project',

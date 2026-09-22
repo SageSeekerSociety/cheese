@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import ActorResolverDep
+from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import is_space_admin
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -18,8 +20,10 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.shell.catalog import is_course_shell
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.course_roster_service import CourseRosterService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.space.member_participating_service import (
     SpaceMemberParticipatingService,
@@ -48,7 +52,17 @@ from app.domain.space.repositories import (
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
+from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.task.services import (
+    TaskMembershipService,
+    TaskService,
+    TaskSubmissionService,
+)
+from app.domain.teaching.models import TeachingUnit
+from app.domain.teaching.repositories import TeachingUnitRepository
+from app.domain.teaching.services import TeachingUnitService
+from app.domain.team.services import team_service
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -113,6 +127,34 @@ class PatchSpaceRequest(BaseModel):
         return value
 
 
+class TeachingRequest(BaseModel):
+    """课程级教学配置 (#8d772257) — 项目集级最小编辑入口。
+
+    **The strict end of this key.** `Teaching.from_json` on the read path drops a
+    bad field rather than raising, because `resolve()` runs on every turn of
+    every project and a typo in one field of a 项目集 must not take down the
+    twenty 赛题 under it. Here a person is looking at the form and can be told
+    which field is wrong, so every field is checked and the ids are typed.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: 课程级 system prompt 模板；`{current_week}` / `{allowed_topics}` /
+    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
+    system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
+    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
+    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
+    #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
+    #: 存指向它们的 id。
+    material_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="materialIds"
+    )
+    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="knowledgeIds"
+    )
+
+
 class CreateSpaceCategoryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -129,6 +171,11 @@ class PatchSpaceCategoryRequest(BaseModel):
     display_order: int | None = Field(default=None, alias="displayOrder")
     archived: bool | None = None
     archived_at: int | None = Field(default=None, alias="archivedAt")
+    #: 课程级教学配置。Sending it replaces the WHOLE teaching config (the
+    #: protocol's whole-key semantics — a half-merged week is harder to reason
+    #: about than either version alone); omitting it leaves it exactly as it is,
+    #: so a PATCH that only renames a 项目集 does not wipe the 教学安排.
+    teaching: TeachingRequest | None = None
 
 
 class CreateSpaceDomainGroupRequest(BaseModel):
@@ -151,6 +198,18 @@ class JoinSpaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     code: str = Field(..., min_length=1)
+
+
+class EnrollInCourseRequest(BaseModel):
+    """The course link's payload: the code it carries, and nothing else.
+
+    The link decides only WHERE the student lands, never what they may see —
+    so there is no 「which parts of the course」 field here to grow.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str | None = None
 
 
 class AddSpaceMemberRequest(BaseModel):
@@ -313,6 +372,28 @@ async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
         )
 
 
+async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
+    """「教师版面的门」: 只有题目板的管理员/创建者能过。
+
+    先按 ``_ensure_space_visible`` 答 404 —— 一个你不在的题目板不该被确认存在；
+    再看是不是管理员，不是就明确 403（不静默返回空内容：空 CSV 会让导出的人以为
+    「这个班没人」，而真相是「你没权限」）。
+
+    和 ``_ensure_space_visible`` 一样，判据只有一处 —— ``app.auth.space_access``
+    的 ``is_space_admin``，与打分、发题、项目对话读权同一个答案。
+
+    挂在这道门上的是一整块教师版面：参与者花名册的导出与分组统计（逐人/分组地
+    解密年级、专业、班级），以及概览、题目、发布者、提醒与其导出。前端本来就把
+    整个「数据分析」入口挂在 ``isCurrentUserAtLeastAdmin`` 下面，所以这几次收窄
+    是把 API 对齐到界面已经说的那句话：这版只有教师看得到。
+    学习看板（``/analytics/learning/*``）不在此列 —— 它读的是学生项目里的对话，
+    由 ``app.auth.project_access`` 逐个项目判，两套数据、两个门。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=user_id)
+    if not await is_space_admin(session=db, space_id=space_id, user_id=user_id):
+        raise ForbiddenError("Only a board manager can perform this action")
+
+
 def _space_to_api_model(space: Space) -> dict:
     created_at_ms = int(space.created_at.timestamp() * 1000) if space.created_at else 0
     updated_at_ms = int(space.updated_at.timestamp() * 1000) if space.updated_at else 0
@@ -373,6 +454,10 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
+        # 课程级教学配置 (#8d772257), `{}` when this 项目集 is not a course — the
+        # edit form reads it back, so it has to be here rather than only on the
+        # write path.
+        "teaching": getattr(cat, "teaching", None) or {},
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
@@ -489,6 +574,69 @@ async def _hydrate_members(
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
 
+async def _build_course_roster_payload(
+    *,
+    space_id: int,
+    service: SpaceService,
+    db,
+) -> dict:
+    """这门课的人与组：结构来自 `CourseRosterService`，人味在这里补。
+
+    拼「学生 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
+    而 handle 在 user 领域 —— 所以那一跳留在这边用现成的 `_hydrate_people` 走完，
+    领域里那份服务只给平表。
+
+    管理员不算学生：教师名单（`space.admins`）与成员表是两件事，一位老师也可以
+    是成员，但他出现在「学生与分组」里只会让人数说谎。
+    """
+    roster = await CourseRosterService(db).roster(space_id)
+    admin_ids = {rel.user_id for rel in await service.list_admins(space_id)}
+    student_ids = [uid for uid in roster["memberUserIds"] if uid not in admin_ids]
+    team_member_ids = [uid for team in roster["teams"] for uid in team["memberUserIds"]]
+    people = await _hydrate_people(
+        list(dict.fromkeys([*student_ids, *team_member_ids])),
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+
+    projects_by_handle: dict[str, list[dict]] = {}
+    for project in roster["projects"]:
+        handle = project["ownerHandle"]
+        if handle:
+            projects_by_handle.setdefault(handle, []).append(project)
+
+    students = []
+    for user_id in student_ids:
+        person = people[user_id]
+        projects = projects_by_handle.get(person.get("username", ""), [])
+        students.append(
+            {
+                "user": person,
+                "projects": [
+                    {"id": p["id"], "name": p["name"], "teamId": p["teamId"]}
+                    for p in projects
+                ],
+                "teamIds": sorted(
+                    {p["teamId"] for p in projects if p["teamId"] is not None}
+                ),
+            }
+        )
+
+    return {
+        "students": students,
+        "teams": [
+            {
+                "id": team["id"],
+                "name": team["name"],
+                "members": [
+                    people[uid] for uid in team["memberUserIds"] if uid in people
+                ],
+            }
+            for team in roster["teams"]
+        ],
+    }
+
+
 async def _build_full_space_payload(
     space: Space,
     *,
@@ -497,9 +645,13 @@ async def _build_full_space_payload(
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
-    Always includes `admins` (hydrated) and `classificationTopics` so that any
-    GET/POST/PATCH response is interchangeable from the frontend's perspective
-    (its store overwrites local state with the response payload).
+    Always includes `admins` (hydrated), `classificationTopics` and `isCourse` so
+    that any GET/POST/PATCH response is interchangeable from the frontend's
+    perspective (its store overwrites local state with the response payload).
+    `isCourse` belongs here for a reason the other two do not have: the frontend
+    picks the *landing* from it (course home vs. problem list) the moment a board
+    is created or joined, so a response that omitted it would send a brand-new
+    course to the problem list.
     """
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -509,6 +661,8 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    # 这块板是不是一门课：由它默认分组声明的壳算（`app.domain.shell.catalog`）。
+    space_data["isCourse"] = await service.is_course(space_id=space.id)
     return space_data
 
 
@@ -542,36 +696,9 @@ async def get_space(
     if queryMyRank:
         my_rank = await service.get_user_rank(space_id, viewer_id)
 
-    # Include admins with user info
-    admin_relations = await service.list_admins(space_id)
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    admins_list = []
-    for rel in admin_relations:
-        user = await user_repo.get_by_id(rel.user_id)
-        profile = (
-            await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-        )
-        user_info = (
-            {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            }
-            if user
-            else {"id": rel.user_id, "username": "unknown"}
-        )
-        admins_list.append(_admin_to_api_model(rel, user_info))
-
-    space_data = _space_to_api_model(space)
-    space_data["admins"] = admins_list
-    # Frontend's stores/space.ts always passes queryClassificationTopics=true
-    # and reads space.classificationTopics directly. Always populate it (cheap)
-    # so callers that forget the flag still get a sensible value.
-    topics = await service.list_classification_topics(space_id)
-    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    # admins / classificationTopics / isCourse 都由这一个构建器给齐：前端拿到任何
+    # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
+    space_data = await _build_full_space_payload(space, service=service, db=db)
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
 
     data: dict = {
@@ -610,6 +737,9 @@ async def get_spaces(
 
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
+    # 这一页里哪些板是课程：一问拿全页，别一行一次往返（见
+    # `SpaceRepository.default_category_shells`）。
+    course_shells = await service.default_category_shells(space_ids=space_ids)
 
     items: list[dict] = []
     for s in spaces:
@@ -640,6 +770,7 @@ async def get_spaces(
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
+        dto["isCourse"] = is_course_shell(course_shells.get(s.id))
 
         items.append(dto)
 
@@ -787,6 +918,202 @@ async def join_space(
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 
+async def _course_anchor_task(db, *, space_id: int) -> Task | None:
+    """Which 题 holds a course's students' projects.
+
+    The course keeps 一学期一个项目 by hanging every student's project on **one**
+    课程题, so the anchor must be chosen by a rule that does not move just
+    because the teacher published something new: the OLDEST approved, un-ended
+    题 of the board's default 分组, falling back to the oldest in the board.
+    Newest-first would hand every student a second project the moment a new
+    assignment went up.
+    """
+    space = await SpaceRepository(db).get_by_id(space_id)
+    default_category_id = space.default_category_id if space is not None else None
+    repo = TaskRepository(session=db)
+    for category_id in (default_category_id, None):
+        if category_id is None and default_category_id is None:
+            continue
+        rows = await repo.list_tasks(
+            space_id=space_id,
+            category_id=category_id,
+            approved=0,
+            limit=10,
+            sort_by="createdAt",
+            sort_order="asc",
+        )
+        for task in rows:
+            if task.ended_at is None:
+                return task
+    return None
+
+
+async def _course_project_for(
+    db, *, space_id: int, auth_user: AuthUserInfo, membership_service
+):
+    """The caller's project in this course, created once and reused after.
+
+    Reuse is asked of the SPACE, not of the anchor 题 — see
+    ``ProjectService.projects_in_space_for_owner``. Then the existing
+    participation path does the creating, so a course project is an ordinary
+    project: same protocol inheritance, same brief document, same 一学期一个项目
+    key. Returns ``None`` when the course has nothing to anchor a project on
+    yet, which is an honest answer rather than a stray hidden 题.
+    """
+    from app.domain.project.services import ProjectService
+
+    owner = await UserRepository(session=db).get_by_id(auth_user.user_id)
+    if owner is None:
+        raise NotFoundError("Participant user not found")
+
+    projects = ProjectService(db)
+    existing = await projects.projects_in_space_for_owner(
+        space_id=space_id, owner_handle=owner.username
+    )
+    if existing:
+        return existing[0]
+
+    anchor = await _course_anchor_task(db, space_id=space_id)
+    if anchor is None:
+        return None
+
+    membership = await membership_service.get_membership_by_task_and_member(
+        task_id=anchor.id, member_id=auth_user.user_id
+    )
+    if membership is None or membership.deleted_at is not None:
+        membership = await membership_service.create_membership(
+            task=anchor,
+            member_id=auth_user.user_id,
+            is_team=False,
+            approved=2,  # ApproveType.NONE — the course link is not a review queue
+            deadline=None,
+            email=None,
+            phone=None,
+            apply_reason=None,
+            personal_advantage=None,
+            remark=None,
+        )
+    return await projects.for_participation(
+        task=anchor, membership=membership, owner_handle=owner.username
+    )
+
+
+@router.post(
+    "/{spaceId}/enroll",
+    summary="Join a course from its link",
+)
+async def enroll_in_course(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: EnrollInCourseRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    db=Depends(get_db),
+) -> dict:
+    """What the course link does, in one round trip.
+
+    Redeems the code the link carries (the only way in for someone who is not
+    a member yet), then makes sure the student has his project in this course.
+    Opening the same link twice is not an error and does not mint a second
+    project: membership and project are both asked for, not created blindly.
+    """
+    if auth_user.user_id <= 0:
+        raise ForbiddenError("Only signed-in users can join a course")
+    code = (payload.code or "").strip()
+    if code:
+        invite = await SpaceInviteCodeRepository(session=db).get_by_code(code)
+        if invite is None:
+            raise NotFoundError("Invite code not found", data={"type": "inviteCode"})
+        if invite.space_id != space_id:
+            # Answer before redeeming: a link for another board must not join
+            # this person to a board the link never named.
+            raise BadRequestError(
+                "This invite code is for a different 题目板",
+                data={"type": "inviteCode", "id": invite.id},
+            )
+        await service.join_space(code=code, user_id=auth_user.user_id)
+
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    project = await _course_project_for(
+        db,
+        space_id=space_id,
+        auth_user=auth_user,
+        membership_service=membership_service,
+    )
+    space = await service.get_space(space_id)
+    if space is None:
+        raise NotFoundError.for_resource("space", space_id)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "space": {"id": space.id, "name": space.name},
+            "project": (
+                {
+                    "id": str(project.id),
+                    "name": project.name,
+                    "root_topic_id": (
+                        str(project.root_topic_id) if project.root_topic_id else None
+                    ),
+                }
+                if project is not None
+                else None
+            ),
+        },
+    }
+
+
+@router.get(
+    "/{spaceId}/course-link",
+    summary="The link a teacher hands out for this course",
+)
+async def get_course_link(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    """Teacher-side: one link to copy into the group chat.
+
+    It carries an invite code, and the code is the ordinary, un-named way in —
+    same as the code shown on the 邀请码 page, handed out by the same people
+    (OWNER and ADMIN, see ``_ensure_space_admin``).
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    codes = await service.list_invite_codes(
+        space_id=space_id, actor_user_id=auth_user.user_id
+    )
+    now = datetime.now(UTC)
+    usable = next(
+        (
+            c
+            for c in codes
+            if (c.expires_at is None or c.expires_at > now) and c.use_count < c.max_uses
+        ),
+        None,
+    )
+    if usable is None:
+        usable = await service.create_invite_code(
+            space_id=space_id, actor_user_id=auth_user.user_id
+        )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "path": f"/spaces/join/{usable.code}",
+            "code": usable.code,
+            "maxUses": usable.max_uses,
+            "useCount": usable.use_count,
+            "expiresAt": (
+                int(usable.expires_at.timestamp() * 1000) if usable.expires_at else None
+            ),
+        },
+    }
+
+
+# ── 课程链接 (course link) ─────────────────────────────────────────────────────
+
+
 @router.get(
     "/{spaceId}/members",
     summary="List Space Members",
@@ -805,6 +1132,75 @@ async def list_space_members(
         profile_repo=UserProfileRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
+
+
+@router.get(
+    "/{spaceId}/course/roster",
+    summary="Course Roster (teachers)",
+)
+async def get_course_roster(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    """这门课的人与组 —— 教师版面的「学生与分组」那一屏。
+
+    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是学生
+    之间该互相看到的东西。判据是 ``_ensure_space_admin``（与打分、发题、读项目
+    对话同一个答案），门外人先按可见性答 404，不做存在性确认。
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    data = await _build_course_roster_payload(space_id=space_id, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
+    "/{spaceId}/course/my-group",
+    summary="My Course Group (student)",
+)
+async def get_my_course_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """学生自己那一行：我在这个课里的项目，以及我挂在哪个组上。
+
+    与花名册（``/course/roster``）分开是因为门不同：那张表把全班列在一起，只有
+    教师能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    viewer = await UserRepository(session=db).get_by_id(auth_user.user_id)
+    data = await CourseRosterService(db).my_group(
+        space_id, viewer.username if viewer else None
+    )
+
+    team = None
+    team_id = data["teamId"]
+    if team_id is not None:
+        teams = team_service(db)
+        row = await teams.get_team(team_id)
+        relations = await teams.get_team_members(team_id)
+        people = await _hydrate_people(
+            [relation.user_id for relation in relations],
+            user_repo=UserRepository(session=db),
+            profile_repo=UserProfileRepository(session=db),
+        )
+        team = {
+            "id": team_id,
+            "name": row.name if row else "",
+            "members": [
+                people[relation.user_id]
+                for relation in relations
+                if relation.user_id in people
+            ],
+        }
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"projectId": data["projectId"], "team": team},
+    }
 
 
 @router.post(
@@ -961,7 +1357,7 @@ async def get_space_task_analytics(
     db=Depends(get_db),
 ) -> dict:
     """Return per-task analytics table rows for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_tasks(
         space_id=space_id,
@@ -990,7 +1386,7 @@ async def get_publishers_participation(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -1009,7 +1405,7 @@ async def export_space_participants(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> Response:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     if format.lower() != "csv":
         raise BadRequestError("Only csv format is supported")
@@ -1045,7 +1441,7 @@ async def get_space_analytics_overview(
     db=Depends(get_db),
 ) -> dict:
     """Return KPI cards, trend data, and distribution summaries for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_overview(
         space_id=space_id,
@@ -1070,7 +1466,7 @@ async def get_space_analytics_alerts(
     db=Depends(get_db),
 ) -> dict:
     """Return governance alert cards for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -1093,7 +1489,7 @@ async def get_space_analytics_publishers(
     db=Depends(get_db),
 ) -> dict:
     """Return publisher comparison table data."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers(
         space_id=space_id,
@@ -1127,7 +1523,10 @@ async def get_space_analytics_participants(
     db=Depends(get_db),
 ) -> dict:
     """Return participant population and completion analytics."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    # 这一格把 ``_decode_identity`` 出来的年级/专业/班级做成分组统计 —— 是学生
+    # 个人信息的聚合，所以和下面的导出同一个门：教师版面只有教师看。非管理员答
+    # 403（不是空的分布），原因和导出一样：空的会把「你没权限」说成「这个班没人」。
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_participants(
         space_id=space_id,
@@ -1170,7 +1569,10 @@ async def export_space_analytics_participants(
     target user to audit real-name data access, matching NT's
     `auditSpaceParticipantExport` behavior.
     """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    # 教师版面：这份 CSV 逐行写着学生的真实姓名、学号、年级、专业、班级、电话、
+    # 邮箱（``_decode_identity`` 负责解密），所以只有题目板的管理员/创建者能拿。
+    # 非管理员明确 403 —— 不返回空 CSV，空的会把「你没权限」误报成「这个班没人」。
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     csv_text, memberships = await service.export_participants_csv(
         space_id=space_id,
         from_ts=from_ts,
@@ -1241,6 +1643,79 @@ class LearningOutlineRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     block_ids: list[uuid.UUID] = Field(default_factory=list, alias="blockIds")
+
+
+async def get_space_submission_service(
+    db=Depends(get_db),
+) -> TaskSubmissionService:
+    """课程的「作业与验收」要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
+    from app.api.routes.tasks import get_task_submission_service
+
+    return await get_task_submission_service(db=db)
+
+
+@router.get(
+    "/{spaceId}/submissions",
+    summary="Get Space Submission Queue",
+)
+async def get_space_submissions(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    reviewed: bool | None = Query(default=None),
+    taskId: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None),
+    pageSize: int = Query(default=20, ge=1, le=100),
+    sortBy: str = Query(default="createdAt"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    submission_service: TaskSubmissionService = Depends(get_space_submission_service),
+    db=Depends(get_db),
+) -> dict:
+    """一整门课的提交与验收队列 —— 教师看的那一屏。
+
+    按板子取一次，而不是逐道题 × 逐个学生地问（那是 N×M 次请求）。每行都带
+    `taskId` / `taskTitle` / `participantId`，教师看的是「谁的哪份作业」。
+
+    判据走那道现成的教师闸 `_ensure_space_admin`：不在这个板里答 404（不确认它
+    存在），在板里但不是管理员答 403。学生看自己那一份走既有的按题接口 ——
+    整门课的提交是教师版面。`reviewed=false` 就是验收队列；不给就是全部。
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    if sortBy not in {"createdAt", "updatedAt"}:
+        raise BadRequestError(f"Invalid sortBy: {sortBy}")
+    if sortOrder not in {"asc", "desc"}:
+        raise BadRequestError(f"Invalid sortOrder: {sortOrder}")
+
+    offset = max(pageStart or 0, 0)
+    items, total = await submission_service.list_for_space(
+        space_id=space_id,
+        task_id=taskId,
+        reviewed=reviewed,
+        limit=pageSize,
+        offset=offset,
+        sort_by=sortBy,
+        sort_order=sortOrder,
+    )
+    returned = len(items)
+    has_more = offset + returned < total
+    summary = await submission_service.summary_for_space(
+        space_id=space_id,
+        task_id=taskId,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "submissions": items,
+            "summary": summary,
+            "page": {
+                "pageStart": offset,
+                "pageSize": returned,
+                "hasMore": has_more,
+                "nextStart": offset + returned if has_more and returned > 0 else None,
+                "total": total,
+            },
+        },
+    }
 
 
 async def get_space_learning_service(db=Depends(get_db)) -> SpaceLearningService:
@@ -1371,7 +1846,7 @@ async def export_space_analytics_tasks(
     db=Depends(get_db),
 ) -> Response:
     """Export task analytics as CSV (16 columns, NT-aligned)."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_tasks_csv(
         space_id=space_id,
@@ -1407,7 +1882,7 @@ async def export_space_analytics_publishers(
     db=Depends(get_db),
 ) -> Response:
     """Export publisher analytics as CSV (11 columns, NT-aligned)."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_publishers_csv(
         space_id=space_id,
@@ -1629,6 +2104,12 @@ async def patch_space_category(
         description=payload.description,
         display_order=payload.display_order,
         archived=archived,
+        # `model_dump()` (field names, not aliases): what lands in the column is
+        # the shape `Teaching.from_json` reads back, so the write path and the
+        # read path cannot drift into two different spellings of one config.
+        teaching=(
+            payload.teaching.model_dump() if payload.teaching is not None else None
+        ),
     )
     return {
         "code": 200,
@@ -1912,3 +2393,176 @@ async def patch_space_manager(
         return {"code": 200, "message": "OK", "data": None}
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
+
+
+# ── 教学单元（一门课的时间线） ─────────────────────────────────────────────────
+#
+# 读的一次给所有人，写的一次给教师：学生只看得到发布过的，而「发布过」这个判断在
+# ``TeachingUnitService`` 的查询里，不在这里的分支里 —— 前端过滤过不了这一关，
+# 将来 agent 注入也复用同一条查询。
+
+
+class CreateTeachingUnitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    week: int
+    title: str = Field(..., min_length=1, max_length=255)
+    summary: str = ""
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
+    material_ids: list[int] = Field(default_factory=list, alias="materialIds")
+    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+    published: bool = False
+
+
+class PatchTeachingUnitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    week: int | None = None
+    title: str | None = None
+    summary: str | None = None
+    knowledge_point_ids: list[int] | None = Field(
+        default=None, alias="knowledgePointIds"
+    )
+    material_ids: list[int] | None = Field(default=None, alias="materialIds")
+    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
+    clear_assignment: bool = Field(default=False, alias="clearAssignment")
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+    clear_due_at: bool = Field(default=False, alias="clearDueAt")
+    published: bool | None = None
+
+
+async def get_teaching_unit_service(
+    db=Depends(get_db),
+) -> TeachingUnitService:
+    return TeachingUnitService(
+        repo=TeachingUnitRepository(db), task_service=TaskService(TaskRepository(db))
+    )
+
+
+def _teaching_unit_to_api_model(unit: TeachingUnit) -> dict:
+    def _ts(value: datetime | None) -> int | None:
+        return int(value.timestamp() * 1000) if value else None
+
+    return {
+        "id": unit.id,
+        "spaceId": unit.space_id,
+        "week": unit.week,
+        "title": unit.title,
+        "summary": unit.summary,
+        "knowledgePointIds": list(unit.knowledge_point_ids or []),
+        "materialIds": list(unit.material_ids or []),
+        "assignmentTaskId": unit.assignment_task_id,
+        "publishedAt": _ts(unit.published_at),
+        "dueAt": _ts(unit.due_at),
+    }
+
+
+@router.get(
+    "/{spaceId}/units",
+    summary="List Teaching Units",
+)
+async def list_space_units(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    can_teach = await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    units = await service.list_units(space_id=space_id, published_only=not can_teach)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "units": [_teaching_unit_to_api_model(unit) for unit in units],
+            "canTeach": can_teach,
+        },
+    }
+
+
+@router.post(
+    "/{spaceId}/units",
+    summary="Create Teaching Unit",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: CreateTeachingUnitRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    unit = await service.create_unit(
+        space_id=space_id,
+        actor_id=auth_user.user_id,
+        week=payload.week,
+        title=payload.title,
+        summary=payload.summary,
+        knowledge_point_ids=payload.knowledge_point_ids,
+        material_ids=payload.material_ids,
+        assignment_task_id=payload.assignment_task_id,
+        published=payload.published,
+        due_at=payload.due_at,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"unit": _teaching_unit_to_api_model(unit)},
+    }
+
+
+@router.patch(
+    "/{spaceId}/units/{unitId}",
+    summary="Update Teaching Unit",
+)
+async def patch_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    payload: PatchTeachingUnitRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    unit = await service.update_unit(
+        space_id=space_id,
+        unit_id=unit_id,
+        week=payload.week,
+        title=payload.title,
+        summary=payload.summary,
+        knowledge_point_ids=payload.knowledge_point_ids,
+        material_ids=payload.material_ids,
+        assignment_task_id=payload.assignment_task_id,
+        clear_assignment=payload.clear_assignment,
+        published=payload.published,
+        due_at=payload.due_at,
+        clear_due_at=payload.clear_due_at,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"unit": _teaching_unit_to_api_model(unit)},
+    }
+
+
+@router.delete(
+    "/{spaceId}/units/{unitId}",
+    summary="Delete Teaching Unit",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> Response:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await service.delete_unit(space_id=space_id, unit_id=unit_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

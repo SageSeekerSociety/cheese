@@ -1,4 +1,147 @@
 {
+  "course": {
+    "nav": {
+      "overview": "Course overview",
+      "units": "Units",
+      "assignments": "Assignments",
+      "people": "Students & groups",
+      "stuck": "Where students got stuck",
+      "settings": "Settings",
+      "myCourse": "My course",
+      "thisWeek": "This week",
+      "team": "My group"
+    },
+    "overview": {
+      "title": "Course overview",
+      "members": "People in the course",
+      "units": "Assignment units",
+      "students": "Students enrolled",
+      "awaitingReview": "Waiting for my review",
+      "noNumbers": "There is nothing to count yet — once the course is running and students join, the numbers appear here."
+    },
+    "pending": {
+      "chip": "Under review",
+      "body": "This course is still being reviewed. Until it is approved its categories, problems, members and data endpoints all read as missing, so this page stays empty."
+    },
+    "myCourse": {
+      "title": "My course",
+      "thisWeek": "This week",
+      "thisWeekEmpty": "Your teacher has not published this week yet. It will appear here once they do.",
+      "progress": "What I am doing in this course",
+      "noWork": "There is nothing for you to do yet. Assignments appear here once your teacher publishes them.",
+      "status": {
+        "notSubmitted": "Not submitted",
+        "pendingReview": "Waiting for the teacher",
+        "resubmittable": "Can be resubmitted",
+        "failed": "Not accepted",
+        "success": "Accepted",
+        "unknown": "In progress"
+      },
+      "week": "Week {week}",
+      "due": "Due {date}",
+      "noDue": "No deadline",
+      "openWork": "Open this week's assignment",
+      "nothingToHandIn": "Nothing to hand in this week"
+    },
+    "assignments": {
+      "title": "Assignments",
+      "queue": "Waiting on me",
+      "all": "All",
+      "statParticipants": "Enrolled",
+      "statSubmitted": "Handed in",
+      "statPending": "Waiting on me",
+      "statMissing": "Nothing yet",
+      "student": "Student",
+      "assignment": "Assignment",
+      "submittedAt": "Handed in",
+      "state": "State",
+      "statePending": "Waiting on me",
+      "stateAccepted": "Accepted",
+      "stateRejected": "Sent back",
+      "grade": "Open and grade",
+      "open": "Open",
+      "dialogTitle": "Submission and review",
+      "emptyTitle": "Nothing handed in yet",
+      "emptyBody": "Once students hand work in it shows up here, filtered by waiting / all.",
+      "publish": "Publish an assignment"
+    },
+    "stage": {
+      "quiz": {
+        "title": "Quiz",
+        "body": "This screen is a quiz: students answer it from the week it belongs to, objective questions are graded automatically, and written answers land in the teacher's review queue. The quiz task builds the mechanism."
+      }
+    },
+    "people": {
+      "title": "Students & groups",
+      "count": "{n} students",
+      "groups": "Groups",
+      "memberCount": "{n} members",
+      "emptyGroup": "No one is in this group yet.",
+      "noGroups": "No groups in this course yet. Students create and join their own, and a group shares one project.",
+      "ungrouped": "Students not in a group yet",
+      "allGrouped": "Everyone is in a group.",
+      "noProject": "No project yet",
+      "howGroupingWorks": "Grouping is done by the students themselves today: one of them creates a group, the others ask or get invited, and the group shares one project. This screen shows the result. Letting a teacher place students into groups needs a new grant for the board's admins on team management — that is not built yet."
+    },
+    "team": {
+      "title": "My group",
+      "noGroupYet": "You are not in a group in this course yet.",
+      "howToJoin": "Create a group of your own, or wait for a classmate to invite you — or ask to join theirs.",
+      "create": "Create a group",
+      "invitations": "Invitations for me",
+      "invitedBy": "{name} invited you",
+      "accept": "Join",
+      "decline": "Decline",
+      "requests": "Requests I am waiting on",
+      "waiting": "Waiting for them to confirm",
+      "withdraw": "Withdraw",
+      "myTeams": "Groups I am in",
+      "thisCourseGroup": "This course's group",
+      "noTeams": "You are not in any group yet.",
+      "nameLabel": "Group name",
+      "cancel": "Cancel",
+      "confirmCreate": "Create"
+    },
+    "units": {
+      "title": "Teaching units",
+      "add": "Add a unit",
+      "weekShort": "Week {week}",
+      "empty": "No units yet. A course is a sequence of weeks: add one, say what it teaches and whether anything is due, and publish it when that week arrives.",
+      "draft": "Not published",
+      "published": "Published",
+      "publish": "Publish",
+      "unpublish": "Take it back",
+      "noAssignment": "Nothing to hand in this week",
+      "assignment": "Due this week: {name}",
+      "assignmentUnknown": "Due this week: problem #{id}",
+      "due": "Due {date}",
+      "noDue": "No deadline",
+      "deleteTitle": "Delete this unit",
+      "deleteConfirm": "Delete week {week}, “{title}”?",
+      "loadFailed": "Could not read this course's units.",
+      "saveFailed": "That did not save. Try again.",
+      "form": {
+        "createTitle": "Add a teaching unit",
+        "editTitle": "Edit this unit",
+        "week": "Week",
+        "weekHint": "Weeks start at 1.",
+        "title": "What this week teaches",
+        "titleHint": "One line — this is what students see.",
+        "summary": "Notes",
+        "summaryHint": "Optional. The points of the week, or something to remind students of.",
+        "assignment": "What is handed in this week",
+        "assignmentHint": "Pick a problem of this board; a lecture-only week picks none.",
+        "noAssignment": "No assignment",
+        "dueAt": "Deadline",
+        "dueAtHint": "Optional. Empty means no deadline.",
+        "publishNow": "Publish it now",
+        "publishNowHint": "Unchecked it stays a draft until that week arrives — students cannot see an unpublished unit.",
+        "required": "A week number and a title are both needed.",
+        "save": "Save",
+        "cancel": "Cancel"
+      }
+    }
+  },
   "create": {
     "open": "New problem board",
     "name": "Problem board name",
@@ -9,7 +152,9 @@
     "visibility": "The problem board will appear in the explore list after approval.",
     "cancel": "Cancel",
     "submit": "Submit for review",
-    "failed": "Could not create the problem board. Please try again."
+    "failed": "Could not create the problem board. Please try again.",
+    "courseTemplateTag": "Course template by default",
+    "courseTemplate": "What you get is a course space: the course template is applied by default, so there is nothing to pick. You become this board's teacher and creator."
   },
   "review": {
     "applicant": "Applicant",
@@ -68,13 +213,12 @@
     "currentAdmins": "Current admins",
     "owner": "Problem board owner",
     "admin": "Admin",
-    "addNewAdmin": "Add admin",
-    "userId": "User ID",
-    "role": "Role",
-    "add": "Add",
     "close": "Close",
-    "userIdRequired": "Enter a user ID",
     "confirmRemoveAdmin": "Remove {nickname} as admin?",
+    "members": "Members",
+    "noMembers": "No members yet",
+    "setAsAdmin": "Set as admin",
+    "unsetAsAdmin": "Remove admin",
     "auditTasks": {
       "title": "Problems awaiting review",
       "noTasks": "No problems awaiting review",
@@ -242,12 +386,31 @@
     "createFailed": "Could not create the invite code",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this board.",
-    "gotIt": "Got it"
+    "openCourse": "Open the course",
+    "courseLinkTitle": "Course link",
+    "courseLinkHelp": "Send this link to the group: a student who opens it signs in, joins this course, gets his own project, and lands in the course. It decides only which screen he arrives on, never what he may see afterwards.",
+    "courseLinkCopy": "Copy link",
+    "courseLinkCopied": "Link copied",
+    "courseLinkFailed": "Could not read the course link"
   },
   "index": {
     "sortOptions": {
       "newest": "Newest",
       "hot": "Hot"
     }
+  },
+  "joinCourse": {
+    "title": "Join the course",
+    "joining": "Adding you to this course…",
+    "failedTitle": "This link does not work",
+    "failed": "This link cannot be used — it may have expired or run out of uses. Ask your teacher for another one.",
+    "joinedTitle": "You are in this course",
+    "noProject": "The teacher has just set the course up and published nothing yet. Your project arrives with the first thing they publish.",
+    "retry": "Try again",
+    "enterCourse": "Enter the course",
+    "teamTitle": "Find teammates?",
+    "teamBody": "This course can be done alone or in a group of two or three. You can skip this now and change it later.",
+    "teamLater": "On my own for now",
+    "teamNow": "Look at the groups"
   }
 }

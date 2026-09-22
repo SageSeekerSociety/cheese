@@ -1,4 +1,147 @@
 {
+  "course": {
+    "nav": {
+      "overview": "课程总览",
+      "units": "教学单元",
+      "assignments": "作业与验收",
+      "people": "学生与分组",
+      "stuck": "共性问题",
+      "settings": "设置",
+      "myCourse": "我的课程",
+      "thisWeek": "本周任务",
+      "team": "我的小组"
+    },
+    "overview": {
+      "title": "课程总览",
+      "members": "在册成员",
+      "units": "作业单元",
+      "students": "报名学生",
+      "awaitingReview": "待我验收",
+      "noNumbers": "这门课还没有数字可看——课开起来、学生进来之后，这里会显示人数、单元数与待验收数。"
+    },
+    "pending": {
+      "chip": "待审核",
+      "body": "这门课还在平台审核中。通过之前，分类、题目、成员与数据接口都读不到，所以这一页暂时是空的。"
+    },
+    "myCourse": {
+      "title": "我的课程",
+      "thisWeek": "本周任务",
+      "thisWeekEmpty": "老师还没有发布这一周的内容。发布了它就会出现在这里。",
+      "progress": "我在这门课里做的",
+      "noWork": "还没有你要做的东西。老师发布作业之后，这里会列出来。",
+      "status": {
+        "notSubmitted": "还没交",
+        "pendingReview": "等老师看",
+        "resubmittable": "可以重交",
+        "failed": "没通过",
+        "success": "已通过",
+        "unknown": "进行中"
+      },
+      "week": "第 {week} 周",
+      "due": "截止 {date}",
+      "noDue": "没有截止时间",
+      "openWork": "去交这一周的作业",
+      "nothingToHandIn": "这一周不用交东西"
+    },
+    "assignments": {
+      "title": "作业与验收",
+      "queue": "待验收",
+      "all": "全部",
+      "statParticipants": "报名学生",
+      "statSubmitted": "已交",
+      "statPending": "等你看",
+      "statMissing": "还没交",
+      "student": "学生",
+      "assignment": "作业",
+      "submittedAt": "交于",
+      "state": "状态",
+      "statePending": "等你看",
+      "stateAccepted": "通过",
+      "stateRejected": "驳回",
+      "grade": "看与打分",
+      "open": "打开",
+      "dialogTitle": "提交与评审",
+      "emptyTitle": "还没有人交",
+      "emptyBody": "这门课的学生交作业之后会出现在这里，按「等你看 / 全部」筛。",
+      "publish": "去发布作业"
+    },
+    "stage": {
+      "quiz": {
+        "title": "小测",
+        "body": "这一屏是小测：学生从这一周点进来作答，客观题自动判，主观题进老师的复核队列。机制由「小测」那条任务新建。"
+      }
+    },
+    "people": {
+      "title": "学生与分组",
+      "count": "{n} 名学生",
+      "groups": "分组",
+      "memberCount": "{n} 人",
+      "emptyGroup": "这个组还没有成员。",
+      "noGroups": "这门课还没有分组。学生自己建组、自己加入，组里共用一个项目。",
+      "ungrouped": "还没有组的学生",
+      "allGrouped": "每个人都进组了。",
+      "noProject": "还没有项目",
+      "howGroupingWorks": "今天组队由学生自己做：他建一个组，别人申请或被邀请进来，组里共用一个项目。老师这一屏是看结果。要让老师直接给学生分组，得先给「本版管理员」开团队管理的权限 —— 那是一条新的授权，还没做。"
+    },
+    "team": {
+      "title": "我的小组",
+      "noGroupYet": "你在这门课里还没有组。",
+      "howToJoin": "自己建一个组，或者等同学邀请你、你去申请加入别人的组。",
+      "create": "建一个组",
+      "invitations": "邀请我加入",
+      "invitedBy": "{name} 邀请你加入",
+      "accept": "加入",
+      "decline": "拒绝",
+      "requests": "我在等的申请",
+      "waiting": "等对方确认",
+      "withdraw": "撤回",
+      "myTeams": "我加入的组",
+      "thisCourseGroup": "这门课的组",
+      "noTeams": "你还没有加入任何组。",
+      "nameLabel": "组名",
+      "cancel": "取消",
+      "confirmCreate": "建组"
+    },
+    "units": {
+      "title": "教学单元",
+      "add": "加一个单元",
+      "weekShort": "第 {week} 周",
+      "empty": "还没有单元。一门课就是一串教学单元：加一个，写清这一周讲什么、要不要交东西，到了这一周再发布它。",
+      "draft": "未发布",
+      "published": "已发布",
+      "publish": "发布",
+      "unpublish": "撤回发布",
+      "noAssignment": "这一周没有要交的东西",
+      "assignment": "本周要交：{name}",
+      "assignmentUnknown": "本周要交一道题（编号 {id}）",
+      "due": "截止 {date}",
+      "noDue": "没有截止时间",
+      "deleteTitle": "删掉这个单元",
+      "deleteConfirm": "删掉第 {week} 周的「{title}」？",
+      "loadFailed": "读不到这门课的单元。",
+      "saveFailed": "没保存上，再试一次。",
+      "form": {
+        "createTitle": "加一个教学单元",
+        "editTitle": "改这个单元",
+        "week": "第几周",
+        "weekHint": "从 1 开始。",
+        "title": "这一周讲什么",
+        "titleHint": "一句话，学生会看到它。",
+        "summary": "说明",
+        "summaryHint": "可选。这一周的要点，或者要提醒学生的话。",
+        "assignment": "这一周要交的东西",
+        "assignmentHint": "选一道这个版里的题；纯讲义的周就不选。",
+        "noAssignment": "不布置作业",
+        "dueAt": "截止时间",
+        "dueAtHint": "可选。留空就是不设截止。",
+        "publishNow": "建好就发布",
+        "publishNowHint": "不勾就先存着，到了这一周再发布 —— 没发布的内容学生看不到。",
+        "required": "周次和标题都要填。",
+        "save": "保存",
+        "cancel": "取消"
+      }
+    }
+  },
   "create": {
     "open": "新建题目板",
     "name": "题目板名称",
@@ -9,7 +152,9 @@
     "visibility": "审核通过后，题目板会出现在探索列表中。",
     "cancel": "取消",
     "submit": "提交审核",
-    "failed": "创建失败，请重试。"
+    "failed": "创建失败，请重试。",
+    "courseTemplateTag": "默认课程模板",
+    "courseTemplate": "建出来就是课程空间——默认课程模板，不用挑模板。建版的人就是这个版的教师 + 创建者。"
   },
   "review": {
     "applicant": "申请人",
@@ -75,13 +220,12 @@
     "currentAdmins": "当前管理员",
     "owner": "题目板所有者",
     "admin": "管理员",
-    "addNewAdmin": "添加新管理员",
-    "userId": "用户ID",
-    "role": "角色",
-    "add": "添加",
     "close": "关闭",
-    "userIdRequired": "请输入用户ID",
     "confirmRemoveAdmin": "确定要移除管理员 {nickname} 吗？",
+    "members": "成员",
+    "noMembers": "暂无成员",
+    "setAsAdmin": "设为管理员",
+    "unsetAsAdmin": "取消管理员",
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
@@ -298,7 +442,12 @@
     "createFailed": "生成邀请码失败",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。",
-    "gotIt": "知道了"
+    "openCourse": "进入课程",
+    "courseLinkTitle": "课程链接",
+    "courseLinkHelp": "把这条链接发到群里：学生点开会先登录，然后自动加入这门课、建好自己的项目，直接进课程。它只决定从哪一屏进来，不限制他之后能看到什么。",
+    "courseLinkCopy": "复制链接",
+    "courseLinkCopied": "已复制链接",
+    "courseLinkFailed": "读取课程链接失败"
   },
   "index": {
     "searchPlaceholder": "搜索题目板",
@@ -307,5 +456,19 @@
       "hot": "最热"
     },
     "noSpaces": "暂无题目板"
+  },
+  "joinCourse": {
+    "title": "加入课程",
+    "joining": "正在把你加进这门课……",
+    "failedTitle": "这条链接用不了",
+    "failed": "这条链接用不了了（可能已过期或用完）。请找老师再要一次。",
+    "joinedTitle": "你已经是这门课的人了",
+    "noProject": "老师刚建好课程、还没有发布内容，等他发布之后你就有自己的项目了。",
+    "retry": "重试",
+    "enterCourse": "进入课程",
+    "teamTitle": "要不要找同学组队？",
+    "teamBody": "这门课可以一个人做，也可以两三个人一组。现在不选也行，以后随时能改。",
+    "teamLater": "先一个人",
+    "teamNow": "去看看小组"
   }
 }

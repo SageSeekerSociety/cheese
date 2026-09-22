@@ -17,7 +17,14 @@
       <v-list>
         <v-list-item :title="t('spaces.detail.editInfo')" prepend-icon="mdi-pencil" @click="openEditProfile">
         </v-list-item>
-        <v-list-item :title="t('spaces.detail.manageAdmins')" prepend-icon="mdi-account-cog" @click="openManageAdmins">
+        <!-- 「管理员设置」= 设/撤教师。后端只认创建者（OWNER）做这件事，所以入口
+             也只对创建者可见，别的管理员点进去只会撞一串 403。 -->
+        <v-list-item
+          v-if="isCurrentUserOwner"
+          :title="t('spaces.detail.manageAdmins')"
+          prepend-icon="mdi-account-cog"
+          @click="openManageAdmins"
+        >
         </v-list-item>
       </v-list>
     </v-menu>
@@ -26,110 +33,138 @@
       <span class="text-subtitle-1">{{ space?.name }}</span>
     </div>
     <v-list nav density="compact" class="sidebar-list pa-2">
-      <v-list-item
-        rounded="lg"
-        :to="{ name: 'SpacesAnnouncements', params: { spaceId: spaceId } }"
-        color="primary"
-        class="sidebar-item"
-      >
-        <template #prepend>
-          <v-icon>mdi-bullhorn</v-icon>
-        </template>
-        <v-list-item-title>{{ t('spaces.detail.announcements') }}</v-list-item-title>
-      </v-list-item>
-      <v-list-subheader>{{ t('spaces.detail.allCategories') }}</v-list-subheader>
-      <v-list-item
-        rounded="lg"
-        :to="{ name: 'SpacesDetailTasksList', params: { spaceId: spaceId } }"
-        :active="isTasksLinkActive()"
-        color="primary"
-        class="sidebar-item"
-      >
-        <template #prepend>
-          <v-icon>mdi-view-grid</v-icon>
-        </template>
-        <v-list-item-title>{{ t('spaces.detail.allContests') }}</v-list-item-title>
-      </v-list-item>
+      <!--
+        课程（`space.isCourse`）：题目板自己的屏幕不是项目、读不到壳，所以这一版
+        侧栏由 `lib/courseNav.ts` 按角色算 —— 老师（本版管理员）看课程总览/教学
+        单元/作业与验收/学生与分组/共性问题，学生看我的课程/本周任务/我的小组，
+        下面那块「管理员操作」对老师照旧在（它就是课程设置）。
 
-      <!-- 显示分类列表 -->
-      <template v-if="categories.length > 0">
+        老题目板一行都不变：它 `isCourse` 是 false，走的还是下面那一段。
+      -->
+      <template v-if="isCourse">
         <v-list-item
-          v-for="category in activeCategories"
-          :key="`category-${category.id}`"
+          v-for="cell in courseCells"
+          :key="cell.route"
           rounded="lg"
-          :to="{
-            name: 'SpacesDetailTasksList',
-            params: { spaceId: spaceId },
-            query: { category: category.id },
-          }"
-          :active="isTasksLinkActive({ category: category.id.toString() })"
+          :to="{ name: cell.route, params: { spaceId: spaceId } }"
           color="primary"
           class="sidebar-item"
         >
           <template #prepend>
-            <v-icon>mdi-shape</v-icon>
+            <v-icon>{{ cell.icon }}</v-icon>
           </template>
-          <v-list-item-title>{{ category.name }}</v-list-item-title>
-          <template v-if="space?.defaultCategoryId === category.id" #append>
-            <v-tooltip location="end">
-              <template #activator="{ props: tooltipProps }">
-                <v-icon v-bind="tooltipProps" size="small" color="warning">mdi-star</v-icon>
-              </template>
-              {{ t('spaces.detail.manageCategories.defaultCategory') }}
-            </v-tooltip>
+          <v-list-item-title>{{ t(cell.label) }}</v-list-item-title>
+        </v-list-item>
+      </template>
+
+      <template v-if="!isCourse">
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesAnnouncements', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-bullhorn</v-icon>
           </template>
+          <v-list-item-title>{{ t('spaces.detail.announcements') }}</v-list-item-title>
+        </v-list-item>
+        <v-list-subheader>{{ t('spaces.detail.allCategories') }}</v-list-subheader>
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailTasksList', params: { spaceId: spaceId } }"
+          :active="isTasksLinkActive()"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-view-grid</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.detail.allContests') }}</v-list-item-title>
+        </v-list-item>
+
+        <!-- 显示分类列表 -->
+        <template v-if="categories.length > 0">
+          <v-list-item
+            v-for="category in activeCategories"
+            :key="`category-${category.id}`"
+            rounded="lg"
+            :to="{
+              name: 'SpacesDetailTasksList',
+              params: { spaceId: spaceId },
+              query: { category: category.id },
+            }"
+            :active="isTasksLinkActive({ category: category.id.toString() })"
+            color="primary"
+            class="sidebar-item"
+          >
+            <template #prepend>
+              <v-icon>mdi-shape</v-icon>
+            </template>
+            <v-list-item-title>{{ category.name }}</v-list-item-title>
+            <template v-if="space?.defaultCategoryId === category.id" #append>
+              <v-tooltip location="end">
+                <template #activator="{ props: tooltipProps }">
+                  <v-icon v-bind="tooltipProps" size="small" color="warning">mdi-star</v-icon>
+                </template>
+                {{ t('spaces.detail.manageCategories.defaultCategory') }}
+              </v-tooltip>
+            </template>
+          </v-list-item>
+        </template>
+
+        <v-divider class="my-2"></v-divider>
+
+        <!-- 个人分组 -->
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailMyPublishing', params: { spaceId: spaceId } }"
+          :active="isMyPublishingLinkActive"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-pencil-box-multiple</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.detail.myPublishedContests') }}</v-list-item-title>
+        </v-list-item>
+
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailMyParticipating', params: { spaceId: spaceId } }"
+          :active="isMyParticipatingLinkActive"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-account-check</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.detail.myJoinedContests') }}</v-list-item-title>
+        </v-list-item>
+
+        <v-divider class="my-2"></v-divider>
+
+        <!-- Discussions Link -->
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailDiscussions', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-forum-outline</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.discussions.title') }}</v-list-item-title>
         </v-list-item>
       </template>
 
       <v-divider class="my-2"></v-divider>
 
-      <!-- 个人分组 -->
-      <v-list-item
-        rounded="lg"
-        :to="{ name: 'SpacesDetailMyPublishing', params: { spaceId: spaceId } }"
-        :active="isMyPublishingLinkActive"
-        color="primary"
-        class="sidebar-item"
-      >
-        <template #prepend>
-          <v-icon>mdi-pencil-box-multiple</v-icon>
-        </template>
-        <v-list-item-title>{{ t('spaces.detail.myPublishedContests') }}</v-list-item-title>
-      </v-list-item>
-
-      <v-list-item
-        rounded="lg"
-        :to="{ name: 'SpacesDetailMyParticipating', params: { spaceId: spaceId } }"
-        :active="isMyParticipatingLinkActive"
-        color="primary"
-        class="sidebar-item"
-      >
-        <template #prepend>
-          <v-icon>mdi-account-check</v-icon>
-        </template>
-        <v-list-item-title>{{ t('spaces.detail.myJoinedContests') }}</v-list-item-title>
-      </v-list-item>
-
-      <v-divider class="my-2"></v-divider>
-
-      <!-- Discussions Link -->
-      <v-list-item
-        rounded="lg"
-        :to="{ name: 'SpacesDetailDiscussions', params: { spaceId: spaceId } }"
-        color="primary"
-        class="sidebar-item"
-      >
-        <template #prepend>
-          <v-icon>mdi-forum-outline</v-icon>
-        </template>
-        <v-list-item-title>{{ t('spaces.discussions.title') }}</v-list-item-title>
-      </v-list-item>
-
-      <v-divider class="my-2"></v-divider>
-
-      <!-- 管理员操作 -->
+      <!-- 管理员操作。课程里它就是「设置」——同一块东西，换个说得过去的名字。 -->
       <template v-if="isCurrentUserAtLeastAdmin">
-        <v-list-subheader>{{ t('spaces.detail.adminOperations') }}</v-list-subheader>
+        <v-list-subheader>
+          {{ isCourse ? t('spaces.course.nav.settings') : t('spaces.detail.adminOperations') }}
+        </v-list-subheader>
 
         <v-list-item
           rounded="lg"
@@ -228,6 +263,7 @@ import { storeToRefs } from 'pinia'
 import { getAvatarUrl } from '@/utils/materials'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import { COURSE_STUDENT_CELLS, COURSE_TEACHER_CELLS } from '@/lib/courseNav'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
 
@@ -240,6 +276,19 @@ const { currentSpace: space, categories } = storeToRefs(spaceStore)
 const isCurrentUserAtLeastAdmin = computed(() => {
   const currentUser = AccountService._user.value
   return space.value?.admins?.some((admin) => admin.user.id === currentUser?.id)
+})
+
+// 这块题目板是不是一门课。服务端按默认分组声明的壳算（`Space.isCourse`）——
+// 老题目板没有声明，是 false，侧栏它就一行都不变。
+const isCourse = computed(() => space.value?.isCourse === true)
+
+// 课程里露哪几格：老师 = 本版管理员（名单就是上面那份 `space.admins`，不另判权限）。
+const courseCells = computed(() => (isCurrentUserAtLeastAdmin.value ? COURSE_TEACHER_CELLS : COURSE_STUDENT_CELLS))
+
+// 创建者 = 题目板的所有者。设/撤管理员是创建者的事，入口只给他。
+const isCurrentUserOwner = computed(() => {
+  const currentUser = AccountService._user.value
+  return space.value?.admins?.some((admin) => admin.user.id === currentUser?.id && admin.role === 'OWNER')
 })
 
 // 获取未归档的分类列表用于侧边栏展示

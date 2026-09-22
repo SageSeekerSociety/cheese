@@ -225,6 +225,84 @@ class UsageRepository:
             for row in rows
         }
 
+    async def by_model(
+        self, *, since: datetime, until: datetime, limit: int
+    ) -> list[dict]:
+        """窗口内按**模型**拆的用量 —— 「钱花在哪个模型上」。
+
+        `route` 那一栏是「这笔供给从哪条路来的」（网关 / 订阅 / 自带凭据），和模型
+        是两个正交的切口：同一个模型可以走订阅也可以走网关，而订阅那一半没有单价。
+        两个一起给，「贵的是模型还是计费方式」这个问题才答得出来。
+
+        `cost_usd` 与 `unpriced_tokens` 同时出现在每一行上，理由和 `platform_totals`
+        一样：订阅那一半的 0 是「没有价」不是「免费」，少写这一列，一根柱子会在几百万
+        token 上印一个 `$0.0000`。
+        """
+        day_unused = None  # 窗口聚合与 by_day 同源，这里只按模型分组
+        del day_unused
+        stmt = (
+            select(
+                ResourceUsage.model,
+                func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
+                func.count(),
+                func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
+                func.coalesce(unpriced_tokens(), 0),
+            )
+            .where(
+                ResourceUsage.created_at >= since,
+                ResourceUsage.created_at < until,
+            )
+            .group_by(ResourceUsage.model)
+            .order_by(func.sum(ResourceUsage.total_tokens).desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            {
+                "model": row[0] or "",
+                "tokens": int(row[1]),
+                "calls": int(row[2]),
+                "cost_usd": float(row[3]),
+                "unpriced_tokens": int(row[4]),
+            }
+            for row in rows
+        ]
+
+    async def by_route(self, *, since: datetime, until: datetime) -> list[dict]:
+        """窗口内按**供给通路**拆的用量 —— 网关 / 订阅 / 自带凭据。
+
+        这是「未定价 token 到底是哪来的」的那个答案：`unpriced_tokens` 只告诉读者
+        「有一部分算不出价」，而按通路拆开之后能看到那部分全在 `subscription` 上
+        （订阅按月计费，行上的 `cost_usd = 0.0` 是「没有单价」）。行数就是通路的
+        个数（三条），所以不设 limit。
+        """
+        stmt = (
+            select(
+                ResourceUsage.route,
+                func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
+                func.count(),
+                func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
+                func.coalesce(unpriced_tokens(), 0),
+            )
+            .where(
+                ResourceUsage.created_at >= since,
+                ResourceUsage.created_at < until,
+            )
+            .group_by(ResourceUsage.route)
+            .order_by(func.sum(ResourceUsage.total_tokens).desc())
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            {
+                "route": row[0] or "",
+                "tokens": int(row[1]),
+                "calls": int(row[2]),
+                "cost_usd": float(row[3]),
+                "unpriced_tokens": int(row[4]),
+            }
+            for row in rows
+        ]
+
     async def top_projects(
         self, *, since: datetime, until: datetime, limit: int
     ) -> list[dict]:

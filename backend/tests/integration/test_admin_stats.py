@@ -71,6 +71,25 @@ def _days_ago(days: int) -> datetime:
     return _today() - timedelta(days=days) + timedelta(hours=12)
 
 
+def _mark_agent(client, feedback_id: str) -> None:
+    """把一行标成 agent 提的（服务层在提案路径上会写，这里直接落库）。
+
+    和 `_stamp_feedback` 同一套写法：**必须写在 `client` 那个库**
+    （`client.test_factory`），不能开一个新的 session —— 见文件头那段
+    关于两个库的警告。
+    """
+    fid = uuid.UUID(feedback_id)
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback).where(Feedback.id == fid).values(author_is_agent=True)
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
 def _stamp_feedback(client, at: datetime, *feedback_ids: str) -> None:
     """把几条反馈的 `created_at` 按到 ``at``。写在 `client` 那个库里。"""
     ids = [uuid.UUID(x) for x in feedback_ids]
@@ -249,9 +268,52 @@ def test_feedback_series_counts_the_window_and_fills_the_days_in_between(
     assert series[-1]["date"] == _today().date().isoformat()
     # 逐日：第 3 天一条、今天一条；中间那天**在**、值是 0；30 天前那条一天也不占。
     assert [s["created"] for s in series] == [0, 0, 0, 1, 0, 0, 1]
-    # counts 是全量口径（不收窗口），三条都在里面。
-    assert body["counts"]["all"] == 3
-    assert body["counts"]["unassigned"] == 3
+    # total 是全量口径（不收窗口），三条都在里面。
+    assert body["total"]["all"] == 3
+    assert body["total"]["unassigned"] == 3
+
+
+def test_the_admin_board_counts_every_visibility_not_just_public(client, as_admin):
+    """**这是这次要钉的那个 bug**：看板此前走 `public_counts`（被 `PUBLIC_ONLY`
+    收窄），于是私密、Agent 发现、安全问题全没进数 —— 而旁边的 `series` 是全量，
+    卡片和曲线各答各的问题，两边各自都看着对。
+
+    这条用四种可见性各建一条，断言四个都进数、并且四栏加起来不等于总数（`agent`
+    是来源，和公开/私密重叠 —— 那是筛选，不是划分）。
+    """
+    # 公开
+    _report(client, REPORTER, title="公开那条")
+    # 私密
+    _report(client, REPORTER, title="私密那条", visibility="private")
+    # Agent 发现（来源是 agent，可见性可以是公开/私密任一）。
+    # `author_is_agent` 不是创建字段 —— 它由服务层按「提的人是不是 agent」写下来
+    # （agent 提案走 `/feedback/proposals`），这里直接改库最省事：这条用例钉的是
+    # **计数**会不会漏掉它，不是「怎么成为 agent」。
+    agent_row = _report(client, REPORTER, title="Agent 提的")
+    _mark_agent(client, agent_row["id"])
+    # 安全问题（security 标志，由管理员分诊时打上 —— 走 PATCH，不是别的路）
+    sec = _report(client, REPORTER, title="安全那条", visibility="private")
+    r = client.patch(
+        f"/admin/feedback/{sec['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    body = _stats(client, as_admin, "feedback", days=DAYS)
+
+    assert body["total"]["all"] == 4
+    # **重叠是故意的**：Agent 那条默认可见性是 public，所以它同时进「公开」和
+    # 「Agent 发现」两栏；安全那条被 `security` 从「私密」里挤出去（私密那一栏的判据
+    # 和队列一样是 `private AND NOT security`），落进「安全问题」。四栏加起来是 5，
+    # 比总数多 1 —— 这就是「筛选不是划分」，页面上那句口径说的也是它。
+    assert body["columns"]["public"] == 2
+    assert body["columns"]["private"] == 1
+    assert body["columns"]["agent"] == 1
+    assert body["columns"]["security"] == 1
+    assert sum(body["columns"].values()) == body["total"]["all"] + 1
+    # 四级状态加起来等于总数（这是划分，和 columns 不同）。
+    assert sum(body["status"].values()) == body["total"]["all"]
 
 
 def test_the_deployed_count_sits_beside_the_resolved_pair(client, as_admin):
@@ -264,21 +326,30 @@ def test_the_deployed_count_sits_beside_the_resolved_pair(client, as_admin):
     row = _report(client, REPORTER)
     _set_status(client, as_admin, row["id"], "deployed")
 
-    counts = _stats(client, as_admin, "feedback", days=DAYS)["counts"]
+    body = _stats(client, as_admin, "feedback", days=DAYS)
 
-    assert set(counts) == {
+    # 三个切口各是一组，不再挤在一个扁平字典里。
+    assert set(body["total"]) == {
         "all",
-        "hot",
-        "active",
+        "open",
+        "closed",
+        "unassigned",
+        "urgent_open",
+    }
+    assert set(body["columns"]) == {"public", "private", "agent", "security"}
+    assert set(body["status"]) == {
+        "received",
+        "in_progress",
         "resolved",
         "deployed",
-        "unread",
-        "unassigned",
     }
-    assert counts["deployed"] == 1
-    assert counts["resolved"] == 1
+    assert body["status"]["deployed"] == 1
+    # 「已修复」那一级只数**现在停在 resolved** 的，和用户侧 `resolved` 栏（修复+上线
+    # 那一对）不是一个口径 —— 那个是筛选，这个是划分（四级加起来等于 total.all）。
+    assert body["status"]["resolved"] == 0
+    assert body["total"]["closed"] == 1
     # 上线也是「办完了」，所以它从「还没人管」里出去了 —— 同一个 `CLOSED_STATUSES`。
-    assert counts["unassigned"] == 0
+    assert body["total"]["unassigned"] == 0
 
 
 def test_a_transition_is_counted_on_its_own_day_and_the_list_filters_by_it(

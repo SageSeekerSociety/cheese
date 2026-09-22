@@ -81,6 +81,29 @@ class Space(Base):
 
 
 class SpaceCategory(Base):
+    """A 题目分组 *inside* one 题目版 — not a course.
+
+    A 题目版 (`Space`) is a course / an activity; this row is one bucket of
+    that course's problems — 作业, 实验, 小测 — so one course holds several of
+    them and every 题目 (`Task`) hangs off exactly one. The auto-created
+    "General" row a new board receives (`SpaceService.create_space`) is the
+    course's first bucket, not a course in its own right.
+
+    This is the current product definition. `docs/spec.md` still carries the
+    older reading (Space = 机构, SpaceCategory = 一门课), which the
+    course-template redefinition retired: the two levels each moved up one, and
+    code and comments are being brought to the new one. Where the protocol and
+    壳 modules below still say 项目集, they mean *this* row.
+
+    **The 机构协议 fields live here (#370).** `resource_pack` / `conditions` /
+    `default_role` and the 壳 `shell` are declared once on the 分组 and inherited
+    by every 题目 underneath it, with a per-题目 whole-key override
+    (`Task.protocol_override`). That is why they sit at this level rather than on
+    the 题目版: a course states its terms once for 作业 as a whole, not once per
+    exercise. Read them only through `app.domain.task.protocol.resolve` (and
+    `app.domain.shell.service` for the 壳) — never off the column directly.
+    """
+
     __tablename__ = "space_categories"
 
     id: Mapped[int] = mapped_column(BigInteger, space_categories_seq, primary_key=True)
@@ -113,7 +136,14 @@ class SpaceCategory(Base):
     # three protocol fields above (a 创研课 has twenty 赛题 and one 壳). NULL =
     # nobody said, so `default` is in force.
     shell: Mapped[str | None] = mapped_column(String(64), nullable=True)
-
+    # 课程级教学配置 (#8d772257): 本周范围、课程级 system prompt 模板、课件与知识
+    # 材料的引用。A 创研课 teaches, and what it is teaching this week is a
+    # property of the 项目集 — twenty 赛题 under one 教学安排. Rides the same
+    # override chain as the three above, via the same resolve(); empty for every
+    # 项目集 that is not a course.
+    teaching: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

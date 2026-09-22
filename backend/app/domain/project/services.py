@@ -198,6 +198,20 @@ class ProjectService:
         await TopicService(self._session).seed_brief_doc(root, brief)
         return project
 
+    async def projects_in_space_for_owner(
+        self, *, space_id: int, owner_handle: str
+    ) -> list[Project]:
+        """一个人在一门课里的项目 —— 课程链接问的就是这一句。
+
+        A course hangs every student's project on ONE 课程题, and that 题 can move
+        as the course grows (the teacher publishes something new). Asking by
+        Space is what keeps 一学期一个项目 true across that move; asking by the
+        anchor 题 would read a new 题 as 「他在这儿还没有项目」。
+        """
+        return await self._repo.list_for_space_and_owner(
+            space_id=space_id, owner_handle=owner_handle
+        )
+
     async def get(self, project_id: uuid.UUID) -> Project | None:
         """项目本身，不存在返回 None。
 
@@ -227,6 +241,15 @@ class ProjectService:
 
     async def list_all(self) -> tuple[list[Project], int]:
         return await self._repo.list_all(), await self._repo.count()
+
+    async def list_for_space(self, space_id: int) -> list[Project]:
+        """Every project anchored on a 赛题 of this 题目版 — a course's students.
+
+        The roster and the acceptance queue both need the whole class at once;
+        going through this method keeps the project repository inside the
+        project domain (architecture guard).
+        """
+        return await self._repo.list_for_space(space_id)
 
     async def list_for_team(self, team_id: int) -> list[Project]:
         """A team's 项目 page. For a personal team this also folds in the owner's

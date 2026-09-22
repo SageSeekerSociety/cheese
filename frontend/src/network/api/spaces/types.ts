@@ -1,4 +1,4 @@
-import type { Page, Space, TaskSubmitterType } from '@/types'
+import type { Page, Space, TaskSubmission, TaskSubmitterType } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -25,6 +25,30 @@ export type PostSpaceRequestData = {
 
 export type PostSpaceJoinRequestData = {
   code: string
+}
+
+/**
+ * The course link's payload. The link decides only WHERE the student lands,
+ * never what he may see, so this carries the code and nothing else.
+ */
+export type PostSpaceEnrollRequestData = {
+  code?: string
+}
+
+/** What opening a course link leaves behind: the board, and his project in it. */
+export type SpaceEnrollment = {
+  space: { id: number; name: string }
+  /** null when the course has nothing to hang a project on yet. */
+  project: { id: string; name: string; root_topic_id: string | null } | null
+}
+
+/** Teacher-side: the link to copy into the group chat, and the code inside it. */
+export type SpaceCourseLink = {
+  path: string
+  code: string
+  maxUses: number
+  useCount: number
+  expiresAt: number | null
 }
 
 export type PostSpaceMemberRequestData = {
@@ -452,4 +476,74 @@ export type PublisherParticipation = {
   participants: number
   completedUsers: number
   taskCount: number
+}
+
+/**
+ * 一门课的作业与验收：一行是「谁的哪份作业」。
+ *
+ * 它是 `TaskSubmission` 加上三个定位用的字段 —— `taskId` / `taskTitle` 说明这是
+ * 哪道作业，`participantId` 是既有的提交与评审接口要的那条报名记录 id。
+ */
+export type SpaceSubmissionRow = TaskSubmission & {
+  taskId: number
+  taskTitle: string
+  participantId: number
+}
+
+/** 课程那一屏的数字。四个数来自同一个口径（每人只算最新一版）。 */
+export type SpaceSubmissionSummary = {
+  participants: number
+  submissions: number
+  pendingReview: number
+  missing: number
+}
+
+export type SpaceSubmissionQueue = {
+  submissions: SpaceSubmissionRow[]
+  summary: SpaceSubmissionSummary
+  page: Page
+}
+
+// ── 教学单元（课程的时间线） ──────────────────────────────────────────────────
+
+export type TeachingUnit = {
+  id: number
+  spaceId: number
+  week: number
+  title: string
+  summary: string
+  knowledgePointIds: number[]
+  materialIds: number[]
+  assignmentTaskId: number | null
+  publishedAt: number | null
+  dueAt: number | null
+}
+
+export type GetTeachingUnitsResponseData = {
+  units: TeachingUnit[]
+  canTeach: boolean
+}
+
+export type PostTeachingUnitRequestData = {
+  week: number
+  title: string
+  summary?: string
+  knowledgePointIds?: number[]
+  materialIds?: number[]
+  assignmentTaskId?: number | null
+  dueAt?: number | null
+  published?: boolean
+}
+
+export type PatchTeachingUnitRequestData = {
+  week?: number
+  title?: string
+  summary?: string
+  knowledgePointIds?: number[]
+  materialIds?: number[]
+  assignmentTaskId?: number | null
+  clearAssignment?: boolean
+  dueAt?: number | null
+  clearDueAt?: boolean
+  published?: boolean
 }

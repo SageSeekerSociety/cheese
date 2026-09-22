@@ -1,4 +1,13 @@
-import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type {
+  CourseRoster,
+  DomainGroup,
+  MyCourseGroup,
+  Space,
+  SpaceCategory,
+  SpaceInviteCode,
+  SpaceMember,
+  Topic,
+} from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -6,21 +15,27 @@ import type {
   AnalyticsRealNameType,
   AnalyticsSortOrder,
   GetSpacesResponseData,
+  GetTeachingUnitsResponseData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceRequestData,
+  PatchTeachingUnitRequestData,
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
+  PostSpaceEnrollRequestData,
   PostSpaceInviteCodeRequestData,
   PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
   PostSpaceRequestData,
+  PostTeachingUnitRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPublishers,
+  SpaceCourseLink,
+  SpaceEnrollment,
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestions,
@@ -29,7 +44,9 @@ import type {
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
   SpaceMyPublishingOverview,
+  SpaceSubmissionQueue,
   SpaceTaskAnalytics,
+  TeachingUnit,
 } from './types'
 
 import { NewApiInstance } from '../index'
@@ -78,9 +95,44 @@ export namespace SpacesApi {
       data,
     })
 
+  /**
+   * Opening a course link: redeem the code it carries, then come away with the
+   * student's project in that course. Doing it twice is not an error.
+   */
+  export const enroll = (spaceId: number, data: PostSpaceEnrollRequestData = {}) =>
+    NewApiInstance.request<SpaceEnrollment>({
+      url: `/spaces/${spaceId}/enroll`,
+      method: 'POST',
+      data,
+    })
+
+  /** Teacher-side: the one link to hand out for this course. */
+  export const courseLink = (spaceId: number) =>
+    NewApiInstance.request<SpaceCourseLink>({
+      url: `/spaces/${spaceId}/course-link`,
+      method: 'GET',
+    })
+
   export const listMembers = (spaceId: number) =>
     NewApiInstance.request<{ members: SpaceMember[] }>({
       url: `/spaces/${spaceId}/members`,
+      method: 'GET',
+    })
+
+  /**
+   * 这门课的人、项目与组 —— 教师版面的「学生与分组」那一屏。
+   * 只对本版管理员（教师）开放：学生读这条是 403。
+   */
+  export const getCourseRoster = (spaceId: number) =>
+    NewApiInstance.request<CourseRoster>({
+      url: `/spaces/${spaceId}/course/roster`,
+      method: 'GET',
+    })
+
+  /** 学生自己那一行：我在这个课里的项目与我的组（谁都能读，只关于自己）。 */
+  export const getMyCourseGroup = (spaceId: number) =>
+    NewApiInstance.request<MyCourseGroup>({
+      url: `/spaces/${spaceId}/course/my-group`,
       method: 'GET',
     })
 
@@ -415,6 +467,53 @@ export namespace SpacesApi {
   export const deleteDomainGroup = (spaceId: number, groupId: number) =>
     NewApiInstance.request({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
+      method: 'DELETE',
+    })
+
+  /**
+   * 一整门课的作业与验收（教师版面）。
+   *
+   * `reviewed: false` 就是验收队列；不给就是全部。每行是「谁的哪份作业」，
+   * 带 `participantId` 供既有的提交 / 评审接口使用。
+   */
+  export const getSubmissionQueue = (
+    spaceId: number,
+    params: {
+      reviewed?: boolean
+      taskId?: number
+      pageStart?: number
+      pageSize?: number
+    } = {}
+  ) =>
+    NewApiInstance.request<SpaceSubmissionQueue>({
+      url: `/spaces/${spaceId}/submissions`,
+      method: 'GET',
+      params,
+    })
+
+  export const listUnits = (spaceId: number) =>
+    NewApiInstance.request<GetTeachingUnitsResponseData>({
+      url: `/spaces/${spaceId}/units`,
+      method: 'GET',
+    })
+
+  export const createUnit = (spaceId: number, data: PostTeachingUnitRequestData) =>
+    NewApiInstance.request<{ unit: TeachingUnit }>({
+      url: `/spaces/${spaceId}/units`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateUnit = (spaceId: number, unitId: number, data: PatchTeachingUnitRequestData) =>
+    NewApiInstance.request<{ unit: TeachingUnit }>({
+      url: `/spaces/${spaceId}/units/${unitId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteUnit = (spaceId: number, unitId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/units/${unitId}`,
       method: 'DELETE',
     })
 }

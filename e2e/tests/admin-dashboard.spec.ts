@@ -4,7 +4,7 @@ import { appOriginOf, isEnvironmentNoise, login } from './helpers';
 // 管理后台的看板（`/admin/dashboard`）。
 //
 // **这条用例是一次真事故的回执。** 看板前端曾经指着一条服务端已经没有的路由
-// （`/admin/feedback/stats`，被拆成了 `/admin/stats/{feedback,usage,platform}`）。
+// （`/admin/feedback/stats`，被拆成了一分类一条的 `/admin/stats/{…}`）。
 // 那条路径落进 `/admin/feedback/{id}` 被当成一个 uuid 解析，真环境回 **400**，页面上
 // 是「看板加载失败」—— 而预览的假后端**替那条老路留了一个别名**，于是预览一切正常；
 // 没有一条测试碰过这一页，CI 全绿，dev 是坏的。
@@ -47,16 +47,25 @@ function watchStats(page: Page) {
   return seen;
 }
 
-test('看板打的是三条新接口，三类各自出数', async ({ page }) => {
+/** 分类开关里点某一个页签。**只在 `.ad__kinds` 里找**：摘要条（`.ad__pulse`）那几块
+ *  也写着同一批标签、也带 button 的可访问名字（role=tab 虽然换掉了隐式 role，但
+ *  `getByRole('button', { name: '…' })` 在部分版本里仍会撞上邻近控件），收窄到开关
+ *  这一层才能点到「切换分类」那个控件本身。 */
+function kindTab(page: Page, label: string) {
+  return page.locator('.ad__kinds').getByRole('button', { name: label, exact: true });
+}
+
+test('看板打的是各自那条新接口，各类各自出数', async ({ page }) => {
   await login(page);
   const seen = watchStats(page);
 
   await page.goto('/admin/dashboard');
 
-  // 1. 第一类：反馈。**这一条就是那次事故** —— 前端曾经指着 `/admin/feedback/stats`，
+  // 1. 默认落**交付**（`/admin/stats/pipeline`），不是老路由。
+  //    **这一条就是那次事故** —— 前端曾经指着 `/admin/feedback/stats`，
   //    而那条路径在服务端已经不存在，`stats` 会被当成一条反馈的 id 解析成 400。
   await expect
-    .poll(() => seen.find((r) => r.path === '/api/admin/stats/feedback'), { timeout: 30_000 })
+    .poll(() => seen.find((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 })
     .toBeTruthy();
   expect(seen.filter((r) => r.path.startsWith('/api/admin/stats/'))).not.toContainEqual(
     expect.objectContaining({ path: '/api/admin/feedback/stats' }),
@@ -66,29 +75,37 @@ test('看板打的是三条新接口，三类各自出数', async ({ page }) => 
   // 请求 200 而页面仍然写「加载失败」是可能的（比如形状对不上）。
   await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
   await expect(page.getByText('看板加载失败')).toHaveCount(0);
-  await expect(page.getByText('待分诊')).toBeVisible();
+  // 限定 `.ad__kpis`：顶上摘要条也写着同一个词（见下一个用例的说明）。
+  await expect(page.locator('.ad__kpis').getByText('等你处理')).toBeVisible();
 
-  // 2. 切到用量：打的是那一条用量接口，而且只有它。
+  // 2. 切到反馈：打的是那一条反馈接口，待分诊那一张卡出数。
+  await kindTab(page, '反馈').click();
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/feedback'), { timeout: 30_000 })
+    .toBe(true);
+  await expect(page.locator('.ad__kpis').getByText('待分诊')).toBeVisible();
+
+  // 3. 切到用量：打的是那一条用量接口。
   const before = seen.length;
-  await page.getByRole('button', { name: '用量' }).click();
+  await kindTab(page, '用量').click();
   await expect
     .poll(() => seen.slice(before).some((r) => r.path === '/api/admin/stats/usage'), { timeout: 30_000 })
     .toBe(true);
   await expect(page.getByText('最花 token 的项目')).toBeVisible();
 
-  // 3. 切到平台：账号与机器在同一类里，机器那几个数是**存量**，那句话必须写着。
-  await page.getByRole('button', { name: '平台' }).click();
+  // 4. 切到平台：账号与机器在同一类里，机器那几个数是**存量**，那句话必须写着。
+  await kindTab(page, '平台').click();
   await expect
     .poll(() => seen.some((r) => r.path === '/api/admin/stats/platform'), { timeout: 30_000 })
     .toBe(true);
   await expect(page.getByText('机器（存量）')).toBeVisible();
   await expect(page.getByText(/不是在线数/)).toBeVisible();
 
-  // 4. 整轮下来每一条只有 2xx。分开断言是因为「请求发出去了」和「服务端认这条路径」
+  // 5. 整轮下来每一条只有 2xx。分开断言是因为「请求发出去了」和「服务端认这条路径」
   //    是两件事 —— 事故里前端确实发出去了，回来的是 400。
   expect(seen.filter((r) => r.status >= 400)).toEqual([]);
 
-  // 5. 控制台干净（放行那两条环境缺口之外一句都不许有）。
+  // 6. 控制台干净（放行那两条环境缺口之外一句都不许有）。
   expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
 });
 
@@ -97,20 +114,23 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
   const seen = watchStats(page);
 
   await page.goto('/admin/dashboard');
-  await expect.poll(() => seen.find((r) => r.path === '/api/admin/stats/feedback'), { timeout: 30_000 }).toBeTruthy();
-  await expect(page.getByText('待分诊')).toBeVisible();
+  await expect.poll(() => seen.find((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 }).toBeTruthy();
+  // **限定在 `.ad__kpis`（明细那一行）里找**：顶上那条摘要条（`.ad__pulse`）也
+  // 常驻着同一批短语（那是它的 value/hint），而摘要是**跨块**的导航，不算「上一类的内容」。
+  // 不加这一层限定，`getByText('等你处理')` 会命中两处、报 strict mode 违规；而下面那条
+  // 「切走之后数 0」也会永远不成立 —— 摘要条本来就不跟着分类消失。
+  const pipelineKpi = page.locator('.ad__kpis').getByText('等你处理');
+  await expect(pipelineKpi).toBeVisible();
 
-  await page.getByRole('button', { name: '用量' }).click();
+  await kindTab(page, '用量').click();
   await expect.poll(() => seen.some((r) => r.path === '/api/admin/stats/usage'), { timeout: 30_000 }).toBe(true);
-  // 切过去之后画的是用量那一块，反馈那块不再挂在屏幕上。
-  await expect(page.getByText('待分诊')).toHaveCount(0);
+  // 切过去之后画的是用量那一块，交付那块的**明细**不再挂在屏幕上（摘要条还在，见上）。
+  await expect(pipelineKpi).toHaveCount(0);
+  await expect(page.getByText('最花 token 的项目')).toBeVisible();
 
   const before = seen.length;
-  // `exact: true`：顶栏那颗「帮助与反馈」的可访问名字里也含「反馈」，而 Playwright 的
-  // `name` 默认是**子串**匹配 —— 不加这一条，这一行会同时命中它和这一页的分类页签，
-  // 报 strict mode 违规。
-  await page.getByRole('button', { name: '反馈', exact: true }).click();
-  await expect(page.getByText('待分诊')).toBeVisible();
+  await kindTab(page, '交付').click();
+  await expect(pipelineKpi).toBeVisible();
   // 那一份已经在手上了：再拉一次只是重复读那两张最长的表。
   expect(seen.length).toBe(before);
 
