@@ -1948,6 +1948,9 @@ function routes(url: URL, method: string, body: unknown): MockReply {
     return {
       routes_total: routes.length,
       routes_shown: routes.length,
+      // 注册的全部路由（FastAPI 路由表的条数）。**和 `routes_total` 不是一回事**：
+      // 这里画出来的 6 条是「有样本的」，分母是这个 app 真有的那么多条路由。
+      routes_registered: 214,
       routes,
       active_requests: 2,
       uptime_seconds: 5 * 3600 + 37 * 60,

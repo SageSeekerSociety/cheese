@@ -7,13 +7,13 @@ import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
+import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
+import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
-import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
@@ -53,15 +53,7 @@ const DAYS = 7
 
 /** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
  *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
-const KINDS: StatsKind[] = [
-  'pipeline',
-  'product',
-  'feedback',
-  'usage',
-  'platform',
-  'performance',
-  'integrations',
-]
+const KINDS: StatsKind[] = ['pipeline', 'product', 'feedback', 'usage', 'platform', 'performance', 'integrations']
 
 /** 每个分类的名字。**写成一张键名字面量的表**，不在模板里拼
  *  `feedback.dashboard.tab.${kind}` —— 拼出来的键在源码里没有一处字面量出现，
@@ -101,22 +93,58 @@ const SHOWN = 10
  *
  *  点一块就切到那一类 —— 它是导航，不是卡片（`to` 语义上的链接由下面的 KPI 卡承担）。
  */
+/** 摘要条的**短值**。
+ *
+ *  两个约束，都是从「两排卡片长一样」那次反馈来的：
+ *
+ *   1. **不重复下面 KPI 行的那一个数**。反馈那块的 KPI 第一张就是「待分诊」、用量
+ *      第一张就是「窗口内 token」，摘要条再打一遍就是同一件事说两遍。所以摘要条
+ *      给的是**这一块现在最该被看见的那件事**的**短语**（「3 急件」「20 万」），
+ *      而不是和 KPI 同一个数字。
+ *   2. **短语，不是大数字**。大数字留给下面那排 KPI 卡；摘要条是导航，它的字是
+ *      `.t-dense`，不是 `.t-console-title`。
+ */
 const pulse = computed(() => {
   const rows = [
+    {
+      key: 'pipeline',
+      label: t('feedback.dashboard.tab.pipeline'),
+      // 「等你」是这一块唯一要回答的问题，而且它**不在**下面的 KPI 第一张
+      // （第一张是「还在走」）。
+      value: t('feedback.dashboard.pipeline.kpi.needsYouShort', {
+        n:
+          (pipeline.value?.needs_you.reviewer_pending ?? 0) +
+          (pipeline.value?.needs_you.open_tasks ?? 0) +
+          (pipeline.value?.needs_you.awaiting_answer ?? 0),
+      }),
+      hint: t('feedback.dashboard.pipeline.needs.title'),
+      tone: 'ink',
+    },
+    {
+      key: 'product',
+      label: t('feedback.dashboard.tab.product'),
+      value: t('feedback.dashboard.product.northStarShort', {
+        n: product.value?.north_star.total ?? 0,
+      }),
+      hint: t('feedback.dashboard.product.northStar'),
+      tone: 'ink',
+    },
     {
       key: 'feedback',
       label: t('feedback.dashboard.tab.feedback'),
       value:
         urgentOpen.value > 0
           ? t('feedback.dashboard.kpi.urgentShort', { n: urgentOpen.value })
-          : num(feedback.value?.total.unassigned),
+          : t('feedback.dashboard.kpi.untriagedShort', {
+              n: feedback.value?.total.unassigned ?? 0,
+            }),
       hint: urgentOpen.value > 0 ? t('feedback.dashboard.kpi.urgent') : t('feedback.dashboard.kpi.untriaged'),
       tone: urgentOpen.value > 0 ? 'warn' : 'ink',
     },
     {
       key: 'usage',
       label: t('feedback.dashboard.tab.usage'),
-      value: num(usage.value?.totals.tokens),
+      value: shortTokens(usage.value?.totals.tokens),
       hint: t('feedback.dashboard.usage.tokens'),
       tone: 'ink',
     },
@@ -126,7 +154,9 @@ const pulse = computed(() => {
       value:
         platform.value?.health?.overall === 'healthy'
           ? t('feedback.dashboard.health.healthy')
-          : t('feedback.dashboard.health.degraded'),
+          : platform.value?.health?.overall === 'degraded'
+            ? t('feedback.dashboard.health.degraded')
+            : '—',
       hint: t('feedback.dashboard.health.title'),
       tone:
         platform.value?.health?.overall === 'healthy'
@@ -142,9 +172,26 @@ const pulse = computed(() => {
       hint: t('feedback.dashboard.perf.slowest'),
       tone: 'ink',
     },
+    {
+      key: 'integrations',
+      label: t('feedback.dashboard.tab.integrations'),
+      value: t('feedback.dashboard.integrations.delivery.deadShort', {
+        n: integrations.value?.delivery.dead_letters ?? 0,
+      }),
+      hint: t('feedback.dashboard.integrations.delivery.title'),
+      tone: (integrations.value?.delivery.dead_letters ?? 0) > 0 ? 'warn' : 'ink',
+    },
   ]
   return rows
 })
+
+/** 20 万 token 这种短写 —— 摘要条上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。 */
+function shortTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  return String(n)
+}
 
 /** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
 const slowestP95 = computed(() => {
@@ -466,8 +513,7 @@ const spineStuck = computed(() => {
   const p = pipeline.value
   if (!p) return []
   const rows: { label: string; count: number }[] = []
-  if (p.backlog.stuck > 0)
-    rows.push({ label: t('feedback.dashboard.pipeline.kpi.stuck'), count: p.backlog.stuck })
+  if (p.backlog.stuck > 0) rows.push({ label: t('feedback.dashboard.pipeline.kpi.stuck'), count: p.backlog.stuck })
   if (p.needs_you.awaiting_answer > 0)
     rows.push({
       label: t('feedback.dashboard.pipeline.kpi.needsYou'),
@@ -506,9 +552,7 @@ const pipelineKpis = computed(() => {
       key: 'needs',
       label: t('feedback.dashboard.pipeline.kpi.needsYou'),
       value: num(
-        (p?.needs_you.reviewer_pending ?? 0) +
-          (p?.needs_you.open_tasks ?? 0) +
-          (p?.needs_you.awaiting_answer ?? 0),
+        (p?.needs_you.reviewer_pending ?? 0) + (p?.needs_you.open_tasks ?? 0) + (p?.needs_you.awaiting_answer ?? 0)
       ),
       loading: store.statsLoading,
     },
@@ -524,17 +568,18 @@ const stuckRows = computed(() =>
     tone: 'warn' as const,
     age: ageText(row.age_seconds),
     to: { path: `/topics/${row.topic_id}` },
-  })),
+  }))
 )
 
 const needsYouRows = computed(() =>
   (pipeline.value?.needs_you.items ?? []).map((row) => ({
     id: `${row.kind}:${row.id}`,
     title: row.title,
-    subtitle: row.kind === 'task' ? t('feedback.dashboard.pipeline.needs.task') : t('feedback.dashboard.pipeline.needs.room'),
+    subtitle:
+      row.kind === 'task' ? t('feedback.dashboard.pipeline.needs.task') : t('feedback.dashboard.pipeline.needs.room'),
     tone: 'ink' as const,
     to: { path: `/topics/${row.topic_id}` },
-  })),
+  }))
 )
 
 const failureRows = computed(() => {
@@ -573,7 +618,7 @@ const hostRows = computed(() =>
     statusLabel: String(row.consecutive_failures),
     tone: row.quarantined_until ? ('danger' as const) : ('warn' as const),
     to: { path: '/admin' },
-  })),
+  }))
 )
 
 /* ---- 产品健康（新） ---------------------------------------------------- */
@@ -591,8 +636,7 @@ const productKpis = computed(() => [
     key: 'returned',
     label: t('feedback.dashboard.product.rejection.title'),
     value:
-      product.value?.rejection.returned_rate === null ||
-      product.value?.rejection.returned_rate === undefined
+      product.value?.rejection.returned_rate === null || product.value?.rejection.returned_rate === undefined
         ? ''
         : `${Math.round(product.value.rejection.returned_rate * 100)}%`,
     loading: store.statsLoading,
@@ -601,8 +645,7 @@ const productKpis = computed(() => [
     key: 'useful',
     label: t('feedback.dashboard.product.usefulness.title'),
     value:
-      product.value?.usefulness.useful_rate === null ||
-      product.value?.usefulness.useful_rate === undefined
+      product.value?.usefulness.useful_rate === null || product.value?.usefulness.useful_rate === undefined
         ? ''
         : `${Math.round(product.value.usefulness.useful_rate * 100)}%`,
     loading: store.statsLoading,
@@ -635,7 +678,11 @@ const rejectionSegments = computed(() => {
     },
     { label: t('feedback.dashboard.product.rejection.conflict'), value: b.conflict, shade: 'muted' as const },
     { label: t('feedback.dashboard.product.rejection.voided'), value: b.voided, shade: 'faint' as const },
-    { label: t('feedback.dashboard.product.rejection.revoked'), value: b.revoked_after_accept, shade: 'faint' as const },
+    {
+      label: t('feedback.dashboard.product.rejection.revoked'),
+      value: b.revoked_after_accept,
+      shade: 'faint' as const,
+    },
     { label: t('feedback.dashboard.product.rejection.live'), value: b.live, shade: 'faint' as const },
   ].filter((s) => s.value > 0)
 })
@@ -672,8 +719,7 @@ const integrationKpis = computed(() => [
     key: 'passkey',
     label: t('feedback.dashboard.integrations.passkey.title'),
     value:
-      integrations.value?.passkey.coverage === null ||
-      integrations.value?.passkey.coverage === undefined
+      integrations.value?.passkey.coverage === null || integrations.value?.passkey.coverage === undefined
         ? ''
         : `${Math.round(integrations.value.passkey.coverage * 100)}%`,
     loading: store.statsLoading,
@@ -799,17 +845,15 @@ const productUnavailable = computed(
     product.value?.unavailable.map((row) => ({
       name: row.name,
       text: t(PRODUCT_UNAVAILABLE_KEY[row.name] ?? row.name),
-    })) ?? [],
+    })) ?? []
 )
 
 /** `name` 是 snake_case，词条是 camelCase。**键写全字面量**（同 `TAB_KEY`）：
  *  拼出来的键在源码里没有一处字面量出现，`catalog.spec.ts` 会把它判成死键。 */
 const UNAVAILABLE_KEY: Record<string, string> = {
   github_app_permission_gaps: 'feedback.dashboard.integrations.unavailable.githubAppPermissionGaps',
-  github_app_mint_failure_rate:
-    'feedback.dashboard.integrations.unavailable.githubAppMintFailureRate',
-  login_lockout_stock_and_rate:
-    'feedback.dashboard.integrations.unavailable.loginLockoutStockAndRate',
+  github_app_mint_failure_rate: 'feedback.dashboard.integrations.unavailable.githubAppMintFailureRate',
+  login_lockout_stock_and_rate: 'feedback.dashboard.integrations.unavailable.loginLockoutStockAndRate',
   metering_post_freeze: 'feedback.dashboard.integrations.unavailable.meteringPostFreeze',
 }
 
@@ -825,8 +869,7 @@ const FAIL_CODE_KEY: Record<string, string> = {
   host_unreachable: 'feedback.dashboard.pipeline.code.host_unreachable',
   storage_exhausted: 'feedback.dashboard.pipeline.code.storage_exhausted',
   runtime_image_missing: 'feedback.dashboard.pipeline.code.runtime_image_missing',
-  subscription_credential_expired:
-    'feedback.dashboard.pipeline.code.subscription_credential_expired',
+  subscription_credential_expired: 'feedback.dashboard.pipeline.code.subscription_credential_expired',
   workspace_vcs_perms: 'feedback.dashboard.pipeline.code.workspace_vcs_perms',
   other: 'feedback.dashboard.pipeline.code.other',
 }
@@ -836,7 +879,7 @@ const integrationsUnavailable = computed(
     integrations.value?.unavailable.map((row) => ({
       name: row.name,
       text: t(UNAVAILABLE_KEY[row.name] ?? row.name),
-    })) ?? [],
+    })) ?? []
 )
 
 const perf = computed(() => store.stats.performance)
@@ -860,12 +903,21 @@ const perfRoutes = computed(() => perf.value?.routes ?? [])
 
 /** 被截断的那部分要说出来：表里只有前 N 条，写「12 条」而不写「共 34 条」的话，
  *  读者会以为这就是全部。 */
+/** 「有样本 X / 共 Y」—— 分母是注册的全部路由。
+ *
+ *  只报 X 会被读成「这个 app 才 6 条路由」（管理员就问过「在采的路由是不是太少了」）。
+ *  实际上 X 是**重启以来被访问过、留下样本的**那几条，没被访问过的路由在这里根本
+ *  不出现。两个数一起读才答得了「是不是太少了」。 */
 const routesText = computed(() => {
   const p = perf.value
   if (!p) return ''
-  return p.routes_total > p.routes_shown
-    ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
-    : String(p.routes_total)
+  const registered = p.routes_registered
+  if (registered === undefined || registered === null) {
+    return p.routes_total > p.routes_shown
+      ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
+      : String(p.routes_total)
+  }
+  return t('feedback.dashboard.perf.routesOf', { shown: p.routes_total, total: registered })
 })
 
 const lagText = computed(() => {
@@ -987,9 +1039,13 @@ onMounted(() => {
         </v-btn-toggle>
       </div>
 
-      <!-- 四块摘要：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
-           切过去），不是四个独立卡片 —— 所以它是一排 button，不是 `<a>`。 -->
-      <div class="ad__pulse" role="tablist" aria-label="看板四块摘要">
+      <!-- 摘要条：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
+           切过去），不是独立卡片。
+           **它是文字 chip，不是第二排大数字卡**：下面那排 KPI 卡已经是「标签 + 大数
+           字」，摘要条再摆一排同样式的大数字就是同一件事说两遍（管理员指着两排问过
+           「这两行是同一个东西」）。所以这里只有名字 + 一个短值，高度压到 chip 档，
+           大数字全留给下面那一排。 -->
+      <div class="ad__pulse" role="tablist" aria-label="看板各块摘要">
         <button
           v-for="row in pulse"
           :key="row.key"
@@ -998,11 +1054,11 @@ onMounted(() => {
           :class="{ 'ad__pulse-cell--on': kind === row.key, [`ad__pulse-cell--${row.tone}`]: true }"
           role="tab"
           :aria-selected="kind === row.key"
+          :title="row.hint"
           @click="selectKind(row.key as StatsKind)"
         >
           <span class="ad__pulse-label t-eyebrow-read">{{ row.label }}</span>
-          <span class="ad__pulse-value t-console-title t-num">{{ row.value }}</span>
-          <span class="ad__pulse-hint t-meta-read">{{ row.hint }}</span>
+          <span class="ad__pulse-value t-dense t-num">{{ row.value }}</span>
         </button>
       </div>
 
@@ -1027,11 +1083,7 @@ onMounted(() => {
 
         <!-- 活四站导轨。**没有闸门那一站** —— 它已退役（#296），画上去就是一个永远
              空的站，而页面第一眼的位置不该放装饰。 -->
-        <AdminLiveSpine
-          :stages="spineStages"
-          :stuck="spineStuck"
-          :loading="store.statsLoading"
-        />
+        <AdminLiveSpine :stages="spineStages" :stuck="spineStuck" :loading="store.statsLoading" />
 
         <div class="ad__row">
           <AdminActionList
@@ -1109,11 +1161,7 @@ onMounted(() => {
         <!-- 算不出来的那两条：**带理由**，不画一个假 0。 -->
         <section class="ad__split">
           <h2 class="ad__block-title">{{ t('feedback.dashboard.product.unavailable.title') }}</h2>
-          <p
-            v-for="row in productUnavailable"
-            :key="row.name"
-            class="ad__none-desc t-meta-read"
-          >
+          <p v-for="row in productUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
             {{ row.text }}
           </p>
           <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.unavailable.note') }}</p>
@@ -1139,9 +1187,21 @@ onMounted(() => {
             :segments="
               integrations
                 ? [
-                    { label: t('feedback.dashboard.integrations.oauth.expired'), value: integrations.oauth.expired, shade: 'ink' as const },
-                    { label: t('feedback.dashboard.integrations.oauth.expiring'), value: integrations.oauth.expiring_7d, shade: 'muted' as const },
-                    { label: t('feedback.dashboard.integrations.oauth.noRefresh'), value: integrations.oauth.no_refresh_token, shade: 'faint' as const },
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.expired'),
+                      value: integrations.oauth.expired,
+                      shade: 'ink' as const,
+                    },
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.expiring'),
+                      value: integrations.oauth.expiring_7d,
+                      shade: 'muted' as const,
+                    },
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.noRefresh'),
+                      value: integrations.oauth.no_refresh_token,
+                      shade: 'faint' as const,
+                    },
                   ].filter((s) => s.value > 0)
                 : []
             "
@@ -1150,9 +1210,7 @@ onMounted(() => {
           />
           <AdminMeterBar
             :label="t('feedback.dashboard.integrations.passkey.title')"
-            :value-text="
-              integrations ? `${integrations.passkey.with_passkey} / ${integrations.passkey.accounts}` : ''
-            "
+            :value-text="integrations ? `${integrations.passkey.with_passkey} / ${integrations.passkey.accounts}` : ''"
             :limit="integrations?.passkey.accounts ?? null"
             :ratio="integrations?.passkey.coverage ?? 0"
             :hint="
@@ -1174,8 +1232,16 @@ onMounted(() => {
           :segments="
             integrations
               ? [
-                  { label: t('feedback.dashboard.integrations.delivery.unsent'), value: integrations.delivery.unsent, shade: 'ink' as const },
-                  { label: t('feedback.dashboard.integrations.delivery.dead'), value: integrations.delivery.dead_letters, shade: 'muted' as const },
+                  {
+                    label: t('feedback.dashboard.integrations.delivery.unsent'),
+                    value: integrations.delivery.unsent,
+                    shade: 'ink' as const,
+                  },
+                  {
+                    label: t('feedback.dashboard.integrations.delivery.dead'),
+                    value: integrations.delivery.dead_letters,
+                    shade: 'muted' as const,
+                  },
                 ].filter((s) => s.value > 0)
               : []
           "
@@ -1185,11 +1251,7 @@ onMounted(() => {
 
         <section class="ad__split">
           <h2 class="ad__block-title">{{ t('feedback.dashboard.integrations.unavailable.title') }}</h2>
-          <p
-            v-for="row in integrationsUnavailable"
-            :key="row.name"
-            class="ad__none-desc t-meta-read"
-          >
+          <p v-for="row in integrationsUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
             {{ row.text }}
           </p>
           <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.unavailable.note') }}</p>
@@ -1313,10 +1375,9 @@ onMounted(() => {
             />
           </div>
           <p v-if="credits" class="ad__block-note t-meta-read">
-            {{ t('feedback.dashboard.credits.unlimited') }} {{ credits.unlimited_count }}
-            · {{ t('feedback.dashboard.credits.burn') }}
-            {{ credits.burn.credits_per_day.toFixed(1) }}/d
-            · {{ t('feedback.dashboard.credits.eta') }} —
+            {{ t('feedback.dashboard.credits.unlimited') }} {{ credits.unlimited_count }} ·
+            {{ t('feedback.dashboard.credits.burn') }} {{ credits.burn.credits_per_day.toFixed(1) }}/d ·
+            {{ t('feedback.dashboard.credits.eta') }} —
           </p>
           <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.credits.note') }}</p>
         </section>
@@ -1372,6 +1433,7 @@ onMounted(() => {
             </tbody>
           </table>
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
+          <p class="ad__perf-note t-meta-read">{{ t('feedback.dashboard.perf.routesNote') }}</p>
         </div>
 
         <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
@@ -1379,11 +1441,15 @@ onMounted(() => {
           <h2 class="ad__block-title">{{ t('feedback.dashboard.reliability.title') }}</h2>
           <div class="ad__split-grid">
             <div class="ad__split-cell">
-              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.integrations.delivery.unsent') }}</span>
+              <span class="ad__split-label t-eyebrow-read">{{
+                t('feedback.dashboard.integrations.delivery.unsent')
+              }}</span>
               <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_unsent) }}</span>
             </div>
             <div class="ad__split-cell">
-              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.integrations.delivery.dead') }}</span>
+              <span class="ad__split-label t-eyebrow-read">{{
+                t('feedback.dashboard.integrations.delivery.dead')
+              }}</span>
               <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_dead_letters) }}</span>
             </div>
             <div class="ad__split-cell">
@@ -1647,71 +1713,46 @@ onMounted(() => {
    高度比 KPI 卡矮一档（72px），但那一格的数用同一档字号（`t-console-title`），因为
    「哪块需要我」和「这块的数是多少」是同一眼要读走的。 */
 .ad__pulse {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-@media (max-width: 900px) {
-  .ad__pulse {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.ad__pulse-cell {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px 16px;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-  border-bottom-left-radius: var(--radius-lg);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+/* chip，不是卡片：高度 28px、横向排、字号 `.t-dense`。大数字只有下面那排 KPI
+   卡才有 —— 摘要条再摆一排 `.t-console-title` 就是同一件事说两遍。 */
+.ad__pulse-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--fill);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .ad__pulse-cell:hover {
-    background: var(--fill);
+    background: var(--fill-2);
   }
 }
 
 .ad__pulse-cell--on {
+  background: var(--surface);
   border-color: var(--line-2);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .ad__pulse-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--muted);
 }
 
 .ad__pulse-value {
   color: var(--ink);
-  font-size: 20px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.ad__pulse-hint {
-  overflow: hidden;
-  color: var(--faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 语义色只在这两档上出现（急件 = warn、健康坏了 = danger）：一屏里只有这一条会亮
-   的时候，它就是「需要看的地方」。 */
 .ad__pulse-cell--warn .ad__pulse-value {
   color: var(--warn-ink);
 }

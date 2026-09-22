@@ -29,7 +29,7 @@ const props = withDefaults(
     /** 空屏的那句邀请。**必填** —— 不写就只能画一个没有字的框。 */
     empty: string
   }>(),
-  { loading: false },
+  { loading: false }
 )
 
 const { t } = useI18n()

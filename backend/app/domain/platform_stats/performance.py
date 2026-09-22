@@ -22,7 +22,7 @@ from app.core.metrics import registry
 ROUTES_SHOWN = 12
 
 
-def performance_snapshot() -> dict:
+def performance_snapshot(*, routes_registered: int | None = None) -> dict:
     """这一刻的接口耗时：按路由的 p50 / p95 / p99，加两个全局数。
 
     **`None` 不是 0**：一条样本都没有的路由，分位数是 `None`，页面画成「—」。
@@ -56,8 +56,15 @@ def performance_snapshot() -> dict:
     return {
         # 「被看过多少条路」和「画出来几条」是两个数：截断要说出来，否则读者会以为
         # 这就是全部（`ROUTES_SHOWN` 之外的慢路由就静默消失了）。
+        #
+        # **`routes_total` 是「有样本的路」，不是「这个 app 有多少条路由」**：没有
+        # 被访问过的路由在这里根本不出现（`hist.count == 0` 的那条被 `continue` 掉
+        # 了）。所以它天然是「重启后到现在的累计」，看起来少不代表路由少 ——
+        # `routes_registered` 把分母补上，页面上写「有样本 X / 共 Y」，两个数一起
+        # 读才答得了「是不是太少了」。
         "routes_total": len(rows),
         "routes_shown": len(shown),
+        "routes_registered": routes_registered,
         "routes": shown,
         # 进程内存里的东西，所以这两个数必须写清口径，不然会被当成「平台的」数。
         # **读这个数的那一条请求自己也在里面**：中间件在 `call_next` 外面一进一出，

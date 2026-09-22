@@ -21,7 +21,7 @@ const props = withDefaults(
     hint?: string
     loading?: boolean
   }>(),
-  { ratio: 0, tone: 'ink', loading: false },
+  { ratio: 0, tone: 'ink', loading: false }
 )
 
 const unlimited = computed(() => props.limit === null)

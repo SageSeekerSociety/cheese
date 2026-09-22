@@ -18,8 +18,8 @@ import Shell from './proto-shell.vue'
 import i18n from '@/i18n'
 import { createDialogPlugin } from '@/plugins/dialog'
 import vuetify from '@/plugins/vuetify'
-import AdminDashboardPage from '@/views/admin/AdminDashboardPage.vue'
 import pinia from '@/stores'
+import AdminDashboardPage from '@/views/admin/AdminDashboardPage.vue'
 
 installPreviewFetch()
 

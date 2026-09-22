@@ -2436,9 +2436,12 @@ export interface StatsPlatform {
  *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
  *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
 export interface StatsPerformance {
-  /** 采集到耗时的路由**总数**（不是画出来的条数）。 */
+  /** 采集到耗时的路由**总数**（不是画出来的条数）。**是「有样本的」，不是注册的全部** ——
+   *  没被访问过的路由在这里不出现。分母见 `routes_registered`。 */
   routes_total: number
   routes_shown: number
+  /** 这个 app 注册的全部路由。和 `routes_total` 一起读才答得了「是不是太少了」。 */
+  routes_registered?: number | null
   routes: {
     method: string
     /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */

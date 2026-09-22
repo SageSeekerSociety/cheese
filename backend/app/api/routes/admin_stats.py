@@ -25,7 +25,7 @@ router」，同一个文件里的第二个 `APIRouter` 会被静默丢掉，理�
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
@@ -94,6 +94,7 @@ async def platform_stats(
 async def performance_stats(
     service: StatsServiceDep,
     handle: PlatformAdminDep,
+    request: Request,
 ) -> dict:
     """第四类：**这一刻**的接口耗时，按路由，外加投递与事件积压。
 
@@ -104,7 +105,13 @@ async def performance_stats(
     「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
     毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
     """
-    return ok(await service.performance())
+    # 「有多少条路由」是 FastAPI 路由表的事，不在指标注册表里 —— 注册表只记得
+    # **被访问过**的那些。所以分母从 app 上数，和 `performance_snapshot` 的分子
+    # （有样本的）一起给，页面上写「有样本 X / 共 Y」。
+    from fastapi.routing import APIRoute
+
+    registered = sum(1 for r in request.app.routes if isinstance(r, APIRoute))
+    return ok(await service.performance(routes_registered=registered))
 
 
 @router.get("/pipeline")

@@ -135,7 +135,8 @@
       "created7d": "New · 7d",
       "unread": "Unread",
       "urgent": "{n} of them urgent and unassigned",
-      "urgentShort": "{n} urgent"
+      "urgentShort": "{n} urgent",
+      "untriagedShort": "untriaged {n}"
     },
     "chart": {
       "title": "New / resolved / deployed per day",
@@ -160,7 +161,7 @@
       "active": "In flight",
       "uptime": "Process uptime",
       "lag": "Event-loop lag",
-      "routes": "Routes measured",
+      "routes": "Routes with samples",
       "routesTruncated": "{shown} of {total}",
       "durationMinutes": "{n} min",
       "durationHours": "{h} h {m} min",
@@ -170,7 +171,9 @@
         "count": "Calls"
       },
       "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
-      "slowest": "Slowest p95"
+      "slowest": "Slowest p95",
+      "routesOf": "{shown} sampled / {total} registered",
+      "routesNote": "The denominator is every route the app has registered; the numerator is the ones hit since restart. A low number does not mean few routes — unsampled routes never appear here."
     },
     "usage": {
       "tokens": "Tokens · window",
@@ -255,7 +258,8 @@
         "live": "In flight",
         "stuck": "Stuck",
         "dwell": "Filed to decision",
-        "needsYou": "Needs you"
+        "needsYou": "Needs you",
+        "needsYouShort": "needs you {n}"
       },
       "station": {
         "filed": "Filed",
@@ -330,7 +334,8 @@
         "note": "No data source. Any number here would have to be invented.",
         "summon": "Acceptance rate after summoning the agent: agent_turns has no summon flag and accept_cards has no origin turn — there is no foreign key between them.",
         "churn": "Churn after credits exhausted: compute_grants has no exhausted_at, user has no last_login."
-      }
+      },
+      "northStarShort": "week {n}"
     },
     "integrations": {
       "title": "Integrations",
@@ -350,7 +355,8 @@
         "title": "Delivery ledger",
         "unsent": "Will retry",
         "dead": "Dead letters",
-        "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike."
+        "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike.",
+        "deadShort": "dead {n}"
       },
       "unavailable": {
         "title": "Not observable today",

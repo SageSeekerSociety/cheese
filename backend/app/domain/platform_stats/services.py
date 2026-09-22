@@ -154,7 +154,7 @@ class PlatformStatsService:
             "extras": await self._gaps.platform_extras(),
         }
 
-    async def performance(self) -> dict:
+    async def performance(self, *, routes_registered: int | None = None) -> dict:
         """性能那一块：**这一刻**的接口耗时 + 投递与事件积压。
 
         前半在 `performance_snapshot()`（进程内存，重启即清零，只有这一个进程）。
@@ -162,7 +162,7 @@ class PlatformStatsService:
         """
         from app.domain.platform_stats.performance import performance_snapshot
 
-        snap = performance_snapshot()
+        snap = performance_snapshot(routes_registered=routes_registered)
         snap["reliability"] = await self._gaps.reliability()
         return snap
 

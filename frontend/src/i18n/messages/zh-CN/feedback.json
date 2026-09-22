@@ -135,7 +135,8 @@
       "created7d": "7 日新增",
       "unread": "未读",
       "urgent": "其中 {n} 条是无人认领的急件",
-      "urgentShort": "急件 {n}"
+      "urgentShort": "急件 {n}",
+      "untriagedShort": "待分诊 {n}"
     },
     "chart": {
       "title": "每天新增 / 解决 / 上线",
@@ -160,7 +161,7 @@
       "active": "正在处理",
       "uptime": "进程已运行",
       "lag": "事件循环滞后",
-      "routes": "在采的路由",
+      "routes": "有样本的路由",
       "routesTruncated": "{shown} / 共 {total} 条",
       "durationMinutes": "{n} 分钟",
       "durationHours": "{h} 小时 {m} 分",
@@ -170,7 +171,9 @@
         "count": "次数"
       },
       "note": "接口耗时按路由统计，数在进程内存里：只有此刻的、重启就清零，而且只覆盖这一个进程（业务 API）。要「过去一周怎么变的」得另做——原料在请求日志里。",
-      "slowest": "最慢那条 p95"
+      "slowest": "最慢那条 p95",
+      "routesOf": "有样本 {shown} / 共 {total}",
+      "routesNote": "分母是这个 app 注册的全部路由，分子是重启以来被访问过、留下样本的那些。少不代表路由少 —— 没被访问过的路由这里根本不出现。"
     },
     "usage": {
       "tokens": "窗口内 token",
@@ -255,7 +258,8 @@
         "live": "还在走",
         "stuck": "卡住了",
         "dwell": "递卡到决议",
-        "needsYou": "等你处理"
+        "needsYou": "等你处理",
+        "needsYouShort": "等你 {n}"
       },
       "station": {
         "filed": "建卡",
@@ -330,7 +334,8 @@
         "note": "这两条没有数据源。放一个数字上去就只能是编的。",
         "summon": "@芝士后的验收通过率：agent_turns 没有 summon 标记，accept_cards 也没有来源轮次，两者之间没有外键。",
         "churn": "额度耗尽后的流失：compute_grants 没有 exhausted_at，user 没有 last_login。"
-      }
+      },
+      "northStarShort": "本周 {n}"
     },
     "integrations": {
       "title": "集成与凭据",
@@ -350,7 +355,8 @@
         "title": "投递账本",
         "unsent": "还会补发",
         "dead": "死信",
-        "note": "两档必须分开：前者补发扫描还会再试，后者试满次数后已放弃。合成一个「未送达」会让有救的和没救的看起来一样。"
+        "note": "两档必须分开：前者补发扫描还会再试，后者试满次数后已放弃。合成一个「未送达」会让有救的和没救的看起来一样。",
+        "deadShort": "死信 {n}"
       },
       "unavailable": {
         "title": "今天查不到",

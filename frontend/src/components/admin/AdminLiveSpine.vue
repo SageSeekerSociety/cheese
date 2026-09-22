@@ -31,7 +31,7 @@ const props = withDefaults(
     stuck?: { label: string; count: number }[]
     loading?: boolean
   }>(),
-  { loading: false, stuck: () => [] },
+  { loading: false, stuck: () => [] }
 )
 
 const { t } = useI18n()
@@ -75,9 +75,7 @@ function dwellText(seconds: number | null | undefined): string {
       </ol>
 
       <p v-if="stuck.length" class="als__stuck t-meta">
-        <span v-for="s in stuck" :key="s.label" class="als__badge">
-          {{ s.label }} {{ s.count }}
-        </span>
+        <span v-for="s in stuck" :key="s.label" class="als__badge"> {{ s.label }} {{ s.count }} </span>
       </p>
 
       <!-- 口径注：**不省略**。少了它，四站会被读成一个漏斗的四级转化率。 -->

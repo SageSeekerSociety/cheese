@@ -17,7 +17,7 @@ const props = withDefaults(
     note: string
     loading?: boolean
   }>(),
-  { loading: false, title: undefined },
+  { loading: false, title: undefined }
 )
 
 const total = computed(() => props.segments.reduce((a, s) => a + s.value, 0))
