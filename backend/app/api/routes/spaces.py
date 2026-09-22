@@ -20,6 +20,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.shell.catalog import is_course_shell
+from app.domain.space import course_modules
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
@@ -104,6 +105,20 @@ class PatchSpaceRequest(BaseModel):
     )
     default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
+    #: 这门课开着哪几个模块。Sending it replaces the whole map (it is a map, not
+    #: a deep merge — a half-updated switchboard is harder to reason about than
+    #: either version alone); omitting it leaves it exactly as it is, so a PATCH
+    #: that renames a 题目版 does not clear the switches. Look at
+    #: `app.domain.space.course_modules`: an absent key means ON, so the frontend
+    #: may send either the whole map or only the exceptions.
+    #:
+    #: Typed `object`, not `bool`, on purpose: the checks live in the route
+    #: (`_validate_course_modules`) because a validator here would have its
+    #: `ValueError` land in pydantic's `ctx`, and the API's RequestValidationError
+    #: handler cannot serialize that — a bad body would 500 instead of 400.
+    course_modules: dict[str, object] | None = Field(
+        default=None, alias="courseModules"
+    )
 
     @field_validator("visible_task_limit", mode="before")
     @classmethod
@@ -241,6 +256,28 @@ async def require_reviewed_space(
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
 )
+
+
+def _validate_course_modules(value: dict[str, object]) -> dict[str, bool]:
+    """这门课开着哪几个模块，逐键看过再收。
+
+    The read path (`course_modules.normalize`) is lenient, because one bad byte
+    in a 题目版's JSON must not take down every page that renders it. This is the
+    write path and a person is looking at the form, so a typo in a module name is
+    answered instead of silently dropped.
+    """
+    unknown = sorted(set(value) - set(course_modules.MODULE_KEYS))
+    if unknown:
+        raise BadRequestError(
+            "unknown course module(s): "
+            + ", ".join(unknown)
+            + "; expected any of "
+            + ", ".join(course_modules.MODULE_KEYS)
+        )
+    for key, flag in value.items():
+        if not isinstance(flag, bool):
+            raise BadRequestError(f"courseModules[{key}] must be a boolean")
+    return {key: value[key] for key in course_modules.MODULE_KEYS if key in value}
 
 
 def _expect_list(value: list | str | None, field: str) -> list:
@@ -386,6 +423,12 @@ def _space_to_api_model(space: Space) -> dict:
         "defaultCategoryId": space.default_category_id,
         "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
+        # 这门课开着哪几个模块. Normalized on the way out as well as on the way
+        # in: this dict is what the sidebar filters on, so an unknown key that
+        # got in some other way must not become a phantom switch.
+        "courseModules": course_modules.normalize(
+            getattr(space, "course_modules", None)
+        ),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -774,6 +817,10 @@ async def patch_space(
 
     classification_topic_ids: list[int] | None = payload.classification_topics
 
+    course_modules_payload: dict[str, bool] | None = None
+    if payload.course_modules is not None:
+        course_modules_payload = _validate_course_modules(payload.course_modules)
+
     space = await service.update_space(
         space_id=space_id,
         actor_user_id=auth_user.user_id,
@@ -787,6 +834,7 @@ async def patch_space(
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,
         set_visible_task_limit="visible_task_limit" in payload.model_fields_set,
+        course_modules=course_modules_payload,
     )
     if classification_topic_ids is not None:
         await service.replace_classification_topics(
