@@ -9,7 +9,7 @@ Covers:
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -1166,148 +1166,122 @@ class TestGenerateVerificationCode:
         assert code.isdigit()
 
 
+class _Outbox:
+    """An email sender that records what it was asked to deliver."""
+
+    def __init__(self, *, configured: bool = True, delivers: bool = True) -> None:
+        self.is_configured = configured
+        self.delivers = delivers
+        self.sent: list[dict] = []
+
+    async def send(self, **kwargs) -> bool:
+        self.sent.append(kwargs)
+        return self.delivers
+
+    def last_code(self) -> str:
+        import re
+
+        match = re.search(r"\b(\d{6})\b", self.sent[-1]["body_text"])
+        assert match, self.sent[-1]["body_text"]
+        return match.group(1)
+
+
 class TestEmailVerificationService:
-    @pytest.fixture
-    def redis(self) -> AsyncMock:
-        return AsyncMock()
+    """Against a real Redis: the budget and the cleanup are Redis behaviour."""
 
     @pytest.fixture
-    def sender(self) -> MagicMock:
-        mock = MagicMock()
-        mock.send = AsyncMock(return_value=True)
-        return mock
+    async def redis(self):
+        from redis.asyncio import Redis
+
+        from app.core.config import settings
+
+        client = Redis.from_url(settings.redis_url, decode_responses=False)
+        yield client
+        await client.aclose()
 
     @pytest.fixture
-    def service(self, redis, sender):
+    def email(self):
+        import uuid
+
+        return f"verify-{uuid.uuid4().hex[:12]}@example.com"
+
+    def _service(self, redis, outbox: _Outbox):
         from app.domain.user.verification_service import EmailVerificationService
 
         svc = EmailVerificationService(redis)
-        svc._sender = sender
+        svc._sender = outbox
         return svc
 
-    # --- send_verification_code ---
+    @pytest.mark.anyio
+    async def test_the_mailed_code_verifies_once(self, redis, email) -> None:
+        outbox = _Outbox()
+        svc = self._service(redis, outbox)
+        await svc.send_verification_code(email)
+
+        assert outbox.sent[0]["to"] == email
+        code = outbox.last_code()
+        assert await svc.verify_code(email, code) is True
+        assert await svc.verify_code(email, code) is False
 
     @pytest.mark.anyio
-    async def test_send_code_no_existing(self, service, redis, sender) -> None:
-        redis.get.return_value = None
-        sender.send.return_value = True
+    async def test_five_wrong_guesses_void_the_code(self, redis, email) -> None:
+        from app.domain.user.verification_service import MAX_VERIFICATION_ATTEMPTS
 
-        result = await service.send_verification_code("test@example.com")
+        outbox = _Outbox()
+        svc = self._service(redis, outbox)
+        await svc.send_verification_code(email)
+        code = outbox.last_code()
+        wrong = "000000" if code != "000000" else "111111"
 
-        assert result is True
-        redis.setex.assert_awaited_once()
-        call_args = redis.setex.call_args[0]
-        assert call_args[0] == "cheese:email_verification:test@example.com"
-        assert call_args[1] == 600  # VERIFICATION_CODE_TTL
-        assert len(call_args[2]) == 6
-        sender.send.assert_called_once()
+        for _ in range(MAX_VERIFICATION_ATTEMPTS):
+            assert await svc.verify_code(email, wrong) is False
+
+        assert await svc.verify_code(email, code) is False
 
     @pytest.mark.anyio
-    async def test_send_code_existing_but_enough_time_passed(
-        self, service, redis, sender
+    async def test_fewer_wrong_guesses_leave_the_code_usable(
+        self, redis, email
     ) -> None:
-        redis.get.return_value = b"123456"
-        redis.ttl.return_value = 500  # 500 < 600 - 60 = 540 -> enough time passed
-        sender.send.return_value = True
+        from app.domain.user.verification_service import MAX_VERIFICATION_ATTEMPTS
 
-        result = await service.send_verification_code("test@example.com")
+        outbox = _Outbox()
+        svc = self._service(redis, outbox)
+        await svc.send_verification_code(email)
+        code = outbox.last_code()
+        wrong = "000000" if code != "000000" else "111111"
 
-        assert result is True
-        redis.setex.assert_awaited_once()
+        for _ in range(MAX_VERIFICATION_ATTEMPTS - 1):
+            assert await svc.verify_code(email, wrong) is False
 
-    @pytest.mark.anyio
-    async def test_send_code_too_soon_raises(self, service, redis) -> None:
-        redis.get.return_value = b"123456"
-        redis.ttl.return_value = 580  # 580 > 600 - 60 = 540 -> too soon
-
-        with pytest.raises(
-            BadRequestError, match="Please wait before requesting a new code"
-        ):
-            await service.send_verification_code("test@example.com")
+        assert await svc.verify_code(email, code) is True
 
     @pytest.mark.anyio
-    async def test_send_code_exactly_at_boundary(self, service, redis, sender) -> None:
-        """TTL exactly at threshold (540) should NOT raise."""
-        redis.get.return_value = b"123456"
-        redis.ttl.return_value = 540  # 540 == 600 - 60 -> not greater, so no raise
-        sender.send.return_value = True
+    async def test_wrong_guesses_against_another_address_do_not_count(
+        self, redis, email
+    ) -> None:
+        from app.domain.user.verification_service import MAX_VERIFICATION_ATTEMPTS
 
-        result = await service.send_verification_code("test@example.com")
-        assert result is True
+        outbox = _Outbox()
+        svc = self._service(redis, outbox)
+        await svc.send_verification_code(email)
+        code = outbox.last_code()
 
-    @pytest.mark.anyio
-    async def test_send_code_email_send_fails(self, service, redis, sender) -> None:
-        redis.get.return_value = None
-        sender.send.return_value = False
+        for _ in range(MAX_VERIFICATION_ATTEMPTS):
+            await svc.verify_code(f"other-{email}", "000000")
 
-        result = await service.send_verification_code("test@example.com")
-
-        # Even though sender.send returns False, the method returns True
-        assert result is True
+        assert await svc.verify_code(email, code) is True
 
     @pytest.mark.anyio
-    async def test_send_code_email_content(self, service, redis, sender) -> None:
-        """Verify the email is sent with the right subject and recipient."""
-        redis.get.return_value = None
-        sender.send.return_value = True
-
-        await service.send_verification_code("user@mail.com")
-
-        call_kwargs = sender.send.call_args.kwargs
-        assert call_kwargs["to"] == "user@mail.com"
-        assert call_kwargs["subject"] == "[Cheese] Email Verification Code"
-        assert "body_html" in call_kwargs
-        assert "body_text" in call_kwargs
-
-    # --- verify_code ---
+    async def test_no_code_was_ever_sent(self, redis, email) -> None:
+        svc = self._service(redis, _Outbox())
+        assert await svc.verify_code(email, "123456") is False
 
     @pytest.mark.anyio
-    async def test_verify_code_success(self, service, redis) -> None:
-        redis.get.return_value = b"654321"
+    async def test_a_second_request_within_a_minute_is_refused(
+        self, redis, email
+    ) -> None:
+        svc = self._service(redis, _Outbox())
+        await svc.send_verification_code(email)
 
-        result = await service.verify_code("test@example.com", "654321")
-
-        assert result is True
-        redis.delete.assert_awaited_once_with(
-            "cheese:email_verification:test@example.com"
-        )
-
-    @pytest.mark.anyio
-    async def test_verify_code_wrong_code(self, service, redis) -> None:
-        redis.get.return_value = b"654321"
-
-        result = await service.verify_code("test@example.com", "000000")
-
-        assert result is False
-        redis.delete.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_verify_code_expired_no_stored(self, service, redis) -> None:
-        redis.get.return_value = None
-
-        result = await service.verify_code("test@example.com", "123456")
-
-        assert result is False
-        redis.delete.assert_not_awaited()
-
-    # --- check_code_exists ---
-
-    @pytest.mark.anyio
-    async def test_check_code_exists_true(self, service, redis) -> None:
-        redis.exists.return_value = 1
-
-        assert await service.check_code_exists("test@example.com") is True
-
-    @pytest.mark.anyio
-    async def test_check_code_exists_false(self, service, redis) -> None:
-        redis.exists.return_value = 0
-
-        assert await service.check_code_exists("test@example.com") is False
-
-    @pytest.mark.anyio
-    async def test_check_code_exists_key_format(self, service, redis) -> None:
-        redis.exists.return_value = 0
-
-        await service.check_code_exists("foo@bar.com")
-
-        redis.exists.assert_awaited_once_with("cheese:email_verification:foo@bar.com")
+        with pytest.raises(BadRequestError, match="Please wait"):
+            await svc.send_verification_code(email)

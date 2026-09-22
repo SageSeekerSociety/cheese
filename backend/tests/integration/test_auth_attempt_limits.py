@@ -97,6 +97,39 @@ def _registration(email: str, code: str, password: str = "abc123456Test!") -> di
 
 
 class TestRegistrationEmailCode:
+    def test_five_wrong_codes_void_the_right_one(
+        self, api_client: TestClient, outbox: _Outbox
+    ):
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+        assert (
+            api_client.post("/users/verify/email", json={"email": email}).status_code
+            == 200
+        )
+        code = _mailed_code(outbox)
+        wrong = "000000" if code != "000000" else "111111"
+
+        for _ in range(5):
+            resp = api_client.post("/users", json=_registration(email, wrong))
+            assert resp.status_code == 422, resp.text
+
+        resp = api_client.post("/users", json=_registration(email, code))
+        assert resp.status_code == 422, resp.text
+        assert "verification code" in resp.json()["error"]["message"]
+
+    def test_the_right_code_still_works_after_fewer_misses(
+        self, api_client: TestClient, outbox: _Outbox
+    ):
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+        api_client.post("/users/verify/email", json={"email": email})
+        code = _mailed_code(outbox)
+        wrong = "000000" if code != "000000" else "111111"
+
+        for _ in range(4):
+            api_client.post("/users", json=_registration(email, wrong))
+
+        resp = api_client.post("/users", json=_registration(email, code))
+        assert resp.status_code == 200, resp.text
+
     def test_an_overlong_password_is_refused_without_spending_the_code(
         self, api_client: TestClient, outbox: _Outbox
     ):

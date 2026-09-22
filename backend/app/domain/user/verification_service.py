@@ -9,8 +9,30 @@ from app.core.errors import BadRequestError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_CODE_PREFIX = "cheese:email_verification:"
+VERIFICATION_CODE_PREFIX = "cheese:email_verification_code:"
 VERIFICATION_CODE_TTL = 10 * 60
+# Wrong guesses a code survives. A code is six digits, so without a cap its
+# ten-minute life is enough to enumerate it.
+MAX_VERIFICATION_ATTEMPTS = 5
+
+# The code and its failure count live in one hash, so they are issued, expire
+# and are deleted together. Checking and counting in one script is what keeps
+# a burst of simultaneous guesses from all being compared before any of them
+# is counted.
+_VERIFY_SCRIPT = """
+local code = redis.call('HGET', KEYS[1], 'code')
+if not code then
+  return 0
+end
+if code == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+if redis.call('HINCRBY', KEYS[1], 'failures', 1) >= tonumber(ARGV[2]) then
+  redis.call('DEL', KEYS[1])
+end
+return 0
+"""
 
 
 def generate_verification_code(length: int = 6) -> str:
@@ -26,13 +48,14 @@ class EmailVerificationService:
         code = generate_verification_code()
         key = f"{VERIFICATION_CODE_PREFIX}{email}"
 
-        existing = await self._redis.get(key)
-        if existing:
-            ttl = await self._redis.ttl(key)
-            if ttl > VERIFICATION_CODE_TTL - 60:
-                raise BadRequestError("Please wait before requesting a new code")
+        if await self._redis.ttl(key) > VERIFICATION_CODE_TTL - 60:
+            raise BadRequestError("Please wait before requesting a new code")
 
-        await self._redis.setex(key, VERIFICATION_CODE_TTL, code)
+        pipe = self._redis.pipeline(transaction=True)
+        pipe.delete(key)
+        pipe.hset(key, "code", code)
+        pipe.expire(key, VERIFICATION_CODE_TTL)
+        await pipe.execute()
 
         subject = "[Cheese] Email Verification Code"
         body_html = f"""
@@ -69,20 +92,11 @@ class EmailVerificationService:
         return True
 
     async def verify_code(self, email: str, code: str) -> bool:
+        """Consume the code on a match. Each miss counts against the code, and
+        the ``MAX_VERIFICATION_ATTEMPTS``-th one deletes it, so a new code
+        has to be requested."""
         key = f"{VERIFICATION_CODE_PREFIX}{email}"
-        stored_code = await self._redis.get(key)
-
-        if stored_code is None:
-            return False
-
-        # redis client is decode_responses=False → get() returns bytes at runtime,
-        # but the redis-py stubs don't model that and type it as str.
-        if stored_code.decode() != code:  # type: ignore[attr-defined]
-            return False
-
-        await self._redis.delete(key)
-        return True
-
-    async def check_code_exists(self, email: str) -> bool:
-        key = f"{VERIFICATION_CODE_PREFIX}{email}"
-        return await self._redis.exists(key) > 0
+        matched = await self._redis.eval(
+            _VERIFY_SCRIPT, 1, key, code, MAX_VERIFICATION_ATTEMPTS
+        )
+        return matched == 1
