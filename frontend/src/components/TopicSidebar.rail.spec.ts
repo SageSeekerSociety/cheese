@@ -168,7 +168,7 @@ describe('C1 置顶导航组', () => {
   it('名字和菜单是两个按钮，两个都够得着', () => {
     const { container } = mount()
     const home = container.querySelector('.rail-header__home') as HTMLElement
-    const more = container.querySelector('.rail-header__more') as HTMLElement
+    const more = container.querySelector('[aria-label="项目菜单"]') as HTMLElement
     // 最常做的事（回首页）不该只能通过先开一个菜单达成，所以它自己是一个按钮。
     expect(home.tagName).toBe('BUTTON')
     expect(home.getAttribute('type')).toBe('button')

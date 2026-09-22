@@ -43,12 +43,8 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   // ⋯ 菜单里那一组是**壳说了算**的：这一版前端认得的页里没摆上侧栏的，全在这里。
   // 少了谁，就说明有页在加壳之后掉出了导航。
   //
-  // 点的是那个 chevron (`.rail-header__more`)，不是整条 `.rail-header`：这一条里
-  // 现在有**两个**按钮，而名字那个 (`.rail-header__home`) 是 `flex: 1 1 auto`
-  // （TopicSidebar.vue），占掉整条几乎全部宽度。点整条的中心落在它身上，于是这一
-  // 下不是开菜单，是回首页——那样下面这条断言拿到的是空菜单，看起来像「菜单里的页
-  // 全掉了」，其实一次都没打开过。
-  await page.locator('.rail-header__more').click();
+  // The transfer action shares the menu button's styling; select its accessible name.
+  await page.getByRole('button', { name: '项目菜单', exact: true }).click();
   // 菜单项**没有 role**：Vuetify 3 的 `v-list-item` 渲染成不带 role 的 `<div>`，
   // 外层 `v-list` 才是 `role="listbox"`，条目既不 `menuitem` 也不 `option`（对着
   // vuetify@3.9.3 实测：整份 DOM 里 `[role="menuitem"]` 是 0 个）。所以按 role 找
