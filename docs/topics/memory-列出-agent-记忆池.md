@@ -8,7 +8,7 @@
 
 - <&backend/app/api/routes/memory.py> — `list_memory` 增加 agent 池；`_list_openviking` 增加按 handle 的单池。
 - <&backend/app/domain/memory/models.py> — 抽出那个前缀函数（今天叫 `project_scope_prefix()`），复合键的格式只在一处定义。
-- <&backend/tests/integration/test_agent_identity.py> — 4 个功能测试（列得出/覆盖多个 agent/不跨项目泄漏/逃生开关）。
+- <&backend/tests/integration/test_agent_identity.py> — 3 个功能测试（列得出/覆盖多个 agent/不跨项目泄漏）。
 - <&backend/tests/unit/test_memory_openviking.py> — 1 个 OpenViking 分支测试。
 
 ## 三个设计点：我的选择和理由
@@ -22,8 +22,6 @@
 那个面板存在的全部意义就是"人能看到芝士记了什么"，而它恰恰一条芝士自己的记忆都看不到——默认带上是把它修对，不是改变它的语义。响应里 `scope`/`scope_id` 已经能区分来源。
 
 **代价（已知、本卡不修）**：`ProjectDocsView.vue:206/211` 的标签是三元 `scope === 'user' ? '个人记忆' : '项目记忆'`，agent 条目会被标成「项目记忆」。功能不受影响，但不精确。本卡约束是"不改前端"，所以留作后续小改（加一个 `agent_project` → 「芝士记忆」分支）。
-
-同时加了 `include_agent=false` 作为逃生口，任何只想看共享池的调用方都能退回旧行为。
 
 ### 2. 寻址 → 前缀扫描为默认，`agent_handle` 为精确取单池
 

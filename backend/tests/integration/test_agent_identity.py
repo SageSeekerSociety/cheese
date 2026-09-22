@@ -189,11 +189,11 @@ def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> st
     return seat
 
 
-def test_the_shared_pool_stays_readable_by_every_agent(client):
-    """Memory written without a topic predates the split, so both rooms see it.
+def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
+    """没有共享池（结论 7）：不带话题的那一次写入也归一位芝士，就是项目自己那位。
 
-    Rooms that accumulated a project pool keep reading it; only new writes are
-    per-agent.
+    所以项目默认那位在自己房间里查得到，而另一位队友在它的房间里查不到——写入
+    分给谁，决定的是谁读得到，不存在一个谁都能写、谁都能读的中间地带。
     """
     project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
@@ -204,17 +204,20 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
         ).json()["data"]["id"]
 
     cheese_room, ops_room = _topic("A"), _topic("B")
-    _seat_a_new_agent(client, project_id, ops_room, "ops")
+    ops = _seat_a_new_agent(client, project_id, ops_room, "ops")
 
-    # No topic → the legacy shared pool.
     client.post(
         f"/projects/{project_id}/memory", json={"content": "本项目用 uv 管依赖"}
     )
 
-    for room in (cheese_room, ops_room):
-        assert any(
-            "uv" in h["abstract"] for h in _recall(client, project_id, room, "依赖")
-        )
+    assert any(
+        "uv" in h["abstract"] for h in _recall(client, project_id, cheese_room, "依赖")
+    )
+    assert not [
+        h
+        for h in _recall(client, project_id, ops_room, "依赖", seat=ops)
+        if "uv" in h["abstract"]
+    ]
 
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
@@ -373,33 +376,10 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
     assert [e["content"] for e in _list_memory(client, ids[1])] == ["P2 的事"]
 
 
-def test_include_agent_false_is_the_way_back_to_the_shared_pool(client):
-    """The escape hatch: callers that only want the pre-split project pool."""
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
-    topic_id = client.post(
-        "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": "alice"},
-    ).json()["data"]["id"]
+def test_listing_answers_what_was_remembered_about_me(client):
+    """问「关于我记了什么」的人在请求里写了 `user_handle`，那是另一个问题。
 
-    _remember(client, project_id, topic_id, "芝士自己记的")
-    # No topic → the legacy shared project pool.
-    client.post(f"/projects/{project_id}/memory", json={"content": "项目共享的"})
-
-    assert [
-        e["content"] for e in _list_memory(client, project_id, include_agent="false")
-    ] == ["项目共享的"]
-    shared = _list_memory(client, project_id, include_agent="false")[0]
-    assert shared["scope"] == "project"
-    assert shared["scope_id"] == project_id
-    assert len(_list_memory(client, project_id)) == 2
-
-
-def test_the_escape_hatch_still_answers_what_was_remembered_about_me(client):
-    """`include_agent=false` 关掉的是芝士自己那些池，不是「关于这个人的记录」。
-
-    问「关于我记了什么」的人在请求里写了 `user_handle`，那一条是另一个问题；
-    把它跟着逃生口一起关掉，接口会不报错地只回共享池——请求里明明写了这个人，
-    答案里一条关于他的都没有。"""
+    它和「这个项目的芝士都记了什么」一起答：两条各自成立，谁也不挡谁。"""
     project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
@@ -408,10 +388,5 @@ def test_the_escape_hatch_still_answers_what_was_remembered_about_me(client):
     _remember(client, project_id, topic_id, "芝士自己记的")
     _remember_about(client, project_id, "alice", "他要结论在最前面")
 
-    about = _list_memory(
-        client,
-        project_id,
-        user_handle="alice",
-        include_agent="false",
-    )
-    assert [e["content"] for e in about] == ["他要结论在最前面"]
+    about = _list_memory(client, project_id, user_handle="alice")
+    assert "他要结论在最前面" in [e["content"] for e in about]

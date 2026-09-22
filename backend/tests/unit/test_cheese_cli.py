@@ -91,6 +91,37 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     assert plans["cheese_milestone"]["body"]["due_date"] == ("2026-09-14T00:00:00Z")
 
 
+def test_everyone_outranks_the_private_chats_personal_memory():
+    """私聊里的 `remember --everyone` 写的是文档，不是对这一位的个人记忆。
+
+    说了「所有人」，就不是只记给眼前这一位看的。两路的差别在发出去的那一刻就定
+    了：写错的那一条落进只有这条会话读得到的池子，没人会发现它本该在总览文档里。
+    """
+    cli = _load()
+    env = {
+        "CHEESE_TOPIC": "room",
+        "CHEESE_PROJECT": "project",
+        "CHEESE_MEMORY_SCOPE": "personal",
+        "CHEESE_OWNER": "alice",
+    }
+
+    everyone = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": True}, env
+    )
+    assert everyone["body"] == {"content": "x", "topic": "room", "scope": "everyone"}
+
+    # 对照：同一个私聊里不说「所有人」的那一条，照旧是对 alice 的个人记忆。
+    personal = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": False}, env
+    )
+    assert personal["body"] == {
+        "content": "x",
+        "topic": "room",
+        "scope": "user",
+        "owner": "alice",
+    }
+
+
 def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
     cli = _load()
     folder = tmp_path / "site"

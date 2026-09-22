@@ -29,9 +29,8 @@ from app.core.db import async_session_factory
 
 # Import every model whose table is referenced by a FK so SQLAlchemy can resolve
 # the mapper registry when we flush (milestones→topics, topics→blocks, etc.).
-from app.domain.block.models import Block  # noqa: F401
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
 from app.domain.notification.models import Notification  # noqa: F401
 from app.domain.project.models import (
@@ -177,16 +176,25 @@ async def enrich_project(project_id: str, task_id: uuid.UUID) -> None:
                 ),
             ]
         )
-        # Foundational project memory (= earlier onboarding). 芝士 adds more live.
-        for fact in [
-            "本项目技术栈：后端 FastAPI + PostgreSQL，前端 Vue 3 + TypeScript。",
-            "分工：林知行负责后端与算法，王清越负责前端与交互，张衡老师是导师。",
-            "数据来源：教务处脱敏的历史选课数据，已签数据使用协议，仅用于本项目。",
-            "中期汇报定在 2026-06-20，需要导师张衡验收。",
-        ]:
+        # 项目总览的实况文档（= 之前的 onboarding）：人和所有芝士共同看的那一份
+        # （结论 7），每一轮都整份进提示词。芝士 往下自己再添。
+        if proj.root_topic_id is not None:
             s.add(
-                MemoryEntry(
-                    scope=MemoryScope.project, scope_id=str(proj.id), content=fact
+                Block(
+                    project_id=proj.id,
+                    topic_id=proj.root_topic_id,
+                    kind=BlockKind.doc,
+                    author_type=AuthorType.participant,
+                    author="cheese",
+                    content=(
+                        "## 技术栈\n后端 FastAPI + PostgreSQL，"
+                        "前端 Vue 3 + TypeScript。\n\n"
+                        "## 分工\n林知行负责后端与算法，王清越负责前端与交互，"
+                        "张衡老师是导师。\n\n"
+                        "## 数据\n教务处脱敏的历史选课数据，已签数据使用协议，"
+                        "仅用于本项目。\n\n"
+                        "## 节点\n中期汇报定在 2026-06-20，需要导师张衡验收。"
+                    ),
                 )
             )
         s.add_all(
