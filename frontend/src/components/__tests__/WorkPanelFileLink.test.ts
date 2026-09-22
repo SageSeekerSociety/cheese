@@ -56,6 +56,7 @@ vi.mock('../../api', async () => {
     getTerminal: vi.fn().mockResolvedValue({ available: false }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTrees: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
