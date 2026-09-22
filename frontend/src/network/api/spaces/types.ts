@@ -503,3 +503,47 @@ export type SpaceSubmissionQueue = {
   summary: SpaceSubmissionSummary
   page: Page
 }
+
+// ── 教学单元（课程的时间线） ──────────────────────────────────────────────────
+
+export type TeachingUnit = {
+  id: number
+  spaceId: number
+  week: number
+  title: string
+  summary: string
+  knowledgePointIds: number[]
+  materialIds: number[]
+  assignmentTaskId: number | null
+  publishedAt: number | null
+  dueAt: number | null
+}
+
+export type GetTeachingUnitsResponseData = {
+  units: TeachingUnit[]
+  canTeach: boolean
+}
+
+export type PostTeachingUnitRequestData = {
+  week: number
+  title: string
+  summary?: string
+  knowledgePointIds?: number[]
+  materialIds?: number[]
+  assignmentTaskId?: number | null
+  dueAt?: number | null
+  published?: boolean
+}
+
+export type PatchTeachingUnitRequestData = {
+  week?: number
+  title?: string
+  summary?: string
+  knowledgePointIds?: number[]
+  materialIds?: number[]
+  assignmentTaskId?: number | null
+  clearAssignment?: boolean
+  dueAt?: number | null
+  clearDueAt?: boolean
+  published?: boolean
+}
