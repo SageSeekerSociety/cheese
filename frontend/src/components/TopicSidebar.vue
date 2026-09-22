@@ -24,6 +24,7 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 
 import { t } from '@/i18n'
@@ -89,6 +90,12 @@ function startResize(e: MouseEvent) {
 // 项目级页面（总览/看板/日历/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
+//
+// 「退出项目」也挂在那个 ⋯ 菜单里（#6）：它本来只长在成员页右上角，而成员页刚被
+// 壳收进同一个菜单——按钮跟着一起藏了两层深。这个菜单是「我和这个项目的关系」在
+// 项目头那一层的落点，退出就是那件事的出口，所以它在这儿也留一颗；确认之后做什
+// 么在 LeaveProjectDialog，两处共用一份。所有者不给这颗：后端会拒他（得先转让），
+// 给一个必定失败的按钮是骗人。
 const router = useRouter()
 const route = useRoute()
 
@@ -485,6 +492,14 @@ const onDocs = computed(() => !!props.activeDocs)
 // scoped class 里：Vuetify 的 `.v-list--nav .v-list-item` 内边距比单个 scoped
 // 类更特化，话题行本来也是这么压住它的。
 const ROW_INDENT = { paddingInlineStart: '8px' }
+
+// ---- 退出项目（⋯ 菜单入口，见上方说明）----
+const leaveOpen = ref(false)
+const canLeaveProject = computed(() => {
+  const me = myHandle()
+  const owner = props.projects.find((p) => p.id === props.selectedProjectId)?.owner_handle
+  return !!me && me !== (owner ?? '')
+})
 </script>
 
 <template>
@@ -578,6 +593,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :active="route.name === 'project-settings'"
                 :disabled="!selectedProjectId"
                 @click="openProjectPage('project-settings')"
+              />
+              <v-list-item
+                v-if="canLeaveProject"
+                prepend-icon="mdi-exit-to-app"
+                title="退出项目"
+                :disabled="!selectedProjectId"
+                @click="leaveOpen = true"
               />
             </v-list>
           </v-menu>
@@ -925,6 +947,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
            Discord-style. The create-project emit stays for API compatibility. -->
     </div>
+
+    <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
   </component>
 </template>
 

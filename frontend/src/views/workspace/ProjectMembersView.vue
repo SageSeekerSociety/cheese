@@ -12,6 +12,8 @@
 // 还有一件不属于「管理他」的事：**自己退出项目**。它不是名册上某一行的动作，而是
 // 这一页右上角那颗按钮（后端 `DELETE /projects/{id}/membership` 认的恒是当前身份
 // 那个人）。放在这里是因为这个页面就是「我和这个项目的关系」唯一说得清的地方。
+// 确认之后做什么在 `LeaveProjectDialog` —— 项目名旁边那个菜单里还有第二个入口
+// （#6：这一页被壳收进菜单之后，只有这里一颗按钮就找不到了）。
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -21,7 +23,6 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import {
   inviteProjectMember,
-  leaveProject,
   listProjectAgents,
   listProjectInvitations,
   removeProjectMember,
@@ -29,6 +30,7 @@ import {
   updateProjectMemberRole,
 } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import { label, PROJECT_ROLE } from '@/labels'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
@@ -209,35 +211,10 @@ function confirmRemove() {
 //
 // 「来自小队」的人照样显示：他在这条路上得到的是一句「请在小队里退出」，那句话
 // 正是他需要的下一步。把入口藏掉，他就只剩下一个点不动的页面。
+//
+// 确认之后做什么在 LeaveProjectDialog：这里只决定「要不要给这颗按钮」和把它打开。
 const leaveOpen = ref(false)
-const leaving = ref(false)
 const canLeave = computed(() => !!me.value && me.value !== ownerHandle.value)
-
-async function confirmLeave() {
-  leaving.value = true
-  error.value = null
-  try {
-    await leaveProject(props.projectId)
-  } catch (e) {
-    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、访问来自小队、还是某个
-    // 话题唯一的 owner）就是用户要的全部内容，原样摆在页面上 —— 关掉弹窗，因为它
-    // 等的是一个已经不会有结果的「退出」。
-    leaveOpen.value = false
-    error.value = e instanceof Error ? e.message : '退出失败'
-    leaving.value = false
-    return
-  }
-  leaveOpen.value = false
-  // 退出的那一刻，这条请求已经成功了：**接下来做什么都不能再把它变成失败**。
-  // 两份刷新是为了让别的页面不拿着旧数据把我送回这个项目（名册里没有我了，项目
-  // 列表里也没有这个项目了），但它们是锦上添花 —— 刷新接口抖一下，用 allSettled
-  // 让失败就地咽掉，人照样是退出成功的，照样该离开这一页。用 Promise.all 的话一次
-  // 刷新失败会走到 catch 里，页面上挂出「退出失败」，而人其实已经退出了 —— 他再
-  // 点一次只会拿到 409。这一页本身也留不住：我已经不在名册上，它下一次读就是空的。
-  await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
-  void router.push({ name: 'HomeSpaces' })
-  leaving.value = false
-}
 
 // ---- 邀请 ----
 // 按 uid 邀请，而不是按 handle：uid 是个人主页地址里那个数字，找得到、抄得准；
@@ -552,19 +529,7 @@ async function submitInvite() {
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="leaveOpen" max-width="420">
-      <v-card>
-        <v-card-title class="t-title pt-4">退出项目？</v-card-title>
-        <v-card-text class="t-body c-muted">
-          退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来得由项目的组长再邀请你一次
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="leaveOpen = false">取消</v-btn>
-          <v-btn color="error" variant="flat" :loading="leaving" @click="confirmLeave">退出</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
 
     <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
       <v-card>
