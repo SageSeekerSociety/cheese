@@ -112,34 +112,32 @@ settings.notification_email_drain_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
 
 
-def _stranded_topics() -> set[str]:
-    """Topics whose work can no longer move, so waiting on it is waiting forever.
+def _topics_with_pending_hooks() -> set[str]:
+    """Topics whose hook consumers still have a write to finish.
 
-    A turn is only ever finished by its own subscription's consumer, running on
-    the loop that subscription was created on. Plenty of tests build their own
-    ``ChatService``, run a turn on the test's loop, and return with hooks still
-    queued — the loop closes, the consumer dies with it, and the turn stays
-    marked in flight in the process-wide broker, which outlives all of it.
-
-    That mark is indistinguishable from a real background turn by count alone,
-    which is why waiting on the count alone used to cost thirty seconds a time.
-    A closed loop is the difference: a consumer on one cannot run again, so
-    whatever it was holding is not in flight, it is abandoned.
+    The broker's active mark describes a turn lifecycle, not work currently
+    running in this process. In particular, an unsolicited hook opens a turn
+    which remains active until a later Stop; once its hook queue drains there is
+    nothing teardown can wait for. Conversely, ``Queue.empty()`` alone misses a
+    hook already taken by the consumer, so include the consumer's per-hook lock.
+    A missing, finished, or closed-loop consumer cannot make further progress.
     """
     from app.domain.agent.harness.claude_code.hooks_substrate import (
         _RUNTIMES,
         ClaudeCodeRuntime,
     )
 
-    stranded = set()
+    pending = set()
     for runtime in list(_RUNTIMES):
         if not isinstance(runtime, ClaudeCodeRuntime):
             continue
         for topic_id, subscription in list(runtime._subscriptions.items()):
             task = subscription.consumer_task
-            if task is not None and task.get_loop().is_closed():
-                stranded.add(str(topic_id))
-    return stranded
+            if task is None or task.done() or task.get_loop().is_closed():
+                continue
+            if not subscription.sink.queue.empty() or subscription.consuming.locked():
+                pending.add(str(topic_id))
+    return pending
 
 
 def wait_work_idle() -> None:
@@ -149,17 +147,17 @@ def wait_work_idle() -> None:
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual.
 
-    Abandoned work is skipped rather than waited out — see ``_stranded_topics``.
-    Giving up is no longer SILENT either, and between them those two hid the
-    suite's largest single cost for a long time: a test that stranded a turn paid
-    the whole ceiling here and left no trace but a slower run. The first
+    A broker lifecycle with no runner task and no hook currently queued or being
+    consumed is not work teardown can drain. Previously, waiting on idle
+    lifecycles and giving up silently combined to hide the suite's largest single
+    cost: a test that stranded a turn paid the whole ceiling here and left no
+    trace but a slower run. The first
     ``--durations`` report ever taken of this suite had seventeen of its twenty
     slowest entries in teardown, every one of them at ~30.5s.
     """
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        active = set(runner._broker.active_channels())
-        moving = len(runner._tasks) or len(active - _stranded_topics())
+        moving = len(runner._tasks) or len(_topics_with_pending_hooks())
         if not moving:
             return
         time.sleep(0.01)
@@ -1001,7 +999,7 @@ def _reaches_for_db(path: str, fixturenames: Iterable[str]) -> bool:
 
     One function because the answer has two readers who must agree: the gate
     below, which provisions a database for the tests that need one, and
-    ``_layer_of``, which sends the tests that don't into a CI step that has none.
+    ``_layer_of``, which sends tests that don't into a CI selection with none.
     Written twice they would drift, and the drift lands as a test asking a
     database that was never built for it.
     """
@@ -1013,9 +1011,9 @@ def _needs_db(request: pytest.FixtureRequest) -> bool:
     return _reaches_for_db(str(request.path), request.fixturenames)
 
 
-# The three layers the suite runs as. CI runs one pytest per layer, in series,
-# each with its own ceiling, so a wedge or a slowdown names the layer it is in
-# instead of arriving as one number for 6800 tests.
+# The three layers the suite selects. Each has its own ceiling, so a wedge or a
+# slowdown names the layer it is in instead of arriving as one number for 6800
+# tests.
 _LAYERS = frozenset({"pure", "contract", "integration"})
 
 
@@ -1027,7 +1025,7 @@ def _layer_of(item: pytest.Item) -> str:
     building a database, asked of the same fixture closure. A file under
     ``tests/unit/`` that does reach for one — the turn log lives in Postgres, so
     the runner's tests do — is a database test wherever it sits, and runs in the
-    integration step with a database under it.
+    integration selection with a database under it.
     """
     path = os.fspath(item.path) if item.path is not None else ""
     if path.startswith(_CONTRACT_DIR):
@@ -1046,10 +1044,11 @@ def _layer_of(item: pytest.Item) -> str:
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give every collected test exactly one layer marker.
 
-    The three CI steps are the whole suite only if every test carries one and
-    only one of the three markers: a test carrying none runs in no step and is
-    reported nowhere — green CI over code nothing checked — and one carrying two
-    is counted, and timed, twice. Neither can be seen in a passing run.
+    The CI selections are the whole suite only if every test carries one and
+    only one of the three markers: a test carrying none runs in no selection
+    and is reported nowhere — green CI over code nothing checked — and one
+    carrying two is counted, and timed, twice. Neither can be seen in a passing
+    run.
 
     So a test that declares a layer of its own aborts the collection here
     rather than being warned about, and a test that declares none has one
@@ -1132,7 +1131,7 @@ def pytest_runtest_teardown(item: pytest.Item):
     # three files define their own local ``client``, a fake HTTP client or a
     # four-route FastAPI app, which shadows the fixture this hook is named after
     # and matches here all the same. That cost every one of them a connection to
-    # the maintenance database per test, and in the pure CI step, which runs with
+    # the maintenance database per test, and in the pure CI selection, which has
     # no database reachable at all, it was an error at teardown on a test that
     # had passed.
     if item.get_closest_marker("pure") is not None:
