@@ -69,5 +69,23 @@ export function suffixOf(path: string): string {
 /** 附件块左边那个方格里的图标，给没有缩略图可画的类型用。认不出的拿一张白纸:
  *  不是出错，只是这个类型没有更具体的说法。 */
 export function fileIcon(path: string): string {
-  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+}
+
+/** 浏览器直接画得出、因此 DOCUMENT_TYPES 里没有的那几种。
+ *
+ *  它们不进 DOCUMENT_TYPES 是有讲究的：那张表同时决定 `previewCanShow`，而一枚
+ *  指着仓库里某个 .html 源文件的 chip 该开在「改动」那一格去看 diff，不是开进
+ *  阅读器。这里只管「它叫什么」，不管「谁来显示它」。 */
+const WEB_TYPES: Record<string, { label: string; icon: string }> = {
+  html: { label: '网页', icon: 'mdi-language-html5' },
+  htm: { label: '网页', icon: 'mdi-language-html5' },
+  svg: { label: '矢量图', icon: 'mdi-vector-square' },
+}
+
+/** 说给人听的类型名（「PDF」「网页」「表格」）。认不出就是中性的「文件」——
+ *  一个说不出的类型不该在界面上变成一段后缀。 */
+export function fileLabel(path: string): string {
+  const suffix = suffixOf(path)
+  return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? '文件'
 }

@@ -374,7 +374,11 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     // 分支外面，芝士自己写的、但不该占住聊天区的那种消息才藏得住。
     if (!showsInRoom(block)) continue
     if (block.kind !== 'event') {
-      if (block.kind === 'message' || block.kind === 'attachment') {
+      // 白名单，所以每加一种块都要在这里认一次——`artifact`（芝士摆出来给人看的
+      // 一份东西，`cheese show`）就是漏在这儿的：后端一直往时间线写它，这一行一直
+      // 不认，于是它连一个字都到不了屏幕上。人在房间里等着看那份报告，而唯一的
+      // 线索是右边预览格上一个小点。
+      if (block.kind === 'message' || block.kind === 'attachment' || block.kind === 'artifact') {
         rows.push({ block, run: [block], notice: null })
       }
       continue

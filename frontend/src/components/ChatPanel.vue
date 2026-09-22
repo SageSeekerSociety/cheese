@@ -67,7 +67,7 @@ import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, sho
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
-import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
+import { fileIcon, fileLabel, IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -1050,6 +1050,16 @@ function replySnippet(m: Block): string {
 }
 
 // An image attachment block (图片输入) — drawn in place by AttachmentImage.
+// ---- 芝士摆出来的一份东西 (`cheese show` → kind=artifact) ----
+/** 卡上写的名字：路径的最后一段。整条路径是工作区里的位置，读的人用不上。 */
+function artifactName(m: Block): string {
+  return m.content.split('/').pop() || m.content
+}
+/** 「它是什么」。认不出后缀时退回一句中性的说法，而不是空着。 */
+function artifactKind(m: Block): string {
+  return fileLabel(m.content)
+}
+
 function isImageBlock(m: Block): boolean {
   return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
 }
@@ -2253,6 +2263,27 @@ onBeforeUnmount(() => {
                 >
                   <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
                 </v-btn>
+                <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
+                   写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
+                   分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
+                   和芝士随口说了个路径长得一模一样。
+                   点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+                <button
+                  v-else-if="m.kind === 'artifact'"
+                  type="button"
+                  class="im-artifact"
+                  :title="`打开 ${artifactName(m)}`"
+                  @click="emit('open-file', m.content, m.task_id ?? null)"
+                >
+                  <span class="att-face im-artifact__face">
+                    <v-icon size="20">{{ fileIcon(m.content) }}</v-icon>
+                  </span>
+                  <span class="im-artifact__text">
+                    <span class="im-artifact__name">{{ artifactName(m) }}</span>
+                    <span class="im-artifact__kind t-meta">{{ artifactKind(m) }}</span>
+                  </span>
+                  <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
+                </button>
                 <div v-else-if="isAgentBlock(m)" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
@@ -3275,6 +3306,53 @@ details.sys-row > summary::-webkit-details-marker {
   text-align: right;
 }
 .im-row--self .im-text {
+/* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
+   「这不是一句话，是一个可以打开的东西」。 */
+.im-artifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+.im-artifact:hover {
+  background: var(--fill);
+  border-color: var(--faint);
+}
+.im-artifact__face {
+  width: 32px;
+  height: 32px;
+}
+.im-artifact__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.im-artifact__name {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-artifact__kind {
+  text-align: left;
+}
+.im-artifact__go {
+  flex: none;
+  color: var(--faint);
+}
   text-align: left; /* 气泡靠右，气泡里的字仍然左起 */
   background: var(--fill-2);
   border-top-left-radius: var(--radius-lg);
