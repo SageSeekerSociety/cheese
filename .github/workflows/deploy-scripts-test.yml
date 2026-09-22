@@ -108,6 +108,9 @@ jobs:
       - name: CI runner disk guard
         run: bash deploy/tests/test-ci-runner-disk-guard.sh
 
+      - name: Dev-box cache reclaim
+        run: bash deploy/tests/test-dev-box-disk-cleanup.sh
+
       - name: CI action archive cache
         run: python3 deploy/tests/test_action_archive_cache.py
 
