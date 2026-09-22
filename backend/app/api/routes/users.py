@@ -3851,26 +3851,97 @@ def _oauth_error_redirect(error_code: str, message: str) -> RedirectResponse:
     )
 
 
+# The login `state` is ours, never the client's. It is reserved server-side so
+# the callback can spend it once, and bound to the browser that started the
+# flow by an httpOnly cookie: a callback URL carried to another browser arrives
+# without the cookie and is refused. SameSite=Lax still sends the cookie on the
+# provider's top-level GET redirect back to us.
+_OAUTH_LOGIN_STATE_COOKIE = "OAUTH_STATE"
+_OAUTH_LOGIN_STATE_SCOPE = "oauth_login_state"
+_OAUTH_LOGIN_STATE_TTL_S = 10 * 60
+
+
+def _oauth_login_state_scope(provider_id: str) -> str:
+    # Per provider, so a state issued for one provider cannot be spent at
+    # another provider's callback.
+    return f"{_OAUTH_LOGIN_STATE_SCOPE}:{provider_id}"
+
+
+async def _spend_oauth_login_state(
+    provider_id: str, state: str | None, cookie_state: str | None
+) -> bool:
+    """True when ``state`` is the one this browser was issued and is unspent."""
+    import hmac
+
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    if not state or not cookie_state:
+        return False
+    if not hmac.compare_digest(state.encode(), cookie_state.encode()):
+        return False
+    try:
+        return await claim(_oauth_login_state_scope(provider_id), state)
+    except SingleUseUnavailableError:
+        logger.exception("OAuth callback: cannot claim login state for %s", provider_id)
+        return False
+
+
+def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectResponse:
+    return RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_error_path, message=message, provider=provider_id
+        ),
+        status_code=302,
+    )
+
+
 @router.get(
     "/auth/oauth/login/{providerId}",
     summary="Redirect to the OAuth provider's authorization page",
 )
 async def get_oauth_login_url(
     provider_id: Annotated[str, Path(alias="providerId")],
-    state: str | None = Query(default=None),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     # The frontend navigates the browser straight to this endpoint, so we
-    # 302-redirect to the provider's authorization page. `state` is generated
-    # by the frontend (CSRF) and passed through to the provider unchanged.
+    # 302-redirect to the provider's authorization page.
+    import secrets
+    from urllib.parse import urlparse
+
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
+
+    state = secrets.token_urlsafe(32)
     try:
+        provider = oauth_service.get_provider(provider_id)
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
     except NotFoundError:
         raise NotFoundError(
             f"OAuth provider '{provider_id}' not found or not enabled"
         ) from None
 
-    return RedirectResponse(auth_url, status_code=302)
+    try:
+        await reserve(
+            _oauth_login_state_scope(provider_id),
+            state,
+            ttl_s=_OAUTH_LOGIN_STATE_TTL_S,
+        )
+    except SingleUseUnavailableError:
+        logger.exception("OAuth login: cannot reserve state for %s", provider_id)
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+
+    redirect = RedirectResponse(auth_url, status_code=302)
+    redirect.set_cookie(
+        _OAUTH_LOGIN_STATE_COOKIE,
+        state,
+        max_age=_OAUTH_LOGIN_STATE_TTL_S,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        # The provider sends the browser to exactly this URL, so its path is
+        # the callback path as the browser sees it, gateway mount included.
+        path=urlparse(provider.config.redirect_url).path or "/",
+    )
+    return redirect
 
 
 @router.get(
@@ -3879,30 +3950,31 @@ async def get_oauth_login_url(
 )
 async def handle_oauth_callback(
     provider_id: Annotated[str, Path(alias="providerId")],
+    request: Request,
     code: str = Query(...),
     state: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> RedirectResponse:
+    # Step 0: the state must be the one issued to this browser, unspent —
+    # checked before the code is exchanged.
+    if not await _spend_oauth_login_state(
+        provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
+    ):
+        logger.info("OAuth callback: state rejected for %s", provider_id)
+        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+
     # Step 1: exchange the code and fetch the provider profile. Any failure here
     # is an authentication problem — bounce to the frontend error page.
     try:
         _access_token, user_info = await oauth_service.handle_callback(
             provider_id=provider_id,
             code=code,
-            state=state,
         )
     except Exception:
         logger.exception("OAuth callback: provider exchange failed for %s", provider_id)
-        return RedirectResponse(
-            _oauth_frontend_url(
-                settings.frontend_oauth_error_path,
-                message="oauth_failed",
-                provider=provider_id,
-            ),
-            status_code=302,
-        )
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
 
     # Step 2 — resolve the local account (reference contract):
     #   A. existing binding → straight to the success page.

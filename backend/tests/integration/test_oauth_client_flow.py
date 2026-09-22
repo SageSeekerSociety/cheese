@@ -443,7 +443,9 @@ class TestOAuthRespectsTwoFactor:
         monkeypatch.setattr(settings, "oauth_github_client_id", "test-client-id")
         monkeypatch.setattr(settings, "oauth_github_client_secret", "test-secret")
         monkeypatch.setattr(
-            settings, "oauth_github_redirect_url", "https://example.com/cb"
+            settings,
+            "oauth_github_redirect_url",
+            "http://testserver/users/auth/oauth/callback/github",
         )
 
         async def fake_exchange_code(self, code):
@@ -465,9 +467,11 @@ class TestOAuthRespectsTwoFactor:
         assert _q(_loc(linked))["bound"] == "true"
         secret = _enable_2fa(api_client, user)
 
+        start = api_client.get("/users/auth/oauth/login/github", follow_redirects=False)
+        state = _q(start.headers["location"])["state"]
         resp = api_client.get(
             "/users/auth/oauth/callback/github",
-            params={"code": "c", "state": "s"},
+            params={"code": "c", "state": state},
             follow_redirects=False,
         )
         self._assert_2fa_ticket(api_client, resp, secret)

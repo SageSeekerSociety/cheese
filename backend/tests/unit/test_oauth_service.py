@@ -829,32 +829,13 @@ class TestGenerateAuthorizationUrl:
 
         assert "state=custom-state" in url
 
-    def test_auto_generates_state_when_none(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github")
-
-        assert "state=" in url
-
-    def test_auto_generates_state_when_empty_string(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github", state="")
-
-        # Empty string is falsy, so auto-generated state is used
-        assert "state=" in url
-
     def test_provider_not_found(self):
         svc, _repo = _make_service()
         svc._initialized = True
         svc._providers = {}
 
         with pytest.raises(NotFoundError):
-            svc.generate_authorization_url("unknown")
+            svc.generate_authorization_url("unknown", "state")
 
 
 # ---------------------------------------------------------------------------

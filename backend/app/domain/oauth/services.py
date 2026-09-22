@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -382,16 +381,11 @@ class OAuthService:
             raise NotFoundError(f"OAuth provider '{provider_id}' not found")
         return provider
 
-    def generate_authorization_url(
-        self, provider_id: str, state: str | None = None
-    ) -> str:
-        provider = self.get_provider(provider_id)
-        if not state:
-            state = secrets.token_urlsafe(32)
-        return provider.get_authorization_url(state)
+    def generate_authorization_url(self, provider_id: str, state: str) -> str:
+        return self.get_provider(provider_id).get_authorization_url(state)
 
     async def handle_callback(
-        self, provider_id: str, code: str, state: str | None = None
+        self, provider_id: str, code: str
     ) -> tuple[str, OAuthUserInfo]:
         provider = self.get_provider(provider_id)
 
