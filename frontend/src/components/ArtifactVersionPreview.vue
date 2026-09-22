@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { artifactVersionBytes } from '../api'
 import { t } from '../i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, NEEDS_CONVERSION, imageMimeOf, suffixOf } from '../lib/fileKind'
 
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
@@ -47,7 +47,7 @@ watch(
       data.value = bytes
       if (IMAGE_SUFFIXES.has(suffix.value)) {
         imageUrl.value = URL.createObjectURL(
-          new Blob([bytes], { type: suffix.value === 'png' ? 'image/png' : 'image/jpeg' })
+          new Blob([bytes], { type: imageMimeOf(suffix.value) })
         )
       } else if (view.value !== 'pages' && view.value !== 'sheet' && bytes.byteLength <= 1024 * 1024) {
         const raw = new Uint8Array(bytes)

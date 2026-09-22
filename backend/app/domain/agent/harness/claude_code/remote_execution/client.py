@@ -673,8 +673,12 @@ def _publish_spooled_hook(command, payload):
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 
-# What the tool result promises the caller about the file. Kept in step with
-# `topics._ARTIFACT_MIME`, which is what the room actually renders each kind as.
+# What the tool result promises the caller about the file: `isImage` for the
+# suffixes that are pictures, `media_type` for what the bytes are. The room
+# types the artifact off the path on `POST /topics/{id}/shown`
+# (`topics._ARTIFACT_MIME`); this tool never declares `as`, so that table is
+# the only one that names a kind. These two fields describe the file to the
+# caller — they are not a second copy of the room's kind table.
 _SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _SEND_MEDIA_TYPE = {
     ".png": "image/png",
@@ -794,9 +798,10 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     offers for download. `POST /topics/{id}/attachments` is the input bar's
     staging area: a file parked there is waiting on a message that never comes.
 
-    Each result entry keeps the filesystem path in `path`, what `SendUserFile`
-    promises the caller. The room-relative pointer is the `path` on the POST
-    body — a different field, for a different reader.
+    Each result entry's `path` is the file's resolved filesystem path (the
+    executor path `send_user_file_paths` computes), what `SendUserFile` promises
+    the caller. The room-relative pointer is the `path` on the POST body — a
+    different field, for a different reader.
     """
     topic = os.environ.get("CHEESE_TOPIC", "")
     if not topic:
@@ -804,6 +809,12 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     attachments = []
     delivered = False
     for index, item in enumerate(args.get("files") or []):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise RuntimeError(
+                "SendUserFile cannot deliver a pre-resolved "
+                "{file_uuid, file_name, size, is_image} object; "
+                "pass a file path instead"
+            )
         path = str(item.get("path") or "")
         name = str(item.get("name") or "") or (
             path.replace("\\", "/").rsplit("/", 1)[-1] or "file"
@@ -812,7 +823,7 @@ def deliver_send_user_file(client, config, payload, args, invoke):
         preexisting = item.get("upload_error")
         if preexisting:
             attachments.append(
-                send_user_file_entry(path, name, 0, upload_error=str(preexisting))
+                send_user_file_entry(machine, name, 0, upload_error=str(preexisting))
             )
             continue
         try:
@@ -827,7 +838,7 @@ def deliver_send_user_file(client, config, payload, args, invoke):
                 if size > MAX_SEND_USER_FILE_BYTES:
                     attachments.append(
                         send_user_file_entry(
-                            path,
+                            machine,
                             name,
                             size,
                             upload_error=(
@@ -842,18 +853,18 @@ def deliver_send_user_file(client, config, payload, args, invoke):
                 )
         except Exception as exc:
             attachments.append(
-                send_user_file_entry(path, name, 0, upload_error=str(exc))
+                send_user_file_entry(machine, name, 0, upload_error=str(exc))
             )
             continue
         if not raw:
             attachments.append(
-                send_user_file_entry(path, name, 0, upload_error="空文件")
+                send_user_file_entry(machine, name, 0, upload_error="空文件")
             )
             continue
         if len(raw) > MAX_SEND_USER_FILE_BYTES:
             attachments.append(
                 send_user_file_entry(
-                    path,
+                    machine,
                     name,
                     len(raw),
                     upload_error=(
@@ -873,10 +884,10 @@ def deliver_send_user_file(client, config, payload, args, invoke):
             )
         except Exception as exc:
             attachments.append(
-                send_user_file_entry(path, name, len(raw), upload_error=str(exc))
+                send_user_file_entry(machine, name, len(raw), upload_error=str(exc))
             )
             continue
-        attachments.append(send_user_file_entry(path, name, len(raw)))
+        attachments.append(send_user_file_entry(machine, name, len(raw)))
         delivered = True
     caption = args.get("caption")
     if delivered and isinstance(caption, str) and caption.strip():

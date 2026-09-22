@@ -408,7 +408,7 @@ def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(central
     what 芝士 points at — `POST /topics/{id}/shown`, the route `cheese show`
     publishes through — and answer the caller with the attachments it promised.
     """
-    process, _, _, _ = central_transport
+    process, _, _, work = central_transport
     raw = b"%PDF-1.4 report"
     result = process.call(
         "tools/call",
@@ -433,7 +433,7 @@ def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(central
     value = json.loads(result["content"][0]["text"])["result"]
     assert value["attachments"] == [
         {
-            "path": "docs/report.pdf",
+            "path": str(work / "docs/report.pdf"),
             "size": len(raw),
             "isImage": False,
             "media_type": "application/pdf",
@@ -475,7 +475,7 @@ def test_send_user_file_reads_a_file_the_plugin_host_never_saw(central_transport
         },
     )
     value = json.loads(result["content"][0]["text"])["result"]
-    # `path` is what `SendUserFile` promised the caller — the file it named —
+    # `path` is the resolved filesystem path `SendUserFile` promises the caller —
     # not the room-relative pointer, which lives on the POST body's own `path`.
     assert value["attachments"][0]["path"] == str(work / "shot.png")
     assert value["attachments"][0]["isImage"] is True
@@ -516,7 +516,7 @@ def test_send_user_file_reports_what_it_could_not_deliver_without_lying(central_
     missing, good, huge = value["attachments"]
     assert "upload_error" in missing
     assert "upload_error" not in good
-    assert good["path"] == "good.md"
+    assert good["path"] == str(work / "good.md")
     assert huge["upload_error"] == "file is over the 10MB limit"
     shown_paths = [
         call["path"] for call in process.platform_calls if "content_b64" in call
@@ -627,6 +627,35 @@ def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
     assert "文件太大" in entry["upload_error"]
     assert entry["path"] == "/work/huge.bin"
     assert len(commands) == 1 and commands[0].startswith("wc ")
+
+
+def test_send_user_file_names_the_object_form_it_cannot_take(central_transport):
+    """The tool text also allows a pre-resolved {file_uuid, file_name, size,
+    is_image} entry — a file already in Anthropic's filestore, which this room
+    has no way to pull. Reading one as a path yields a file called `file` far
+    downstream; refuse the form by name instead.
+    """
+    process, _, _, _ = central_transport
+    with pytest.raises(RuntimeError, match="file_uuid"):
+        process.call(
+            "tools/call",
+            {
+                "name": "send_user_file",
+                "arguments": {
+                    "id": "object-form",
+                    "session_id": "fixture",
+                    "files": [
+                        {
+                            "file_uuid": "f-1",
+                            "file_name": "shot.png",
+                            "size": 3,
+                            "is_image": True,
+                        }
+                    ],
+                    "status": "normal",
+                },
+            },
+        )
 
 
 @pytest.mark.parametrize(
