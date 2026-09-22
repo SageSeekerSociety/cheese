@@ -2123,7 +2123,7 @@ def _quiz_payload_to_api_model(payload: dict) -> dict:
     score = sum(answer["awardedPoints"] or 0 for answer in my_answers)
     attempt = payload.get("myAttempt")
     my_attempt = _quiz_attempt_to_api_model(attempt) if attempt is not None else None
-    if my_attempt is not None:
+    if my_attempt is not None and attempt is not None:
         my_attempt["pendingReview"] = attempt.graded_at is None
         my_attempt["score"] = score
     out = {

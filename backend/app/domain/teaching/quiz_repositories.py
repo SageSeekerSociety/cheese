@@ -1,6 +1,7 @@
 """小测的读写。判分与可见性不在这里 —— 那是 service 的事，这里只有查询。"""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -302,7 +303,7 @@ class QuizAnswerRepository:
         *,
         attempt_id: int,
         question_id: int,
-        response: list,
+        response: Any,
         awarded_points: int | None,
     ) -> QuizAnswer:
         now = datetime.now(UTC)
