@@ -221,9 +221,7 @@ def test_the_queue_is_what_has_no_review_yet(
     assert left["page"]["total"] == 1
     assert first["id"] not in {row["id"] for row in left["submissions"]}
 
-    reviewed = _queue(
-        api_client, s, s["creator_token"], reviewed="true"
-    ).json()["data"]
+    reviewed = _queue(api_client, s, s["creator_token"], reviewed="true").json()["data"]
     assert reviewed["page"]["total"] == 1
     assert reviewed["submissions"][0]["review"]["detail"]["score"] == 90
 
