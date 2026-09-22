@@ -50,10 +50,9 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   // vuetify@3.9.3 实测：整份 DOM 里 `[role="menuitem"]` 是 0 个）。所以按 role 找
   // 永远匹配不到，只能按类名找——和侧栏那几格同一条来源。
   //
-  // 末一行「项目设置」不由壳决定，但它在这个菜单里，一起钉住：壳加一页、少一页都
-  // 应该在这里看得见，而不是悄悄换掉最后一行。
+  // The project owner also has settings and ownership transfer actions.
   const menu = page.locator('.v-overlay-container .v-list-item-title');
-  await expect(menu).toHaveText([...MENU, '项目设置']);
+  await expect(menu).toHaveText([...MENU, '项目设置', '转让项目']);
   await page.keyboard.press('Escape');
 
   // 留一张图给这次验收：屏幕上就是上面断言的那一屏。
