@@ -2130,9 +2130,13 @@ export interface FeedbackListQuery {
   q?: string
   sort?: string
   pageStart?: number
-  /** 三段日期窗口。**只有管理端那条列表吃它们** —— 用户侧没有「点一个数字看那一段」
-   *  的入口，映射写进 `listAdminFeedback` 而不是在这里的每一个函数里。 */
-  since?: string
+  author?: string | null
+  kind?: string | null
+  status?: string | null
+  /** 起始时间（ISO）。**两条列表都吃**：管理端是「点看板上一个数字，看那一段」，
+   *  反馈中心是「最近 24 小时 / 7 天 / 30 天」那个下拉。客户端只负责把「最近 N 天」
+   *  折成一个时刻，窗口的对齐由服务端那套 UTC 日说。 */
+  since?: string | null
   resolvedSince?: string
   deployedSince?: string
 }
@@ -2147,6 +2151,11 @@ export function listFeedback(query: FeedbackListQuery): Promise<FeedbackListPayl
       sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
+      // 四个筛选。空值由 `feedbackQuery` 丢掉，所以「不限」就是不传。
+      author: query.author,
+      kind: query.kind,
+      status: query.status,
+      since: query.since,
     })}`
   )
 }

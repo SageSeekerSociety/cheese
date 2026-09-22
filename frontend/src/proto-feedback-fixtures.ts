@@ -1314,10 +1314,22 @@ function listPage(url: URL, tab: string): { data: FeedbackCard[]; total: number;
   const sort = url.searchParams.get('sort') ?? 'new'
   // 公开那条路由**不校验** `tab` / `sort`（服务端 `list_public` 对不认识的词悄悄
   // 退回默认档，见那一段的 docstring）—— 这是那条路由自己的口径，和管理端不同。
+  //
+  // 四个筛选（作者 / 类型 / 状态 / 起始时间）照抄 `repositories.list_public`：**叠在
+  // 栏位之上**，不是替换它。假后端也得筛 —— 不筛的话预览里那排控件点了没反应，
+  // 而预览正是拿来看这类东西的地方。
+  const author = url.searchParams.get('author')
+  const kind = url.searchParams.get('kind')
+  const status = url.searchParams.get('status')
+  const since = url.searchParams.get('since')
   return paged(
     ROWS.filter(inPublicList)
       .filter((item) => matchesTab(item, tab))
-      .filter((item) => matchesQuery(item, q)),
+      .filter((item) => matchesQuery(item, q))
+      .filter((item) => author === null || item.author_handle === author)
+      .filter((item) => kind === null || item.kind === kind)
+      .filter((item) => status === null || item.status === status)
+      .filter((item) => since === null || item.created_at >= since),
     url,
     sort
   )

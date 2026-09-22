@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import type { FeedbackKind, FeedbackStatus } from '@/cx_types'
 import type { FeedbackTab as TabName } from '@/stores/feedback'
 
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import { t } from '@/i18n'
+import { KIND_LABEL, STATUS_META } from '@/lib/feedbackMeta'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -13,9 +15,16 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 它是一个**独立完整页面**：不套工作区那套左侧话题导航，也不进任何项目上下文。
 // 反馈说的是平台本身，跟「我现在在哪个项目里」没有关系。
 //
-// 页面结构刻意只有三层（标题行 / Tab / 列表）。多一层筛选条就会让「我要找的那条
-// 在哪」变成一个需要读三处才能回答的问题，而反馈中心的全部价值就是让人**快速找到
-// 已经有人提过的同一件事**，然后支持它，而不是再提一条。
+// 页面结构是三层（标题行 / Tab / 列表）**加上一排筛选**。
+//
+// 那一排是后加的，而加它之前这里写着一句「刻意只有三层」—— 当时的理由是「筛选条会让
+// 『我要找的那条在哪』变成要读三处才能回答的问题」。那句话在列表还短的时候是对的，
+// 现在不成立了：**只靠搜索找不到东西的时候，缺的不是更多字符，是另一个问题** ——
+// 谁提的、哪一类、什么时候。四个筛选各自答的是这些，而它们和搜索一样是**服务端**的
+// 筛选（本地再筛一遍就是第二份实现）。
+//
+// 它们默认都不生效（全部「不限」），所以这一页第一眼的样子没变 —— 多出来的是一排
+// 控件，不是一层常态的过滤。
 //
 // 上一轮这里有一个「原型身份」开关（user / admin），那是给人看两套界面的道具。现在
 // 权限在服务端：`store.isAdmin` 读 `GET /feedback/meta`，管理后台的入口跟着它出现
@@ -23,6 +32,53 @@ import { useFeedbackStore } from '@/stores/feedback'
 defineOptions({ name: 'FeedbackCenterPage' })
 
 const store = useFeedbackStore()
+
+/* ---- 四个筛选 ---------------------------------------------------------------
+ *
+ * 控件的值各自有一格本地状态，**store 才是发请求那一份**：`setFilter` 会重新拉一页，
+ * 因为筛选在服务端（本地筛是第二份实现，两份漂开的表现是「翻页之后筛选悄悄失效」）。
+ *
+ * 选项里的名词一律来自共享的表（`KIND_LABEL`、`STATUS_META`、`store.statusLadder`）：
+ * 这一页再写一遍「Bug / 建议 / 其他」就是同一个事实的第二份拷贝，而它的漂开方式是
+ * 「列表里叫建议、筛选框里叫功能请求」。
+ */
+const kind = ref<FeedbackKind | null>(store.filterKind)
+const status = ref<FeedbackStatus | null>(store.filterStatus)
+const days = ref<number | null>(store.filterDays)
+const author = ref(store.filterAuthor)
+
+const kindOptions = computed(() => [
+  { value: null, title: '不限' },
+  ...(store.meta?.kinds ?? ['bug', 'suggestion', 'other']).map((value) => ({
+    value,
+    title: KIND_LABEL[value],
+  })),
+])
+const statusOptions = computed(() => [
+  { value: null, title: '不限' },
+  ...store.statusLadder.map((value) => ({ value, title: STATUS_META[value].label })),
+])
+const dayOptions = [
+  { value: null, title: '不限' },
+  { value: 1, title: '24 小时' },
+  { value: 7, title: '7 天' },
+  { value: 30, title: '30 天' },
+]
+
+/** 作者那一栏是打字，按防抖提交 —— 每敲一个字发一次请求，和搜索框一样的毛病。
+ *  下拉是离散的一次选择，那三个不防抖。 */
+let authorTimer: ReturnType<typeof setTimeout> | null = null
+watch(author, (value) => {
+  // **`?? ''` 不是防御性编程，是这一栏真的会变成 null**：`v-text-field` 的
+  // `clearable` 那颗 × 走的是 Vuetify 的 `onClear`，它把 model 置成 `null` 而不是
+  // 空串（`VTextField.js` 的 `model.value = null`）。少了这一句，点一下 × 就在
+  // watch 里抛 `Cannot read properties of null`，而**筛选清不掉**、界面还停在原样。
+  const text = value ?? ''
+  if (authorTimer) clearTimeout(authorTimer)
+  authorTimer = setTimeout(() => {
+    if (text.trim() !== store.filterAuthor.trim()) store.setFilter({ author: text })
+  }, 300)
+})
 
 /** 栏位的中文名。**有哪些栏位**来自服务端（`meta.tabs`），这里只负责把它们叫成
  *  人话；服务端多出一个栏位时标成它自己的名字，而不是不显示（少一个 Tab 比多一个
@@ -85,10 +141,21 @@ const emptyState = computed(() => {
   }
 })
 
+/** 一次清干净：栏位、搜索词、以及那四个筛选。
+ *
+ *  **空态那颗按钮和筛选条那颗调的是同一个** —— 分两个的话，被筛选筛空的人按
+ *  「清除筛选」会发现那四个控件还挂在上面，而列表已经变回全部了：屏幕上说一套、
+ *  控件说另一套。
+ *
+ *  控件那几格也要一起回默认值：`store.clearFilters()` 清的是**发请求的那一份**，
+ *  而控件绑的是本地 ref —— 只清 store 的话，数字还显示着上一次的选择。
+ */
 function clearFilters() {
-  store.tab = 'all'
-  if (store.query) void store.clearQuery()
-  else void store.loadList()
+  kind.value = null
+  status.value = null
+  days.value = null
+  author.value = ''
+  store.clearFilters()
 }
 </script>
 
@@ -150,6 +217,68 @@ function clearFilters() {
           <span class="fb-tab-count">{{ tab.count }}</span>
         </v-tab>
       </v-tabs>
+
+      <!-- 四个筛选。**默认全部「不限」**，所以这一页第一眼的样子没变。它们加在栏位
+           之上（栏位说「哪一栏」，这四个说「那一栏里哪些」），而且和搜索一样在服务端
+           执行 —— 本地再筛一遍就是第二份实现。 -->
+      <div class="fb-filters">
+        <v-select
+          v-model="kind"
+          :items="kindOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="fb-filter"
+          autocomplete="off"
+          aria-label="类型"
+          @update:model-value="store.setFilter({ kind })"
+        />
+        <v-select
+          v-model="status"
+          :items="statusOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="fb-filter"
+          autocomplete="off"
+          aria-label="状态"
+          @update:model-value="store.setFilter({ status })"
+        />
+        <v-text-field
+          v-model="author"
+          placeholder="作者"
+          density="compact"
+          variant="outlined"
+          hide-details
+          autocomplete="off"
+          class="fb-filter"
+          aria-label="作者"
+          clearable
+        />
+        <v-select
+          v-model="days"
+          :items="dayOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="fb-filter"
+          autocomplete="off"
+          aria-label="时间"
+          @update:model-value="store.setFilter({ days })"
+        />
+        <!-- 「清除筛选」只在真有筛选时出现：常驻的话它是一颗平时没有任何作用的
+             按钮，而这一排里已经有四个控件了。 -->
+        <v-btn
+          v-if="store.hasFilters()"
+          variant="text"
+          color="secondary"
+          size="small"
+          class="fb-filters__clear"
+          @click="clearFilters"
+        >
+          清除筛选
+        </v-btn>
+      </div>
 
       <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
            排，其实是按「支持数按半衰期折过的分数」排 —— 一条二十个支持的老反馈排在一条
@@ -276,6 +405,26 @@ function clearFilters() {
 .fb-search {
   max-width: 360px;
 }
+/* 四个筛选一排。窄屏折行 —— 四个控件加清除按钮在 360px 上放不下，硬挤会变成每个
+   都窄到读不出值。 */
+.fb-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 每个下拉一个固定宽度：`v-select` 默认会撑满，四个撑满会把这一行挤成四行。 */
+.fb-filter {
+  flex: 0 0 140px;
+  max-width: 140px;
+}
+
+.fb-filters__clear {
+  flex: 0 0 auto;
+}
+
 .fb-tabs {
   margin-bottom: 12px;
   border-bottom: 1px solid var(--line);
