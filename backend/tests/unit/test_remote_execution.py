@@ -264,7 +264,11 @@ def test_send_user_file_a_file_this_host_cannot_read_still_reaches_the_transport
           session: {id: async () => 'session'},
           fs: {
             stat: async () => ({kind: 'file', size: 3, mtimeMs: 0, isLink: false}),
-            read: async () => {throw new Error('$.fs.read: refused: the file is over the 4194304-byte limit');},
+            read: async () => {
+              throw new Error(
+                '$.fs.read: refused: the file is over the 4194304-byte limit'
+              );
+            },
           },
           mcp: {call: async (server, tool, args) => {
             called = args;
@@ -297,7 +301,9 @@ def test_send_user_file_an_oversize_file_is_refused_before_it_is_read():
         const api = {
           session: {id: async () => 'session'},
           fs: {
-            stat: async () => ({kind: 'file', size: 11 * 1024 * 1024, mtimeMs: 0, isLink: false}),
+            stat: async () => ({
+              kind: 'file', size: 11 * 1024 * 1024, mtimeMs: 0, isLink: false,
+            }),
             read: async () => {read = true; return {base64: ''};},
           },
           mcp: {call: async (server, tool, args) => {

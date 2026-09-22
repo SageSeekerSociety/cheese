@@ -46,9 +46,7 @@ watch(
       if (current !== generation) return
       data.value = bytes
       if (IMAGE_SUFFIXES.has(suffix.value)) {
-        imageUrl.value = URL.createObjectURL(
-          new Blob([bytes], { type: imageMimeOf(suffix.value) })
-        )
+        imageUrl.value = URL.createObjectURL(new Blob([bytes], { type: imageMimeOf(suffix.value) }))
       } else if (view.value !== 'pages' && view.value !== 'sheet' && bytes.byteLength <= 1024 * 1024) {
         const raw = new Uint8Array(bytes)
         if (!raw.slice(0, 8192).includes(0)) {

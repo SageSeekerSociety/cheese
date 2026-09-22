@@ -29,9 +29,7 @@ const target = ref<string | null>(null)
 // 只有「名册上真有他一行」的人接得住：后端要求新所有者已经是成员，而小队带进来
 // 的人、所有者那一行补出来的行背后都没有成员表记录，AI 队友也不是能把项目扛走的
 // 人。自己也不列——转让是把手交出去，不是左手倒右手。
-const candidates = computed(() =>
-  rows.value.filter((m) => !m.source && !m.agent && m.user_handle !== myHandle())
-)
+const candidates = computed(() => rows.value.filter((m) => !m.source && !m.agent && m.user_handle !== myHandle()))
 
 watch(open, (v) => {
   if (!v) return
@@ -106,13 +104,7 @@ function faceUrl(m: ProjectMemberRow): string {
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" @click="open = false">取消</v-btn>
-        <v-btn
-          color="primary"
-          variant="flat"
-          :loading="transferring"
-          :disabled="!target"
-          @click="confirmTransfer"
-        >
+        <v-btn color="primary" variant="flat" :loading="transferring" :disabled="!target" @click="confirmTransfer">
           转让
         </v-btn>
       </v-card-actions>

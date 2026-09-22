@@ -180,7 +180,9 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
 
-def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(machine_is_gone):
+def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(
+    machine_is_gone,
+):
     """表上只有六样（结论 21）。
 
     另外三个不是产品动作，是这条传输自己的三个口子：`invoke` 是项目工具（文件、命
@@ -225,7 +227,9 @@ def test_feedback_propose_description_carries_the_cli_guidance(machine_is_gone):
     ):
         assert trigger in description
     assert "什么时候不该提" in description
-    assert description.index("什么时候该提") < description.index("把你发现的问题提成一张提案卡")
+    assert description.index("什么时候该提") < description.index(
+        "把你发现的问题提成一张提案卡"
+    )
 
 
 @pytest.mark.parametrize("tool", SIX)

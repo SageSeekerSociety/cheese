@@ -187,7 +187,10 @@ class Handler(socketserver.BaseRequestHandler):
         if request and request["method"] == "tools/list":
             for descriptor in descriptors:
                 os.close(descriptor)
-            result = {"status": 0, "result": {"tools": _tools(server.parser, server.join_descriptions)}}
+            result = {
+                "status": 0,
+                "result": {"tools": _tools(server.parser, server.join_descriptions)},
+            }
             self.request.sendall(json.dumps(result).encode() + b"\n")
             return
         # Recreate wrappers: inherited file streams retain seekability after dup2.
@@ -259,7 +262,9 @@ class Server(socketserver.ForkingMixIn, socketserver.UnixStreamServer):
         self.parser = build_parser() if build_parser else None
         join = namespace.get("join_descriptions")
         self.join_descriptions = (
-            join if callable(join) else lambda *parts: "\n\n".join(p for p in parts if p)
+            join
+            if callable(join)
+            else lambda *parts: "\n\n".join(p for p in parts if p)
         )
         if threading.active_count() != 1:
             raise RuntimeError("CLI preload must remain single-threaded before fork")

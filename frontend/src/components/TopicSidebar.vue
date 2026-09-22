@@ -506,9 +506,7 @@ const transferOpen = ref(false)
 // 吃 403 的那条缝。没行 = 不知道 = 不显示、不给按。行到货了再按行上的 owner 说：
 // 所有者退不掉（后端 `membership/services.py` 的 `leave`），无主项目（owner 空）谁
 // 都退得掉，后端也是这么判的。
-const selectedProject = computed(
-  () => props.projects.find((p) => p.id === props.selectedProjectId) ?? null
-)
+const selectedProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
 const canLeaveProject = computed(() => {
   const me = myHandle()
   const project = selectedProject.value

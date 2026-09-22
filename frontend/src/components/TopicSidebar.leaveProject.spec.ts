@@ -61,9 +61,7 @@ const topics: Topic[] = [
   } as Topic,
 ]
 
-const projects = [
-  { id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'alice' },
-]
+const projects = [{ id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'alice' }]
 
 const Blank = defineComponent({ setup: () => () => h('div') })
 
@@ -121,7 +119,9 @@ async function openProjectMenu(container: Element, baseElement: Element): Promis
 }
 
 function menuItem(baseElement: Element, text: string): Element | undefined {
-  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find((el) => el.textContent?.includes(text))
+  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find((el) =>
+    el.textContent?.includes(text)
+  )
 }
 
 function headerBtn(container: Element, label: string): Element | null {
@@ -293,10 +293,7 @@ describe('退出：先确认，确认之后退出、刷新、回首页', () => {
 
   it('换一个选中项目，退的跟着换', async () => {
     meHandle = 'ligan'
-    const two = [
-      ...projects,
-      { id: 'p2', name: '第二', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bob' },
-    ]
+    const two = [...projects, { id: 'p2', name: '第二', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bob' }]
     const { container, baseElement, router } = mount({ projects: two, selectedProjectId: 'p2' })
     vi.spyOn(router, 'push').mockResolvedValue(undefined)
     await fireEvent.click(headerBtn(container, '退出项目') as Element)
@@ -313,13 +310,9 @@ describe('转让之后：刷新 → 重判，不重挂', () => {
     // refreshProjects 是整份换掉它（`projects.value = (await listProjects()).data`）。
     // host 按当前值往里传（同 ProjectSidebar 的绑定），所以换值之后这一层必须自己
     // 重判——转让完还能退出，靠的就是这根线。
-    const storeProjects = ref([
-      { id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'alice' },
-    ])
+    const storeProjects = ref([{ id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'alice' }])
     refreshProjects.mockImplementation(async () => {
-      storeProjects.value = [
-        { id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bobby' },
-      ]
+      storeProjects.value = [{ id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bobby' }]
     })
     listProjectMembers.mockResolvedValue({
       data: [

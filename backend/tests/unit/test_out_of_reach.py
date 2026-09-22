@@ -156,9 +156,7 @@ def test_a_device_offline_409_naming_the_device_is_the_machine_being_gone(
     assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
 
 
-def test_a_header_only_409_names_the_device_off_the_header_alone(
-    monkeypatch, tmp_path
-):
+def test_a_header_only_409_names_the_device_off_the_header_alone(monkeypatch, tmp_path):
     """头那一条短路判得出来就够了 —— 但这一档不是 ``RemoteClient.call`` 收得到的线材。
 
     ``RemoteClient.call``（kind=device）POST 的是
@@ -229,9 +227,7 @@ def test_an_offline_shape_off_409_is_not_read_as_the_machine_being_gone(
     assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
 
 
-def test_a_generation_conflict_409_is_not_the_machine_being_gone(
-    monkeypatch, tmp_path
-):
+def test_a_generation_conflict_409_is_not_the_machine_being_gone(monkeypatch, tmp_path):
     """执行代际换了的那一种 409 说的不是这双手没了。
 
     ``ConflictError`` ("Execution generation is no longer current"，

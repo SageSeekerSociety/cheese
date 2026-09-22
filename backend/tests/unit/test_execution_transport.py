@@ -403,7 +403,9 @@ def test_platform_mcp_preserves_backend_permission_failure(central_transport):
     assert len(clients) == 1
 
 
-def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(central_transport):
+def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(
+    central_transport,
+):
     """A `SendUserFile` the plugin already read must land where this room shows
     what 芝士 points at — `POST /topics/{id}/shown`, the route `cheese show`
     publishes through — and answer the caller with the attachments it promised.
@@ -486,7 +488,9 @@ def test_send_user_file_reads_a_file_the_plugin_host_never_saw(central_transport
     assert base64.b64decode(shown["content_b64"]) == b"\x89PNG-shot"
 
 
-def test_send_user_file_reports_what_it_could_not_deliver_without_lying(central_transport):
+def test_send_user_file_reports_what_it_could_not_deliver_without_lying(
+    central_transport,
+):
     """One bad file must not take the good ones down with it, and a failure is
     reported in the entry it belongs to — never a success the room never sees.
     """
