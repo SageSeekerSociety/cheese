@@ -43,7 +43,6 @@ from app.domain.agent.harness import (
 from app.domain.agent.harness.prompt import (
     attachment_prompt_line,
     build_system_prompt,
-    chipify_paths,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -253,6 +252,9 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
+    # 项目总览那一份实况文档：全项目共看的东西住在这里（结论 7）。总览房间自己
+    # 那一轮是 None —— 它的 `doc_text` 就是这一份，说两遍只会让模型以为是两份。
+    overview_doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
     topic_stage: TopicStage
@@ -3192,14 +3194,12 @@ class ChatService:
 
         Its own pool and one pool per person sitting with it (`pools_for_turn`
         picks them; every key starts with this project's id, so nothing another
-        project learned about the same person is reachable from here), plus one
-        read-only tail: the shared ``project`` pool from
-        before memory was split per agent at all. Writes only ever go to the
-        first, so the tail does not grow — but dropping it would make the day
-        this shipped look, from inside a room, exactly like amnesia. What the
-        rooms learned while memory was keyed by the room is not a tail: it was
-        rekeyed onto the agent itself by `d5c48f1a6b73`, and is in the first
-        pool.
+        project learned about the same person is reachable from here). That is
+        the whole list — every memory belongs to one agent instance (结论 8),
+        so no pool here is shared with anyone.
+
+        什么都该看见的那些事实不在这里：它们是文档（结论 7），本轮另外读——
+        项目总览那一份和本房间那一份，作为文档进提示词，不冒充记忆。
 
         Only the core layer comes back; everything else is counted, not
         carried, and reached with `recall`. A pool nobody is told is bigger
@@ -3213,7 +3213,6 @@ class ChatService:
             resolved.handle,
             await TopicMemberService(session).people_handles(topic.id),
         )
-        pools.append((MemoryScope.project, str(topic.project_id)))
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
@@ -4671,6 +4670,18 @@ class ChatService:
             )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             project = await ProjectRepository(session).get(topic.project_id)
+            # 人和 agent 共同看的那一份（结论 7）：项目总览房间的实况文档。它不是
+            # 记忆，所以不走召回那条路——写它的人（或 agent）留了痕，读它的每一间
+            # 房间读到的是同一份，而这正是共享记忆池做不到的两件事。
+            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它。
+            overview_root = (
+                await blocks.doc_root(project.root_topic_id)
+                if project is not None
+                and project.root_topic_id is not None
+                and project.root_topic_id != place.room_id
+                else None
+            )
+            overview_doc_text = overview_root.content if overview_root else None
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
@@ -4968,6 +4979,7 @@ class ChatService:
             agent=agent,
             agent_pool=agent_pool,
             doc_text=doc_text,
+            overview_doc_text=overview_doc_text,
             memories=memories,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
@@ -5036,6 +5048,7 @@ class ChatService:
         acting_agent = prepared.acting_agent
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
+        overview_doc_text = prepared.overview_doc_text
         memories = prepared.memories
         needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
@@ -5087,6 +5100,7 @@ class ChatService:
             topic_refs_for_prompt,
             untitled,
             artifacts=artifact_refs,
+            overview_doc=overview_doc_text,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
             session_opening=_session_opening_lines(
@@ -5553,19 +5567,21 @@ class ChatService:
             projects = ProjectRepository(session)
             topics = TopicRepository(session)
             milestones = MilestoneRepository(session)
-            memory = memory_store(session)
 
             project = await projects.get(project_id)
             if project is None:
                 raise NotFoundError("Project not found")
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
-            # Deliberately the shared pool, not any one agent's memory: a project
-            # summary describes the project, and what a 芝士 learned for itself is
-            # not project knowledge.
-            memories = await recall_pools(
-                memory, [(MemoryScope.project, str(project_id))]
+            # 项目的状态在总览那份实况文档里，不在任何一个记忆池里（结论 7）：
+            # 一页纸总结描述的是这个项目，而记忆是某一个芝士自己的观察——拿它当
+            # 项目知识用，等于把一个实例看到的东西当成大家的共识写进总结。
+            overview_root = (
+                await BlockRepository(session).doc_root(project.root_topic_id)
+                if project.root_topic_id is not None
+                else None
             )
+            overview_doc = overview_root.content if overview_root else ""
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
             role = await agents.system_prompt(agent)
@@ -5582,13 +5598,10 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {chipify_paths(m)}" for m in memories.facts)
-        if memories.omitted:
-            mem_lines += f"\n- （另有 {memories.omitted} 条相关性较低的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            f"## 关键记忆\n{mem_lines or '（暂无）'}"
+            f"## 项目总览的实况文档\n{overview_doc.strip() or '（暂无）'}"
         )
         system_prompt = build_system_prompt(
             self._base_prompt,

@@ -1,9 +1,12 @@
 """End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
 
 import asyncio
+import uuid
 
-from app.domain.memory.models import MemoryLayer, MemoryScope
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
+from app.domain.memory.models import MemoryLayer
 from app.domain.memory.store import DbMemoryStore
+from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
     room_agent_seat,
@@ -182,16 +185,14 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
 
     async def _seed() -> None:
         async with client.test_factory() as session:
+            project = await ProjectService(session).get_or_404(uuid.UUID(project_id))
+            agent = await AgentInstanceService(session).for_project(project)
+            pool = memory_pool(project.id, agent)
             store = DbMemoryStore(session)
             await store.remember(
-                MemoryScope.project,
-                project_id,
-                "你是芝士，回答先给结论",
-                layer=MemoryLayer.core,
+                *pool, "你是芝士，回答先给结论", layer=MemoryLayer.core
             )
-            await store.remember(
-                MemoryScope.project, project_id, "项目用 FastAPI 写后端"
-            )
+            await store.remember(*pool, "项目用 FastAPI 写后端")
             await session.commit()
 
     asyncio.run(_seed())

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -957,8 +958,9 @@ async def _calling_agent(
     own pool wherever it is working — the same 芝士 moving between rooms keeps
     one pool. A token that names no saved teammate (an older one, a DM's)
     writes as the place's default: the DM's own teammate, else the project's.
-    Returns ``None`` when no usable place was supplied, so the caller falls
-    back to the shared project pool.
+    Returns ``None`` when no usable place was supplied; the caller then names
+    the project's own 芝士 (`_agent_speaking`), because a memory always belongs
+    to one instance.
 
     The agent itself rather than a pool key, because two different pools are
     named from it now: its own (`memory_pool`) and one per person it has
@@ -980,18 +982,19 @@ async def _calling_agent(
     return agent
 
 
-async def _agent_forming_the_view(
+async def _agent_speaking(
     db: DbSession, project: Project, agent: ResolvedAgent | None
 ) -> ResolvedAgent:
-    """Which agent's view of a person this is — the caller's, else the
-    project's own 芝士.
+    """Which 芝士 this call is — the caller's, else the project's own.
 
-    A pool about a person has to name an instance (结论 8), and an endpoint
-    called without a place still has to name one. Every project has its own
-    芝士 (结论 4), and a project-level call is that one speaking.
+    Every memory names an instance: a pool about a person (结论 8) and the
+    project pool an instance keeps for itself (结论 7 — there is no pool the
+    project shares). An endpoint called without a place still has to name one,
+    and every project has its own 芝士 (结论 4), so a project-level call is
+    that one speaking.
 
-    Takes the caller's agent rather than resolving it again: both endpoints
-    that ask this already had to resolve it for something else on the same
+    Takes the caller's agent rather than resolving it again: every endpoint
+    that asks this already had to resolve it for something else on the same
     path.
     """
     if agent is not None:
@@ -1015,6 +1018,46 @@ async def _authorize_personal_memory_owner(
         raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
 
 
+#: 芝士 写给所有人看的那几条，在总览文档里自己占一节。
+#:
+#: 裸追加到文档末尾的那一份读起来是另一回事：它落在最后一个标题底下，种子文档
+#: 那份的最后一节叫「## 数据」，读的人就把它当成数据那一节的内容。一个固定的标
+#: 题把出处说清楚——这几行是芝士 观察到的、写给大家看的。
+FACTS_FOR_EVERYONE = "## 大家都该知道的"
+
+
+def _with_fact_for_everyone(current: str, content: str, handle: str) -> str:
+    """把一条事实添进总览文档「大家都该知道的」那一节，署写它的那位的名。
+
+    署名写在正文里，不是只写在 `Block.author` 上：那一栏只记最近一次编辑的人，
+    下一个改文档的人一盖，这条事实就成了没有出处的一句话——而文档是给人看的，
+    看的人要知道这句话是谁说的、找谁问。
+
+    同一节里往下添，不是每条另起一个标题：一份被一条条观察切碎的文档，人不会再
+    往里写字。
+    """
+    body = current.rstrip()
+    line = f"- {content} —— @{handle}"
+    if not body:
+        return f"{FACTS_FOR_EVERYONE}\n\n{line}"
+    lines = body.split("\n")
+    start = next(
+        (i for i, text in enumerate(lines) if text.strip() == FACTS_FOR_EVERYONE),
+        None,
+    )
+    if start is None:
+        return f"{body}\n\n{FACTS_FOR_EVERYONE}\n\n{line}"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"#{1,6} ", lines[i])),
+        len(lines),
+    )
+    # 这一节和下一个标题之间的空行留在原处：添在它前面，不是后面。
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    lines.insert(end, line)
+    return "\n".join(lines)
+
+
 @router.post("/{project_id}/memory")
 async def add_memory(
     project_id: uuid.UUID,
@@ -1025,13 +1068,20 @@ async def add_memory(
     """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that agent's view of that person, inside this project (结论 8).
-    Without either it falls back to the shared project pool.
+    Called without a place, it is the project's own 芝士 writing.
 
-    Before anything is stored, the fact is looked for in the live checkout: a
+    ``scope="everyone"`` is not a memory at all: 人和 agent 共同看的东西只能是
+    文档（结论 7），so a fact everyone must know is appended to the project
+    overview room's living doc, where it is signed, versioned, editable by the
+    people it is for, and read by every room. 项目没有共享记忆池，那一路的去向
+    就是这一份文档。
+
+    Before a *memory* is stored, the fact is looked for in the live checkout: a
     memory is for what the repo cannot tell you (结论 61), and a fact that is
     already written in a file there is a copy that will go stale on its own.
     The refusal names the file, because "已经写在 repo 里了" without it leaves
-    the caller nothing to do but rephrase and try again.
+    the caller nothing to do but rephrase and try again. 文档那一路不问这一
+    句——它写的本来就是给人看的那一份。
 
     ``layer="core"`` buys a seat in every future prompt instead of a place in
     the pool that gets retrieved on demand — see MemoryLayer."""
@@ -1052,10 +1102,16 @@ async def add_memory(
     if raw_layer not in tuple(MemoryLayer):
         raise ValidationError("layer 只能是 core 或 fact")
     layer = MemoryLayer(raw_layer)
+    scope = (body.get("scope") or "project").strip()
     # 谁在调用，这一句就答完了：下面三处都用它——查哪条检出目录（手是这位 agent
     # 的，不是房间的，结论 60）、这是谁对这个人形成的看法、以及写进谁的池子。
     agent = await _calling_agent(db, project_id, caller)
-    if place is not None and agent is not None:
+    # 这道闸只拦记忆。「memory 只记 repo 里查不到的」是记忆那一侧的判据（结论
+    # 61），而 scope="everyone" 写的是文档：文档给人看、与 memory 正交，项目用
+    # 什么技术栈、分工写在哪个文件里，恰恰是总览文档该说的话——repo 里写着并不
+    # 让它少说一句。拿记忆的判据挡文档，等于把「写给所有人看」这个唯一的留痕动
+    # 作从最典型的项目事实上收走。
+    if scope != "everyone" and place is not None and agent is not None:
         hit = await already_in_repo(
             content,
             agent_checkout_search(
@@ -1068,12 +1124,12 @@ async def add_memory(
                 f"「{hit.text}」。记忆只记 repo 里查不到的东西；"
                 "要让别人看见就改那个文件，不要在这里记一份会过期的副本。"
             )
-    if (body.get("scope") or "project") == "user":
+    if scope == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         await _authorize_personal_memory_owner(db, place, owner)
-        viewer = await _agent_forming_the_view(db, project, agent)
+        viewer = await _agent_speaking(db, project, agent)
         await memory_store(db).remember(
             MemoryScope.user,
             user_scope_id(project_id, viewer.handle, owner),
@@ -1081,14 +1137,46 @@ async def add_memory(
             layer=layer,
         )
         return ok({"remembered": True, "layer": layer.value})
-    if agent is not None:
-        await memory_store(db).remember(
-            *memory_pool(project_id, agent), content, layer=layer
+    if scope == "everyone":
+        if caller is None:
+            # 这一路写的是总览的实况文档，而这个端点的授权全在 `_authorized_place`
+            # 里：不带 `topic`，`resolve` 与 `authorize_topic` 一次都不跑。落在记忆
+            # 上时那只是自己池子里的一行，落在文档上就是替项目默认芝士往大家共看的
+            # 那一份里添字，还在总览房间留一条「编辑了文档」。写入闸
+            # （`cheese_token_gate`）只证明「这个项目的某张凭证」，连不代表任何参与
+            # 者的项目级能力票也算数，所以「你在哪儿」这一句必须有人答。
+            #
+            # 不在这里拿总览房间另解析一次 actor：一张按房间签的每轮 token 去问总览
+            # 房间，`_reject_out_of_scope_token` 会判它越界（403），于是每一次从线程
+            # 里发出的 `remember --everyone` 都被拦下——那是把正当调用一起挡掉。带上
+            # 地点，caller 就已经是这个项目里一个被授权的参与者。
+            raise ForbiddenError(
+                "写给所有人看的要带上 topic：平台据此确认你是这个项目里的人"
+            )
+        if layer is MemoryLayer.core:
+            raise ValidationError(
+                "写给所有人看的落在项目总览的实况文档里，文档没有核心记忆这一档"
+            )
+        # 总览是哪个房间只有项目行知道（同 `TopicService._overview_room`）。
+        assert project.root_topic_id is not None  # create() 一定播种了总览。
+        topics = TopicService(db)
+        doc = await topics.get_doc(project.root_topic_id)
+        writer = (await _agent_speaking(db, project, agent)).handle
+        # 追加，不改写：这一份是大家共同在看的状态，芝士往上添一条观察，别人
+        # 写在上面的话一个字都不动。文档冲突照旧由 `edit_doc` 的版本号挡。
+        updated, _ = await topics.edit_doc(
+            topic_id=project.root_topic_id,
+            content=_with_fact_for_everyone(
+                doc.content if doc else "", content, writer
+            ),
+            author=writer,
+            expected_version=doc.doc_version if doc is not None else 0,
         )
-    else:
-        await memory_store(db).remember(
-            MemoryScope.project, str(project_id), content, layer=layer
-        )
+        return ok({"documented": True, "doc_version": updated.doc_version})
+    writer = await _agent_speaking(db, project, agent)
+    await memory_store(db).remember(
+        *memory_pool(project_id, writer), content, layer=layer
+    )
     return ok({"remembered": True, "layer": layer.value})
 
 
@@ -1123,30 +1211,29 @@ async def search_memory(
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         await _authorize_personal_memory_owner(db, place, owner)
-        viewer = await _agent_forming_the_view(db, project, agent)
+        viewer = await _agent_speaking(db, project, agent)
         hits = await store.search(
             MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
         )
         return ok({"hits": [h.as_dict() for h in hits]})
-    # `cheese recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），加上
-    # 项目的共享池。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
-    # 却查不到」——而注入那句话的全部作用就是让人来 recall。
+    # `cheese recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
+    # 不多一条不少。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
+    # 却查不到」——而注入那句话的全部作用就是让人来 recall。项目共看的那份状态
+    # 不在这里：它是总览的实况文档（结论 7），每一轮本来就整份进提示词。
     #
     # 按分数合并，不按池子首尾相接：一条事实恰好落在哪个池里，说明不了它答这个
     # 问题答得多好，而调用方是从上往下读的。
-    pools = (
-        pools_for_turn(
-            project_id,
-            agent.handle,
-            await TopicMemberService(db).people_handles(place.room_id),
-        )
-        if agent is not None and place is not None
-        else []
+    speaker = await _agent_speaking(db, project, agent)
+    pools = pools_for_turn(
+        project_id,
+        speaker.handle,
+        await TopicMemberService(db).people_handles(place.room_id)
+        if place is not None
+        else [],
     )
     hits: list = []
     for scope, scope_id in pools:
         hits.extend(await store.search(scope, scope_id, query))
-    hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})
 

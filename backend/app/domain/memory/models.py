@@ -2,8 +2,9 @@
 
 Per spec §8.4, the block tree (DB) is the source of truth; memory is a
 projection for fast AI recall, rebuildable from blocks. Memory is stored as
-plain entries, each in one pool; every pool but the project one belongs to a
-single agent instance inside a single project (结论 8).
+plain entries, each in one pool, and every pool belongs to a single agent
+instance inside a single project (结论 8). 项目没有池：人和 agent 共同看的东西
+是文档（结论 7）。
 """
 
 import enum
@@ -27,7 +28,11 @@ from app.domain.common import Timestamps, UuidPk
 
 
 class MemoryScope(enum.StrEnum):
-    project = "project"  # 项目记忆: 章程/决策/进展 (spec §8.4)
+    # 已退役，代码里零读写点 (结论 7)：共同看的东西是文档，不是池子。这一档还在
+    # 枚举里只为了库里那批旧行——迁移 `a1c4e8f30b26` 把它们搬进了项目总览的实况
+    # 文档，但**没有删**，因为窗口里旧镜像还在写。P36b 逐行核对内容都在文档里之
+    # 后才删行、删这一档。新代码写它就是在往一个没有读者的地方写。
+    project = "project"
     # 关于某个人的记忆: 某个项目里的某个 agent 实例对这个人的认识。它属于那个实
     # 例, 不属于那个人, 也不跟着人跨项目走 (结论 8) —— A 项目的芝士对他的判断,
     # B 项目的芝士读不到。scope_id 是 `<项目>:<agent handle>:<这个人的 handle>`,
