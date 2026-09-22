@@ -7,26 +7,66 @@ is a claim about the machine, not a synonym for 非 200.
 结论 23。不变量 I25。
 """
 
+import json
 import logging
 import re
 
 import pytest
 
+from app.core.errors import ConflictError, format_error_response
 from app.domain.agent import executor_transport
 
 
-def failing_client(monkeypatch, tmp_path, status):
-    """一个每次调用都拿到 ``status`` 的执行器客户端。"""
+def _device_offline_body(device_id: str) -> bytes:
+    """``_handle_device_offline`` 的真实应答体（core/errors.py）。
+
+    ``DeviceOffline`` / ``DeviceUnreachable`` 都从这里出，名字都叫
+    ``DeviceOffline``（handler 写死），而 ``name`` 嵌在 ``error`` 里 ——
+    ``format_error_response`` 的形状，测试用的就是它本身。
+    """
+    return json.dumps(
+        format_error_response(
+            status_code=409,
+            message=f"设备 {device_id} 离线",
+            name="DeviceOffline",
+        )
+    ).encode()
+
+
+def _owner_offline_body() -> bytes:
+    """属主自己那条 RPC 路径的应答体（device_connection_app.py:174-179）。
+
+    ``HTTPException(409, detail="device offline")`` 走 ``http_exception_handler``
+    （属主装了 handler，device_connection_app.py:62），于是体里 ``name`` 是
+    默认的 ``"Error"`` —— 两层都没有 ``DeviceOffline``，只有 ``X-Device-Id``
+    头说得出这是哪台机器没了。
+    """
+    return json.dumps(
+        format_error_response(status_code=409, message="device offline")
+    ).encode()
+
+
+def failing_client(monkeypatch, tmp_path, status, body=None, device_id=None):
+    """一个每次调用都拿到 ``status``/``body`` 的执行器客户端。
+
+    ``device_id`` 是应答带不带 ``X-Device-Id`` 头。真实的 http.client 应答永远
+    有 ``getheader``，头不在时答 ``None`` —— 假应答照着做，不然测不出「头缺席」
+    这一档。
+    """
     token = tmp_path / "execution.token"
     token.write_text("t")
+    if body is None:
+        body = b"whatever the executor said"
 
     class Response:
         def __init__(self):
             self.status = status
 
-        @staticmethod
-        def read():
-            return b"whatever the executor said"
+        def read(self):
+            return body
+
+        def getheader(self, name):
+            return device_id if name == "X-Device-Id" else None
 
     class Connection:
         sock = None
@@ -91,52 +131,24 @@ def test_a_handler_that_threw_does_not_get_reported_as_the_machine_being_gone(
     assert not re.search(r"\b[1-5][0-9][0-9]\b", said)
 
 
-def test_a_device_offline_409_is_the_machine_being_gone(monkeypatch, tmp_path):
-    """链路断了答的是 409 ``DeviceOffline``，那双手就是够不着。
+def test_a_device_offline_409_naming_the_device_is_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """链路断了答的是 409，头和体都说得出来 —— 那双手就是够不着。
 
-    ``DeviceOffline`` / ``DeviceUnreachable`` 由 ``_handle_device_offline`` 以
-    409 答出（带上 ``X-Device-Id``）。以前 ``OUT_OF_REACH_STATUSES`` 只认
+    形状 (a)：``_handle_device_offline`` 的真实应答，``X-Device-Id`` 头加上
+    ``format_error_response`` 体。以前 ``OUT_OF_REACH_STATUSES`` 只认
     502/503/504，于是一条断掉的 websocket 被说成「机器还在，这一个可以重试」——
     agent 照着这句话一轮一轮地重试，而对话和平台工具一直正常，正是
-    「机器够不着」那句话要描述的那一种分裂。``ConflictError``（执行代际换了）
-    也是 409，但那一种机器好好的，必须留在 ``EXECUTOR_CALL_FAILED`` 那一档。
+    「机器够不着」那句话要描述的那一种分裂。
     """
-    token = tmp_path / "execution.token"
-    token.write_text("t")
-
-    class Response:
-        status = 409
-
-        @staticmethod
-        def read():
-            return (
-                b'{"code": 409, "message": "device abcd1234 offline",'
-                b' "name": "DeviceOffline"}'
-            )
-
-        @staticmethod
-        def getheader(name):
-            return "abcd1234" if name == "X-Device-Id" else None
-
-    class Connection:
-        sock = None
-
-        def request(self, method, path, *, body, headers):
-            return None
-
-        @staticmethod
-        def getresponse():
-            return Response()
-
-        @staticmethod
-        def close():
-            pass
-
-    client = executor_transport.RemoteClient(
-        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
+    client = failing_client(
+        monkeypatch,
+        tmp_path,
+        409,
+        body=_device_offline_body("abcd1234"),
+        device_id="abcd1234",
     )
-    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
-    client.transport.headers = {}
 
     with pytest.raises(executor_transport.MachineOutOfReach) as raised:
         client.call("invoke")
@@ -144,52 +156,87 @@ def test_a_device_offline_409_is_the_machine_being_gone(monkeypatch, tmp_path):
     assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
 
 
+def test_the_owners_header_only_offline_409_is_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """形状 (b)：属主的 409 体里没有 ``DeviceOffline``，只靠头认。
+
+    ``device_connection_app.call`` 的 ``DeviceOffline`` 出口（174-179）是
+    ``HTTPException(detail="device offline")``，经 ``http_exception_handler``
+    包出来的 ``name`` 是默认的 ``"Error"``。看体永远认不出这一档，看头才认得出
+    —— 和 ``device_hub_rpc.py:245-247`` 的判法一致。
+    """
+    client = failing_client(
+        monkeypatch, tmp_path, 409, body=_owner_offline_body(), device_id="abcd1234"
+    )
+
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
+        client.call("invoke")
+
+    assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
+
+
+def test_a_device_offline_body_that_lost_its_header_is_still_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """形状 (c)：头被某一跳吃掉之后，体里的名字还得兜住。
+
+    规范判法是只看头（``device_hub_rpc.py:245-247``），体是 belt-and-braces：
+    以前的兜底读的是顶层 ``name``，而 ``format_error_response`` 把名字嵌在
+    ``error`` 里 —— 那个兜底从来不会亮。这里没有头，走的就是兜底那条路。
+    """
+    client = failing_client(
+        monkeypatch,
+        tmp_path,
+        409,
+        body=_device_offline_body("abcd1234"),
+        device_id=None,
+    )
+
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
+        client.call("invoke")
+
+    assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
+
+
+def test_an_offline_shape_off_409_is_not_read_as_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """判法是 409 + ``X-Device-Id``，不是头或名字出现在哪儿都算。
+
+    ``device_hub_rpc.py:245-247`` 只在 409 上读那个头。一个 500 带着同样的头和
+    体，说的是别的事；把它也说成够不着，agent 会放弃这一轮全部文件与命令操作。
+    """
+    client = failing_client(
+        monkeypatch,
+        tmp_path,
+        500,
+        body=_device_offline_body("abcd1234"),
+        device_id="abcd1234",
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("invoke")
+
+    assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
+    assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
+
+
 def test_a_generation_conflict_409_is_not_the_machine_being_gone(
     monkeypatch, tmp_path
 ):
     """执行代际换了的那一种 409 说的不是这双手没了。
 
-    ``ConflictError`` ("Execution generation is no longer current") 也是 409，
-    但它说的是租约旧了，机器本身还在。把它也说成够不着，agent 会放弃这一轮全部
-    文件与命令操作并报告机器掉线 —— 那是假话。
+    ``ConflictError`` ("Execution generation is no longer current"，
+    execution.py:99) 也是 409，但它说的是租约旧了，机器本身还在。把它也说成
+    够不着，agent 会放弃这一轮全部文件与命令操作并报告机器掉线 —— 那是假话。
+    应答体是 ``to_response_body()`` 的真实形状：``name`` 嵌在 ``error`` 里，
+    叫 ``ConflictError``。
     """
-    token = tmp_path / "execution.token"
-    token.write_text("t")
-
-    class Response:
-        status = 409
-
-        @staticmethod
-        def read():
-            return (
-                b'{"code": 409,'
-                b' "message": "Execution generation is no longer current",'
-                b' "data": null}'
-            )
-
-        @staticmethod
-        def getheader(name):
-            return None
-
-    class Connection:
-        sock = None
-
-        def request(self, method, path, *, body, headers):
-            return None
-
-        @staticmethod
-        def getresponse():
-            return Response()
-
-        @staticmethod
-        def close():
-            pass
-
-    client = executor_transport.RemoteClient(
-        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
-    )
-    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
-    client.transport.headers = {}
+    body = json.dumps(
+        ConflictError("Execution generation is no longer current").to_response_body()
+    ).encode()
+    client = failing_client(monkeypatch, tmp_path, 409, body=body, device_id=None)
 
     with pytest.raises(RuntimeError) as raised:
         client.call("invoke")

@@ -37,11 +37,12 @@ MACHINE_OUT_OF_REACH = (
     "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
 )
 
-# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。够不着的只有这三个：
-# 502/504 是中间那一跳转不过去，503 是执行器没在听。一个 500 是机器上某个工具处理
-# 函数抛了异常，一个 401 是执行令牌过期，一个 4xx 是那台机器上的执行器比后端旧 ——
-# 手好好的，下一次工具调用照样通。把它们也说成够不着，agent 会照着这句话放弃这一轮
-# 全部文件与命令操作、并向人报告机器掉线，而那是假话。
+# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。光看状态码判得出来的只
+# 有这三个：502/504 是中间那一跳转不过去，503 是执行器没在听。还有一个得连形状一起看
+# 的 409（`_device_is_offline`）：链路断了那一种同样够不着，代际冲突那一种机器好好的。
+# 其余的 —— 500 是机器上某个工具处理函数抛了异常，401 是执行令牌过期，别的 4xx 是那
+# 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
+# agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 
 # 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
@@ -50,25 +51,31 @@ EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照�
 
 
 def _device_is_offline(response, data: bytes) -> bool:
-    """Whether this 409 says the hands are gone rather than the generation moved.
+    """Whether this answer says the hands are gone rather than one call went wrong.
 
-    ``DeviceOffline`` / ``DeviceUnreachable`` answer 409 with
-    ``name: "DeviceOffline"`` and an ``X-Device-Id`` header
-    (``core/errors._handle_device_offline``). A ``ConflictError`` ("Execution
-    generation is no longer current") is also 409 and is NOT out of reach —
-    the machine is fine, only the lease is stale. Lumping both into
-    ``EXECUTOR_CALL_FAILED`` ("机器还在") is what made a dead websocket look
-    like a retryable one-call failure while chat and platform tools kept
-    working.
+    The canonical rule is ``device_hub_rpc.py:245-247``'s: on 409, and only
+    there, ``X-Device-Id`` is the signal. Both producers of an offline answer
+    set it — ``core/errors._handle_device_offline`` (``DeviceOffline`` /
+    ``DeviceUnreachable``, which serialize under that one name) and
+    ``device_connection_app.call``. A ``ConflictError`` ("Execution generation
+    is no longer current") is also 409 and is NOT out of reach: the machine is
+    fine, only the lease is stale. Lumping both into ``EXECUTOR_CALL_FAILED``
+    ("机器还在") is what made a dead websocket look like a retryable one-call
+    failure while chat and platform tools kept working.
     """
-    getheader = getattr(response, "getheader", None)
-    if getheader is not None and getheader("X-Device-Id"):
+    if response.status != 409:
+        return False
+    if response.getheader("X-Device-Id") is not None:
         return True
+    # The header alone is canonical (device_hub_rpc.py:245-247); the body is
+    # belt-and-braces for a hop that strips it. ``name`` lives under ``error``
+    # in every envelope our handlers emit (core/errors.py).
     try:
         body = json.loads(data)
     except (ValueError, UnicodeDecodeError):
         return False
-    return isinstance(body, dict) and body.get("name") == "DeviceOffline"
+    error = body.get("error") if isinstance(body, dict) else None
+    return isinstance(error, dict) and error.get("name") == "DeviceOffline"
 
 
 class MachineOutOfReach(RuntimeError):
@@ -391,14 +398,10 @@ class RemoteClient:
                         logger.warning(
                             "executor %s -> %s: %s", method, response.status, data[:200]
                         )
-                        if response.status in OUT_OF_REACH_STATUSES:
-                            raise MachineOutOfReach
-                        # DeviceOffline answers 409, which is NOT in
-                        # OUT_OF_REACH_STATUSES: a dead websocket used to be
-                        # reported as "机器还在" (retry this one) while chat and
-                        # platform tools kept working — the exact split this
-                        # sentence exists to describe.
-                        if _device_is_offline(response, data):
+                        if (
+                            response.status in OUT_OF_REACH_STATUSES
+                            or _device_is_offline(response, data)
+                        ):
                             raise MachineOutOfReach
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
