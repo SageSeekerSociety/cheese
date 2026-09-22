@@ -3615,40 +3615,68 @@ def _oauth_frontend_url(path: str, **params: str | None) -> str:
 
 # --- OAuth client-completion flow (reference contract) --------------------
 # When the callback cannot resolve the account by itself it hands the browser
-# to a frontend page with either a stateless stateToken (decision page) or a
-# Redis-backed pending session (credential-verify page). 15-minute TTL both.
+# to a frontend page with either a signed stateToken (decision page) or a
+# Redis-backed pending session (credential-verify page). 15-minute TTL both,
+# and each is redeemable once: the stateToken's ``jti`` is reserved when it is
+# minted and claimed by whichever create/bind request spends it.
 
 _OAUTH_STATE_TTL_S = 15 * 60
+_OAUTH_STATE_SCOPE = "oauth_state"
 _OAUTH_PENDING_PREFIX = "oauth:pending:"
 
 
-def _mint_oauth_state_token(provider_id: str, user_info: dict) -> str:
+async def _issue_oauth_state_token(provider_id: str, user_info: dict) -> str:
+    """Mint a decision-page stateToken and reserve it for one redemption.
+
+    Raises ``SingleUseUnavailableError`` when Redis is unreachable: a token we
+    could not reserve would be refused by every endpoint that spends it.
+    """
     import time
+    import uuid
+
+    from app.core.single_use_state import reserve
 
     now = int(time.time())
-    return jwt.encode(
+    jti = uuid.uuid4().hex
+    token = jwt.encode(
         {
             "type": "oauth_state",
             "provider": provider_id,
             "info": user_info,
+            "jti": jti,
             "iat": now,
             "exp": now + _OAUTH_STATE_TTL_S,
         },
         settings.jwt_secret,
         algorithm="HS256",
     )
+    await reserve(_OAUTH_STATE_SCOPE, jti, ttl_s=_OAUTH_STATE_TTL_S)
+    return token
 
 
-def _decode_oauth_state_token(token: str) -> tuple[str, dict]:
+def _decode_oauth_state_token(token: str) -> tuple[str, dict, str]:
+    """(provider, userInfo, jti). Reading does not spend the token."""
     try:
         claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError as exc:
         raise AuthenticationRequiredError(
             "Invalid or expired OAuth state token"
         ) from exc
-    if claims.get("type") != "oauth_state":
+    jti = claims.get("jti")
+    if claims.get("type") != "oauth_state" or not isinstance(jti, str) or not jti:
         raise AuthenticationRequiredError("Invalid or expired OAuth state token")
-    return str(claims["provider"]), dict(claims["info"])
+    return str(claims["provider"]), dict(claims["info"]), jti
+
+
+async def _redeem_oauth_state_token(jti: str) -> bool:
+    """Spend a decoded stateToken. True exactly once; fails closed."""
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    try:
+        return await claim(_OAUTH_STATE_SCOPE, jti)
+    except SingleUseUnavailableError:
+        logger.exception("oauth: cannot claim state token")
+        return False
 
 
 def _oauth_user_info_dict(user_info) -> dict:
@@ -3879,7 +3907,7 @@ async def handle_oauth_callback(
                 status_code=302,
             )
 
-        state_token = _mint_oauth_state_token(provider_id, info_dict)
+        state_token = await _issue_oauth_state_token(provider_id, info_dict)
         return RedirectResponse(
             _oauth_frontend_url(
                 settings.frontend_oauth_complete_path, stateToken=state_token
@@ -3909,7 +3937,7 @@ async def get_oauth_state(
     token: str = Query(...),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    provider_id, user_info = _decode_oauth_state_token(token)
+    provider_id, user_info, _jti = _decode_oauth_state_token(token)
     suggested_username, suggested_nickname = await _suggest_oauth_identity(
         auth_service, user_info
     )
@@ -4039,7 +4067,7 @@ async def oauth_create_user(
     import re
 
     try:
-        provider_id, user_info = _decode_oauth_state_token(stateToken)
+        provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
@@ -4059,6 +4087,9 @@ async def oauth_create_user(
         return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
     if await auth_service.is_username_taken(username):
         return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+
+    if not await _redeem_oauth_state_token(jti):
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
     try:
         email = (
@@ -4100,8 +4131,10 @@ async def oauth_bind_user(
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     try:
-        provider_id, user_info = _decode_oauth_state_token(stateToken)
+        provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    if not await _redeem_oauth_state_token(jti):
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
     user = await auth_service._user_repo.get_by_username(username)
@@ -4145,7 +4178,7 @@ async def oauth_bind_srp_init(
     state_token = payload.get("stateToken") or ""
     username = payload.get("username") or ""
     try:
-        provider_id, user_info = _decode_oauth_state_token(state_token)
+        provider_id, user_info, jti = _decode_oauth_state_token(state_token)
     except AuthenticationRequiredError:
         raise AuthenticationRequiredError("Session expired, please try again") from None
 
@@ -4159,6 +4192,13 @@ async def oauth_bind_srp_init(
     if len(parts) != 3:
         raise BadRequestError("User does not support SRP authentication")
     salt, verifier = parts[1], parts[2]
+
+    # Spent here rather than at verify: the pending session below is itself
+    # single-use, so one stateToken buys exactly one proof attempt. A username
+    # typo above is answered before the token is spent, because the decision
+    # page stays open on that error.
+    if not await _redeem_oauth_state_token(jti):
+        raise AuthenticationRequiredError("Session expired, please try again")
 
     import secrets as _secrets
     import time as _time

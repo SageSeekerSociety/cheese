@@ -3,24 +3,35 @@
 creation and binding — everything downstream of the provider callback, which
 is the part that needs no live OAuth provider."""
 
+from collections.abc import Callable
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes.users import _mint_oauth_state_token
+from app.api.routes.users import _issue_oauth_state_token
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
 
+StateToken = Callable[..., str]
 
-def _state_token(provider: str = "ruc", **info) -> str:
-    payload = {
-        "id": info.get("id", "prov-uid-1"),
-        "email": info.get("email"),
-        "name": info.get("name", "Prov User"),
-        "username": info.get("username"),
-        "preferredUsername": info.get("preferredUsername", "provuser"),
-    }
-    return _mint_oauth_state_token(provider, payload)
+
+@pytest.fixture
+def state_token(_portal) -> StateToken:
+    """A stateToken issued the way the callback issues one — minted AND
+    reserved, so the endpoints that spend it can actually claim it."""
+
+    def issue(provider: str = "ruc", **info) -> str:
+        payload = {
+            "id": info.get("id", "prov-uid-1"),
+            "email": info.get("email"),
+            "name": info.get("name", "Prov User"),
+            "username": info.get("username"),
+            "preferredUsername": info.get("preferredUsername", "provuser"),
+        }
+        return _portal.call(_issue_oauth_state_token, provider, payload)
+
+    return issue
 
 
 def _loc(resp) -> str:
@@ -32,9 +43,25 @@ def _q(url: str) -> dict:
     return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
 
 
+def _bind(client: TestClient, token: str, username: str, password: str):
+    return client.post(
+        "/users/oauth/bind",
+        data={"stateToken": token, "username": username, "password": password},
+        follow_redirects=False,
+    )
+
+
+def _seed_pending(portal, session_id: str, data: dict) -> None:
+    from app.api.routes.users import _store_oauth_pending
+
+    portal.call(_store_oauth_pending, session_id, data)
+
+
 class TestOAuthState:
-    def test_state_decodes_and_suggests_identity(self, api_client: TestClient):
-        token = _state_token(id="uid-state-1", preferredUsername="alice_prov")
+    def test_state_decodes_and_suggests_identity(
+        self, api_client: TestClient, state_token: StateToken
+    ):
+        token = state_token(id="uid-state-1", preferredUsername="alice_prov")
         resp = api_client.get(f"/users/auth/oauth/state?token={token}")
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -45,9 +72,12 @@ class TestOAuthState:
         assert data["emailConflict"] is False
 
     def test_state_reports_email_conflict(
-        self, api_client: TestClient, authenticated_user: CreatedUser
+        self,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        state_token: StateToken,
     ):
-        token = _state_token(email=authenticated_user.email)
+        token = state_token(email=authenticated_user.email)
         resp = api_client.get(f"/users/auth/oauth/state?token={token}")
         assert resp.json()["data"]["emailConflict"] is True
 
@@ -55,10 +85,23 @@ class TestOAuthState:
         resp = api_client.get("/users/auth/oauth/state?token=garbage")
         assert resp.status_code == 401
 
+    def test_reading_the_state_does_not_spend_it(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        # The decision page reads the token on load and spends it on submit.
+        user = user_client.create_user()
+        token = state_token(id=f"uid-state-read-{user.user_id}")
+        assert api_client.get(f"/users/auth/oauth/state?token={token}").is_success
+
+        resp = _bind(api_client, token, user.username, user.password)
+        assert _q(_loc(resp))["bound"] == "true"
+
 
 class TestOAuthCreate:
-    def test_create_account_and_login_redirect(self, api_client: TestClient):
-        token = _state_token(id="uid-create-1")
+    def test_create_account_and_login_redirect(
+        self, api_client: TestClient, state_token: StateToken
+    ):
+        token = state_token(id="uid-create-1")
         resp = api_client.post(
             "/users/oauth/create",
             data={
@@ -85,8 +128,7 @@ class TestOAuthCreate:
         )
         assert me.status_code == 200
 
-        # replaying the stateToken with a different username hits the
-        # already-linked guard instead of minting a second account
+        # the stateToken is spent: a replay cannot mint a second account
         replay = api_client.post(
             "/users/oauth/create",
             data={
@@ -97,10 +139,12 @@ class TestOAuthCreate:
             },
             follow_redirects=False,
         )
-        assert _q(_loc(replay))["error_code"] == "ALREADY_LINKED"
+        assert _q(_loc(replay))["error_code"] == "TOKEN_EXPIRED"
 
-    def test_create_with_srp_password(self, api_client: TestClient):
-        token = _state_token(id="uid-create-srp")
+    def test_create_with_srp_password(
+        self, api_client: TestClient, state_token: StateToken
+    ):
+        token = state_token(id="uid-create-srp")
         resp = api_client.post(
             "/users/oauth/create",
             data={
@@ -120,12 +164,15 @@ class TestOAuthCreate:
         assert methods.json()["data"]["supports_srp"] is True
 
     def test_create_rejects_taken_username(
-        self, api_client: TestClient, authenticated_user: CreatedUser
+        self,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        state_token: StateToken,
     ):
         resp = api_client.post(
             "/users/oauth/create",
             data={
-                "stateToken": _state_token(id="uid-create-2"),
+                "stateToken": state_token(id="uid-create-2"),
                 "username": authenticated_user.username,
                 "nickname": "x",
             },
@@ -134,12 +181,12 @@ class TestOAuthCreate:
         assert _q(_loc(resp))["error_code"] == "USERNAME_TAKEN"
 
     def test_create_rejects_bad_username_and_expired_token(
-        self, api_client: TestClient
+        self, api_client: TestClient, state_token: StateToken
     ):
         resp = api_client.post(
             "/users/oauth/create",
             data={
-                "stateToken": _state_token(id="uid-create-3"),
+                "stateToken": state_token(id="uid-create-3"),
                 "username": "ab",  # too short
                 "nickname": "x",
             },
@@ -157,65 +204,70 @@ class TestOAuthCreate:
 
 class TestOAuthBindPassword:
     def test_bind_legacy_password_account(
-        self, api_client: TestClient, user_client: UserCreator
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
     ):
         user = user_client.create_user()
-        resp = api_client.post(
-            "/users/oauth/bind",
-            data={
-                "stateToken": _state_token(id=f"uid-bind-{user.user_id}"),
-                "username": user.username,
-                "password": user.password,
-            },
-            follow_redirects=False,
+        resp = _bind(
+            api_client,
+            state_token(id=f"uid-bind-{user.user_id}"),
+            user.username,
+            user.password,
         )
         params = _q(_loc(resp))
         assert params["bound"] == "true"
         assert params["token"]
 
     def test_bind_rejects_wrong_password(
-        self, api_client: TestClient, user_client: UserCreator
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
     ):
         user = user_client.create_user()
-        resp = api_client.post(
-            "/users/oauth/bind",
-            data={
-                "stateToken": _state_token(id="uid-bind-wrong"),
-                "username": user.username,
-                "password": "not-the-password",
-            },
-            follow_redirects=False,
+        resp = _bind(
+            api_client, state_token(id="uid-bind-wrong"), user.username, "not-it"
         )
         assert _q(_loc(resp))["error_code"] == "INVALID_CREDENTIALS"
 
-    def test_bind_rejects_unknown_user(self, api_client: TestClient):
-        resp = api_client.post(
-            "/users/oauth/bind",
-            data={
-                "stateToken": _state_token(id="uid-bind-nouser"),
-                "username": "no_such_user_xyz",
-                "password": "whatever",
-            },
-            follow_redirects=False,
+    def test_bind_rejects_unknown_user(
+        self, api_client: TestClient, state_token: StateToken
+    ):
+        resp = _bind(
+            api_client, state_token(id="uid-bind-nouser"), "no_such_user_xyz", "x"
         )
         assert _q(_loc(resp))["error_code"] == "USER_NOT_FOUND"
+
+    def test_state_token_binds_only_once(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        first, second = user_client.create_user(), user_client.create_user()
+        token = state_token(id="uid-bind-once")
+        assert (
+            _q(_loc(_bind(api_client, token, first.username, first.password)))["bound"]
+            == "true"
+        )
+
+        replay = _bind(api_client, token, second.username, second.password)
+        assert _q(_loc(replay))["error_code"] == "TOKEN_EXPIRED"
+
+    def test_a_failed_attempt_spends_the_state_token(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        user = user_client.create_user()
+        token = state_token(id="uid-bind-spent")
+        _bind(api_client, token, user.username, "wrong")
+
+        retry = _bind(api_client, token, user.username, user.password)
+        assert _q(_loc(retry))["error_code"] == "TOKEN_EXPIRED"
 
 
 class TestOAuthVerifyPending:
     """The verify page redeems a Redis pending session created by the callback
     when the provider email collides with a local account."""
 
-    def _seed_pending(self, portal, session_id: str, data: dict) -> None:
-        from app.api.routes.users import _store_oauth_pending
-
-        portal.call(_store_oauth_pending, session_id, data)
-
     def test_password_verify_links_and_logs_in(
         self, api_client: TestClient, user_client: UserCreator, _portal
     ):
         user = user_client.create_user()
         session_id = f"oauth_password_test_{user.user_id}"
-        self._seed_pending(
+        _seed_pending(
             _portal,
             session_id,
             {
@@ -249,7 +301,7 @@ class TestOAuthVerifyPending:
     ):
         user = user_client.create_user()
         session_id = f"oauth_password_bad_{user.user_id}"
-        self._seed_pending(
+        _seed_pending(
             _portal,
             session_id,
             {
@@ -277,29 +329,60 @@ class TestOAuthVerifyPending:
 
 
 class TestOAuthSrpBind:
-    def test_init_rejects_non_srp_user(
-        self, api_client: TestClient, user_client: UserCreator
+    def _srp_user(self, client: TestClient, state_token: StateToken) -> str:
+        username = "oauth_srp_binder"
+        resp = client.post(
+            "/users/oauth/create",
+            data={
+                "stateToken": state_token(id="uid-srp-owner"),
+                "username": username,
+                "nickname": "srp",
+                "passwordMode": "srp",
+                "srpSalt": "aa" * 8,
+                "srpVerifier": "bb" * 8,
+            },
+            follow_redirects=False,
+        )
+        assert _q(_loc(resp))["created"] == "true"
+        return username
+
+    def test_init_spends_the_state_token(
+        self, api_client: TestClient, state_token: StateToken
     ):
-        user = user_client.create_user()  # bcrypt legacy user
-        resp = api_client.post(
+        username = self._srp_user(api_client, state_token)
+        token = state_token(id="uid-srpinit-once")
+        body = {"stateToken": token, "username": username}
+
+        first = api_client.post("/users/oauth/bind/srp/init", json=body)
+        assert first.status_code == 200, first.text
+        assert first.json()["data"]["sessionId"]
+
+        assert (
+            api_client.post("/users/oauth/bind/srp/init", json=body).status_code == 401
+        )
+
+    def test_init_rejects_non_srp_and_unknown_users(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        legacy = user_client.create_user()  # bcrypt legacy user
+        not_srp = api_client.post(
             "/users/oauth/bind/srp/init",
             json={
-                "stateToken": _state_token(id="uid-srpinit-1"),
-                "username": user.username,
+                "stateToken": state_token(id="uid-srpinit-1"),
+                "username": legacy.username,
             },
         )
-        assert resp.status_code == 400
-
-    def test_init_rejects_unknown_user_and_bad_token(self, api_client: TestClient):
-        resp = api_client.post(
+        assert not_srp.status_code == 400
+        unknown = api_client.post(
             "/users/oauth/bind/srp/init",
             json={
-                "stateToken": _state_token(id="uid-srpinit-2"),
+                "stateToken": state_token(id="uid-srpinit-2"),
                 "username": "no_such_user_xyz",
             },
         )
-        assert resp.status_code == 404
+        assert unknown.status_code == 404
 
+    def test_init_rejects_bad_token(self, api_client: TestClient):
         resp = api_client.post(
             "/users/oauth/bind/srp/init",
             json={"stateToken": "garbage", "username": "whoever"},
