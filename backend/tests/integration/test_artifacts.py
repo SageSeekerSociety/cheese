@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
+from tests.integration.conftest import chat_ws_url
 
 
 @pytest.fixture(autouse=True)
@@ -149,12 +150,27 @@ def test_latest_artifact_wins(client):
     assert client.get(f"/topics/{tid}/preview").json()["data"]["path"] == ("new.html")
 
 
-def test_artifact_is_not_in_conversation_timeline(client):
-    # An artifact is a preview pointer, not a chat message.
+def test_a_shown_file_is_in_the_conversation(client):
+    # 芝士 putting something in front of the room is something it said: the chat
+    # shows it as a card. Every earlier one stays there too — the preview tab
+    # only ever shows the last.
     _pid, tid = _topic(client)
-    client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
+    first = client.post(f"/topics/{tid}/shown", json={"path": "old.html"}).json()
+    second = client.post(f"/topics/{tid}/shown", json={"path": "report.html"}).json()
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    assert not any(b["kind"] == "artifact" for b in blocks)
+    shown = [b for b in blocks if b["kind"] == "artifact"]
+    assert [b["id"] for b in shown] == [first["data"]["id"], second["data"]["id"]]
+    assert [b["content"] for b in shown] == ["old.html", "report.html"]
+
+
+def test_a_shown_file_reaches_the_room_live(client):
+    # The reader is usually in the room while 芝士 works: the card appears then,
+    # not on the next reload.
+    _pid, tid = _topic(client, owner="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        block = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
+        frame = ws.receive_json()
+    assert frame == {"type": "assistant_block", "block": block.json()["data"]}
 
 
 def test_artifact_rejects_unsupported_type(client):
