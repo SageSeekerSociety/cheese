@@ -63,6 +63,15 @@ describe('这个房间里的东西', () => {
     expect(container.querySelector('[data-testid="room-outputs"]')).toBeNull()
   })
 
+  it('点名字就把那一份开出来 —— 上面那块只看得到最后一样', async () => {
+    const { container, getByText, emitted } = mount()
+    await waitFor(() => expect(container.textContent).toContain('评审简报.docx'))
+
+    await fireEvent.click(getByText('评审简报.docx'))
+
+    expect(emitted().open).toEqual([['out/评审简报.docx']])
+  })
+
   it('存进资料库之后说清它在那边叫什么', async () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('评审简报.docx'))
