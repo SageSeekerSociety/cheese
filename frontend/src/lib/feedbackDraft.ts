@@ -65,7 +65,7 @@ export function isDraftMeaningful(draft: FeedbackDraft | null | undefined): bool
     draft.body.trim() ||
     draft.repro?.trim() ||
     draft.expectation?.trim() ||
-    draft.attachments.length ||
+    draft.tags.length ||
     draft.proposal
   )
 }
@@ -96,7 +96,7 @@ function parseDraft(value: unknown): FeedbackDraft | null {
     visibility,
     title: raw.title,
     body: raw.body,
-    attachments: Array.isArray(raw.attachments) ? raw.attachments.filter((n) => typeof n === 'string') : [],
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((n) => typeof n === 'string') : [],
     attachContext: !!raw.attachContext,
     repro: str(raw.repro),
     expectation: str(raw.expectation),

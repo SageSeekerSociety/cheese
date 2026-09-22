@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import type { FeedbackTab as TabName } from '@/stores/feedback'
 
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted } from 'vue'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
-import SubmitFeedbackDrawer from '@/components/feedback/SubmitFeedbackDrawer.vue'
 import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 

@@ -5,7 +5,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
-import SubmitFeedbackDrawer from './SubmitFeedbackDrawer.vue'
+import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 
 import { KIND_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -53,8 +53,11 @@ const submitted = ref<Record<string, string>>({})
 const dismissed = ref<Set<string>>(new Set())
 /** 展开着的那些（按 block_id）。 */
 const expanded = ref<Set<string>>(new Set())
-/** 抽屉正为哪张卡开着的。抽屉是全局唯一的那一个，所以只需要记一个。 */
+/** 提交表单正为哪张卡开着。表单是全局唯一的那一份，所以只需要记一个。 */
 const pending = ref<string | null>(null)
+/** 对话框开着没有。它和 `pending` 是两件事：`pending` 说的是「提交成功后算哪张卡的
+ *  凭证」，关掉对话框要给那张卡留一句话，所以它得活到 `onSubmitted` 跑完。 */
+const formOpen = ref(false)
 
 async function load() {
   const asked = props.topicId
@@ -82,7 +85,7 @@ function toggleExpanded(blockId: string) {
   expanded.value = next
 }
 
-function openDrawer(proposal: FeedbackProposal) {
+function openForm(proposal: FeedbackProposal) {
   const p = proposal.payload
   pending.value = proposal.block_id
   store.openSubmit({
@@ -90,6 +93,9 @@ function openDrawer(proposal: FeedbackProposal) {
     title: p.title,
     body: p.problem,
     visibility: p.visibility,
+    // 提案自己带的标签一起填进去：后端一直收 `tags`、也一直在提案上带着它，只是表单
+    // 以前没这一栏。人可以在表单上改 —— 发出去的是他改过的那份。
+    tags: p.tags ?? [],
     // 从这张卡进来时现场默认勾上：卡存在的理由就是别让现场丢掉。
     attachContext: true,
     fromAgent: {
@@ -101,6 +107,7 @@ function openDrawer(proposal: FeedbackProposal) {
     },
     proposal: { topicId: props.topicId, blockId: proposal.block_id },
   })
+  formOpen.value = true
 }
 
 /** 「不用」。服务端按**指纹**记，所以同一个问题的另一种说法回来时是另一条，会被再问一次
@@ -110,7 +117,7 @@ function dismiss(proposal: FeedbackProposal) {
   void store.dismissProposal(props.topicId, proposal.block_id)
 }
 
-/** 抽屉提交完成 —— 它是全局共享的那一个，所以只由**开着它的那张卡**记下来。 */
+/** 提交完成 —— 表单是全局共享的那一份，所以只由**开着它的那张卡**记下来。 */
 function onSubmitted(id: string) {
   const blockId = pending.value
   pending.value = null
@@ -214,7 +221,7 @@ function onSubmitted(id: string) {
           </v-btn>
           <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">不用</v-btn>
           <v-spacer />
-          <v-btn color="primary" size="small" @click="openDrawer(proposal)">提交反馈</v-btn>
+          <v-btn color="primary" size="small" @click="openForm(proposal)">提交反馈</v-btn>
         </div>
       </div>
     </v-card>
@@ -222,7 +229,7 @@ function onSubmitted(id: string) {
 
   <!-- 抽屉挂在卡片外面：它 temporary、fixed 定位，跟着卡片一起被条件渲染的话，
        点「提交反馈」到抽屉出现之间会多一帧空档，看起来像没反应。 -->
-  <SubmitFeedbackDrawer @submitted="onSubmitted" />
+  <SubmitFeedbackDialog v-model:open="formOpen" @submitted="onSubmitted" />
 </template>
 
 <style scoped>

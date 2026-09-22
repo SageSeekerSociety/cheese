@@ -66,6 +66,7 @@ import {
 } from '@/api'
 import {
   clearLiveFeedbackDraft,
+  forgetFeedbackDraft,
   isDraftMeaningful,
   loadFeedbackDraft,
   parkFeedbackDraft,
@@ -203,8 +204,9 @@ export interface FeedbackDraft {
   /** 「你以为会发生什么」。bug 和建议都问：一句话就能把「哪里不对」和
    *  「你想让它怎样」分开，而这两件事在正文里常常混成一段读不出要求的话。 */
   expectation: string
-  /** 附件名。**不上传** —— 见 SubmitFeedbackDrawer 里那段说明。 */
-  attachments: string[]
+  /** 标签。后端 `FeedbackCreate.tags` 一直收（`list[str]`，上限 20），卡片也一直在
+   *  渲染 `item.tags`，只是表单以前没做。用来横向归类（登录 / 移动端 / 性能）。 */
+  tags: string[]
   /** 「附带现场」：把 `fromAgent` 那三段会话信息一起提交。 */
   attachContext: boolean
   visibility: FeedbackVisibility
@@ -228,6 +230,29 @@ export interface FeedbackDraft {
 export const REPRO_KINDS: FeedbackKind[] = ['bug']
 export const EXPECTATION_KINDS: FeedbackKind[] = ['bug', 'suggestion']
 
+/** 一条反馈能带多少个标签。后端的 `max_length=20` 是同一件事（Pydantic 在 list 上
+ *  数的是**条数**），两处写同一个数是刻意的：客户端先截，用户就在输入框边上看到上限，
+ *  而不是写完正文才被服务端 422 挡回来。 */
+export const MAX_TAGS = 20
+
+/** 标签的规范化：去空白、丢空串、去重、截到 20 条。
+ *
+ *  后端的 `max_length=20` 只管条数，**不去重也不裁空白** —— 把这三件事放在客户端，
+ *  是因为它们在人还在打字时就有答案；全都留给服务端，代价是「标签填了、提交被拒、
+ *  正文跟着丢一次」这类最贵的那种失败。 */
+export function cleanTags(tags: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of tags) {
+    const tag = raw.trim()
+    if (!tag || seen.has(tag)) continue
+    seen.add(tag)
+    out.push(tag)
+    if (out.length >= MAX_TAGS) break
+  }
+  return out
+}
+
 function emptyDraft(): FeedbackDraft {
   return {
     kind: 'bug',
@@ -235,7 +260,7 @@ function emptyDraft(): FeedbackDraft {
     body: '',
     repro: '',
     expectation: '',
-    attachments: [],
+    tags: [],
     attachContext: false,
     visibility: 'public',
   }
@@ -258,6 +283,7 @@ function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
     summary: body.split('\n')[0]?.slice(0, 120) || draft.title.trim(),
     problem: body,
     visibility: draft.visibility,
+    tags: cleanTags(draft.tags),
     // 人自己写的那一栏优先，agent 带的现场只在人没写时补上 —— 现场是跟着提案卡
     // 一起过来的，而这一栏人刚才就看着它（bug 那一类表单项里有），他改过就该算他的。
     repro: repro || agent?.repro || null,
@@ -360,9 +386,15 @@ export const useFeedbackStore = defineStore('feedback', {
      *  是两条一模一样的回复（`key` 还会撞）。所以真正的门在 action 里，这个状态是
      *  给按钮看的。 */
     moreRepliesLoading: {} as Record<string, boolean>,
-    /* ---- 抽屉：open 控制显隐，draft 是那一份表单。两处入口共用。 ---- */
-    submitOpen: false,
+    /* ---- 提交表单：`draft` 是那一份表单，三个入口共用（反馈中心、我的反馈、
+       会话里的 agent 提案卡）。**「表单开着没有」不在 store 里** —— 提交表单有两个
+       壳（独立页面 `/feedback/new`、会话里的对话框），壳自己知道自己在不在屏幕上
+       （路由在不在、dialog 开不开）。store 里再留一个布尔就是同一个事实的第二份
+       拷贝，而两份拷贝漂开的表现是「界面开着、按钮按不动」这种最难查的错位。 ---- */
     draft: emptyDraft(),
+    /** 手上这份是不是从盘上**捞回来**的（而不是刚打出来的）。表单据此说一句话
+     *  （「已恢复上次没写完的草稿」+ 丢弃），见 `openSubmit`。 */
+    draftRestored: false,
     submitting: false,
     /** 上一次失败**原话**。页面直接显示它，不另写一句「操作失败」。 */
     error: null as string | null,
@@ -876,8 +908,13 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
-    /* ---- 提交抽屉 ---- */
+    /* ---- 提交表单 ---- */
 
+    /** **准备一份草稿**，不做「打开」这件事 —— 三个入口都先调它，然后把壳拉起来
+     *  （两个列表入口 push 到 `/feedback/new`，会话里那张提案卡开对话框）。
+     *
+     *  `preset` 只有提案卡那条路会传：它整份替换表单内容，所以人自己打了一半的那份
+     *  先挪去 parked。 */
     openSubmit(preset: Partial<FeedbackDraft> = {}): void {
       const incoming = Object.keys(preset).length > 0
       if (incoming) {
@@ -885,6 +922,10 @@ export const useFeedbackStore = defineStore('feedback', {
         // 而替换不是他的本意（他点的是会话里那张卡）。下一次裸开表单时它会自己回来。
         parkFeedbackDraft(this.draft)
         this.draft = { ...emptyDraft(), ...preset }
+        // 卡片带过来的那份是**新**的一份，不是从盘上捞的：那条「已恢复草稿」的提示
+        // 跟着它一起清掉，否则刚从卡上进来的人会看到一句「已恢复上次没写完的草稿」，
+        // 而屏幕上这份明明是芝士刚递过来的。
+        this.draftRestored = false
         // 卡片带过来的那份也是「打了一半的东西」—— 关掉、刷新、再打开，它该还在。
         saveFeedbackDraft(this.draft)
       } else if (isDraftMeaningful(this.draft)) {
@@ -895,8 +936,13 @@ export const useFeedbackStore = defineStore('feedback', {
         // 和「关掉又想起来」用的 —— 少这一步，几百字在用户眼皮底下消失。
         const restored = takeParkedFeedbackDraft() ?? loadFeedbackDraft()
         this.draft = { ...emptyDraft(), ...(restored ?? {}) }
+        // 捞回来这件事**要在界面上说出来**（见 SubmitFeedbackForm 的那条提示）：
+        // 打开表单看到一段不是自己刚打的字，不说一声就像串了别人的内容。
+        this.draftRestored = isDraftMeaningful(restored)
       }
-      this.submitOpen = true
+      // 上一次那条失败的原话是给**上一次**那个表单看的。新开一份时清掉，否则刚进
+      // 来的人会看到一句「提交失败」，而他什么都还没提交。
+      this.error = null
     },
 
     /** 表单里改了任何一栏，调用方在字段的 `update:model-value` 上打一下这里。
@@ -915,25 +961,27 @@ export const useFeedbackStore = defineStore('feedback', {
       }, DRAFT_SAVE_DEBOUNCE_MS)
     },
 
+    /** 关掉表单不是「不要了」：把防抖窗口里那几下收尾写下去。**不负责关界面** ——
+     *  壳自己关（页面 push 走、对话框合上），这里只管草稿和那一次性的提示。 */
     closeSubmit(): void {
-      // 关掉抽屉不是「不要了」：把防抖窗口里那几下收尾写下去。
       if (draftTimer) clearTimeout(draftTimer)
       draftTimer = null
       saveFeedbackDraft(this.draft)
-      this.submitOpen = false
       this.lastSubmittedId = null
     },
 
-    /** 附件名只留在这一屏里 —— 上传还没接，见 SubmitFeedbackDrawer。 */
-    addAttachment(name: string): void {
-      if (!name || this.draft.attachments.includes(name)) return
-      this.draft.attachments.push(name)
-      this.touchDraft()
-    },
-
-    removeAttachment(name: string): void {
-      this.draft.attachments = this.draft.attachments.filter((n) => n !== name)
-      this.touchDraft()
+    /** 「丢弃草稿」：盘上**两份槽位**一起抹掉，表单回到空白。
+     *
+     *  两份都要抹是有意的：只清「正在写的」那一格，人会看到自己刚说不要的那份**下次
+     *  打开又一字不差地回来**（它从 parked 那一格回来了），而「丢弃」这个词承诺的正是
+     *  不回来。 */
+    discardDraft(): void {
+      if (draftTimer) clearTimeout(draftTimer)
+      draftTimer = null
+      forgetFeedbackDraft()
+      this.draft = emptyDraft()
+      this.draftRestored = false
+      this.error = null
     },
 
     /** 提交。返回新条目的 **uuid**（路由用它），失败回 null 并把原因写进 error。
@@ -941,10 +989,18 @@ export const useFeedbackStore = defineStore('feedback', {
      *  两条路都从这里走：普通提交是 `POST /feedback`；从提案卡来的那条是
      *  `POST /topics/{id}/feedback-proposals/{block_id}/accept` —— 后者的作者是提案
      *  的 agent、提交者是按下发送的人，两个都由服务端从卡和会话里取，所以客户端
-     *  连作者名都不用传（传了也不算数）。 */
+     *  连作者名都不用传（传了也不算数）。
+     *
+     *  **提交完不关任何界面**：谁把表单摆在屏幕上，谁负责收它（页面 replace 到详情
+     *  页，对话框自己合上）。store 在这里关界面的话，两个壳会各关一次，而第二次关
+     *  的是别人。 */
     async submit(): Promise<string | null> {
       const draft = this.draft
-      if (!draft.title.trim() || this.submitting) return null
+      // 必填两栏都查：按钮 disabled 不是替代品 —— 这个 action 还有别的调用点（会话里
+      // 那张卡、以后的快捷键），少查一栏就会出现一条只有标题、没有任何正文的反馈。
+      // 提交的门槛是「标题 + 说明」，`repro` / `expectation` 保持选填，理由见
+      // SubmitFeedbackForm 的注释。
+      if (!draft.title.trim() || !draft.body.trim() || this.submitting) return null
       this.submitting = true
       this.error = null
       try {
@@ -952,9 +1008,9 @@ export const useFeedbackStore = defineStore('feedback', {
         const detail = draft.proposal
           ? await acceptFeedbackProposal(draft.proposal.topicId, draft.proposal.blockId, body)
           : await createFeedback(body)
-        this.submitOpen = false
         this.lastSubmittedId = detail.id
         this.draft = emptyDraft()
+        this.draftRestored = false
         // 这份东西已经变成一条反馈了，盘上那份不该再留着：否则下次打开表单它整份
         // 弹回来，看着像「刚提交的那条又回到草稿里了」。**只清「正在写的」那一格** ——
         // 被替换下去的那份（有人自己打了一半的）和这次提交无关，还得在。

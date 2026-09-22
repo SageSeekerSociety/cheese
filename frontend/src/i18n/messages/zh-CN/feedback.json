@@ -198,5 +198,83 @@
   "undo": {
     "message": "已改为「{status}」",
     "action": "撤销"
+  },
+  "submit": {
+    "title": "提交反馈",
+    "titleFromAgent": "发送这条反馈",
+    "back": "返回",
+    "cancel": "取消",
+    "submit": "提交反馈",
+    "send": "发送",
+    "kind": {
+      "label": "这是一条什么样的反馈",
+      "hint": {
+        "bug": "有操作出错了、坏了",
+        "suggestion": "希望某个地方变得更好",
+        "other": "不属于上面两类"
+      }
+    },
+    "requiredLegend": "带 * 的是必填",
+    "optionalDivider": "以下都是选填 —— 写多少都行；写得越具体，越容易被认领和复现。",
+    "field": {
+      "title": {
+        "label": "标题",
+        "placeholder": "一句话说清发生了什么"
+      },
+      "body": {
+        "bug": {
+          "label": "发生了什么",
+          "placeholder": "你做了什么、实际发生了什么"
+        },
+        "suggestion": {
+          "label": "哪里不好用",
+          "placeholder": "现在是什么情况、你想让它怎样"
+        },
+        "other": {
+          "label": "描述",
+          "placeholder": "把这件事说清楚"
+        }
+      },
+      "expectation": {
+        "label": "你原本期待什么",
+        "placeholder": "同一个操作，你原本期待的结果是什么"
+      },
+      "repro": {
+        "label": "怎么重现",
+        "placeholder": "从打开页面到看见问题的最短一串操作"
+      },
+      "tags": {
+        "label": "标签",
+        "placeholder": "回车添加",
+        "helper": "方便归类，比如登录、移动端"
+      }
+    },
+    "visibility": {
+      "label": "可见范围",
+      "public": {
+        "title": "公开",
+        "hint": "所有用户可见，可以被支持、被评论"
+      },
+      "private": {
+        "title": "私密",
+        "hintWithRoom": "只有你、平台管理员、以及提出它时在那个房间里的人可见，不进公开列表、不能被支持",
+        "hintNoRoom": "只有你和平台管理员可见，不进公开列表、不能被支持"
+      },
+      "once": "这一条由你决定，而且只能决定这一次 —— 提完之后连管理员也没有把它改成公开的入口。"
+    },
+    "agent": {
+      "title": "来自芝士的排查",
+      "note": "这条反馈的作者会记成发现它的 AI 队友，提交人记成你 —— 两个都记，所以「芝士提的东西有多少真的发出去了」答得出来。",
+      "attach": "把这段现场一起提交",
+      "attachHint": "现场里可能包含你的代码片段、文件路径或对话内容。选「私密」时，能看到它们的是你、平台管理员、以及提出它时在那个房间里的人。",
+      "whatHappened": "发生了什么",
+      "repro": "复现步骤",
+      "evidence": "证据",
+      "session": "会话与环境"
+    },
+    "draft": {
+      "restored": "已恢复上次没写完的草稿",
+      "discard": "丢弃草稿"
+    }
   }
 }
