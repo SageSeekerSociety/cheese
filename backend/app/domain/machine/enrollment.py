@@ -41,7 +41,7 @@ SSH_TIMEOUT_S = 180.0
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
     "tools": "正在检查并安装基础工具",
-    "pi": "正在安装运行程序",
+    "runtime": "正在安装运行程序",
     "cache": "正在准备运行缓存",
     "connector": "正在下载连接器",
     "connect": "正在启动连接器",
@@ -254,7 +254,7 @@ fi
 # It is also the one check that can fail on a machine claude is fine on — the
 # vendor publishes no musl build — and that is exactly the case worth hearing
 # about here rather than reading out of one room's launcher output.
-echo CHEESE_STARTUP:pi
+echo CHEESE_STARTUP:runtime
 {pi_script}
 umask 077
 echo CHEESE_STARTUP:cache
