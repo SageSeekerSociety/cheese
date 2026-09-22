@@ -8,9 +8,15 @@ application error — 1143 times in the connection owner on 2026-09-19, for one
 machine whose link died between `accept` and the welcome frame.
 """
 
+import asyncio
+import socket
+
 import pytest
+import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
+from starlette.types import Message
+from websockets.asyncio.client import connect
 
 from app.core.errors import ForbiddenError, register_exception_handlers
 from app.domain.agent.device_hub import DeviceOffline
@@ -38,13 +44,13 @@ def _app() -> FastAPI:
 
 
 async def _drive(app: FastAPI, path: str) -> list[str]:
-    sent: list[dict] = []
+    sent: list[Message] = []
     inbox = iter([{"type": "websocket.connect"}, {"type": "websocket.disconnect"}])
 
     async def receive() -> dict:
         return next(inbox)
 
-    async def send(message: dict) -> None:
+    async def send(message: Message) -> None:
         sent.append(message)
 
     scope = {
@@ -79,3 +85,62 @@ def test_the_same_failure_over_http_keeps_its_answer() -> None:
     response = client.get("/http")
     assert response.status_code == 409
     assert response.headers["X-Device-Id"] == "machine-7"
+
+
+@pytest.mark.anyio
+async def test_peer_disconnect_before_accept_does_not_crash_the_server() -> None:
+    entered = asyncio.Event()
+    disconnected = asyncio.Event()
+    finished = asyncio.Event()
+    failures: list[Exception] = []
+
+    async def app(scope, receive, send):
+        await receive()
+        if scope["path"] == "/healthy":
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.send", "text": "ready"})
+            await receive()
+            return
+        entered.set()
+        await disconnected.wait()
+        try:
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.close", "code": 1000})
+        except OSError:
+            # A departed peer is a transport disconnect, not an application bug.
+            pass
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            finished.set()
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        async with asyncio.timeout(5):
+            while not server.started:
+                await asyncio.sleep(0.01)
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(
+                b"GET /aborted HTTP/1.1\r\nHost: localhost\r\n"
+                b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                b"Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            await writer.drain()
+            await entered.wait()
+            writer.transport.abort()
+            while server.server_state.connections:
+                await asyncio.sleep(0.01)
+            disconnected.set()
+            await finished.wait()
+            assert not failures
+            async with connect(f"ws://127.0.0.1:{port}/healthy") as websocket:
+                assert await websocket.recv() == "ready"
+    finally:
+        disconnected.set()
+        server.should_exit = True
+        await asyncio.wait_for(serving, 5)
