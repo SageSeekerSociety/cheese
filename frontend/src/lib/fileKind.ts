@@ -32,8 +32,22 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
 export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 
 /** 浏览器自己画得出来的图片。它们不是文档，所以不在上面那张表里，但预览域按
- *  image/png、image/jpeg 把字节发出来，浏览器画得出来。 */
-export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
+ *  对应的 image/* 把字节发出来，浏览器画得出来。 */
+export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+
+/** 图片字节的 mime。预览域按 artifact 自己的 mime 发字节，改动那一格从原始字节
+ *  造 Blob 时要的是同一个答案。 */
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+}
+
+export function imageMimeOf(suffix: string): string {
+  return IMAGE_MIME[suffix] ?? 'image/jpeg'
+}
 
 /** 预览面板自己显示得出这个文件吗。
  *

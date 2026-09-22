@@ -13,6 +13,7 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
         raise SystemExit(0)
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -670,6 +671,235 @@ def _publish_spooled_hook(command, payload):
     return True
 
 
+MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
+
+# What the tool result promises the caller about the file: `isImage` for the
+# suffixes that are pictures, `media_type` for what the bytes are. The room
+# types the artifact off the path on `POST /topics/{id}/shown`
+# (`topics._ARTIFACT_MIME`); this tool never declares `as`, so that table is
+# the only one that names a kind. These two fields describe the file to the
+# caller — they are not a second copy of the room's kind table.
+_SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_SEND_MEDIA_TYPE = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def send_user_file_paths(path, config):
+    """`(executor path, room path)` for one file a SendUserFile named.
+
+    The model spells paths the way the session was told to (the executor's
+    workspace); the room wants a workspace-relative pointer because
+    `POST /topics/{id}/shown` refuses absolute ones. A file that lives outside
+    the workspace keeps its name under `uploads/`, the address this room already
+    gives a paste with no name of its own.
+    """
+    path = (path or "").replace("\\", "/")
+    center = (config.get("central_workspace") or "").rstrip("/")
+    work = (config.get("workspace") or "").rstrip("/")
+    machine = path
+    if center and work and (path == center or path.startswith(center + "/")):
+        machine = work + path[len(center) :]
+    elif work and not machine.startswith("/"):
+        # The executor's shell keeps its own cwd across commands; a relative
+        # path is only unambiguous once it is anchored at the workspace.
+        machine = work + "/" + machine
+    name = machine.rsplit("/", 1)[-1] or "file"
+    rel = machine
+    if work and (machine == work or machine.startswith(work + "/")):
+        rel = machine[len(work) :].lstrip("/")
+    parts = rel.split("/") if rel else []
+    if not rel or rel.startswith("/") or ".." in parts or ".git" in parts:
+        rel = f"uploads/{uuid.uuid4().hex}/{name}"
+    return machine, rel
+
+
+def send_user_file_entry(path, name, size, upload_error=None):
+    suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    entry = {
+        "path": path,
+        "size": size,
+        "isImage": suffix in _SEND_IMAGE_SUFFIXES,
+        "media_type": _SEND_MEDIA_TYPE.get(suffix, "application/octet-stream"),
+        "pathValidated": upload_error is None,
+    }
+    if upload_error is not None:
+        entry["upload_error"] = upload_error
+    return entry
+
+
+def send_user_file_body(raw):
+    """The `POST /topics/{id}/shown` body for one file's bytes.
+
+    `content_b64` for every kind, not just the binary ones: the room route
+    already takes office and PDF bytes that way, and a caller that decoded to
+    text first cannot carry them. The kind is not declared here — the route
+    reads it off `path`, so this and the room's table cannot drift.
+    """
+    return {"content_b64": base64.b64encode(raw).decode("ascii")}
+
+
+def _from_the_machine(invoke, command, request_id):
+    """One command's stdout, from the machine that holds the file.
+
+    The transport's own host only sees a forwarded workspace, so a private
+    container's file (or one over the plugin's read cap) is reached the same way
+    every other project file is: a command on the executor, through
+    `invoke_on_the_machine` — the one exit that trips the unreachable breaker
+    instead of each call waiting out the executor's read timeout on its own.
+    """
+    receipt = invoke(
+        {"id": request_id, "tool": "Bash"},
+        {"command": command, "timeout": 60000},
+    )
+    if "error" in receipt:
+        raise RuntimeError(receipt["error"])
+    value = receipt.get("value") or {}
+    stdout = value.get("stdout") or ""
+    if value.get("backgroundTaskId"):
+        raise RuntimeError("reading the file did not finish")
+    if stdout.startswith("Exit code"):
+        # A command that exits non-zero is not an executor failure; the build
+        # hands back its own error text as stdout, with the exit code on top.
+        raise RuntimeError(stdout.strip())
+    return stdout
+
+
+def stat_file_on_the_machine(invoke, path, request_id):
+    """The file's size on the machine, without walking its bytes across."""
+    stdout = _from_the_machine(invoke, f"wc -c < {shlex.quote(path)}", request_id)
+    return int("".join(stdout.split()))
+
+
+def read_file_on_the_machine(invoke, path, request_id):
+    """One file's bytes, from the machine that holds them."""
+    stdout = _from_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
+    return base64.b64decode("".join(stdout.split()), validate=True)
+
+
+def deliver_send_user_file(client, config, payload, args, invoke):
+    """Hand each file to this room, and the caption beside them.
+
+    Delivery is `POST /topics/{id}/shown` — the route `cheese show` already
+    publishes through (SKILL.md), which lands an artifact the room renders and
+    offers for download. `POST /topics/{id}/attachments` is the input bar's
+    staging area: a file parked there is waiting on a message that never comes.
+
+    Each result entry's `path` is the file's resolved filesystem path (the
+    executor path `send_user_file_paths` computes), what `SendUserFile` promises
+    the caller. The room-relative pointer is the `path` on the POST body — a
+    different field, for a different reader.
+    """
+    topic = os.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise RuntimeError("Delivering a file requires room credentials")
+    attachments = []
+    delivered = False
+    for index, item in enumerate(args.get("files") or []):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise RuntimeError(
+                "SendUserFile cannot deliver a pre-resolved "
+                "{file_uuid, file_name, size, is_image} object; "
+                "pass a file path instead"
+            )
+        path = str(item.get("path") or "")
+        name = str(item.get("name") or "") or (
+            path.replace("\\", "/").rsplit("/", 1)[-1] or "file"
+        )
+        machine, rel = send_user_file_paths(path, config)
+        preexisting = item.get("upload_error")
+        if preexisting:
+            attachments.append(
+                send_user_file_entry(machine, name, 0, upload_error=str(preexisting))
+            )
+            continue
+        try:
+            if item.get("data_b64"):
+                raw = base64.b64decode(item["data_b64"], validate=True)
+            else:
+                # The plugin's stat never saw this file; refuse an oversize one
+                # before `base64` walks it across the executor connection.
+                size = stat_file_on_the_machine(
+                    invoke, machine, f"{payload['id']}-file-{index}-stat"
+                )
+                if size > MAX_SEND_USER_FILE_BYTES:
+                    attachments.append(
+                        send_user_file_entry(
+                            machine,
+                            name,
+                            size,
+                            upload_error=(
+                                f"文件太大（上限 "
+                                f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB）"
+                            ),
+                        )
+                    )
+                    continue
+                raw = read_file_on_the_machine(
+                    invoke, machine, f"{payload['id']}-file-{index}"
+                )
+        except Exception as exc:
+            attachments.append(
+                send_user_file_entry(machine, name, 0, upload_error=str(exc))
+            )
+            continue
+        if not raw:
+            attachments.append(
+                send_user_file_entry(machine, name, 0, upload_error="空文件")
+            )
+            continue
+        if len(raw) > MAX_SEND_USER_FILE_BYTES:
+            attachments.append(
+                send_user_file_entry(
+                    machine,
+                    name,
+                    len(raw),
+                    upload_error=(
+                        f"文件太大（上限 "
+                        f"{MAX_SEND_USER_FILE_BYTES // (1024 * 1024)}MB）"
+                    ),
+                )
+            )
+            continue
+        try:
+            client.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"/topics/{topic}/shown",
+                    "body": {"path": rel, **send_user_file_body(raw)},
+                }
+            )
+        except Exception as exc:
+            attachments.append(
+                send_user_file_entry(machine, name, len(raw), upload_error=str(exc))
+            )
+            continue
+        attachments.append(send_user_file_entry(machine, name, len(raw)))
+        delivered = True
+    caption = args.get("caption")
+    if delivered and isinstance(caption, str) and caption.strip():
+        client.publish_message(payload, {"content": caption.strip()})
+    result = {"attachments": attachments}
+    if isinstance(caption, str):
+        result["caption"] = caption
+    if isinstance(args.get("display"), str):
+        result["display"] = args["display"]
+    return {"value": result}
+
+
 def publish_event(config, payload):
     output = {}
     for group in config.get("central_hooks", {}).get(payload["hook_event_name"], []):
@@ -837,12 +1067,45 @@ def transport(config, target_path):
                                 "required": ["method", "path"],
                             },
                         },
+                        {
+                            "name": "send_user_file",
+                            "description": (
+                                "Internal delivery transport for the built-in "
+                                "SendUserFile tool: hands files to this room on "
+                                "the session's own credentials. Call SendUserFile "
+                                "instead of this."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "session_id": {"type": "string"},
+                                    "files": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "path": {"type": "string"},
+                                                "name": {"type": "string"},
+                                                "data_b64": {"type": "string"},
+                                                "upload_error": {"type": "string"},
+                                            },
+                                            "required": ["path"],
+                                        },
+                                    },
+                                    "caption": {"type": "string"},
+                                    "status": {"type": "string"},
+                                    "display": {"type": "string"},
+                                },
+                                "required": ["id", "session_id", "files"],
+                            },
+                        },
                     ]
                     + cheese.PLATFORM_TOOLS.schemas()
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
-                if tool not in ("invoke", "platform_request") and (
+                if tool not in ("invoke", "platform_request", "send_user_file") and (
                     tool not in cheese.PLATFORM_TOOLS
                 ):
                     raise ValueError("Unknown transport tool")
@@ -867,6 +1130,17 @@ def transport(config, target_path):
                             key: payload[key]
                             for key in ("method", "path", "body")
                             if key in payload
+                        },
+                    }
+                elif tool == "send_user_file":
+                    payload = {
+                        "id": payload["id"],
+                        "session_id": payload["session_id"],
+                        "tool": "SendUserFile",
+                        "args": {
+                            key: value
+                            for key, value in payload.items()
+                            if key not in ("id", "session_id")
                         },
                     }
                 elif tool.startswith("cheese_"):
@@ -900,19 +1174,24 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
-                    receipt = (
-                        client.platform_request(args)
-                        if tool == "platform_request"
-                        else client.platform_request(
-                            cheese.request_plan(tool, args, dict(os.environ))
+                    if tool == "send_user_file":
+                        receipt = deliver_send_user_file(
+                            client, config, payload, args, invoke_on_the_machine
                         )
-                        if tool.startswith("cheese_")
-                        else client.publish_message(payload, args)
-                        if tool == "chat_send"
-                        else client.publish_chat(payload, args)
-                    )
-                    if receipt is None:
-                        receipt = invoke_on_the_machine(payload, args)
+                    else:
+                        receipt = (
+                            client.platform_request(args)
+                            if tool == "platform_request"
+                            else client.platform_request(
+                                cheese.request_plan(tool, args, dict(os.environ))
+                            )
+                            if tool.startswith("cheese_")
+                            else client.publish_message(payload, args)
+                            if tool == "chat_send"
+                            else client.publish_chat(payload, args)
+                        )
+                        if receipt is None:
+                            receipt = invoke_on_the_machine(payload, args)
                     if "error" in receipt:
                         outcome = {"deny": receipt["error"]}
                     else:

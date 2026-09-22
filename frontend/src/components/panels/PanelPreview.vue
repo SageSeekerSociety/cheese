@@ -76,7 +76,7 @@ function openPreviewInNewTab() {
 // text it already is, parsed by the same renderer the chat uses.
 //
 // 图片读不成文本（`content` 是 null），但那不是「没法显示」——内容域就是拿
-// image/png、image/jpeg 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
+// 对应的 image/* 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
 // 同住 `lib/fileKind`：一个文件是哪种类型只能有一个答案。
 
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
@@ -288,7 +288,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
       if (!stillCurrent()) return
       // 两种「读不到文本」的情形分开走：
       // - 图片：它的内容本来就是字节，null 是正常的，交给 iframe 直接显示，
-      //   否则会掉进下面那句「这个文件不是文本」——预览域本身是拿 image/png
+      //   否则会掉进下面那句「这个文件不是文本」——预览域本身是拿 image/*
       //   把这些字节发出来的，浏览器画得出来。
       // - 其它二进制（docx/xlsx 走 documentType 那份分支，这里指没认出来的）：
       //   没有 iframe 能显示它，停下。

@@ -1,6 +1,7 @@
 """Exercise connector output limits and executor mutation receipts together."""
 
 import asyncio
+import base64
 import io
 import json
 import os
@@ -275,6 +276,10 @@ def central_transport(executor, tmp_path, request):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
                 result = {"data": {"content": payload["content"]}}
+            elif self.path == "/topics/fixture/shown":
+                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
+                platform_calls.append(payload)
+                result = {"data": {"content": payload.get("path"), "ok": True}}
             else:
                 result = runtime.request(state, payload["method"], payload["params"])
             if drop:
@@ -396,6 +401,261 @@ def test_platform_mcp_preserves_backend_permission_failure(central_transport):
             },
         )
     assert len(clients) == 1
+
+
+def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(central_transport):
+    """A `SendUserFile` the plugin already read must land where this room shows
+    what 芝士 points at — `POST /topics/{id}/shown`, the route `cheese show`
+    publishes through — and answer the caller with the attachments it promised.
+    """
+    process, _, _, work = central_transport
+    raw = b"%PDF-1.4 report"
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "delivered",
+                "session_id": "fixture",
+                "files": [
+                    {
+                        "path": "docs/report.pdf",
+                        "name": "report.pdf",
+                        "data_b64": base64.b64encode(raw).decode("ascii"),
+                    }
+                ],
+                "caption": "the failing case is row 42",
+                "status": "normal",
+                "display": "render",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    assert value["attachments"] == [
+        {
+            "path": str(work / "docs/report.pdf"),
+            "size": len(raw),
+            "isImage": False,
+            "media_type": "application/pdf",
+            "pathValidated": True,
+        }
+    ]
+    assert value["caption"] == "the failing case is row 42"
+    assert value["display"] == "render"
+    shown = [call for call in process.platform_calls if "content_b64" in call]
+    assert shown == [
+        {
+            "path": "docs/report.pdf",
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        }
+    ]
+    assert [note["content"] for note in process.publications] == [
+        "the failing case is row 42"
+    ]
+
+
+def test_send_user_file_reads_a_file_the_plugin_host_never_saw(central_transport):
+    """The plugin reads through `$.fs`, which is capped and is not where a
+    private container keeps its files. A path that arrives without bytes is read
+    off the executor instead — the same machine every other project file call
+    goes to.
+    """
+    process, _, _, work = central_transport
+    (work / "shot.png").write_bytes(b"\x89PNG-shot")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "machine-read",
+                "session_id": "fixture",
+                "files": [{"path": str(work / "shot.png"), "name": "shot.png"}],
+                "status": "proactive",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    # `path` is the resolved filesystem path `SendUserFile` promises the caller —
+    # not the room-relative pointer, which lives on the POST body's own `path`.
+    assert value["attachments"][0]["path"] == str(work / "shot.png")
+    assert value["attachments"][0]["isImage"] is True
+    assert "upload_error" not in value["attachments"][0]
+    shown = process.platform_calls[-1]
+    assert shown["path"] == "shot.png"
+    assert "as" not in shown
+    assert base64.b64decode(shown["content_b64"]) == b"\x89PNG-shot"
+
+
+def test_send_user_file_reports_what_it_could_not_deliver_without_lying(central_transport):
+    """One bad file must not take the good ones down with it, and a failure is
+    reported in the entry it belongs to — never a success the room never sees.
+    """
+    process, _, _, work = central_transport
+    (work / "good.md").write_text("# ok\n")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "partial",
+                "session_id": "fixture",
+                "files": [
+                    {"path": "missing.bin", "name": "missing.bin"},
+                    {"path": "good.md", "name": "good.md"},
+                    {
+                        "path": "huge.bin",
+                        "name": "huge.bin",
+                        "upload_error": "file is over the 10MB limit",
+                    },
+                ],
+                "status": "normal",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    missing, good, huge = value["attachments"]
+    assert "upload_error" in missing
+    assert "upload_error" not in good
+    assert good["path"] == str(work / "good.md")
+    assert huge["upload_error"] == "file is over the 10MB limit"
+    shown_paths = [
+        call["path"] for call in process.platform_calls if "content_b64" in call
+    ]
+    assert shown_paths == ["good.md"]
+    assert process.publications == []
+
+
+def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside_it():
+    """`POST /topics/{id}/shown` takes a workspace-relative pointer and refuses
+    an absolute one; a file the agent left in `/tmp` still has to arrive, under
+    the name this room already gives a paste with no name of its own.
+    """
+    config = {"workspace": "/work", "central_workspace": "/center"}
+    assert central.send_user_file_paths("docs/report.pdf", config) == (
+        "/work/docs/report.pdf",
+        "docs/report.pdf",
+    )
+    assert central.send_user_file_paths("/work/shot.png", config) == (
+        "/work/shot.png",
+        "shot.png",
+    )
+    # The model is told the executor's paths; the plugin host sees the mount.
+    assert central.send_user_file_paths("/center/shot.png", config) == (
+        "/work/shot.png",
+        "shot.png",
+    )
+    machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
+    assert machine == "/tmp/scratch.bin"
+    assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
+    _, escaped = central.send_user_file_paths("/work/../etc/passwd", config)
+    assert escaped.startswith("uploads/")
+    assert central.send_user_file_body(b"%PDF") == {
+        "content_b64": base64.b64encode(b"%PDF").decode("ascii"),
+    }
+    # No `as` is declared at all: `POST /topics/{id}/shown` reads the kind off
+    # the path, so this and the room's table cannot drift — and a .gif or a
+    # .webp is not silently filed as text/html the way a client-side fallback
+    # used to file it.
+    assert "as" not in central.send_user_file_body(b"GIF89a")
+    for name, mime in (("shot.gif", "image/gif"), ("shot.webp", "image/webp")):
+        entry = central.send_user_file_entry(name, name, 4)
+        assert entry["isImage"] is True
+        assert entry["media_type"] == mime
+
+
+def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
+    """A file the plugin host never saw is read by a command on the executor,
+    and that command has to take the same exit as every other project-tool call
+    — `invoke_on_the_machine`, the one that trips `unreachable_since`. Calling
+    the connection directly reintroduces the timeout storm the breaker exists
+    to stop: every SendUserFile on a sandbox session takes this path.
+    """
+    commands = []
+
+    def invoke(payload, args):
+        commands.append((payload["id"], payload["tool"], args["command"]))
+        if args["command"].startswith("wc"):
+            return {"value": {"stdout": "2\n"}}
+        return {"value": {"stdout": base64.b64encode(b"hi").decode("ascii")}}
+
+    assert central.stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
+    assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
+    assert [(tool, command.split()[0]) for _, tool, command in commands] == [
+        ("Bash", "wc"),
+        ("Bash", "base64"),
+    ]
+
+    def refuse_invoke(payload, args):
+        return {"error": "machine is out of reach"}
+
+    with pytest.raises(RuntimeError, match="machine is out of reach"):
+        central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+
+
+def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
+    monkeypatch,
+):
+    """The proxy's `$.fs.stat` is what stops an oversize file before it is read,
+    but a private container's file never reaches `$.fs`. The fallback has to
+    ask the machine how big the file is and stop there — walking it with
+    `base64` first is the exact transfer the ceiling is meant to prevent.
+    """
+    monkeypatch.setenv("CHEESE_TOPIC", "fixture")
+    commands = []
+
+    def invoke(payload, args):
+        commands.append(args["command"])
+        if args["command"].startswith("wc"):
+            return {"value": {"stdout": str(11 * 1024 * 1024)}}
+        raise AssertionError("an oversize file must not be read")
+
+    class Client:
+        def platform_request(self, args):
+            raise AssertionError("an oversize file must not be published")
+
+        def publish_message(self, payload, args):
+            raise AssertionError("nothing to caption")
+
+    result = central.deliver_send_user_file(
+        Client(),
+        {"workspace": "/work", "central_workspace": "/center"},
+        {"id": "over"},
+        {"files": [{"path": "/work/huge.bin", "name": "huge.bin"}]},
+        invoke,
+    )
+    entry = result["value"]["attachments"][0]
+    assert "文件太大" in entry["upload_error"]
+    assert entry["path"] == "/work/huge.bin"
+    assert len(commands) == 1 and commands[0].startswith("wc ")
+
+
+def test_send_user_file_names_the_object_form_it_cannot_take(central_transport):
+    """The tool text also allows a pre-resolved {file_uuid, file_name, size,
+    is_image} entry — a file already in Anthropic's filestore, which this room
+    has no way to pull. Reading one as a path yields a file called `file` far
+    downstream; refuse the form by name instead.
+    """
+    process, _, _, _ = central_transport
+    with pytest.raises(RuntimeError, match="file_uuid"):
+        process.call(
+            "tools/call",
+            {
+                "name": "send_user_file",
+                "arguments": {
+                    "id": "object-form",
+                    "session_id": "fixture",
+                    "files": [
+                        {
+                            "file_uuid": "f-1",
+                            "file_name": "shot.png",
+                            "size": 3,
+                            "is_image": True,
+                        }
+                    ],
+                    "status": "normal",
+                },
+            },
+        )
 
 
 @pytest.mark.parametrize(

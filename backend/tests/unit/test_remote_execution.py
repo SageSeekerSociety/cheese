@@ -137,6 +137,227 @@ def test_a_task_stop_the_executor_does_not_own_goes_back_to_the_harness():
     """)
 
 
+def test_send_user_file_is_delivered_to_the_room_never_to_the_anthropic_upload():
+    """`SendUserFile` is the build's own "hand this file to the person watching".
+
+    Left alone it POSTs the bytes to Anthropic's `/api/oauth/file_upload` on a
+    scoped cheese token that means nothing upstream — the tool reports 401 on
+    every call and the room never sees the screenshot or the report. It has to
+    land on this room's own delivery route, and the caller has to get back the
+    result shape `SendUserFile` promised it.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let called;
+        const bytes = Buffer.from('hello');
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async ({path, resolve}) => {
+              assert.equal(typeof resolve, 'boolean');
+              return {kind: 'file', size: bytes.length, mtimeMs: 0, isLink: false};
+            },
+            read: async ({path, as}) => {
+              assert.equal(path, 'report.pdf');
+              assert.equal(as, 'bytes');
+              return {base64: bytes.toString('base64')};
+            },
+          },
+          mcp: {call: async (server, tool, args) => {
+            called = {server, tool, args};
+            const text = JSON.stringify({result: {attachments: [{
+              path: 'report.pdf', size: bytes.length, isImage: false,
+              media_type: 'application/pdf', pathValidated: true,
+            }]}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+        let handed_back = false;
+        const next = async () => {handed_back = true; return 'next'};
+
+        const mine = await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send', agentId: 'child',
+          files: ['report.pdf'], caption: "Here's the report.", status: 'normal',
+        }, next);
+
+        assert.equal(handed_back, false,
+          'the built-in Anthropic upload must not run');
+        assert.deepEqual(called, {
+          server: 'native', tool: 'send_user_file', args: {
+            id: 'send', session_id: 'session',
+            files: [{
+              path: 'report.pdf', name: 'report.pdf',
+              data_b64: bytes.toString('base64'),
+            }],
+            caption: "Here's the report.",
+            status: 'normal',
+          },
+        });
+        assert.deepEqual(mine, {result: {attachments: [{
+          path: 'report.pdf', size: bytes.length, isImage: false,
+          media_type: 'application/pdf', pathValidated: true,
+        }]}});
+    """)
+
+
+def test_send_user_file_reaches_a_file_the_model_spelled_on_the_executor():
+    """The session tells the model the executor's paths (prompt.section rewrites
+    them), so a file it just wrote is named `/work/…` while `$.fs` on this host
+    sees the forwarded workspace under `central_workspace`. Either spelling has
+    to find the same bytes.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const bytes = Buffer.from('png');
+        const asked = [];
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async ({path}) => {
+              asked.push(path);
+              if (path.startsWith('/work/')) throw new Error('ENOENT');
+              return {kind: 'file', size: bytes.length, mtimeMs: 0, isLink: false};
+            },
+            read: async ({path}) => {
+              if (path.startsWith('/work/')) throw new Error('ENOENT');
+              assert.equal(path, '/center/shot.png');
+              return {base64: bytes.toString('base64')};
+            },
+          },
+          mcp: {call: async (server, tool, args) => {
+            const text = JSON.stringify({result: {attachments: []}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+
+        await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send',
+          files: ['/work/shot.png'], status: 'proactive',
+        }, async () => 'next');
+
+        assert.deepEqual(asked, ['/work/shot.png', '/center/shot.png']);
+    """)
+
+
+def test_send_user_file_a_file_this_host_cannot_read_still_reaches_the_transport():
+    """A private container's file is not on this host at all, and `$.fs.read`
+    refuses anything over its own transfer cap. Neither is "the file does not
+    exist": both go to the transport, which reads them off the executor the way
+    every other project file is read.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let called;
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async () => ({kind: 'file', size: 3, mtimeMs: 0, isLink: false}),
+            read: async () => {throw new Error('$.fs.read: refused: the file is over the 4194304-byte limit');},
+          },
+          mcp: {call: async (server, tool, args) => {
+            called = args;
+            const text = JSON.stringify({result: {attachments: []}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+
+        await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send',
+          files: ['big.pdf'], status: 'normal',
+        }, async () => 'next');
+
+        assert.deepEqual(called.files, [{path: 'big.pdf', name: 'big.pdf'}]);
+    """)
+
+
+def test_send_user_file_an_oversize_file_is_refused_before_it_is_read():
+    """The room's own limit is 10MB (`/topics/{id}/shown`). Asking `$.fs` for
+    more than that is a transfer nobody accepts on the far side.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let called;
+        let read = false;
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async () => ({kind: 'file', size: 11 * 1024 * 1024, mtimeMs: 0, isLink: false}),
+            read: async () => {read = true; return {base64: ''};},
+          },
+          mcp: {call: async (server, tool, args) => {
+            called = args;
+            const text = JSON.stringify({result: {attachments: []}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+
+        await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send',
+          files: ['huge.bin'], status: 'normal',
+        }, async () => 'next');
+
+        assert.equal(read, false);
+        assert.equal(called.files[0].data_b64, undefined);
+        assert.match(called.files[0].upload_error, /10MB/);
+    """)
+
+
+def test_send_user_file_names_the_object_form_it_cannot_take():
+    """The tool text also allows a pre-resolved {file_uuid, file_name, size,
+    is_image} entry — a file already in Anthropic's filestore. This room has no
+    such filestore to pull it from, and stringifying the object used to name it
+    `[object Object]` and fail later on that name. Refuse the form outright, and
+    say which form it was.
+    """
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let delivered = false;
+        const api = {
+          session: {id: async () => 'session'},
+          fs: {
+            stat: async () => {throw new Error('must not stat');},
+            read: async () => {throw new Error('must not read');},
+          },
+          mcp: {call: async (server, tool, args) => {
+            delivered = true;
+            const text = JSON.stringify({result: {attachments: []}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+
+        const outcome = await handlers['tool.call'](api, {
+          tool: 'SendUserFile', tool_use_id: 'send',
+          files: [{file_uuid: 'f-1', file_name: 'shot.png', size: 3, is_image: true}],
+          status: 'normal',
+        }, async () => 'next');
+
+        assert.equal(delivered, false);
+        assert.equal(typeof outcome.deny, 'string');
+        assert.match(outcome.deny, /file_uuid/);
+        assert.match(outcome.deny, /path/);
+    """)
+
+
 @pytest.mark.parametrize("exit_contents", ["", "0", "7"])
 def test_exit_written_during_process_scan_is_not_reported_as_unknown(
     tmp_path, monkeypatch, exit_contents
