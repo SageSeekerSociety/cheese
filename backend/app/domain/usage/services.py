@@ -44,9 +44,7 @@ class UsageService:
         """窗口内按模型拆的用量。`limit` 和 `top_projects` 同一个理由。"""
         return await self._repo.by_model(since=since, until=until, limit=limit)
 
-    async def by_route(
-        self, *, since: datetime, until: datetime
-    ) -> list[dict]:
+    async def by_route(self, *, since: datetime, until: datetime) -> list[dict]:
         """窗口内按供给通路拆的用量（网关 / 订阅 / 自带凭据）。"""
         return await self._repo.by_route(since=since, until=until)
 

@@ -83,9 +83,7 @@ def _mark_agent(client, feedback_id: str) -> None:
     async def _go() -> None:
         async with client.test_factory() as session:
             await session.execute(
-                update(Feedback)
-                .where(Feedback.id == fid)
-                .values(author_is_agent=True)
+                update(Feedback).where(Feedback.id == fid).values(author_is_agent=True)
             )
             await session.commit()
 

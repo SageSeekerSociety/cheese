@@ -268,9 +268,7 @@ class UsageRepository:
             for row in rows
         ]
 
-    async def by_route(
-        self, *, since: datetime, until: datetime
-    ) -> list[dict]:
+    async def by_route(self, *, since: datetime, until: datetime) -> list[dict]:
         """窗口内按**供给通路**拆的用量 —— 网关 / 订阅 / 自带凭据。
 
         这是「未定价 token 到底是哪来的」的那个答案：`unpriced_tokens` 只告诉读者

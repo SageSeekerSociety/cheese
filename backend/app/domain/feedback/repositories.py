@@ -1485,9 +1485,7 @@ class FeedbackRepository:
             # 同一条边界（`CLOSED_STATUSES`），只是再收一层优先级。
             "urgent_open": await _count(
                 Feedback.status.not_in(list(CLOSED_STATUSES)),
-                Feedback.priority.in_(
-                    [FeedbackPriority.high, FeedbackPriority.urgent]
-                ),
+                Feedback.priority.in_([FeedbackPriority.high, FeedbackPriority.urgent]),
             ),
         }
         return {"columns": columns, "status": status, "total": total}
