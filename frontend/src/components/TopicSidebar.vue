@@ -26,6 +26,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { t } from '@/i18n'
 
@@ -91,11 +92,12 @@ function startResize(e: MouseEvent) {
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
-// 「退出项目」也挂在那个 ⋯ 菜单里（#6）：它本来只长在成员页右上角，而成员页刚被
-// 壳收进同一个菜单——按钮跟着一起藏了两层深。这个菜单是「我和这个项目的关系」在
-// 项目头那一层的落点，退出就是那件事的出口，所以它在这儿也留一颗；确认之后做什
-// 么在 LeaveProjectDialog，两处共用一份。所有者不给这颗：后端会拒他（得先转让），
-// 给一个必定失败的按钮是骗人。
+// 「退出项目」在项目头上是**看得见的一颗**（#6）：它本来只长在成员页右上角，而
+// 成员页刚被壳收进 ⋯ 菜单——按钮跟着一起藏了两层深，没注意到那个 ⋯ 的人连怎么
+// 退出都找不到。所以项目头这一层（「我和这个项目的关系」的落点）直接给一颗，不再
+// 只活在菜单里；⋯ 菜单里那一行留着，多一个入口没有坏处。确认之后做什么在
+// LeaveProjectDialog，几处共用一份。所有者那颗换成「转让项目」：他退不掉（后端会
+// 拒，得先把手交出去），TransferProjectDialog 就是那条路。
 const router = useRouter()
 const route = useRoute()
 
@@ -493,12 +495,33 @@ const onDocs = computed(() => !!props.activeDocs)
 // 类更特化，话题行本来也是这么压住它的。
 const ROW_INDENT = { paddingInlineStart: '8px' }
 
-// ---- 退出项目（⋯ 菜单入口，见上方说明）----
+// ---- 退出项目 / 转让项目（项目头可见入口 + ⋯ 菜单各一份）----
 const leaveOpen = ref(false)
+const transferOpen = ref(false)
+
+// 项目行还没到货（清单没回来、或这个 id 不在我的清单里）时，`owner_handle` 是
+// undefined —— 那时候**不能**当成「他不是所有者」：那正是把退出递给所有者、点下去
+// 吃 403 的那条缝。没行 = 不知道 = 不显示、不给按。行到货了再按行上的 owner 说：
+// 所有者退不掉（后端 `membership/services.py` 的 `leave`），无主项目（owner 空）谁
+// 都退得掉，后端也是这么判的。
+const selectedProject = computed(
+  () => props.projects.find((p) => p.id === props.selectedProjectId) ?? null
+)
 const canLeaveProject = computed(() => {
   const me = myHandle()
-  const owner = props.projects.find((p) => p.id === props.selectedProjectId)?.owner_handle
-  return !!me && me !== (owner ?? '')
+  const project = selectedProject.value
+  if (!me || !project) return false
+  const owner = project.owner_handle
+  return !owner || me !== owner
+})
+// 转让是所有者离得开的那条路（退不掉，得先把手交出去），也是 `PUT /projects/{id}/owner`
+// 认的人：项目行没到货、或我不是所有者时都不长这颗。名册上的 lead 也能转（后端
+// `require_project_steward` 认 owner 和 lead），但侧栏手上没有名册，那一层的入口
+// 在成员页——这一层只答「我是所有者吗」。
+const canTransferProject = computed(() => {
+  const me = myHandle()
+  const owner = selectedProject.value?.owner_handle
+  return !!me && !!owner && me === owner
 })
 </script>
 
@@ -539,6 +562,30 @@ const canLeaveProject = computed(() => {
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
                它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
           <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
+          <!-- 「退出 / 转让」在项目头上有一颗**看得见**的（不是菜单里的一项）：把
+               这件事收进 ⋯ 正是那条反馈的原话——没注意到 ⋯ 的人连名册都进不去，
+               更看不到退出。非所有者是退出；所有者是转让（他退不掉，把手交出去才
+               是他那条路）。两颗互斥，行没到货时两颗都不长。 -->
+          <button
+            v-if="canLeaveProject"
+            type="button"
+            class="rail-header__more"
+            title="退出项目"
+            aria-label="退出项目"
+            @click="leaveOpen = true"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-exit-to-app" />
+          </button>
+          <button
+            v-else-if="canTransferProject"
+            type="button"
+            class="rail-header__more"
+            title="转让项目"
+            aria-label="转让项目"
+            @click="transferOpen = true"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-account-arrow-right-outline" />
+          </button>
           <v-menu location="bottom end">
             <template #activator="{ isActive, props: menuProps }">
               <button
@@ -593,6 +640,13 @@ const canLeaveProject = computed(() => {
                 :active="route.name === 'project-settings'"
                 :disabled="!selectedProjectId"
                 @click="openProjectPage('project-settings')"
+              />
+              <v-list-item
+                v-if="canTransferProject"
+                prepend-icon="mdi-account-arrow-right-outline"
+                title="转让项目"
+                :disabled="!selectedProjectId"
+                @click="transferOpen = true"
               />
               <v-list-item
                 v-if="canLeaveProject"
@@ -949,6 +1003,7 @@ const canLeaveProject = computed(() => {
     </div>
 
     <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
+    <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
   </component>
 </template>
 

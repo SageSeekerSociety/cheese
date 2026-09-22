@@ -141,12 +141,13 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('侧栏上常驻的只有每天都用的那两样：全局和资料库', () => {
+  it('侧栏上常驻的是每天要用的那几样：全局、资料库和成员', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
-    // 看板不在这里——它就是首页，项目名那一行点下去就到。日历和成员一年点几次，
-    // 收进了项目名旁边那个菜单。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库'])
+    // 看板不在这里——它就是首页，项目名那一行点下去就到。日历一年点几次，收进了
+    // 项目名旁边那个菜单。成员留在外面不是因为它天天用，而是因为「退出项目」长在
+    // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。
+    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员'])
   })
 
   it('点项目名回项目首页，不打开任何房间', async () => {
