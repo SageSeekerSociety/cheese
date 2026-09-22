@@ -923,8 +923,8 @@ class Settings(BaseSettings):
           described above. Under it, ``environment`` saying "development" is
           evidence the env file failed, not evidence this is a dev box.
         - ``environment`` outside dev/test — the line the rest of the app already
-          draws (secure cookies, the X-User-Id gate). Still checked, for any
-          deployment that does not run through this compose file.
+          draws (secure cookies). Still checked, for any deployment that does
+          not run through this compose file.
 
         Local dev and the test suite set neither, keep the default secret and
         never trip this, which is why fail-closed does not take the suite down.
