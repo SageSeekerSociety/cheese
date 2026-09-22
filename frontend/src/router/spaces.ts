@@ -145,6 +145,44 @@ export default {
         },
       ],
     },
+    // 一门课自己的几屏。题目板是不是课看 `Space.isCourse`（服务端按默认分组声明
+    // 的壳算的），能不能看见哪几格看 `lib/courseNav.ts`。这六条路由**一次加齐**：
+    // 教学单元 / 作业与验收 / 学生与分组 / 小测 由后面的任务填组件，它们不再动这个
+    // 文件，也不再动侧栏。
+    //
+    // 注意 `SpacesCourseHome` 一条路由两种人看：老师看到课程总览，学生看到我的
+    // 课程。分叉在页面里按 `space.admins` 判，不按地址分叉 —— 同一个人今天教书、
+    // 明天可能只是学员，地址不该因为「你是谁」而变。
+    {
+      path: 'course',
+      name: 'SpacesCourseHome',
+      component: () => import('@/views/spaces/course/CourseHome.vue'),
+    },
+    {
+      path: 'course/units',
+      name: 'SpacesCourseUnits',
+      component: () => import('@/views/spaces/course/Units.vue'),
+    },
+    {
+      path: 'course/assignments',
+      name: 'SpacesCourseAssignments',
+      component: () => import('@/views/spaces/course/Assignments.vue'),
+    },
+    {
+      path: 'course/people',
+      name: 'SpacesCoursePeople',
+      component: () => import('@/views/spaces/course/People.vue'),
+    },
+    {
+      path: 'course/quiz',
+      name: 'SpacesCourseQuiz',
+      component: () => import('@/views/spaces/course/Quiz.vue'),
+    },
+    {
+      path: 'course/team',
+      name: 'SpacesCourseTeam',
+      component: () => import('@/views/spaces/course/Team.vue'),
+    },
     {
       path: 'tasks/audit',
       name: 'SpacesDetailAuditTasks',
