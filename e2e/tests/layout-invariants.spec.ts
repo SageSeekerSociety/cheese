@@ -302,7 +302,10 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
 
       for (const tab of ['反馈', '用量', '平台']) {
-        await page.getByRole('button', { name: tab }).click();
+        // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
+        // 而 Playwright 的 `name` 默认按**子串**匹配 —— 不加这一条，'反馈' 那一轮会同时
+        // 命中它和这一页的分类页签，报 strict mode 违规。
+        await page.getByRole('button', { name: tab, exact: true }).click();
         // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
         await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
         await expect(page.locator('.akpi__skel')).toHaveCount(0);
