@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.core.config import settings
@@ -36,6 +37,16 @@ logger = logging.getLogger("cheese.machine.enrollment")
 # One attempt should be slow enough to survive a cold apt/curl on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
+
+# Only these markers may reach the room; process output can contain credentials.
+STARTUP_STEPS = {
+    "tools": "正在检查并安装基础工具",
+    "pi": "正在安装运行程序",
+    "cache": "正在准备运行缓存",
+    "connector": "正在下载连接器",
+    "connect": "正在启动连接器",
+    "verify": "正在检查连接器服务",
+}
 
 SSH_OPTS = [
     "-o",
@@ -164,6 +175,7 @@ esac
 # but not tmux, and the VM template installs neither (it adds only curl + Docker
 # on top of a stock Debian cloud image). Depending on which offering a machine
 # came from is exactly the kind of assumption that fails quietly.
+echo CHEESE_STARTUP:tools
 for tool in tmux git python3; do
   command -v "$tool" >/dev/null 2>&1 && continue
   sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1 \
@@ -242,10 +254,13 @@ fi
 # It is also the one check that can fail on a machine claude is fine on — the
 # vendor publishes no musl build — and that is exactly the case worth hearing
 # about here rather than reading out of one room's launcher output.
+echo CHEESE_STARTUP:pi
 {pi_script}
 umask 077
+echo CHEESE_STARTUP:cache
 {preparation_script}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
+echo CHEESE_STARTUP:connector
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
   -o "$HOME/.local/bin/cheesehost.new"
@@ -262,6 +277,7 @@ CHEESE_CONFIG_EOF
 # starts the background service — for THIS account, no root involved.
 # stdin is closed: this script arrives ON stdin, and anything the command reads
 # from it would eat the rest of the script.
+echo CHEESE_STARTUP:connect
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
@@ -270,6 +286,7 @@ systemctl --user restart cheese
 # the process can fail. Enrollment must not report success for a service that is
 # already dead, so ask systemd what actually happened. It is a --user unit, and
 # the system manager knows nothing about those.
+echo CHEESE_STARTUP:verify
 sleep 5
 if ! systemctl --user is-active --quiet cheese; then
   echo "the connector service did not stay up:" >&2
@@ -317,7 +334,12 @@ CHEESE_UPSTREAM_EOF
 
 
 async def run_bootstrap(
-    *, ip: str, login_user: str, private_key: str, script: str
+    *,
+    ip: str,
+    login_user: str,
+    private_key: str,
+    script: str,
+    progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     """Run the bootstrap over SSH and return its output.
 
@@ -325,6 +347,8 @@ async def run_bootstrap(
     device token, and an argument would show up in the machine's process list.
     """
     with tempfile.TemporaryDirectory() as tmp:
+        if progress:
+            await progress("正在连接机器并检查运行程序")
         key_path = os.path.join(tmp, "bootstrap")
         with open(os.open(key_path, os.O_CREAT | os.O_WRONLY, 0o600), "w") as handle:
             handle.write(private_key)
@@ -380,11 +404,15 @@ async def run_bootstrap(
                 raise EnrollmentError("unsupported cloud machine architecture")
             platform = f"linux-{arch}" + ("-musl" if "musl" in facts else "")
             try:
+                if progress:
+                    await progress("正在准备 Claude 运行程序")
                 binary = await claude_dist.ensure_cached(
                     connector_build.dist_dir(), pin, platform
                 )
             except claude_dist.ClaudeDistError as exc:
                 raise EnrollmentError("platform Claude binary unavailable") from exc
+            if progress:
+                await progress("正在传输 Claude 运行程序")
             await run(
                 "scp",
                 "-i",
@@ -414,15 +442,39 @@ async def run_bootstrap(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+
+        async def collect() -> bytes:
+            if progress is None:
+                output, _ = await process.communicate(script.encode())
+                return output
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(script.encode())
+            await process.stdin.drain()
+            process.stdin.close()
+            output = bytearray()
+            while line := await process.stdout.readline():
+                output.extend(line)
+                marker = line.decode(errors="replace").strip()
+                if marker.startswith("CHEESE_STARTUP:"):
+                    step = STARTUP_STEPS.get(marker.removeprefix("CHEESE_STARTUP:"))
+                    if step:
+                        await progress(step)
+            await process.wait()
+            return bytes(output)
+
         try:
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(script.encode()), timeout=SSH_TIMEOUT_S
-            )
+            stdout = await asyncio.wait_for(collect(), timeout=SSH_TIMEOUT_S)
         except TimeoutError as exc:
             process.kill()
+            await process.wait()
             raise EnrollmentError(
                 f"bootstrap timed out after {SSH_TIMEOUT_S:.0f}s"
             ) from exc
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            raise
     output = stdout.decode(errors="replace").strip()
     if process.returncode != 0:
         raise EnrollmentError(
