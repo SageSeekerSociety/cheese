@@ -65,8 +65,13 @@ function defineCheesexTheme(dark: boolean) {
   const bg = resolveColor('var(--surface)', dark ? '#1b1d20' : '#ffffff')
   const fg = resolveColor('var(--text)', dark ? '#d3d6db' : '#2c2c2c')
   const accent = resolveColor('rgb(var(--v-theme-primary))', dark ? '#ffa733' : '#e08a34')
-  const muted = resolveColor('var(--muted)', dark ? '#9ca2ab' : '#6b6b6b')
-  const faint = resolveColor('var(--faint)', dark ? '#7a808a' : '#cccccc')
+  // Second argument is a fallback for the one path where the var cannot be read
+  // (jsdom, SSR, before the stylesheet lands) — a browser always takes the live
+  // var, so these are copies of the tokens, not the source of truth. They drifted
+  // once already: the light `--faint` fallback used to read `#cccccc` while the
+  // token said `#9aa0a8`. If you move a neutral token, move its fallback here too.
+  const muted = resolveColor('var(--muted)', dark ? '#aeb4bd' : '#5a5e66')
+  const faint = resolveColor('var(--faint)', dark ? '#888ea0' : '#747a82')
   monaco.editor.defineTheme(THEME_NAME, {
     base: dark ? 'vs-dark' : 'vs',
     inherit: true,
