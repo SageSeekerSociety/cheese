@@ -593,8 +593,8 @@ _STORE_VARS = (
 )
 
 
-def _installer_env(tmp_path, env, dump):
-    """Run one launch whose "agent" reports the environment an install sees."""
+def _installer_env(env, dump):
+    """Run the generated synchronous project-store setup and report its env."""
     launcher = machine_launcher.launch_script(command=":")
     start = launcher.index('CS="${CHEESE_STORE:-}"')
     end = launcher.index("\nfi\n", start) + len("\nfi\n")
@@ -634,8 +634,8 @@ def test_two_rooms_of_one_project_install_into_one_store(tmp_path):
     _machine_home, home_a, env_a = _room(tmp_path, "proj", "room-a")
     _machine_home, home_b, env_b = _room(tmp_path, "proj", "room-b")
 
-    seen_a = _installer_env(tmp_path, env_a, tmp_path / "a.env")
-    seen_b = _installer_env(tmp_path, env_b, tmp_path / "b.env")
+    seen_a = _installer_env(env_a, tmp_path / "a.env")
+    seen_b = _installer_env(env_b, tmp_path / "b.env")
 
     assert set(seen_a) == set(_STORE_VARS)
     assert seen_a == seen_b
@@ -651,8 +651,8 @@ def test_another_project_on_the_same_machine_gets_its_own_store(tmp_path):
     _m, _home, env_ours = _room(tmp_path, "ours", "room")
     _m, _home, env_theirs = _room(tmp_path, "theirs", "room")
 
-    seen_ours = _installer_env(tmp_path, env_ours, tmp_path / "ours.env")
-    seen_theirs = _installer_env(tmp_path, env_theirs, tmp_path / "theirs.env")
+    seen_ours = _installer_env(env_ours, tmp_path / "ours.env")
+    seen_theirs = _installer_env(env_theirs, tmp_path / "theirs.env")
 
     assert set(seen_ours) == set(seen_theirs) == set(_STORE_VARS)
     for name in _STORE_VARS:
@@ -667,7 +667,7 @@ def test_the_store_lands_on_the_machine_home_the_placeholder_names(tmp_path):
     machine_home, room_home, env = _room(tmp_path, "proj", "room")
     assert env["CHEESE_STORE"].startswith("$HOME/")
 
-    seen = _installer_env(tmp_path, env, tmp_path / "s.env")
+    seen = _installer_env(env, tmp_path / "s.env")
 
     assert seen["UV_CACHE_DIR"] == f"{machine_home}/.cheese/store/proj/uv-cache"
     assert not seen["UV_CACHE_DIR"].startswith(str(room_home))
@@ -680,7 +680,7 @@ def test_a_screen_with_no_store_leaves_every_tool_on_its_own_default(tmp_path):
     would be worse than not pointing it anywhere."""
     _m, _home, env = _room(tmp_path, "proj", "room", store=None)
 
-    seen = _installer_env(tmp_path, env, tmp_path / "n.env")
+    seen = _installer_env(env, tmp_path / "n.env")
 
     assert seen == {}
 

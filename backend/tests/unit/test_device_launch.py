@@ -88,7 +88,25 @@ def test_warm_adoption_waits_for_room_configuration(
     tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
     tmux.chmod(0o700)
     script = tmp_path / "launch.sh"
-    script.write_text(device_launch.build_launch_script())
+    launch = device_launch.build_launch_script()
+    staged = launch.index("cheese_launch_phase warm_staged")
+    configured = launch.index('mv "$HOME/.cheese/cheese-drain.env.tmp"')
+    adopted = launch.index('if [ -n "$WARM_ROOT" ]; then', configured)
+    assert staged < configured < adopted
+    # Exercise the generated staging and adoption programs around the generated
+    # configuration write. The intervening launcher work has independent tests
+    # and made this ordering contract depend on whole-launch wall time.
+    prefix_end = launch.index("# The platform's own directory", staged)
+    config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
+    config_end = launch.index("\n", configured) + 1
+    adoption_end = launch.index("\nfi\n", adopted) + len("\nfi\n")
+    script.write_text(
+        launch[:prefix_end]
+        + 'mkdir -p "$HOME/.cheese"\n'
+        + launch[config_start:config_end]
+        + 'cd "$CHEESE_WORK"\n'
+        + launch[adopted:adoption_end]
+    )
     with (tmp_path / "launcher.log").open("w") as output:
         process = subprocess.Popen(
             ["sh", str(script)],
