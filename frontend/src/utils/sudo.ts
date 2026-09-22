@@ -16,6 +16,7 @@ const SUDO_PURPOSES: Record<string, UserApi.SudoPurpose> = {
   update2FASettings: '2fa:settings',
   addPasskey: 'passkey:add',
   deletePasskey: 'passkey:delete',
+  changePassword: 'password:change',
 }
 
 export function sudoPurposeFor(opKey: string | undefined | null): UserApi.SudoPurpose | undefined {

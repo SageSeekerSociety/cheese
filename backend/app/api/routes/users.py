@@ -138,6 +138,21 @@ class SudoAuthRequest(BaseModel):
     purpose: SudoPurpose | None = None
 
 
+# SRP values are hex on the wire and are handed to the SRP math as hex, so
+# anything else is refused before it is stored as a login credential.
+_SRP_HEX = r"^[0-9a-fA-F]+$"
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    srp_salt: str = Field(..., alias="srpSalt", pattern=_SRP_HEX, max_length=1024)
+    srp_verifier: str = Field(
+        ..., alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
+    )
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
+
+
 class SudoTicketRequest(BaseModel):
     """The body of an operation that redeems a sudo ticket and needs nothing
     else."""
@@ -2792,11 +2807,10 @@ async def recover_password_verify(
             raise UnprocessableEntityError("Invalid or expired reset token")
 
         user_id = int(token_data["user_id"])
-        if has_password:
+        if new_password:
             await auth_service.update_password(user_id, new_password)
-        else:
-            srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-            await auth_service._user_repo.update_password(user_id, srp_data)
+        elif srp_salt and srp_verifier:
+            await auth_service.set_srp_credentials(user_id, srp_salt, srp_verifier)
 
         return {
             "code": 200,
@@ -2804,6 +2818,36 @@ async def recover_password_verify(
         }
     finally:
         await redis.aclose()
+
+
+@router.patch(
+    "/{userId}/password",
+    summary="Change password",
+)
+async def change_password(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: ChangePasswordRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Replace the account's password with new SRP credentials.
+
+    Other sessions stay signed in: the session layer cannot yet revoke them
+    (#1481).
+    """
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can change their password.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSWORD_CHANGE,
+    )
+    await auth_service.set_srp_credentials(
+        user_id, payload.srp_salt, payload.srp_verifier
+    )
+
+    return {"code": 200, "message": "Password changed successfully"}
 
 
 @router.get(

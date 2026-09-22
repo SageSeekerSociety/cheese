@@ -238,6 +238,11 @@ class UserAuthService:
         ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
 
+    async def set_srp_credentials(
+        self, user_id: int, srp_salt: str, srp_verifier: str
+    ) -> None:
+        await self._user_repo.update_password(user_id, f"SRP:{srp_salt}:{srp_verifier}")
+
     @staticmethod
     def _reject_reserved(username: str) -> None:
         """A handle the platform already uses to mean "not a person" (#345).
