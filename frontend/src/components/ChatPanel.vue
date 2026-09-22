@@ -1218,7 +1218,7 @@ onBeforeUnmount(() => {
             size="small"
             density="comfortable"
             prepend-icon="mdi-arrow-left"
-            class="c-muted"
+            color="medium-emphasis"
             @click="emit('back')"
           >
             {{ backLabel }}

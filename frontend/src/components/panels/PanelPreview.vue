@@ -395,7 +395,7 @@ watch(
         :to="{ name: 'workspace-running', params: { projectId } }"
         size="small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
       >
         发布网站
       </v-btn>
@@ -405,7 +405,7 @@ watch(
           icon="mdi-open-in-new"
           size="small"
           variant="text"
-          class="c-muted"
+          color="medium-emphasis"
           title="在新标签页打开"
           @click="openPreviewInNewTab"
         />
@@ -414,7 +414,7 @@ watch(
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
           size="small"
           variant="text"
-          class="c-muted"
+          color="medium-emphasis"
           :title="previewFull ? '退出全屏' : '全屏预览'"
           @click="fullscreen"
         />
@@ -423,7 +423,7 @@ watch(
         icon="mdi-refresh"
         size="small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
         title="刷新"
         :loading="refreshing"
         @click="load({ silent: true, reload: true })"
@@ -489,7 +489,13 @@ watch(
         <span class="doc__name">{{ documentName }}</span>
         <span class="doc__type t-meta">{{ documentType.label }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" class="c-muted" prepend-icon="mdi-download" @click="downloadArtifact">
+        <v-btn
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          prepend-icon="mdi-download"
+          @click="downloadArtifact"
+        >
           下载
         </v-btn>
       </div>
@@ -565,7 +571,14 @@ watch(
           <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
             发送
           </v-btn>
-          <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" title="取消" @click="clearLocator" />
+          <v-btn
+            icon="mdi-close"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="取消"
+            @click="clearLocator"
+          />
         </div>
       </Transition>
     </div>
