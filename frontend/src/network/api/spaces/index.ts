@@ -44,6 +44,7 @@ import type {
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
   SpaceMyPublishingOverview,
+  SpaceSubmissionQueue,
   SpaceTaskAnalytics,
   TeachingUnit,
 } from './types'
@@ -467,6 +468,27 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
       method: 'DELETE',
+    })
+
+  /**
+   * 一整门课的作业与验收（教师版面）。
+   *
+   * `reviewed: false` 就是验收队列；不给就是全部。每行是「谁的哪份作业」，
+   * 带 `participantId` 供既有的提交 / 评审接口使用。
+   */
+  export const getSubmissionQueue = (
+    spaceId: number,
+    params: {
+      reviewed?: boolean
+      taskId?: number
+      pageStart?: number
+      pageSize?: number
+    } = {}
+  ) =>
+    NewApiInstance.request<SpaceSubmissionQueue>({
+      url: `/spaces/${spaceId}/submissions`,
+      method: 'GET',
+      params,
     })
 
   export const listUnits = (spaceId: number) =>
