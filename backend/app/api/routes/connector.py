@@ -38,6 +38,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
 from app.core.config import settings
@@ -214,6 +215,9 @@ async def device_connect(
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Approving a device requires a logged-in user")
 
+    if body.project_id is not None:
+        await resolver.authorize_project(actor, project_id=body.project_id)
+
     # Approve binds the device to its owner + mints the durable token. The device is
     # PURE COMPUTE (execution-architecture v3: a ComputePool node) — enrolling a machine
     # does NOT mint an agent. The agent a screen runs as is resolved per project/topic
@@ -302,6 +306,9 @@ async def agent_socket(
     close_code: int | None = None
     try:
         while True:
+            # A failed outbound send can disconnect an already accepted socket.
+            if websocket.application_state is WebSocketState.DISCONNECTED:
+                raise WebSocketDisconnect(code=1006)
             message = await websocket.receive_json()
             await device_hub.on_device_message(device.device_id, message)
     except WebSocketDisconnect as disconnect:
