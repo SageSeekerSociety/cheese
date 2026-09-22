@@ -28,7 +28,7 @@ from tests.conftest import (
 )
 
 _REVISION = "514d7c9cb013"
-_PREVIOUS = "93ac2aa4b5fd"
+_PREVIOUS = "8c9ea105b7d2"
 _BACKEND = Path(__file__).resolve().parents[2]
 
 

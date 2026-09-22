@@ -14,14 +14,20 @@
 //      here rather than in the tabs because a closed component reports nothing.
 //
 // The one cross-tab wire is `open-file`: a <&path> chip in the doc (or in the
-// chat, via `openFile`) selects the 改动 tab and opens that file there.
+// chat, via `openFile`) opens that file where it lives — its own tab in the
+// free zone when it is a room file the preview can draw, the 改动 tab otherwise.
+//
+// 页签分两段。固定区（总览 / 现场 / 改动 / 预览）不能关，位置记忆来自这里。自由区是
+// 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
+// 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
+// 话，聊一小时能攒出二十个页签。
 import type { PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
-import { previewCanShow } from '../lib/fileKind'
+import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { fileIcon, previewCanShow } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
@@ -100,13 +106,38 @@ const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview')
 // 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进总览了，所以它们指的就是
 // 总览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
-const active = ref<TabKey>(defaultTab.value)
+// ---- 自由区 ----
+// 一份文件一个页签，键是 `file:<路径>`，地址里的 `?tab=` 用的也是它——「你看一下
+// 这份报告」得是一条能发出去的链接。
+interface FileTab {
+  path: string
+  pinned: boolean
+}
+const FILE_TAB = 'file:'
+function fileKey(path: string): string {
+  return FILE_TAB + path
+}
+function fileName(path: string): string {
+  return path.split('/').pop() || path
+}
+const openFiles = ref<FileTab[]>([])
+// 自由区属于房间：切去别的房间再回来，开着的那几份还在。只记在这一次会话里。
+const filesByTopic = new Map<string, FileTab[]>()
+
+const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
-function tabFromUrl(): TabKey | null {
+function tabFromUrl(): string | null {
   const asked = props.tab
   if (!asked) return null
+  if (asked.startsWith(FILE_TAB) && asked.length > FILE_TAB.length) return asked
   if (ALL_TABS.some((t) => t.key === asked)) return asked as TabKey
   return TAB_ALIASES[asked] ?? null
+}
+/** 地址点名了自由区的一份文件，而它还没开着：照着地址开出来（临时位）。 */
+function ensureFileFromUrl(key: string | null) {
+  if (!key?.startsWith(FILE_TAB)) return
+  const path = key.slice(FILE_TAB.length)
+  if (!openFiles.value.some((f) => f.path === path)) placeFile(path)
 }
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
@@ -122,7 +153,7 @@ watch(active, () => {
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
-function setTab(key: TabKey) {
+function setTab(key: string) {
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
@@ -155,6 +186,7 @@ watch(
   () => props.tab,
   () => {
     const asked = tabFromUrl()
+    ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
   }
 )
@@ -163,15 +195,14 @@ watch(
 // what the drawer effectively did with its state (openPath, expanded folders,
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
-const mounted = ref<Set<TabKey>>(new Set<TabKey>([active.value]))
-function show(k: TabKey) {
+const mounted = ref<Set<string>>(new Set<string>([active.value]))
+function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
 
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
-const previewRef = ref<InstanceType<typeof PanelPreview> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 const projectId = computed(() => props.topic?.project_id ?? null)
@@ -200,6 +231,9 @@ watch(
 // screen. ----
 const previewLatest = ref<string | null>(null)
 const previewSeen = ref<string | null>(null)
+// 当前预览指着的那份文件。网页和跑着的应用只有预览那一格画得出来，所以点开的是它
+// 就去那一格。
+const previewPath = ref<string | null>(null)
 const previewHasNew = computed(() => !!previewLatest.value && previewLatest.value !== previewSeen.value)
 
 function markPreviewSeen(id?: string | null) {
@@ -221,6 +255,7 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
     return
   }
   if (props.topic?.id !== tid) return
+  previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
   // Opening a topic must not greet the reader with a dot for something that was
   // already there before they arrived, and a poll while 预览 is open is looking
@@ -289,6 +324,7 @@ async function pollThreads() {
 }
 
 function tabIsOffered(key: TabKey): boolean {
+  // (自由区的页签不经过这里：开着就在，关掉就没——那是读者自己的动作。)
   // The tab you are ON never disappears from under you. A topic whose changes
   // just merged, or whose preview 芝士 retracted, would otherwise close the
   // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
@@ -322,7 +358,7 @@ function tabTitle(t: TabDef): string {
 }
 // 房间型话题（谁也没在里面干过活）就只剩文档一个 tab —— 一条只有一个选项的
 // tab 栏教不了任何东西，只是一条占着 33px 的横线。
-const showTabBar = computed(() => tabs.value.length > 1)
+const showTabBar = computed(() => tabs.value.length + openFiles.value.length > 1)
 
 // Topic switch: the address decides, 文档 when it says nothing. Baseline the dot
 // against whatever this topic already had, so opening a topic — including
@@ -331,11 +367,15 @@ const showTabBar = computed(() => tabs.value.length > 1)
 watch(
   () => props.topic?.id,
   (id) => {
-    active.value = tabFromUrl() ?? defaultTab.value
+    openFiles.value = (id && filesByTopic.get(id)) || []
+    const asked = tabFromUrl()
+    ensureFileFromUrl(asked)
+    active.value = asked ?? defaultTab.value
     // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
     // decided, so the phase does not get to.
-    settled.value = !!tabFromUrl()
+    settled.value = !!asked
     markPreviewSeen(null)
+    previewPath.value = null
     summary.value = { changedFiles: [], hasRun: false }
     changesSeen.value = ''
     threads.value = { total: 0, open: 0 }
@@ -383,13 +423,16 @@ async function openFile(path: string, taskId?: string | null) {
   // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
   // names a place inside the file, not a file, and neither store knows it.
   const want = path.replace(/:\d+(?:-\d+)?$/, '')
-  if (previewCanShow(want)) {
-    show('preview')
-    await nextTick()
-    if (await previewRef.value?.openFile(want)) {
-      setTab('preview')
-      return
-    }
+  if (previewCanShow(want) && (await inRoomFiles(want))) {
+    openFileTab(want)
+    return
+  }
+  // 画不出来的那几种（网页、应用）只剩预览那一格。它指着谁要现问：芝士一轮里摆出来
+  // 的东西，这里手上那份记录要等这一轮结束才更新。
+  await pollPreviewPointer()
+  if (want === previewPath.value) {
+    setTab('preview')
+    return
   }
   setTab('changes')
   await nextTick()
@@ -398,6 +441,60 @@ async function openFile(path: string, taskId?: string | null) {
   // room is still working on is not on main yet.
   await changesRef.value?.openFile(want, taskId ?? undefined)
 }
+
+/** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
+async function inRoomFiles(path: string): Promise<boolean> {
+  const tid = props.topic?.id
+  if (!tid) return false
+  try {
+    await readPreviewFile(tid, path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
+// 没有就排到最后。
+function placeFile(path: string) {
+  if (openFiles.value.some((f) => f.path === path)) return
+  const next = [...openFiles.value]
+  const temp = next.findIndex((f) => !f.pinned)
+  if (temp >= 0) next.splice(temp, 1, { path, pinned: false })
+  else next.push({ path, pinned: false })
+  setFiles(next)
+}
+
+function openFileTab(path: string) {
+  placeFile(path)
+  setTab(fileKey(path))
+}
+
+function pinFile(path: string) {
+  setFiles(openFiles.value.map((f) => (f.path === path ? { ...f, pinned: true } : f)))
+}
+
+// 关掉的是正看着的那一格，就落到它旁边那一格；自由区空了就回总览。
+function closeFile(path: string) {
+  const at = openFiles.value.findIndex((f) => f.path === path)
+  if (at < 0) return
+  const next = openFiles.value.filter((f) => f.path !== path)
+  setFiles(next)
+  const key = fileKey(path)
+  const nextMounted = new Set(mounted.value)
+  nextMounted.delete(key)
+  mounted.value = nextMounted
+  if (active.value !== key) return
+  const neighbour = next[Math.min(at, next.length - 1)]
+  setTab(neighbour ? fileKey(neighbour.path) : 'overview')
+}
+
+function setFiles(next: FileTab[]) {
+  openFiles.value = next
+  const tid = props.topic?.id
+  if (tid) filesByTopic.set(tid, next)
+}
+
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
 
@@ -446,6 +543,38 @@ defineExpose({ pulse, highlightTurn, openFile })
             >{{ summary.changedFiles.length }}</span
           >
         </button>
+        <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会
+             把两者念成一个东西。 -->
+        <span v-if="openFiles.length" class="tabbar__sep" aria-hidden="true" />
+        <div
+          v-for="f in openFiles"
+          :key="fileKey(f.path)"
+          class="tabbar__file"
+          :class="{ 'tabbar__file--temp': !f.pinned }"
+        >
+          <button
+            type="button"
+            role="tab"
+            class="tabbar__tab"
+            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
+            :aria-selected="active === fileKey(f.path)"
+            :title="f.pinned ? f.path : `${f.path}（双击固定这个页签）`"
+            @click="setTab(fileKey(f.path))"
+            @dblclick="pinFile(f.path)"
+          >
+            <v-icon size="16">{{ fileIcon(f.path) }}</v-icon>
+            <span class="tabbar__name">{{ fileName(f.path) }}</span>
+          </button>
+          <button
+            type="button"
+            class="tabbar__close"
+            :aria-label="`关闭 ${fileName(f.path)}`"
+            :title="`关闭 ${fileName(f.path)}`"
+            @click="closeFile(f.path)"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </button>
+        </div>
       </div>
 
       <div class="tabbody">
@@ -491,14 +620,26 @@ defineExpose({ pulse, highlightTurn, openFile })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
-          ref="previewRef"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"
           :refresh-tick="refreshTick"
           @loaded="markPreviewSeen"
           @locate="emit('locate', $event)"
+          @open-file="openFileTab"
         />
+        <template v-for="f in openFiles" :key="fileKey(f.path)">
+          <PanelPreview
+            v-if="mounted.has(fileKey(f.path))"
+            v-show="active === fileKey(f.path)"
+            :topic-id="topicId"
+            :project-id="projectId"
+            :path="f.path"
+            :active="active === fileKey(f.path)"
+            :refresh-tick="refreshTick"
+            @locate="emit('locate', $event)"
+          />
+        </template>
       </div>
     </template>
   </div>
@@ -554,6 +695,53 @@ defineExpose({ pulse, highlightTurn, openFile })
   cursor: pointer;
 }
 .tabbar__tab:hover {
+  color: var(--ink);
+}
+/* 固定区和自由区之间的那一道：前面几格永远在，后面几格是你自己开的。 */
+.tabbar__sep {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--line);
+}
+.tabbar__file {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+.tabbar__file .tabbar__tab {
+  padding-right: 4px;
+}
+.tabbar__name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 临时位：下一次打开会换掉它。斜体是编辑器里通行的说法；双击就不斜了。 */
+.tabbar__file--temp .tabbar__name {
+  font-style: italic;
+}
+.tabbar__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.tabbar__close:hover {
+  background: var(--fill);
   color: var(--ink);
 }
 /* 选中态: ink + 一条下边线。琥珀只留给唯一主操作、导航选中态和品牌标，工作面板的
