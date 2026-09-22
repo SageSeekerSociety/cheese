@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import ActorResolverDep
+from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -854,24 +855,26 @@ async def _course_anchor_task(db, *, space_id: int) -> Task | None:
     return None
 
 
-async def _course_project_for(db, *, space_id: int, auth_user: AuthUserInfo):
+async def _course_project_for(
+    db, *, space_id: int, auth_user: AuthUserInfo, membership_service
+):
     """The caller's project in this course, created once and reused after.
 
     Reuse is asked of the SPACE, not of the anchor 题 — see
-    ``ProjectRepository.list_for_space_and_owner``. Then the existing
+    ``ProjectService.projects_in_space_for_owner``. Then the existing
     participation path does the creating, so a course project is an ordinary
     project: same protocol inheritance, same brief document, same 一学期一个项目
     key. Returns ``None`` when the course has nothing to anchor a project on
     yet, which is an honest answer rather than a stray hidden 题.
     """
-    from app.domain.project.repositories import ProjectRepository
     from app.domain.project.services import ProjectService
 
     owner = await UserRepository(session=db).get_by_id(auth_user.user_id)
     if owner is None:
         raise NotFoundError("Participant user not found")
 
-    existing = await ProjectRepository(session=db).list_for_space_and_owner(
+    projects = ProjectService(db)
+    existing = await projects.projects_in_space_for_owner(
         space_id=space_id, owner_handle=owner.username
     )
     if existing:
@@ -881,7 +884,6 @@ async def _course_project_for(db, *, space_id: int, auth_user: AuthUserInfo):
     if anchor is None:
         return None
 
-    membership_service = _membership_service(db)
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=anchor.id, member_id=auth_user.user_id
     )
@@ -898,20 +900,8 @@ async def _course_project_for(db, *, space_id: int, auth_user: AuthUserInfo):
             personal_advantage=None,
             remark=None,
         )
-    return await ProjectService(db).for_participation(
+    return await projects.for_participation(
         task=anchor, membership=membership, owner_handle=owner.username
-    )
-
-
-def _membership_service(db) -> TaskMembershipService:
-    from app.domain.team.repositories import TeamRepository
-
-    return TaskMembershipService(
-        repo=TaskMembershipRepository(session=db),
-        realname_repo=UserRealNameRepository(session=db),
-        space_repo=SpaceRepository(session=db),
-        space_rank_repo=SpaceUserRankRepository(session=db),
-        team_repo=TeamRepository(session=db),
     )
 
 
@@ -924,6 +914,7 @@ async def enroll_in_course(
     payload: EnrollInCourseRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
     """What the course link does, in one round trip.
@@ -950,7 +941,12 @@ async def enroll_in_course(
         await service.join_space(code=code, user_id=auth_user.user_id)
 
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    project = await _course_project_for(db, space_id=space_id, auth_user=auth_user)
+    project = await _course_project_for(
+        db,
+        space_id=space_id,
+        auth_user=auth_user,
+        membership_service=membership_service,
+    )
     space = await service.get_space(space_id)
     if space is None:
         raise NotFoundError.for_resource("space", space_id)
