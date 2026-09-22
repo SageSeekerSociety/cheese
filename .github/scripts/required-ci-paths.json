@@ -2,6 +2,8 @@
   "backend": [
     "backend/**",
     "deploy/metering-proxy/**",
+    ".pre-commit-config.yaml",
+    ".github/scripts/ensure-apt.sh",
     ".github/workflows/test.yml"
   ],
   "frontend": [
@@ -28,6 +30,7 @@
   ],
   "deploy": [
     "deploy/**",
+    ".github/scripts/ensure-apt.sh",
     "backend/scripts/gateway_supply_probe.py",
     "backend/scripts/test_gateway_supply_probe.py",
     ".github/workflows/deploy-drift.yml",
