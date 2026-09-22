@@ -131,12 +131,16 @@ class SudoPurpose(StrEnum):
     the one that gets performed. So the purpose is asked for at mint time,
     signed into the ticket, and checked at the entrance that redeems it.
 
-    Only the operations whose gate the server actually enforces belong here.
-    The rest are still gated in the client alone and ask for no ticket: a
-    credential with no lock to fit is not a protection, it is a spare key.
+    Only the operations whose gate the server actually enforces belong here:
+    a credential with no lock to fit is not a protection, it is a spare key.
     """
 
+    TWO_FA_ENABLE = "2fa:enable"
     TWO_FA_DISABLE = "2fa:disable"
+    TWO_FA_BACKUP_CODES = "2fa:backup-codes"
+    TWO_FA_SETTINGS = "2fa:settings"
+    PASSKEY_ADD = "passkey:add"
+    PASSKEY_DELETE = "passkey:delete"
 
 
 class MintedSudoTicket(NamedTuple):
