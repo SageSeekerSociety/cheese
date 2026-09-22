@@ -21,7 +21,7 @@
  * （见下面那几个模块级计数器），否则慢的那次后到，会把快的那次覆盖掉。
  */
 
-import type { AdminFeedbackStats, FeedbackAdminPatch } from '@/api'
+import type { FeedbackAdminPatch, StatsKind, StatsShapes } from '@/api'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -47,10 +47,10 @@ import {
   deleteFeedbackComment,
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
-  getAdminFeedbackStats,
   getFeedback,
   getFeedbackCounts,
   getFeedbackMeta,
+  getStats,
   likeFeedbackComment,
   listAdminFeedback,
   listFeedback,
@@ -102,7 +102,13 @@ const DRAFT_SAVE_DEBOUNCE_MS = 400
 let listSeq = 0
 let adminSeq = 0
 let mineSeq = 0
-let statsSeq = 0
+/** 看板那三类的代次，**一类一把**。
+ *
+ *  一把共用的计数器在这里是错的，而且错得很安静：看板挂载时就发了一次请求，人接着切
+ *  到另一类 —— 共用计数器一自增，那一份还在飞的响应就被判成「过期」，于是第一类永远
+ *  停在 `null`，切回去还要再拉一次。而「过期」在这里的**真实含义**只是「后来又问了同
+ *  一类」，切到别的类并没有让谁过期。 */
+const statsSeq: Record<StatsKind, number> = { feedback: 0, usage: 0, platform: 0 }
 /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
  *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
 let adminDetailSeq = 0
@@ -266,6 +272,20 @@ function emptyDraft(): FeedbackDraft {
   }
 }
 
+/** 看板那三份数据各存各的：分类 → 它那一份（还没拉到就是 null）。 */
+type StatsBucket = { [K in StatsKind]: StatsShapes[K] | null }
+
+/** 把刚拉到的那一份写进它自己那一格。
+ *
+ *  为什么不直接 `bucket[kind] = value`：那是**联合索引写入**，TS 没法保证写进去的正是
+ *  那一格要的类型（三格的形状互不相同），它会拒绝。三个分支各自窄化一次，是对同一件
+ *  事的显式说法 —— 也正是「切到用量却把反馈的数写进用量那一格」这类错会藏身的地方。 */
+function assignStats(bucket: StatsBucket, kind: StatsKind, value: StatsShapes[StatsKind]): void {
+  if (kind === 'feedback') bucket.feedback = value as StatsShapes['feedback']
+  else if (kind === 'usage') bucket.usage = value as StatsShapes['usage']
+  else bucket.platform = value as StatsShapes['platform']
+}
+
 /** 把表单折成请求体。**只有这一个地方做这件事**：两条提交路走的是同一个动作，
  *  各折一次的话，「可见范围」这种后来加的字段必然只会加进其中一份。 */
 function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
@@ -360,10 +380,19 @@ export const useFeedbackStore = defineStore('feedback', {
     adminSince: null as string | null,
     adminResolvedSince: null as string | null,
     adminDeployedSince: null as string | null,
-    /* ---- 看板的汇总（`GET /admin/feedback/stats`）。和上面那份列表是**两份数据**：
-       列表回的是「这一栏的第一页」，这里是 7 天的聚合。前端拿列表数一个聚合出来，
-       就是把筛选和分页各抄第二份，数出来的数字迟早和旁边那一栏对不上。 ---- */
-    stats: null as AdminFeedbackStats | null,
+    /* ---- 看板的汇总。**一个分类一份**（`/admin/stats/{feedback,usage,platform}`），
+       因为服务端就是三块：切到哪一类才拉哪一类，各自留着自己那份（切回来不再拉一次，
+       也不会出现「切到用量却画着反馈的数」）。和上面那份列表是**两份数据** —— 列表回
+       的是「这一栏的第一页」，这里是窗口内的聚合；拿列表在前端数一个聚合出来，就是把
+       筛选和分页各抄第二份，数出来的数字迟早和旁边那一栏对不上。 ---- */
+    stats: {
+      feedback: null,
+      usage: null,
+      platform: null,
+    } as { [K in StatsKind]: StatsShapes[K] | null },
+    /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
+       但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
+    statsKind: 'feedback' as StatsKind,
     statsLoading: false,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
@@ -1334,23 +1363,31 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /* ---- 看板 ---- */
 
-    /** 拉看板那一页要的汇总。`days` 由页面给（默认 7，就是页头上那句「过去 7 天」）
-     *  —— 窗口是页面的问题，不是 store 的：将来多一个「过去 30 天」就是换个参数。
+    /** 拉看板的**一个分类**。`kind` 缺省是当前停着的那一类，`days` 由页面给（默认 7，
+     *  就是页头上那句「过去 7 天」）—— 窗口是页面的问题，不是 store 的：将来多一个
+     *  「过去 30 天」就是换个参数。
+     *
+     *  **切分类要把当时那一类钉住**：请求发出去之后人才切的分类，回来的那一份是给上一个
+     *  分类的，写进 `stats[kind]` 才对；写进「现在这一类」就成了「切到用量、画出来的是
+     *  反馈的数」。所以 `kind` 在这里被捕获，不读 `this.statsKind`。
      *
      *  和列表一样要扔掉过期响应：R 键连按两次会发两个请求，而先发的那次可能后到。 */
-    async loadStats(days = 7): Promise<void> {
-      const seq = ++statsSeq
+    async loadStats(kind?: StatsKind, days = 7): Promise<void> {
+      // `kind` 缺省是「当前停着的那一类」，但**在这里定下来**（不写进参数默认值：
+      // 参数默认值里的 `this` 在 options store 里没有类型，而它读的正是 this）。
+      const wanted: StatsKind = kind ?? this.statsKind
+      const seq = ++statsSeq[wanted]
       this.statsLoading = true
       this.error = null
       try {
-        const stats = await getAdminFeedbackStats({ days })
-        if (seq !== statsSeq) return
-        this.stats = stats
+        const stats = await getStats(wanted, { days })
+        if (seq !== statsSeq[wanted]) return
+        assignStats(this.stats, wanted, stats)
       } catch (error) {
-        if (seq !== statsSeq) return
+        if (seq !== statsSeq[wanted]) return
         this.error = message(error, '看板加载失败')
       } finally {
-        if (seq === statsSeq) this.statsLoading = false
+        if (seq === statsSeq[wanted]) this.statsLoading = false
       }
     },
 

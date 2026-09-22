@@ -1681,32 +1681,6 @@ function platformStats(url: URL): Record<string, unknown> {
   }
 }
 
-/** 老路径 `/admin/feedback/stats` —— **迁移期的别名**，服务端已经没有它了
- *  （看板拆成了上面那三条）。`api.ts` 的 `getAdminFeedbackStats` 还指着这条路，而看板
- *  那一页还没换过来；留一条是为了**两种前端版本都不报警**：假后端存在的意义就是预览里
- *  不出现「没有假数据的请求」。
- *
- *  形状照 `AdminFeedbackStats` 抄：四个数（`untriaged` 就是「还没人管」那一个，
- *  `in_progress` 就是 `active`）、两条线、成本那张卡。成本从上面 `usageWindow` 借，
- *  借法两边一样，所以不会出现「看板说 1,284 次调用、成本卡说另一个数」。
- *  **前端那一页换完之后这一条应当删掉** —— 它是脚手架，不是服务端的接口。 */
-function legacyFeedbackStats(url: URL): Record<string, unknown> {
-  const days = windowDays(url)
-  const c = counts()
-  const usage = usageWindow(days)
-  return {
-    days,
-    totals: {
-      untriaged: c.unassigned,
-      in_progress: c.active,
-      resolved: c.resolved,
-      deployed: c.deployed,
-    },
-    series: dense(days, { created: createdDays(), resolved: reachedDays('resolved') }),
-    cost: { calls: usage.calls, usd: usage.cost },
-  }
-}
-
 let nextId = 1043
 
 /* ---- 成员管理（`/admin/members`）的假数据 ---- */
@@ -1792,8 +1766,13 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   // --- 看板（`/admin/stats/*`）---------------------------------------------
   //
   // 三条路由一个分类（`backend/app/api/routes/admin_stats.py`），切到哪一类才拉哪一类。
-  // 这一组的前缀不是 `/admin/feedback`，所以不会被下面那条动态段吃掉；唯一有这个风险的
-  // 是老路径 `/admin/feedback/stats`，那一条紧挨着动态段写（见下）。
+  // 这一组的前缀不是 `/admin/feedback`，所以不会被下面那条动态段吃掉。
+  //
+  // 这里以前还多一条**老路径** `/admin/feedback/stats` 的替身，注释里写着「看板那一页
+  // 还没换过来」。那是个教训：它把真环境里的 **400** 盖住了 —— 前端指着一条已经没有的
+  // 路由，`stats` 落进 `/admin/feedback/{id}` 被当成一个 uuid 解析，预览一切正常、dev 上
+  // 是「看板加载失败」。**替身只该照抄服务端真实存在的东西**；一条为了「两种前端版本都
+  // 不报警」而留的别名，代价是发现不了其中一种版本是坏的。
   const stats = /^\/admin\/stats\/([a-z]+)$/.exec(path)
   if (stats && method === 'GET') {
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
@@ -1815,12 +1794,6 @@ function routes(url: URL, method: string, body: unknown): MockReply {
     if (!SORTS.includes(sort)) return { invalid: `未知的排序：${sort}` }
     return { data: adminPage(url, tab, sort) }
   }
-
-  // 老路径 `/admin/feedback/stats`。**必须在 `/admin/feedback/{id}` 之前**：晚一步的话
-  // `stats` 会被那条动态段当成一条反馈的 id，页面拿到的是 `data: null`（HTTP 200，
-  // 不是报错）—— 那种错最难查，因为每个请求都「成功」了。删它的时机见
-  // `legacyFeedbackStats` 的注释。
-  if (path === '/admin/feedback/stats' && method === 'GET') return { data: legacyFeedbackStats(url) }
 
   // --- 成员管理（`/admin/members`）----------------------------------------
   //

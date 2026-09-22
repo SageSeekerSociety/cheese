@@ -125,14 +125,8 @@
       "untriaged": "待分诊",
       "inProgress": "进行中",
       "resolved7d": "7 日解决",
-      "deployed7d": "7 日上线",
       "created7d": "7 日新增",
-      "resolvedTotal": "已解决累计",
-      "deployedTotal": "已上线累计",
-      "all": "全部反馈",
-      "hot": "热门",
-      "unread": "未读",
-      "noSeries": "暂无来源"
+      "unread": "未读"
     },
     "chart": {
       "title": "每天新增 / 每天解决",
@@ -156,8 +150,32 @@
     },
     "partial": {
       "title": "成本数据暂不可用",
-      "desc": "用量接口未返回。其余数字不受影响。",
       "hint": "用量接口未返回"
+    },
+    "tab": {
+      "feedback": "反馈",
+      "usage": "用量",
+      "platform": "平台"
+    },
+    "usage": {
+      "tokens": "窗口内 token",
+      "calls": "窗口内调用",
+      "chart": "每天 token",
+      "top": "最花 token 的项目"
+    },
+    "people": {
+      "total": "账号总数",
+      "new": "7 日新增",
+      "admins": "平台管理员",
+      "chart": "每天新增账号"
+    },
+    "machines": {
+      "title": "机器（存量）",
+      "devices": "设备",
+      "hosted": "托管设备",
+      "warm": "常驻机器",
+      "project": "项目机器",
+      "note": "这四行是四张台账的存量，不是在线数 —— 在线状态住在进程内存里，库里没有可以查的那一列。"
     }
   },
   "chart": {
