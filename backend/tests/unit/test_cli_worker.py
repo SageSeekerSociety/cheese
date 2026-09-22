@@ -159,6 +159,8 @@ def test_worker_feedback_description_includes_parent_triggers(worker, tmp_path):
         "用户让你提",
     ):
         assert trigger in description
+    assert "什么时候不该提" in description
+    assert "芝士 平台 CLI" not in description
     assert description.index("什么时候该提") < description.index("落一张提案卡")
 
 

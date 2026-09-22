@@ -191,7 +191,8 @@ def test_the_table_is_exactly_the_six_plus_the_two_the_transport_owns(machine_is
 
 
 def test_feedback_propose_description_carries_the_cli_guidance(machine_is_gone):
-    """`cheese_feedback_propose` 的 description 必须和 `cheese feedback -h` 同源。
+    """`cheese_feedback_propose` 的 description 必须是父命令 `cheese feedback -h` 的文案
+    **加上** 叶子 `cheese feedback propose -h` 的文案，两段都少不得。
 
     只抄叶子命令的文案（「落一张提案卡……」）就是这次的 bug：四条触发和
     「什么时候不该提」写在父命令上，agent 在 MCP 这一侧根本看不见，于是它不知道

@@ -136,6 +136,11 @@ class ToolTable:
         return name in self.names()
 
 
+def join_descriptions(*parts: str) -> str:
+    """The one way command-chain descriptions become a tool schema description."""
+    return "\n\n".join(part for part in parts if part)
+
+
 # `cheese feedback -h` and the native MCP schema for `cheese_feedback_propose`
 # must carry the same 什么时候该用 text. Both read these two strings — the parent
 # command's guidance and the leaf's — so the surfaces cannot drift apart.
@@ -216,9 +221,9 @@ PLATFORM_TOOLS = ToolTable(
         },
         {
             "name": "cheese_feedback_propose",
-            "description": FEEDBACK_DESCRIPTION
-            + "\n\n"
-            + FEEDBACK_PROPOSE_DESCRIPTION,
+            "description": join_descriptions(
+                FEEDBACK_DESCRIPTION, FEEDBACK_PROPOSE_DESCRIPTION
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
