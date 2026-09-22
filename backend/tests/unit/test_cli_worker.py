@@ -161,7 +161,7 @@ def test_worker_feedback_description_includes_parent_triggers(worker, tmp_path):
         assert trigger in description
     assert "什么时候不该提" in description
     assert "芝士 平台 CLI" not in description
-    assert description.index("什么时候该提") < description.index("落一张提案卡")
+    assert description.index("什么时候该提") < description.index("把你发现的问题提成一张提案卡")
 
 
 def test_worker_tool_description_joins_ancestor_guidance_without_the_root(

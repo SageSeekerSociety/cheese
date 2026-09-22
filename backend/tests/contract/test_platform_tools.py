@@ -180,14 +180,20 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
 
-def test_the_table_is_exactly_the_six_plus_the_two_the_transport_owns(machine_is_gone):
+def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(machine_is_gone):
     """表上只有六样（结论 21）。
 
-    另外两个不是产品动作，是这条传输自己的两个口子：`invoke` 是项目工具（文件、命
-    令）过河的那一程，`platform_request` 是没有对应工具时的原始 API 入口。
+    另外三个不是产品动作，是这条传输自己的三个口子：`invoke` 是项目工具（文件、命
+    令）过河的那一程，`platform_request` 是没有对应工具时的原始 API 入口，
+    `send_user_file` 是 SendUserFile 把文件递进本房间的那一程。
     """
     process, _, _ = machine_is_gone
-    assert set(_listing(process)) == {*SIX, "invoke", "platform_request"}
+    assert set(_listing(process)) == {
+        *SIX,
+        "invoke",
+        "platform_request",
+        "send_user_file",
+    }
 
 
 def test_feedback_propose_description_carries_the_cli_guidance(machine_is_gone):
@@ -219,7 +225,7 @@ def test_feedback_propose_description_carries_the_cli_guidance(machine_is_gone):
     ):
         assert trigger in description
     assert "什么时候不该提" in description
-    assert description.index("什么时候该提") < description.index("落一张提案卡")
+    assert description.index("什么时候该提") < description.index("把你发现的问题提成一张提案卡")
 
 
 @pytest.mark.parametrize("tool", SIX)
