@@ -594,7 +594,17 @@ class FeedbackRepository:
         return [sunk]
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         # Everything that narrows the tab **except** the hot rule itself. The hot
         # rule is then expressed against this list rather than appended to it —
@@ -607,6 +617,18 @@ class FeedbackRepository:
         where.extend(self._tab_where(tab))
         if q:
             where.append(matching(q))
+        # 四个筛选**加在栏位之上**，不替换它：它们是同一批行的进一步收窄
+        # （`tab` 说的是「哪一栏」，这四个说的是「那一栏里哪些」）。全部走等值比较
+        # 与 `>=`，所以都能吃到 `ix_feedback_visibility_status_created` 那一组索引的
+        # 前缀；`author` 另有 `ix_feedback_author_created`。
+        if author is not None:
+            where.append(Feedback.author_handle == author)
+        if status is not None:
+            where.append(Feedback.status == status)
+        if kind is not None:
+            where.append(Feedback.kind == kind)
+        if since is not None:
+            where.append(Feedback.created_at >= since)
         if tab == "hot":
             # `hot` is a filter **and** an ordering, and both come from
             # `hot_score()` — the tab's definition, not just its sort.

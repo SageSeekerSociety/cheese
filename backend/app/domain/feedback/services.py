@@ -53,6 +53,7 @@ from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
+    FeedbackKind,
     FeedbackStatus,
     FeedbackVisibility,
 )
@@ -242,10 +243,43 @@ class FeedbackService:
     # --- 读 -----------------------------------------------------------------
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
+        """公开列表，四个可选的筛选叠在栏位之上。
+
+        **不认识的取值一律 400，不退回「全不筛」** —— 和 `tab` / `sort` 同一条规矩：
+        猜错一个筛选会让人以为「没有这样的反馈」，而它其实只是被别的条件挡住了。
+        反馈中心那几个筛选是**控件**，控件里的值只能来自这份词表（服务端随 meta 下发
+        的 `statuses` / `kinds`），所以走到这里的一定是客户端版本落后了，而不是有人
+        手打了什么。
+        """
+        # 「办完了」那一栏装的是两级（修复 + 上线），而状态筛选是**单级**的。两者
+        # 不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
+        # `_tab_where` 合并，只保证两边都成立。
+        if status is not None and status not in {s.value for s in FeedbackStatus}:
+            raise BadRequestError(f"未知的状态：{status}")
+        if kind is not None and kind not in {k.value for k in FeedbackKind}:
+            raise BadRequestError(f"未知的类型：{kind}")
         return await self._repo.list_public(
-            tab=tab, q=q, sort=sort, limit=limit, offset=offset
+            tab=tab,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            author=author,
+            status=status,
+            kind=kind,
+            since=since,
         )
 
     async def list_admin(

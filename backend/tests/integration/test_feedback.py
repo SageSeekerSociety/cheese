@@ -2788,3 +2788,67 @@ def test_an_unauthenticated_delete_is_refused(client):
     """没登录的人连「能不能删」都不该问出来（401，不是 403）。"""
     row = _report(client, REPORTER, body="按钮点了没反应")
     assert client.delete(f"/feedback/{row['id']}").status_code == 401
+
+
+# --- 公开列表的四个筛选 --------------------------------------------------------
+
+
+def test_the_four_filters_narrow_the_list(client, as_admin):
+    """作者 / 状态 / 类型 / 起始时间：四个都能把结果收窄，而且**缺省即不筛**。
+
+    「缺省即不筛」那半也要断言：老的调用方一个都不传，行为必须一字不变 —— 加筛选最
+    容易出的事就是把某个条件写成必填。
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    bug = _report(client, REPORTER, kind=FeedbackKind.bug, title="按钮点了没反应")
+    idea = _report(client, STRANGER, kind=FeedbackKind.suggestion, title="希望支持导出")
+    old = _report(client, REPORTER, kind=FeedbackKind.bug, title="很老的一条")
+
+    # 把一个状态推到第二级，用来验状态筛选。
+    client.post(
+        f"/admin/feedback/{idea['id']}/status",
+        json={"status": "in_progress"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.id == uuid.UUID(old["id"]))
+                .values(created_at=datetime.now(UTC) - timedelta(days=30))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, REPORTER, **params)}
+
+    # 不传就是全部（缺省即不筛）。
+    assert ids() == {bug["id"], idea["id"], old["id"]}
+
+    # 四个各收各的。
+    assert ids(author=REPORTER) == {bug["id"], old["id"]}
+    assert ids(kind="suggestion") == {idea["id"]}
+    assert ids(status="in_progress") == {idea["id"]}
+    since = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    assert ids(since=since) == {bug["id"], idea["id"]}
+
+    # 叠起来是**与**，不是或。
+    assert ids(author=REPORTER, kind="bug") == {bug["id"], old["id"]}
+    assert ids(author=STRANGER, kind="bug") == set()
+
+
+def test_an_unknown_status_or_kind_is_refused_rather_than_ignored(client):
+    """不认识的取值报 **400**，不退回「全不筛」。
+
+    和 `tab` / `sort` 同一条规矩：猜错一个筛选会让人以为「没有这样的反馈」，而它其实
+    只是被别的条件挡住了 —— 页面上看不出任何异常。
+    """
+    assert client.get("/feedback", params={"status": "shipped"}).status_code == 400
+    assert client.get("/feedback", params={"kind": "complaint"}).status_code == 400
+    assert client.get("/feedback", params={"status": "received"}).status_code == 200
+    assert client.get("/feedback", params={"kind": "bug"}).status_code == 200

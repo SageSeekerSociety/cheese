@@ -15,6 +15,7 @@ harness 正是用第二种在敲门。`/awaiting-me` 是同一个先例。
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -209,6 +210,14 @@ async def list_feedback(
     tab: str = Query(default="all"),
     q: str | None = Query(default=None, max_length=200),
     sort: str = Query(default="new"),
+    #: 四个筛选：作者 / 状态 / 类型 / 起始时间。**都是可选的，缺省即不筛** —— 所以
+    #: 老的调用方（一个都不传）行为一字不变。不认识的 status / kind 报 400（见
+    #: `services.list_public`），`author` 和 `since` 是自由值：前者是个人名，后者是
+    #: 一个时刻，都不该由服务端维护一张词表。
+    author: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, max_length=32),
+    kind: str | None = Query(default=None, max_length=32),
+    since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
@@ -221,7 +230,15 @@ async def list_feedback(
         # so nobody reaches this by hand.
         raise BadRequestError(f"未知的视图：{tab}")
     rows, total = await service.list_public(
-        tab=tab, q=q, sort=sort, limit=page_size, offset=page_start
+        tab=tab,
+        q=q,
+        sort=sort,
+        limit=page_size,
+        offset=page_start,
+        author=author,
+        status=status,
+        kind=kind,
+        since=since,
     )
     items = await _cards(service, rows, handle=handle)
     return ok({**page(items, total), "counts": await service.counts(handle=handle)})

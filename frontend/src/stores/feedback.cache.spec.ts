@@ -151,7 +151,34 @@ describe('列表：命中先画，背后照拉', () => {
     expect(store.loading).toBe(true)
     searching.resolve(page([card('fb-2')]))
     await pending
-    expect(listFeedback).toHaveBeenLastCalledWith({ tab: 'all', q: '头像', pageSize: 50 })
+    // 四个筛选也在请求体里（默认全空 = 不筛）。它们和 `q` 一样是**指纹的一部分**：
+    // 少了这一半，换一个筛选时列表会画回上一份缓存。
+    expect(listFeedback).toHaveBeenLastCalledWith({
+      tab: 'all',
+      q: '头像',
+      pageSize: 50,
+      author: '',
+      kind: null,
+      status: null,
+      since: null,
+    })
+  })
+
+  it('换一个筛选也算指纹的一部分，而且会真的发给服务端', async () => {
+    listFeedback.mockResolvedValueOnce(page([card('fb-1')]))
+    const store = useFeedbackStore()
+    await store.loadList()
+
+    listFeedback.mockResolvedValueOnce(page([card('fb-2')]))
+    store.setFilter({ kind: 'bug' })
+    await Promise.resolve()
+
+    expect(listFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'bug' }))
+    // 再切回不筛 —— 指纹跟着变，所以不会画回上面那一份。
+    listFeedback.mockResolvedValueOnce(page([card('fb-1')]))
+    store.setFilter({ kind: null })
+    await Promise.resolve()
+    expect(listFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ kind: null }))
   })
 
   it('刷新失败回到「拉失败」那一态，旧内容不留在屏幕上冒充', async () => {
