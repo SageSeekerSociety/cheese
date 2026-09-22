@@ -367,12 +367,22 @@ function routeLabel(route: string): string {
  *  都是中性阶，这一行是唯一需要「一眼看出好坏」的地方。 */
 const health = computed(() => platform.value?.health ?? null)
 
+/** 检查名 → 词条键。**写成字面量表**，不在模板里拼 `feedback.dashboard.health.${name}`
+ *  —— 拼出来的键在源码里没有一处字面量出现，`catalog.spec.ts` 的「这个键没有任何文件
+ *  引用」那条闸门会把它们判成死词条（它扫的是源码文本，不是运行时的调用）。和上面
+ *  `TAB_KEY` 同一个理由。 */
+const HEALTH_KEY: Record<string, string> = {
+  database: 'feedback.dashboard.health.database',
+  redis: 'feedback.dashboard.health.redis',
+  event_loop: 'feedback.dashboard.health.event_loop',
+}
+
 const healthRows = computed(() => {
   const h = health.value
   if (!h) return []
   return Object.entries(h.checks).map(([name, body]) => ({
     key: name,
-    label: t(`feedback.dashboard.health.${name}`),
+    label: t(HEALTH_KEY[name] ?? name),
     status: body.status,
     tone: body.status === 'up' ? 'ok' : body.status === 'down' ? 'danger' : 'warn',
   }))
