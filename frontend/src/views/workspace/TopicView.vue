@@ -322,7 +322,7 @@ watch(
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
            什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
            画。放在这里而不是首屏：见组件自己的说明。 -->
-      <PushPermissionPrompt class="env-strip" :working="working" />
+      <PushPermissionPrompt :working="working" />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
@@ -386,11 +386,6 @@ watch(
 <style scoped>
 /* 这条不参与伸缩：它有内容时占自己那点高度，没内容时整个不在 DOM 里，四格的高度
    都不会因为它变来变去。 */
-.env-strip {
-  flex: 0 0 auto;
-  margin: 8px 12px 0;
-}
-
 .topic-view {
   flex: 1 1 auto;
   overflow: hidden;
