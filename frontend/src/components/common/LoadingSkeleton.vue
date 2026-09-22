@@ -171,27 +171,25 @@ function width(i: number): string {
       </div>
     </template>
 
-    <!-- 反馈中心的一条：左边是支持（32px 的正圆按钮 + 计数），右边是标题 + 状态芯片、
-         两行摘要、元信息一行。它和 `card` 不是一回事：看板的卡没有左边那一列，也没有
-         两行摘要；共用一种形态就会有一边对不上。 -->
+    <!-- 反馈中心的一条（`FeedbackCard` 的 `.fb-card`）：竖着一列 —— 标题、两行摘要、
+         底行（头像 + 作者 · 时间 + 标签 + 状态 + 支持）。**左边那一列没有了**：支持按钮
+         在卡片上已经挪到底行最右边，骨架左边还留着它的话，真数据到货那一刻整列会重排
+         一次（正文变宽、那颗按钮从左边跳到右下），而这份骨架存在的全部理由就是不重排。
+         它和 `card` 不是一回事：看板的卡没有两行摘要。 -->
     <template v-else-if="variant === 'feedback'">
       <div v-for="i in rows || DEFAULT_ROWS.feedback" :key="i" class="skel__fb" :style="{ '--skel-i': i }">
-        <div class="skel__fb-vote">
-          <div class="skel__bone skel__bone--vote" />
-          <div class="skel__bone skel__bone--votecount" />
-        </div>
         <div class="skel__fb-main">
-          <div class="skel__fb-titlerow">
-            <div class="skel__bone skel__bone--fbtitle" />
-            <div class="skel__bone skel__bone--fbchip" />
-          </div>
+          <div class="skel__bone skel__bone--fbtitle" />
           <div class="skel__bone skel__bone--fbsum" :style="{ width: width(i) }" />
           <!-- 第二行：-webkit-line-clamp 的第二行本来就是半行，所以它固定短一截。 -->
           <div class="skel__bone skel__bone--fbsum skel__bone--fbsum-last" />
           <div class="skel__fb-meta">
-            <div class="skel__bone skel__bone--meta skel__bone--fbauthor" />
+            <div class="skel__bone skel__bone--fbavatar" />
+            <div class="skel__bone skel__bone--fbauthor" />
             <div class="skel__bone skel__bone--fbtag" />
             <div class="skel__bone skel__bone--fbtag" />
+            <div class="skel__bone skel__bone--fbchip" />
+            <div class="skel__bone skel__bone--fbvote" />
           </div>
         </div>
       </div>
@@ -605,32 +603,13 @@ function width(i: number): string {
    v-card 默认值。圆角不参与布局，这一处对不上不会让内容挪位。 */
 .skel__fb {
   display: flex;
-  gap: 12px;
+  /* 竖列，而且只有一列 —— 真卡片左边那 40px 的支持栏已经没有了。 */
+  flex-direction: column;
   padding: 16px;
   margin-bottom: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-}
-.skel__fb-vote {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding-top: 2px;
-}
-/* 支持按钮：v-btn icon size=small —— 32px 的正圆（.v-btn--icon 是 border-radius 50%）。 */
-.skel__bone--vote {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-}
-/* 它下面那一行计数：12px 等宽字，行盒 18px。 */
-.skel__bone--votecount {
-  width: 20px;
-  height: 10px;
-  margin: 4px 0;
 }
 .skel__fb-main {
   display: flex;
@@ -639,23 +618,26 @@ function width(i: number): string {
   min-width: 0;
 }
 /* 标题那一行：15px × 1.4 = 21px 的行盒，右边跟一枚状态芯片（19px）。 */
-.skel__fb-titlerow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
 .skel__bone--fbtitle {
   width: 46%;
   height: 13px;
   margin: 4px 0;
 }
-/* 状态芯片是胶囊（.fb-chip），高 19px。 */
+/* 状态芯片是胶囊（.fb-chip），高 19px；它在底行的右半边，所以 `margin-left: auto`
+   把这一颗和它右边那颗支持按钮一起推过去 —— 真卡片上就是这两颗靠 `auto` 顶在右边。 */
 .skel__bone--fbchip {
   width: 56px;
   height: 19px;
   flex: none;
+  margin-left: auto;
   border-radius: var(--radius-pill);
+}
+/* 支持按钮：图标 + 数字的一颗小按钮。实测 51×36（窄屏上真卡片把它抬到 36 高）。 */
+.skel__bone--fbvote {
+  width: 51px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--radius-sm);
 }
 /* 摘要两行：13px × 1.6 = 20.8px 的行盒。第一行占满（真文字就是这样），第二行短一截。
    合计 20.8 × 2 + 卡片自己那 8px 下边距 = 49.6px。 */
@@ -667,11 +649,19 @@ function width(i: number): string {
   width: 48%;
   margin-bottom: 13px;
 }
-/* 元信息一行：作者 · 时间、评论数、来源或标签的芯片。 */
+/* 元信息一行：头像、作者 · 时间、评论数、来源或标签的芯片、状态、支持。
+   间距 8 跟着真卡片走（`.fb-card__meta` 是 gap 8）。 */
 .skel__fb-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+}
+/* 头像 18px 的正圆。 */
+.skel__bone--fbavatar {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
 }
 .skel__bone--fbauthor {
   width: 88px;

@@ -397,7 +397,15 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
        但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
     statsKind: 'feedback' as StatsKind,
-    statsLoading: false,
+    /** 看板**每一类各自**的加载中。**不能是一把全局的布尔**：那个标志会被任何一类的
+     *  响应在 `finally` 里清掉（判据只比它自己那一类的代次），于是「前一类的请求还在飞、
+     *  后一类先回来了」这一瞬间，当前这一类的骨架会提前收掉、数字画成「—」、折线图落进
+     *  「暂无数据」—— 屏幕上说这一类没有数据，而它正在路上。更糟的一种是：先回来那一趟
+     *  若是**失败**的，它那句 `error` 配上「当前这一类还没拿到」，整页会翻成「看板加载
+     *  失败」，哪怕当前这一类马上就会成功。
+     *  对外仍然只暴露一个 `statsLoading`（下面那个 getter，读的是**当前这一类**那一格），
+     *  所以页面上的读法一行都不用改。 */
+    statsBusy: { feedback: false, usage: false, platform: false } as Record<StatsKind, boolean>,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
        服务端的 WHERE 就不是同一个。 ---- */
@@ -471,6 +479,11 @@ export const useFeedbackStore = defineStore('feedback', {
     },
     mineHasMore(state): boolean {
       return state.mineItems.length < state.mineTotal
+    },
+    /** 当前停着的那一类在不在加载中。页面读的是它，所以「切到另一类」不会把已经拿到的
+     *  这一类按成骨架。 */
+    statsLoading(state): boolean {
+      return state.statsBusy[state.statsKind]
     },
     tabCounts(state): Record<FeedbackTab, number> {
       return {
@@ -1381,7 +1394,7 @@ export const useFeedbackStore = defineStore('feedback', {
       // 参数默认值里的 `this` 在 options store 里没有类型，而它读的正是 this）。
       const wanted: StatsKind = kind ?? this.statsKind
       const seq = ++statsSeq[wanted]
-      this.statsLoading = true
+      this.statsBusy[wanted] = true
       this.error = null
       try {
         const stats = await getStats(wanted, { days })
@@ -1391,7 +1404,7 @@ export const useFeedbackStore = defineStore('feedback', {
         if (seq !== statsSeq[wanted]) return
         this.error = message(error, '看板加载失败')
       } finally {
-        if (seq === statsSeq[wanted]) this.statsLoading = false
+        if (seq === statsSeq[wanted]) this.statsBusy[wanted] = false
       }
     },
 
