@@ -696,19 +696,20 @@ def test_note_says_whether_anyone_caught_it(monkeypatch, capsys, delivered, expe
 
 
 def test_the_feedback_tool_says_when_to_use_it():
-    """这个工具**唯一的说明就是那段文字**，所以触发时机必须长在工具自己身上。
+    """这个工具**唯一的说明就是那段文字**，所以触发时机必须出现在模型读到的工具说明里。
 
     这里钉的是一次真事故：四条触发时机原来写在 `feedback` 那个**父** parser 的
     `description` 上，而翻 argparse 树的那条路（`cli_worker._tools()`：
     `leaf.description or leaf.format_usage()`）只产出**叶子** —— 于是那段字一个字都
     没到过模型。工具建好了、流程接好了、限流也在，而模型从来不知道什么时候该用它。
 
-    两条发现路径各读一处，所以要两边都断言：
+    两条发现路径各读一处，所以要两边都断言，断言的是**模型实际读到的那一份**：
 
     * **会话侧那张常量表**（`PLATFORM_TOOLS`）—— claude_code 读的是它（结论 21：表在
       会话层，机器离线时它也在）。
-    * **argparse 树的叶子** —— pi 在机器上生成 catalog、codex 从执行器的 `native`
-      服务器发现，两条都读这里。
+    * **`_tools()` 从 argparse 树翻出来的工具说明** —— pi 在机器上生成 catalog、codex
+      从执行器的 `native` 服务器发现，两条都读这里。注意不是裸的 `leaf.description`：
+      `_tools()` 会把祖先 parser 的 description 拼上去，那才是工具 schema 里的字面。
 
     只改一处的话，模型看到的是两种说法里的随机一种，而且**是哪个取决于它跑在哪个
     harness 上** —— 那种 bug 只有对着某一个 harness 复现得出来。
@@ -723,13 +724,14 @@ def test_the_feedback_tool_says_when_to_use_it():
         if tool["name"] == "cheese_feedback_propose"
     )["description"]
 
-    from_tree = None
-    for command, leaf in cli_worker._leaf_commands(cli.build_parser()):
-        if cli_worker._tool_name(command) == "cheese_feedback_propose":
-            from_tree = leaf.description or leaf.format_usage()
+    from_tree = next(
+        tool["description"]
+        for tool in cli_worker._tools(cli.build_parser())
+        if tool["name"] == "cheese_feedback_propose"
+    )
 
     assert from_table, "会话侧那张表里没有这一条"
-    assert from_tree, "argparse 树里没有这个叶子"
+    assert from_tree, "argparse 树翻出来的工具说明里没有这一条"
 
     for description in (from_table, from_tree):
         # 什么时候该提（四条触发时机里至少要能读出这些）。

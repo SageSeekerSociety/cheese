@@ -202,6 +202,8 @@ def test_a_declared_type_is_not_needed_when_the_name_says_it(client):
         ("预算.xlsx", "spreadsheetml"),
         ("结题报告.pdf", "application/pdf"),
         ("页面.html", "text/html"),
+        ("动画.gif", "image/gif"),
+        ("图.webp", "image/webp"),
     ):
         assert (
             client.post(f"/topics/{tid}/shown", json={"path": name}).status_code == 200

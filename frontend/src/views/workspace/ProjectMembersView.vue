@@ -9,9 +9,14 @@
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
 //
-// 还有一件不属于「管理他」的事：**自己退出项目**。它不是名册上某一行的动作，而是
-// 这一页右上角那颗按钮（后端 `DELETE /projects/{id}/membership` 认的恒是当前身份
-// 那个人）。放在这里是因为这个页面就是「我和这个项目的关系」唯一说得清的地方。
+// 还有一件不属于「管理他」的事：**自己和这个项目的关系怎么结束**。不是名册上某
+// 一行的动作，而是这一页右上角那两颗按钮：普通成员「退出项目」（后端
+// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人，确认之后做什么在
+// `LeaveProjectDialog`），所有者「转让项目」（他退不掉，得先把手交出去 ——
+// `PUT /projects/{id}/owner`，`TransferProjectDialog`）。放在这里是因为这个页面
+// 就是「我和这个项目的关系」唯一说得清的地方；项目头上另有一份看得见的入口，
+// 名册本身也回到了侧栏（#6：这一页曾被壳收进 ⋯ 菜单，按钮跟着藏了两层深，
+// 没注意到那个 ⋯ 的人连怎么退出都找不到）。
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -21,7 +26,6 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import {
   inviteProjectMember,
-  leaveProject,
   listProjectAgents,
   listProjectInvitations,
   removeProjectMember,
@@ -29,6 +33,8 @@ import {
   updateProjectMemberRole,
 } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
+import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { label, PROJECT_ROLE } from '@/labels'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
@@ -203,41 +209,34 @@ function confirmRemove() {
   void run(m.user_handle, () => removeProjectMember(props.projectId, m.user_handle))
 }
 
-// ---- 退出项目（自己走） ----
-// 所有者不显示这一颗：后端会拒绝他（他一走项目就没人管得了），前端藏起来是为了
-// 不给人一个必定失败的按钮 —— 和角色 / 移出那两颗按钮同一条理由。
+// ---- 退出项目 / 转让项目（自己这条关系的两个出口） ----
+// 所有者不显示「退出」：后端会拒绝他（他一走项目就没人管得了），给一个必定失败的
+// 按钮是骗人。他换一颗「转让项目」—— `PUT /projects/{id}/owner` 是他离得开的那条
+// 路的第一步（把手交出去，变成普通成员，再退出）。lead 也能转（后端
+// `require_project_steward` 认 owner 和 lead）。
 //
-// 「来自小队」的人照样显示：他在这条路上得到的是一句「请在小队里退出」，那句话
-// 正是他需要的下一步。把入口藏掉，他就只剩下一个点不动的页面。
+// 「来自小队」的人照样显示「退出」：他在这条路上得到的是一句「请在小队里退出」，
+// 那句话正是他需要的下一步。把入口藏掉，他就只剩下一个点不动的页面。
+//
+// 项目行还没到货时**不能**当成「他不是所有者」（那正是把退出递给所有者、点下去吃
+// 403 的那条缝）：没行 = 不知道 = 不给。行到了再按 owner 说；owner 空（无主项目）
+// 谁都退得掉，后端也是这么判的。
+//
+// 确认之后做什么在 LeaveProjectDialog / TransferProjectDialog：这里只决定「给哪颗
+// 按钮」和把它打开。
 const leaveOpen = ref(false)
-const leaving = ref(false)
-const canLeave = computed(() => !!me.value && me.value !== ownerHandle.value)
-
-async function confirmLeave() {
-  leaving.value = true
-  error.value = null
-  try {
-    await leaveProject(props.projectId)
-  } catch (e) {
-    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、访问来自小队、还是某个
-    // 话题唯一的 owner）就是用户要的全部内容，原样摆在页面上 —— 关掉弹窗，因为它
-    // 等的是一个已经不会有结果的「退出」。
-    leaveOpen.value = false
-    error.value = e instanceof Error ? e.message : '退出失败'
-    leaving.value = false
-    return
-  }
-  leaveOpen.value = false
-  // 退出的那一刻，这条请求已经成功了：**接下来做什么都不能再把它变成失败**。
-  // 两份刷新是为了让别的页面不拿着旧数据把我送回这个项目（名册里没有我了，项目
-  // 列表里也没有这个项目了），但它们是锦上添花 —— 刷新接口抖一下，用 allSettled
-  // 让失败就地咽掉，人照样是退出成功的，照样该离开这一页。用 Promise.all 的话一次
-  // 刷新失败会走到 catch 里，页面上挂出「退出失败」，而人其实已经退出了 —— 他再
-  // 点一次只会拿到 409。这一页本身也留不住：我已经不在名册上，它下一次读就是空的。
-  await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
-  void router.push({ name: 'HomeSpaces' })
-  leaving.value = false
-}
+const transferOpen = ref(false)
+const isOwner = computed(() => {
+  const owner = project.value?.owner_handle
+  return !!me.value && !!owner && me.value === owner
+})
+const canLeave = computed(() => {
+  const p = project.value
+  if (!me.value || !p) return false
+  const owner = p.owner_handle
+  return !owner || me.value !== owner
+})
+const canTransfer = computed(() => project.value !== null && (isOwner.value || myRole.value === 'lead'))
 
 // ---- 邀请 ----
 // 按 uid 邀请，而不是按 handle：uid 是个人主页地址里那个数字，找得到、抄得准；
@@ -329,6 +328,15 @@ async function submitInvite() {
         <v-spacer />
         <v-btn v-if="canLeave" variant="text" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
           退出项目
+        </v-btn>
+        <v-btn
+          v-if="canTransfer"
+          variant="text"
+          prepend-icon="mdi-account-arrow-right-outline"
+          class="ms-2"
+          @click="transferOpen = true"
+        >
+          转让项目
         </v-btn>
         <v-btn
           v-if="canManage"
@@ -552,19 +560,8 @@ async function submitInvite() {
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="leaveOpen" max-width="420">
-      <v-card>
-        <v-card-title class="t-title pt-4">退出项目？</v-card-title>
-        <v-card-text class="t-body c-muted">
-          退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来得由项目的组长再邀请你一次
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="leaveOpen = false">取消</v-btn>
-          <v-btn color="error" variant="flat" :loading="leaving" @click="confirmLeave">退出</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
+    <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
 
     <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
       <v-card>

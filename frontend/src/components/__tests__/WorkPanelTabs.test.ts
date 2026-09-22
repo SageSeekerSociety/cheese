@@ -58,6 +58,8 @@ vi.mock('../../api', async () => {
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    readPreviewFile: vi.fn().mockRejectedValue(new Error('file not found')),
   }
 })
 

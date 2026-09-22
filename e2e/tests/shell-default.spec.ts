@@ -11,16 +11,11 @@ import { login } from './helpers';
 // 等号右边是**今天**的样子，不是壳的某种理想形态：这一格、这个顺序、这一屏，就是
 // 此刻每个人打开项目看到的。改这一条等于改「老项目长什么样」，要单独想清楚。
 //
-// 「今天」动过一次，就在本分支合并 main 的时候：#1330 把侧栏那条竖线收窄到只剩
-// 资料库（看板就是首页，项目名那一行点下去就到），#1339 又把总览与导出与发布并进
-// 首页、AI 队友不再是一页。所以下面从「七格」变成「全局 + 资料库」，⋯ 菜单里多了
-// 日历与成员。这不是这一版壳把版面换掉，是 main 换了版面、壳的声明跟着换。
-
-// 项目侧栏上常驻的行，按今天渲染出来的顺序：全局那一行 + 资料库。
-const PINNED = ['全局', '资料库'];
+// Membership stays visible so joining, transferring and leaving are discoverable.
+const PINNED = ['全局', '资料库', '成员'];
 
 // 项目名旁边那个 ⋯ 菜单里的页：不占竖线，但一次点击可达。
-const MENU = ['看板', '日历', '成员'];
+const MENU = ['看板', '日历'];
 
 test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
   await login(page);
@@ -48,21 +43,16 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   // ⋯ 菜单里那一组是**壳说了算**的：这一版前端认得的页里没摆上侧栏的，全在这里。
   // 少了谁，就说明有页在加壳之后掉出了导航。
   //
-  // 点的是那个 chevron (`.rail-header__more`)，不是整条 `.rail-header`：这一条里
-  // 现在有**两个**按钮，而名字那个 (`.rail-header__home`) 是 `flex: 1 1 auto`
-  // （TopicSidebar.vue），占掉整条几乎全部宽度。点整条的中心落在它身上，于是这一
-  // 下不是开菜单，是回首页——那样下面这条断言拿到的是空菜单，看起来像「菜单里的页
-  // 全掉了」，其实一次都没打开过。
-  await page.locator('.rail-header__more').click();
+  // The transfer action shares the menu button's styling; select its accessible name.
+  await page.getByRole('button', { name: '项目菜单', exact: true }).click();
   // 菜单项**没有 role**：Vuetify 3 的 `v-list-item` 渲染成不带 role 的 `<div>`，
   // 外层 `v-list` 才是 `role="listbox"`，条目既不 `menuitem` 也不 `option`（对着
   // vuetify@3.9.3 实测：整份 DOM 里 `[role="menuitem"]` 是 0 个）。所以按 role 找
   // 永远匹配不到，只能按类名找——和侧栏那几格同一条来源。
   //
-  // 末一行「项目设置」不由壳决定，但它在这个菜单里，一起钉住：壳加一页、少一页都
-  // 应该在这里看得见，而不是悄悄换掉最后一行。
+  // The project owner also has settings and ownership transfer actions.
   const menu = page.locator('.v-overlay-container .v-list-item-title');
-  await expect(menu).toHaveText([...MENU, '项目设置']);
+  await expect(menu).toHaveText([...MENU, '项目设置', '转让项目']);
   await page.keyboard.press('Escape');
 
   // 留一张图给这次验收：屏幕上就是上面断言的那一屏。
@@ -152,4 +142,3 @@ test('顶栏的帮助与反馈：和语言开关同高、字装得下、点开�
   // 可访问名字**带着未读状态**：色点对读屏和色觉障碍读者不成立，所以状态同时进名字。
   expect(box.label === '帮助与反馈' || box.label === '帮助与反馈，有未读更新').toBe(true);
 });
-

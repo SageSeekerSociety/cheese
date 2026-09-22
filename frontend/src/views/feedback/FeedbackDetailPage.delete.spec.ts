@@ -28,6 +28,8 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
+    getFeedbackMeta: vi.fn().mockResolvedValue({ is_admin: false, hot_min_items: 5 }),
+    getFeedbackCounts: vi.fn().mockResolvedValue({ unread: 0 }),
     deleteFeedback: (...a: unknown[]) => deleteFeedback(...a),
     getFeedback: (...a: unknown[]) => getFeedback(...a),
   }

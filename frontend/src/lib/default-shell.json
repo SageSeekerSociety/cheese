@@ -6,6 +6,6 @@
     "tabs": ["spaces", "workspace", "inbox"],
     "project": ["calendar", "project-library", "project-members"]
   },
-  "hidden": ["calendar", "project-members"],
+  "hidden": ["calendar"],
   "terms": {}
 }

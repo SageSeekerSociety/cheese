@@ -65,3 +65,14 @@ export function expandMentions(text: string, members: MentionMember[], topics: M
   }
   return out
 }
+
+/**
+ * 展开之后的正文里点没点到这个 handle。
+ *
+ * 房间和输入区都要问这件事：输入区拿它判「这条草稿算不算叫了它」，房间拿它判
+ * 「最后那句话没叫它、该不该提示一下」。各留一份的话，总有一天两边对「算不算叫
+ * 了」给出不同的答案，而那正是这套写法要消灭的东西。
+ */
+export function mentionsHandle(expanded: string, handle: string | undefined): boolean {
+  return !!handle && expanded.includes(`<@${handle}>`)
+}

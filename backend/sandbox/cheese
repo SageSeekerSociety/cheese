@@ -90,9 +90,11 @@ ARTIFACT_KIND_BY_SUFFIX = {
     ".png": "png",
     ".jpg": "jpg",
     ".jpeg": "jpg",
+    ".gif": "gif",
+    ".webp": "webp",
 }
 ARTIFACT_KINDS = frozenset(ARTIFACT_KIND_BY_SUFFIX.values())
-BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg"})
+BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"})
 
 
 def artifact_kind_for(path: str) -> str:
@@ -134,6 +136,45 @@ class ToolTable:
 
     def __contains__(self, name: object) -> bool:
         return name in self.names()
+
+
+def join_descriptions(*parts: str) -> str:
+    """The one way command-chain descriptions become a tool schema description."""
+    return "\n\n".join(part for part in parts if part)
+
+
+# `cheese feedback -h` and the native MCP schema for `cheese_feedback_propose`
+# must carry the same 什么时候该用 text. Both read these two strings — the parent
+# command's guidance and the leaf's — so the surfaces cannot drift apart.
+FEEDBACK_DESCRIPTION = (
+    "你在轮次里发现的问题,提到平台上给人看。\n"
+    "\n"
+    "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
+    "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
+    "\n"
+    "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
+    "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
+    "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
+    "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
+    "「平台坏了」和「用户不会用」之间的那句话。\n"
+    "\n"
+    "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
+    "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
+    "\n"
+    "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
+    "的不会再问)。超了平台会拒绝,不要重试。"
+)
+
+FEEDBACK_PROPOSE_DESCRIPTION = (
+    "把你发现的问题提成一张提案卡,交给人决定发不发。"
+    "人在聊天里按「提交反馈」才算发布,所以不用等他,"
+    "也不要在任务中途打断或宣布你提了这件事——卡本身就是那句话。\n"
+    "\n"
+    "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
+    "观察到的 vs 期望的,错误原文短就照抄。"
+    "**根因没在会话里验证过就不要写**;拿不准的字段留空,不要填一个猜测。"
+    "不要把密钥、凭据或别人的隐私写进去。"
+)
 
 
 PLATFORM_TOOLS = ToolTable(
@@ -192,17 +233,8 @@ PLATFORM_TOOLS = ToolTable(
             # 触发时机原来只写在 argparse 的**父** parser 上，而翻树那条路只取叶子
             # ——所以它一个字都没到过模型。这一份当时连触发时机都没有。
             "name": "cheese_feedback_propose",
-            "description": (
-                "撞到平台本身的毛病时报一条——你不是在抱怨，是在交证据。"
-                "落下的是一张提案卡，人在聊天里按「提交反馈」才算发布。\n"
-                "\n"
-                "**什么时候提**：某个工具或命令反复失败；你做不到用户要求的事；"
-                "用户指出你的错；或者你自己发现犯了错。"
-                "**什么时候不该提**：一轮任务失败但不影响别人、用户已经知道的事、"
-                "能从文档里查到答案的事。先确认这不是用户的使用方式问题。\n"
-                "**不要在任务中途宣布**你提了这件事：卡本身就是那句话，不用等人回。\n"
-                "只写事实：观察到的 vs 期望的，错误原文短就照抄；根因没验证过就不要写，"
-                "拿不准的字段留空而不是猜。不要把密钥、凭据或别人的隐私写进去。"
+            "description": join_descriptions(
+                FEEDBACK_DESCRIPTION, FEEDBACK_PROPOSE_DESCRIPTION
             ),
             "inputSchema": {
                 "type": "object",
@@ -1637,53 +1669,17 @@ def build_parser() -> argparse.ArgumentParser:
     pfb = sub.add_parser(
         "feedback",
         help="给平台提一条反馈(提案,由人确认后发送)",
-        description=(
-            "你在轮次里发现的问题,提到平台上给人看。\n"
-            "\n"
-            "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
-            "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
-            "\n"
-            "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
-            "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
-            "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
-            "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
-            "「平台坏了」和「用户不会用」之间的那句话。\n"
-            "\n"
-            "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
-            "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
-            "\n"
-            "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
-            "的不会再问)。超了平台会拒绝,不要重试。"
-        ),
+        description=FEEDBACK_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pfbsub = pfb.add_subparsers(dest="feedbackcmd", required=True)
     pfbprop = pfbsub.add_parser(
         "propose",
         help="把你发现的问题提成一张提案卡,交给人决定发不发",
-        # ⚠️ **这一段就是模型看到的那份 schema** —— `cli_worker._tools()` 取的是
-        # `leaf.description or leaf.format_usage()`，而它只遍历**叶子**命令。所以
-        # 上面 `feedback` 那个父 parser 的 description（四条触发时机写在那里）**一个
-        # 字都到不了模型**：工具清单里 `cheese_feedback_propose` 的说明是这一段。
-        #
-        # 这正是这个功能一直没被用起来的原因，不是措辞问题。两种修法：把触发时机搬到
-        # 这里（现在这样），或者把 `_tools()` 改成把父级的 description 也带上。选了前者
-        # —— 工具说明本来就该自洽，模型不需要读命令树才知道一条工具什么时候用。
-        description=(
-            "把你发现的问题提成一张提案卡,交给人决定发不发。\n"
-            "\n"
-            "**什么时候提**(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
-            "事;用户指出你的错;或者你自己发现犯了错。\n"
-            "**什么时候不该提**:一轮任务失败但不影响别人、用户已经知道的事、能从文档"
-            "里查到答案的事。**先确认这不是用户的使用方式问题**——这张卡问的正是"
-            "「平台坏了」和「用户不会用」之间的那一句话。\n"
-            "**不要在任务中途打断或宣布**你提了这件事:卡本身就是那句话,人按"
-            "「提交反馈」才算发布,所以不用等他。\n"
-            "\n"
-            "每一项都是短标签加一两行,不要写成叙事段落。只写事实:观察到的 vs 期望的,"
-            "错误原文短就照抄。**根因没在会话里验证过就不要写**;拿不准的字段留空,"
-            "不要填一个猜测。不要把密钥、凭据或别人的隐私写进去。"
-        ),
+        # ⚠️ 这一段是**叶子**的说明。cli_worker._tools() 现在会把祖先 parser 的
+        # description 按序拼在它前面，所以「什么时候提」那段写在上面 `feedback` 父
+        # parser 的 FEEDBACK_DESCRIPTION 里即可，不必在这里复制一遍。
+        description=FEEDBACK_PROPOSE_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pfbprop.add_argument("title", help="一句话说清问题(≤300 字)")

@@ -13,7 +13,7 @@ import type { Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -152,5 +152,20 @@ describe('输入栏引用资料库里的文件', () => {
     // 正文只剩人写的那句话，文件在待发条里。
     expect(box.value).toBe('看看 ')
     expect(c.querySelector('.att-strip')?.textContent).toContain('预算表.xlsx')
+  })
+
+  // 打了一半的 @ 会跟着话题存下来，所以重新进这个房间时菜单从第一帧起就是开着的。
+  // 「等它变成开着」那种写法在这一次永远等不到：菜单开着，资料库那一行却说不出
+  // 有几份文件，翻进去是空的。
+  it('草稿里本来就有 @：重新进来时资料库照样列得出来', async () => {
+    const typed = composer()
+    await flush()
+    await typeAt(typed, '@')
+    cleanup()
+
+    const c = composer()
+    await flush()
+    expect(c.querySelector('textarea')?.value).toBe('@')
+    expect(c.querySelector('.mention-menu')?.textContent).toContain('3 份文件')
   })
 })
