@@ -133,7 +133,8 @@
       "inProgress": "进行中",
       "resolved7d": "7 日解决",
       "created7d": "7 日新增",
-      "unread": "未读"
+      "unread": "未读",
+      "urgent": "其中 {n} 条是无人认领的急件"
     },
     "chart": {
       "title": "每天新增 / 解决 / 上线",
@@ -151,7 +152,7 @@
     },
     "empty": {
       "title": "暂无数据",
-      "desc": "平台还没有产生反馈。"
+      "desc": "平台还没有产生数据。"
     },
     "error": {
       "title": "看板加载失败",
@@ -182,7 +183,18 @@
       "tokens": "窗口内 token",
       "calls": "窗口内调用",
       "chart": "每天 token",
-      "top": "最花 token 的项目"
+      "top": "最花 token 的项目",
+      "byModel": "按模型拆",
+      "byModelNote": "条是 token，后两列是钱与「算不出价」的 token —— 只有三列一起看才答得出「贵的是模型还是计费方式」。",
+      "byRoute": "按供给通路拆",
+      "byRouteNote": "订阅按月计费，它的 token 没有单价，所以「算不出价」那一列集中在订阅这一行 —— KPI 里那个数的来源就在这里。",
+      "unknownModel": "（未标注模型）",
+      "route": {
+        "gateway": "网关",
+        "subscription": "订阅",
+        "native": "自带凭据",
+        "unknown": "（旧数据，未标注）"
+      }
     },
     "people": {
       "total": "账号总数",
@@ -197,6 +209,28 @@
       "warm": "常驻机器",
       "project": "项目机器",
       "note": "这四行是四张台账的存量，不是在线数 —— 在线状态住在进程内存里，库里没有可以查的那一列。"
+    },
+    "column": {
+      "title": "四栏计数",
+      "public": "公开反馈",
+      "private": "私密反馈",
+      "agent": "Agent 发现",
+      "security": "安全问题",
+      "note": "四栏是筛选不是划分：「Agent 发现」是来源，会和公开/私密重叠，所以四个数加起来不等于总数。"
+    },
+    "status": {
+      "title": "状态分布",
+      "received": "已收录",
+      "inProgress": "处理中",
+      "resolved": "已修复",
+      "deployed": "已上线"
+    },
+    "health": {
+      "title": "平台健康",
+      "database": "数据库",
+      "redis": "Redis",
+      "event_loop": "事件循环",
+      "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。"
     }
   },
   "chart": {

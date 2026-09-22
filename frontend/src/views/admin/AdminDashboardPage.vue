@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
+import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -97,31 +98,32 @@ function sumOf(values: number[] | undefined): string {
 
 /* ---- 反馈那一块 ---- */
 
-/** 反馈的 KPI。**四张都走看板接口这一条**（`/admin/stats/feedback` 的 `counts`），
+/** 反馈的 KPI。**四张都走看板接口这一条**（`/admin/stats/feedback` 的 `total`），
  *  不再有前两张走列表接口那种混搭。
  *
  *  改的原因是两类错，都出在「同一个数有两个来源」上：
  *
- *   * 那两个计数（`unassigned` / `active`）在**列表接口**那一趟里也回，而列表那一趟
- *     失败时它的初值是全 0 的实体对象（不是 null）—— `num()` 拦不住，于是「队列加载
- *     失败」会被画成「待分诊 0、进行中 0」，还带着能点进队列的链接。
+ *   * 那两个计数（`unassigned` / `in_progress`）曾在**列表接口**那一趟里也回，而列表
+ *     那一趟失败时它的初值是全 0 的实体对象（不是 null）—— `num()` 拦不住，于是「队列
+ *     加载失败」会被画成「待分诊 0、进行中 0」，还带着能点进队列的链接。
  *   * 一行的四张卡有两套加载态（`adminLoading` / `statsLoading`）、两个失败原因，而
  *     它们说的是同一件事：这一栏现在什么样。
  *
- *  两个端点的这两个数是**同一个来源**（都走 `FeedbackService.counts`，管理端列表那条
- *  路由在 `routes/admin_feedback.py` 里就是这么取的），所以换过来数不变、含义不变。 */
+ *  口径：`total` 是**全量**（公开 + 私密 + Agent 发现 + 安全问题），和下面那条曲线同
+ *  一个板子。此前卡片走的是被 `PUBLIC_ONLY` 收窄的那一份，而曲线是全量 —— 于是「进行中」
+ *  和「进行中」在卡片上和图上是两个数，两边各自都看着对。 */
 const feedbackKpis = computed(() => [
   {
     key: 'untriaged',
     label: t('feedback.dashboard.kpi.untriaged'),
-    value: num(feedback.value?.counts.unassigned),
+    value: num(feedback.value?.total.unassigned),
     loading: store.statsLoading,
     to: queue({ assigned: 'none' }),
   },
   {
     key: 'inProgress',
     label: t('feedback.dashboard.kpi.inProgress'),
-    value: num(feedback.value?.counts.active),
+    value: num(feedback.value?.total.open),
     loading: store.statsLoading,
     to: queue({ status: 'in_progress' }),
   },
@@ -140,6 +142,35 @@ const feedbackKpis = computed(() => [
     to: queue({ resolved_since: '7d' }),
   },
 ])
+
+/** 队列那四栏的计数 —— **筛选，不是划分**（`agent` 是来源，和公开/私密重叠），所以
+ *  四个数加起来不等于总数。这一行要说清这件事，否则「四个数对不上」会被读成算错了。 */
+const feedbackColumns = computed(() => {
+  const c = feedback.value?.columns
+  return [
+    { key: 'public', label: t('feedback.dashboard.column.public'), value: num(c?.public) },
+    { key: 'private', label: t('feedback.dashboard.column.private'), value: num(c?.private) },
+    { key: 'agent', label: t('feedback.dashboard.column.agent'), value: num(c?.agent) },
+    { key: 'security', label: t('feedback.dashboard.column.security'), value: num(c?.security) },
+  ]
+})
+
+/** 梯子上的四级，全量并排。条的长度按四级里最大的那一级算 —— 四级是**同一量纲**的
+ *  划分（加起来等于 `total.all`），所以可以同轴比长短。 */
+const feedbackStatusRows = computed(() => {
+  const s = feedback.value?.status
+  if (!s) return []
+  const rows = [
+    { key: 'received', label: t('feedback.dashboard.status.received'), value: s.received },
+    { key: 'in_progress', label: t('feedback.dashboard.status.inProgress'), value: s.in_progress },
+    { key: 'resolved', label: t('feedback.dashboard.status.resolved'), value: s.resolved },
+    { key: 'deployed', label: t('feedback.dashboard.status.deployed'), value: s.deployed },
+  ]
+  return rows
+})
+
+/** 压着没人管的急件 —— 只有它 > 0 时才画那一行警示。空着的时候不占位置。 */
+const urgentOpen = computed(() => feedback.value?.total.urgent_open ?? 0)
 
 /** 反馈的三条线：新增 / 解决 / 上线（§7.5：颜色由组件按线型发，这一层只管名字和值）。
  *
@@ -234,6 +265,51 @@ const usageSeries = computed<ChartSeries[]>(() => [
 const topProjects = computed(() =>
   (usage.value?.top_projects ?? []).map((row) => ({ label: row.name, value: row.tokens }))
 )
+
+/** 按模型拆。行本身带上钱与「算不出价」的两列，因为这一张表要回答的正是「贵的是
+ *  模型还是计费方式」——只有 token 一列答不了。 */
+const byModel = computed(() =>
+  (usage.value?.by_model ?? []).map((row) => ({
+    label: row.model || t('feedback.dashboard.usage.unknownModel'),
+    value: row.tokens,
+    cost: fmtCost(row.cost_usd),
+    unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+  }))
+)
+
+/** 按供给通路拆（gateway / subscription / native）。`subscription` 那一行的
+ *  `unpriced_tokens` 就是 KPI 里「未定价 token」的来源 —— 这一张表是那张卡的注脚。 */
+const byRoute = computed(() =>
+  (usage.value?.by_route ?? []).map((row) => ({
+    label: routeLabel(row.route),
+    value: row.tokens,
+    cost: fmtCost(row.cost_usd),
+    unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+  }))
+)
+
+/** 通路代号 → 人话。`''` 是打在补上这一列之前的那些行。 */
+function routeLabel(route: string): string {
+  if (route === 'gateway') return t('feedback.dashboard.usage.route.gateway')
+  if (route === 'subscription') return t('feedback.dashboard.usage.route.subscription')
+  if (route === 'native') return t('feedback.dashboard.usage.route.native')
+  return t('feedback.dashboard.usage.route.unknown')
+}
+
+/** 平台的健康度。三格并排，**状态色只在这里用**（up / stalling / down）—— 全页别处
+ *  都是中性阶，这一行是唯一需要「一眼看出好坏」的地方。 */
+const health = computed(() => platform.value?.health ?? null)
+
+const healthRows = computed(() => {
+  const h = health.value
+  if (!h) return []
+  return Object.entries(h.checks).map(([name, body]) => ({
+    key: name,
+    label: t(`feedback.dashboard.health.${name}`),
+    status: body.status,
+    tone: body.status === 'up' ? 'ok' : body.status === 'down' ? 'danger' : 'warn',
+  }))
+})
 
 /** 成本那一行下面那句口径。两个数（金额、没有单价的 token）各自已经是 KPI 卡了，
  *  这句话说的是**它们之间的关系** —— 订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
@@ -412,6 +488,23 @@ onMounted(() => {
           />
         </div>
 
+        <!-- 急件警示：只有真的压着没人管的急件时才画。空着时不占位置。 -->
+        <p v-if="urgentOpen > 0" class="ad__urgent t-meta">
+          {{ t('feedback.dashboard.kpi.urgent', { n: urgentOpen }) }}
+        </p>
+
+        <!-- 四栏计数。**筛选不是划分**，所以行末那句口径必须在。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.column.title') }}</h2>
+          <div class="ad__split-grid">
+            <div v-for="col in feedbackColumns" :key="col.key" class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ col.label }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ col.value }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.column.note') }}</p>
+        </section>
+
         <div class="ad__row">
           <AdminLineChart
             :title="t('feedback.dashboard.chart.title')"
@@ -427,6 +520,13 @@ onMounted(() => {
             :more-to="queue()"
           />
         </div>
+
+        <!-- 状态分布：四级同轴（它们加起来等于总数，所以可以比长短）。 -->
+        <AdminBarChart
+          :title="t('feedback.dashboard.status.title')"
+          :rows="feedbackStatusRows"
+          :loading="store.statsLoading"
+        />
       </template>
 
       <!-- 用量：窗口内的 token 与调用次数、每天一条线、最花钱的几个项目、成本那一行。 -->
@@ -456,6 +556,23 @@ onMounted(() => {
              之间的关系**那一句：金额里没有「算不出价钱」的那部分。以前它们挤在页脚一行
              里（一行正文加一行脚注），两个数被降级成了注释。 -->
         <p v-if="costNote" class="ad__cost-note t-meta">{{ costNote }}</p>
+
+        <!-- 两个正交的拆分：模型答「贵的是哪个模型」，通路答「贵的是计费方式还是模型」。
+             并排放是因为**只有两个一起看**才答得出那个问题。 -->
+        <div class="ad__row ad__row--equal">
+          <AdminBreakTable
+            :title="t('feedback.dashboard.usage.byModel')"
+            :note="t('feedback.dashboard.usage.byModelNote')"
+            :rows="byModel"
+            :loading="store.statsLoading"
+          />
+          <AdminBreakTable
+            :title="t('feedback.dashboard.usage.byRoute')"
+            :note="t('feedback.dashboard.usage.byRouteNote')"
+            :rows="byRoute"
+            :loading="store.statsLoading"
+          />
+        </div>
       </template>
 
       <!-- 性能：**这一刻**的接口耗时。它是四类里唯一读进程内存的，所以底下那句口径
@@ -542,6 +659,20 @@ onMounted(() => {
             <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.machines.note') }}</p>
           </section>
         </div>
+
+        <!-- 健康度：**这一刻**的，和上面两组的「存量 / 窗口」不是一回事。状态色只在
+             这一行用（up / stalling / down），全页别处都是中性阶。 -->
+        <section v-if="healthRows.length" class="ad__health">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.health.title') }}</h2>
+          <div class="ad__health-grid">
+            <div v-for="row in healthRows" :key="row.key" class="ad__health-cell">
+              <span class="ad__health-dot" :class="`ad__health-dot--${row.tone}`" aria-hidden="true" />
+              <span class="ad__health-label t-eyebrow-read">{{ row.label }}</span>
+              <span class="ad__health-status t-body">{{ row.status }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.health.note') }}</p>
+        </section>
       </template>
     </div>
   </div>
@@ -714,6 +845,122 @@ onMounted(() => {
 .ad__cost-note {
   margin: 12px 0 0;
   line-height: var(--lh-12);
+}
+
+/* 急件警示行。只有真的压着没人管的急件时才画，所以它一出现就该被看见 —— 用
+   `--warn-ink` 的文字而不是整块琥珀底：琥珀在这套设计系统里只留给「当前唯一的主操作」
+   （§0），一个警示行不是操作。 */
+.ad__urgent {
+  margin: 12px 0 0;
+  color: var(--warn-ink);
+  line-height: var(--lh-12);
+}
+
+/* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个
+   筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
+.ad__split {
+  margin-top: 20px;
+}
+
+.ad__split-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ad__split-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ad__split-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__split-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__split-value {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+/* 健康度。**状态色只在这一块用**（up / stalling / down），全页别处都是中性阶：一屏里
+   只有一处有颜色的时候，那一处就是「需要看的地方」。 */
+.ad__health {
+  margin-top: 20px;
+}
+
+.ad__health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ad__health-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}
+
+.ad__health-cell {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__health-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.ad__health-dot--ok {
+  background: var(--ok);
+}
+
+.ad__health-dot--warn {
+  background: var(--warn);
+}
+
+.ad__health-dot--danger {
+  background: var(--danger);
+}
+
+.ad__health-label {
+  flex: 0 0 auto;
+}
+
+.ad__health-status {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__row--equal {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .ad__machines {

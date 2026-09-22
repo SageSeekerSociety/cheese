@@ -1430,6 +1430,68 @@ class FeedbackRepository:
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
+    async def admin_counts(self) -> dict[str, dict[str, int]]:
+        """The admin dashboard's numbers — the WHOLE board, not the public arm.
+
+        `public_counts` is the user-side tab arithmetic: it is narrowed by
+        `PUBLIC_ONLY` because a non-admin must not learn how many private rows
+        exist. The admin dashboard asks the opposite question (「现在一共有多少
+        事」), and feeding it `public_counts` is the bug this method exists to
+        fix — every KPI on that page then described only the public arm while
+        the series beside it counted everything, so a card and the line under it
+        answered two different questions and both looked right.
+
+        Three buckets, and the split is the admin UI's own vocabulary:
+
+        * `columns` — the queue's four columns, re-spelled as counts. **They are
+          filters, not a partition**: `agent` is a source (it overlaps public and
+          private), exactly as `list_admin` reads them, so they deliberately do
+          not sum to `total`.
+        * `status` — every rung of the ladder, full board. This is the only place
+          the four rungs are shown side by side; `public_counts` only ever had
+          `active` / `resolved` (a filter, not a partition — see `_tab_where`).
+        * `total` — the one-number answers. `open` / `closed` use the same
+          `CLOSED_STATUSES` as everywhere else, so a fifth rung lands here too.
+
+        One round trip per bucket rather than one giant CASE: this table is
+        still small (rows are filed by humans and agents, not per API call), and
+        three readable queries beat one that nobody can verify against
+        `list_admin`.
+        """
+        live = [Feedback.deleted_at.is_(None)]
+
+        async def _count(*where: Any) -> int:
+            return await self._count([*live, *where])
+
+        columns = {
+            "public": await _count(*PUBLIC_ONLY),
+            "private": await _count(
+                Feedback.visibility == FeedbackVisibility.private,
+                Feedback.security.is_(False),
+            ),
+            "agent": await _count(Feedback.author_is_agent.is_(True)),
+            "security": await _count(Feedback.security.is_(True)),
+        }
+        status = {
+            status.value: await _count(Feedback.status == status)
+            for status in FeedbackStatus
+        }
+        total = {
+            "all": await _count(),
+            "open": await _count(Feedback.status.not_in(list(CLOSED_STATUSES))),
+            "closed": await _count(Feedback.status.in_(list(CLOSED_STATUSES))),
+            "unassigned": await self.unassigned_count(),
+            # 「压着没人管的急件」— 分诊台最该先动的一格。全量口径，和 `unassigned`
+            # 同一条边界（`CLOSED_STATUSES`），只是再收一层优先级。
+            "urgent_open": await _count(
+                Feedback.status.not_in(list(CLOSED_STATUSES)),
+                Feedback.priority.in_(
+                    [FeedbackPriority.high, FeedbackPriority.urgent]
+                ),
+            ),
+        }
+        return {"columns": columns, "status": status, "total": total}
+
     async def comment_counts(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
         """Live comment counts for a page — one query, same reason as supports."""
         if not ids:

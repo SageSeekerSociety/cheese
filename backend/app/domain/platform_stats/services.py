@@ -27,6 +27,10 @@ from app.domain.user.services import AccountService
 #: 收行数，两个都少一个都会让这个读在全平台最长的表上无界。
 TOP_PROJECTS = 10
 
+#: 用量按模型拆分时画几根。和 `TOP_PROJECTS` 同一个上界理由：模型是低基数维度
+#: （个位数到十几），但窗口里的行数不是，所以仍然要 limit 收口。
+TOP_MODELS = 10
+
 
 class PlatformStatsService:
     def __init__(self, session: AsyncSession) -> None:
@@ -38,17 +42,20 @@ class PlatformStatsService:
         self._machines = MachineInventoryRepository(session)
 
     async def feedback(self, *, days: int, handle: str) -> dict:
-        """反馈那一块：五个栏位的数（+ 未读、未指派）与按天的新增/解决/上线。
+        """反馈那一块：**全量口径**的总量/四栏/四级状态，加窗口内的三条曲线。
 
-        `counts` 走 `FeedbackService.counts`，**不是**在这里再数一遍：那五个数是
-        列表页上那一行标签页的同一批数字，两处各数一次的表现是「看板和反馈管理页
-        对同一天给出两个数」，而两边各自看着都对。这里只挑出响应形状要的那七个键。
+        口径是这一段的全部内容，所以写在最前面：**看板数的是整个板子**，不是公开
+        那一臂。此前这里走 `FeedbackService.counts`（它被 `PUBLIC_ONLY` 收窄，因为
+        那是反馈中心那一行标签页给匿名读者看的数），而旁边的 `series` 走的是全量
+        —— 于是卡片上的「进行中」和曲线下的「进行中」是两个口径，两边各自都看着
+        对。现在两边都问整个板子，`admin_board_counts` 就是那个口径的名字。
 
-        `counts` 是全量口径（不含窗口），`series` 才是窗口内的 —— 和页面上「现在是
-        多少 / 这七天怎么变的」这两个问题一一对应。
+        `unread` 仍然走 `counts`，而且只取那一个键：它问的是**这个管理员**的读到
+        哪儿了，本来就是人各一份，和板子有多大无关。
         """
         since, until, buckets = utc_day_window(days)
-        counts = await self._feedback.counts(handle=handle, is_admin=True)
+        board = await self._feedback.admin_board_counts()
+        mine = await self._feedback.counts(handle=handle, is_admin=True)
         created = await self._feedback.created_series(since=since, until=until)
         resolved = await self._feedback.reached_series(
             status=FeedbackStatus.resolved, since=since, until=until
@@ -58,18 +65,10 @@ class PlatformStatsService:
         )
         return {
             "days": days,
-            "counts": {
-                key: counts[key]
-                for key in (
-                    "all",
-                    "hot",
-                    "active",
-                    "resolved",
-                    "deployed",
-                    "unread",
-                    "unassigned",
-                )
-            },
+            "total": board["total"],
+            "columns": board["columns"],
+            "status": board["status"],
+            "unread": mine.get("unread", 0),
             "series": dense_series(
                 buckets,
                 {"created": created, "resolved": resolved, "deployed": deployed},
@@ -90,6 +89,12 @@ class PlatformStatsService:
         top = await self._usage.top_projects(
             since=since, until=until, limit=TOP_PROJECTS
         )
+        # 两个正交的切口：模型回答「贵的是哪个模型」，通路回答「贵的是计费方式还是
+        # 模型」（订阅那一半没有单价，`unpriced_tokens` 的来源就在这条拆分上）。
+        models = await self._usage.by_model(
+            since=since, until=until, limit=TOP_MODELS
+        )
+        routes = await self._usage.by_route(since=since, until=until)
         return {
             "days": days,
             "totals": totals,
@@ -102,6 +107,8 @@ class PlatformStatsService:
                 },
             ),
             "top_projects": top,
+            "by_model": models,
+            "by_route": routes,
         }
 
     async def platform(self, *, days: int) -> dict:
@@ -127,4 +134,35 @@ class PlatformStatsService:
                 "series": dense_series(buckets, {"created": created}),
             },
             "machines": await self._machines.counts(),
+            # 「平台现在健康吗」——和上面两组的差别是**这一刻**的，不是存量也不是
+            # 窗口。复用 `/health/detailed` 那一套判据（`_REQUIRED_CHECKS` 的同一批
+            # 检查），不在这里另写一份「什么算健康」：两处各写一份的话，看板说健康、
+            # readyz 说不健康，而两边各自都看着对。
+            "health": await _health_snapshot(),
         }
+
+
+async def _health_snapshot() -> dict:
+    """`/health/detailed` 的那几个检查，读成看板能画的形状。
+
+    **不 import 路由模块**（`api.routes.health` 里是 FastAPI handler，import 它会
+    把整条路由装配拖进领域层）。判据本身在那几个私有函数里，这里做的是同一件事的
+    第二次回答 —— 所以它只取「状态 + 一句话」，绝不重算健康与否：`status` 原样带
+    出来，页面照读。
+
+    `overall` 是三者里最差的那一个（up < stalling < down），而不是「多数票」：
+    一个 down 的 Redis 不该被两个 up 投成「healthy」。
+    """
+    from app.api.routes import health as health_routes
+
+    checks = await health_routes.detailed_health_check()
+    return {
+        "overall": checks.get("status", "unknown"),
+        "checks": {
+            name: {
+                "status": body.get("status", "unknown"),
+                "detail": body.get("error") or body.get("recent_ms"),
+            }
+            for name, body in checks.get("checks", {}).items()
+        },
+    }

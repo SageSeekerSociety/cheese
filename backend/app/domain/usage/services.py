@@ -38,6 +38,18 @@ class UsageService:
         """按 UTC 的天分好的用量序列，稀疏；补 0 是调用方的事。"""
         return await self._repo.platform_series(since=since, until=until)
 
+    async def by_model(
+        self, *, since: datetime, until: datetime, limit: int
+    ) -> list[dict]:
+        """窗口内按模型拆的用量。`limit` 和 `top_projects` 同一个理由。"""
+        return await self._repo.by_model(since=since, until=until, limit=limit)
+
+    async def by_route(
+        self, *, since: datetime, until: datetime
+    ) -> list[dict]:
+        """窗口内按供给通路拆的用量（网关 / 订阅 / 自带凭据）。"""
+        return await self._repo.by_route(since=since, until=until)
+
     async def top_projects(
         self, *, since: datetime, until: datetime, limit: int
     ) -> list[dict]:
