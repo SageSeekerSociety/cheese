@@ -1,27 +1,3 @@
-<script lang="ts">
-// Per-topic scroll position, kept at module scope so it survives this component
-// unmounting (e.g. navigating to another view) and remounting — come back to a
-// topic and you land where you left off, not yanked to the bottom.
-// `atBottom` is stored alongside the raw offset because "at the bottom" is a
-// SEMANTIC position: the timeline's height changes between visits (blocks that
-// landed while away are already in the cache, the merge box fills in async),
-// so restoring a stale pixel offset would leave the newest message below the
-// fold — the "last message pops in a frame late" bug.
-const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
-// How close to the bottom still counts as "at the bottom" (px).
-const BOTTOM_THRESHOLD = 80
-
-// 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
-// images waiting to go — all belong to the topic they were composed in.
-//
-// 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
-// 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
-// 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
-//
-// 存在哪、分几层、谁清它，全在 lib/composerDrafts.ts —— 这里只有调用。那个 Map
-// 一度住在这个文件里，于是同一个概念有两套规则，换账号只清掉了其中一套。
-</script>
-
 <script setup lang="ts">
 import type { LibraryFile } from '../api'
 import type {
@@ -81,6 +57,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import { useChatScroll } from './room/composables/useChatScroll'
 import AgentControls from './AgentControls.vue'
 import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
@@ -444,88 +421,27 @@ function onMessagesClick(e: MouseEvent) {
   }
 }
 
-// Catch-up mode: right after (re)opening the socket, the broker REPLAYS every
-// buffered frame of an in-progress turn in one burst. Rendering + auto-scrolling
-// per frame makes the pane visibly flash for seconds on a long turn — so during
-// the burst we apply frames quietly and do ONE scroll when it goes idle.
-let catchingUp = false
-let catchUpTimer: ReturnType<typeof setTimeout> | null = null
-function noteCatchUpFrame() {
-  if (!catchingUp) return
-  if (catchUpTimer) clearTimeout(catchUpTimer)
-  catchUpTimer = setTimeout(() => {
-    catchingUp = false
-    autoScroll()
-  }, 200)
-}
-
 let socket: WebSocket | null = null
-const scrollRef = ref<HTMLElement | null>(null)
-const contentRef = ref<HTMLElement | null>(null)
 
-// Keep the pane glued to the bottom while the user is parked there. Timeline
-// height changes AFTER the first frame of a topic switch (the merge box /
-// accept card fills in async, images decode, streaming re-renders) — without
-// this, the correction only came from later async scrolls (fetch completion,
-// the catch-up idle timer), so the tail visibly popped in a beat late.
-// ResizeObserver callbacks run after layout but before paint: the re-pin lands
-// in the SAME frame as the growth, so no flash is ever painted.
-//
-// 盯的是**两个**元素，不是内容一个：内容变高是「新消息来了」，而容器变矮是
-// 「地方变小了」——手机弹出软键盘缩的正是这个容器（`--keyboard-inset` 减的就是
-// 它），内容高度一个像素都没动。只盯内容时，键盘一起来回调一次都不发，停在底部
-// 的人就看着最新几条滑到键盘底下（真机反馈 2026-09-17）。两个都在同一个
-// observer 里，重钉只有一条路径，不会互相打架。
-let contentObserver: ResizeObserver | null = null
-watch([contentRef, scrollRef], ([content, pane]) => {
-  contentObserver?.disconnect()
-  contentObserver = null
-  if (!content && !pane) return
-  contentObserver = new ResizeObserver(() => {
-    const sc = scrollRef.value
-    if (!sc) return
-    if (atBottom.value && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
-  })
-  if (content) contentObserver.observe(content)
-  if (pane) contentObserver.observe(pane)
-})
+// 滚动位置、跟不跟新消息、重放期间不抖 —— 见 room/composables/useChatScroll。
+// 往回翻历史留在这里：它碰 messages / 缓存 / 错误横幅，不是滚动的事。
+const {
+  scrollRef,
+  contentRef,
+  atBottom,
+  scrollToBottom,
+  autoScroll,
+  beginCatchUp,
+  noteFrame,
+  rememberScroll,
+  restoreScroll,
+} = useChatScroll()
 
-// Whether the user is parked at (or near) the bottom — drives whether incoming
-// messages auto-follow or leave the user's scroll position alone.
-const atBottom = ref(true)
-
-function isAtBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
-}
-
-function scrollToBottom() {
-  nextTick(() => {
-    const el = scrollRef.value
-    if (el) {
-      el.scrollTop = el.scrollHeight
-      atBottom.value = true
-    }
-  })
-}
-
-// Auto-follow new messages only when the user hasn't scrolled up. During a
-// replay catch-up the per-frame calls are suppressed; noteCatchUpFrame does a
-// single scroll once the burst settles.
-function autoScroll() {
-  if (catchingUp) return
-  if (atBottom.value) scrollToBottom()
-}
-
-// Save the current scroll position for the active topic (called on scroll).
-function rememberScroll() {
+// 滚动事件：记下位置，顺带判断是不是滚到了要上一页的地方。
+function onTimelineScroll() {
+  rememberScroll(props.topic?.id)
   const el = scrollRef.value
-  if (!el || !props.topic) return
-  atBottom.value = isAtBottom(el)
-  scrollMemory.set(props.topic.id, { top: el.scrollTop, atBottom: atBottom.value })
-  // Scrolling near the top is the request for the previous page.
-  if (shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) {
-    void loadOlder()
-  }
+  if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) void loadOlder()
 }
 
 // --- paging back through history --------------------------------------------
@@ -581,26 +497,6 @@ async function loadOlder() {
   // still isn't tall enough to scroll. Not after a failure — that would retry
   // a broken request in a tight loop.
   if (!failed) await fillViewportIfNeeded()
-}
-
-// Restore a topic's saved scroll position. "At the bottom" (and no memory at
-// all) restores to the CURRENT bottom rather than the remembered offset — the
-// timeline may be taller than when we left (background cache refresh already
-// holds the messages that landed while away), and the newest message must be
-// visible on the very first frame.
-function restoreScroll(topicId: string) {
-  nextTick(() => {
-    const el = scrollRef.value
-    if (!el) return
-    const saved = scrollMemory.get(topicId)
-    if (saved && !saved.atBottom) {
-      el.scrollTop = saved.top
-      atBottom.value = isAtBottom(el)
-    } else {
-      el.scrollTop = el.scrollHeight
-      atBottom.value = true
-    }
-  })
 }
 
 // Auto-reconnect (协作软件语义): a backend deploy/restart must be a blip, not a
@@ -725,8 +621,7 @@ function startHeartbeat(ws: WebSocket) {
 }
 
 function openSocket(topicId: string) {
-  catchingUp = true
-  noteCatchUpFrame()
+  beginCatchUp()
   closeSocket()
   const ws = new WebSocket(chatWsUrl(topicId))
   socket = ws
@@ -767,7 +662,7 @@ function openSocket(topicId: string) {
     noteHeartbeatAnswer()
     if (frame.type === 'pong') return
     handleFrame(frame)
-    noteCatchUpFrame()
+    noteFrame()
   }
 }
 
@@ -1771,6 +1666,15 @@ function sendDraft(opts?: { summon?: boolean }) {
 // 每话题草稿: stash / restore everything the composer holds. Nothing here is
 // "just a preference" — each field names something in the topic being left
 // (a block to reply to, files already uploaded to that topic's worktree).
+// 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
+// images waiting to go — all belong to the topic they were composed in.
+//
+// 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
+// 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
+// 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+//
+// 存在哪、分几层、谁清它，全在 lib/composerDrafts.ts —— 这里只有调用。那个 Map
+// 一度住在这个文件里，于是同一个概念有两套规则，换账号只清掉了其中一套。
 function rememberComposer(topicId: string) {
   // 两层各写一次，都不在这里判空——两层的「空」本来就不是同一个定义（内存那层还
   // 管着发件箱），各自判各自的。在这里判一次再分发，等于替它们决定，而那个判据
@@ -1912,10 +1816,7 @@ watch(
   () => props.topic?.id,
   (id, oldId) => {
     // Save where we were in the topic we're leaving, so coming back restores it.
-    if (oldId && scrollRef.value) {
-      const el = scrollRef.value
-      scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
-    }
+    if (oldId) rememberScroll(oldId)
     if (oldId) {
       rememberComposer(oldId)
       for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
@@ -1935,11 +1836,10 @@ watch(
 
 onBeforeUnmount(() => {
   disposed = true
-  rememberScroll() // persist position across an unmount (e.g. leaving the view)
+  // persist position across an unmount (e.g. leaving the view)
+  rememberScroll(props.topic?.id)
   if (props.topic) rememberComposer(props.topic.id)
   for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
-  contentObserver?.disconnect()
-  contentObserver = null
   closeSocket()
 })
 </script>
@@ -2005,7 +1905,7 @@ onBeforeUnmount(() => {
         ref="scrollRef"
         class="messages flex-grow-1 overflow-y-auto py-2"
         data-testid="chat-scroll"
-        @scroll="rememberScroll"
+        @scroll="onTimelineScroll"
         @click="onMessagesClick"
       >
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
