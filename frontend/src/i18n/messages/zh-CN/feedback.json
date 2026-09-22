@@ -332,7 +332,7 @@
       "unavailable": {
         "title": "今天算不出来",
         "note": "这两条没有数据源。放一个数字上去就只能是编的。",
-        "summon": "@芝士后的验收通过率：agent_turns 没有 summon 标记，accept_cards 也没有来源轮次，两者之间没有外键。",
+        "summon": "{'@'}芝士后的验收通过率：agent_turns 没有 summon 标记，accept_cards 也没有来源轮次，两者之间没有外键。",
         "churn": "额度耗尽后的流失：compute_grants 没有 exhausted_at，user 没有 last_login。"
       },
       "northStarShort": "本周 {n}"
