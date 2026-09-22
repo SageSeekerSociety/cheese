@@ -6,10 +6,12 @@ import type {
   AnalyticsRealNameType,
   AnalyticsSortOrder,
   GetSpacesResponseData,
+  GetTeachingUnitsResponseData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceRequestData,
+  PatchTeachingUnitRequestData,
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
@@ -18,6 +20,7 @@ import type {
   PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
   PostSpaceRequestData,
+  PostTeachingUnitRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
@@ -33,6 +36,7 @@ import type {
   SpaceMyPublishedTasks,
   SpaceMyPublishingOverview,
   SpaceTaskAnalytics,
+  TeachingUnit,
 } from './types'
 
 import { NewApiInstance } from '../index'
@@ -436,6 +440,32 @@ export namespace SpacesApi {
   export const deleteDomainGroup = (spaceId: number, groupId: number) =>
     NewApiInstance.request({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
+      method: 'DELETE',
+    })
+
+  export const listUnits = (spaceId: number) =>
+    NewApiInstance.request<GetTeachingUnitsResponseData>({
+      url: `/spaces/${spaceId}/units`,
+      method: 'GET',
+    })
+
+  export const createUnit = (spaceId: number, data: PostTeachingUnitRequestData) =>
+    NewApiInstance.request<{ unit: TeachingUnit }>({
+      url: `/spaces/${spaceId}/units`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateUnit = (spaceId: number, unitId: number, data: PatchTeachingUnitRequestData) =>
+    NewApiInstance.request<{ unit: TeachingUnit }>({
+      url: `/spaces/${spaceId}/units/${unitId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteUnit = (spaceId: number, unitId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/units/${unitId}`,
       method: 'DELETE',
     })
 }
