@@ -272,12 +272,18 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
   .fb-card__stat {
     grid-area: stat;
   }
-  /* 第二行的左半边：整格给它，chips 自己折行，装不下才由 `overflow: hidden` 从**尾部**
-     裁（私密/安全排在标签前面，所以先让位的永远是标签）。 */
+  /* 第二行的左半边：整格给它，chips 自己折行。装不下时**仍然由 `overflow: hidden`
+     从尾部裁**（私密 / 安全排在标签前面，所以先让位的永远是标签那一端）。
+     这里一度写的是 `overflow: visible`（想「别静默裁掉」），那是错的：chip 是
+     `white-space: nowrap` 的，它既折不了行也不会自己缩，放开裁剪的结果是**一个特别长的
+     标签直接压到旁边的状态和支持按钮上面** —— 从「静默少一个标签」变成「盖住别人」，
+     两个都不对。标签是用户自己填的、没有长度上限（`cleanTags` 只管去重和条数），
+     所以这一格必须留着裁剪。真正该消失的从来不是「裁」这件事，而是「裁掉的是私密/安全」
+     那一种 —— 现在这两个永远排在最前、永远装得下。 */
   .fb-card__extras {
     grid-area: extras;
     flex-wrap: wrap;
-    overflow: visible;
+    overflow: hidden;
   }
   /* 网格里 `margin-left: auto` 不再参与对齐（轨道已经把它放在右端），留着会在格子里
      再顶一次。 */

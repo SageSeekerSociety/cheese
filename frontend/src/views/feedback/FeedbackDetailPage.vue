@@ -521,6 +521,13 @@ async function share() {
 .fb-aside {
   /* 长 handle 没有空格，不写这条会把轨道撑宽、整页可以横向拖。 */
   min-width: 0;
+  /* `width: 100%` 是**必须**的，而且必须三块都有：`justify-self: center` 配一个
+     `width: auto` 的 grid item，它先按 max-content 收缩、再在自己的轨道里居中。
+     正文那一块因为内容够宽、被 660 的上限顶住，等于占满轨道，所以它看着没事；
+     而页头（标题 + 几个 chip + 一行作者）自然宽度只有一百多像素，于是它被居中到
+     轨道中间 —— 手机上比正文右偏约 93px、平板上偏 240px，三块东西三个左沿。
+     写满宽度之后三块都取 `min(轨道, 660)`，再一起居中，左沿才是一条线。 */
+  width: 100%;
   max-width: var(--page-w-read);
   justify-self: center;
 }
