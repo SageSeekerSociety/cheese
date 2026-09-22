@@ -225,6 +225,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 教学单元的读写在 teaching 领域，路由按本文件通篇的写法自己组 service
         # （route → 自己的 service，教学那半边在 teaching.services 里）。
         ("app.api.routes.spaces", "app.domain.teaching.repositories"),
+        # 小测的读写在 teaching 领域，路由同样只按本文件通篇的写法组 service
+        # （route → 自己的 service；判分与可见性在 teaching.quiz_services 里）。
+        ("app.api.routes.spaces", "app.domain.teaching.quiz_repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks", "app.domain.llm.repositories"),
