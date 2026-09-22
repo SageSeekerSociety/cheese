@@ -1,4 +1,66 @@
 {
+  "course": {
+    "nav": {
+      "overview": "课程总览",
+      "units": "教学单元",
+      "assignments": "作业与验收",
+      "people": "学生与分组",
+      "stuck": "共性问题",
+      "settings": "设置",
+      "myCourse": "我的课程",
+      "thisWeek": "本周任务",
+      "team": "我的小组"
+    },
+    "overview": {
+      "title": "课程总览",
+      "members": "在册成员",
+      "units": "作业单元",
+      "students": "报名学生",
+      "awaitingReview": "待我验收",
+      "noNumbers": "这门课还没有数字可看——课开起来、学生进来之后，这里会显示人数、单元数与待验收数。"
+    },
+    "pending": {
+      "chip": "待审核",
+      "body": "这门课还在平台审核中。通过之前，分类、题目、成员与数据接口都读不到，所以这一页暂时是空的。"
+    },
+    "myCourse": {
+      "title": "我的课程",
+      "thisWeek": "本周任务",
+      "thisWeekEmpty": "老师还没有发布这一周的内容。发布了它就会出现在这里。",
+      "progress": "我在这门课里做的",
+      "noWork": "还没有你要做的东西。老师发布作业之后，这里会列出来。",
+      "status": {
+        "notSubmitted": "还没交",
+        "pendingReview": "等老师看",
+        "resubmittable": "可以重交",
+        "failed": "没通过",
+        "success": "已通过",
+        "unknown": "进行中"
+      }
+    },
+    "stage": {
+      "units": {
+        "title": "教学单元",
+        "body": "这一屏是课程的时间线：按周次的单元、课件、作业与小测，老师在这里编排并发布。内容由「教学单元」那条任务填。"
+      },
+      "assignments": {
+        "title": "作业与验收",
+        "body": "这一屏收作业、做验收：老师看到等批的提交，学生看到这一周要交的东西。内容由「作业与验收」那条任务填。"
+      },
+      "people": {
+        "title": "学生与分组",
+        "body": "这一屏是名册与分组：谁在这门课里、谁和谁一组。组队机制已经在，界面由「学生与分组」那条任务填。"
+      },
+      "quiz": {
+        "title": "小测",
+        "body": "这一屏是小测：学生从这一周点进来作答，客观题自动判，主观题进老师的复核队列。机制由「小测」那条任务新建。"
+      },
+      "team": {
+        "title": "我的小组",
+        "body": "这一屏是我的小组：和谁一组、组里现在做到哪。内容由「组队」那条任务填。"
+      }
+    }
+  },
   "create": {
     "open": "新建题目板",
     "name": "题目板名称",
@@ -299,7 +361,12 @@
     "createFailed": "生成邀请码失败",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。",
-    "openCourse": "进入课程"
+    "openCourse": "进入课程",
+    "courseLinkTitle": "课程链接",
+    "courseLinkHelp": "把这条链接发到群里：学生点开会先登录，然后自动加入这门课、建好自己的项目，直接进课程。它只决定从哪一屏进来，不限制他之后能看到什么。",
+    "courseLinkCopy": "复制链接",
+    "courseLinkCopied": "已复制链接",
+    "courseLinkFailed": "读取课程链接失败"
   },
   "index": {
     "searchPlaceholder": "搜索题目板",
@@ -308,5 +375,19 @@
       "hot": "最热"
     },
     "noSpaces": "暂无题目板"
+  },
+  "joinCourse": {
+    "title": "加入课程",
+    "joining": "正在把你加进这门课……",
+    "failedTitle": "这条链接用不了",
+    "failed": "这条链接用不了了（可能已过期或用完）。请找老师再要一次。",
+    "joinedTitle": "你已经是这门课的人了",
+    "noProject": "老师刚建好课程、还没有发布内容，等他发布之后你就有自己的项目了。",
+    "retry": "重试",
+    "enterCourse": "进入课程",
+    "teamTitle": "要不要找同学组队？",
+    "teamBody": "这门课可以一个人做，也可以两三个人一组。现在不选也行，以后随时能改。",
+    "teamLater": "先一个人",
+    "teamNow": "去看看小组"
   }
 }

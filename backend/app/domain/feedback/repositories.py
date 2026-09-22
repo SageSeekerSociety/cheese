@@ -18,7 +18,18 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, text, true, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -357,15 +368,81 @@ def matching(q: str) -> Any:
     Backslash goes first: it is the escape character, so a reader who typed one
     would otherwise escape whatever follows it and turn a literal into syntax a
     second way.
+
+    **Each word is its own term, and the terms are ANDed.** One pattern over the
+    whole query means 「导出 报表」 only finds a row where those two words are
+    adjacent with that exact space — so the reader who names two things they
+    remember gets *nothing*, while a reader who happens to remember one of them
+    gets their row. That is backwards: the more you remember, the fewer results.
+    Terms are ANDed rather than ORed because a second word is a further
+    restriction, not an alternative (「导出 报表」 is not 「导出」 or 「报表」).
+
+    Recall, not ranking: the rows come back in the tab's order, not by how well
+    each one matches. Relevance ranking is a different and larger thing — it
+    needs a text index (`pg_search` is in the image, unused) and a maintenance
+    story for a table that also takes status updates.
     """
-    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{literal}%"
-    return or_(
-        Feedback.title.ilike(pattern, escape="\\"),
-        Feedback.summary.ilike(pattern, escape="\\"),
-        Feedback.problem.ilike(pattern, escape="\\"),
-        Feedback.author_handle.ilike(pattern, escape="\\"),
+    columns = (
+        Feedback.title,
+        Feedback.summary,
+        Feedback.problem,
+        Feedback.author_handle,
     )
+    terms = q.split()
+    if not terms:
+        # Whitespace is not a search: it must not be read as 「find rows with a
+        # space in them」 (what the single-pattern version did) nor as nothing at
+        # all (an empty AND would match every row and silently drop the filter
+        # the caller thinks it applied).
+        return true()
+    return and_(
+        *[
+            or_(*[column.ilike(_like_pattern(term), escape="\\") for column in columns])
+            for term in terms
+        ]
+    )
+
+
+def _like_pattern(term: str) -> str:
+    """One search term, as a `LIKE` pattern with its own syntax escaped."""
+    literal = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{literal}%"
+
+
+def search_rank(q: str) -> Any | None:
+    """How well a row answers what was typed, as an integer to sort on.
+
+    **The title is the only weight**, and that is a deliberate floor rather than a
+    finished ranking. A term that lands in the title is nearly always the thing
+    the reader meant — titles are written to be the one line that says what the
+    report is about — while a term in the body is often incidental (a stack
+    trace, a word in passing). Counting **how many of the typed terms hit the
+    title** is the cheapest honest version of 「哪条最像是我要找的」, and it needs
+    nothing that is not already in the query: no new column, no index, no
+    extension.
+
+    What it is NOT, and the reason it is not called relevance in the usual sense:
+    it ignores term frequency and rarity, so it cannot tell a row that says
+    「报表」 five times from one that says it once. Doing that needs a text index
+    with statistics behind it (`pg_search` is in the image and unused — see issue
+    #1461 for what that would take). Until then, this orders the rows a reader is
+    most likely to have meant above the ones whose only mention was somewhere in
+    the body, which is the difference they actually notice.
+
+    Returns None for a query with no terms, so the caller keeps its own order —
+    whitespace is not a search.
+    """
+    terms = q.split()
+    if not terms:
+        return None
+    exprs = [
+        case((Feedback.title.ilike(_like_pattern(term), escape="\\"), 1), else_=0)
+        for term in terms
+    ]
+    rank = exprs[0]
+    for expr in exprs[1:]:
+        rank = rank + expr
+    return rank
 
 
 class FeedbackRepository:
@@ -494,6 +571,7 @@ class FeedbackRepository:
         sort: str,
         limit: int,
         offset: int,
+        q: str | None = None,
     ) -> Select[tuple[Feedback]]:
         # Total on purpose: `supports` is the only non-default branch, so any
         # other string means newest-first rather than "no ordering". Callers that
@@ -505,41 +583,47 @@ class FeedbackRepository:
             # 一条两周前的 4 票和一条今天的 2 票热度相同（都是 2.0），按原始支持数排会
             # 把旧的那条放在前面，于是上面那行「两周前的 4 票和今天的 2 票一样热」当场
             # 被这个排序推翻。判据用哪个分，排序就用哪个分。
-            stmt = (
-                stmt.outerjoin(
-                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
-                )
-                .group_by(Feedback.id)
-                .order_by(
-                    hot_score().desc(),
-                    Feedback.created_at.desc(),
-                    Feedback.display_no.desc(),
-                )
-            )
+            stmt = stmt.outerjoin(
+                FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+            ).group_by(Feedback.id)
+            order: list[Any] = [
+                hot_score().desc(),
+                Feedback.created_at.desc(),
+                Feedback.display_no.desc(),
+            ]
         elif sort == "supports":
             # `hot` sorts by support count. `GROUP BY feedback.id` rather than a
             # denormalised counter column: MVP lists 20 rows, and this repo has
             # no precedent for a redundant counter (`BlockReaction` has none,
             # `comments.count_votes` is a live aggregate).
-            stmt = (
-                stmt.outerjoin(
-                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
-                )
-                .group_by(Feedback.id)
-                # `display_no` as the tiebreak, same as the `new` branch below:
-                # `created_at` comes from the application clock, so two rows made
-                # in the same millisecond compare equal and an OFFSET page can
-                # repeat or skip one between two requests. An ordering that two
-                # rows can tie on is not an ordering.
-                .order_by(
-                    func.count(FeedbackSupport.id).desc(),
-                    Feedback.created_at.desc(),
-                    Feedback.display_no.desc(),
-                )
-            )
+            stmt = stmt.outerjoin(
+                FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+            ).group_by(Feedback.id)
+            # `display_no` as the tiebreak, same as the `new` branch below:
+            # `created_at` comes from the application clock, so two rows made
+            # in the same millisecond compare equal and an OFFSET page can
+            # repeat or skip one between two requests. An ordering that two
+            # rows can tie on is not an ordering.
+            order = [
+                func.count(FeedbackSupport.id).desc(),
+                Feedback.created_at.desc(),
+                Feedback.display_no.desc(),
+            ]
         else:
-            stmt = stmt.order_by(Feedback.created_at.desc(), Feedback.display_no.desc())
-        return stmt.limit(limit).offset(offset)
+            order = [Feedback.created_at.desc(), Feedback.display_no.desc()]
+        # **What the search found, before which tab it is in.** The tab's order
+        # answers 「这一栏里先看哪条」, and a reader who just typed something is
+        # asking a narrower question: 「哪条最像是我要找的」. Answering the second
+        # one with the first one's order is what makes a search feel like it
+        # ignored you — the row you meant sits wherever its age puts it.
+        #
+        # Still the tab's order underneath, so the two are consistent for paging
+        # and a search inside 「热门」 stays hot-ordered among equals.
+        if q:
+            rank = search_rank(q)
+            if rank is not None:
+                order.insert(0, rank.desc())
+        return stmt.order_by(*order).limit(limit).offset(offset)
 
     async def _count(self, where: Sequence[Any]) -> int:
         stmt = select(func.count(Feedback.id)).where(
@@ -675,7 +759,9 @@ class FeedbackRepository:
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
+                    self._list_stmt(
+                        where=where, sort=sort, limit=limit, offset=offset, q=q
+                    )
                 )
             )
             .scalars()
@@ -768,7 +854,9 @@ class FeedbackRepository:
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
+                    self._list_stmt(
+                        where=where, sort=sort, limit=limit, offset=offset, q=q
+                    )
                 )
             )
             .scalars()

@@ -1,4 +1,66 @@
 {
+  "course": {
+    "nav": {
+      "overview": "Course overview",
+      "units": "Units",
+      "assignments": "Assignments",
+      "people": "Students & groups",
+      "stuck": "Where students got stuck",
+      "settings": "Settings",
+      "myCourse": "My course",
+      "thisWeek": "This week",
+      "team": "My group"
+    },
+    "overview": {
+      "title": "Course overview",
+      "members": "People in the course",
+      "units": "Assignment units",
+      "students": "Students enrolled",
+      "awaitingReview": "Waiting for my review",
+      "noNumbers": "There is nothing to count yet — once the course is running and students join, the numbers appear here."
+    },
+    "pending": {
+      "chip": "Under review",
+      "body": "This course is still being reviewed. Until it is approved its categories, problems, members and data endpoints all read as missing, so this page stays empty."
+    },
+    "myCourse": {
+      "title": "My course",
+      "thisWeek": "This week",
+      "thisWeekEmpty": "Your teacher has not published this week yet. It will appear here once they do.",
+      "progress": "What I am doing in this course",
+      "noWork": "There is nothing for you to do yet. Assignments appear here once your teacher publishes them.",
+      "status": {
+        "notSubmitted": "Not submitted",
+        "pendingReview": "Waiting for the teacher",
+        "resubmittable": "Can be resubmitted",
+        "failed": "Not accepted",
+        "success": "Accepted",
+        "unknown": "In progress"
+      }
+    },
+    "stage": {
+      "units": {
+        "title": "Units",
+        "body": "This screen is the course timeline: weekly units with slides, assignments and quizzes, arranged and published by the teacher. The course-units task fills it in."
+      },
+      "assignments": {
+        "title": "Assignments",
+        "body": "This screen collects work and reviews it: the teacher sees submissions waiting, the student sees what is due this week. The assignments task fills it in."
+      },
+      "people": {
+        "title": "Students & groups",
+        "body": "This screen is the roster and the groups: who is in the course and who works with whom. Teams already exist; the students-and-groups task fills in the screen."
+      },
+      "quiz": {
+        "title": "Quiz",
+        "body": "This screen is a quiz: students answer it from the week it belongs to, objective questions are graded automatically, and written answers land in the teacher's review queue. The quiz task builds the mechanism."
+      },
+      "team": {
+        "title": "My group",
+        "body": "This screen is my group: who I work with and how far the group has got. The teams task fills it in."
+      }
+    }
+  },
   "create": {
     "open": "New problem board",
     "name": "Problem board name",
@@ -243,12 +305,31 @@
     "createFailed": "Could not create the invite code",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this board.",
-    "openCourse": "Open the course"
+    "openCourse": "Open the course",
+    "courseLinkTitle": "Course link",
+    "courseLinkHelp": "Send this link to the group: a student who opens it signs in, joins this course, gets his own project, and lands in the course. It decides only which screen he arrives on, never what he may see afterwards.",
+    "courseLinkCopy": "Copy link",
+    "courseLinkCopied": "Link copied",
+    "courseLinkFailed": "Could not read the course link"
   },
   "index": {
     "sortOptions": {
       "newest": "Newest",
       "hot": "Hot"
     }
+  },
+  "joinCourse": {
+    "title": "Join the course",
+    "joining": "Adding you to this course…",
+    "failedTitle": "This link does not work",
+    "failed": "This link cannot be used — it may have expired or run out of uses. Ask your teacher for another one.",
+    "joinedTitle": "You are in this course",
+    "noProject": "The teacher has just set the course up and published nothing yet. Your project arrives with the first thing they publish.",
+    "retry": "Try again",
+    "enterCourse": "Enter the course",
+    "teamTitle": "Find teammates?",
+    "teamBody": "This course can be done alone or in a group of two or three. You can skip this now and change it later.",
+    "teamLater": "On my own for now",
+    "teamNow": "Look at the groups"
   }
 }
