@@ -1,32 +1,42 @@
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
+import type { StatsKind } from '@/api'
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
 
 import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
-// 管理后台的看板（§4.2）。列宽 1100，两条算式各钉一排东西：
-// `4 × 263 + 3 × 16 = 1100`（KPI 行）与 `660 + 24 + 416 = 1100`（图 + 迷你列表）。
+// 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
 //
-// **这一页的琥珀出现 0 次**（§3 F-01）：图用中性灰阶 + 线型区分系列（§7.5），KPI 大
-// 数字走 `--ink`，页头下沿是 `--line-2`（那条线全站只出现两处：表头下、页头下）。
+// 分类是这一页的骨架（需求方原话：「看板我觉得不是专门为反馈打造的？其它的也应该算
+// 进去，比如 token 消费之类的，然后表也不要太多……不然人的注意力比较稀疏」）。三类
+// 各占一屏，切到哪一类才拉哪一类 —— 服务端就是三条接口（`/admin/stats/{feedback,
+// usage,platform}`），而这三块里有两块读的是全平台增长最快的表（`resource_usage` 每
+// 调一次 `/v1/messages` 长一行），没有理由让「看一眼反馈」把用量也读一遍。
 //
-// **墙上每个数字都写得出点下去去哪**（§6.3 那张准入表的规则：把这一页所有数字的点击
-// 禁掉之后，这里应该变得没有价值）。所以：拿不到来源的数不上墙（成员总数 / 按天新增
-// 成员 —— 前端这条接口里没有平台账号的计数，见下），上了墙的每一个都有 `to`。
+// 一页里并列八张图是**没人读**的页面：每一块都有自己的尺度和自己的读者，摆在一起只会
+// 让注意力平均分配，而那恰好等于没有重点。所以「表不要太多」不是删表，是**分屏**。
 //
-// 两个请求，两块数据：管理列表接口（`loadAdmin`）给 `counts` 和第一页卡片，看板接口
-// （`loadStats`）给窗口内的曲线和成本。**没有第三个** —— 计数那两个键
-// （`unassigned` / `deployed`）只在管理端的列表响应里（`FeedbackService.counts`
-// 的 docstring 写着「rides on /admin/feedback and nowhere else」），所以拉这两个数的
-// 那一趟顺手把迷你列表的十行也带回来了。
+// 数字口径有两处是刻意的：
+//
+//   * **存量与窗口分开**。`counts` 是全量（现在一共多少条），`series` 是窗口内的
+//     （这七天怎么变的）—— 页面上「现在是多少」和「这七天怎么走的」是两个问题，
+//     合成一个数就会有一个是错的。
+//   * **未定价的 token 单独算**。订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
+//     「没有单价」而不是「免费」；把它们加进总额，会在几百万 token 上印一个
+//     `$0.0000`，读起来像「这个月没花钱」。
+//
+// 墙上每个数字都写得出点下去去哪（§6.3 那张准入表）。机器那四个数是例外，而且是**说
+// 得出理由的例外**：平台里没有一页列设备，它们点不进去，所以那一块只报数、不装成链接
+// （口径是存量，见 `machines`）。
 defineOptions({ name: 'AdminDashboardPage' })
 
 const store = useFeedbackStore()
@@ -36,55 +46,61 @@ const router = useRouter()
 /** 页头上那句「过去 7 天」问的窗口。窗口是**页面**的问题（`loadStats` 收参数）。 */
 const DAYS = 7
 
-/** 迷你列表最多画几行。和 `AdminNumberList` 的 `SHOWN` 是同一个数，这里再写一份是
- *  因为标题上那个数得跟**下面真的画出来的行数**一致：区块标题说「需处理 · 10」、
- *  下面摆着三行，比不写还难读。 */
-const SHOWN = 10
+/** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
+ *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
+const KINDS: StatsKind[] = ['feedback', 'usage', 'platform']
 
-/** 队列的地址。写**地址**不写路由名：`/admin/queue` 是后面才注册的路由，名字还没定，
- *  而规格 §11 第 9 条钉的是地址。 */
+/** 每个分类的名字。**写成一张键名字面量的表**，不在模板里拼
+ *  `feedback.dashboard.tab.${kind}` —— 拼出来的键在源码里没有一处字面量出现，
+ *  `catalog.spec.ts` 的「这个键没有任何文件引用」那条闸门就会把这三个键判成没人用的
+ *  死词条（它扫的是源码文本，不是运行时的调用）。拼字符串在这里省下的是一行，代价是
+ *  每次跑门禁都要重新解释一遍「这三个键其实是活的」。 */
+const TAB_KEY: Record<StatsKind, string> = {
+  feedback: 'feedback.dashboard.tab.feedback',
+  usage: 'feedback.dashboard.tab.usage',
+  platform: 'feedback.dashboard.tab.platform',
+}
+
+/** 队列的地址。写**地址**不写路由名：规格 §11 第 9 条钉的是地址。 */
 const QUEUE = '/admin/queue'
-
 const queue = (query: Record<string, string> = {}): RouteLocationRaw => ({ path: QUEUE, query })
 
-/** 数字串。拿不到来源（`undefined`）时给空串，卡片自己画成 `—`；给 0 的话「没读到」
- *  和「读出来确实是零」在屏幕上就分不开了（`AdminKpiCard` 文件开头写的就是这条）。
- *
- *  `store.error` 非空时也一律留空：它是**全 store 共用**的一个字段，两趟请求并发时
- *  后到的那个会把先到的那句错话擦掉，所以它只答得了一件事 —— 「这一屏刚出过事」。
- *  答得了的那一件用上就够：出过事的时候不拿 `counts` 初值里的那几个 0 冒充读数。 */
-const num = (v: number | undefined): string => (v === undefined || store.error !== null ? '' : fmtNum(v))
+/** 迷你列表最多画几行。和 `AdminNumberList` 的 `SHOWN` 是同一个数。 */
+const SHOWN = 10
+
+const kind = computed(() => store.statsKind)
+const feedback = computed(() => store.stats.feedback)
+const usage = computed(() => store.stats.usage)
+const platform = computed(() => store.stats.platform)
+
+/** 当前这一类拿到了没有。`null` = 还没拉到（第一次进来）或这一趟没成。 */
+const current = computed(() => store.stats[kind.value])
+/** 整页失败 = 当前那一类什么都没拿到，而 store 里有一句服务端的原话。 */
+const failed = computed(() => !store.statsLoading && current.value === null && store.error !== null)
+
+/** 数字串。拿不到来源（`null`）时给空串，卡片自己画成 `—`；给 0 的话「没读到」和
+ *  「读出来确实是零」在屏幕上就分不开。 */
+const num = (v: number | null | undefined): string => (v === null || v === undefined ? '' : fmtNum(v))
+
+/** 切分类：先写状态（控件立刻跟上），再拉这一类。已经拉过的那一类**不重拉** ——
+ *  切回来看到的是刚才那份，而「重新拉一次」是刷新页面的事。 */
+function selectKind(next: StatsKind) {
+  if (next === store.statsKind) return
+  store.statsKind = next
+  if (store.stats[next] === null) void store.loadStats(next, DAYS)
+}
+
+function sumOf(values: number[] | undefined): string {
+  return values ? fmtNum(values.reduce((acc, n) => acc + n, 0)) : ''
+}
+
+/* ---- 反馈那一块 ---- */
 
 const counts = computed(() => store.counts)
 
-/** 曲线上的和。`stats` 还没到（或这一趟没成）时给空串，不给 0，理由同 `num`。 */
-const sumOf = (pick: 'created' | 'resolved'): string =>
-  store.stats ? fmtNum(store.stats.series.reduce((acc, row) => acc + row[pick], 0)) : ''
-
-/** 「7 日上线」这一格**没有来源**：`AdminFeedbackStats.series` 这一版只有 `created` /
- *  `resolved` 两条曲线（后端的 `/admin/stats` 里其实回 `deployed`，前端这条接口的形状
- *  还没跟上），所以这个窗口数拿不到。卡片照画、数字位留空画成 `—`，并且**不拿累计的
- *  「已上线」顶替** —— 「这七天上线了几条」和「一共上线了几条」是两个问题，混着用会
- *  让人在下一周看不出变化。它是 §9.3 第 4 态那套读法的同一件事：拿不到就说拿不到，
- *  卡片不许因此消失（消失会让 KPI 行少一格，`4 × 263 + 3 × 16` 当场失效）。 */
-const DEPLOYED_7D = ''
-
-/** 墙上那一摞数字，顺序就是屏幕上从左到右、从上到下的顺序：第一排四张和 §4.2 画的
- *  那四张逐字相同（待分诊 / 进行中 / 7 日解决 / 7 日上线），其余按 §6.3 的表往下排。
- *  §4.2 那张图只画了一排，而准入表里有 14 个数要上墙 —— 一张速写画不下，格子照 263
- *  一格一格往下排。 */
-interface Kpi {
-  key: string
-  label: string
-  value: string
-  /** 只有「7 日上线」用得上（它得说明自己为什么是空的）。 */
-  unit?: string
-  loading: boolean
-  /** 每一张都有：准入表上留着而点不动的数字不该上墙。 */
-  to: RouteLocationRaw
-}
-
-const kpis = computed<Kpi[]>(() => [
+/** 反馈的 KPI。前两张走**列表接口**的计数（`loadAdmin` 带回来的 `counts`），后两张走
+ *  看板接口 —— 两个请求并发，互不依赖。 */
+const feedbackKpis = computed(() => [
   {
     key: 'untriaged',
     label: t('feedback.dashboard.kpi.untriaged'),
@@ -100,106 +116,46 @@ const kpis = computed<Kpi[]>(() => [
     to: queue({ status: 'in_progress' }),
   },
   {
-    key: 'resolved7d',
-    label: t('feedback.dashboard.kpi.resolved7d'),
-    value: sumOf('resolved'),
-    loading: store.statsLoading,
-    to: queue({ resolved_since: '7d' }),
-  },
-  {
-    key: 'deployed7d',
-    label: t('feedback.dashboard.kpi.deployed7d'),
-    value: DEPLOYED_7D,
-    unit: t('feedback.dashboard.kpi.noSeries'),
-    loading: store.statsLoading,
-    to: queue({ deployed_since: '7d' }),
-  },
-  {
     key: 'created7d',
     label: t('feedback.dashboard.kpi.created7d'),
-    value: sumOf('created'),
+    value: sumOf(feedback.value?.series.map((row) => row.created)),
     loading: store.statsLoading,
     to: queue({ since: '7d' }),
   },
   {
-    key: 'resolvedTotal',
-    label: t('feedback.dashboard.kpi.resolvedTotal'),
-    value: num(counts.value.resolved),
-    loading: store.adminLoading,
-    to: queue({ status: 'resolved' }),
-  },
-  {
-    key: 'deployedTotal',
-    label: t('feedback.dashboard.kpi.deployedTotal'),
-    value: num(counts.value.deployed),
-    loading: store.adminLoading,
-    to: queue({ status: 'deployed' }),
-  },
-  {
-    key: 'all',
-    label: t('feedback.dashboard.kpi.all'),
-    value: num(counts.value.all),
-    loading: store.adminLoading,
-    // 队列（无参）就是「全部」那一栏，带上任何参数都成了另一个问题。
-    to: queue(),
-  },
-  {
-    key: 'hot',
-    label: t('feedback.dashboard.kpi.hot'),
-    value: num(counts.value.hot),
-    loading: store.adminLoading,
-    to: queue({ hot: '1' }),
-  },
-  {
-    key: 'unread',
-    label: t('feedback.dashboard.kpi.unread'),
-    value: num(counts.value.unread),
-    loading: store.adminLoading,
-    to: queue({ unread: '1' }),
+    key: 'resolved7d',
+    label: t('feedback.dashboard.kpi.resolved7d'),
+    value: sumOf(feedback.value?.series.map((row) => row.resolved)),
+    loading: store.statsLoading,
+    to: queue({ resolved_since: '7d' }),
   },
 ])
 
-/** 图上的两条线。`created` 实线、`resolved` 虚线（§7.5：颜色由组件按线型发，这一层
- *  只管名字和值）。 */
-const series = computed<ChartSeries[]>(() => [
+/** 反馈的三条线：新增 / 解决 / 上线（§7.5：颜色由组件按线型发，这一层只管名字和值）。
+ *
+ *  **上线那一条是后补的，而它正是这条曲线在这里的理由**：梯子最后两档是两件事 ——
+ *  「修好了」和「上线了」对提交者是两个不同的日子，而看板此前只画前两档，最该被看见的
+ *  那一步整个不存在。后端的 `series[].deployed` 一直就回，只是没人读。 */
+const feedbackSeries = computed<ChartSeries[]>(() => [
   {
     name: t('feedback.dashboard.chart.created'),
-    values: store.stats?.series.map((row) => row.created) ?? [],
+    values: feedback.value?.series.map((row) => row.created) ?? [],
     style: 'solid',
   },
   {
     name: t('feedback.dashboard.chart.resolved'),
-    values: store.stats?.series.map((row) => row.resolved) ?? [],
+    values: feedback.value?.series.map((row) => row.resolved) ?? [],
     style: 'dashed',
+  },
+  {
+    name: t('feedback.dashboard.chart.deployed'),
+    values: feedback.value?.series.map((row) => row.deployed) ?? [],
+    style: 'dotted',
   },
 ])
 
-/** 轴标签写「9/15」：轴上七个点，写全年月日是七串数字挤在一起，而窗口在页头上已经
- *  说了是过去七天。 */
-const xLabels = computed(() => store.stats?.series.map((row) => dayLabel(row.date)) ?? [])
-
-function dayLabel(date: string): string {
-  // 后端给的是 `YYYY-MM-DD`（或带时间的 ISO 串），取前两段就够，别交给 `Date`
-  // 去解析 —— 那会按本地时区把日期挪一天。
-  const [, month, day] = date.slice(0, 10).split('-')
-  return `${Number(month)}/${Number(day)}`
-}
-
-/** 点某一天去队列看那一天收进来的。用 ISO 的 `YYYY-MM-DD` 而不是轴上那个「9/15」：
- *  筛选参数是给机器读的，月份写在前面就不会有「哪个是月」的问题。 */
-function onSelectDay(index: number): void {
-  const date = store.stats?.series[index]?.date
-  if (!date) return
-  void router.push(queue({ since: date.slice(0, 10) }))
-}
-
-/** 迷你列表的行。**「需处理」只有两种状态**（还没人接手、有人在做），所以在这一页
- *  已经拿到的那摞卡片里筛这两档 —— 筛的是状态，不是再发一次请求：那十行本来就跟着
- *  `loadAdmin()` 一起回来了。
- *
- *  更新时间取 `last_activity_at`，为空退回 `created_at`（后端的 `last_activity` 是
- *  一条 timeline 查询，还没人动过的条目回 null；那一格的语义是「最近一次动静」，一条
- *  都没动过的条目上，提交就是它唯一的动静）。 */
+/** 迷你列表的行。「需处理」只有两种状态（还没人接手、有人在做）；更新时间取
+ *  `last_activity_at`，为空退回 `created_at`。 */
 const pending = computed(() =>
   store.adminItems
     .filter((row) => row.status === 'received' || row.status === 'in_progress')
@@ -213,43 +169,147 @@ const pending = computed(() =>
     }))
 )
 
-/** 「FB-1042」里那串数字。列表左列要的是一个能纵向对齐、能排序的编号，`display_id`
- *  里那一段就是它。 */
+/** 「FB-1042」里那串数字。列表左列要的是一个能纵向对齐、能排序的编号。 */
 function displayNo(displayId: string): number {
   const digits = displayId.replace(/\D/g, '')
   return digits === '' ? 0 : Number(digits)
 }
 
-/** 成本那一行。`cost` 为 null 就是 §9.3 的第 4 态（用量那本账不在反馈域里，拿不到），
- *  只降级这一行，其余数字照画。 */
-const cost = computed(() => store.stats?.cost ?? null)
-const costText = computed(() => {
-  const c = cost.value
-  return c === null ? '' : t('feedback.dashboard.cost.value', { calls: fmtNum(c.calls), usd: fmtCost(c.usd) })
-})
+/* ---- 用量那一块 ---- */
 
-/** 整页失败 = 看板接口这一趟什么都没拿到。数字那一块来自另一个接口，它单独失败时
- *  这一页照样画（数字位留空，见 `num`）—— 「一个接口挂了」不该把另一块也带走。 */
-const failed = computed(() => !store.statsLoading && store.stats === null && store.error !== null)
+const usageKpis = computed(() => [
+  {
+    key: 'tokens',
+    label: t('feedback.dashboard.usage.tokens'),
+    value: num(usage.value?.totals.tokens),
+    loading: store.statsLoading && store.statsKind === 'usage',
+    to: queue(),
+  },
+  {
+    key: 'calls',
+    label: t('feedback.dashboard.usage.calls'),
+    value: num(usage.value?.totals.calls),
+    loading: store.statsLoading && store.statsKind === 'usage',
+    to: queue(),
+  },
+])
 
-/** 空态：公开那一路一条都没有，而且没有任何一条还没人接手。`unassigned` 是唯一把
- *  private / security 也算进去的那个数，所以这两个都归零才是「平台还没有产生反馈」。
- *
- *  `stats !== null` 这一条不是多余的：`counts` 的初值就是全 0，光看它的话，挂载前
- *  那一帧（骨架还没开始转）会被读成「一条反馈都没有」。 */
-const empty = computed(
-  () =>
-    !store.statsLoading &&
-    !store.adminLoading &&
-    store.stats !== null &&
-    (store.counts.all ?? 0) === 0 &&
-    (store.counts.unassigned ?? 0) === 0
+/** 窗口内每天的 token。**只画 token 一条**：调用次数和钱各自有不同的量级，三条线画在
+ *  一根轴上会有两条贴着底走 —— 而「贴着底的那条是不是 0」正是这张图要回答的问题。 */
+const usageSeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.usage.tokens'),
+    values: usage.value?.series.map((row) => row.tokens) ?? [],
+    style: 'solid',
+  },
+])
+
+/** 用量最高的几个项目。柱子只报 token —— 同一根柱子上再叠一个「花了多少钱」，两根
+ *  柱子的长度就各自代表不同的东西，而长短本来是用来比的。 */
+const topProjects = computed(() =>
+  (usage.value?.top_projects ?? []).map((row) => ({ label: row.name, value: row.tokens }))
 )
 
+const costText = computed(() => {
+  const totals = usage.value?.totals
+  return totals === undefined
+    ? ''
+    : t('feedback.dashboard.cost.value', { calls: fmtNum(totals.calls), usd: fmtCost(totals.cost_usd) })
+})
+
+/** 「没有算进上面那个金额的 token」。**它必须和 `cost_usd` 一起读**（api.ts 里那条
+ *  注释就是这么写的）：订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是「没有单价」而
+ *  不是「免费」—— 不把它写出来，几百万 token 上印一个 `$0.0000` 读起来像「这个月没
+ *  花钱」。后端一直单独回这一份数（`totals.unpriced_tokens`），但页面从来不读，于是
+ *  那句口径只活在代码注释里。为零时不画：一句话说的是一个不存在的数字。 */
+const unpricedText = computed(() => {
+  const totals = usage.value?.totals
+  if (!totals || totals.unpriced_tokens <= 0) return ''
+  return t('feedback.dashboard.cost.unpriced', { tokens: fmtNum(totals.unpriced_tokens) })
+})
+
+/* ---- 平台那一块 ---- */
+
+const peopleKpis = computed(() => [
+  {
+    key: 'accounts',
+    label: t('feedback.dashboard.people.total'),
+    value: num(platform.value?.people.total),
+    loading: store.statsLoading && store.statsKind === 'platform',
+  },
+  {
+    key: 'new',
+    label: t('feedback.dashboard.people.new'),
+    value: num(platform.value?.people.new),
+    loading: store.statsLoading && store.statsKind === 'platform',
+  },
+  {
+    key: 'admins',
+    label: t('feedback.dashboard.people.admins'),
+    value: num(platform.value?.people.admins),
+    loading: store.statsLoading && store.statsKind === 'platform',
+  },
+])
+
+const signupSeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.people.new'),
+    values: platform.value?.people.series.map((row) => row.created) ?? [],
+    style: 'solid',
+  },
+])
+
+/** 机器那四行。**存量，不是在线数** —— 在线状态住在进程内存里，库里没有可以查的那一
+ *  列（`platform_stats/repositories.py` 的模块 docstring）。这句话必须写在页面上：一个
+ *  「机器 5」的数字，读的人默认会当成「现在有 5 台在跑」。 */
+const machines = computed(() => [
+  { key: 'devices', label: t('feedback.dashboard.machines.devices'), value: num(platform.value?.machines.devices) },
+  {
+    key: 'hosted',
+    label: t('feedback.dashboard.machines.hosted'),
+    value: num(platform.value?.machines.hosted_devices),
+  },
+  { key: 'warm', label: t('feedback.dashboard.machines.warm'), value: num(platform.value?.machines.warm_machines) },
+  {
+    key: 'project',
+    label: t('feedback.dashboard.machines.project'),
+    value: num(platform.value?.machines.project_machines),
+  },
+])
+
+/** 日期轴的标签。三类各有一条 series，长度都是 `days`。 */
+const xLabels = computed(() => {
+  const series =
+    kind.value === 'platform'
+      ? platform.value?.people.series
+      : kind.value === 'usage'
+        ? usage.value?.series
+        : feedback.value?.series
+  return (series ?? []).map((row) => dayLabel(row.date))
+})
+
+/** 轴标签写「9/15」：轴上七个点，写全年月日是七串数字挤在一起，而窗口在页头上已经
+ *  说了是过去七天。 */
+function dayLabel(date: string): string {
+  // 后端给的是 `YYYY-MM-DD`（或带时间的 ISO 串），取前两段就够，别交给 `Date` 去解析
+  // —— 那会按本地时区把日期挪一天。
+  const [, month, day] = date.slice(0, 10).split('-')
+  return `${Number(month)}/${Number(day)}`
+}
+
+/** 点某一天去队列看那一天收进来的。只有反馈那一类的图接这个事件：用量和平台没有对应
+ *  的筛选参数，接了就只是「点了没反应」。 */
+function onSelectDay(index: number) {
+  const date = feedback.value?.series[index]?.date
+  if (!date) return
+  void router.push(queue({ since: date.slice(0, 10) }))
+}
+
 onMounted(() => {
-  // 两个请求并发发出去：计数和曲线互不依赖，串行只让首屏多等一个来回。
+  // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
+  // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
-  void store.loadStats(DAYS)
+  if (store.stats[store.statsKind] === null) void store.loadStats(store.statsKind, DAYS)
 })
 </script>
 
@@ -261,26 +321,39 @@ onMounted(() => {
         <span class="ad__window t-meta-read">{{ t('feedback.dashboard.window') }}</span>
       </header>
 
-      <!-- 错误与空是**整块**的（§9.3）：这一页的主文案只有这两句，页头留着 —— 它是
-           这一页的名字，不是数据。 -->
+      <!-- 分类控件是这一页的**第一个控件**：读的人先决定看哪一类，再看数字。
+           `v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头那条 `--line-2` 抢同一种
+           「这里是边界」的意思，而分类不是边界，是一次筛选。 -->
+      <div class="ad__kinds">
+        <v-btn-toggle
+          :model-value="store.statsKind"
+          mandatory
+          density="comfortable"
+          variant="outlined"
+          divided
+          @update:model-value="selectKind($event as StatsKind)"
+        >
+          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small">
+            {{ t(TAB_KEY[k]) }}
+          </v-btn>
+        </v-btn-toggle>
+      </div>
+
+      <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
+           的名字，不是数据。 -->
       <p v-if="failed" class="ad__none">
         <span class="ad__none-title">{{ t('feedback.dashboard.error.title') }}</span>
         <span class="ad__none-desc">{{ t('feedback.dashboard.error.desc') }}</span>
       </p>
 
-      <p v-else-if="empty" class="ad__none">
-        <span class="ad__none-title">{{ t('feedback.dashboard.empty.title') }}</span>
-        <span class="ad__none-desc">{{ t('feedback.dashboard.empty.desc') }}</span>
-      </p>
-
-      <template v-else>
+      <!-- 反馈：栏位计数 + 两条曲线 + 需处理那十行。 -->
+      <template v-else-if="kind === 'feedback'">
         <div class="ad__kpis">
           <AdminKpiCard
-            v-for="kpi in kpis"
+            v-for="kpi in feedbackKpis"
             :key="kpi.key"
             :label="kpi.label"
             :value="kpi.value"
-            :unit="kpi.unit"
             :loading="kpi.loading"
             :to="kpi.to"
           />
@@ -290,7 +363,7 @@ onMounted(() => {
           <AdminLineChart
             :title="t('feedback.dashboard.chart.title')"
             :x-labels="xLabels"
-            :series="series"
+            :series="feedbackSeries"
             :loading="store.statsLoading"
             @select="onSelectDay"
           />
@@ -301,21 +374,76 @@ onMounted(() => {
             :more-to="queue()"
           />
         </div>
+      </template>
 
-        <div class="ad__cost" :class="{ 'ad__cost--partial': !store.statsLoading && cost === null }">
+      <!-- 用量：窗口内的 token 与调用次数、每天一条线、最花钱的几个项目、成本那一行。 -->
+      <template v-else-if="kind === 'usage'">
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in usageKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+            :to="kpi.to"
+          />
+        </div>
+
+        <div class="ad__row">
+          <AdminLineChart
+            :title="t('feedback.dashboard.usage.chart')"
+            :x-labels="xLabels"
+            :series="usageSeries"
+            :loading="store.statsLoading"
+          />
+          <AdminBarChart :title="t('feedback.dashboard.usage.top')" :rows="topProjects" :loading="store.statsLoading" />
+        </div>
+
+        <div class="ad__cost" :class="{ 'ad__cost--partial': !store.statsLoading && !usage }">
           <span class="ad__cost-label t-meta-read">{{ t('feedback.dashboard.cost.label') }}</span>
           <v-skeleton-loader v-if="store.statsLoading" type="text" class="ad__cost-skel" />
-          <template v-else-if="cost">
-            <span class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
-          </template>
-          <!-- §9.3 第 4 态：只降这一行，别的数字不受影响。`?` 上的 `title` 是给鼠标
-               用户的原文，可见的两句是给所有人的 —— 一个只有 `title` 的说明等于没有
-               说明（触屏和键盘都碰不到它）。 -->
+          <span v-else-if="usage" class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
+          <!-- 自己占一整行（`flex: 1 0 100%`）：它是上面那个金额的**脚注**，横着挤在
+               同一行里会被读成同一个句子的一部分。 -->
+          <span v-if="usage && unpricedText" class="ad__cost-unpriced t-meta-read">{{ unpricedText }}</span>
+          <!-- §9.3 第 4 态：这一趟没拿到就说没拿到，别拿 0 冒充读数。 -->
           <template v-else>
             <span class="ad__cost-value t-meta-read">{{ t('feedback.dashboard.partial.title') }}</span>
-            <span class="ad__cost-value t-meta-read">{{ t('feedback.dashboard.partial.desc') }}</span>
             <span class="ad__cost-hint t-meta-read" :title="t('feedback.dashboard.partial.hint')">?</span>
           </template>
+        </div>
+      </template>
+
+      <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
+      <template v-else>
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in peopleKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <div class="ad__row">
+          <AdminLineChart
+            :title="t('feedback.dashboard.people.chart')"
+            :x-labels="xLabels"
+            :series="signupSeries"
+            :loading="store.statsLoading"
+          />
+
+          <section class="ad__machines">
+            <h2 class="ad__block-title">{{ t('feedback.dashboard.machines.title') }}</h2>
+            <dl class="ad__machine-list">
+              <template v-for="row in machines" :key="row.key">
+                <dt class="t-meta-read">{{ row.label }}</dt>
+                <dd class="t-num">{{ row.value }}</dd>
+              </template>
+            </dl>
+            <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.machines.note') }}</p>
+          </section>
         </div>
       </template>
     </div>
@@ -324,8 +452,8 @@ onMounted(() => {
 
 <style scoped>
 /* 滚动归这一页自己领：外壳（`AdminLayout` 的 `.admin-shell__main`）只让高度和宽度，
-   不给滚动（和 `AdminMembersPage` 同一套约定）。KPI 那三排加起来比一屏高，少了
-   `overflow-y: auto` 下半截会被外面那层 `overflow-hidden` 裁掉，而且没人能滚。 */
+   不给滚动（和 `AdminMembersPage` 同一套约定）。少了 `overflow-y: auto`，内容比一屏高
+   时下半截会被外面那层 `overflow-hidden` 裁掉，而且没人能滚。 */
 .ad {
   box-sizing: border-box;
   height: 100%;
@@ -334,16 +462,14 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-/* 1100 那一列的水平居中。宽度走 `page-container--wide`（全站两个列宽之一），这里
-   只管位置。 */
+/* 1100 那一列的水平居中。宽度走 `page-container--wide`，这里只管位置。 */
 .ad__inner {
   display: flex;
   flex-direction: column;
   margin: 0 auto;
 }
 
-/* 页头 56px，下沿用 `--line-2`（§4.2）。这条线是页头与内容之间那道**比行分隔线重**
-   的界，而全站只有两处用它。 */
+/* 页头 56px，下沿用 `--line-2`（§4.2）。 */
 .ad__head {
   display: flex;
   flex: 0 0 auto;
@@ -357,80 +483,59 @@ onMounted(() => {
   flex: 0 0 auto;
 }
 
-/* KPI 一排四张、263 一格（§4.2 的算式）。卡片自己写死了宽高，所以这里用固定列宽而
-   不是 `1fr` —— 让列去分配宽度的话，四张卡会按内容各取一个数，那一行就不再是 1100。 */
+.ad__kinds {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 16px 0 0;
+}
+
 .ad__kpis {
   display: grid;
-  grid-template-columns: repeat(4, 263px);
+  /* 四列等宽，跟着容器走 —— 卡片自己写死了高度，宽度由格子给。 */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
-  padding-top: 16px;
+  margin-top: 16px;
 }
 
-/* 图 660 + 缝 24 + 迷你列表 416 = 1100（§4.2 的第二条算式）。两块**按顶对齐**：
-   图的高度由画布和那张折叠表决定，列表的高度由行数决定，谁都不该被拉到对方那么高。 */
+/* 平台那一类只有三张卡：写死四列的话第四格是空的，看起来像少了一张。 */
+.ad__kpis:has(> :nth-child(3):last-child) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 窄屏：一排四张挤不下，退成两排两列。再窄下去（一格不到 140px）文字开始被压。 */
+@media (max-width: 900px) {
+  .ad__kpis,
+  .ad__kpis:has(> :nth-child(3):last-child) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .ad__row {
   display: grid;
-  grid-template-columns: 660px 416px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   gap: 24px;
-  align-items: start;
-  padding-top: 16px;
+  margin-top: 24px;
 }
 
-/* 成本那行 18px（§4.2）。它是这一页唯一**不是**链接的数字（§6.3 第 17 项：只显示合计、
-   不拆天，而且不上墙为可点数字），所以它不是卡片、没有 `to`、也不跟 KPI 那一摞挤。 */
-.ad__cost {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  min-height: var(--lh-12);
-  margin-top: 16px;
-  border-top: 1px solid var(--line);
+/* 窄屏成一列：两块并排之后各自都不到 300px，图里的刻度会互相压。 */
+@media (max-width: 1100px) {
+  .ad__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-/* 第 4 态（§9.3）只作用在这一行上：底色降一档，其余数字照画。 */
-.ad__cost--partial {
-  padding: 0 8px;
-  background: var(--fill);
-}
-
-.ad__cost-label {
-  flex: 0 0 auto;
-}
-
-.ad__cost-value {
-  flex: 0 0 auto;
-}
-
-/* 那个 `?`：告诉人「这里少了一个数」这件事本身有一个理由可查（`title`）。 */
-.ad__cost-hint {
-  flex: 0 0 auto;
-  cursor: help;
-}
-
-.ad__cost-skel {
-  width: 200px;
-}
-
-.ad__cost-skel :deep(.v-skeleton-loader__text) {
-  height: 12px;
-  margin: 0;
-  background: var(--fill-2);
-}
-
-/* 空态 / 错误态的内容块和两张卡里的那一套同形（主 15/600/`--ink`，副 13/`--muted`，
-   中间 8px）：同一页面上「这里没东西」的两种说法不该长得不一样。 */
 .ad__none {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding-top: 32px;
+  gap: 4px;
+  margin: 48px 0 0;
 }
 
 .ad__none-title {
   font-size: 15px;
-  font-weight: 600;
   line-height: var(--lh-15);
+  font-weight: 600;
   color: var(--ink);
 }
 
@@ -438,5 +543,83 @@ onMounted(() => {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.ad__cost {
+  display: flex;
+  /* 折行是给下面那条脚注留的：它自己占一整行的宽度（`flex: 1 0 100%`），所以这一行
+     会变成两行。宽屏上没脚注时仍然是原来那一行。 */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ad__cost--partial {
+  color: var(--muted);
+}
+
+.ad__cost-label {
+  flex: 0 0 auto;
+}
+
+.ad__cost-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.ad__cost-hint {
+  cursor: help;
+  color: var(--muted);
+}
+
+.ad__cost-skel {
+  flex: 1;
+}
+/* 成本那一行的脚注（没有单价的那部分 token）。整行宽：它是上面那个数的注解，不是它的
+   后缀。 */
+.ad__cost-unpriced {
+  flex: 1 0 100%;
+  margin-top: 2px;
+}
+
+.ad__machines {
+  display: flex;
+  flex-direction: column;
+}
+
+.ad__block-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: var(--lh-15);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 机器那四行。两列：名字在左、数在右 —— 这一块在读四个并列的量，竖着排成
+   「名字 / 数 / 名字 / 数」会让四个数对不齐。 */
+.ad__machine-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.ad__machine-list dt,
+.ad__machine-list dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ad__machine-list dd {
+  margin: 0;
+  text-align: right;
+  color: var(--ink);
+}
+
+.ad__block-note {
+  margin: 12px 0 0;
 }
 </style>

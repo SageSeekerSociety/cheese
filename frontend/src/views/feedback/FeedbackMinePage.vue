@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
-import SubmitFeedbackDrawer from '@/components/feedback/SubmitFeedbackDrawer.vue'
 import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -25,15 +23,10 @@ import { useFeedbackStore } from '@/stores/feedback'
 defineOptions({ name: 'FeedbackMinePage' })
 
 const store = useFeedbackStore()
-const router = useRouter()
 
 onMounted(() => {
   void store.loadMine()
 })
-
-function onSubmitted(id: string) {
-  void router.push(`/feedback/${id}`)
-}
 
 /** 空列表有两种，说的话不一样：「还没有」和「没拉到」。写成同一句「暂无反馈」的话，
  *  拉挂的那一次看起来就像「平台把你的反馈弄丢了」。
@@ -60,7 +53,7 @@ const emptyState = computed(() =>
         <h1 class="t-page-title">我的反馈</h1>
         <v-spacer />
         <v-btn variant="text" color="secondary" size="small" to="/feedback">回反馈中心</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="store.openSubmit()">提交反馈</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">提交反馈</v-btn>
       </header>
 
       <p class="t-meta fb-lede">
@@ -117,7 +110,7 @@ const emptyState = computed(() =>
             color="secondary"
             size="small"
             class="fb-empty__action"
-            @click="store.openSubmit()"
+            :to="{ name: 'FeedbackSubmit' }"
           >
             提交一条
           </v-btn>
@@ -145,8 +138,6 @@ const emptyState = computed(() =>
         办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到
       </p>
     </div>
-
-    <SubmitFeedbackDrawer @submitted="onSubmitted" />
   </div>
 </template>
 

@@ -8,6 +8,13 @@
       "placeholder": "Search feedback",
       "scope": "Titles, summaries, bodies and submitters"
     },
+    "lane": {
+      "label": "Scope",
+      "public": "Public",
+      "private": "Private",
+      "agent": "From agents",
+      "security": "Security"
+    },
     "view": {
       "list": "List",
       "table": "Table"
@@ -125,26 +132,22 @@
       "untriaged": "Untriaged",
       "inProgress": "In progress",
       "resolved7d": "Resolved · 7d",
-      "deployed7d": "Shipped · 7d",
       "created7d": "New · 7d",
-      "resolvedTotal": "Resolved · all time",
-      "deployedTotal": "Shipped · all time",
-      "all": "All feedback",
-      "hot": "Hot",
-      "unread": "Unread",
-      "noSeries": "no source yet"
+      "unread": "Unread"
     },
     "chart": {
-      "title": "New / resolved per day",
+      "title": "New / resolved / deployed per day",
       "created": "New",
-      "resolved": "Resolved"
+      "resolved": "Resolved",
+      "deployed": "Deployed"
     },
     "list": {
       "title": "Needs action · {count}"
     },
     "cost": {
       "label": "Cost · last 7 days",
-      "value": "{calls} calls · {usd} · no daily breakdown"
+      "value": "{calls} calls · {usd} · no daily breakdown",
+      "unpriced": "{tokens} more tokens have no unit price (subscription plans bill monthly) and are not in the figure above"
     },
     "empty": {
       "title": "No data yet",
@@ -156,8 +159,32 @@
     },
     "partial": {
       "title": "Cost data is unavailable",
-      "desc": "The usage endpoint didn't respond. The other numbers are unaffected.",
       "hint": "The usage endpoint didn't respond"
+    },
+    "tab": {
+      "feedback": "Feedback",
+      "usage": "Usage",
+      "platform": "Platform"
+    },
+    "usage": {
+      "tokens": "Tokens · window",
+      "calls": "Calls · window",
+      "chart": "Tokens per day",
+      "top": "Top projects by tokens"
+    },
+    "people": {
+      "total": "Accounts",
+      "new": "New · 7d",
+      "admins": "Platform admins",
+      "chart": "New accounts per day"
+    },
+    "machines": {
+      "title": "Machines (stock)",
+      "devices": "Devices",
+      "hosted": "Hosted devices",
+      "warm": "Warm machines",
+      "project": "Project machines",
+      "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database."
     }
   },
   "chart": {
@@ -198,5 +225,83 @@
   "undo": {
     "message": "Changed to \"{status}\"",
     "action": "Undo"
+  },
+  "submit": {
+    "title": "Submit feedback",
+    "titleFromAgent": "Send this feedback",
+    "back": "Back",
+    "cancel": "Cancel",
+    "submit": "Submit feedback",
+    "send": "Send",
+    "kind": {
+      "label": "What kind of feedback is this?",
+      "hint": {
+        "bug": "Something errored or broke",
+        "suggestion": "You want something to work better",
+        "other": "Neither of the above"
+      }
+    },
+    "requiredLegend": "Fields marked * are required",
+    "optionalDivider": "Everything below is optional — write as much as you like. The more specific it is, the easier it is to reproduce and pick up.",
+    "field": {
+      "title": {
+        "label": "Title",
+        "placeholder": "What happened, in one sentence"
+      },
+      "body": {
+        "bug": {
+          "label": "What happened",
+          "placeholder": "What you did, and what actually happened"
+        },
+        "suggestion": {
+          "label": "What's not working well",
+          "placeholder": "How it is now, and how you'd like it to be"
+        },
+        "other": {
+          "label": "Description",
+          "placeholder": "Describe it"
+        }
+      },
+      "expectation": {
+        "label": "What you expected",
+        "placeholder": "The result you expected from the same action"
+      },
+      "repro": {
+        "label": "How to reproduce",
+        "placeholder": "The shortest sequence from opening the page to seeing the problem"
+      },
+      "tags": {
+        "label": "Tags",
+        "placeholder": "Press Enter to add",
+        "helper": "For grouping — e.g. login, mobile"
+      }
+    },
+    "visibility": {
+      "label": "Who can see it",
+      "public": {
+        "title": "Public",
+        "hint": "Visible to every signed-in user; can be supported and commented on"
+      },
+      "private": {
+        "title": "Private",
+        "hintWithRoom": "Only you, platform admins, and the people who were in the room where it was raised. It stays out of public lists and cannot be supported.",
+        "hintNoRoom": "Only you and platform admins. It stays out of public lists and cannot be supported."
+      },
+      "once": "You decide this now, and only now — not even an admin has a way to make it public afterwards."
+    },
+    "agent": {
+      "title": "From Cheese's investigation",
+      "note": "This feedback will be attributed to the AI teammate that found it, and you will be recorded as the submitter — both are kept, so \"how much of what Cheese raised actually got filed\" has an answer.",
+      "attach": "Include this context",
+      "attachHint": "The context may contain your code snippets, file paths, or conversation text. With \"Private\", the people who can see it are you, platform admins, and the people who were in the room where it was raised.",
+      "whatHappened": "What happened",
+      "repro": "Repro steps",
+      "evidence": "Evidence",
+      "session": "Session and environment"
+    },
+    "draft": {
+      "restored": "Restored your unfinished draft",
+      "discard": "Discard draft"
+    }
   }
 }

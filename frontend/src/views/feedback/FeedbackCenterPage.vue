@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import type { FeedbackTab as TabName } from '@/stores/feedback'
 
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted } from 'vue'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
-import SubmitFeedbackDrawer from '@/components/feedback/SubmitFeedbackDrawer.vue'
 import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -25,7 +23,6 @@ import { useFeedbackStore } from '@/stores/feedback'
 defineOptions({ name: 'FeedbackCenterPage' })
 
 const store = useFeedbackStore()
-const router = useRouter()
 
 /** 栏位的中文名。**有哪些栏位**来自服务端（`meta.tabs`），这里只负责把它们叫成
  *  人话；服务端多出一个栏位时标成它自己的名字，而不是不显示（少一个 Tab 比多一个
@@ -55,12 +52,6 @@ onMounted(() => {
   void store.loadMeta()
   void store.loadList()
 })
-
-const showSubmitted = ref(false)
-function onSubmitted(id: string) {
-  showSubmitted.value = true
-  void router.push(`/feedback/${id}`)
-}
 
 /** 空列表有三种，说的话不一样：「一条都没有」「筛选之后没有」「没拉到」。
  *  把它们合成一句「暂无反馈」的话，最后一种会看着像平台真的没有反馈。 */
@@ -139,7 +130,10 @@ function clearFilters() {
           class="fb-search"
           @update:model-value="(v: string) => store.setQuery(v ?? '')"
         />
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="store.openSubmit()">提交反馈</v-btn>
+        <!-- 提交走**独立页面**（`/feedback/new`），不是就地开一个浮层。这一颗只是那一页
+             的门：草稿由那一页自己准备（`SubmitFeedbackForm` 挂载时调 `openSubmit`），
+             这里不再调一次 —— 两处都调的话，第二次会把刚捞回来的草稿重判一遍。 -->
+        <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">提交反馈</v-btn>
       </div>
 
       <!-- Tab 的切换走一个 action，不直接绑 `store.tab`：栏位是**服务端**的筛选，
@@ -254,10 +248,6 @@ function clearFilters() {
         公开反馈所有人可见；提交时选「私密」的只有你和平台管理员能看到，别人搜不到、也拿不到链接
       </p>
     </div>
-
-    <SubmitFeedbackDrawer @submitted="onSubmitted" />
-
-    <v-snackbar v-model="showSubmitted" color="success" :timeout="4000">反馈已提交</v-snackbar>
   </div>
 </template>
 

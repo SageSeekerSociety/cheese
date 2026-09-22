@@ -4,7 +4,7 @@ import type { AdminTab } from '@/stores/feedback'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AdminFeedbackTable from '@/components/admin/AdminFeedbackTable.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
@@ -38,6 +38,7 @@ defineOptions({ name: 'AdminQueuePage' })
 const store = useFeedbackStore()
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 
 /* ---- 常量 ---- */
 
@@ -68,9 +69,25 @@ const WIDE_QUERY = '(min-width: 1280px)'
  *  意思，名字会跟着服务端变。 */
 const TRIAGE_SLOTS: Record<string, number> = { 1: 1, 2: 2, 3: 3 }
 
-/** 旧的 `/admin/feedback?tab=...` 书签还认这几个值（服务端的 `ADMIN_TABS`）。写成常量
- *  是因为 store 只导出了类型，没导出这份元组。 */
+/** 队列的四个**栏位**（服务端的 `ADMIN_TABS`）。写成常量是因为 store 只导出了类型、
+ *  没导出这份元组。顺序就是控件上的顺序：最常用的「公开」在最前，「安全」最靠里。
+ *
+ *  这四个词在这一页上是**服务端的问法**（`GET /admin/feedback?tab=`），不是客户端的筛选
+ *  —— 和工具行右边那排状态页签不是一回事：状态页签在**已经拿到的那一页里**筛，栏位换的
+ *  是去要哪一批数据。所以两者在控件上必须长得不一样（这里是收在一段底色里的分段控件，
+ *  那边是裸的药丸），否则同一行里两排一模一样的东西说着两件不同的事。 */
 const ADMIN_TABS: AdminTab[] = ['public', 'private', 'agent', 'security']
+
+/** 四个栏位各自的名字。**写成一张字面量表，不拼键** —— i18n 的闸门
+ *  （`src/i18n/catalog.spec.ts`）是照源码里的字面量认「这个键有人用」的，拼出来的键
+ *  既不算调用、真叶子又会被判成没人引用。值写成函数是为了 `t()` 在读的那一刻取当前
+ *  语言（写成常量只会在 setup 时求值一次）。 */
+const LANE_LABEL: Record<AdminTab, () => string> = {
+  public: () => t('feedback.queue.lane.public'),
+  private: () => t('feedback.queue.lane.private'),
+  agent: () => t('feedback.queue.lane.agent'),
+  security: () => t('feedback.queue.lane.security'),
+}
 
 /* ---- 状态 ---- */
 
@@ -570,6 +587,26 @@ function applyRouteQuery(): boolean {
   return loaded
 }
 
+/** 切栏位。**和地址同步**，理由有两条：
+ *
+ *   * 刷新之后还停在刚才那一栏。这一页的栏位是**服务端的问法**，换一栏就是换一批数据；
+ *     地址里不带它的话，F5 一下人就被悄悄送回「公开」，而他刚才看的可能是私密那一栏。
+ *   * 链接发得出去。`/admin/feedback?tab=private` 这条旧书签本来就认（见 `ADMIN_TABS`），
+ *     而这一页现在自己也写得出同样的地址 —— 一份事实、一个来源，不会出现「控件上是私密、
+ *     地址上是空的」这种两个答案。
+ *
+ *  用 `replace` 不是 `push`：切栏位不是「去别的地方」，是在同一页里换一个问题，回退键
+ *  该回到来处，而不是在四个栏位之间一步步倒。`public` 那一档**不写进地址**（不写就是
+ *  它，默认值不占位）。 */
+function selectLane(lane: AdminTab) {
+  if (store.adminTab === lane) return
+  store.setAdminTab(lane)
+  const query = { ...route.query }
+  if (lane === 'public') delete query.tab
+  else query.tab = lane
+  void router.replace({ query })
+}
+
 /* ---- 生命周期 ---- */
 
 watch(draft, (value) => {
@@ -690,8 +727,29 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <!-- 工具行 48px：搜索 260px + 五个状态页签。 -->
+        <!-- 工具行 48px：栏位 + 搜索 260px + 状态页签。 -->
         <div class="qpage__tools">
+          <!-- 栏位（公开 / 私密 / AI 队友提的 / 安全）。**收在一段底色里的分段控件**，
+               和右边那排裸药丸刻意长得不一样 —— 两者不是一回事：这一排换的是「去要哪一批
+               数据」（服务端的 `tab`），右边那排是在**已经拿到的那一页里**筛。四个都画出来
+               而不是收进一个下拉：这一页最贵的一类错就是「管理员以为某条反馈不见了，其实
+               它在隔壁那一栏」，当前停在哪一栏必须一眼看得见。 -->
+          <div class="qpage__lanes" role="radiogroup" :aria-label="t('feedback.queue.lane.label')">
+            <span class="qpage__lanes-label">{{ t('feedback.queue.lane.label') }}</span>
+            <button
+              v-for="lane in ADMIN_TABS"
+              :key="lane"
+              type="button"
+              class="qpage__lane"
+              :class="{ 'qpage__lane--on': store.adminTab === lane }"
+              role="radio"
+              :aria-checked="store.adminTab === lane"
+              @click="selectLane(lane)"
+            >
+              {{ LANE_LABEL[lane]() }}
+            </button>
+          </div>
+
           <div class="qpage__search">
             <v-icon icon="mdi-magnify" size="16" class="qpage__search-icon" aria-hidden="true" />
             <input
@@ -946,14 +1004,71 @@ onBeforeUnmount(() => {
   color: var(--ink);
 }
 
+/* 工具行。**让它能折行**（`min-height` 而不是 `height`）：宽屏上三组东西并排正好
+   48px（32 的内容 + 上下 8 的 padding），窄到装不下时折成两行而不是把状态页签挤出
+   容器 —— 加栏位那一组之前，这一行只有两组，装得下是巧合，不是余量。 */
 .qpage__tools {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
-  height: 48px;
-  padding: 0 24px;
+  min-height: 48px;
+  padding: 8px 24px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 栏位那一组：收在一段底色里的分段控件，和页头那个视图切换同一个形状。**和右边那排
+   状态页签刻意长得不一样**，因为两者不是一回事（见 `ADMIN_TABS` 的注释）。 */
+.qpage__lanes {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  background: var(--fill);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+/* 「栏位」两个字只做说明：它说的是右边那四颗是什么，自己不参与点选。 */
+.qpage__lanes-label {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+.qpage__lane {
+  height: 24px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.qpage__lane:hover {
+  color: var(--text);
+}
+/* 选中的那一颗：抬到底色之上（`--surface` + 一圈描边）。中性色 —— 栏位是一个位置，
+  不是一条告警，琥珀只留给当前选项卡和主操作。 */
+.qpage__lane--on,
+.qpage__lane--on:hover {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
 }
 
 .qpage__search {
