@@ -119,7 +119,7 @@ function dwellText(seconds: number | null | undefined): string {
   display: block;
   height: 10px;
   background: var(--fill-2);
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
@@ -128,7 +128,7 @@ function dwellText(seconds: number | null | undefined): string {
   display: block;
   height: 100%;
   background: var(--muted);
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
 }
 
 .als__count {

@@ -406,8 +406,8 @@ export const useFeedbackStore = defineStore('feedback', {
     adminSince: null as string | null,
     adminResolvedSince: null as string | null,
     adminDeployedSince: null as string | null,
-    /* ---- 看板的汇总。**一个分类一份**（`/admin/stats/{feedback,usage,platform}`），
-       因为服务端就是三块：切到哪一类才拉哪一类，各自留着自己那份（切回来不再拉一次，
+    /* ---- 看板的汇总。**一个分类一份**（`/admin/stats/{feedback,usage,platform,…}`），
+       因为服务端一分类一块：切到哪一类才拉哪一类，各自留着自己那份（切回来不再拉一次，
        也不会出现「切到用量却画着反馈的数」）。和上面那份列表是**两份数据** —— 列表回
        的是「这一栏的第一页」，这里是窗口内的聚合；拿列表在前端数一个聚合出来，就是把
        筛选和分页各抄第二份，数出来的数字迟早和旁边那一栏对不上。 ---- */

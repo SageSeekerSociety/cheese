@@ -124,7 +124,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 .aal__bar {
   width: 3px;
   height: 22px;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--line-2);
 }
 

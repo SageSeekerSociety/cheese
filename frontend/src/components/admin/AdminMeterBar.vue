@@ -84,7 +84,7 @@ const widthText = computed(() => `${Math.max(2, Math.min(100, (props.ratio ?? 0)
   display: block;
   height: 8px;
   background: var(--fill-2);
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
@@ -98,7 +98,7 @@ const widthText = computed(() => `${Math.max(2, Math.min(100, (props.ratio ?? 0)
   display: block;
   height: 100%;
   background: var(--muted);
-  border-radius: 2px 4px 4px 2px;
+  border-radius: var(--radius-pill);
 }
 
 /* 只有 warn/danger 才上状态色（项目约定：状态色留给「要人管」）。 */

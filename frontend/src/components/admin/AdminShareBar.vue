@@ -86,7 +86,7 @@ function widthOf(value: number): string {
   gap: 2px;
   /* 2px 缝用卡片底色把段分开 —— 不留缝时两段会糊在一起。 */
   background: var(--surface);
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
@@ -108,10 +108,16 @@ function widthOf(value: number): string {
 }
 
 .ash__seg[data-first='true'] {
-  border-radius: 4px 2px 2px 4px;
+  border-top-left-radius: var(--radius-pill);
+  border-bottom-left-radius: var(--radius-pill);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
 }
 .ash__seg[data-last='true'] {
-  border-radius: 2px 4px 4px 2px;
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-pill);
+  border-bottom-right-radius: var(--radius-pill);
 }
 
 .ash__legend {
@@ -133,7 +139,7 @@ function widthOf(value: number): string {
 .ash__swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .ash__leg-value {
