@@ -30,7 +30,9 @@ export default defineConfig({
     // Existing workspace scenarios assert Chinese UI labels explicitly.
     locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
-    trace: 'on-first-retry',
+    // Keep the failed attempt even when its retry passes. The workflow uploads
+    // the retained trace after a passing retry, while clean runs upload no artifacts.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     // The CI runner IS the dev box, so a failed run cannot be reproduced by
     // re-running it later — the deployment underneath has already moved on.
