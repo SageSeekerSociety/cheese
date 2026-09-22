@@ -98,7 +98,7 @@
               </template>
               <v-row>
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
-                  <v-card flat rounded="lg" class="space-card elevation-0 border" :to="`/spaces/${space.id}`">
+                  <v-card flat rounded="lg" class="space-card elevation-0 border" :to="spaceEntryRoute(space)">
                     <v-card-item>
                       <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
                            它会提亮到 #FFA733，白字只有 1.9:1；surface 在深色下是深墨。 -->
@@ -220,6 +220,7 @@
 
 <script lang="ts" setup>
 import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
+import type { Space } from '@/types'
 
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -235,6 +236,7 @@ import { listProjects } from '@/api'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { spaceEntryRoute } from '@/lib/courseNav'
 import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
 import AccountService from '@/services/account'
@@ -283,13 +285,14 @@ const createdInviteCode = ref<string | null>(null)
 const codeDialog = ref(false)
 const codeCopied = ref(false)
 // 刚建出来的版：建完要落到这门课上，不是回到名录页干看着一个空版。
-const createdSpaceId = ref<number | null>(null)
+const createdSpace = ref<Space | null>(null)
 
 function enterCreatedSpace() {
   codeDialog.value = false
-  const spaceId = createdSpaceId.value
-  if (spaceId === null) return
-  void router.push({ name: 'SpacesDetail', params: { spaceId } })
+  const space = createdSpace.value
+  if (!space) return
+  // 落点由这块板自己说了算（新建的就是课程模板 → 课程首页）。
+  void router.push(spaceEntryRoute(space))
 }
 
 async function copyCreatedCode() {
@@ -309,7 +312,7 @@ function openCreateSpace() {
   spaceIntro.value = ''
   selectedAvatar.value = undefined
   existingAvatarId.value = undefined
-  createdSpaceId.value = null
+  createdSpace.value = null
   createError.value = ''
   createDialog.value = true
 }
@@ -329,7 +332,7 @@ async function createSpace() {
     } else {
       const { data } = await SpacesApi.create(payload)
       createdInviteCode.value = data.inviteCode?.code ?? null
-      createdSpaceId.value = data.space?.id ?? null
+      createdSpace.value = data.space ?? null
       codeCopied.value = false
       // 有码先把码给他（建版时就发好了），收起那张卡再进这门课；
       // 没码就直接进。

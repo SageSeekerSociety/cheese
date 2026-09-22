@@ -75,6 +75,30 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def default_category_shells(
+        self, *, space_ids: Sequence[int]
+    ) -> dict[int, str | None]:
+        """Every one of these 题目板's default 分组 壳, in one query.
+
+        A board is a course when this column says so (`app.domain.shell.catalog`
+        decides which names mean that), and the list page asks it of a whole page
+        of boards at once — one round trip per row is what this avoids.
+
+        A board with no default 分组 (or an archived/dangling one) answers None,
+        which reads as 「not a course」 rather than raising: the column is how the
+        answer travels, not a guarantee about the row.
+        """
+        if not space_ids:
+            return {}
+        stmt = (
+            select(Space.id, SpaceCategory.shell)
+            .select_from(Space)
+            .outerjoin(SpaceCategory, SpaceCategory.id == Space.default_category_id)
+            .where(Space.id.in_(space_ids), Space.deleted_at.is_(None))
+        )
+        result = await self._session.execute(stmt)
+        return {int(row[0]): row[1] for row in result.all()}
+
     @staticmethod
     def build_membership_predicate(*, user_id: int) -> ColumnElement[bool]:
         """「这个题目版是不是他的」, as a SQL predicate over Space.

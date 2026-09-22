@@ -180,6 +180,23 @@ CATALOG: dict[str, Shell] = {
 #: making one would be the second chain this module exists to avoid.
 DEFAULT_CATEGORY_SHELL_NAME: str = _COURSE_STUDENT.name
 
+#: The 壳 names that mean 「the 题目板 declaring one is a course」.
+#:
+#: A 题目板's own screens are not projects and so read no 壳 — but a board whose
+#: default 分组 declares a course 壳 *is* a course, and its screens need to know
+#: that before they can decide anything (see `SpaceOut.isCourse`). Both names are
+#: here because either says the same thing about the board; which 壳 a *project*
+#: under it inherits stays a question for the chain in
+#: `app.domain.task.protocol`.
+COURSE_SHELL_NAMES: frozenset[str] = frozenset(
+    {_COURSE_STUDENT.name, _COURSE_TEACHER.name}
+)
+
+
+def is_course_shell(name: str | None) -> bool:
+    """Whether this 壳 name says its 题目板 is a course. Undeclared is not."""
+    return bool(name) and name in COURSE_SHELL_NAMES
+
 
 def lookup(name: str | None) -> Shell:
     """The declaration for ``name``, or `default`.
