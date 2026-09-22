@@ -102,6 +102,10 @@
     "body": "在「{topicTitle}」",
     "untitled": "平台有一条提示"
   },
+  "SPACE_COMPUTE_POOL_LOW": {
+    "title": "空间共享额度池已用到 {ratio}%",
+    "body": "还剩 {remaining} / {total}。花完之后，这个空间下的项目会被拒绝。"
+  },
   "CHEESE_QUESTION": {
     "body": "在「{topicTitle}」，本轮已暂停等待回答",
     "untitled": "芝士有一个待确认问题"

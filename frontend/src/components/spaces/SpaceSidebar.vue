@@ -202,6 +202,18 @@
           </template>
           <v-list-item-title>{{ t('spaces.domainGroups.title') }}</v-list-item-title>
         </v-list-item>
+
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailManageComputePool', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-lightning-bolt</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.detail.manageComputePool.title') }}</v-list-item-title>
+        </v-list-item>
       </template>
     </v-list>
   </SecondaryNavigation>

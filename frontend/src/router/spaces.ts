@@ -226,6 +226,14 @@ export default {
       component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
     },
     {
+      path: 'manage/compute-pool',
+      name: 'SpacesDetailManageComputePool',
+      component: () => import('@/views/spaces/detail/ManageComputePool.vue'),
+      meta: {
+        titleKey: 'spaces.detail.manageComputePool.title',
+      },
+    },
+    {
       path: 'discussions',
       name: 'SpacesDetailDiscussions',
       component: () => import('@/views/spaces/detail/Discussions.vue'),

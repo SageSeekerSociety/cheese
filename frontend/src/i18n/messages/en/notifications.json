@@ -98,6 +98,10 @@
     "body": "In \"{topicTitle}\"",
     "untitled": "A notice from the platform"
   },
+  "SPACE_COMPUTE_POOL_LOW": {
+    "title": "The space's shared pool is {ratio}% used",
+    "body": "{remaining} of {total} left. Once it is gone, projects under this space are refused."
+  },
   "CHEESE_QUESTION": {
     "body": "In \"{topicTitle}\" — paused, waiting for your answer",
     "untitled": "Cheese has a question for you"

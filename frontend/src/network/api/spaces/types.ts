@@ -351,3 +351,37 @@ export type PublisherParticipation = {
   completedUsers: number
   taskCount: number
 }
+
+// ── 空间级共享额度池 ────────────────────────────────────────────────────────
+// 一个空间（课程）买一份额度池，空间下所有项目共用，先到先得。见
+// backend/app/domain/usage/space_pool.py。金额单位是 credit。
+
+export type SpaceComputePoolProject = {
+  project_id: string
+  name: string
+  cost_usd: number
+  total_tokens: number
+  turns: number
+}
+
+export type SpaceComputePool = {
+  space_id: number
+  //: 这个空间有没有买过池子。false 时所有项目照旧不限量。
+  has_pool: boolean
+  credits_total: number
+  credits_used: number
+  credits_remaining: number
+  //: used / total，0..1；没有池子时为 0。
+  credits_ratio: number
+  //: 提醒阈值（当前 0.8），后端给的，前端别自己写死。
+  alert_ratio: number
+  exhausted: boolean
+  //: 需要提醒老师：已过阈值或已用完。
+  needs_attention: boolean
+  projects: SpaceComputePoolProject[]
+}
+
+export type FundSpaceComputePoolRequestData = {
+  //: 充值额度，增量而不是「设成多少」；必须大于 0。
+  credits: number
+}

@@ -5,6 +5,7 @@ import type {
   AnalyticsGroupBy,
   AnalyticsRealNameType,
   AnalyticsSortOrder,
+  FundSpaceComputePoolRequestData,
   GetSpacesResponseData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
@@ -18,6 +19,7 @@ import type {
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPublishers,
+  SpaceComputePool,
   SpaceMyParticipatingOverview,
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
@@ -290,5 +292,23 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
       method: 'DELETE',
+    })
+
+  // Compute Pool API（空间级共享额度池）
+  //
+  // 两个接口都只有空间管理员调得动：逐项目的花销点名了哪个队在花钱，而那些队
+  // 本来互相看不见对方的工作。普通成员拿到的是 403，不是空表。
+
+  export const getComputePool = (spaceId: number) =>
+    NewApiInstance.request<SpaceComputePool>({
+      url: `/spaces/${spaceId}/compute-pool`,
+      method: 'GET',
+    })
+
+  export const fundComputePool = (spaceId: number, data: FundSpaceComputePoolRequestData) =>
+    NewApiInstance.request<SpaceComputePool>({
+      url: `/spaces/${spaceId}/compute-pool`,
+      method: 'POST',
+      data,
     })
 }

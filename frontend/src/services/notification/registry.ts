@@ -10,6 +10,7 @@ import RenderProjectInviteNotification from '@/components/common/Notification/re
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
 import RenderRoomNoticeNotification from '@/components/common/Notification/renders/RenderRoomNoticeNotification.vue'
+import RenderSpaceComputePoolLowNotification from '@/components/common/Notification/renders/RenderSpaceComputePoolLowNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -36,6 +37,7 @@ const notificationRendererRegistry: Record<NotificationType, Component> = {
   TEAM_REQUEST_CANCELED: RenderTeamRequestCanceledNotification,
   ROOM_NOTICE: RenderRoomNoticeNotification,
   CHEESE_QUESTION: RenderCheeseQuestionNotification,
+  SPACE_COMPUTE_POOL_LOW: RenderSpaceComputePoolLowNotification,
 }
 
 /**
@@ -84,6 +86,8 @@ export function getNotificationIcon(type: NotificationType): string {
       return 'mdi-bell-ring-outline'
     case 'CHEESE_QUESTION':
       return 'mdi-help-circle-outline'
+    case 'SPACE_COMPUTE_POOL_LOW':
+      return 'mdi-lightning-bolt'
     default:
       return 'mdi-bell'
   }
@@ -106,9 +110,11 @@ export function getNotificationColor(type: NotificationType): string {
       return 'error'
     // 这两条都只在事情落到人手上时才发出，所以它们总是「待你处理」——和看板上
     // 那一列同一个暖色。CHEESE_QUESTION 更甚：本轮已经停在那个问题上。
+    // SPACE_COMPUTE_POOL_LOW 同理：钱还在跑，但能决定的只有收到这条的人。
     case 'DEADLINE_REMIND':
     case 'ROOM_NOTICE':
     case 'CHEESE_QUESTION':
+    case 'SPACE_COMPUTE_POOL_LOW':
       return 'warning'
     default:
       return 'primary'
