@@ -169,12 +169,19 @@ class S3StorageBackend(StorageBackend):
     @asynccontextmanager
     async def _get_client(self):  # type: ignore[override]
         import aioboto3
+        from aiobotocore.config import AioConfig
 
         kwargs = dict(
             endpoint_url=self._endpoint_url,
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
             region_name=self._region,
+            # Leave time to retry a stalled socket within the 60s transcript deadline.
+            config=AioConfig(
+                connect_timeout=5,
+                read_timeout=15,
+                retries={"mode": "standard", "total_max_attempts": 3},
+            ),
         )
 
         def new_client() -> Any:
