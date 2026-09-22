@@ -1578,6 +1578,13 @@ export function getProjectDecisions(projectId: string): Promise<ListPayload<Bloc
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
+// 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block
+// carries the stretch it covers in `meta` (`since`/`until`) and points back to
+// the room it was written in via `topic_id`.
+export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block>> {
+  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
+}
+
 // 选项问题 (cheese ask): one-click answer.
 export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {

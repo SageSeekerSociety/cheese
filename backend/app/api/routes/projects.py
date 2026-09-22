@@ -841,6 +841,29 @@ async def list_decisions(
     return ok(page(items, len(items)))
 
 
+@router.get("/{project_id}/weeklies")
+async def list_weeklies(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """周报集 (spec §7.1): project-wide weekly blocks, newest first.
+
+    Each carries the stretch it covers in `meta` (`since`/`until`). A weekly
+    report says what happened over a piece of time rather than what the project
+    looks like right now, so that window is what tells two of them apart.
+
+    Same shape as /decisions and for the same reason: these are the project's
+    own words, and each is traceable to the room it was written in via
+    `topic_id`."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    blocks = await BlockRepository(db).list_by_kind_for_project(
+        project_id, BlockKind.weekly
+    )
+    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    return ok(page(items, len(items)))
+
+
 @router.get("/{project_id}/tasks")
 async def list_project_tasks(
     project_id: uuid.UUID,

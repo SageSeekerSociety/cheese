@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type { MemoryEntryOut } from '../api'
-import type { Block, Topic } from '../cx_types'
+import type { Block } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
-import { deleteMemory, getProject, getProjectDecisions, listMemory, listTopics } from '../api'
+import { deleteMemory, getProject, getProjectDecisions, getProjectWeeklies, listMemory } from '../api'
 import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
@@ -60,7 +60,7 @@ interface DocsPayload {
   projectName: string
   rootTopicId: string | null
   decisions: Block[]
-  weeklies: Topic[]
+  weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
 }
 
@@ -82,7 +82,9 @@ const { data, loading, error } = useCachedResource(
     } else if (kind.value === 'memory') {
       payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
     } else if (kind.value === 'weeklies') {
-      payload.weeklies = (await listTopics(props.projectId)).data.filter((t) => t.title.includes('周报'))
+      // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
+      // 认，一个叫「周报怎么发」的房间也会出现在这儿。
+      payload.weeklies = (await getProjectWeeklies(props.projectId)).data
     }
     return payload
   }
@@ -90,7 +92,7 @@ const { data, loading, error } = useCachedResource(
 
 const projectName = computed<string>(() => data.value?.projectName ?? '')
 const decisions = computed<Block[]>(() => data.value?.decisions ?? [])
-const weeklies = computed<Topic[]>(() => data.value?.weeklies ?? [])
+const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
 // 章程的保存失败是「刚才那一下没成」，跟「这一页加载不出来」分开报。
 const saveError = ref<string | null>(null)
@@ -144,6 +146,20 @@ function fmtDate(d: string | null): string {
   return d.length >= 10 ? d.slice(0, 10) : d
 }
 
+// 一份周报讲的那一周。窗口是它的身份：并排摆着的几份周报，是这一行把它们分开的。
+function fmtDay(iso: unknown): string {
+  if (typeof iso !== 'string' || !iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  const ymd = `${d.getMonth() + 1}月${d.getDate()}日`
+  return d.getFullYear() === new Date().getFullYear() ? ymd : `${d.getFullYear()}年${ymd}`
+}
+function weeklyWindow(w: Block): string {
+  const since = fmtDay(w.meta?.since)
+  const until = fmtDay(w.meta?.until)
+  return since && until ? `${since} – ${until}` : fmtDate(w.created_at)
+}
+
 // ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
 // 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
 async function removeMemory(id: string) {
@@ -176,6 +192,18 @@ function topicTo(topicId: string | null | undefined) {
               <span class="status-dot status-dot--ok" />已保存
             </span>
             <span v-else-if="charterDirty" class="t-meta">未保存</span>
+          </template>
+          <template v-else-if="kind === 'weeklies' && weeklies.length > 0">
+            <v-spacer />
+            <v-btn
+              v-if="rootTopicId"
+              :to="topicTo(rootTopicId)"
+              variant="text"
+              size="small"
+              class="text-none"
+              append-icon="mdi-arrow-right"
+              >去项目房间请它写</v-btn
+            >
           </template>
         </div>
         <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
@@ -287,23 +315,49 @@ function topicTo(topicId: string | null | undefined) {
 
         <!-- ===== 周报集 ===== -->
         <template v-else>
+          <!-- 空态说实话。以前这里写「周报由芝士定期产出」——平台既没有生成器，
+               也没有任何定期的东西，那句话是句承诺而不是一句描述。现在周报真的
+               由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
           <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             <div>暂无周报</div>
-            <div class="text-caption mt-1">周报由芝士定期产出</div>
+            <div class="text-caption mt-1">
+              在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里
+            </div>
+            <v-btn
+              v-if="rootTopicId"
+              :to="topicTo(rootTopicId)"
+              variant="text"
+              size="small"
+              class="mt-2 text-none"
+              append-icon="mdi-arrow-right"
+            >
+              去项目房间
+            </v-btn>
           </div>
-          <!-- 一份周报整卡就是一个链接：没有卡内操作、没有第二层信息，它是导航
-               行不是对象卡。改成带发丝线的行列表，和总览页的成员列表同一套语法。 -->
-          <div v-else class="weekly-list">
-            <router-link v-for="t in weeklies" :key="t.id" class="weekly-row" :to="topicTo(t.id)">
-              <v-icon size="18" class="c-faint">mdi-calendar-week-outline</v-icon>
-              <div class="flex-grow-1" style="min-width: 0">
-                <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
-                  {{ t.title }}
+          <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
+               还有「写在哪」。所以整卡摊开，和决策记录同一套语法。 -->
+          <div v-else class="d-flex flex-column ga-3">
+            <v-card v-for="w in weeklies" :key="w.id" class="weekly-card">
+              <div class="pa-4">
+                <div class="d-flex align-center ga-2 mb-2">
+                  <v-icon size="17" class="c-faint">mdi-calendar-week-outline</v-icon>
+                  <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
+                  <span class="t-meta">{{ fmtDate(w.created_at) }} 记录</span>
+                  <v-spacer />
+                  <v-btn
+                    v-if="w.topic_id"
+                    :to="topicTo(w.topic_id)"
+                    size="x-small"
+                    variant="text"
+                    class="c-muted"
+                    append-icon="mdi-arrow-top-right"
+                  >
+                    来自话题
+                  </v-btn>
                 </div>
-                <div class="t-meta">{{ fmtDate(t.created_at) }}</div>
+                <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
               </div>
-              <v-icon size="18" class="c-faint">mdi-chevron-right</v-icon>
-            </router-link>
+            </v-card>
           </div>
         </template>
       </template>
@@ -336,20 +390,10 @@ function topicTo(topicId: string | null | undefined) {
   overflow: hidden;
 }
 
-/* 周报集: 行列表，靠发丝线分隔。列表不自带顶边 —— 上面 .docs-tabs 的底边线就
-   是它的顶边，再画一条会在 24px 之内出现两条平行的满宽横线。 */
-.weekly-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 8px;
-  border-bottom: 1px solid var(--line);
-  text-decoration: none;
-  color: inherit;
-  transition: background 0.12s ease;
-}
-.weekly-row:hover {
-  background: var(--fill);
+/* 周报集: 和决策记录一样是一份一份的对象，卡片保留。 */
+.weekly-card {
+  /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
+  overflow: hidden;
 }
 </style>
 

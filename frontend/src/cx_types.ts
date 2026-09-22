@@ -121,6 +121,9 @@ export interface BlockMeta {
   severity?: string
   title?: string
   retryable?: boolean
+  // 一份周报讲的那一周（kind=weekly）。并排摆着的几份周报，是它把它们分开的。
+  since?: string
+  until?: string
 }
 
 export interface Block {
