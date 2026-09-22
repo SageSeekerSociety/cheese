@@ -278,6 +278,18 @@ class Settings(BaseSettings):
     # "the next step is on a person" that nobody is waiting on, so unlike a
     # decision request it is safe to drop — and this is what drops it.
     feedback_proposals_per_topic_per_day: int = 2
+    # How many reports ONE AUTHOR may publish per rolling 24 hours. This is the
+    # human path, and it exists because deleting a spam report is cleanup, not
+    # prevention: the only thing standing between a script and the public list
+    # was a person noticing and pressing delete, one row at a time.
+    #
+    # Deliberately far above any honest day. Somebody working through a bad
+    # release can file a dozen real bugs, and a cap that refuses *them* is the
+    # failure this must not have — the message says which limit was hit and when
+    # it lifts, so the one person this is aimed at is a runaway loop, not a
+    # tester. Not shared with the proposal cap above: that one is per TOPIC and
+    # protects a room's reading; this one is per PERSON and protects the list.
+    feedback_reports_per_author_per_day: int = 30
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is
