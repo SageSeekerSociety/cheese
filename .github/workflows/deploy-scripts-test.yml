@@ -19,9 +19,12 @@ on:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
       - '.github/workflows/deploy-dev.yml'
+      - '.github/workflows/deploy-drift.yml'
       - '.github/workflows/build.yml'
       - '.github/scripts/plan-image-builds.sh'
       - '.github/scripts/test-plan-image-builds.sh'
+      - 'backend/scripts/gateway_supply_probe.py'
+      - 'backend/scripts/test_gateway_supply_probe.py'
   workflow_call:
 permissions:
   contents: read
@@ -77,6 +80,8 @@ jobs:
       - name: Gateway release and image planning
         run: |
           python3 deploy/tests/test_gateway_release.py
+          python3 deploy/tests/test_gateway_health_workflow.py
+          python3 backend/scripts/test_gateway_supply_probe.py
           bash .github/scripts/test-plan-image-builds.sh
 
       - name: Cloud control connection lifecycle

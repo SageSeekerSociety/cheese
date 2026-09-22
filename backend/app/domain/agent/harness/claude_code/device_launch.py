@@ -25,6 +25,7 @@ from uuid import uuid4
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
+from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
@@ -416,13 +417,17 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
     env: dict[str, str] = {
         # Work is a subagent of the room's session, so these two are the shape
-        # of the room itself. Depth 1: a piece of work does not split further —
-        # its own children would be invisible to the platform (nothing binds
-        # them to a card) and unaddressable by a person. Concurrency 4: how
-        # many pieces of work a room runs at once; they share one worktree, so
-        # the ceiling is about how much simultaneous editing of one tree stays
-        # comprehensible, not about machine capacity.
-        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+        # of the room itself. Depth is a harness setting and not a design
+        # constraint (结论 33): work is flat in the room, there are no child
+        # cards, and nothing on the platform branches on this number — a
+        # deployment that wants a piece of work to spawn work of its own raises
+        # it and no code here changes. Concurrency 4: how many pieces of work a
+        # room runs at once; they share one tree, so the ceiling is about how
+        # much simultaneous editing of one tree stays comprehensible, not about
+        # machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(
+            settings.claude_code_max_subagent_spawn_depth
+        ),
         "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
     }
     if resume_session_id:

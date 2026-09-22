@@ -28,6 +28,9 @@
   ],
   "deploy": [
     "deploy/**",
+    "backend/scripts/gateway_supply_probe.py",
+    "backend/scripts/test_gateway_supply_probe.py",
+    ".github/workflows/deploy-drift.yml",
     ".github/workflows/deploy-scripts-test.yml",
     ".github/workflows/deploy-dev.yml",
     ".github/workflows/build.yml",
