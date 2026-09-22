@@ -65,6 +65,32 @@ export function parseStylelintReport(report, toRelativePath) {
 }
 
 /**
+ * Files stylelint could not parse, with what it choked on.
+ *
+ * A parse error is not a design violation, so `parseStylelintReport` drops it —
+ * and a file it could not read contributes zero violations, which reads to the
+ * ratchet as an IMPROVEMENT. That is how an unclosed block once shipped past a
+ * green check: the suite does not compile CSS, the type checker does not read
+ * it, and the one tool that does was counting the file as clean.
+ *
+ * @param {Array<{source?: string, warnings?: Array<{rule?: string, line?: number, text?: string}>}>} report
+ * @param {(source: string) => string} toRelativePath
+ * @returns {string[]} One line per broken file; empty when every file parsed.
+ */
+export function syntaxErrors(report, toRelativePath) {
+  const lines = []
+  for (const entry of report ?? []) {
+    if (!entry?.source) continue
+    for (const warning of entry.warnings ?? []) {
+      if (warning?.rule !== 'CssSyntaxError') continue
+      const file = toRelativePath(entry.source).replaceAll('\\', '/')
+      lines.push(`  ${file}:${warning.line ?? '?'} ${warning.text ?? 'CSS syntax error'}`)
+    }
+  }
+  return lines
+}
+
+/**
  * Human-readable detail for the regressions, so the failure names the offending
  * lines instead of only a count. A ratchet that says "3 -> 4" and nothing else
  * makes people go looking with grep, and grep finds the 235 pre-existing ones
