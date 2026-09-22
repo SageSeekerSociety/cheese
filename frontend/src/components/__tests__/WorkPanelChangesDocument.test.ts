@@ -12,7 +12,7 @@ import type { FileContent, Topic } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../CodeEditor.vue', () => ({
@@ -106,6 +106,17 @@ async function openChanges(container: Element) {
 }
 
 beforeAll(() => {
+  // 改动横条上的 ⋯ 是一个菜单，打开时 Vuetify 要读这两样来摆位置，happy-dom 没有。
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -144,8 +155,9 @@ describe('改动 tab: 一份文档', () => {
     const { container } = mountPanel()
     await flush()
     await openChanges(container)
-    const select = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '已提交版本')
-    await fireEvent.click(select!)
+    await fireEvent.click(container.querySelector('.panel-changes [aria-label="更多"]')!)
+    await flush()
+    await fireEvent.click(screen.getByText('已提交版本', { selector: '.v-list-item-title' }))
     await flush()
     expect(previewDocumentPdf).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
     expect(documentRevisions).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
