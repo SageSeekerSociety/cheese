@@ -29,7 +29,16 @@ vi.mock('@/api', async (original) => ({
     created_at: '2026-09-20T00:00:00Z',
     root_topic_id: 't9',
   })),
+  // 这一页挂的是真 App 外壳（要的就是它挂载出来的那个对话框），而外壳自己会拉
+  // 通知计数、词表和额度提示：`setup-network.ts` 让任何没被 mock 的请求判失败，
+  // 所以这些跟「你要做什么」无关的请求也得在这里给出答案。
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
+  getResourceLimits: vi.fn(async () => ({ max_machines_per_team: 0, max_concurrent_turns: 0 })),
 }))
+// 版本徽章自己会打 `/api/version`，而这里没有要证的东西在它身上；和
+// `App.navigation.spec.ts` / `App.keepAlive.spec.ts` 同一处理。
+vi.mock('@/components/common/VersionBadge.vue', () => ({ default: { template: '<span />' } }))
 // 对话框里的「所属团队」要有一个选项，创建按钮才不是灰的。
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {
