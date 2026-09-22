@@ -23,6 +23,6 @@ order: 21
 
 ## 用什么模型 {#runtime}
 
-**模型不是队友的设置，是一条活的设置。** 新建或修改队友时能改的是它的角色——名字、标识、角色设定；改了从**下一轮**开始生效，它已经攒下的记忆不受影响。
+Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
 
-用哪个模型写在**卡**上：一条活在哪台机器上跑、用哪个模型、花了多少，都在那一张卡上并排看得见。想给一件事换个更强的脑子，换的是那条活，不是再建一个队友。
+Project creation includes naming its first AI teammate, with random-name suggestions; more teammates can be added later.

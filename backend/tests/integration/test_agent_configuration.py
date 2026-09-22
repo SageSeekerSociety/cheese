@@ -50,22 +50,27 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
     _portal.call(run)
 
 
-def test_a_saved_agent_carries_no_model_and_no_harness(client):
-    """一个队友存的是角色。模型和运行方式连一个键都不留下——留着就等于在活的
-    绑定之外开了第二个住处，而两处都能设的东西，没人答得上来哪一处说了算。
-    """
-    retired = {"model", "harness", "effort"}
+def test_a_saved_agent_can_override_model_but_not_harness(client):
+    """A teammate can select a model while execution settings remain project-owned."""
+    retired = {"harness", "effort"}
     pid = client.post("/projects", json={"name": "Models"}).json()["data"]["id"]
     default = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
     assert not retired & set(default["configuration"])
+    assert default["configuration"]["model"] is None
 
-    # 客户端硬塞进来的那三个键同样落不进库：这一版之后没有一条写路径再写它们。
     client.put(
         f"/projects/{pid}/agents/{default['id']}",
-        json={"configuration": {"body": "Review", "model": "opus", "harness": "codex"}},
+        json={
+            "configuration": {
+                "body": "Review",
+                "model": "opus",
+                "harness": "codex",
+            }
+        },
     )
     saved = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
     assert saved["configuration"]["body"] == "Review"
+    assert saved["configuration"]["model"] == "opus"
     assert not retired & set(saved["configuration"])
 
 

@@ -133,9 +133,7 @@ class StreamingUsageExtractor:
         self.model = self.model or msg.get("model", "")
         for src in (msg.get("usage"), evt.get("usage")):
             if isinstance(src, dict):
-                self.usage.update(
-                    {k: v for k, v in src.items() if isinstance(v, int)}
-                )
+                self.usage.update({k: v for k, v in src.items() if isinstance(v, int)})
 
 
 def usage_from_sse(body: bytes) -> tuple[dict, str]:
@@ -273,11 +271,14 @@ class Verdict:
     fail_open: bool = True
 
 
-def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
+def _post_admission(
+    url: str, bearer: str, timeout_s: float, *, subagent: bool = False
+) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
-    req = urllib.request.Request(
-        url, method="POST", headers={"Authorization": f"Bearer {bearer}"}, data=b""
-    )
+    headers = {"Authorization": f"Bearer {bearer}"}
+    if subagent:
+        headers["X-Cheese-Subagent"] = "1"
+    req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
     data = payload.get("data") or {}
@@ -298,7 +299,8 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
         # the control plane as the source instead of surfacing as an upstream
         # 407 several hops away.
         upstream=upstream
-        if isinstance(upstream, str) and len(upstream.split(":", 1)) == 2
+        if isinstance(upstream, str)
+        and len(upstream.split(":", 1)) == 2
         and all(upstream.split(":", 1))
         else None,
         # The backend answered; `pool` below is its word, not a default.
@@ -341,20 +343,31 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, str, str], tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str, str, bool], tuple[float, Verdict]] = {}
 
-    def check(self, project_id: str, topic_id: str, bearer: str) -> Verdict:
+    def check(
+        self, project_id: str, topic_id: str, bearer: str, *, subagent: bool = False
+    ) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
         # A relaunched agent can select a different model supply in the same room.
-        key = (project_id, topic_id, hashlib.sha256(bearer.encode()).hexdigest())
+        key = (
+            project_id,
+            topic_id,
+            hashlib.sha256(bearer.encode()).hexdigest(),
+            subagent,
+        )
         now = time.time()
         with self._lock:
             hit = self._cache.get(key)
             if hit and now - hit[0] < self._cache_s:
                 return hit[1]
         try:
-            verdict = self._post(self._url, bearer, self._timeout)
+            verdict = (
+                self._post(self._url, bearer, self._timeout, subagent=True)
+                if subagent
+                else self._post(self._url, bearer, self._timeout)
+            )
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:

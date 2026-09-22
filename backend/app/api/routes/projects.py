@@ -196,6 +196,7 @@ async def create_project(
         owner_handle=owner_handle,
         ai_mode=body.ai_mode,
         agent_type=body.agent_type,
+        agent_name=body.agent_name,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
         forge_kind=body.forge_kind,
@@ -1332,7 +1333,7 @@ async def save_forge_attribution(
     return await get_forge_attribution(project_id, db, resolver)
 
 
-# --- 项目默认模型（#1365 之后主线的唯一模型来源）---
+# --- Project main and native subagent model defaults ---
 
 
 def _default_model_state(project_settings: dict | None) -> dict:
@@ -1344,9 +1345,15 @@ def _default_model_state(project_settings: dict | None) -> dict:
     # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
     known_ids = {c["id"] for c in choices}
     effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
+    deployment_settings = dict(project_settings or {})
+    deployment_settings.pop("default_model", None)
+    deployment_choices = model_choices(deployment_settings)
     return {
         "model": effective,
-        "deployment_default": next((c["id"] for c in choices if c["default"]), None),
+        "subagent_model": (project_settings or {}).get("default_subagent_model"),
+        "deployment_default": next(
+            (c["id"] for c in deployment_choices if c["default"]), None
+        ),
         "choices": choices,
         "can_manage": False,  # 由路由层按权限填
     }
@@ -1383,17 +1390,22 @@ async def save_default_model(
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)
     values = dict(project.settings or {})
-    if body.model is None:
-        values.pop("default_model", None)
-    else:
-        from app.domain.agent_instance.configuration import model_choices
+    from app.domain.agent_instance.configuration import model_choices
 
-        valid = {c["id"] for c in model_choices(values)}
-        if body.model not in valid:
-            raise ValidationError(
-                f"当前项目无法使用模型 {body.model!r}，请选择可用模型"
-            )
-        values["default_model"] = body.model
+    valid = {c["id"] for c in model_choices(values)}
+    for field, key in (
+        ("model", "default_model"),
+        ("subagent_model", "default_subagent_model"),
+    ):
+        if field not in body.model_fields_set:
+            continue
+        chosen = getattr(body, field)
+        if chosen is None:
+            values.pop(key, None)
+        elif chosen not in valid:
+            raise ValidationError(f"当前项目无法使用模型 {chosen!r}，请选择可用模型")
+        else:
+            values[key] = chosen
     project.settings = values
     await db.flush()
     state = _default_model_state(project.settings)

@@ -668,7 +668,7 @@ def _resolve_compute_id(
     return topic_compute_profile or project_configs(project_settings).default.profile
 
 
-def _model_policy_call(project) -> gate.Call:
+def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
     """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
 
     两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
@@ -679,7 +679,16 @@ def _model_policy_call(project) -> gate.Call:
     给一个猜出来的人。
     """
     choices = binding.catalog(project.settings)
-    bound = binding.resolve(None, choices)
+    bound = binding.resolve(
+        None,
+        choices,
+        agent_model=agent.configuration.get("model")
+        if agent and not subagent
+        else None,
+        default_model=(project.settings or {}).get("default_subagent_model")
+        if subagent
+        else None,
+    )
     return gate.Call(
         resource=gate.Resource.model,
         subject=bound.model,
@@ -4234,14 +4243,12 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
-        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
-        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
-        # 工作占用的资源，不是参与者的属性。
-        #
-        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
-        # 而主线正是最长、最吃缓存的那条对话。
-        bound = binding.resolve(None, binding.catalog(project.settings))
+        # A saved teammate may override the project main model.
+        bound = binding.resolve(
+            None,
+            binding.catalog(project.settings),
+            agent_model=agent.configuration.get("model"),
+        )
         # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
         # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
         # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
@@ -4250,18 +4257,21 @@ class ChatService:
         # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
         # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
         async with self._sessions() as session:
-            proposed = await self._pass_policy_gate(
-                session,
-                topic_id,
-                _model_policy_call(project),
-                gate.policy_of(project.settings),
-                actor=acting_agent or agent.handle,
-            )
-            if proposed is not None:
-                await session.commit()
-                # 这几轮没有一条流在等帧（没人在看），所以这里的收场只能是抛：提
-                # 议已经落进房间，这一轮到此为止，抛出去的是同一句话。
-                raise gate.OverTier(proposed.proposal.content)
+            calls = [_model_policy_call(project, agent)]
+            child_call = _model_policy_call(project, subagent=True)
+            if child_call.subject != calls[0].subject:
+                calls.append(child_call)
+            for call in calls:
+                proposed = await self._pass_policy_gate(
+                    session,
+                    topic_id,
+                    call,
+                    gate.policy_of(project.settings),
+                    actor=acting_agent or agent.handle,
+                )
+                if proposed is not None:
+                    await session.commit()
+                    raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
         model = bound.wire_model
         config_hash = hashlib.sha256(
@@ -4287,6 +4297,9 @@ class ChatService:
                         "git_author": acting_agent,
                         "model": model,
                         "supply": supply,
+                        "subagent_model": (project.settings or {}).get(
+                            "default_subagent_model"
+                        ),
                     },
                     sort_keys=True,
                 )
@@ -4303,7 +4316,10 @@ class ChatService:
         ).hexdigest()
         kwargs: dict = {
             "model": model,
-            "env": {"CHEESE_AGENT_CONFIG": config_hash},
+            "env": {
+                "CHEESE_AGENT_CONFIG": config_hash,
+                "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+            },
             # Which conversation the turn belongs to, and so which session's
             # machines it runs on. Separate from `agent_handle` below, which is
             # the SEAT the turn authors under — the two are different strings
@@ -4831,7 +4847,7 @@ class ChatService:
                 proposed = await self._pass_policy_gate(
                     session,
                     topic_id,
-                    _model_policy_call(project),
+                    _model_policy_call(project, agent),
                     policy,
                     actor=actor_handle,
                 )

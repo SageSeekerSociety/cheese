@@ -18,6 +18,7 @@ class ProjectCreate(BaseModel):
     # on the project: the persona is one of the type's properties, and the
     # project only says which agent is the default.
     agent_type: str | None = None
+    agent_name: str | None = Field(default=None, min_length=1, max_length=64)
     # 项目归团队 (v4): the shared team this project belongs to. Omitted → the
     # owner's personal team is resolved server-side.
     team_id: int | None = None
@@ -51,15 +52,10 @@ class ForgeAttributionUpdate(BaseModel):
 
 
 class ProjectDefaultModelUpdate(BaseModel):
-    """项目默认模型：主线和未显式绑模型的活都走这个。
-
-    `model=None` 表示清掉显式设置，回落到部署兜底（订阅部署→订阅默认；
-    否则→部署级 agent_model）。设一个不在 model_choices 里的名字会被
-    `validate` 拒掉，而不是静默落到部署兜底——静默换池正是 #1365 之后
-    这条控制点要杀掉的失败（I27）。
-    """
+    """Omitted fields remain unchanged; null clears the corresponding override."""
 
     model: str | None = None
+    subagent_model: str | None = None
 
 
 class TaskLinkCreate(BaseModel):

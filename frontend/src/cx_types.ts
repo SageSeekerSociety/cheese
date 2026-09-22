@@ -1122,12 +1122,12 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
-// 一个 agent 存着的**角色**。模型绑在活上（卡是用户接触模型的唯一地方），
-// 运行方式是部署的开发者选项 —— 两样都不在这里。
+// Saved teammate role and optional project-scoped model override.
 export interface AgentConfiguration {
   body: string
   skills: string[]
   mcp_servers: string[]
+  model?: string | null
 }
 
 export interface ProjectAgent {

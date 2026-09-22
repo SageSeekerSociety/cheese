@@ -39,7 +39,7 @@
 
 | # | 概念 | 层 | 一句话 |
 |---|---|---|---|
-| 1 | **参与者 Actor** | L0 | 能说话、被点名、被通知、被署名的一个 handle。人和 agent 是它的两种到达方式，不是两个类。**只按岗位（role）分，模型不是它的属性** [已定] 结论 3、44 |
+| 1 | **参与者 Actor** | L0 | 能说话、被点名、被通知、被署名的一个 handle。人和 agent 是它的两种到达方式，不是两个类。**Teammates have distinct roles and may override the project main model** [已定] 结论 3、44 |
 | 2 | **席位 Seat** | L0 | 「某个参与者在某个房间担某个角色」。**全系统唯一的授权载体**，凭证只负责认证 [已定] `agent-principles` 二、三 |
 | 3 | **项目 Project** | L0 | 一个源仓库、一个资料库、一份产物清单、一份名册、一套配置。**每个项目恰好有一个源仓库（git），但不是项目里的每样东西都进它** [已定] 结论 26 |
 | 4 | **房间 Room** | L0 | 一条时间线的容器，里面坐着若干成员，其中一些是 agent。**它不指向任何 agent**。私聊和项目总览是它的两种特例，不占槽位 [已定方向] #1180 |
@@ -144,7 +144,7 @@
 | **I14** | **同一个 handle 在一个项目里是一个参与者**：它在各条线程上共享身份与记忆，线程之间只走内部便条；**不同 handle 之间只走 chat，agent 对 agent 也是**（结论 11、12） | 两条：①同 handle 的两条线程读到的是同一个记忆目录（按实例取，不按线程取）；②守卫：向另一个 handle 送话的路径只有 chat 一条，「便条」那条通道的收件人必须与发件人同 handle |
 | **I15** | **没有项目记忆池**（结论 7）；**记忆是平台侧的文件**（结论 42） | 三条：①`MemoryScope.project` 在全仓零命中；②人和 agent 共同看的东西全部是 1.12 那几份文档，每一份都有一个指名的所有者；③一条记忆是一个文件，**自带「关于谁」「何时观察到」两项元数据**，落在「一个实例一个目录、目录下按关于谁分三个子目录」那棵树上，项目源仓库里零命中，版本由平台给，**索引由平台维护**，**读它的路径走平台工具、不经过工作区那双手** |
 | **I16** | **agent 关于每个人的知识在任何房间都可读，怎么用是它的判断**（结论 54 修订结论 9）；**写入按「关于谁」归目录**（结论 42） | 六条：①读关于某个人的池不以「他在不在这个房间」为条件——守卫：取记忆的代码里没有一处按在场名册过滤池；②跨项目仍然读不到：池按 (实例, 项目) 关着（I15），放开的是房间这一层，不是项目这一层；③agent 对人记了什么，这个人在这个 agent 的 profile「记忆」页上读得到、翻得了历史、标得了、删得掉；④任何提到某个人的判断只能落进那个人的那个子目录，落在项目或自己那两个目录里就是写错；⑤关于某个人的文件只对当事人可见——另一个项目成员在同一个记忆页上列不出它，**这是隐私那一侧仅剩的一条**（结论 54）；⑥记忆的改动不进房间时间线、不产生通知，搜索默认不覆盖它 |
-| **I17** | 模型不是参与者的属性，是**工作的资源绑定**（结论 3） | 四条：①agent 类型与实例的数据模型里没有 `model` / `harness` 字段，`effort` 也不在实例上（它随这条活的模型绑定走，1.1）；②房间主线程的模型在一轮里不可改，一条活的模型可改且下一轮生效；③卡上显示的模型**从用量记录算出来**，不是一个被 set 的状态字段；④项目配置对象上与模型有关的字段只有默认模型和启用列表两样（结论 44） |
+| **I17** | Project and teammate model selection | Project main and native subagent defaults are separate. Teammates may override the main default with an available model. The prepared turn keeps its model; configuration changes apply at the next task boundary. Reported usage records the actual model. Harness and effort remain outside teammate configuration. |
 | **I18** | 会话可迁移，而迁移是搬运不是重开；**transcript 的权威副本在平台** | 把一个房间的会话搬到另一台机器，下一轮 agent 能引用上一轮自己说过的话；恢复的源是平台副本，不是另一台机器 |
 | **I18b** | **活与子 agent 不声明自己的地点**（结论 38，按结论 60 修订） | 活与子 agent 不声明自己的地点——它们用**做这条活的那个 agent 的会话**解析出的租约（原生子 agent 用父进程那一份，结论 43）；活、轮次与子 agent 的数据结构上没有 place / placement 字段 |
 | **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到三张收据：transcript 已落库、记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这三张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
@@ -226,15 +226,9 @@ would give two agents in one room the same name, and the same agent two names in
 这条要求是**类型的出厂设置的一部分**，实例继承它，一条活在绑模型时必须满足它——
 所以它不是上面那两行「删」的例外：它声明的是能力要求，不是一个型号。
 
-#### 模型不是 agent 的属性
+#### Project and teammate models
 
-[已定] 结论 3、44。**分参与者的判据是岗位（role）。模型不是 agent 的属性，也不是分参与者的理由——用第二个 agent 换模型是错放。**
-模型是**工作的资源绑定**，与机器（地点）同形：
-卡上并排显示「在哪台机器、用哪个模型、现在在做什么、花了多少」。展开是 2.5、4.6 与 8.1。
-
-**项目级只有两样：默认模型和启用列表** [已定] 结论 44。
-「超档要人点头」不是第三样配置，它是启用列表之外那一档在投递上的形状（结论 3，8.1）；
-**「档位策略」也不是第三样——它就是启用列表按费用分出来的那几档**，本稿凡说「档位」都指这个。
+Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
 
 #### 什么时候才该是两个 agent
 
@@ -271,7 +265,7 @@ would give two agents in one room the same name, and the same agent two names in
 （一个 agent 类型所描述的 role，如设计、测试，住在类型上，1.1）是两个词，英文里都叫 role。
 本文一律分称「席位角色」与「岗位」。
 **分 agent 的判据只有岗位一个** [已定] 结论 44：席位角色管的是它在这个房间能做什么，岗位管的是它是干什么的，
-模型两边都不在——它在这条活上（1.5、4.6）。
+A teammate may store an optional model override; a seat does not configure a model.
 
 - **拥有**：席位角色（owner / admin / member）、加入时间。
 - **不拥有**：身份（在参与者上）、**出厂设置**（在 agent 类型上，1.1）、**资源绑定**（在这条活上，1.5）。

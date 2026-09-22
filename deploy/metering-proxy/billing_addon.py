@@ -662,6 +662,12 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # (project, topic) — the topic is part of the answer, not just of the
     # question, because the identity it resolves belongs to that topic's machine.
     verdict = None
+    is_subagent = bool(
+        flow.request.headers.get("x-claude-code-agent-id")
+    ) or flow.request.headers.get("x-claude-code-request-class") in {
+        "subagent",
+        "workflow",
+    }
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
@@ -669,7 +675,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 
         def check_admission():
             check_started = time.perf_counter()
-            verdict = ADMISSION.check(project_id, topic_id, bearer)
+            verdict = (
+                ADMISSION.check(project_id, topic_id, bearer, subagent=True)
+                if is_subagent
+                else ADMISSION.check(project_id, topic_id, bearer)
+            )
             return verdict, check_started, time.perf_counter()
 
         verdict, check_started, check_finished = await asyncio.to_thread(
@@ -730,7 +740,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         if verdict is not None:
             # The subscription pool serves the haiku family itself, so the
             # CLI's own background requests stay on it.
-            _write_bound_model(flow, verdict.model, keep_haiku=True)
+            _write_bound_model(flow, verdict.model, keep_haiku=not is_subagent)
 
     # A stale x-api-key would override whatever bearer goes upstream, on either
     # path below — so it is dropped before the branch, not inside one.

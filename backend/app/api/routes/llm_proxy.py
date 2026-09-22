@@ -163,9 +163,23 @@ async def admission(
     # from — that silent swap is what one control point exists to remove — so
     # the refusal carries the resolver's own words and the turn stops here.
     project = await ProjectRepository(db).get(project_uuid)
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    is_subagent = request.headers.get("x-cheese-subagent") == "1"
+    agent = None
+    if project is not None and not is_subagent:
+        agents = AgentInstanceService(db)
+        agent = await agents.for_seat_handle(project, claims.get("a"))
+        if agent is None:
+            agent = await agents.for_project(project)
     try:
         bound = binding.resolve(
-            None, binding.catalog(project.settings if project else None)
+            None,
+            binding.catalog(project.settings if project else None),
+            agent_model=agent.configuration.get("model") if agent else None,
+            default_model=(project.settings or {}).get("default_subagent_model")
+            if project and is_subagent
+            else None,
         )
     except ValidationError as exc:
         # `reason_kind` is what stops the proxy dressing this up as a budget

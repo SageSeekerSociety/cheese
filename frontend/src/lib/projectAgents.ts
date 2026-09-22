@@ -4,7 +4,22 @@
 // 分不出哪个队友真的在学、哪个是建完就没人用的空壳。所以这里单独成文件，
 // 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
 import type { MemoryEntryOut } from '../api'
-import type { AgentType, ProjectAgent } from '../cx_types'
+import type { AgentType } from '../cx_types'
+
+import { t } from '../i18n'
+
+export function randomTeammateName(current = ''): string {
+  const names = [
+    t('work.teammate.names.moss'),
+    t('work.teammate.names.spark'),
+    t('work.teammate.names.milo'),
+    t('work.teammate.names.bean'),
+    t('work.teammate.names.nova'),
+    t('work.teammate.names.cedar'),
+  ]
+  const choices = names.filter((name) => name !== current)
+  return choices[Math.floor(Math.random() * choices.length)]!
+}
 
 // 每个队友攒下了多少条记忆，按 handle 归。
 //

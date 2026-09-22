@@ -1,4 +1,29 @@
 {
+  "models": {
+    "title": "Model settings",
+    "readOnly": "Project managers can change the default models",
+    "description": "AI teammates use the project main model unless you assign one to them",
+    "main": "Project main model",
+    "subagent": "Default subagent model",
+    "subagentHint": "Used by temporary subagents spawned by Claude Code during a task",
+    "inheritMain": "Use project main model",
+    "assign": "Assign a model to this teammate",
+    "agent": "Teammate model",
+    "inheritHint": "Uses the project main model when no model is assigned",
+    "chooseAvailable": "Choose a model available to this project",
+    "loadError": "Could not load models"
+  },
+  "teammate": {
+    "title": "Your project's AI teammate",
+    "intro": "Give the AI teammate for {project} a name",
+    "more": "This teammate will work with you in this project. You can add more teammates later",
+    "name": "Teammate name",
+    "random": "Random name",
+    "next": "Next",
+    "back": "Back",
+    "create": "Create project",
+    "names": { "moss": "Moss", "spark": "Spark", "milo": "Milo", "bean": "Bean", "nova": "Nova", "cedar": "Cedar" }
+  },
   "allSpaces": "All spaces",
   "awaiting": "{count} waiting for you",
   "emptyBody": "Create a {project} and Cheese starts with you: say what you want to do, and it reads, writes and breaks the work down.",

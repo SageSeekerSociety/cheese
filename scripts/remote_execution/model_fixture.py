@@ -101,6 +101,14 @@ class Handler(BaseHTTPRequestHandler):
                     {"error": {"type": "invalid_request_error", "message": str(exc)}}
                 )
         state["requests"].append(body)
+        dump(
+            state["dir"] / f"headers-{index + 1}.json",
+            {
+                key: value
+                for key, value in self.headers.items()
+                if key.lower().startswith("x-claude-code-")
+            },
+        )
         dump(state["dir"] / f"request-{index + 1}.json", body)
         log(
             state["dir"] / "progress.jsonl",
