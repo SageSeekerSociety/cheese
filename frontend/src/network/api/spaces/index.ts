@@ -1,4 +1,13 @@
-import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type {
+  CourseRoster,
+  DomainGroup,
+  MyCourseGroup,
+  Space,
+  SpaceCategory,
+  SpaceInviteCode,
+  SpaceMember,
+  Topic,
+} from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -35,6 +44,7 @@ import type {
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
   SpaceMyPublishingOverview,
+  SpaceSubmissionQueue,
   SpaceTaskAnalytics,
   TeachingUnit,
 } from './types'
@@ -106,6 +116,23 @@ export namespace SpacesApi {
   export const listMembers = (spaceId: number) =>
     NewApiInstance.request<{ members: SpaceMember[] }>({
       url: `/spaces/${spaceId}/members`,
+      method: 'GET',
+    })
+
+  /**
+   * 这门课的人、项目与组 —— 教师版面的「学生与分组」那一屏。
+   * 只对本版管理员（教师）开放：学生读这条是 403。
+   */
+  export const getCourseRoster = (spaceId: number) =>
+    NewApiInstance.request<CourseRoster>({
+      url: `/spaces/${spaceId}/course/roster`,
+      method: 'GET',
+    })
+
+  /** 学生自己那一行：我在这个课里的项目与我的组（谁都能读，只关于自己）。 */
+  export const getMyCourseGroup = (spaceId: number) =>
+    NewApiInstance.request<MyCourseGroup>({
+      url: `/spaces/${spaceId}/course/my-group`,
       method: 'GET',
     })
 
@@ -441,6 +468,27 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
       method: 'DELETE',
+    })
+
+  /**
+   * 一整门课的作业与验收（教师版面）。
+   *
+   * `reviewed: false` 就是验收队列；不给就是全部。每行是「谁的哪份作业」，
+   * 带 `participantId` 供既有的提交 / 评审接口使用。
+   */
+  export const getSubmissionQueue = (
+    spaceId: number,
+    params: {
+      reviewed?: boolean
+      taskId?: number
+      pageStart?: number
+      pageSize?: number
+    } = {}
+  ) =>
+    NewApiInstance.request<SpaceSubmissionQueue>({
+      url: `/spaces/${spaceId}/submissions`,
+      method: 'GET',
+      params,
     })
 
   export const listUnits = (spaceId: number) =>

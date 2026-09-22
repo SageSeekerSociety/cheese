@@ -24,6 +24,7 @@ from app.domain.shell.catalog import is_course_shell
 from app.domain.space import course_modules
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.course_roster_service import CourseRosterService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.space.member_participating_service import (
     SpaceMemberParticipatingService,
@@ -54,10 +55,15 @@ from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
-from app.domain.task.services import TaskMembershipService, TaskService
+from app.domain.task.services import (
+    TaskMembershipService,
+    TaskService,
+    TaskSubmissionService,
+)
 from app.domain.teaching.models import TeachingUnit
 from app.domain.teaching.repositories import TeachingUnitRepository
 from app.domain.teaching.services import TeachingUnitService
+from app.domain.team.services import team_service
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -612,6 +618,69 @@ async def _hydrate_members(
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
 
+async def _build_course_roster_payload(
+    *,
+    space_id: int,
+    service: SpaceService,
+    db,
+) -> dict:
+    """这门课的人与组：结构来自 `CourseRosterService`，人味在这里补。
+
+    拼「学生 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
+    而 handle 在 user 领域 —— 所以那一跳留在这边用现成的 `_hydrate_people` 走完，
+    领域里那份服务只给平表。
+
+    管理员不算学生：教师名单（`space.admins`）与成员表是两件事，一位老师也可以
+    是成员，但他出现在「学生与分组」里只会让人数说谎。
+    """
+    roster = await CourseRosterService(db).roster(space_id)
+    admin_ids = {rel.user_id for rel in await service.list_admins(space_id)}
+    student_ids = [uid for uid in roster["memberUserIds"] if uid not in admin_ids]
+    team_member_ids = [uid for team in roster["teams"] for uid in team["memberUserIds"]]
+    people = await _hydrate_people(
+        list(dict.fromkeys([*student_ids, *team_member_ids])),
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+
+    projects_by_handle: dict[str, list[dict]] = {}
+    for project in roster["projects"]:
+        handle = project["ownerHandle"]
+        if handle:
+            projects_by_handle.setdefault(handle, []).append(project)
+
+    students = []
+    for user_id in student_ids:
+        person = people[user_id]
+        projects = projects_by_handle.get(person.get("username", ""), [])
+        students.append(
+            {
+                "user": person,
+                "projects": [
+                    {"id": p["id"], "name": p["name"], "teamId": p["teamId"]}
+                    for p in projects
+                ],
+                "teamIds": sorted(
+                    {p["teamId"] for p in projects if p["teamId"] is not None}
+                ),
+            }
+        )
+
+    return {
+        "students": students,
+        "teams": [
+            {
+                "id": team["id"],
+                "name": team["name"],
+                "members": [
+                    people[uid] for uid in team["memberUserIds"] if uid in people
+                ],
+            }
+            for team in roster["teams"]
+        ],
+    }
+
+
 async def _build_full_space_payload(
     space: Space,
     *,
@@ -1114,6 +1183,75 @@ async def list_space_members(
     return {"code": 200, "message": "OK", "data": {"members": items}}
 
 
+@router.get(
+    "/{spaceId}/course/roster",
+    summary="Course Roster (teachers)",
+)
+async def get_course_roster(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    """这门课的人与组 —— 教师版面的「学生与分组」那一屏。
+
+    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是学生
+    之间该互相看到的东西。判据是 ``_ensure_space_admin``（与打分、发题、读项目
+    对话同一个答案），门外人先按可见性答 404，不做存在性确认。
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    data = await _build_course_roster_payload(space_id=space_id, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
+    "/{spaceId}/course/my-group",
+    summary="My Course Group (student)",
+)
+async def get_my_course_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """学生自己那一行：我在这个课里的项目，以及我挂在哪个组上。
+
+    与花名册（``/course/roster``）分开是因为门不同：那张表把全班列在一起，只有
+    教师能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    viewer = await UserRepository(session=db).get_by_id(auth_user.user_id)
+    data = await CourseRosterService(db).my_group(
+        space_id, viewer.username if viewer else None
+    )
+
+    team = None
+    team_id = data["teamId"]
+    if team_id is not None:
+        teams = team_service(db)
+        row = await teams.get_team(team_id)
+        relations = await teams.get_team_members(team_id)
+        people = await _hydrate_people(
+            [relation.user_id for relation in relations],
+            user_repo=UserRepository(session=db),
+            profile_repo=UserProfileRepository(session=db),
+        )
+        team = {
+            "id": team_id,
+            "name": row.name if row else "",
+            "members": [
+                people[relation.user_id]
+                for relation in relations
+                if relation.user_id in people
+            ],
+        }
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"projectId": data["projectId"], "team": team},
+    }
+
+
 @router.post(
     "/{spaceId}/members",
     summary="Add Space Member",
@@ -1554,6 +1692,79 @@ class LearningOutlineRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     block_ids: list[uuid.UUID] = Field(default_factory=list, alias="blockIds")
+
+
+async def get_space_submission_service(
+    db=Depends(get_db),
+) -> TaskSubmissionService:
+    """课程的「作业与验收」要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
+    from app.api.routes.tasks import get_task_submission_service
+
+    return await get_task_submission_service(db=db)
+
+
+@router.get(
+    "/{spaceId}/submissions",
+    summary="Get Space Submission Queue",
+)
+async def get_space_submissions(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    reviewed: bool | None = Query(default=None),
+    taskId: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None),
+    pageSize: int = Query(default=20, ge=1, le=100),
+    sortBy: str = Query(default="createdAt"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    submission_service: TaskSubmissionService = Depends(get_space_submission_service),
+    db=Depends(get_db),
+) -> dict:
+    """一整门课的提交与验收队列 —— 教师看的那一屏。
+
+    按板子取一次，而不是逐道题 × 逐个学生地问（那是 N×M 次请求）。每行都带
+    `taskId` / `taskTitle` / `participantId`，教师看的是「谁的哪份作业」。
+
+    判据走那道现成的教师闸 `_ensure_space_admin`：不在这个板里答 404（不确认它
+    存在），在板里但不是管理员答 403。学生看自己那一份走既有的按题接口 ——
+    整门课的提交是教师版面。`reviewed=false` 就是验收队列；不给就是全部。
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    if sortBy not in {"createdAt", "updatedAt"}:
+        raise BadRequestError(f"Invalid sortBy: {sortBy}")
+    if sortOrder not in {"asc", "desc"}:
+        raise BadRequestError(f"Invalid sortOrder: {sortOrder}")
+
+    offset = max(pageStart or 0, 0)
+    items, total = await submission_service.list_for_space(
+        space_id=space_id,
+        task_id=taskId,
+        reviewed=reviewed,
+        limit=pageSize,
+        offset=offset,
+        sort_by=sortBy,
+        sort_order=sortOrder,
+    )
+    returned = len(items)
+    has_more = offset + returned < total
+    summary = await submission_service.summary_for_space(
+        space_id=space_id,
+        task_id=taskId,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "submissions": items,
+            "summary": summary,
+            "page": {
+                "pageStart": offset,
+                "pageSize": returned,
+                "hasMore": has_more,
+                "nextStart": offset + returned if has_more and returned > 0 else None,
+                "total": total,
+            },
+        },
+    }
 
 
 async def get_space_learning_service(db=Depends(get_db)) -> SpaceLearningService:
