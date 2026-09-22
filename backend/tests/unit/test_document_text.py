@@ -12,13 +12,7 @@ from __future__ import annotations
 
 import zipfile
 
-import pytest
-
-pytest.importorskip(
-    "lxml", reason="读 .docx 正文用的是 documents 技能里那个脚本，它要 lxml"
-)
-
-from app.domain.documents.text import delivered_comparison, document_text  # noqa: E402
+from app.domain.documents.text import delivered_comparison, document_text
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 

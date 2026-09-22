@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 import zipfile
@@ -24,10 +23,6 @@ import pytest
 from app.domain.agent.skills import _NATIVE_SKILL_SRC
 
 OFFICE = _NATIVE_SKILL_SRC / "documents" / "scripts" / "office.py"
-
-pytest.importorskip(
-    "lxml", reason="office.py 用 lxml 保住命名空间前缀，沙箱里由 uv run --with 取用"
-)
 
 DECLARATION = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 
@@ -412,7 +407,6 @@ def test_unpack_refuses_a_part_that_escapes_the_directory(tmp_path: Path):
     assert not (tmp_path / "逃出去.xml").exists()
 
 
-@pytest.mark.skipif(shutil.which("ln") is None, reason="需要能造符号链接")
 def test_unpack_refuses_a_symlink_entry(tmp_path: Path):
     """zip 里的符号链接条目解包后会让后续写入落到链接指向的地方。"""
     bad = tmp_path / "链接.docx"

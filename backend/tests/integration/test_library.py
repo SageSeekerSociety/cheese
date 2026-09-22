@@ -8,8 +8,6 @@
 资料只有一份字节，哪个房间引用它都读的是那一份。
 """
 
-import pytest
-
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import session_auth_headers
 
@@ -255,8 +253,6 @@ def test_a_library_document_lists_its_revisions_but_does_not_take_a_decision(cli
 
     改的是所有房间都在引用的那一份，而这一下没有人要求过——要改这份文档，产出的是
     另一份。"""
-    lxml = pytest.importorskip("lxml", reason="修订解析要用 lxml")
-    assert lxml
     from tests.integration.test_document_revisions_endpoint import DOCUMENT, _docx
 
     project_id = _project(client)

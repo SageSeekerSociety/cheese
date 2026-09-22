@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import shutil
 import subprocess
 import time
 import uuid
@@ -19,7 +18,6 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import (
 )
 
 
-@pytest.mark.skipif(not shutil.which("tmux"), reason="requires a real tmux terminal")
 @pytest.mark.parametrize("legacy_workspace", [True, False])
 def test_exited_session_with_retained_terminal_allows_transfer(
     tmp_path, monkeypatch, capsys, legacy_workspace

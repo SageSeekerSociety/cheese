@@ -41,7 +41,10 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         str(pin) if pin.exists() else None
     )
     if not binary:
-        pytest.skip("Native executor acceptance supplies CHEESE_TEST_CLAUDE in CI")
+        pytest.fail(
+            "CHEESE_TEST_CLAUDE must point to the pinned Claude build before "
+            "running the pure layer"
+        )
     owner = tmp_path / "owner"
     destination = owner / ".cheese/claude/versions/2.1.277"
     destination.parent.mkdir(parents=True)
