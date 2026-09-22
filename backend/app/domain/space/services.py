@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME
+from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME, is_course_shell
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -64,6 +64,25 @@ class SpaceService:
         self._domain_group_domain_repo = domain_group_domain_repo
         self._member_repo = member_repo
         self._invite_code_repo = invite_code_repo
+
+    # ------------------------------------------------------------------
+    # What a 题目板 is
+    # ------------------------------------------------------------------
+
+    async def default_category_shells(
+        self, *, space_ids: Sequence[int]
+    ) -> dict[int, str | None]:
+        """The 壳 each of these 题目板's default 分组 declares.
+
+        The answer is a name, not a verdict: `app.domain.shell.catalog` owns
+        which names mean 「this board is a course」, so callers ask it rather
+        than comparing strings themselves.
+        """
+        return await self._repo.default_category_shells(space_ids=space_ids)
+
+    async def is_course(self, *, space_id: int) -> bool:
+        shells = await self.default_category_shells(space_ids=[space_id])
+        return is_course_shell(shells.get(space_id))
 
     # ------------------------------------------------------------------
     # Classification topics

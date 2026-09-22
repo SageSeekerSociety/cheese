@@ -19,6 +19,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.shell.catalog import is_course_shell
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
@@ -596,6 +597,9 @@ async def get_space(
     topics = await service.list_classification_topics(space_id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
+    # 这块板是不是一门课。它自己的屏幕不是项目、读不到壳，所以这个答复由默认
+    # 分组声明的壳算出来（`app.domain.shell.catalog`），随板子一起下来。
+    space_data["isCourse"] = await service.is_course(space_id=space_id)
 
     data: dict = {
         "space": space_data,
@@ -633,6 +637,9 @@ async def get_spaces(
 
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
+    # 这一页里哪些板是课程：一问拿全页，别一行一次往返（见
+    # `SpaceRepository.default_category_shells`）。
+    course_shells = await service.default_category_shells(space_ids=space_ids)
 
     items: list[dict] = []
     for s in spaces:
@@ -663,6 +670,7 @@ async def get_spaces(
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
+        dto["isCourse"] = is_course_shell(course_shells.get(s.id))
 
         items.append(dto)
 

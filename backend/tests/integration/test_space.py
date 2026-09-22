@@ -211,6 +211,57 @@ class TestNewBoardOpensAsACourse:
 
         assert _portal.call(_shell_name) == "course-student"
 
+    def test_a_board_says_whether_it_is_a_course(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
+    ):
+        """哪块板是课：新建的说是，分组那一列空的说不是。
+
+        题目板自己的屏幕不是项目、读不到壳，所以 `isCourse` 是它们唯一能凭的
+        东西。它错了不报错：一门课会长成题目列表，一个老题目板会长出课程格子。
+        """
+        creator = user_client.create_user()
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        resp = create_approved_space(
+            api_client,
+            json={"name": f"Course ({unique_int(10000000, 99999999)})"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        space = resp.json()["data"]["space"]
+        space_id = space["id"]
+        category_id = space["defaultCategoryId"]
+        assert category_id is not None
+        assert space["isCourse"] is True
+
+        detail = api_client.get(f"/spaces/{space_id}", headers=headers)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["space"]["isCourse"] is True
+
+        listed = api_client.get("/spaces", params={"pageSize": 200}, headers=headers)
+        assert listed.status_code == 200, listed.text
+        rows = {s["id"]: s for s in listed.json()["data"]["spaces"]}
+        assert rows[space_id]["isCourse"] is True
+
+        # 老题目板：这一列没有值（它就产生于这一列存在之前）。
+        async def _undeclare() -> None:
+            category = await db_session.get(SpaceCategory, category_id)
+            assert category is not None
+            category.shell = None
+            await db_session.commit()
+
+        _portal.call(_undeclare)
+
+        again = api_client.get(f"/spaces/{space_id}", headers=headers)
+        assert again.status_code == 200, again.text
+        assert again.json()["data"]["space"]["isCourse"] is False
+
 
 def _project_row():
     return SimpleNamespace(
