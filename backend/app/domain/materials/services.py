@@ -1,5 +1,7 @@
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.materials.models import Material, MaterialBundle
 from app.domain.materials.repositories import (
@@ -48,6 +50,23 @@ def _bundle_to_dto(bundle: MaterialBundle) -> dict:
 class MaterialService:
     def __init__(self, repo: MaterialRepository) -> None:
         self._repo = repo
+
+    @classmethod
+    def for_lookup(cls, session: AsyncSession) -> "MaterialService":
+        """A reader another domain can build without copying our wiring.
+
+        The import guard keeps other domains out of our repository, and what
+        they need here is a plain fetch by id.
+        """
+        return cls(repo=MaterialRepository(session))
+
+    async def get_many(self, material_ids: list[int]) -> list[Material]:
+        """Whatever of these ids exists, in the order asked for.
+
+        No visibility check: the caller is a 课程 naming the 课件 its teacher
+        arranged, and a teacher can only point at material they could see.
+        """
+        return await self._repo.list_by_ids(material_ids)
 
     async def get_material(self, material_id: int) -> dict:
         material = await self._repo.get_by_id(material_id)

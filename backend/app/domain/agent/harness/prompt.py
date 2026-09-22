@@ -1,9 +1,33 @@
-"""Platform instructions shared by every agent harness."""
+"""Platform instructions shared by every agent harness.
+
+**教学配置的生效语义 (#8d772257)。** 改一次课程配置，三种项目分别什么时候看见
+它——这是设计决定，不是实现细节，所以写在这里而不是让人从代码里猜：
+
+1. **新建的项目**：建出来就带最新配置。建项目那一轮本来就要组装一次 prompt，
+   读到的就是当时项目集里的那一份，没有缓存层要等。
+2. **已有项目的新会话**：启动时读到最新配置。prompt 每一轮都从库里重新组装
+   （`chat._assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
+   此刻的配置。
+3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
+   的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
+   prompt 交给它，而它**在启动时读一次**那个文件
+   （`claude_code/session_launch.py` 的模块注释，`hooks_substrate` 里
+   「reads a system prompt exactly once — at launch」）。文件每轮都重写，重写是
+   给**下一次**冷启动看的。
+
+   所以「第 3 周改成了第 4 周」这件事，一个正在跑的会话当天听不到。这是有意接受
+   的：往一个已经跑起来、上下文里全是第 3 周内容的会话里塞第 4 周的范围，比让它
+   按第 3 周做完这一轮更糟。要立刻生效就重开会话（换机器/重建屏幕都会重开）。
+
+`prompt_text`（逐轮的用户消息）里**不放**教学上下文，这是第 3 条的实现保证：
+它只走 system prompt 这一条路，没有第二条路能让它在会话中途变脸。
+"""
 
 import re
 import uuid
 
 from app.domain.block.models import BlockKind
+from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -12,6 +36,63 @@ _BARE_PATH_RE = re.compile(
 
 def chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
+
+
+def teaching_section(context: TeachingContext) -> str | None:
+    """本周教学范围 —— 课程级的那一段，或者 None。
+
+    **None 是默认，而且是字面意义上的「一个字都不加」。** 一个不是课程的项目
+    没有教学安排，而「这周教到哪了」对它是一句废话：说了会让 agent 以为自己在
+    一门课里。所以这里不是渲染一个空标题，是整段不存在（`build_system_prompt`
+    对 None 直接跳过），而且配套的取数在 `task.teaching.for_project` 里同样没
+    有发生——不取，不是取了再说空话。
+
+    **位置在角色之后、技能之前。** 教学安排不是人设（那是角色），也不是工具箱
+    （那是技能）。它约束的是「这一周该做什么」，得在读具体怎么做之前先立住。
+    """
+    teaching = context.teaching
+    if teaching.is_empty:
+        return None
+    # 课程名和「第几周」都可能缺：一个项目集配了教学安排却没说自己叫什么，仍然
+    # 要有一段读得通的话，而不是一个空括号。
+    where = []
+    if context.course:
+        where.append(f"课程：{context.course}")
+    if teaching.current_week is not None:
+        where.append(f"第 {teaching.current_week} 周")
+    parts = ["## 本周教学范围" + (f"（{' · '.join(where)}）" if where else "")]
+    if teaching.system_prompt:
+        parts.append(teaching.fill(teaching.system_prompt))
+    if teaching.allowed_topics:
+        parts.append(
+            "本周只做这些：\n"
+            + "\n".join(f"- {topic}" for topic in teaching.allowed_topics)
+        )
+    if teaching.avoid_in_code:
+        # 说清「避开」是什么意思。不说的版本会被读成禁令，agent 于是绕开一个它
+        # 本来可以用的写法去做同一件事——这一周的练习照样练不到点子上。
+        parts.append(
+            "**本周的课还没讲到这些**，代码里请避开（这一周的练习不是练它）：\n"
+            + "\n".join(f"- {item}" for item in teaching.avoid_in_code)
+        )
+    if context.materials:
+        parts.append(
+            "### 本周课件\n"
+            + "\n".join(f"- 《{m['name']}》{m['url']}" for m in context.materials)
+        )
+    if context.knowledge:
+        # 只给名字和描述，正文留在知识库里按 id 取：一份上传可以有多大，不是这门
+        # 课说了算的，prompt 不跟着别人的文件长。
+        parts.append(
+            "### 本周知识材料（要正文用 id 自己去取）\n"
+            + "\n".join(
+                f"- 《{k['name']}》"
+                + (f"（id={k['id']}）" if k.get("id") else "")
+                + (f" {k['description']}" if k.get("description") else "")
+                for k in context.knowledge
+            )
+        )
+    return "\n\n".join(parts)
 
 
 #: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
@@ -39,6 +120,7 @@ def build_system_prompt(
     overview_doc: str | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
+    teaching: TeachingContext | None = None,
     memories_omitted: int = 0,
     memories_core_omitted: int = 0,
 ) -> str:
@@ -59,6 +141,8 @@ def build_system_prompt(
     parts.append(ALWAYS_PUSH)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
+    if teaching is not None and (section := teaching_section(teaching)):
+        parts.append(section)
     if skills:
         parts.append(skills)
     if stage_guide:
