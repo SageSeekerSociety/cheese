@@ -16,7 +16,7 @@ import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
-import { fmtCost, fmtNum } from '@/lib/usageFormat'
+import { fmtCompact, fmtCost, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
@@ -193,18 +193,14 @@ const pulseByKey = computed<Record<string, (typeof pulse.value)[number]>>(() => 
   return out
 })
 
-/** 20 万 token 这种短写 —— 摘要条上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。 */
-function shortTokens(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 10_000) return `${Math.round(n / 1000)}k`
-  return String(n)
-}
+/** 20 万 token 这种短写 —— 导轨上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。
+ *  走 `fmtSI` 而不是手写阶梯：手写的那份止步于 M，`1e12` 会被打成 `1000000.0M`。 */
+const shortTokens = (n: number | null | undefined): string => (n ? fmtSI(n) : '—')
 
 /** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
 const slowestP95 = computed(() => {
   const row = perf.value?.routes?.[0]
-  return row?.p95 === undefined || row.p95 === null ? '—' : `${row.p95} ms`
+  return row?.p95 === undefined || row.p95 === null ? '—' : fmtMs(row.p95)
 })
 
 const kind = computed(() => store.statsKind)
