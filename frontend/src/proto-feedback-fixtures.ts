@@ -1507,9 +1507,7 @@ function feedbackStats(url: URL): Record<string, unknown> {
     open: live.filter((i) => !isClosed(i)).length,
     closed: live.filter(isClosed).length,
     unassigned: live.filter((i) => !i.assignee_handle && !isClosed(i)).length,
-    urgent_open: live.filter(
-      (i) => !isClosed(i) && (i.priority === 'high' || i.priority === 'urgent')
-    ).length,
+    urgent_open: live.filter((i) => !isClosed(i) && (i.priority === 'high' || i.priority === 'urgent')).length,
   }
   const columns = {
     public: live.filter((i) => i.visibility === 'public' && !i.security).length,

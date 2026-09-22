@@ -134,7 +134,8 @@
       "resolved7d": "Resolved · 7d",
       "created7d": "New · 7d",
       "unread": "Unread",
-      "urgent": "{n} of them urgent and unassigned"
+      "urgent": "{n} of them urgent and unassigned",
+      "urgentShort": "{n} urgent"
     },
     "chart": {
       "title": "New / resolved / deployed per day",
@@ -177,7 +178,8 @@
         "route": "Endpoint",
         "count": "Calls"
       },
-      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead."
+      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
+      "slowest": "Slowest p95"
     },
     "usage": {
       "tokens": "Tokens · window",
@@ -230,7 +232,9 @@
       "database": "Database",
       "redis": "Redis",
       "event_loop": "Event loop",
-      "note": "This moment only — not stock, not a window. Same checks as /health/detailed."
+      "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
+      "healthy": "Healthy",
+      "degraded": "Degraded"
     }
   },
   "chart": {

@@ -8,9 +8,9 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
+import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
-import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -69,6 +69,73 @@ const queue = (query: Record<string, string> = {}): RouteLocationRaw => ({ path:
 
 /** 迷你列表最多画几行。和 `AdminNumberList` 的 `SHOWN` 是同一个数。 */
 const SHOWN = 10
+
+/** 顶上那条「四块摘要」—— 这一页的**第一眼**。
+ *
+ *  分类控件把四块藏在四个抽屉里，于是「反馈在催、用量在涨」这件事要么点三下才看见，
+ *  要么根本看不见。这一条把每一块的那**一个**数摆在一起：读的人先知道「现在哪块
+ *  需要我」，再决定进哪一块。
+ *
+ *  每块只取一个数（不是四个）：一行摆四个指标 × 四块 = 十六个数，那就不是摘要而是
+ *  另一张表。取哪一个，判据是「这一块现在最该被看见的那件事」：
+ *
+ *   * 反馈 → **待分诊**（有事等着人动）；有急件时换成急件数并染琥珀警示。
+ *   * 用量 → 窗口内的 **token**（量级，比钱稳 —— 未定价的那部分没有钱数）。
+ *   * 平台 → **健康度**（`healthy` / `degraded`，这一刻的）。
+ *   * 性能 → **最慢那条的 p95**（「哪条慢」是这一块唯一要回答的问题）。
+ *
+ *  点一块就切到那一类 —— 它是导航，不是卡片（`to` 语义上的链接由下面的 KPI 卡承担）。
+ */
+const pulse = computed(() => {
+  const rows = [
+    {
+      key: 'feedback',
+      label: t('feedback.dashboard.tab.feedback'),
+      value:
+        urgentOpen.value > 0
+          ? t('feedback.dashboard.kpi.urgentShort', { n: urgentOpen.value })
+          : num(feedback.value?.total.unassigned),
+      hint: urgentOpen.value > 0 ? t('feedback.dashboard.kpi.urgent') : t('feedback.dashboard.kpi.untriaged'),
+      tone: urgentOpen.value > 0 ? 'warn' : 'ink',
+    },
+    {
+      key: 'usage',
+      label: t('feedback.dashboard.tab.usage'),
+      value: num(usage.value?.totals.tokens),
+      hint: t('feedback.dashboard.usage.tokens'),
+      tone: 'ink',
+    },
+    {
+      key: 'platform',
+      label: t('feedback.dashboard.tab.platform'),
+      value:
+        platform.value?.health?.overall === 'healthy'
+          ? t('feedback.dashboard.health.healthy')
+          : t('feedback.dashboard.health.degraded'),
+      hint: t('feedback.dashboard.health.title'),
+      tone:
+        platform.value?.health?.overall === 'healthy'
+          ? 'ok'
+          : platform.value?.health?.overall === 'degraded'
+            ? 'danger'
+            : 'ink',
+    },
+    {
+      key: 'performance',
+      label: t('feedback.dashboard.tab.performance'),
+      value: slowestP95.value,
+      hint: t('feedback.dashboard.perf.slowest'),
+      tone: 'ink',
+    },
+  ]
+  return rows
+})
+
+/** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
+const slowestP95 = computed(() => {
+  const row = perf.value?.routes?.[0]
+  return row?.p95 === undefined || row.p95 === null ? '—' : `${row.p95} ms`
+})
 
 const kind = computed(() => store.statsKind)
 const feedback = computed(() => store.stats.feedback)
@@ -468,6 +535,25 @@ onMounted(() => {
         </v-btn-toggle>
       </div>
 
+      <!-- 四块摘要：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
+           切过去），不是四个独立卡片 —— 所以它是一排 button，不是 `<a>`。 -->
+      <div class="ad__pulse" role="tablist" aria-label="看板四块摘要">
+        <button
+          v-for="row in pulse"
+          :key="row.key"
+          type="button"
+          class="ad__pulse-cell"
+          :class="{ 'ad__pulse-cell--on': kind === row.key, [`ad__pulse-cell--${row.tone}`]: true }"
+          role="tab"
+          :aria-selected="kind === row.key"
+          @click="selectKind(row.key as StatsKind)"
+        >
+          <span class="ad__pulse-label t-eyebrow-read">{{ row.label }}</span>
+          <span class="ad__pulse-value t-console-title t-num">{{ row.value }}</span>
+          <span class="ad__pulse-hint t-meta-read">{{ row.hint }}</span>
+        </button>
+      </div>
+
       <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
            的名字，不是数据。 -->
       <p v-if="failed" class="ad__none">
@@ -854,6 +940,87 @@ onMounted(() => {
   margin: 12px 0 0;
   color: var(--warn-ink);
   line-height: var(--lh-12);
+}
+
+/* 四块摘要 —— 这一页的**第一眼**。四格并排、整块可点，所以它是导航不是卡片：
+   高度比 KPI 卡矮一档（72px），但那一格的数用同一档字号（`t-console-title`），因为
+   「哪块需要我」和「这块的数是多少」是同一眼要读走的。 */
+.ad__pulse {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .ad__pulse {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ad__pulse-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 16px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ad__pulse-cell:hover {
+    background: var(--fill);
+  }
+}
+
+.ad__pulse-cell--on {
+  border-color: var(--line-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ad__pulse-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__pulse-value {
+  color: var(--ink);
+  font-size: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__pulse-hint {
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 语义色只在这两档上出现（急件 = warn、健康坏了 = danger）：一屏里只有这一条会亮
+   的时候，它就是「需要看的地方」。 */
+.ad__pulse-cell--warn .ad__pulse-value {
+  color: var(--warn-ink);
+}
+
+.ad__pulse-cell--ok .ad__pulse-value {
+  color: var(--ok-ink);
+}
+
+.ad__pulse-cell--danger .ad__pulse-value {
+  color: var(--danger-ink);
 }
 
 /* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个

@@ -74,8 +74,9 @@ def _days_ago(days: int) -> datetime:
 def _mark_agent(client, feedback_id: str) -> None:
     """把一行标成 agent 提的（服务层在提案路径上会写，这里直接落库）。
 
-    和 `_stamp_feedback` 同一套写法：**必须写在 `client` 那个库**（`client.test_factory`），
-    不能开一个新的 session —— 见文件头那段关于两个库的警告。
+    和 `_stamp_feedback` 同一套写法：**必须写在 `client` 那个库**
+    （`client.test_factory`），不能开一个新的 session —— 见文件头那段
+    关于两个库的警告。
     """
     fid = uuid.UUID(feedback_id)
 
