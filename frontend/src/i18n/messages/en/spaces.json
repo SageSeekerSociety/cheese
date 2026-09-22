@@ -1,4 +1,66 @@
 {
+  "course": {
+    "nav": {
+      "overview": "Course overview",
+      "units": "Units",
+      "assignments": "Assignments",
+      "people": "Students & groups",
+      "stuck": "Where students got stuck",
+      "settings": "Settings",
+      "myCourse": "My course",
+      "thisWeek": "This week",
+      "team": "My group"
+    },
+    "overview": {
+      "title": "Course overview",
+      "members": "People in the course",
+      "units": "Assignment units",
+      "students": "Students enrolled",
+      "awaitingReview": "Waiting for my review",
+      "noNumbers": "There is nothing to count yet — once the course is running and students join, the numbers appear here."
+    },
+    "pending": {
+      "chip": "Under review",
+      "body": "This course is still being reviewed. Until it is approved its categories, problems, members and data endpoints all read as missing, so this page stays empty."
+    },
+    "myCourse": {
+      "title": "My course",
+      "thisWeek": "This week",
+      "thisWeekEmpty": "Your teacher has not published this week yet. It will appear here once they do.",
+      "progress": "What I am doing in this course",
+      "noWork": "There is nothing for you to do yet. Assignments appear here once your teacher publishes them.",
+      "status": {
+        "notSubmitted": "Not submitted",
+        "pendingReview": "Waiting for the teacher",
+        "resubmittable": "Can be resubmitted",
+        "failed": "Not accepted",
+        "success": "Accepted",
+        "unknown": "In progress"
+      }
+    },
+    "stage": {
+      "units": {
+        "title": "Units",
+        "body": "This screen is the course timeline: weekly units with slides, assignments and quizzes, arranged and published by the teacher. The course-units task fills it in."
+      },
+      "assignments": {
+        "title": "Assignments",
+        "body": "This screen collects work and reviews it: the teacher sees submissions waiting, the student sees what is due this week. The assignments task fills it in."
+      },
+      "people": {
+        "title": "Students & groups",
+        "body": "This screen is the roster and the groups: who is in the course and who works with whom. Teams already exist; the students-and-groups task fills in the screen."
+      },
+      "quiz": {
+        "title": "Quiz",
+        "body": "This screen is a quiz: students answer it from the week it belongs to, objective questions are graded automatically, and written answers land in the teacher's review queue. The quiz task builds the mechanism."
+      },
+      "team": {
+        "title": "My group",
+        "body": "This screen is my group: who I work with and how far the group has got. The teams task fills it in."
+      }
+    }
+  },
   "create": {
     "open": "New problem board",
     "name": "Problem board name",

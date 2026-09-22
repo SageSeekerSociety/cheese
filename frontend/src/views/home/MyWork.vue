@@ -24,6 +24,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, listTopics } from '@/api'
 import { t } from '@/i18n'
+import { spaceEntryRoute } from '@/lib/courseNav'
 import { activityParts, awaitingByProject, NO_SIGNAL, topicsSignal, workGroups } from '@/lib/myWork'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { SpacesApi } from '@/network/api/spaces'
@@ -73,7 +74,7 @@ const settled = computed(() => store.projectsSettled)
  * 刚用邀请码进来的人看到的是一排没变化的东西，像是没加入成功。榜单上的
  * `GET /spaces` 现在只返回「我建的 + 我加入的」，直接用它，两者就不会打架。
  */
-const spaces = ref<{ id: number; name: string }[]>([])
+const spaces = ref<{ id: number; name: string; isCourse?: boolean }[]>([])
 
 async function loadSpaces() {
   try {
@@ -82,7 +83,11 @@ async function loadSpaces() {
       sort_by: 'created_at',
       sort_order: 'desc',
     })
-    spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
+    spaces.value = data.spaces.map((space) => ({
+      id: space.id,
+      name: space.name,
+      isCourse: space.isCourse,
+    }))
   } catch {
     // 问不到就不画这一排，卡片照常。这一排是导航，不是内容。
   }
@@ -109,7 +114,7 @@ async function submitJoin() {
     const { data } = await SpacesApi.join({ code })
     joinOpen.value = false
     joinCode.value = ''
-    await router.push(`/spaces/${data.space.id}`)
+    await router.push(spaceEntryRoute(data.space))
   } catch {
     joinError.value = t('work.joinFailed')
   } finally {
@@ -230,7 +235,7 @@ onMounted(async () => {
           <v-chip
             v-for="space in spaces"
             :key="space.id"
-            :to="`/spaces/${space.id}`"
+            :to="spaceEntryRoute(space)"
             variant="tonal"
             size="small"
             rounded="lg"
