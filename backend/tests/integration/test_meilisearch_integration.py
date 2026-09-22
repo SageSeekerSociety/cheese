@@ -1,35 +1,57 @@
 """Integration tests for Meilisearch search.
 
-These tests require a running Meilisearch instance. They are skipped when
-MEILISEARCH_URL is not set (which is the case in CI unless a Meilisearch
-service is configured).
+These tests require the dedicated Meilisearch service configured by their test
+entry. The rest of the integration suite deliberately keeps the production
+fallback, so this module uses its own test-only URL.
 
 Run locally:
-    MEILISEARCH_URL=http://127.0.0.1:7700 MEILISEARCH_API_KEY=test-key \
+    CHEESEX_TEST_MEILISEARCH_URL=http://127.0.0.1:7700 \
     uv run pytest tests/integration/test_meilisearch_integration.py -v
 """
 
 import os
 import time
+from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
+from app.domain.questions.repositories import QuestionRepository
 from tests.integration.conftest import UserCreator
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("MEILISEARCH_URL"),
-    reason="MEILISEARCH_URL not set — Meilisearch integration tests skipped",
-)
+if TYPE_CHECKING:
+    from anyio.from_thread import BlockingPortal
 
 
 @pytest.fixture(scope="module")
-def _ensure_indices():
-    """Set up Meilisearch indices once for the module."""
-    from app.domain.search.meilisearch_service import setup_indices
+def _ensure_indices(_portal: "BlockingPortal") -> Generator[None]:
+    """Point only this module at the dedicated service and configure its index."""
+    from app.domain.search import meilisearch_service
 
-    setup_indices()
-    yield
+    url = os.environ.get("CHEESEX_TEST_MEILISEARCH_URL")
+    if not url:
+        raise RuntimeError(
+            "CHEESEX_TEST_MEILISEARCH_URL is required: start the dedicated "
+            "Meilisearch test service before running this module"
+        )
+    previous = (settings.meilisearch_url, settings.meilisearch_api_key)
+    settings.meilisearch_url = url
+    settings.meilisearch_api_key = os.environ.get(
+        "CHEESEX_TEST_MEILISEARCH_API_KEY", "test-key"
+    )
+    meilisearch_service._client = None
+    meilisearch_service._initialized = False
+    _portal.call(meilisearch_service.setup_indices)
+    if meilisearch_service.get_search_client() is None:
+        raise RuntimeError(f"Meilisearch test service is unavailable at {url}")
+    try:
+        yield
+    finally:
+        meilisearch_service._client = None
+        meilisearch_service._initialized = False
+        settings.meilisearch_url, settings.meilisearch_api_key = previous
 
 
 class TestMeilisearchQuestionSearch:
@@ -37,8 +59,16 @@ class TestMeilisearchQuestionSearch:
 
     @pytest.fixture
     def search_setup(
-        self, user_client: UserCreator, api_client: TestClient, _ensure_indices
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        _ensure_indices,
+        monkeypatch,
     ) -> dict:
+        async def reject_postgres_fallback(*args, **kwargs):
+            pytest.fail("search fell back to PostgreSQL instead of using Meilisearch")
+
+        monkeypatch.setattr(QuestionRepository, "search", reject_postgres_fallback)
         creator = user_client.create_user()
         creator.token = user_client.login(
             api_client, creator.username, creator.password
@@ -85,10 +115,7 @@ class TestMeilisearchQuestionSearch:
         )
         assert q3.status_code in (200, 201), q3.text
 
-        # Wait for Meilisearch to index (async indexing)
-        time.sleep(2)
-
-        return {
+        result = {
             "creator": creator,
             "headers": h,
             "q1_id": q1.json()["data"].get("id")
@@ -98,12 +125,28 @@ class TestMeilisearchQuestionSearch:
             "q3_id": q3.json()["data"].get("id")
             or q3.json()["data"].get("question", {}).get("id"),
         }
+        deadline = time.monotonic() + 10
+        while True:
+            response = api_client.get(
+                "/questions",
+                params={"q": "深度学习", "page_size": 10},
+                headers=h,
+            )
+            assert response.status_code == 200, response.text
+            if any(
+                "深度学习" in question["title"]
+                for question in response.json()["data"]["questions"]
+            ):
+                return result
+            if time.monotonic() >= deadline:
+                pytest.fail("Meilisearch did not index the created question within 10s")
+            time.sleep(0.05)
 
     def test_chinese_keyword_search(self, search_setup: dict, api_client: TestClient):
         """Search for Chinese keywords returns relevant results."""
         resp = api_client.get(
             "/questions",
-            params={"keywords": "深度学习", "pageSize": 10},
+            params={"q": "深度学习", "page_size": 10},
             headers=search_setup["headers"],
         )
         assert resp.status_code == 200
@@ -117,7 +160,7 @@ class TestMeilisearchQuestionSearch:
         """Meilisearch typo tolerance finds results despite typos."""
         resp = api_client.get(
             "/questions",
-            params={"keywords": "PostgreSQ", "pageSize": 10},
+            params={"q": "PostgreSQ", "page_size": 10},
             headers=search_setup["headers"],
         )
         assert resp.status_code == 200
@@ -129,15 +172,13 @@ class TestMeilisearchQuestionSearch:
         """Partial Chinese term still finds relevant results."""
         resp = api_client.get(
             "/questions",
-            params={"keywords": "数据库", "pageSize": 10},
+            params={"q": "深度", "page_size": 10},
             headers=search_setup["headers"],
         )
         assert resp.status_code == 200
         questions = resp.json()["data"]["questions"]
         titles = [q["title"] for q in questions]
-        assert any("PostgreSQL" in t or "数据库" in t for t in titles), (
-            f"Partial search failed: {titles}"
-        )
+        assert any("深度学习" in t for t in titles), f"Partial search failed: {titles}"
 
     def test_no_results_for_unrelated_term(
         self, search_setup: dict, api_client: TestClient
@@ -145,9 +186,9 @@ class TestMeilisearchQuestionSearch:
         """Unrelated search term returns empty."""
         resp = api_client.get(
             "/questions",
-            params={"keywords": "量子力学", "pageSize": 10},
+            params={"q": "量子力学", "page_size": 10},
             headers=search_setup["headers"],
         )
         assert resp.status_code == 200
         questions = resp.json()["data"]["questions"]
-        assert len(questions) == 0 or not any("量子" in q["title"] for q in questions)
+        assert questions == []

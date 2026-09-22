@@ -20,8 +20,6 @@ from app.domain.documents import revisions as rev
 
 OFFICE = _NATIVE_SKILL_SRC / "documents" / "scripts" / "office.py"
 
-pytest.importorskip("lxml", reason="修订解析要用 lxml，它现在是运行时依赖")
-
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 OPENXML = "http://schemas.openxmlformats.org"

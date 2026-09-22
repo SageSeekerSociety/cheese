@@ -6,7 +6,6 @@ Interactive session control has a separate contract; this tests the model reques
 import asyncio
 import json
 import os
-import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +16,6 @@ from tests.support.harness_prompts import event_prompts, system_prompt
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(shutil.which("claude") is None, reason="Claude binary required")
 @pytest.mark.parametrize("event_name", event_prompts())
 async def test_real_claude_provider_receives_complete_platform_prompt(
     tmp_path, event_name

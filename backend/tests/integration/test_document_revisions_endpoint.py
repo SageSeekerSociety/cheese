@@ -20,8 +20,6 @@ from tests.integration.test_file_panel_safety import (
     task_machine,  # noqa: F401
 )
 
-pytest.importorskip("lxml", reason="修订解析要用 lxml")
-
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 OPENXML = "http://schemas.openxmlformats.org"
