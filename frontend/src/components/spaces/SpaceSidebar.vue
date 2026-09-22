@@ -202,6 +202,18 @@
           </template>
           <v-list-item-title>{{ t('spaces.domainGroups.title') }}</v-list-item-title>
         </v-list-item>
+
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailManageInviteCodes', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-ticket-confirmation-outline</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.inviteCodes.title') }}</v-list-item-title>
+        </v-list-item>
       </template>
     </v-list>
   </SecondaryNavigation>

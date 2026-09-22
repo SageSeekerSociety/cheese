@@ -218,6 +218,32 @@
     "nameRequired": "Domain group name is required",
     "invalidDomain": "Enter a valid domain"
   },
+  "inviteCodes": {
+    "title": "Invite codes",
+    "help": "Send a code to whoever you want to invite. They enter it on the \"My work\" page and join this board. Codes are shared — don't post them in public.",
+    "create": "New code",
+    "copy": "Copy",
+    "usage": "Used {used} / {total}",
+    "neverExpires": "No expiry",
+    "expiresAt": "Expires {date}",
+    "createdAt": "Created {date}",
+    "statusUsable": "Usable",
+    "statusExhausted": "Used up",
+    "statusExpired": "Expired",
+    "empty": "No invite code yet",
+    "loadFailed": "Could not load invite codes",
+    "maxUses": "Number of uses",
+    "maxUsesHint": "How many people may join with this code",
+    "maxUsesInvalid": "Enter a whole number greater than 0",
+    "expiresOn": "Valid until",
+    "expiresOnHint": "Leave empty for a code that never expires",
+    "cancel": "Cancel",
+    "createSuccess": "Invite code created",
+    "createFailed": "Could not create the invite code",
+    "createdTitle": "Here is your invite code",
+    "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this board.",
+    "gotIt": "Got it"
+  },
   "index": {
     "sortOptions": {
       "newest": "Newest",

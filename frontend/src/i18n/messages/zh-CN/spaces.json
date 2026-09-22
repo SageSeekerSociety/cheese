@@ -274,6 +274,32 @@
     "nameRequired": "域名组名称不能为空",
     "invalidDomain": "请输入有效的域名格式"
   },
+  "inviteCodes": {
+    "title": "邀请码",
+    "help": "把邀请码发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。码是共享的，别贴到公开场合。",
+    "create": "生成新码",
+    "copy": "复制",
+    "usage": "已用 {used} / {total}",
+    "neverExpires": "无期限",
+    "expiresAt": "{date} 到期",
+    "createdAt": "{date} 创建",
+    "statusUsable": "可用",
+    "statusExhausted": "已用尽",
+    "statusExpired": "已过期",
+    "empty": "还没有邀请码",
+    "loadFailed": "读取邀请码失败",
+    "maxUses": "可用次数",
+    "maxUsesHint": "最多有多少人能用这张码加入",
+    "maxUsesInvalid": "可用次数要填一个大于 0 的整数",
+    "expiresOn": "有效期至",
+    "expiresOnHint": "留空表示永久有效",
+    "cancel": "取消",
+    "createSuccess": "已生成邀请码",
+    "createFailed": "生成邀请码失败",
+    "createdTitle": "这是你的邀请码",
+    "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。",
+    "gotIt": "知道了"
+  },
   "index": {
     "searchPlaceholder": "搜索题目板",
     "sortOptions": {
