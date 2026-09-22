@@ -77,7 +77,10 @@ def _tool_name(command):
 
 def _description(ancestors, leaf):
     body = leaf.description or leaf.format_usage().strip()
-    context = [parser.description for parser in ancestors if parser.description]
+    # ancestors[0] is the program root. Its description is how to read the CLI
+    # as a whole, not any one tool's 什么时候该用 — threading it in buries every
+    # tool schema under the same boilerplate.
+    context = [parser.description for parser in ancestors[1:] if parser.description]
     return "\n\n".join((*context, body)) if context else body
 
 

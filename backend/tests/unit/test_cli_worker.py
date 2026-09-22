@@ -162,7 +162,9 @@ def test_worker_feedback_description_includes_parent_triggers(worker, tmp_path):
     assert description.index("什么时候该提") < description.index("落一张提案卡")
 
 
-def test_worker_tool_description_joins_ancestor_guidance(worker, tmp_path):
+def test_worker_tool_description_joins_ancestor_guidance_without_the_root(
+    worker, tmp_path
+):
     worker[0].write_text(
         "import argparse\n"
         "def build_parser():\n"
@@ -177,7 +179,29 @@ def test_worker_tool_description_joins_ancestor_guidance(worker, tmp_path):
     )
     receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
     tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    assert tools["cheese_mid_leafy"]["description"] == "root when\n\nmid when\n\nleaf how"
+    description = tools["cheese_mid_leafy"]["description"]
+    assert description == "mid when\n\nleaf how"
+    assert "root when" not in description
+
+
+def test_worker_tool_description_joins_ancestors_when_leaf_is_silent(worker, tmp_path):
+    worker[0].write_text(
+        "import argparse\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(description='root when')\n"
+        " s=p.add_subparsers(dest='cmd', required=True)\n"
+        " m=s.add_parser('mid', description='mid when')\n"
+        " ms=m.add_subparsers(dest='midcmd', required=True)\n"
+        " q=ms.add_parser('leafy')\n"
+        " q.add_argument('--x'); return p\n"
+        "if __name__ == '__main__':\n"
+        " build_parser().parse_args()\n"
+    )
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    description = tools["cheese_mid_leafy"]["description"]
+    assert description.startswith("mid when\n\nusage:")
+    assert "root when" not in description
 
 
 def test_worker_tool_description_keeps_leaf_when_ancestors_add_nothing(

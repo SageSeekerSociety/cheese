@@ -136,6 +136,37 @@ class ToolTable:
         return name in self.names()
 
 
+# `cheese feedback -h` and the native MCP schema for `cheese_feedback_propose`
+# must carry the same 什么时候该用 text. Both read these two strings — the parent
+# command's guidance and the leaf's — so the surfaces cannot drift apart.
+FEEDBACK_DESCRIPTION = (
+    "你在轮次里发现的问题,提到平台上给人看。\n"
+    "\n"
+    "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
+    "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
+    "\n"
+    "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
+    "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
+    "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
+    "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
+    "「平台坏了」和「用户不会用」之间的那句话。\n"
+    "\n"
+    "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
+    "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
+    "\n"
+    "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
+    "的不会再问)。超了平台会拒绝,不要重试。"
+)
+
+FEEDBACK_PROPOSE_DESCRIPTION = (
+    "落一张提案卡。人在聊天里按「提交反馈」才算发布,所以不用等他,"
+    "也不用在正文里宣布你提了这件事——卡本身就是那句话。\n"
+    "\n"
+    "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
+    "观察到的 vs 期望的,错误原文短就照抄。根因没在会话里验证过就不要写。"
+)
+
+
 PLATFORM_TOOLS = ToolTable(
     (
         {
@@ -185,10 +216,9 @@ PLATFORM_TOOLS = ToolTable(
         },
         {
             "name": "cheese_feedback_propose",
-            "description": (
-                "撞到平台本身的毛病时报一条——你不是在抱怨，是在交证据。"
-                "落下的是一张提案卡，人在聊天里按「提交反馈」才算发布。"
-            ),
+            "description": FEEDBACK_DESCRIPTION
+            + "\n\n"
+            + FEEDBACK_PROPOSE_DESCRIPTION,
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1622,37 +1652,14 @@ def build_parser() -> argparse.ArgumentParser:
     pfb = sub.add_parser(
         "feedback",
         help="给平台提一条反馈(提案,由人确认后发送)",
-        description=(
-            "你在轮次里发现的问题,提到平台上给人看。\n"
-            "\n"
-            "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
-            "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
-            "\n"
-            "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
-            "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
-            "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
-            "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
-            "「平台坏了」和「用户不会用」之间的那句话。\n"
-            "\n"
-            "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
-            "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
-            "\n"
-            "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
-            "的不会再问)。超了平台会拒绝,不要重试。"
-        ),
+        description=FEEDBACK_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pfbsub = pfb.add_subparsers(dest="feedbackcmd", required=True)
     pfbprop = pfbsub.add_parser(
         "propose",
         help="把你发现的问题提成一张提案卡,交给人决定发不发",
-        description=(
-            "落一张提案卡。人在聊天里按「提交反馈」才算发布,所以不用等他,"
-            "也不用在正文里宣布你提了这件事——卡本身就是那句话。\n"
-            "\n"
-            "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
-            "观察到的 vs 期望的,错误原文短就照抄。根因没在会话里验证过就不要写。"
-        ),
+        description=FEEDBACK_PROPOSE_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pfbprop.add_argument("title", help="一句话说清问题(≤300 字)")
