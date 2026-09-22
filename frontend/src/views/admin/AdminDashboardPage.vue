@@ -131,8 +131,11 @@ const feedbackKpis = computed(() => [
   },
 ])
 
-/** 反馈的两条线。`created` 实线、`resolved` 虚线（§7.5：颜色由组件按线型发，这一层
- *  只管名字和值）。 */
+/** 反馈的三条线：新增 / 解决 / 上线（§7.5：颜色由组件按线型发，这一层只管名字和值）。
+ *
+ *  **上线那一条是后补的，而它正是这条曲线在这里的理由**：梯子最后两档是两件事 ——
+ *  「修好了」和「上线了」对提交者是两个不同的日子，而看板此前只画前两档，最该被看见的
+ *  那一步整个不存在。后端的 `series[].deployed` 一直就回，只是没人读。 */
 const feedbackSeries = computed<ChartSeries[]>(() => [
   {
     name: t('feedback.dashboard.chart.created'),
@@ -143,6 +146,11 @@ const feedbackSeries = computed<ChartSeries[]>(() => [
     name: t('feedback.dashboard.chart.resolved'),
     values: feedback.value?.series.map((row) => row.resolved) ?? [],
     style: 'dashed',
+  },
+  {
+    name: t('feedback.dashboard.chart.deployed'),
+    values: feedback.value?.series.map((row) => row.deployed) ?? [],
+    style: 'dotted',
   },
 ])
 
@@ -207,6 +215,17 @@ const costText = computed(() => {
   return totals === undefined
     ? ''
     : t('feedback.dashboard.cost.value', { calls: fmtNum(totals.calls), usd: fmtCost(totals.cost_usd) })
+})
+
+/** 「没有算进上面那个金额的 token」。**它必须和 `cost_usd` 一起读**（api.ts 里那条
+ *  注释就是这么写的）：订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是「没有单价」而
+ *  不是「免费」—— 不把它写出来，几百万 token 上印一个 `$0.0000` 读起来像「这个月没
+ *  花钱」。后端一直单独回这一份数（`totals.unpriced_tokens`），但页面从来不读，于是
+ *  那句口径只活在代码注释里。为零时不画：一句话说的是一个不存在的数字。 */
+const unpricedText = computed(() => {
+  const totals = usage.value?.totals
+  if (!totals || totals.unpriced_tokens <= 0) return ''
+  return t('feedback.dashboard.cost.unpriced', { tokens: fmtNum(totals.unpriced_tokens) })
 })
 
 /* ---- 平台那一块 ---- */
@@ -384,6 +403,9 @@ onMounted(() => {
           <span class="ad__cost-label t-meta-read">{{ t('feedback.dashboard.cost.label') }}</span>
           <v-skeleton-loader v-if="store.statsLoading" type="text" class="ad__cost-skel" />
           <span v-else-if="usage" class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
+          <!-- 自己占一整行（`flex: 1 0 100%`）：它是上面那个金额的**脚注**，横着挤在
+               同一行里会被读成同一个句子的一部分。 -->
+          <span v-if="usage && unpricedText" class="ad__cost-unpriced t-meta-read">{{ unpricedText }}</span>
           <!-- §9.3 第 4 态：这一趟没拿到就说没拿到，别拿 0 冒充读数。 -->
           <template v-else>
             <span class="ad__cost-value t-meta-read">{{ t('feedback.dashboard.partial.title') }}</span>
@@ -525,6 +547,9 @@ onMounted(() => {
 
 .ad__cost {
   display: flex;
+  /* 折行是给下面那条脚注留的：它自己占一整行的宽度（`flex: 1 0 100%`），所以这一行
+     会变成两行。宽屏上没脚注时仍然是原来那一行。 */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 24px;
@@ -552,6 +577,12 @@ onMounted(() => {
 
 .ad__cost-skel {
   flex: 1;
+}
+/* 成本那一行的脚注（没有单价的那部分 token）。整行宽：它是上面那个数的注解，不是它的
+   后缀。 */
+.ad__cost-unpriced {
+  flex: 1 0 100%;
+  margin-top: 2px;
 }
 
 .ad__machines {

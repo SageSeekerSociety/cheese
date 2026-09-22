@@ -8,6 +8,13 @@
       "placeholder": "Search feedback",
       "scope": "Titles, summaries, bodies and submitters"
     },
+    "lane": {
+      "label": "Scope",
+      "public": "Public",
+      "private": "Private",
+      "agent": "From agents",
+      "security": "Security"
+    },
     "view": {
       "list": "List",
       "table": "Table"
@@ -129,16 +136,18 @@
       "unread": "Unread"
     },
     "chart": {
-      "title": "New / resolved per day",
+      "title": "New / resolved / deployed per day",
       "created": "New",
-      "resolved": "Resolved"
+      "resolved": "Resolved",
+      "deployed": "Deployed"
     },
     "list": {
       "title": "Needs action · {count}"
     },
     "cost": {
       "label": "Cost · last 7 days",
-      "value": "{calls} calls · {usd} · no daily breakdown"
+      "value": "{calls} calls · {usd} · no daily breakdown",
+      "unpriced": "{tokens} more tokens have no unit price (subscription plans bill monthly) and are not in the figure above"
     },
     "empty": {
       "title": "No data yet",

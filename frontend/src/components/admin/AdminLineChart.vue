@@ -1,9 +1,14 @@
 <script lang="ts">
-/** 一条折线。`style` 只决定线型；颜色由组件按线型发（见 SERIES_COLOR）。 */
+/** 一条折线。`style` 只决定线型；颜色由组件按线型发（见 SERIES_COLOR / DASH）。
+ *
+ *  三种而不是两种：反馈那一类的生命周期是**三档**（新增 → 解决 → 上线），而后两档是
+ *  两件事 —— 一条反馈「修好了」和「上线了」对提交者是两回事（见
+ *  `domain/feedback/repositories.py` 的 `CLOSED_STATUSES`）。只画前两档的话，图上
+ *  那条最该被看见的尾巴整个不存在。 */
 export interface ChartSeries {
   name: string
   values: number[]
-  style: 'solid' | 'dashed'
+  style: 'solid' | 'dashed' | 'dotted'
 }
 </script>
 
@@ -18,9 +23,9 @@ import { useI18n } from 'vue-i18n'
 // 项目里其实没有任何图表依赖（package.json 里没有 chart/d3/echarts 这一类），为两张
 // 图装一个是把整条依赖链引进来换几十行路径。
 //
-// **两条线只用中性阶的深浅 + 线型区分，不用两个色相。** 琥珀在这个产品里只能当填充
-// （§7.3：浅色下 2.65:1，当线色读不出来），而随便挑两个色相必然有一个落在低对比度
-// 上；实线/虚线这一重信号在灰度截图里也活着（§14 第 7 条就是这么量的）。
+// **几条线只用中性阶的深浅 + 线型区分，不用几个色相。** 琥珀在这个产品里只能当填充
+// （§7.3：浅色下 2.65:1，当线色读不出来），而随便挑几个色相必然有一个落在低对比度
+// 上；线型这一重信号在灰度截图里也活着（§14 第 7 条就是这么量的）。
 //
 // 坐标按设计尺寸（628×180）算，再用 `viewBox` 缩放到容器宽：容器按 §4.2 就是 660px
 // （卡内 628），缩放比因此是 1 —— 字号与线宽都是设计值。换别的宽度时整张图等比缩放，
@@ -55,11 +60,25 @@ const PAD_BOTTOM = 20
 const PLOT_W = VIEW_W - PAD_LEFT - PAD_RIGHT
 const PLOT_H = VIEW_H - PAD_TOP - PAD_BOTTOM
 
-/** 线型是第一重信号（灰度下也在），颜色是第二重。两条线各占一档中性色。 */
+/** 线型是第一重信号（灰度下也在），颜色是第二重。三条线各占一档中性色，深浅跟着
+ *  「走到哪一步」走：新增最深、解决次之、上线最浅。 */
 const SERIES_COLOR: Record<ChartSeries['style'], string> = {
   solid: 'var(--text)',
   dashed: 'var(--muted)',
+  dotted: 'var(--faint)',
 }
+
+/** 线型 → `stroke-dasharray`。**一处定义、两处用**（图例里那一小段线样和图上那条线）：
+ *  两处各写一遍的话，以后改线型的人会在图例上看到一种画法、在图上是另一种。 */
+const DASH: Record<ChartSeries['style'], string | undefined> = {
+  solid: undefined,
+  dashed: '4 3',
+  dotted: '1 3',
+}
+
+/** 点标记画成空心还是实心。只有实线是实心的；两种虚线都画空心 —— 空心圆用卡片底色填
+ *  （不是 `fill: none`，后者会让线从洞里穿过去，看起来仍是实心）。 */
+const hollow = (s: ChartSeries): boolean => s.style !== 'solid'
 
 /** 空态只认「结构上没有东西」：没有一天的标签，或者一条线都没有。**全 0 不算空** ——
  *  那是「这一周真的没有新增」，是一条压在底上的线；把它换成「暂无数据」等于对读的人
@@ -109,8 +128,8 @@ const onClick = (event: MouseEvent): void => {
       <span class="alc__title t-eyebrow-read">{{ title }}</span>
       <span class="alc__legend">
         <span v-for="s in series" :key="s.name" class="alc__legend-item">
-          <!-- 图例里的线样和图上那条线是同一套参数（颜色 + 4 3 虚线），换了线型的人
-               不会在两处看到两种画法。 -->
+          <!-- 图例里的线样和图上那条线是同一套参数（颜色 + `DASH` 那张表），换了线型
+               的人不会在两处看到两种画法。 -->
           <svg class="alc__swatch" width="16" height="4" viewBox="0 0 16 4" aria-hidden="true">
             <line
               x1="0"
@@ -119,7 +138,7 @@ const onClick = (event: MouseEvent): void => {
               y2="2"
               stroke-width="2"
               :style="{ stroke: SERIES_COLOR[s.style] }"
-              :stroke-dasharray="s.style === 'dashed' ? '4 3' : undefined"
+              :stroke-dasharray="DASH[s.style]"
             />
           </svg>
           <span class="alc__ink">{{ s.name }}</span>
@@ -163,8 +182,9 @@ const onClick = (event: MouseEvent): void => {
           :style="{ stroke: SERIES_COLOR[s.style] }"
           :stroke-dasharray="s.style === 'dashed' ? '4 3' : undefined"
         />
-        <!-- 标记：实线系列是实心圆，虚线系列是空心圆（§7.5）。空心那一种用卡片的底色
-             填，而不是 `fill: none` —— 后者会让线从洞里穿过去，看起来还是实心的。 -->
+        <!-- 标记：实线系列是实心圆，虚线系列是空心圆（§7.5，判据见 `hollow`）。空心那
+             一种用卡片的底色填，而不是 `fill: none` —— 后者会让线从洞里穿过去，看起来
+             还是实心的。 -->
         <template v-for="s in series" :key="`pt-${s.name}`">
           <circle
             v-for="(v, i) in s.values"
@@ -173,9 +193,9 @@ const onClick = (event: MouseEvent): void => {
             :cx="x(i)"
             :cy="y(v)"
             r="2"
-            :stroke-width="s.style === 'dashed' ? 2 : 0"
+            :stroke-width="hollow(s) ? 2 : 0"
             :style="{
-              fill: s.style === 'dashed' ? 'var(--surface)' : SERIES_COLOR[s.style],
+              fill: hollow(s) ? 'var(--surface)' : SERIES_COLOR[s.style],
               stroke: SERIES_COLOR[s.style],
             }"
           />

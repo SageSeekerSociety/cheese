@@ -8,6 +8,13 @@
       "placeholder": "搜索反馈",
       "scope": "只搜标题、摘要、正文、提交人"
     },
+    "lane": {
+      "label": "栏位",
+      "public": "公开",
+      "private": "私密",
+      "agent": "AI 队友提的",
+      "security": "安全"
+    },
     "view": {
       "list": "列表",
       "table": "表格"
@@ -129,16 +136,18 @@
       "unread": "未读"
     },
     "chart": {
-      "title": "每天新增 / 每天解决",
+      "title": "每天新增 / 解决 / 上线",
       "created": "新增",
-      "resolved": "解决"
+      "resolved": "解决",
+      "deployed": "上线"
     },
     "list": {
       "title": "需处理 · {count}"
     },
     "cost": {
       "label": "成本（过去 7 天）",
-      "value": "合计 {calls} 次调用 · {usd} · 不按天拆分"
+      "value": "合计 {calls} 次调用 · {usd} · 不按天拆分",
+      "unpriced": "另有 {tokens} token 没有单价（订阅制按月计费），没有算进上面的金额"
     },
     "empty": {
       "title": "暂无数据",

@@ -123,7 +123,7 @@ describe('看板页', () => {
     // 切回第一类：那一份已经在手上了，再拉一次只是重复读那两张最长的表。
     const before = hits.length
     await fireEvent.click(tab('反馈', getAllByRole))
-    expect(await findByText('每天新增 / 每天解决')).toBeTruthy()
+    expect(await findByText('每天新增 / 解决 / 上线')).toBeTruthy()
     expect(hits.length).toBe(before)
   })
 

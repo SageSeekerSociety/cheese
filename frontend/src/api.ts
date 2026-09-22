@@ -2276,7 +2276,9 @@ export interface StatsUsage {
   days: number
   totals: { tokens: number; calls: number; cost_usd: number; unpriced_tokens: number }
   series: { date: string; tokens: number; calls: number; cost_usd: number }[]
-  /** 柱状图的每一根都带 id 和名字：柱子要能点进去，只给名字的柱子点不开。 */
+  /** 柱状图的每一根都带 id 和名字。**今天柱子不点得开**（看板上那一张只报数），
+   *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
+   *  只按名字连线，两个同名项目会合成一根柱子。 */
   top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
 }
 
@@ -2418,7 +2420,7 @@ export function dismissFeedbackProposal(topicId: string, blockId: string): Promi
 
 /** 发送：把卡变成一条正式反馈。
  *
- *  正文走请求体而不是卡上的原文 —— 抽屉是预填的，人可以改完再发，而按下发送的
+ *  正文走请求体而不是卡上的原文 —— 表单是预填的，人可以改完再发，而按下发送的
  *  人为自己发出去的东西负责。作者从卡上取（提案的 agent），提交者取验证过的
  *  调用者，两个字段都不是客户端能填的。 */
 export function acceptFeedbackProposal(
