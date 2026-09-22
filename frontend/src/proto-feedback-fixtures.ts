@@ -1489,25 +1489,44 @@ function reachedDays(status: FeedbackStatus): Map<string, number> {
   return dayCounts(table)
 }
 
-/** 反馈那一块：栏位计数 + 按天的新增 / 解决 / 上线。
+/** 反馈那一块：**全量口径**的总量 / 四栏 / 四级状态 + 按天的新增 / 解决 / 上线。
  *
- *  `counts` 是**全量口径**（不收窗口），`series` 才是窗口内的 —— 页面上「现在有多少」
- *  和「这七天怎么变的」是两个问题。七个键和 `PlatformStatsService.feedback` 那一个
- *  推导式一样（五个栏位数 + 未读 + 未指派）。 */
+ *  形状和 `PlatformStatsService.feedback` 那一个推导式一一对应（`total` / `columns` /
+ *  `status` / `unread` / `series`）。**口径是全量**：看板数的是整个板子，不是公开那一
+ *  臂 —— 此前它走 `counts()`（被 `PUBLIC_ONLY` 收窄），而 `series` 是全量，卡片和曲线
+ *  各答各的问题。这里直接从 `ROWS` 数，和曲线同一批行，两边永远一致。
+ *
+ *  `columns` 的四个是**筛选不是划分**（`agent` 是来源，和公开/私密重叠），所以它们加
+ *  起来不等于 `total.all` —— 页面上那句口径说的就是这件事。 */
 function feedbackStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
-  const c = counts()
+  const live = ROWS
+  const isClosed = (i: FeedbackDetail) => i.status === 'resolved' || i.status === 'deployed'
+  const total = {
+    all: live.length,
+    open: live.filter((i) => !isClosed(i)).length,
+    closed: live.filter(isClosed).length,
+    unassigned: live.filter((i) => !i.assignee_handle && !isClosed(i)).length,
+    urgent_open: live.filter((i) => !isClosed(i) && (i.priority === 'high' || i.priority === 'urgent')).length,
+  }
+  const columns = {
+    public: live.filter((i) => i.visibility === 'public' && !i.security).length,
+    private: live.filter((i) => i.visibility === 'private' && !i.security).length,
+    agent: live.filter((i) => i.author_is_agent).length,
+    security: live.filter((i) => i.security).length,
+  }
+  const status = {
+    received: live.filter((i) => i.status === 'received').length,
+    in_progress: live.filter((i) => i.status === 'in_progress').length,
+    resolved: live.filter((i) => i.status === 'resolved').length,
+    deployed: live.filter((i) => i.status === 'deployed').length,
+  }
   return {
     days,
-    counts: {
-      all: c.all,
-      hot: c.hot,
-      active: c.active,
-      resolved: c.resolved,
-      deployed: c.deployed,
-      unread: c.unread,
-      unassigned: c.unassigned,
-    },
+    total,
+    columns,
+    status,
+    unread: counts().unread,
     series: dense(days, {
       created: createdDays(),
       resolved: reachedDays('resolved'),
@@ -1653,7 +1672,57 @@ function usageStats(url: URL): Record<string, unknown> {
     },
     series: bucket.rows.map(({ date, tokens, calls, cost_usd }) => ({ date, tokens, calls, cost_usd })),
     top_projects: topProjects(bucket.tokens, bucket.unpriced),
+    // 两个正交的拆分。**加起来都等于 totals.tokens** —— 「柱子和合计对不上」是这一块
+    // 唯一会被核对的地方。模型那几条是仓库里真跑过的（`deploy/gateway/config.yaml`、
+    // 项目记忆里的智谱/小米端点），通路那三条是 `ResourceUsage.route` 的全部取值。
+    by_model: byModel(bucket),
+    by_route: byRoute(bucket),
   }
+}
+
+const MODELS = ['glm-4.6', 'glm-5.3-flash', 'mimo-v2.6-pro', 'claude-sonnet-5']
+const ROUTES: { key: string; weight: number }[] = [
+  { key: 'gateway', weight: 0.62 },
+  { key: 'subscription', weight: 0.28 },
+  { key: 'native', weight: 0.1 },
+]
+
+function byModel(bucket: ReturnType<typeof usageWindow>) {
+  const shares = splitShares(bucket.tokens, [0.46, 0.24, 0.18])
+  // 最后一条吃掉余数，和 `topProjects` 同一条规则。
+  shares.push(bucket.tokens - shares.reduce((acc, n) => acc + n, 0))
+  return MODELS.map((model, i) => {
+    const tokens = shares[i]
+    // 订阅那一份全在前两个模型上（和 `by_route` 对得上：未定价的总量相等）。
+    const unpriced = i < 2 ? Math.round((bucket.unpriced * (i === 0 ? 0.7 : 0.3)) / 100) * 100 : 0
+    const usd = ((tokens - unpriced) / 1_000_000) * USD_PER_MTOK
+    return {
+      model,
+      tokens,
+      calls: Math.max(1, Math.round(tokens / 3000)),
+      cost_usd: Number(usd.toFixed(4)),
+      unpriced_tokens: unpriced,
+    }
+  })
+}
+
+function byRoute(bucket: ReturnType<typeof usageWindow>) {
+  const shares = splitShares(bucket.tokens, [ROUTES[0].weight, ROUTES[1].weight])
+  shares.push(bucket.tokens - shares.reduce((acc, n) => acc + n, 0))
+  return ROUTES.map((route, i) => {
+    const tokens = shares[i]
+    // **订阅那一行的 unpriced 就是全部未定价** —— 订阅按月计费，行上没有单价。这一行
+    // 和 KPI 里「未定价 token」那个数必须相等，否则「来源就在这里」那句话是假的。
+    const unpriced = route.key === 'subscription' ? bucket.unpriced : 0
+    const usd = ((tokens - unpriced) / 1_000_000) * USD_PER_MTOK
+    return {
+      route: route.key,
+      tokens,
+      calls: Math.max(1, Math.round(tokens / 3000)),
+      cost_usd: Number(usd.toFixed(4)),
+      unpriced_tokens: unpriced,
+    }
+  })
 }
 
 /* ---- 平台 ----------------------------------------------------------------
@@ -1696,6 +1765,16 @@ function platformStats(url: URL): Record<string, unknown> {
       series: dense(days, { created }),
     },
     machines: { ...MACHINE_STOCK },
+    // **这一刻**的健康度（和上面两组的存量/窗口不是一回事）。判据与 `/health/detailed`
+    // 同源。预览里 Redis 偶尔红一次，是为了看「状态色只在这一块用」那个形态。
+    health: {
+      overall: 'healthy',
+      checks: {
+        database: { status: 'up' },
+        redis: { status: 'up' },
+        event_loop: { status: 'up', detail: 3.4 },
+      },
+    },
   }
 }
 

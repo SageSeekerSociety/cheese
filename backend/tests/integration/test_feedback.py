@@ -2420,6 +2420,87 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
     assert {card["id"] for card in listed} == {mine["id"]}
 
 
+def test_a_second_word_narrows_the_search_instead_of_emptying_it(client, as_admin):
+    """两个词是**与**，不是「这两个字连在一起」。
+
+    原判据是**一个** `%整句%`，所以「导出 报表」只找得到那两个字挨着、中间正好
+    是那个空格的行 —— 记得越多，结果越少，最后什么都没有。而那正是搜索最常见的
+    用法：读者记得两件事，把它们一起打进去。
+
+    **与不是或**：第二个词是进一步收窄，不是另一个选项。「导出 报表」问的不是
+    「有导出 或 有报表」，所以只命中一个词的那条不该出现。反过来写成或的话，
+    多打一个词会把结果**变多**，那比搜不到更让人不信这一栏。
+    """
+    both = _report(
+        client, REPORTER, title="导出报表偶发 502", problem="每次导出季度报表时偶发 502"
+    )
+    # 只含其中一个词，而且两个字从不挨着。
+    one = _report(
+        client, REPORTER, title="导出的按钮点了没反应", problem="导出的时候页面卡住"
+    )
+    other = _report(
+        client, REPORTER, title="报表数字对不上", problem="季度报表合计少了一行"
+    )
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, as_admin, **params)}
+
+    # 核心这一条：两个词在正文里**不相邻**，照样找得到。
+    assert both["id"] in ids(q="导出 报表")
+    # 与：各只命中一个词的两条都不出现。
+    assert one["id"] not in ids(q="导出 报表")
+    assert other["id"] not in ids(q="导出 报表")
+    # 顺序反过来问的是同一件事。
+    assert ids(q="报表 导出") == ids(q="导出 报表")
+    # 单个词照旧，而且能同时出现标题和正文各命中的那两条。
+    assert one["id"] in ids(q="导出")
+    assert other["id"] in ids(q="报表")
+    # 多打一个词只会收窄，永远不会变多。
+    assert ids(q="导出 报表") <= ids(q="导出")
+
+    # 只打了空格不算在搜：它既不该被读成「找含空格的行」，也不该把列表清空。
+    # 搜索框里留一个空格是很常见的手滑，而那个状态下读者想看的就是全部。
+    assert ids(q="   ") == ids()
+
+
+def test_a_title_hit_is_put_in_front_of_a_newer_body_only_hit(client, as_admin):
+    """标题命中的排在前面，**哪怕它更旧**。
+
+    这一页的默认顺序是「最新」，而搜索时照旧按时间排，读者要找的那条就会被一条只是
+    正文里顺带提到该词的新报告压下去——搜索框问的是「哪条最像我要找的」，用「哪条最新」
+    回答它是两件不同的事。
+
+    这是一条**只能靠排序通过**的用例：两条都命中，唯一能区分它们的就是「命中在哪一列」，
+    而时间顺序正好相反。
+    """
+    # 先建的这条命中**标题**（更旧）；后建的只命中正文（更新）。
+    titled = _report(
+        client, REPORTER, title="导出报表偶发 502", problem="偶发，重启就好了"
+    )
+    body_only = _report(
+        client,
+        REPORTER,
+        title="和这个无关的标题",
+        problem="顺带提一句：导出报表那条我也遇到过",
+    )
+
+    def ids(**params) -> list[str]:
+        return [row["id"] for row in _cards(client, as_admin, **params)]
+
+    assert ids(q="报表") == [titled["id"], body_only["id"]], ids(q="报表")
+
+    # 而**不搜的时候顺序不变**，还是最新在前：这条判据只在搜索时生效，
+    # 不能顺手把这一页平时的读法改掉。
+    assert ids() == [body_only["id"], titled["id"]]
+    # 一栏之内同样成立：判据挂在列表的排序上，不是挂在某一栏上。用「热门」是因为
+    # 新提的两条只有 0 票、进不了它的门槛，而这一栏会按同一个分数**补足**到 5 条——
+    # 所以两条都在里面，正是要验的那个交集。
+    assert ids(tab="hot", q="报表") == [titled["id"], body_only["id"]]
+
+    # 单条命中的词不再是「整句」——这里两个词分别落在标题和正文里，本来一条都搜不到。
+    assert ids(q="502 重启") == [titled["id"]]
+
+
 def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
     """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
 
@@ -2852,3 +2933,74 @@ def test_an_unknown_status_or_kind_is_refused_rather_than_ignored(client):
     assert client.get("/feedback", params={"kind": "complaint"}).status_code == 400
     assert client.get("/feedback", params={"status": "received"}).status_code == 200
     assert client.get("/feedback", params={"kind": "bug"}).status_code == 200
+
+
+# --- 提交侧的每日上限 -------------------------------------------------------
+
+
+def _submit(client, handle: str, title: str):
+    """发一条，**不**断言成功——上限用例要的就是被拒的那一次。"""
+    return client.post(
+        "/feedback", json={"title": title}, headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_runs_out_of_reports_for_the_day(client, monkeypatch):
+    """同一个人发到上限之后被拒，而且是 412。
+
+    这是「防刷」那一半：管理员的删除是**事后清理**，一条一条按；在那之前，能
+    直接写进公开列表的人没有任何上限。412 而不是 429，因为它和提案那三道限流
+    对客户端说的是同一句话——**别重试**（`Retry-After` 不存在，客户端也不该
+    等到某个时刻再撞一次）。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 3)
+    for n in range(3):
+        assert _submit(client, REPORTER, f"第 {n} 个不同的问题").status_code == 200
+
+    over = _submit(client, REPORTER, "第 4 个问题")
+    assert over.status_code == 412, over.text
+    # 那句话要说清楚是哪条限制、以及上限是多少 —— 这是一条会打在人脸上的拒绝。
+    message = over.json()["message"]
+    assert "3" in message and "上限" in message, message
+
+
+def test_the_cap_is_per_person_not_global(client, monkeypatch):
+    """一个人的上限不是另一个人的。反过来的写法（一张平台级的表）会让第一个
+    把当天额度用完的人顺手把所有人关掉。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "我的第一条").status_code == 200
+    assert _submit(client, REPORTER, "我的第二条").status_code == 412
+    assert _submit(client, STRANGER, "另一个人的第一条").status_code == 200
+
+
+def test_deleting_a_report_does_not_buy_quota(client, monkeypatch):
+    """删掉不能把额度换回来。
+
+    上限算的是**产出**，不是「现存几条」。否则刷屏的写法就是发一条删一条，
+    而这条路上删的正好是它自己的——那正是要防的那个人能自己按的按钮。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    row = _report(client, REPORTER, title="先发一条再删掉")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+    assert _submit(client, REPORTER, "删完之后再发一条").status_code == 412
+
+
+def test_the_cap_counts_a_rolling_day_not_a_calendar_one(client, monkeypatch):
+    """窗口是滚动的 24 小时。自然日会在午夜清零，于是紧挨着午夜的两分钟里能发
+    两倍的量——和提案那条上限同一个理由，也同一个写法。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "第一条").status_code == 200
+
+    # 把那条的 created_at 往回拨 25 小时：它落到窗口外面，额度就回来了。
+    # 直接改那一行而不是等 24 小时 —— 「一天」是窗口的宽度，不是这段测试要睡多久。
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.author_handle == REPORTER)
+                .values(created_at=datetime.now(UTC) - timedelta(hours=25))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+    assert _submit(client, REPORTER, "一天之后再发一条").status_code == 200

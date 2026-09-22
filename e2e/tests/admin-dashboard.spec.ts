@@ -72,7 +72,8 @@ test('看板打的是三条新接口，三类各自出数', async ({ page }) => 
   // 请求 200 而页面仍然写「加载失败」是可能的（比如形状对不上）。
   await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
   await expect(page.getByText('看板加载失败')).toHaveCount(0);
-  await expect(page.getByText('待分诊')).toBeVisible();
+  // 限定 `.ad__kpis`：顶上摘要条也写着同一个词（见下一个用例的说明）。
+  await expect(page.locator('.ad__kpis').getByText('待分诊')).toBeVisible();
 
   // 2. 切到用量：打的是那一条用量接口，而且只有它。
   const before = seen.length;
@@ -104,19 +105,24 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
 
   await page.goto('/admin/dashboard');
   await expect.poll(() => seen.find((r) => r.path === '/api/admin/stats/feedback'), { timeout: 30_000 }).toBeTruthy();
-  await expect(page.getByText('待分诊')).toBeVisible();
+  // **限定在 `.ad__kpis`（明细那一行）里找**：顶上那条「四块摘要」（`.ad__pulse`）也
+  // 常驻着同一个词（那是它的 hint），而摘要是**跨块**的导航，不算「上一类的内容」。
+  // 不加这一层限定，`getByText('待分诊')` 会命中两处、报 strict mode 违规；而下面那条
+  // 「切走之后数 0」也会永远不成立 —— 摘要条本来就不跟着分类消失。
+  const feedbackKpi = page.locator('.ad__kpis').getByText('待分诊');
+  await expect(feedbackKpi).toBeVisible();
 
   await page.getByRole('button', { name: '用量' }).click();
   await expect.poll(() => seen.some((r) => r.path === '/api/admin/stats/usage'), { timeout: 30_000 }).toBe(true);
-  // 切过去之后画的是用量那一块，反馈那块不再挂在屏幕上。
-  await expect(page.getByText('待分诊')).toHaveCount(0);
+  // 切过去之后画的是用量那一块，反馈那块的**明细**不再挂在屏幕上（摘要条还在，见上）。
+  await expect(feedbackKpi).toHaveCount(0);
 
   const before = seen.length;
   // `exact: true`：顶栏那颗「帮助与反馈」的可访问名字里也含「反馈」，而 Playwright 的
   // `name` 默认是**子串**匹配 —— 不加这一条，这一行会同时命中它和这一页的分类页签，
   // 报 strict mode 违规。
   await page.getByRole('button', { name: '反馈', exact: true }).click();
-  await expect(page.getByText('待分诊')).toBeVisible();
+  await expect(feedbackKpi).toBeVisible();
   // 那一份已经在手上了：再拉一次只是重复读那两张最长的表。
   expect(seen.length).toBe(before);
 

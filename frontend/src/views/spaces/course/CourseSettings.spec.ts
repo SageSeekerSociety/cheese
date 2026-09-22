@@ -121,7 +121,9 @@ describe('CourseSettings', () => {
     const firstSwitch = container.querySelector('.v-switch input') as HTMLInputElement
     firstSwitch.click()
     await nextTick()
-    await fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent?.includes('save'))!)
+    await fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('save'))!
+    )
 
     await waitFor(() => expect(updateSpace).toHaveBeenCalled())
     const [, payload] = updateSpace.mock.calls[0]
@@ -139,7 +141,7 @@ describe('CourseSettings', () => {
   it('reads the teaching config off the default grouping', async () => {
     const { container } = await mountPage()
     const values = () =>
-      [...container.querySelectorAll('input, textarea')].map(
+      Array.from(container.querySelectorAll('input, textarea')).map(
         (el) => (el as HTMLInputElement | HTMLTextAreaElement).value
       )
     // 参数是异步取回来的（space + 默认分组），要等它落到表单上再断言。
@@ -151,11 +153,12 @@ describe('CourseSettings', () => {
 
   it('writes the whole teaching config back, on the course grouping', async () => {
     const { container } = await mountPage()
-    const weekOf = () => [...container.querySelectorAll('input')].find((el) => (el as HTMLInputElement).value === '3')
+    const weekOf = () =>
+      Array.from(container.querySelectorAll('input')).find((el) => (el as HTMLInputElement).value === '3')
     await waitFor(() => expect(weekOf()).toBeTruthy())
 
     await fireEvent.update(weekOf()!, '4')
-    const saves = [...container.querySelectorAll('button')].filter((b) =>
+    const saves = Array.from(container.querySelectorAll('button')).filter((b) =>
       b.textContent?.includes('spaces.course.settings.save')
     )
     await fireEvent.click(saves[saves.length - 1])
