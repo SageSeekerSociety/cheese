@@ -3218,18 +3218,19 @@ details.sys-row > summary::-webkit-details-marker {
   align-items: flex-start;
   gap: 10px;
   padding: 4px 16px;
-  margin-top: 8px;
+  /* 换一个人说话时空开一档。气泡没了之后，分界全靠这段留白和下面那行名字 ——
+     同一个人连着说的那几条仍然贴在一起（.im-row--cont），两档差出来的就是
+     「这是另一个人开口了」。 */
+  margin-top: 16px;
 }
 /* continuation rows of the same author sit tight under the first */
 .im-row--cont {
   margin-top: 0;
 }
-/* 悬停只改颜色不改位置（设计系统 §9.1）。改的是气泡自己那一档 —— 原来刷的是
-   整行的 --fill，而气泡也是 --fill，鼠标扫过去气泡就消失了。 */
-.im-row:hover .im-text {
-  background: var(--fill-2);
-}
-.im-row--self:hover .im-text {
+/* 悬停只改颜色不改位置（设计系统 §9.1）。刷的是整行 —— 气泡在的时候刷不了，
+   气泡自己就是 --fill，整行一刷它就跟背景融了，只好退而求其次去刷气泡内部那
+   一档。现在这一档腾出来了。 */
+.im-row:hover {
   background: var(--fill);
 }
 .im-gutter {
@@ -3269,53 +3270,42 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .im-name {
   font-size: 13px;
+  line-height: var(--lh-13);
   font-weight: 600;
   color: var(--ink);
+}
+/* 自己说的那几条安静一档。气泡在的时候「是不是我」由左右两侧说，那件事没了之后
+   不必再找一个同样响的说法替它 —— 在一个房间里你要找的是别人说了什么、芝士做了
+   什么，自己说过的话是上下文。所以这里是往下压，不是往上提。 */
+.im-row--self .im-name {
+  font-weight: 500;
+  color: var(--muted);
 }
 .im-time {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
 }
-/* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
-   一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：
-   位置、头像在哪边、尖角朝哪边 —— **不能**用颜色说，别家那一格放的是品牌色，
-   而我们这套色板里那个位置是琥珀，按设计系统只留给主操作、激活态和品牌。所以
-   两侧只差一档灰。
-   立面靠描边不靠填充（设计系统 §3.4「卡片只描边，不投影」）：--fill 在白底上
-   只差 3% 亮度，那是「悬停高亮」那一档的强度，单靠它立不起一个面。--line-2 而
-   不是 --line：--line 比 --fill 还浅，描在 --fill 的面上等于没描。 */
+/* ---- 正文平铺，不套气泡 ----
+   气泡是给短句用的。这一栏里最长的一半内容是芝士的产出 —— markdown、代码块、
+   diff、几十行 —— 给一篇文档套个框，框没帮上任何忙：它吃掉宽度，它让一屏出现
+   几十个带描边的灰块（「杂乱」最直接的来源），而代码块自己有底色，外面再压一层
+   灰底就是两层灰贴在一起。
+   判据是内容长度，不是人数：微信群、Telegram 群、飞书以短句为主，气泡成立；
+   Slack、Discord、GitHub 要装代码块和长帖，全是平铺。这一栏属于后者。
+   分界改由留白、头像和名字那一行承担，够用 —— 同一个人连着说的还是合并，
+   只在第一条上出名字（.im-row--cont）。 */
 .im-text {
-  display: inline-block;
   max-width: 100%;
-  padding: 7px 12px;
   font-size: 14px;
-  line-height: 1.62;
+  line-height: var(--lh-14);
   color: var(--text);
   word-break: break-word;
-  background: var(--fill);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  border-top-left-radius: var(--radius-sm); /* 尖角朝说话的那一边 */
 }
-/* 对侧留白。各家常见的是 15%，这里 8% —— 头像在哪边本身已经说明了侧，不需要
-   那么大的空档，省下的宽度还给正文（默认栏宽下 403px 对 365px）。 */
-.im-row {
-  padding-right: calc(16px + 8%);
+/* 现场尊重原文: exactly what the human typed, line breaks included. */
+.im-text--verbatim {
+  white-space: pre-wrap;
 }
-.im-row--self {
-  flex-direction: row-reverse;
-  padding-right: 16px;
-  padding-left: calc(16px + 8%);
-}
-.im-row--self .im-meta {
-  flex-direction: row-reverse;
-}
-/* 自己那一侧的所有块级内容（气泡、图片、附件、表情、提示）一起靠右。 */
-.im-row--self .im-main {
-  text-align: right;
-}
-.im-row--self .im-text {
 /* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
    「这不是一句话，是一个可以打开的东西」。 */
 .im-artifact {
@@ -3362,40 +3352,6 @@ details.sys-row > summary::-webkit-details-marker {
 .im-artifact__go {
   flex: none;
   color: var(--faint);
-}
-  text-align: left; /* 气泡靠右，气泡里的字仍然左起 */
-  background: var(--fill-2);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-sm);
-}
-/* 同一个人连着说的第二条：尖角收掉，两条读成一段。分栏之下这是「连续消息」
-   唯一还剩的信号 —— 位置已经被拿去表示「是不是我」了。 */
-.im-row--cont .im-text {
-  border-top-left-radius: var(--radius-lg);
-}
-.im-row--self.im-row--cont .im-text {
-  border-top-right-radius: var(--radius-lg);
-}
-/* 气泡里的行内元素（表情 chip、选项、提示）跟着靠右。 */
-.im-row--self .rx-row,
-.im-row--self .ask-row,
-.im-row--self .summon-hint {
-  justify-content: flex-end;
-}
-/* 悬停条镜像到左上角：自己那侧的右上角被气泡的尖角占着。 */
-.im-row--self .im-actions {
-  right: auto;
-  left: 12px;
-}
-/* 表情面板挂在悬停条上，所以它也得跟着换边 —— 不换的话它从条的右端往右展开，
-   而条已经在这一列的最左边，面板整个滑出聊天栏、盖到侧栏上去（实测点不到）。 */
-.im-row--self .rx-picker {
-  right: auto;
-  left: 0;
-}
-/* 现场尊重原文: exactly what the human typed, line breaks included. */
-.im-text--verbatim {
-  white-space: pre-wrap;
 }
 .im-file-link {
   max-width: 100%;
