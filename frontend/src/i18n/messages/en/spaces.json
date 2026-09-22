@@ -75,6 +75,10 @@
     "close": "Close",
     "userIdRequired": "Enter a user ID",
     "confirmRemoveAdmin": "Remove {nickname} as admin?",
+    "members": "Members",
+    "noMembers": "No members yet",
+    "setAsAdmin": "Set as admin",
+    "unsetAsAdmin": "Remove admin",
     "auditTasks": {
       "title": "Problems awaiting review",
       "noTasks": "No problems awaiting review",

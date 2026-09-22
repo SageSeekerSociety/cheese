@@ -17,7 +17,14 @@
       <v-list>
         <v-list-item :title="t('spaces.detail.editInfo')" prepend-icon="mdi-pencil" @click="openEditProfile">
         </v-list-item>
-        <v-list-item :title="t('spaces.detail.manageAdmins')" prepend-icon="mdi-account-cog" @click="openManageAdmins">
+        <!-- 「管理员设置」= 设/撤教师。后端只认创建者（OWNER）做这件事，所以入口
+             也只对创建者可见，别的管理员点进去只会撞一串 403。 -->
+        <v-list-item
+          v-if="isCurrentUserOwner"
+          :title="t('spaces.detail.manageAdmins')"
+          prepend-icon="mdi-account-cog"
+          @click="openManageAdmins"
+        >
         </v-list-item>
       </v-list>
     </v-menu>
@@ -240,6 +247,12 @@ const { currentSpace: space, categories } = storeToRefs(spaceStore)
 const isCurrentUserAtLeastAdmin = computed(() => {
   const currentUser = AccountService._user.value
   return space.value?.admins?.some((admin) => admin.user.id === currentUser?.id)
+})
+
+// 创建者 = 题目板的所有者。设/撤管理员是创建者的事，入口只给他。
+const isCurrentUserOwner = computed(() => {
+  const currentUser = AccountService._user.value
+  return space.value?.admins?.some((admin) => admin.user.id === currentUser?.id && admin.role === 'OWNER')
 })
 
 // 获取未归档的分类列表用于侧边栏展示
