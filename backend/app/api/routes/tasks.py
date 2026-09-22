@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import may_publish_in_space, may_teach_task
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -864,10 +865,8 @@ async def _ensure_task_visible_for_ordinary_user(
     task: Task,
     auth_user: AuthUserInfo,
 ) -> None:
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    if await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None:
-        return
-    if task.creator_id == auth_user.user_id:
+    # 教师（出题者或本版管理员）不受 visibleTaskLimit 限制 —— 这道闸是给学生看的。
+    if await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         return
     space_repo = SpaceRepository(session=db)
     space = await space_repo.get_by_id(task.space_id)
@@ -1029,6 +1028,16 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
+    # 发布题目收权：只有这个题目板的管理员/创建者（= 教师）能发题。判据在
+    # ``app.auth.space_access``，和评审、导出参与者同一处 —— 「只有空间管理员和
+    # 空间创建者具有教师版面，也只有他们能发布题目」。放在这里而不是两个路由各写
+    # 一遍，是因为 ``POST /tasks`` 与 PDF 批量发布（``publish/from-pdf/confirm``）
+    # 都从这里走，漏掉任一条就等于没收权。
+    if not await may_publish_in_space(
+        session=db, space_id=space_id, user_id=creator_user_id
+    ):
+        raise ForbiddenError("Only a board manager can publish tasks here")
+
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
         space_repo=space_repo,
@@ -1107,7 +1116,9 @@ async def create_task(
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
     NOTE:
-    - 当前版本不检查复杂权限，只要求提供 space 并验证 category 归属；
+    - 权限：调用者必须是 ``space`` 的管理员/创建者（= 教师），否则 403 ——
+      从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
+      现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
     - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
     """
     task = await _create_task_entity(
@@ -1317,10 +1328,13 @@ async def create_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    if member != auth_user.user_id and task.creator_id != auth_user.user_id:
+    # 教师（出题者或本版管理员）可以替学生报名，也可以把没审过的题先加进课程，
+    # 不必等它 approved —— 这两条都是「老师对这道题能做的事」，和评审同一个判据。
+    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+    if member != auth_user.user_id and not is_teacher:
         raise ForbiddenError("Only task owner can add other participants")
 
-    if task.approved != 0 and task.creator_id != auth_user.user_id:
+    if task.approved != 0 and not is_teacher:
         raise BadRequestError("Cannot join a task that is not approved")
     if task.ended_at is not None:
         raise BadRequestError("Cannot join an ended task")
@@ -1532,12 +1546,7 @@ async def patch_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-    if not is_creator and not is_space_admin:
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_id(participant_id)
@@ -1602,15 +1611,10 @@ async def get_task(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
 
-    # 权限检查：未审批任务只有空间管理员或任务创建者可以查看
+    # 权限检查：未审批的题只有教师（出题者或本版管理员）能看 —— 一道还没过审的
+    # 题在老师手上是「草稿」，在学生手上不该存在。
     if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        is_creator = task.creator_id == auth_user.user_id
-        is_space_admin = False
-        if not is_creator:
-            admin_repo = SpaceAdminRelationRepository(session=db)
-            relation = await admin_repo.get_relation(task.space_id, auth_user.user_id)
-            is_space_admin = relation is not None
-        if not is_creator and not is_space_admin:
+        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
             raise ForbiddenError(
                 "Only space admins or task creator can view unapproved tasks"
             )
@@ -1834,13 +1838,14 @@ async def patch_task(
 
     from app.domain.space.repositories import SpaceAdminRelationRepository
 
+    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
+    # 那是一个比「教师」更窄的问题，不能拿 may_teach_task 顶。
     admin_repo = SpaceAdminRelationRepository(session=db)
     is_space_admin = (
         await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
     )
-    is_creator = task.creator_id == auth_user.user_id
 
-    if not is_creator and not is_space_admin:
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can update this task")
 
     # 基本字符串字段
@@ -1916,7 +1921,7 @@ async def patch_task(
             task.reject_reason = payload.reject_reason
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
-        if not is_creator and not is_space_admin:
+        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
             raise ForbiddenError("Only task owner or space admin can update endedAt")
         if payload.has_ended_at is False or (
             "ended_at" in payload.model_fields_set
@@ -2242,12 +2247,7 @@ async def delete_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-    if not is_creator and not is_space_admin:
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can delete this task")
 
     now = datetime.now(UTC)
@@ -2281,18 +2281,15 @@ async def delete_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
 
+    # 教师（出题者或本版管理员）能撤任何报名；学生只能撤自己的。
     is_self = not membership.is_team and membership.member_id == auth_user.user_id
-    if not is_creator and not is_space_admin and not is_self:
+    if not is_self and not await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    ):
         raise ForbiddenError(
             "Only task owner, space admin, or the participant can remove participation"
         )
@@ -2318,12 +2315,6 @@ async def delete_task_participant_by_member(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,
         member_id=member,
@@ -2332,7 +2323,9 @@ async def delete_task_participant_by_member(
         raise NotFoundError("Participant not found")
 
     is_self = not membership.is_team and membership.member_id == auth_user.user_id
-    if not is_creator and not is_space_admin and not is_self:
+    if not is_self and not await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    ):
         raise ForbiddenError(
             "Only task owner, space admin, or the participant can remove participation"
         )
@@ -2358,12 +2351,7 @@ async def patch_task_membership_by_member(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-    if not is_creator and not is_space_admin:
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_task_and_member(
@@ -2428,9 +2416,11 @@ async def resubmit_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    if task.creator_id != auth_user.user_id:
+    # 重提审核是发布侧的动作：教师（出题者或本版管理员）都能做。
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError(
-            "Only the task creator can resubmit the task for approval."
+            "Only the task creator or a board manager can resubmit "
+            "the task for approval."
         )
 
     # 仅当当前状态为 DISAPPROVED(1) 时允许重提。
@@ -2476,12 +2466,7 @@ async def get_task_participants(
     if task is None:
         raise NotFoundError("Task not found")
 
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = (
-        await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
-    )
-    is_creator = task.creator_id == auth_user.user_id
-    if not is_creator and not is_space_admin:
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can view participants")
 
     approved_value: int | None = None
@@ -2642,6 +2627,7 @@ async def get_task_submissions(
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     """Enumerate submissions for a given task participant."""
     task = await task_service.get_task(task_id=task_id)
@@ -2652,7 +2638,9 @@ async def get_task_submissions(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError.for_resource("participant", participant_id)
 
-    is_task_owner = task.creator_id == auth_user.user_id
+    # 教师（出题者或本版管理员）看得到这道题下任何人的提交；学生只看自己（或自己
+    # 所在小队）的那一份。
+    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
     is_own_participant = (
         membership.member_id == auth_user.user_id and not membership.is_team
     )
@@ -2661,7 +2649,7 @@ async def get_task_submissions(
         is_team_member = await team_service.is_team_member(
             membership.member_id, auth_user.user_id
         )
-    if not is_task_owner and not is_own_participant and not is_team_member:
+    if not is_teacher and not is_own_participant and not is_team_member:
         raise ForbiddenError("You are not authorized to view these submissions")
 
     if sortBy not in {"createdAt", "updatedAt"}:
@@ -2830,14 +2818,15 @@ async def post_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can create review")
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can create review")
 
     existing = await review_service.get_review_dto(submission_id)
     if existing.get("reviewed"):
@@ -2897,14 +2886,15 @@ async def patch_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can update review")
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can update review")
 
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
@@ -2933,14 +2923,15 @@ async def put_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can update review")
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can update review")
 
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
@@ -2968,14 +2959,15 @@ async def delete_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can delete review")
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can delete review")
 
     existing = await review_service.get_review_dto(submission_id)
     if not existing.get("reviewed"):
