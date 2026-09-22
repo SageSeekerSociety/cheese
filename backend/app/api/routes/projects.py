@@ -71,12 +71,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
-from app.domain.preview.office import (
-    OfficeRenderFailed,
-    OfficeRenderUnavailable,
-    is_renderable,
-    render_to_pdf,
-)
+from app.domain.preview import office
 from app.domain.project import artifacts
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
@@ -683,13 +678,18 @@ async def download_artifact_version(
     db: DbSession,
     resolver: ActorResolverDep,
     topic: str = "",
-    preview_pdf: bool = False,
+    preview: bool = False,
 ) -> Response:
     """这一版交出去的那一份字节 (#1085 结论五)。
 
     取的是当时交出去的那个快照，不是现在从源重建一次的结果：半年之后依赖变了、字
     体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
-    一份。"""
+    一份。
+
+    `preview` 要的是「浏览器画得出来的那份形态」，不是「转成一份 PDF」：文档转
+    PDF、旧表格转新表格、其余的原样交出去，因为浏览器自己画得出来。哪一种由这一
+    侧决定，也只有这一侧能决定 —— 渲染器会做什么是平台的事，让每个调用方各自维护
+    一张「哪些后缀要转」的表，那两张表迟早不是同一张。"""
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
     await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
@@ -702,24 +702,26 @@ async def download_artifact_version(
     if version.kind != "file" or not version.filename:
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
         raise NotFoundError("这一版交出去的不是一份文件")
-    data = library.read_artifact_snapshot(project_id, card_id, version.filename)
-    if preview_pdf:
-        if len(data) > 10 * 1024 * 1024:
-            raise ValidationError("文件超过 10 MB，无法生成预览")
-        if not is_renderable(version.filename):
-            raise ValidationError("这个格式不能转换为预览")
+    # 这一份从磁盘上读，和写它的时候一样交给线程：一份 10MB 的幻灯片在事件循环上
+    # 读，读的是这一轮所有人的时间。
+    data = await asyncio.to_thread(
+        library.read_artifact_snapshot, project_id, card_id, version.filename
+    )
+    media_type = "application/octet-stream"
+    if preview:
         try:
-            data = await render_to_pdf(
+            shown = await office.preview(
                 data, version.filename, settings.office_render_endpoint
             )
-        except OfficeRenderUnavailable as exc:
+        except office.OfficeRenderUnavailable as exc:
             raise SystemBusyError(str(exc)) from exc
-        except OfficeRenderFailed as exc:
+        except office.OfficeRenderFailed as exc:
             raise ValidationError(str(exc)) from exc
+        data, media_type = shown.data, shown.media_type
     filename = quote(version.filename, safe="")
     return Response(
         content=data,
-        media_type="application/pdf" if preview_pdf else "application/octet-stream",
+        media_type=media_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
             "X-Content-Type-Options": "nosniff",
