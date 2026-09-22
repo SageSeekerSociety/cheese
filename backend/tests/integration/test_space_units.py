@@ -117,9 +117,7 @@ def _create_unit(
 
 
 def _list_units(api_client: TestClient, board: dict, token: str) -> dict:
-    return api_client.get(
-        f"/spaces/{board['space_id']}/units", headers=_auth(token)
-    )
+    return api_client.get(f"/spaces/{board['space_id']}/units", headers=_auth(token))
 
 
 def _weeks(payload: dict) -> list[int]:
@@ -255,14 +253,13 @@ def test_a_student_cannot_build_or_change_the_timeline(
     student_token = _login(user_client, api_client, student)
     _join(api_client, board, student.user_id)
 
-    created = _create_unit(
-        api_client, board, week=2, title="循环", published=True
-    )
+    created = _create_unit(api_client, board, week=2, title="循环", published=True)
     unit_id = created.json()["data"]["unit"]["id"]
 
     assert (
-        _create_unit(api_client, board, week=6, title="我自己加的", token=student_token)
-        .status_code
+        _create_unit(
+            api_client, board, week=6, title="我自己加的", token=student_token
+        ).status_code
         == 403
     )
     assert (
@@ -291,9 +288,12 @@ def test_an_outsider_cannot_see_that_the_timeline_exists(
     outsider_token = _login(user_client, api_client, outsider)
 
     assert _list_units(api_client, board, outsider_token).status_code == 404
-    assert _create_unit(
-        api_client, board, week=1, title="不是我的版", token=outsider_token
-    ).status_code == 404
+    assert (
+        _create_unit(
+            api_client, board, week=1, title="不是我的版", token=outsider_token
+        ).status_code
+        == 404
+    )
 
 
 def test_deleting_a_unit_takes_it_out_of_the_timeline(
