@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import ActorResolverDep
+from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -50,8 +51,9 @@ from app.domain.space.repositories import (
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
+from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
-from app.domain.task.services import TaskService
+from app.domain.task.services import TaskMembershipService, TaskService
 from app.domain.teaching.models import TeachingUnit
 from app.domain.teaching.quiz_models import Quiz, QuizAnswer, QuizAttempt, QuizQuestion
 from app.domain.teaching.quiz_repositories import (
@@ -127,6 +129,34 @@ class PatchSpaceRequest(BaseModel):
         return value
 
 
+class TeachingRequest(BaseModel):
+    """课程级教学配置 (#8d772257) — 项目集级最小编辑入口。
+
+    **The strict end of this key.** `Teaching.from_json` on the read path drops a
+    bad field rather than raising, because `resolve()` runs on every turn of
+    every project and a typo in one field of a 项目集 must not take down the
+    twenty 赛题 under it. Here a person is looking at the form and can be told
+    which field is wrong, so every field is checked and the ids are typed.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: 课程级 system prompt 模板；`{current_week}` / `{allowed_topics}` /
+    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
+    system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
+    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
+    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
+    #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
+    #: 存指向它们的 id。
+    material_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="materialIds"
+    )
+    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="knowledgeIds"
+    )
+
+
 class CreateSpaceCategoryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -143,6 +173,11 @@ class PatchSpaceCategoryRequest(BaseModel):
     display_order: int | None = Field(default=None, alias="displayOrder")
     archived: bool | None = None
     archived_at: int | None = Field(default=None, alias="archivedAt")
+    #: 课程级教学配置。Sending it replaces the WHOLE teaching config (the
+    #: protocol's whole-key semantics — a half-merged week is harder to reason
+    #: about than either version alone); omitting it leaves it exactly as it is,
+    #: so a PATCH that only renames a 项目集 does not wipe the 教学安排.
+    teaching: TeachingRequest | None = None
 
 
 class CreateSpaceDomainGroupRequest(BaseModel):
@@ -165,6 +200,18 @@ class JoinSpaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     code: str = Field(..., min_length=1)
+
+
+class EnrollInCourseRequest(BaseModel):
+    """The course link's payload: the code it carries, and nothing else.
+
+    The link decides only WHERE the student lands, never what they may see —
+    so there is no 「which parts of the course」 field here to grow.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str | None = None
 
 
 class AddSpaceMemberRequest(BaseModel):
@@ -409,6 +456,10 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
+        # 课程级教学配置 (#8d772257), `{}` when this 项目集 is not a course — the
+        # edit form reads it back, so it has to be here rather than only on the
+        # write path.
+        "teaching": getattr(cat, "teaching", None) or {},
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
@@ -804,6 +855,202 @@ async def join_space(
     )
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
+
+
+async def _course_anchor_task(db, *, space_id: int) -> Task | None:
+    """Which 题 holds a course's students' projects.
+
+    The course keeps 一学期一个项目 by hanging every student's project on **one**
+    课程题, so the anchor must be chosen by a rule that does not move just
+    because the teacher published something new: the OLDEST approved, un-ended
+    题 of the board's default 分组, falling back to the oldest in the board.
+    Newest-first would hand every student a second project the moment a new
+    assignment went up.
+    """
+    space = await SpaceRepository(db).get_by_id(space_id)
+    default_category_id = space.default_category_id if space is not None else None
+    repo = TaskRepository(session=db)
+    for category_id in (default_category_id, None):
+        if category_id is None and default_category_id is None:
+            continue
+        rows = await repo.list_tasks(
+            space_id=space_id,
+            category_id=category_id,
+            approved=0,
+            limit=10,
+            sort_by="createdAt",
+            sort_order="asc",
+        )
+        for task in rows:
+            if task.ended_at is None:
+                return task
+    return None
+
+
+async def _course_project_for(
+    db, *, space_id: int, auth_user: AuthUserInfo, membership_service
+):
+    """The caller's project in this course, created once and reused after.
+
+    Reuse is asked of the SPACE, not of the anchor 题 — see
+    ``ProjectService.projects_in_space_for_owner``. Then the existing
+    participation path does the creating, so a course project is an ordinary
+    project: same protocol inheritance, same brief document, same 一学期一个项目
+    key. Returns ``None`` when the course has nothing to anchor a project on
+    yet, which is an honest answer rather than a stray hidden 题.
+    """
+    from app.domain.project.services import ProjectService
+
+    owner = await UserRepository(session=db).get_by_id(auth_user.user_id)
+    if owner is None:
+        raise NotFoundError("Participant user not found")
+
+    projects = ProjectService(db)
+    existing = await projects.projects_in_space_for_owner(
+        space_id=space_id, owner_handle=owner.username
+    )
+    if existing:
+        return existing[0]
+
+    anchor = await _course_anchor_task(db, space_id=space_id)
+    if anchor is None:
+        return None
+
+    membership = await membership_service.get_membership_by_task_and_member(
+        task_id=anchor.id, member_id=auth_user.user_id
+    )
+    if membership is None or membership.deleted_at is not None:
+        membership = await membership_service.create_membership(
+            task=anchor,
+            member_id=auth_user.user_id,
+            is_team=False,
+            approved=2,  # ApproveType.NONE — the course link is not a review queue
+            deadline=None,
+            email=None,
+            phone=None,
+            apply_reason=None,
+            personal_advantage=None,
+            remark=None,
+        )
+    return await projects.for_participation(
+        task=anchor, membership=membership, owner_handle=owner.username
+    )
+
+
+@router.post(
+    "/{spaceId}/enroll",
+    summary="Join a course from its link",
+)
+async def enroll_in_course(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: EnrollInCourseRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    db=Depends(get_db),
+) -> dict:
+    """What the course link does, in one round trip.
+
+    Redeems the code the link carries (the only way in for someone who is not
+    a member yet), then makes sure the student has his project in this course.
+    Opening the same link twice is not an error and does not mint a second
+    project: membership and project are both asked for, not created blindly.
+    """
+    if auth_user.user_id <= 0:
+        raise ForbiddenError("Only signed-in users can join a course")
+    code = (payload.code or "").strip()
+    if code:
+        invite = await SpaceInviteCodeRepository(session=db).get_by_code(code)
+        if invite is None:
+            raise NotFoundError("Invite code not found", data={"type": "inviteCode"})
+        if invite.space_id != space_id:
+            # Answer before redeeming: a link for another board must not join
+            # this person to a board the link never named.
+            raise BadRequestError(
+                "This invite code is for a different 题目板",
+                data={"type": "inviteCode", "id": invite.id},
+            )
+        await service.join_space(code=code, user_id=auth_user.user_id)
+
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    project = await _course_project_for(
+        db,
+        space_id=space_id,
+        auth_user=auth_user,
+        membership_service=membership_service,
+    )
+    space = await service.get_space(space_id)
+    if space is None:
+        raise NotFoundError.for_resource("space", space_id)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "space": {"id": space.id, "name": space.name},
+            "project": (
+                {
+                    "id": str(project.id),
+                    "name": project.name,
+                    "root_topic_id": (
+                        str(project.root_topic_id) if project.root_topic_id else None
+                    ),
+                }
+                if project is not None
+                else None
+            ),
+        },
+    }
+
+
+@router.get(
+    "/{spaceId}/course-link",
+    summary="The link a teacher hands out for this course",
+)
+async def get_course_link(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    """Teacher-side: one link to copy into the group chat.
+
+    It carries an invite code, and the code is the ordinary, un-named way in —
+    same as the code shown on the 邀请码 page, handed out by the same people
+    (OWNER and ADMIN, see ``_ensure_space_admin``).
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    codes = await service.list_invite_codes(
+        space_id=space_id, actor_user_id=auth_user.user_id
+    )
+    now = datetime.now(UTC)
+    usable = next(
+        (
+            c
+            for c in codes
+            if (c.expires_at is None or c.expires_at > now) and c.use_count < c.max_uses
+        ),
+        None,
+    )
+    if usable is None:
+        usable = await service.create_invite_code(
+            space_id=space_id, actor_user_id=auth_user.user_id
+        )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "path": f"/spaces/join/{usable.code}",
+            "code": usable.code,
+            "maxUses": usable.max_uses,
+            "useCount": usable.use_count,
+            "expiresAt": (
+                int(usable.expires_at.timestamp() * 1000) if usable.expires_at else None
+            ),
+        },
+    }
+
+
+# ── 课程链接 (course link) ─────────────────────────────────────────────────────
 
 
 @router.get(
@@ -1654,6 +1901,12 @@ async def patch_space_category(
         description=payload.description,
         display_order=payload.display_order,
         archived=archived,
+        # `model_dump()` (field names, not aliases): what lands in the column is
+        # the shape `Teaching.from_json` reads back, so the write path and the
+        # read path cannot drift into two different spellings of one config.
+        teaching=(
+            payload.teaching.model_dump() if payload.teaching is not None else None
+        ),
     )
     return {
         "code": 200,

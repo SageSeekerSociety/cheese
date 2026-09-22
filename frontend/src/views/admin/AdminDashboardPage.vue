@@ -7,20 +7,25 @@ import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import AdminActionList from '@/components/admin/AdminActionList.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
+import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
+import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
+import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
+import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
 //
 // 分类是这一页的骨架（需求方原话：「看板我觉得不是专门为反馈打造的？其它的也应该算
-// 进去，比如 token 消费之类的，然后表也不要太多……不然人的注意力比较稀疏」）。三类
-// 各占一屏，切到哪一类才拉哪一类 —— 服务端就是三条接口（`/admin/stats/{feedback,
-// usage,platform}`），而这三块里有两块读的是全平台增长最快的表（`resource_usage` 每
-// 调一次 `/v1/messages` 长一行），没有理由让「看一眼反馈」把用量也读一遍。
+// 进去，比如 token 消费之类的，然后表也不要太多……不然人的注意力比较稀疏」）。各类
+// 各占一屏，切到哪一类才拉哪一类 —— 服务端一分类一条接口（`/admin/stats/{…}`），而
+// 其中用量那块读的是全平台增长最快的表（`resource_usage` 每调一次 `/v1/messages` 长
+// 一行），没有理由让「看一眼反馈」把用量也读一遍。
 //
 // 一页里并列八张图是**没人读**的页面：每一块都有自己的尺度和自己的读者，摆在一起只会
 // 让注意力平均分配，而那恰好等于没有重点。所以「表不要太多」不是删表，是**分屏**。
@@ -48,7 +53,7 @@ const DAYS = 7
 
 /** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
  *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
-const KINDS: StatsKind[] = ['feedback', 'usage', 'platform', 'performance']
+const KINDS: StatsKind[] = ['pipeline', 'product', 'feedback', 'usage', 'platform', 'performance', 'integrations']
 
 /** 每个分类的名字。**写成一张键名字面量的表**，不在模板里拼
  *  `feedback.dashboard.tab.${kind}` —— 拼出来的键在源码里没有一处字面量出现，
@@ -56,10 +61,13 @@ const KINDS: StatsKind[] = ['feedback', 'usage', 'platform', 'performance']
  *  死词条（它扫的是源码文本，不是运行时的调用）。拼字符串在这里省下的是一行，代价是
  *  每次跑门禁都要重新解释一遍「这三个键其实是活的」。 */
 const TAB_KEY: Record<StatsKind, string> = {
+  pipeline: 'feedback.dashboard.tab.pipeline',
+  product: 'feedback.dashboard.tab.product',
   feedback: 'feedback.dashboard.tab.feedback',
   usage: 'feedback.dashboard.tab.usage',
   platform: 'feedback.dashboard.tab.platform',
   performance: 'feedback.dashboard.tab.performance',
+  integrations: 'feedback.dashboard.tab.integrations',
 }
 
 /** 队列的地址。写**地址**不写路由名：规格 §11 第 9 条钉的是地址。 */
@@ -68,6 +76,128 @@ const queue = (query: Record<string, string> = {}): RouteLocationRaw => ({ path:
 
 /** 迷你列表最多画几行。和 `AdminNumberList` 的 `SHOWN` 是同一个数。 */
 const SHOWN = 10
+
+/** 顶上那条「四块摘要」—— 这一页的**第一眼**。
+ *
+ *  分类控件把四块藏在四个抽屉里，于是「反馈在催、用量在涨」这件事要么点三下才看见，
+ *  要么根本看不见。这一条把每一块的那**一个**数摆在一起：读的人先知道「现在哪块
+ *  需要我」，再决定进哪一块。
+ *
+ *  每块只取一个数（不是四个）：一行摆四个指标 × 四块 = 十六个数，那就不是摘要而是
+ *  另一张表。取哪一个，判据是「这一块现在最该被看见的那件事」：
+ *
+ *   * 反馈 → **待分诊**（有事等着人动）；有急件时换成急件数并染琥珀警示。
+ *   * 用量 → 窗口内的 **token**（量级，比钱稳 —— 未定价的那部分没有钱数）。
+ *   * 平台 → **健康度**（`healthy` / `degraded`，这一刻的）。
+ *   * 性能 → **最慢那条的 p95**（「哪条慢」是这一块唯一要回答的问题）。
+ *
+ *  点一块就切到那一类 —— 它是导航，不是卡片（`to` 语义上的链接由下面的 KPI 卡承担）。
+ */
+/** 摘要条的**短值**。
+ *
+ *  两个约束，都是从「两排卡片长一样」那次反馈来的：
+ *
+ *   1. **不重复下面 KPI 行的那一个数**。反馈那块的 KPI 第一张就是「待分诊」、用量
+ *      第一张就是「窗口内 token」，摘要条再打一遍就是同一件事说两遍。所以摘要条
+ *      给的是**这一块现在最该被看见的那件事**的**短语**（「3 急件」「20 万」），
+ *      而不是和 KPI 同一个数字。
+ *   2. **短语，不是大数字**。大数字留给下面那排 KPI 卡；摘要条是导航，它的字是
+ *      `.t-dense`，不是 `.t-console-title`。
+ */
+const pulse = computed(() => {
+  const rows = [
+    {
+      key: 'pipeline',
+      label: t('feedback.dashboard.tab.pipeline'),
+      // 「等你」是这一块唯一要回答的问题，而且它**不在**下面的 KPI 第一张
+      // （第一张是「还在走」）。
+      value: t('feedback.dashboard.pipeline.kpi.needsYouShort', {
+        n:
+          (pipeline.value?.needs_you.reviewer_pending ?? 0) +
+          (pipeline.value?.needs_you.open_tasks ?? 0) +
+          (pipeline.value?.needs_you.awaiting_answer ?? 0),
+      }),
+      hint: t('feedback.dashboard.pipeline.needs.title'),
+      tone: 'ink',
+    },
+    {
+      key: 'product',
+      label: t('feedback.dashboard.tab.product'),
+      value: t('feedback.dashboard.product.northStarShort', {
+        n: product.value?.north_star.total ?? 0,
+      }),
+      hint: t('feedback.dashboard.product.northStar'),
+      tone: 'ink',
+    },
+    {
+      key: 'feedback',
+      label: t('feedback.dashboard.tab.feedback'),
+      value:
+        urgentOpen.value > 0
+          ? t('feedback.dashboard.kpi.urgentShort', { n: urgentOpen.value })
+          : t('feedback.dashboard.kpi.untriagedShort', {
+              n: feedback.value?.total.unassigned ?? 0,
+            }),
+      hint: urgentOpen.value > 0 ? t('feedback.dashboard.kpi.urgent') : t('feedback.dashboard.kpi.untriaged'),
+      tone: urgentOpen.value > 0 ? 'warn' : 'ink',
+    },
+    {
+      key: 'usage',
+      label: t('feedback.dashboard.tab.usage'),
+      value: shortTokens(usage.value?.totals.tokens),
+      hint: t('feedback.dashboard.usage.tokens'),
+      tone: 'ink',
+    },
+    {
+      key: 'platform',
+      label: t('feedback.dashboard.tab.platform'),
+      value:
+        platform.value?.health?.overall === 'healthy'
+          ? t('feedback.dashboard.health.healthy')
+          : platform.value?.health?.overall === 'degraded'
+            ? t('feedback.dashboard.health.degraded')
+            : '—',
+      hint: t('feedback.dashboard.health.title'),
+      tone:
+        platform.value?.health?.overall === 'healthy'
+          ? 'ok'
+          : platform.value?.health?.overall === 'degraded'
+            ? 'danger'
+            : 'ink',
+    },
+    {
+      key: 'performance',
+      label: t('feedback.dashboard.tab.performance'),
+      value: slowestP95.value,
+      hint: t('feedback.dashboard.perf.slowest'),
+      tone: 'ink',
+    },
+    {
+      key: 'integrations',
+      label: t('feedback.dashboard.tab.integrations'),
+      value: t('feedback.dashboard.integrations.delivery.deadShort', {
+        n: integrations.value?.delivery.dead_letters ?? 0,
+      }),
+      hint: t('feedback.dashboard.integrations.delivery.title'),
+      tone: (integrations.value?.delivery.dead_letters ?? 0) > 0 ? 'warn' : 'ink',
+    },
+  ]
+  return rows
+})
+
+/** 20 万 token 这种短写 —— 摘要条上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。 */
+function shortTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  return String(n)
+}
+
+/** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
+const slowestP95 = computed(() => {
+  const row = perf.value?.routes?.[0]
+  return row?.p95 === undefined || row.p95 === null ? '—' : `${row.p95} ms`
+})
 
 const kind = computed(() => store.statsKind)
 const feedback = computed(() => store.stats.feedback)
@@ -97,31 +227,32 @@ function sumOf(values: number[] | undefined): string {
 
 /* ---- 反馈那一块 ---- */
 
-/** 反馈的 KPI。**四张都走看板接口这一条**（`/admin/stats/feedback` 的 `counts`），
+/** 反馈的 KPI。**四张都走看板接口这一条**（`/admin/stats/feedback` 的 `total`），
  *  不再有前两张走列表接口那种混搭。
  *
  *  改的原因是两类错，都出在「同一个数有两个来源」上：
  *
- *   * 那两个计数（`unassigned` / `active`）在**列表接口**那一趟里也回，而列表那一趟
- *     失败时它的初值是全 0 的实体对象（不是 null）—— `num()` 拦不住，于是「队列加载
- *     失败」会被画成「待分诊 0、进行中 0」，还带着能点进队列的链接。
+ *   * 那两个计数（`unassigned` / `in_progress`）曾在**列表接口**那一趟里也回，而列表
+ *     那一趟失败时它的初值是全 0 的实体对象（不是 null）—— `num()` 拦不住，于是「队列
+ *     加载失败」会被画成「待分诊 0、进行中 0」，还带着能点进队列的链接。
  *   * 一行的四张卡有两套加载态（`adminLoading` / `statsLoading`）、两个失败原因，而
  *     它们说的是同一件事：这一栏现在什么样。
  *
- *  两个端点的这两个数是**同一个来源**（都走 `FeedbackService.counts`，管理端列表那条
- *  路由在 `routes/admin_feedback.py` 里就是这么取的），所以换过来数不变、含义不变。 */
+ *  口径：`total` 是**全量**（公开 + 私密 + Agent 发现 + 安全问题），和下面那条曲线同
+ *  一个板子。此前卡片走的是被 `PUBLIC_ONLY` 收窄的那一份，而曲线是全量 —— 于是「进行中」
+ *  和「进行中」在卡片上和图上是两个数，两边各自都看着对。 */
 const feedbackKpis = computed(() => [
   {
     key: 'untriaged',
     label: t('feedback.dashboard.kpi.untriaged'),
-    value: num(feedback.value?.counts.unassigned),
+    value: num(feedback.value?.total.unassigned),
     loading: store.statsLoading,
     to: queue({ assigned: 'none' }),
   },
   {
     key: 'inProgress',
     label: t('feedback.dashboard.kpi.inProgress'),
-    value: num(feedback.value?.counts.active),
+    value: num(feedback.value?.total.open),
     loading: store.statsLoading,
     to: queue({ status: 'in_progress' }),
   },
@@ -140,6 +271,35 @@ const feedbackKpis = computed(() => [
     to: queue({ resolved_since: '7d' }),
   },
 ])
+
+/** 队列那四栏的计数 —— **筛选，不是划分**（`agent` 是来源，和公开/私密重叠），所以
+ *  四个数加起来不等于总数。这一行要说清这件事，否则「四个数对不上」会被读成算错了。 */
+const feedbackColumns = computed(() => {
+  const c = feedback.value?.columns
+  return [
+    { key: 'public', label: t('feedback.dashboard.column.public'), value: num(c?.public) },
+    { key: 'private', label: t('feedback.dashboard.column.private'), value: num(c?.private) },
+    { key: 'agent', label: t('feedback.dashboard.column.agent'), value: num(c?.agent) },
+    { key: 'security', label: t('feedback.dashboard.column.security'), value: num(c?.security) },
+  ]
+})
+
+/** 梯子上的四级，全量并排。条的长度按四级里最大的那一级算 —— 四级是**同一量纲**的
+ *  划分（加起来等于 `total.all`），所以可以同轴比长短。 */
+const feedbackStatusRows = computed(() => {
+  const s = feedback.value?.status
+  if (!s) return []
+  const rows = [
+    { key: 'received', label: t('feedback.dashboard.status.received'), value: s.received },
+    { key: 'in_progress', label: t('feedback.dashboard.status.inProgress'), value: s.in_progress },
+    { key: 'resolved', label: t('feedback.dashboard.status.resolved'), value: s.resolved },
+    { key: 'deployed', label: t('feedback.dashboard.status.deployed'), value: s.deployed },
+  ]
+  return rows
+})
+
+/** 压着没人管的急件 —— 只有它 > 0 时才画那一行警示。空着的时候不占位置。 */
+const urgentOpen = computed(() => feedback.value?.total.urgent_open ?? 0)
 
 /** 反馈的三条线：新增 / 解决 / 上线（§7.5：颜色由组件按线型发，这一层只管名字和值）。
  *
@@ -235,6 +395,61 @@ const topProjects = computed(() =>
   (usage.value?.top_projects ?? []).map((row) => ({ label: row.name, value: row.tokens }))
 )
 
+/** 按模型拆。行本身带上钱与「算不出价」的两列，因为这一张表要回答的正是「贵的是
+ *  模型还是计费方式」——只有 token 一列答不了。 */
+const byModel = computed(() =>
+  (usage.value?.by_model ?? []).map((row) => ({
+    label: row.model || t('feedback.dashboard.usage.unknownModel'),
+    value: row.tokens,
+    cost: fmtCost(row.cost_usd),
+    unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+  }))
+)
+
+/** 按供给通路拆（gateway / subscription / native）。`subscription` 那一行的
+ *  `unpriced_tokens` 就是 KPI 里「未定价 token」的来源 —— 这一张表是那张卡的注脚。 */
+const byRoute = computed(() =>
+  (usage.value?.by_route ?? []).map((row) => ({
+    label: routeLabel(row.route),
+    value: row.tokens,
+    cost: fmtCost(row.cost_usd),
+    unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+  }))
+)
+
+/** 通路代号 → 人话。`''` 是打在补上这一列之前的那些行。 */
+function routeLabel(route: string): string {
+  if (route === 'gateway') return t('feedback.dashboard.usage.route.gateway')
+  if (route === 'subscription') return t('feedback.dashboard.usage.route.subscription')
+  if (route === 'native') return t('feedback.dashboard.usage.route.native')
+  return t('feedback.dashboard.usage.route.unknown')
+}
+
+/** 平台的健康度。三格并排，**状态色只在这里用**（up / stalling / down）—— 全页别处
+ *  都是中性阶，这一行是唯一需要「一眼看出好坏」的地方。 */
+const health = computed(() => platform.value?.health ?? null)
+
+/** 检查名 → 词条键。**写成字面量表**，不在模板里拼 `feedback.dashboard.health.${name}`
+ *  —— 拼出来的键在源码里没有一处字面量出现，`catalog.spec.ts` 的「这个键没有任何文件
+ *  引用」那条闸门会把它们判成死词条（它扫的是源码文本，不是运行时的调用）。和上面
+ *  `TAB_KEY` 同一个理由。 */
+const HEALTH_KEY: Record<string, string> = {
+  database: 'feedback.dashboard.health.database',
+  redis: 'feedback.dashboard.health.redis',
+  event_loop: 'feedback.dashboard.health.event_loop',
+}
+
+const healthRows = computed(() => {
+  const h = health.value
+  if (!h) return []
+  return Object.entries(h.checks).map(([name, body]) => ({
+    key: name,
+    label: t(HEALTH_KEY[name] ?? name),
+    status: body.status,
+    tone: body.status === 'up' ? 'ok' : body.status === 'down' ? 'danger' : 'warn',
+  }))
+})
+
 /** 成本那一行下面那句口径。两个数（金额、没有单价的 token）各自已经是 KPI 卡了，
  *  这句话说的是**它们之间的关系** —— 订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
  *  「没有单价」而不是「免费」，所以金额里没有它们，也不该被读成「这个月没花钱」。
@@ -247,6 +462,426 @@ const costNote = computed(() => (usage.value ? t('feedback.dashboard.cost.note')
  * 出来：没有窗口（只有此刻）、重启即清零、只覆盖业务 API。不说的话，读者会把它当
  * 成「整个平台的、有历史的」数 —— 而它两个都不是。
  */
+
+/* ---- 交付管线（新） ---------------------------------------------------- */
+
+const pipeline = computed(() => store.stats.pipeline)
+
+/** 活四站：建卡 → 决议 → 合并 → 归档。**没有「闸门」那一站** —— 机器闸门已退役
+ *  （#296），画上去就是一个永远空的站。四站各是**不同卡在不同时刻**的通过量，不是
+ *  同一批样本的漏斗，所以 `AdminLiveSpine` 用导轨不用漏斗图。 */
+const spineStages = computed(() => {
+  const p = pipeline.value
+  if (!p) return []
+  const backlog = p.backlog.by_status
+  const accepted = backlog['accepted'] ?? 0
+  const merged = p.dwell.filed_to_merge.count
+  const filed = p.dwell.filed_to_decision.count + p.dwell.open_card_age.count
+  const archived = p.dwell.accepted_not_archived
+    ? Math.max(0, accepted - p.dwell.accepted_not_archived.count)
+    : accepted
+  return [
+    {
+      key: 'filed',
+      label: t(STATION_KEY.filed),
+      count: filed,
+      dwellSeconds: p.dwell.open_card_age.p50_seconds,
+    },
+    {
+      key: 'decided',
+      label: t(STATION_KEY.decided),
+      count: p.dwell.filed_to_decision.count,
+      dwellSeconds: p.dwell.filed_to_decision.p50_seconds,
+    },
+    {
+      key: 'merged',
+      label: t(STATION_KEY.merged),
+      count: merged,
+      dwellSeconds: p.dwell.filed_to_merge.p50_seconds,
+    },
+    {
+      key: 'archived',
+      label: t(STATION_KEY.archived),
+      count: archived,
+      dwellSeconds: p.dwell.accepted_not_archived.max_seconds,
+    },
+  ]
+})
+
+/** 卡点徽章。只在 >0 时出现 —— 空着时不占位置，也不画一个 0 的徽章。 */
+const spineStuck = computed(() => {
+  const p = pipeline.value
+  if (!p) return []
+  const rows: { label: string; count: number }[] = []
+  if (p.backlog.stuck > 0) rows.push({ label: t('feedback.dashboard.pipeline.kpi.stuck'), count: p.backlog.stuck })
+  if (p.needs_you.awaiting_answer > 0)
+    rows.push({
+      label: t('feedback.dashboard.pipeline.kpi.needsYou'),
+      count: p.needs_you.awaiting_answer,
+    })
+  if (p.turn_failures.credits_refused > 0)
+    rows.push({
+      label: t('feedback.dashboard.credits.exhausted'),
+      count: p.turn_failures.credits_refused,
+    })
+  return rows
+})
+
+const pipelineKpis = computed(() => {
+  const p = pipeline.value
+  return [
+    {
+      key: 'live',
+      label: t('feedback.dashboard.pipeline.kpi.live'),
+      value: num(p?.backlog.live_total),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'stuck',
+      label: t('feedback.dashboard.pipeline.kpi.stuck'),
+      value: num(p?.backlog.stuck),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'dwell',
+      label: t('feedback.dashboard.pipeline.kpi.dwell'),
+      value: hoursText(p?.dwell.filed_to_decision.p50_seconds ?? null),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'needs',
+      label: t('feedback.dashboard.pipeline.kpi.needsYou'),
+      value: num(
+        (p?.needs_you.reviewer_pending ?? 0) + (p?.needs_you.open_tasks ?? 0) + (p?.needs_you.awaiting_answer ?? 0)
+      ),
+      loading: store.statsLoading,
+    },
+  ]
+})
+
+const stuckRows = computed(() =>
+  (pipeline.value?.stuck_cards ?? []).map((row) => ({
+    id: row.card_id,
+    title: row.change_subject || row.topic_title,
+    subtitle: `${row.note_code ?? ''} ${row.reviewer_handle}`,
+    statusLabel: row.status,
+    tone: 'warn' as const,
+    age: ageText(row.age_seconds),
+    to: { path: `/topics/${row.topic_id}` },
+  }))
+)
+
+const needsYouRows = computed(() =>
+  (pipeline.value?.needs_you.items ?? []).map((row) => ({
+    id: `${row.kind}:${row.id}`,
+    title: row.title,
+    subtitle:
+      row.kind === 'task' ? t('feedback.dashboard.pipeline.needs.task') : t('feedback.dashboard.pipeline.needs.room'),
+    tone: 'ink' as const,
+    to: { path: `/topics/${row.topic_id}` },
+  }))
+)
+
+const failureRows = computed(() => {
+  const f = pipeline.value?.turn_failures
+  if (!f) return []
+  const rows = Object.entries(f.by_code)
+    .filter(([, n]) => n > 0)
+    .map(([code, n]) => ({
+      label: t(FAIL_CODE_KEY[code] ?? code),
+      value: n,
+      cost: '—',
+      unpriced: '—',
+    }))
+  if (f.other > 0)
+    rows.push({
+      label: t(FAIL_CODE_KEY.other),
+      value: f.other,
+      cost: '—',
+      unpriced: '—',
+    })
+  if (f.credits_refused > 0)
+    rows.push({
+      label: t('feedback.dashboard.credits.exhausted'),
+      value: f.credits_refused,
+      cost: '—',
+      unpriced: '—',
+    })
+  return rows
+})
+
+const hostRows = computed(() =>
+  (pipeline.value?.host_health.rows ?? []).map((row) => ({
+    id: row.device_id,
+    title: row.device_id,
+    subtitle: row.last_failure_code ?? '',
+    statusLabel: String(row.consecutive_failures),
+    tone: row.quarantined_until ? ('danger' as const) : ('warn' as const),
+    to: { path: '/admin' },
+  }))
+)
+
+/* ---- 产品健康（新） ---------------------------------------------------- */
+
+const product = computed(() => store.stats.product)
+
+const productKpis = computed(() => [
+  {
+    key: 'north',
+    label: t('feedback.dashboard.product.northStar'),
+    value: num(product.value?.north_star.total),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'returned',
+    label: t('feedback.dashboard.product.rejection.title'),
+    value:
+      product.value?.rejection.returned_rate === null || product.value?.rejection.returned_rate === undefined
+        ? ''
+        : `${Math.round(product.value.rejection.returned_rate * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'useful',
+    label: t('feedback.dashboard.product.usefulness.title'),
+    value:
+      product.value?.usefulness.useful_rate === null || product.value?.usefulness.useful_rate === undefined
+        ? ''
+        : `${Math.round(product.value.usefulness.useful_rate * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'dismiss',
+    label: t('feedback.dashboard.product.usefulness.down'),
+    value: num(product.value?.usefulness.proposal_dismissals),
+    loading: store.statsLoading,
+  },
+])
+
+const northSeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.product.northStar'),
+    values: product.value?.north_star.series.map((row) => row.accepted) ?? [],
+    style: 'solid',
+  },
+])
+
+const rejectionSegments = computed(() => {
+  const b = product.value?.rejection.buckets
+  if (!b) return []
+  return [
+    { label: t('feedback.dashboard.product.rejection.rejected'), value: b.rejected, shade: 'ink' as const },
+    {
+      label: t('feedback.dashboard.product.rejection.gate'),
+      value: b.gate_failed + b.gate_blocked,
+      shade: 'muted' as const,
+    },
+    { label: t('feedback.dashboard.product.rejection.conflict'), value: b.conflict, shade: 'muted' as const },
+    { label: t('feedback.dashboard.product.rejection.voided'), value: b.voided, shade: 'faint' as const },
+    {
+      label: t('feedback.dashboard.product.rejection.revoked'),
+      value: b.revoked_after_accept,
+      shade: 'faint' as const,
+    },
+    { label: t('feedback.dashboard.product.rejection.live'), value: b.live, shade: 'faint' as const },
+  ].filter((s) => s.value > 0)
+})
+
+const usefulnessSegments = computed(() => {
+  const u = product.value?.usefulness
+  if (!u) return []
+  return [
+    { label: t('feedback.dashboard.product.usefulness.up'), value: u.up, shade: 'ink' as const },
+    { label: t('feedback.dashboard.product.usefulness.down'), value: u.down, shade: 'muted' as const },
+    { label: t('feedback.dashboard.product.usefulness.unrated'), value: u.unrated_read, shade: 'faint' as const },
+    { label: t('feedback.dashboard.product.usefulness.unread'), value: u.unread, shade: 'faint' as const },
+  ].filter((s) => s.value > 0)
+})
+
+/* ---- 集成健康（新） ---------------------------------------------------- */
+
+const integrations = computed(() => store.stats.integrations)
+
+const integrationKpis = computed(() => [
+  {
+    key: 'expired',
+    label: t('feedback.dashboard.integrations.oauth.expired'),
+    value: num(integrations.value?.oauth.expired),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'norefresh',
+    label: t('feedback.dashboard.integrations.oauth.noRefresh'),
+    value: num(integrations.value?.oauth.no_refresh_token),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'passkey',
+    label: t('feedback.dashboard.integrations.passkey.title'),
+    value:
+      integrations.value?.passkey.coverage === null || integrations.value?.passkey.coverage === undefined
+        ? ''
+        : `${Math.round(integrations.value.passkey.coverage * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'dead',
+    label: t('feedback.dashboard.integrations.delivery.dead'),
+    value: num(integrations.value?.delivery.dead_letters),
+    loading: store.statsLoading,
+  },
+])
+
+/* ---- 四块补缺：额度燃尽 / 磁盘预览机器 / 投递事件 ---------------------- */
+
+const credits = computed(() => usage.value?.credits ?? null)
+
+const creditMeters = computed(() => {
+  const c = credits.value
+  if (!c) return []
+  const rows: {
+    label: string
+    valueText: string
+    limit: number | null
+    ratio: number
+    tone: 'ink' | 'ok' | 'warn' | 'danger'
+    hint: string
+  }[] = []
+  for (const e of c.exhausted.slice(0, 5)) {
+    rows.push({
+      label: e.name,
+      valueText: fmtNum(Math.round(e.credits_remaining)),
+      limit: e.credits_total,
+      ratio: 1,
+      tone: 'danger',
+      hint: t('feedback.dashboard.credits.exhausted'),
+    })
+  }
+  for (const e of c.low.slice(0, 5)) {
+    rows.push({
+      label: e.name,
+      valueText: fmtNum(Math.round(e.credits_remaining)),
+      limit: e.credits_total,
+      ratio: e.ratio,
+      tone: 'warn',
+      hint: t('feedback.dashboard.credits.low'),
+    })
+  }
+  return rows
+})
+
+const extras = computed(() => platform.value?.extras ?? null)
+
+const extrasRows = computed(() => {
+  const x = extras.value
+  if (!x) return []
+  const rows: {
+    label: string
+    valueText: string
+    limit: number | null
+    ratio: number
+    tone: 'ink' | 'ok' | 'warn' | 'danger'
+    hint: string
+  }[] = []
+  if (x.disk.available && x.disk.used_pct !== undefined) {
+    rows.push({
+      label: t('feedback.dashboard.extras.disk.title'),
+      valueText: `${x.disk.used_pct}%`,
+      limit: 100,
+      ratio: x.disk.used_pct / 100,
+      tone: x.disk.tier === 'critical' ? 'danger' : x.disk.tier === 'warn' ? 'warn' : 'ink',
+      hint: `${x.disk.free_gb} GB`,
+    })
+  }
+  if (x.preview.available) {
+    rows.push({
+      label: t('feedback.dashboard.extras.preview.title'),
+      valueText: num(x.preview.attached),
+      limit: null,
+      ratio: 0,
+      tone: 'ink',
+      hint: '',
+    })
+  }
+  return rows
+})
+
+const reliability = computed(() => {
+  const p = store.stats.performance as (typeof store.stats.performance & { reliability?: any }) | null
+  return p?.reliability ?? null
+})
+
+/* ---- 工具 -------------------------------------------------------------- */
+
+/** 停留时长画成「N 分 / N 小时 / N 天」。没有读数画破折号，不画 0。 */
+function hoursText(seconds: number | null): string {
+  if (seconds === null || seconds === undefined) return ''
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} ${t('feedback.dashboard.dwell.minutes')}`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} ${t('feedback.dashboard.dwell.hours')}`
+  const days = Math.floor(hours / 24)
+  return `${days} ${t('feedback.dashboard.dwell.days')}`
+}
+
+function ageText(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return t('feedback.dashboard.pipeline.age.minutes', { n: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('feedback.dashboard.pipeline.age.hours', { h: hours })
+  return t('feedback.dashboard.pipeline.age.days', { d: Math.floor(hours / 24) })
+}
+
+/** 站名。键表而不是拼字符串（同 `TAB_KEY` / `HEALTH_KEY`）。 */
+const STATION_KEY: Record<string, string> = {
+  filed: 'feedback.dashboard.pipeline.station.filed',
+  decided: 'feedback.dashboard.pipeline.station.decided',
+  merged: 'feedback.dashboard.pipeline.station.merged',
+  archived: 'feedback.dashboard.pipeline.station.archived',
+}
+
+const productUnavailable = computed(
+  () =>
+    product.value?.unavailable.map((row) => ({
+      name: row.name,
+      text: t(PRODUCT_UNAVAILABLE_KEY[row.name] ?? row.name),
+    })) ?? []
+)
+
+/** `name` 是 snake_case，词条是 camelCase。**键写全字面量**（同 `TAB_KEY`）：
+ *  拼出来的键在源码里没有一处字面量出现，`catalog.spec.ts` 会把它判成死键。 */
+const UNAVAILABLE_KEY: Record<string, string> = {
+  github_app_permission_gaps: 'feedback.dashboard.integrations.unavailable.githubAppPermissionGaps',
+  github_app_mint_failure_rate: 'feedback.dashboard.integrations.unavailable.githubAppMintFailureRate',
+  login_lockout_stock_and_rate: 'feedback.dashboard.integrations.unavailable.loginLockoutStockAndRate',
+  metering_post_freeze: 'feedback.dashboard.integrations.unavailable.meteringPostFreeze',
+}
+
+const PRODUCT_UNAVAILABLE_KEY: Record<string, string> = {
+  acceptance_rate_after_summon: 'feedback.dashboard.product.unavailable.summon',
+  churn_after_credits_exhausted: 'feedback.dashboard.product.unavailable.churn',
+}
+
+/** 轮次失败的码 → 词条。同 `HEALTH_KEY`：不拼字符串。 */
+const FAIL_CODE_KEY: Record<string, string> = {
+  turn_timeout: 'feedback.dashboard.pipeline.code.turn_timeout',
+  prompt_undelivered: 'feedback.dashboard.pipeline.code.prompt_undelivered',
+  host_unreachable: 'feedback.dashboard.pipeline.code.host_unreachable',
+  storage_exhausted: 'feedback.dashboard.pipeline.code.storage_exhausted',
+  runtime_image_missing: 'feedback.dashboard.pipeline.code.runtime_image_missing',
+  subscription_credential_expired: 'feedback.dashboard.pipeline.code.subscription_credential_expired',
+  workspace_vcs_perms: 'feedback.dashboard.pipeline.code.workspace_vcs_perms',
+  other: 'feedback.dashboard.pipeline.code.other',
+}
+
+const integrationsUnavailable = computed(
+  () =>
+    integrations.value?.unavailable.map((row) => ({
+      name: row.name,
+      text: t(UNAVAILABLE_KEY[row.name] ?? row.name),
+    })) ?? []
+)
+
 const perf = computed(() => store.stats.performance)
 
 /** 一条路由的耗时。**`null` 画成「—」不是 0**：0 是一个读数（「真的很快」），
@@ -268,12 +903,21 @@ const perfRoutes = computed(() => perf.value?.routes ?? [])
 
 /** 被截断的那部分要说出来：表里只有前 N 条，写「12 条」而不写「共 34 条」的话，
  *  读者会以为这就是全部。 */
+/** 「有样本 X / 共 Y」—— 分母是注册的全部路由。
+ *
+ *  只报 X 会被读成「这个 app 才 6 条路由」（管理员就问过「在采的路由是不是太少了」）。
+ *  实际上 X 是**重启以来被访问过、留下样本的**那几条，没被访问过的路由在这里根本
+ *  不出现。两个数一起读才答得了「是不是太少了」。 */
 const routesText = computed(() => {
   const p = perf.value
   if (!p) return ''
-  return p.routes_total > p.routes_shown
-    ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
-    : String(p.routes_total)
+  const registered = p.routes_registered
+  if (registered === undefined || registered === null) {
+    return p.routes_total > p.routes_shown
+      ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
+      : String(p.routes_total)
+  }
+  return t('feedback.dashboard.perf.routesOf', { shown: p.routes_total, total: registered })
 })
 
 const lagText = computed(() => {
@@ -359,6 +1003,9 @@ function onSelectDay(index: number) {
 }
 
 onMounted(() => {
+  // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
+  // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
+  if (store.statsKind === 'feedback') selectKind('pipeline')
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
   // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
@@ -392,12 +1039,224 @@ onMounted(() => {
         </v-btn-toggle>
       </div>
 
+      <!-- 摘要条：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
+           切过去），不是独立卡片。
+           **它是文字 chip，不是第二排大数字卡**：下面那排 KPI 卡已经是「标签 + 大数
+           字」，摘要条再摆一排同样式的大数字就是同一件事说两遍（管理员指着两排问过
+           「这两行是同一个东西」）。所以这里只有名字 + 一个短值，高度压到 chip 档，
+           大数字全留给下面那一排。 -->
+      <div class="ad__pulse" role="tablist" aria-label="看板各块摘要">
+        <button
+          v-for="row in pulse"
+          :key="row.key"
+          type="button"
+          class="ad__pulse-cell"
+          :class="{ 'ad__pulse-cell--on': kind === row.key, [`ad__pulse-cell--${row.tone}`]: true }"
+          role="tab"
+          :aria-selected="kind === row.key"
+          :title="row.hint"
+          @click="selectKind(row.key as StatsKind)"
+        >
+          <span class="ad__pulse-label t-eyebrow-read">{{ row.label }}</span>
+          <span class="ad__pulse-value t-dense t-num">{{ row.value }}</span>
+        </button>
+      </div>
+
       <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
            的名字，不是数据。 -->
       <p v-if="failed" class="ad__none">
         <span class="ad__none-title">{{ t('feedback.dashboard.error.title') }}</span>
         <span class="ad__none-desc">{{ t('feedback.dashboard.error.desc') }}</span>
       </p>
+
+      <!-- 交付管线：产品自己的主链。默认落点 —— 「现在该我动的是哪几件」排第一。 -->
+      <template v-else-if="kind === 'pipeline'">
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in pipelineKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <!-- 活四站导轨。**没有闸门那一站** —— 它已退役（#296），画上去就是一个永远
+             空的站，而页面第一眼的位置不该放装饰。 -->
+        <AdminLiveSpine :stages="spineStages" :stuck="spineStuck" :loading="store.statsLoading" />
+
+        <div class="ad__row">
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.needs.title')"
+            :rows="needsYouRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.needs.empty')"
+          />
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.stuck.title')"
+            :rows="stuckRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.stuck.empty')"
+          />
+        </div>
+
+        <div class="ad__row ad__row--equal">
+          <AdminBreakTable
+            :title="t('feedback.dashboard.pipeline.failures.title')"
+            :note="t('feedback.dashboard.pipeline.failures.note')"
+            :rows="failureRows"
+            :loading="store.statsLoading"
+          />
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.host.title')"
+            :rows="hostRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.host.empty')"
+          />
+        </div>
+
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.title') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.backlog.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.stuck.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.needs.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.host.note') }}</p>
+      </template>
+
+      <!-- 产品健康：北极星 + 两条护栏 + 两条「今天算不出来」。 -->
+      <template v-else-if="kind === 'product'">
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.product.title') }}</p>
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in productKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <div class="ad__row">
+          <AdminLineChart
+            :title="t('feedback.dashboard.product.northStar')"
+            :x-labels="xLabels"
+            :series="northSeries"
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.northStarNote') }}</p>
+          <AdminShareBar
+            :title="t('feedback.dashboard.product.rejection.title')"
+            :segments="rejectionSegments"
+            :note="t('feedback.dashboard.product.rejection.note')"
+            :loading="store.statsLoading"
+          />
+        </div>
+
+        <AdminShareBar
+          :title="t('feedback.dashboard.product.usefulness.title')"
+          :segments="usefulnessSegments"
+          :note="t('feedback.dashboard.product.usefulness.note')"
+          :loading="store.statsLoading"
+        />
+
+        <!-- 算不出来的那两条：**带理由**，不画一个假 0。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.product.unavailable.title') }}</h2>
+          <p v-for="row in productUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
+            {{ row.text }}
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.unavailable.note') }}</p>
+        </section>
+      </template>
+
+      <!-- 集成健康：静默降级。**没有 days** —— 凭据与投递是存量问题。 -->
+      <template v-else-if="kind === 'integrations'">
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.integrations.title') }}</p>
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in integrationKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <div class="ad__row ad__row--equal">
+          <AdminShareBar
+            :title="t('feedback.dashboard.integrations.oauth.title')"
+            :segments="
+              integrations
+                ? [
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.expired'),
+                      value: integrations.oauth.expired,
+                      shade: 'ink' as const,
+                    },
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.expiring'),
+                      value: integrations.oauth.expiring_7d,
+                      shade: 'muted' as const,
+                    },
+                    {
+                      label: t('feedback.dashboard.integrations.oauth.noRefresh'),
+                      value: integrations.oauth.no_refresh_token,
+                      shade: 'faint' as const,
+                    },
+                  ].filter((s) => s.value > 0)
+                : []
+            "
+            :note="t('feedback.dashboard.integrations.oauth.note')"
+            :loading="store.statsLoading"
+          />
+          <AdminMeterBar
+            :label="t('feedback.dashboard.integrations.passkey.title')"
+            :value-text="integrations ? `${integrations.passkey.with_passkey} / ${integrations.passkey.accounts}` : ''"
+            :limit="integrations?.passkey.accounts ?? null"
+            :ratio="integrations?.passkey.coverage ?? 0"
+            :hint="
+              integrations?.passkey.coverage === null || integrations?.passkey.coverage === undefined
+                ? ''
+                : `${Math.round(integrations.passkey.coverage * 100)}%`
+            "
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.passkey.note') }}</p>
+        </div>
+
+        <p class="ad__block-note t-meta-read">
+          {{ t('feedback.dashboard.integrations.oauth.total') }} {{ integrations?.oauth.total ?? '—' }}
+        </p>
+
+        <AdminShareBar
+          :title="t('feedback.dashboard.integrations.delivery.title')"
+          :segments="
+            integrations
+              ? [
+                  {
+                    label: t('feedback.dashboard.integrations.delivery.unsent'),
+                    value: integrations.delivery.unsent,
+                    shade: 'ink' as const,
+                  },
+                  {
+                    label: t('feedback.dashboard.integrations.delivery.dead'),
+                    value: integrations.delivery.dead_letters,
+                    shade: 'muted' as const,
+                  },
+                ].filter((s) => s.value > 0)
+              : []
+          "
+          :note="t('feedback.dashboard.integrations.delivery.note')"
+          :loading="store.statsLoading"
+        />
+
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.integrations.unavailable.title') }}</h2>
+          <p v-for="row in integrationsUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
+            {{ row.text }}
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.unavailable.note') }}</p>
+        </section>
+      </template>
 
       <!-- 反馈：栏位计数 + 两条曲线 + 需处理那十行。 -->
       <template v-else-if="kind === 'feedback'">
@@ -411,6 +1270,23 @@ onMounted(() => {
             :to="kpi.to"
           />
         </div>
+
+        <!-- 急件警示：只有真的压着没人管的急件时才画。空着时不占位置。 -->
+        <p v-if="urgentOpen > 0" class="ad__urgent t-meta">
+          {{ t('feedback.dashboard.kpi.urgent', { n: urgentOpen }) }}
+        </p>
+
+        <!-- 四栏计数。**筛选不是划分**，所以行末那句口径必须在。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.column.title') }}</h2>
+          <div class="ad__split-grid">
+            <div v-for="col in feedbackColumns" :key="col.key" class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ col.label }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ col.value }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.column.note') }}</p>
+        </section>
 
         <div class="ad__row">
           <AdminLineChart
@@ -427,6 +1303,13 @@ onMounted(() => {
             :more-to="queue()"
           />
         </div>
+
+        <!-- 状态分布：四级同轴（它们加起来等于总数，所以可以比长短）。 -->
+        <AdminBarChart
+          :title="t('feedback.dashboard.status.title')"
+          :rows="feedbackStatusRows"
+          :loading="store.statsLoading"
+        />
       </template>
 
       <!-- 用量：窗口内的 token 与调用次数、每天一条线、最花钱的几个项目、成本那一行。 -->
@@ -456,6 +1339,48 @@ onMounted(() => {
              之间的关系**那一句：金额里没有「算不出价钱」的那部分。以前它们挤在页脚一行
              里（一行正文加一行脚注），两个数被降级成了注释。 -->
         <p v-if="costNote" class="ad__cost-note t-meta">{{ costNote }}</p>
+
+        <!-- 两个正交的拆分：模型答「贵的是哪个模型」，通路答「贵的是计费方式还是模型」。
+             并排放是因为**只有两个一起看**才答得出那个问题。 -->
+        <div class="ad__row ad__row--equal">
+          <AdminBreakTable
+            :title="t('feedback.dashboard.usage.byModel')"
+            :note="t('feedback.dashboard.usage.byModelNote')"
+            :rows="byModel"
+            :loading="store.statsLoading"
+          />
+          <AdminBreakTable
+            :title="t('feedback.dashboard.usage.byRoute')"
+            :note="t('feedback.dashboard.usage.byRouteNote')"
+            :rows="byRoute"
+            :loading="store.statsLoading"
+          />
+        </div>
+
+        <!-- 额度燃尽：三个互斥名单（已耗尽 / 快烧完 / 不限量）。少了它，三个项目同时
+             停摆时 token 曲线只是「今天用量下降」，看起来像好消息。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.credits.title') }}</h2>
+          <div class="ad__split-grid">
+            <AdminMeterBar
+              v-for="row in creditMeters"
+              :key="row.label"
+              :label="row.label"
+              :value-text="row.valueText"
+              :limit="row.limit"
+              :ratio="row.ratio"
+              :tone="row.tone"
+              :hint="row.hint"
+              :loading="store.statsLoading"
+            />
+          </div>
+          <p v-if="credits" class="ad__block-note t-meta-read">
+            {{ t('feedback.dashboard.credits.unlimited') }} {{ credits.unlimited_count }} ·
+            {{ t('feedback.dashboard.credits.burn') }} {{ credits.burn.credits_per_day.toFixed(1) }}/d ·
+            {{ t('feedback.dashboard.credits.eta') }} —
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.credits.note') }}</p>
+        </section>
       </template>
 
       <!-- 性能：**这一刻**的接口耗时。它是四类里唯一读进程内存的，所以底下那句口径
@@ -508,7 +1433,32 @@ onMounted(() => {
             </tbody>
           </table>
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
+          <p class="ad__perf-note t-meta-read">{{ t('feedback.dashboard.perf.routesNote') }}</p>
         </div>
+
+        <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
+        <section v-if="reliability" class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.reliability.title') }}</h2>
+          <div class="ad__split-grid">
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{
+                t('feedback.dashboard.integrations.delivery.unsent')
+              }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_unsent) }}</span>
+            </div>
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{
+                t('feedback.dashboard.integrations.delivery.dead')
+              }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_dead_letters) }}</span>
+            </div>
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.reliability.title') }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.spool?.unread) }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.reliability.note') }}</p>
+        </section>
       </template>
 
       <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
@@ -542,6 +1492,40 @@ onMounted(() => {
             <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.machines.note') }}</p>
           </section>
         </div>
+
+        <!-- 健康度：**这一刻**的，和上面两组的「存量 / 窗口」不是一回事。状态色只在
+             这一行用（up / stalling / down），全页别处都是中性阶。 -->
+        <section v-if="healthRows.length" class="ad__health">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.health.title') }}</h2>
+          <div class="ad__health-grid">
+            <div v-for="row in healthRows" :key="row.key" class="ad__health-cell">
+              <span class="ad__health-dot" :class="`ad__health-dot--${row.tone}`" aria-hidden="true" />
+              <span class="ad__health-label t-eyebrow-read">{{ row.label }}</span>
+              <span class="ad__health-status t-body">{{ row.status }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.health.note') }}</p>
+        </section>
+
+        <!-- 三样缺口：磁盘（只这台后端）/ 预览（进程内存）/ 机器普查（台账行不是容器）。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.extras.disk.title') }}</h2>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.title') }}</p>
+          <AdminMeterBar
+            v-for="row in extrasRows"
+            :key="row.label"
+            :label="row.label"
+            :value-text="row.valueText"
+            :limit="row.limit"
+            :ratio="row.ratio"
+            :tone="row.tone"
+            :hint="row.hint"
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.disk.note') }}</p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.preview.note') }}</p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.note') }}</p>
+        </section>
       </template>
     </div>
   </div>
@@ -714,6 +1698,178 @@ onMounted(() => {
 .ad__cost-note {
   margin: 12px 0 0;
   line-height: var(--lh-12);
+}
+
+/* 急件警示行。只有真的压着没人管的急件时才画，所以它一出现就该被看见 —— 用
+   `--warn-ink` 的文字而不是整块琥珀底：琥珀在这套设计系统里只留给「当前唯一的主操作」
+   （§0），一个警示行不是操作。 */
+.ad__urgent {
+  margin: 12px 0 0;
+  color: var(--warn-ink);
+  line-height: var(--lh-12);
+}
+
+/* 四块摘要 —— 这一页的**第一眼**。四格并排、整块可点，所以它是导航不是卡片：
+   高度比 KPI 卡矮一档（72px），但那一格的数用同一档字号（`t-console-title`），因为
+   「哪块需要我」和「这块的数是多少」是同一眼要读走的。 */
+.ad__pulse {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+/* chip，不是卡片：高度 28px、横向排、字号 `.t-dense`。大数字只有下面那排 KPI
+   卡才有 —— 摘要条再摆一排 `.t-console-title` 就是同一件事说两遍。 */
+.ad__pulse-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--fill);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ad__pulse-cell:hover {
+    background: var(--fill-2);
+  }
+}
+
+.ad__pulse-cell--on {
+  background: var(--surface);
+  border-color: var(--line-2);
+}
+
+.ad__pulse-label {
+  color: var(--muted);
+}
+
+.ad__pulse-value {
+  color: var(--ink);
+}
+
+.ad__pulse-cell--warn .ad__pulse-value {
+  color: var(--warn-ink);
+}
+
+.ad__pulse-cell--ok .ad__pulse-value {
+  color: var(--ok-ink);
+}
+
+.ad__pulse-cell--danger .ad__pulse-value {
+  color: var(--danger-ink);
+}
+
+/* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个
+   筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
+.ad__split {
+  margin-top: 20px;
+}
+
+.ad__split-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ad__split-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ad__split-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__split-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__split-value {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+/* 健康度。**状态色只在这一块用**（up / stalling / down），全页别处都是中性阶：一屏里
+   只有一处有颜色的时候，那一处就是「需要看的地方」。 */
+.ad__health {
+  margin-top: 20px;
+}
+
+.ad__health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ad__health-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}
+
+.ad__health-cell {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__health-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.ad__health-dot--ok {
+  background: var(--ok);
+}
+
+.ad__health-dot--warn {
+  background: var(--warn);
+}
+
+.ad__health-dot--danger {
+  background: var(--danger);
+}
+
+.ad__health-label {
+  flex: 0 0 auto;
+}
+
+.ad__health-status {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__row--equal {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .ad__machines {

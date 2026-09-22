@@ -103,3 +103,4 @@ tmp/
 frontend/public/docs/
 docs/manual/.vitepress/cache/
 docs/manual/node_modules/
+frontend/dist-dashboard-proto/

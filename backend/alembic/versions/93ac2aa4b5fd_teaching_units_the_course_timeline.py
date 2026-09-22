@@ -6,7 +6,7 @@ means the unit does not exist for a student yet — that is the whole point of t
 column, so it is deliberately nullable and unindexed.
 
 Revision ID: 93ac2aa4b5fd
-Revises: 16f4e85e5971
+Revises: b7e4a1c9d0f2
 Create Date: 2026-09-22 12:10:00.000000
 
 """
@@ -19,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "93ac2aa4b5fd"
-down_revision: str | Sequence[str] | None = "16f4e85e5971"
+down_revision: str | Sequence[str] | None = "b7e4a1c9d0f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
