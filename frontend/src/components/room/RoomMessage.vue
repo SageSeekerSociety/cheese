@@ -249,6 +249,52 @@ function renderPlain(text: string): string {
 <style scoped src="./room-row.css"></style>
 
 <style scoped>
+/* 忘了 @ 的补救行。它属于那条消息（和正文左对齐），不是一条平台行——平台行说的
+   是平台做了什么，这一行说的是**你**还差一步。 */
+.summon-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--faint);
+}
+.summon-hint-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.summon-hint-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.summon-hint-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
+.im-replied {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  margin-bottom: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-replied:hover {
+  color: var(--accent-ink);
+}
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
 .im-row--pending .im-name {
