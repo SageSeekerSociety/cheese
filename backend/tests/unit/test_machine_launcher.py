@@ -73,16 +73,34 @@ def _run(tmp_path, env, **holes):
 def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path):
     home, work, env = _machine(tmp_path)
     proof = tmp_path / "agent.ran"
+    store_env = tmp_path / "store.env"
+    store = tmp_path / "project-store"
+    env["CHEESE_STORE"] = str(store)
     result = _run(
         tmp_path,
         env,
-        prepare=_harness(tmp_path, f'pwd > "{proof}"\n'),
+        prepare=_harness(
+            tmp_path,
+            f'pwd > "{proof}"\n'
+            + "".join(
+                f'printf "%s=%s\\n" {name} "${name}" >> "{store_env}"\n'
+                for name in _STORE_VARS
+            ),
+        ),
         command="$AGENT",
     )
 
     assert result.returncode == 0, result.stderr
     # The agent ran, in the session's workdir.
     assert proof.read_text().strip() == str(work.resolve())
+    seen_store = dict(line.split("=", 1) for line in store_env.read_text().splitlines())
+    assert seen_store == {
+        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
+        "npm_config_store_dir": str(store / "pnpm-store"),
+        "npm_config_cache": str(store / "npm-cache"),
+        "PIP_CACHE_DIR": str(store / "pip-cache"),
+    }
     # And the platform put its own half on the machine around it.
     for name in ("cheese", "cheese-hook", "cheese-drain", "cheese-environment.py"):
         assert (home / ".cheese" / name).is_file(), name
