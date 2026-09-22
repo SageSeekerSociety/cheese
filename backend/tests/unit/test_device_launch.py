@@ -95,7 +95,7 @@ def test_warm_adoption_waits_for_room_configuration(
     assert staged < configured < adopted
     # Exercise the generated staging and adoption programs around the generated
     # configuration write. The intervening launcher work has independent tests
-    # and made this ordering contract depend on whole-launch wall time.
+    # and made this ordering contract depend on the elapsed time of the complete launch.
     prefix_end = launch.index("# The platform's own directory", staged)
     config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
     config_end = launch.index("\n", configured) + 1

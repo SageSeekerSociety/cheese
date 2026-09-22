@@ -594,7 +594,7 @@ _STORE_VARS = (
 
 
 def _installer_env(env, dump):
-    """Run the generated synchronous project-store setup and report its env."""
+    """Run the generated synchronous project-store setup and report its environment."""
     launcher = machine_launcher.launch_script(command=":")
     start = launcher.index('CS="${CHEESE_STORE:-}"')
     end = launcher.index("\nfi\n", start) + len("\nfi\n")
