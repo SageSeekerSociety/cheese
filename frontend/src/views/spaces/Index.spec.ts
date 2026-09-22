@@ -68,6 +68,8 @@ function mountPage() {
     routes: [
       { path: '/', name: 'root', component: { template: '<div />' } },
       { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/course', name: 'SpacesCourseHome', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
     ],
   })
   // PageHeader 要 pinia（它读页面标题那个 store）。
@@ -191,24 +193,38 @@ describe('space creation', () => {
     expect(page.getByText('spaces.create.courseTemplateTag')).toBeTruthy()
   })
 
-  it('lands the creator in the new board instead of back on the list', async () => {
+  it('lands the creator in the new course instead of back on the list', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
+    // 建出来的题目板就是一门课（服务端说 `isCourse`），所以落点是课程首页。
+    spacesCreate.mockResolvedValue({ data: { space: { id: 42, isCourse: true } } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Programming course')
     await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
 
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesCourseHome'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('42')
+  })
+
+  it('lands a board that is not a course on the problem list', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({ data: { space: { id: 43 } } })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Not a course')
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
+    expect(page.router.currentRoute.value.params.spaceId).toBe('43')
   })
 
   it('hands over the invite code first, then lands in the new board', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockResolvedValue({
       data: {
-        space: { id: 7 },
+        space: { id: 7, isCourse: true },
         inviteCode: {
           id: 1,
           spaceId: 7,
@@ -231,7 +247,7 @@ describe('space creation', () => {
     expect(page.router.currentRoute.value.name).toBe('root')
 
     await fireEvent.click(page.getByRole('button', { name: 'spaces.inviteCodes.openCourse' }))
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesCourseHome'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('7')
   })
 
