@@ -2212,6 +2212,18 @@ export function createFeedbackComment(
 /** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
  *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
  *  遍历，多算一次就会和服务端的答案漂开。 */
+/** 删掉**整条反馈**（软删，连带它下面的评论）。
+ *
+ *  **谁能删由服务端说了算**：每一条详情上的 `can_delete` 就是那个答案（作者 —— 写它的
+ *  那个 handle 或按下发送的那个 —— 或平台管理员），客户端不自己拼一遍判据。这个仓库
+ *  已经吃过一次「客户端重算一遍服务端的规则」的亏（`deployed` 那次：按钮亮着、服务端
+ *  回 412），评论那一层也因此把 `can_delete` 交给服务端算。 */
+export function deleteFeedback(feedbackId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/feedback/${encodeURIComponent(feedbackId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,

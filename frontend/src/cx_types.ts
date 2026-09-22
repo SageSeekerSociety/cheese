@@ -1274,6 +1274,10 @@ export interface FeedbackDetail extends FeedbackCard {
   thread_next_cursor: string | null
   /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
   notes: FeedbackNote[]
+  /** 调用者能不能删掉**整条反馈**。**服务端算**（作者 —— 写它的那个 handle 或按下
+   *  发送的那个 —— 或平台管理员），和 `DELETE /feedback/{id}` 共用一处判据；客户端
+   *  照它画按钮，不自己拼一遍，否则就是「按钮画得出来、点下去 403」。 */
+  can_delete: boolean
 }
 
 export interface FeedbackCounts {

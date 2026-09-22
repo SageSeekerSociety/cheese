@@ -279,6 +279,35 @@ async def get_feedback(
     )
 
 
+@router.delete("/{feedback_id}")
+async def delete_feedback(
+    feedback_id: uuid.UUID,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+) -> dict:
+    """删掉一条反馈 —— **作者删自己的，平台管理员删任何一条**。
+
+    两种 4xx 分得很清楚，因为它们是两件事：
+
+    * **404** 是「你看不见这条」（`visible_row` 的答案）。私人反馈存不存在本身就不该
+      被一个看不见它的人问出来，所以这里不告诉他自己没有权限 —— 那等于确认了它存在。
+    * **403** 是「你看得见，但这不是你的」（`may_delete_feedback` 的答案）。
+
+    删除是**软删**（`deleted_at`，连带评论）。管理员删的是别人写的东西，那是需要留痕
+    的一类动作，而行还在就是那条痕。前端不自己判断能不能删：每一条上都有服务端算好的
+    `can_delete`，按钮照它画。
+    """
+    who = await resolver.resolve(fallback_handle=None)
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError("需要登录")
+    await service.delete_feedback(
+        feedback_id,
+        handle=who.handle,
+        is_admin=await service.is_admin(who.handle),
+    )
+    return ok({"deleted": True})
+
+
 @router.get("/{feedback_id}/comments")
 async def list_feedback_comments(
     feedback_id: uuid.UUID,
