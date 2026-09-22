@@ -43,7 +43,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          # Go already keeps its module and build caches on this persistent runner.
+
+          cache: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

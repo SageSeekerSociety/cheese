@@ -187,10 +187,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: |
-            frontend/pnpm-lock.yaml
-            e2e/pnpm-lock.yaml
 
       # The venv is built per job out of uv's cache, which is the thing worth
       # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
@@ -229,13 +225,15 @@ jobs:
         working-directory: backend
         run: uv run python -m scripts.seed_fusion_demo
 
+      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+
       - name: Install frontend deps
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install E2E deps
         working-directory: e2e
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install Playwright browsers
         working-directory: e2e

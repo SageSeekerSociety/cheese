@@ -16,9 +16,18 @@ import type { RouteRecordRaw } from 'vue-router'
  * 事，所以这里不为它做任何特殊处理。
  *
  * 后台从「一整页反馈管理」改成了**壳**（`AdminLayout`）：左边分区、右边装模块，现在
- * 装「反馈管理」和「成员管理」两块，以后加模块只加一条子路由。所以 `/admin` 是一条
- * 带 `children` 的父路由，`/admin/feedback` 从顶层搬到了它下面 —— 地址没变，变的是
- * 谁画旁边那一列。
+ * 装三块。所以 `/admin` 是一条带 `children` 的父路由。
+ *
+ * `/admin/queue` 和 `/admin/dashboard` 是这一轮新加的两条：
+ *
+ * - `queue` 是「反馈管理」这个模块改叫「队列」之后的家。换地址而不是原地换内容，因为
+ *   「反馈管理」这个名字说的是「一页管所有反馈」，而它其实是按状态往前推的分诊队列，
+ *   旁边还站着看板和成员 —— 三个平级的模块挤在同一个名字底下，链接分享出去对不上话。
+ * - `dashboard` 是看板，同一层里的第三块。
+ * - `/admin/feedback` **留着**，渲染一个薄壳（`AdminFeedbackPage` → `AdminQueuePage`）。
+ *   老书签、老通知、别人贴在聊天里的链接都指到这里，删掉就是一个 404；而重定向会把
+ *   地址栏里那个旧地址悄悄换掉，用户回头再复制一次时会以为自己记错了。留着它，代价
+ *   是六行。
  *
  * `isFullPage: true` 是给顶栏用的：AppBar 取层级里第一个 isFullPage 的标题作为
  * 中间那行字（见 components/common/Navigation/AppBar.vue 的 updateTitle），
@@ -46,20 +55,35 @@ export default [
   {
     path: '/admin',
     component: () => import('@/views/admin/AdminLayout.vue'),
-    // 只写地址不写组件：`/admin` 本身没有内容，直接落进「反馈管理」。
-    redirect: '/admin/feedback',
+    // 只写地址不写组件：`/admin` 本身没有内容，直接落进队列 —— 后台里用得最多的那一块。
+    redirect: '/admin/queue',
     children: [
       {
+        path: 'queue',
+        name: 'AdminQueue',
+        component: () => import('@/views/admin/AdminQueuePage.vue'),
+        meta: { title: '反馈队列', isFullPage: true },
+      },
+      {
+        path: 'dashboard',
+        name: 'AdminDashboard',
+        component: () => import('@/views/admin/AdminDashboardPage.vue'),
+        meta: { title: '看板', isFullPage: true },
+      },
+      {
+        // main 后加的这一块（题目板审核），地址与分区名都跟着它自己的 PR 走。
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
         meta: { title: '题目板审核', isFullPage: true },
       },
       {
+        // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字
+        // 不该因为用户是从哪个链接进来的而变。
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
-        meta: { title: '反馈管理', isFullPage: true },
+        meta: { title: '反馈队列', isFullPage: true },
       },
       {
         path: 'members',

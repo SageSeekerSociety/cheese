@@ -3,10 +3,12 @@ import type { User } from '@/types/users'
 import { computed, ref } from 'vue'
 
 import { clearComposerDrafts } from '@/lib/composerDrafts'
+import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
 import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
 import { disablePush } from '@/services/webPush'
+import { resetFeedbackCaches } from '@/stores/feedback'
 
 // 令牌快到期时也当过期处理：留一点余量，免得请求刚发出去令牌就死在路上。
 const EXPIRY_SKEW_MS = 30_000
@@ -47,7 +49,7 @@ function storedUserId(): number | undefined {
 /**
  * 换人登录就把上一个人的缓存丢掉。
  *
- * 两份缓存都装着上一个人读过的东西，而两份都不按人分：
+ * 这几份缓存都装着上一个人读过的东西，而它们都不按人分：
  *
  * - **service worker 的 API 读缓存**（vite.config.ts 的 `cheese-api-get`）按 URL
  *   建键，请求头不进键，后端也没发 `Vary` —— 所以 `GET /api/projects` 全浏览器只
@@ -55,12 +57,15 @@ function storedUserId(): number | undefined {
  *   个人的数据画到这个人屏幕上。
  * - **页面缓存**住在内存里，下一个人打开总览会先看到上一个人的项目名，然后才被
  *   后台刷新盖掉 —— 那一眼已经泄露了。
+ * - **反馈那三份**（stores/feedback.ts 的公开列表 / 我的反馈 / 详情）也都是「同一
+ *   台机器上的下一个人会先看到」的那种：其中「我的反馈」和详情是**按人**的，公开
+ *   列表虽然不是私密数据，但它记着这个人刚翻过哪一页。
  *
- * 两份本来都只在退出登录时清（`logout`），而危险的那一下不是退出，是**换人登录**：
- * 上一个人关掉标签页就走了、没点退出，下一个人登进来时两份都还在。
+ * 它们本来都只在退出登录时清（`logout`），而危险的那一下不是退出，是**换人登录**：
+ * 上一个人关掉标签页就走了、没点退出，下一个人登进来时全都还在。
  *
  * 同一个人不清：续签令牌走的也是 `login`（`refreshToken` 拦截器），每小时清一次
- * 等于这两份缓存从来不存在。所以判据是**身份变了**，不是「又登了一次」。
+ * 等于这些缓存从来不存在。所以判据是**身份变了**，不是「又登了一次」。
  *
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
@@ -68,9 +73,14 @@ function storedUserId(): number | undefined {
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
   if (previous !== undefined && next !== undefined && previous === next) return false
   clearPageCache()
+  // 反馈那三份：不按人分，而且其中两份装的就是「按人」的东西。
+  resetFeedbackCaches()
   // 输入框草稿也带着上一个人的话（lib/composerDrafts.ts），而且它的键里只有话题
   // id——话题是全站共享的，不清就等于把上一个人的半句话递给下一个人看。
   clearComposerDrafts()
+  // 反馈提交表单那半篇也一样（lib/feedbackDraft.ts）：它里面可能有这个人的原话、
+  // 甚至是他贴进来的一段内部报错。它没有第二个按键让人自己清，只能在这里清。
+  forgetFeedbackDraft()
   // 即发即忘：缓存出问题绝不能挡住登录本身。
   if (typeof caches !== 'undefined') void caches.delete(API_CACHE).catch(() => {})
   return true
@@ -228,8 +238,12 @@ export class AccountService {
     // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
     // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
     clearPageCache()
+    // 反馈那三份同理，而且它们更直接：「我的反馈」和详情装的就是这个人自己那几条。
+    resetFeedbackCaches()
     // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。
     clearComposerDrafts()
+    // 反馈提交表单那半篇同理（lib/feedbackDraft.ts）。
+    forgetFeedbackDraft()
   }
 }
 

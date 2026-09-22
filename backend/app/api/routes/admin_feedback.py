@@ -15,6 +15,7 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -87,16 +88,40 @@ async def list_admin_feedback(
     tab: str = Query(default="public"),
     assignee: str | None = Query(default=None, max_length=64),
     q: str | None = Query(default=None, max_length=200),
+    sort: str = Query(default="new"),
+    since: datetime | None = Query(default=None),
+    resolved_since: datetime | None = Query(default=None),
+    deployed_since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     """四个栏位：公开 / 私密 / agent 提的 / 安全。
 
     `tab` 不认识时报 400 而不是悄悄退回 `public` —— 管理端猜错栏位会让人以为
-    「这条反馈不见了」，而它其实在隔壁那一栏。
+    「这条反馈不见了」，而它其实在隔壁那一栏。`sort` 走同一条规矩（`new` /
+    `supports`，见 `services.SORTS`）：排序就是这一页的答案，答成另一种排序
+    等于用同一个标题回答了另一个问题。
+
+    三个可选的时间下界，口径**不一样**，别当成一组：
+
+    * `since` 按**提交时间**收（`feedback.created_at >= since`）。
+    * `resolved_since` / `deployed_since` 按**时间线**收：这条反馈在窗口内**到过**
+      该状态（`EXISTS` 子查询）。它们问的不是「现在是不是这个状态」—— 一条后来又被
+      退回的条目照样算「解决过」，那正是分诊要看见的那一批。判据与理由写在
+      `FeedbackRepository._reached_since`。
+
+    三个都不给就是原来的行为（全量那一页），所以这组参数是纯增量。
     """
     rows, total = await service.list_admin(
-        tab=tab, assignee=assignee, q=q, limit=page_size, offset=page_start
+        tab=tab,
+        assignee=assignee,
+        q=q,
+        sort=sort,
+        limit=page_size,
+        offset=page_start,
+        since=since,
+        resolved_since=resolved_since,
+        deployed_since=deployed_since,
     )
     return ok(
         {

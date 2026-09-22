@@ -6,7 +6,7 @@ visible at each level (话题→项目→机构).
 
 import uuid
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -40,6 +40,11 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
+    #: 平台看板按天聚合这张表：`created_at` 的范围扫。等值的四条索引
+    #: （`project_id` / `topic_id` / `task_id` / `turn_id`）一条都服务不了它——
+    #: 这是全仓增长最快的一张表，没有它就是每次看板全表顺序扫。迁移见
+    #: `a9c4e7f12b60`。
+    __table_args__ = (Index("ix_resource_usage_created_at", "created_at"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True

@@ -4,6 +4,7 @@ import type { FeedbackComment } from '@/cx_types'
 import { computed, ref } from 'vue'
 
 import FeedbackCommentItem from '@/components/feedback/FeedbackCommentItem.vue'
+import { t } from '@/i18n'
 
 // 评论**只有一种摆法**：两层折叠。
 //
@@ -222,7 +223,13 @@ function onRemove(commentId: string) {
       </button>
     </li>
   </ul>
-  <div v-else class="t-body c-faint mb-3">暂无评论</div>
+  <!-- 无评论（§9.5）。主副两句，和别处的四态同一副骨架：主句说「现在这样」，副句说
+       「接下来会怎样」。原来是一行 `c-faint` 的 14px 灰字 —— 那一档在浅色主题下连
+       3:1 都到不了（见 style.css 的 .t-meta-read），而这是要人读的一句话。 -->
+  <div v-else class="fb-thread__empty">
+    <div class="fb-thread__empty-title">{{ t('feedback.detail.comments.title') }}</div>
+    <p class="fb-thread__empty-desc">{{ t('feedback.detail.comments.desc') }}</p>
+  </div>
 </template>
 
 <style scoped>
@@ -232,6 +239,37 @@ function onRemove(commentId: string) {
   margin: 0 0 24px;
   padding: 0;
   list-style: none;
+}
+/* 评论正文 14 / --lh-14-loose 22（§10.2）：和列表摘要、详情正文同一档可读性 ——
+   评论也是会连排三行的 CJK，跟着 `.t-body` 走的 20px 让两条挨着的评论挤成一块。
+   字重一并落到 400：`.t-body` 的 430 在 PingFang SC 上没有对应字重，会被吸到 500，
+   汉字的拉丁部分是凭空重半档的。
+   改在**这一层**而不是评论条里：§10.3 把 `FeedbackCommentItem.vue` 定为不动的一件，
+   而它在四处复用 —— 效果一样，不必去动一件共用组件。 */
+.fb-thread :deep(.fb-ci__body) {
+  font-weight: 400;
+  line-height: var(--lh-14-loose);
+}
+/* 无评论那一块。和列表的空态同形，只是这里不做居中：它是评论区里的一句话，左边
+   要和上面的评论正文对齐。下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个
+   评论框的位置不该跟着挪。 */
+.fb-thread__empty {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 24px;
+  gap: 8px;
+}
+.fb-thread__empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+}
+.fb-thread__empty-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 .fb-thread__top + .fb-thread__top {
   margin-top: 16px;

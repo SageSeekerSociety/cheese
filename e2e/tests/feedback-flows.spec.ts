@@ -9,7 +9,7 @@ import { api, login } from './helpers';
 // 事：像人一样点一遍，任何一步和预期不符就红。
 //
 // 管理端那条要求后端把 alice 放进管理员名单（`PLATFORM_ADMIN_HANDLES`，见
-// playwright.config.ts 里后端 webServer 的 env）。没有它，`/admin/feedback` 只会
+// playwright.config.ts 里后端 webServer 的 env）。没有它，`/admin/queue` 只会
 // 回 403，用例红在「这一页是管理员后台」的闸门那一步，而不是红在要验的东西上。
 
 // 每条用例的标题带时间戳，这样重跑时不会撞上上一轮留下的条目——列表按新到旧排，
@@ -229,48 +229,72 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   })) as { id: string };
   const id = created.id;
 
-  await page.goto('/admin/feedback');
-  // 两件事叠在一起，所以这一步的等待要给足：管理端在 onMounted 里先 loadMeta 再
-  // loadAdmin（落地就断言行数会读到空表），而 vite 开发服务器是**按路由**编译的，
-  // 「反馈管理」这一条在这条用例里是第一次进，冷编译能吃掉几十秒——默认 5s 的
-  // expect 超时不够，那时 main 里还是空的。
-  await expect(page.locator('tr.fb-row').first()).toBeVisible({ timeout: 45_000 });
+  await page.goto('/admin/queue');
+  // 这一步的等待要给足：管理端在 onMounted 里先 loadMeta 再 loadAdmin（落地就断言行数
+  // 会读到空表），而 vite 开发服务器是**按路由**编译的，「反馈队列」在这条用例里是
+  // 第一次进，冷编译能吃掉几十秒——默认 5s 的 expect 超时不够，那时列表里还是空的。
+  const row = page.locator('.qrow', { hasText: title });
+  await expect(row).toBeVisible({ timeout: 45_000 });
+  await row.locator('.fbrow__link').click();
 
-  await page.locator('tr.fb-row', { hasText: title }).click();
-  const drawer = page.locator('.fb-admin-drawer');
-  await drawer.waitFor();
+  // 宽屏（默认视口就是 1280，`min-width: 1280px` 命中）下详情**接管整页**：队列让位
+  // 给 `.qdet`，不是从右边滑出来的抽屉。
+  const detail = page.locator('.qdet');
+  await expect(detail).toBeVisible();
+  // 分诊面板展开着（宽屏的默认值）。后面那两格控件在收起时根本不在 DOM 里，所以这一
+  // 行不是铺垫——它是这条用例依赖的那个前提，写成断言才不会在默认值改了以后静默失效。
+  await expect(detail.locator('.qdet__fields')).toBeVisible();
 
-  // 状态是下拉，不是按钮：三个动作块里第一个 select 是状态，第二个是优先级。
-  const status = drawer.locator('.v-select').first();
-  for (const label of ['处理中', '已修复', '已上线']) {
-    await status.click();
-    await page.getByRole('option', { name: label, exact: true }).click();
-    await expect(drawer).toContainText(label);
-  }
+  // 四级梯子：状态不再是下拉，而是底部那颗主按钮推**下一格**（梯子上那一列按钮留着
+  // 直接跳级用）。按钮文案说的是目标那一格，所以这三步每一步读出来的是什么状态。
+  const primary = detail.locator('.qdet__primary');
+  await expect(primary).toHaveText('开始处理');
+  await primary.click();
+  await expect(detail.locator('.qdet__word')).toHaveText('处理中');
+  await expect(primary).toHaveText('标记已修复');
+  await primary.click();
+  await expect(detail.locator('.qdet__word')).toHaveText('已修复');
+  await expect(primary).toHaveText('标记已上线');
+  await primary.click();
+  await expect(detail.locator('.qdet__word')).toHaveText('已上线');
+  // 最后一格没有下一级：主按钮必须跟着消失。留一颗点了没反应的按钮，等于告诉管理员
+  // 「还有一步」，而那一格后面什么都没有。
+  await expect(primary).toHaveCount(0);
 
-  const priority = drawer.locator('.v-select').nth(1);
+  // 优先级是这一块里唯一的 `v-select`（指派那个是 autocomplete），所以不用取序号。
+  const priority = detail.locator('.v-select');
   await priority.click();
   await page.getByRole('option', { name: '高', exact: true }).click();
-  await expect(drawer).toContainText('高');
+  await expect(priority).toContainText('高');
 
-  // 指派是自由输入框，回车触发（失焦也触发）。
-  await drawer.getByPlaceholder('填 handle，留空取消指派').fill('alice');
-  await drawer.getByPlaceholder('填 handle，留空取消指派').press('Enter');
-  await expect(drawer).toContainText('alice');
-
-  await drawer.getByPlaceholder('写点什么给下一个接手的人').fill(note);
-  await drawer.getByRole('button', { name: '加一条备注' }).click();
-  await expect(drawer).toContainText(note);
-
-  // 收工。关抽屉走头上那颗关闭按钮——Vuetify 的 navigation-drawer 不吃 Esc
-  // （`temporary` 只保证遮罩点击关得掉），点 Esc 抽屉还在，别把它当成人手路径。
+  // 指派：搜账号，等候选**真的画出来**再点它。
   //
-  // 关掉之后不能断言 `toBeHidden()`：`temporary` 的抽屉关上是**滑出视口**，
-  // 元素留在 DOM 里、display 还是 flex、还是有尺寸，Playwright 因此判它 visible。
-  // 真正表示「关了」的是那颗 `--active` 类。
-  await drawer.getByRole('button', { name: '关闭' }).click();
-  await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/);
-  await expect(page.locator('tr.fb-row', { hasText: title })).toContainText('@alice');
+  // 这里踩过一次，写下来：`fill` 只是把字打进框里，它不改 `model-value`——所以
+  // 「框里是 alice」什么都证明不了（那是搜索串本身）。而搜索有 250ms 防抖，紧接着
+  // 敲 `Enter` 会打在一个还没到的候选列表上，什么都不会发生，界面上却看不出区别：
+  // 框里照样写着 alice，服务端那边一个字节都没动。这条断言后来是由下面那一格
+  // （`.qrow__assignee`，读的是服务端）兜住的——第一次跑正是它红的。
+  const assignee = detail.getByRole('textbox', { name: /指派给/ });
+  await assignee.fill('alice');
+  // 候选项按类名找，**不按 `role="option"`**：这个下拉的候选项是自定义的 `#item`
+  // 槽（昵称当标题、handle 当副标题、前面挂头像），渲染出来是普通的 `generic`
+  // 而不是 option —— 按 role 找会一直等到超时，而菜单其实就开在那儿。
+  await page.locator('.v-overlay__content .v-list-item', { hasText: 'alice' }).first().click();
+  // 选完框里留的是 handle（`item-title="handle"`），不是昵称——旧版抽屉真出过
+  // 「把昵称当 handle 发出去」这一类错。
+  await expect(assignee).toHaveValue('alice');
+
+  // 内部备注：空草稿时那颗提交按钮是禁用的，写完才点得动。
+  const submitNote = detail.locator('.qdet__submit');
+  await expect(submitNote).toBeDisabled();
+  await detail.getByPlaceholder('写点什么给下一个接手的人').fill(note);
+  await submitNote.click();
+  await expect(detail).toContainText(note);
+
+  // 收工回队列（宽屏下是那颗「返回」，不是抽屉的关闭按钮）。指派跟着进了行——队列
+  // 这一格读的是服务端那份数据，不是详情里那份本地状态。
+  await detail.locator('.qdet__back').click();
+  await expect(row.locator('.qrow__assignee')).toHaveText('alice');
 
   // 用户侧的两栏跟着动：走完梯子的进「已完成」，不在「处理中」里。
   await page.goto('/feedback');

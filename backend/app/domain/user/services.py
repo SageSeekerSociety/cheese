@@ -1,6 +1,7 @@
 import asyncio
 import re
 from collections.abc import Iterable, Sequence
+from datetime import date, datetime
 
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,6 +117,32 @@ class UserService:
 
     async def get_users_by_ids(self, ids: Sequence[int]) -> dict[int, UserProfile]:
         return await self._repo.get_profiles_by_user_ids(ids)
+
+
+class AccountService:
+    """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。
+
+    **Why this one takes a session and its three neighbours take a repository:**
+    它们三个的调用点只有用户自己的路由，而路由手里本来就已经握着那几个仓储（它们
+    还要用它做别的事），把仓储传进来省一次构造。这一个开给的是**别的领域**，而那些
+    领域不许 import `UserRepository` —— 建仓储这一步留在门里面，越界才不成立。所以
+    它拿 session，和 `FeedbackService` / `AdminService` 同一个形状。
+
+    它面对的是账号表而不是 profile：旁边三个类全是「资料」那一侧（昵称、头像、
+    关注、实名），而账号的存量与新增问的是 `User` 自己的行。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._repo = UserRepository(session)
+
+    async def count_accounts(self) -> int:
+        return await self._repo.count_accounts()
+
+    async def accounts_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
+        return await self._repo.accounts_series(since=since, until=until)
 
 
 class UserProfileService:

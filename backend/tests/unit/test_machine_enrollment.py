@@ -96,6 +96,7 @@ class FakeMachineRepo:
 
 def make_machine(**overrides):
     base = dict(
+        topic_id=None,
         project_id=uuid.uuid4(),
         hostname="proj-abc123-1",
         login_user="cheese",
@@ -135,7 +136,7 @@ def build_service(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
 
-    async def _run_bootstrap(*, ip, login_user, private_key, script):
+    async def _run_bootstrap(*, ip, login_user, private_key, script, progress=None):
         service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}

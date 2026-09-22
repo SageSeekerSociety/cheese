@@ -7,18 +7,29 @@
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
-    <!-- 反馈入口（原型）。它是一条**路由**不是一个弹窗：反馈中心是一个完整的页面
-         （有搜索、Tab、详情页、可以分享出去的链接），塞进浮层里这四件事一件都做
-         不了。登录与否都显示——没登录的人遇到的问题同样值得记下来。 -->
+    <!-- 反馈入口。它是一条**路由**不是一个弹窗：反馈中心是一个完整的页面
+         （有搜索、Tab、详情页、可以分享出去的链接），塞进浮层里这四件事一件都做不
+         了。登录与否都显示——没登录的人遇到的问题同样值得记下来。
+
+         `variant="outlined"` 画的边跟着 currentColor 走，也就是这个按钮本来就在用的
+         `--muted`（见下面那条 CSS）。所以右边这一簇里它成了唯一有可见轮廓的控件，而
+         紧随其后的语言开关仍然只有一条更淡的 `--line`——顺序正好和以前反过来，以前
+         是「切换界面语言」比「给平台提意见」显眼。**一个琥珀色都没加**：这条入口不
+         抢主操作位。
+         图标用 `<template #prepend>` 显式给 14px，不用 `prepend-icon` prop——后者由
+         Vuetify 按按钮尺寸推导，配 12px 文案会偏大。去掉 `title`：按钮已经有可见
+         文案，那个 tooltip 只是把标签再念一遍。 -->
     <v-btn
       class="feedback-entry"
-      variant="text"
+      variant="outlined"
       color="on-surface-variant"
-      :size="28"
+      :size="24"
       to="/feedback"
-      title="反馈"
       aria-label="反馈"
     >
+      <template #prepend>
+        <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
+      </template>
       反馈
     </v-btn>
     <div class="position-relative d-flex align-center justify-center">
@@ -167,16 +178,25 @@ onMounted(() => {
   color: rgb(var(--v-theme-on-surface-variant));
 }
 
+/* 高度**钉死，不靠内容撑**。这个 chip 原来只有 `min-height`，实际高度是行盒 +
+   上下内边距 + 上下描边算出来的（12px 的字在这条栏里落在 20px 的行盒上，20+2+2+1+1
+   = 26），而旁边那条 `:size="24"` 的反馈入口是实打实的 24 —— 同一簇里两个控件差 2px，
+   在真浏览器里量出来就是 24 对 26。行盒是被继承下来的，改一次字体就再差一次，所以
+   这里把两边都定成 24：`height` 是 border-box，行盒放得下就不再参与高度。
+   （端到端那条 `shell-default.spec.ts` 的「顶栏的反馈入口」钉的就是这个等式。） */
 .app-system-bar .language-toggle {
   min-height: 24px;
-  padding: 2px 8px;
+  height: 24px;
+  padding: 0 8px;
   font-size: 12px;
 }
 
-/* 和语言开关同一档尺寸：这条系统栏里的东西高度必须一致，否则整条会看起来参差。 */
+/* 和语言开关同一档尺寸：这条系统栏里的东西高度必须一致，否则整条会看起来参差。
+   高度是 `:size="24"` 给出的**内联** `height`，`min-height` 压不过它——所以原来那句
+   注释其实没成立（量出来 28 ≠ 语言开关的 24），现在由 `:size` 对齐，这里只管水平
+   内边距和字号。 */
 .app-system-bar .feedback-entry {
-  min-height: 24px;
-  padding: 2px 10px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
