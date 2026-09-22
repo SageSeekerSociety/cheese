@@ -6,6 +6,7 @@ routes return can be compared with the one the JS client expects.
 
 from collections.abc import Generator
 
+import pyotp
 import pytest
 import redis
 from fastapi.testclient import TestClient
@@ -79,6 +80,52 @@ def _srp_login(client: TestClient, a: str = js.A, m1: str = js.M1):
     data = _init(client)
     assert (data["salt"], data["serverPublicEphemeral"]) == (js.SALT, js.B)
     return _verify(client, a, m1)
+
+
+def _enable_2fa(client: TestClient, user: CreatedUser, token: str) -> str:
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"/users/{user.user_id}/2fa/enable"
+    init = client.post(url, headers=headers, json={})
+    assert init.status_code == 200, init.text
+    secret = init.json()["data"]["secret"]
+    confirm = client.post(
+        url,
+        headers=headers,
+        json={"secret": secret, "code": pyotp.TOTP(secret).now()},
+    )
+    assert confirm.status_code == 200, confirm.text
+    return secret
+
+
+def test_login_returns_the_proof_the_client_expects(
+    api_client: TestClient, srp_user: CreatedUser
+):
+    resp = _srp_login(api_client)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["requires2FA"] is False
+    assert data["serverProof"] == js.M2
+    assert data["user"]["id"] == srp_user.user_id
+
+
+def test_login_with_2fa_returns_the_proof_before_asking_for_a_code(
+    api_client: TestClient, srp_user: CreatedUser
+):
+    token = _srp_login(api_client).json()["data"]["accessToken"]
+    secret = _enable_2fa(api_client, srp_user, token)
+
+    resp = _srp_login(api_client)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["requires2FA"] is True
+    assert data["serverProof"] == js.M2
+
+    done = api_client.post(
+        "/users/auth/verify-2fa",
+        json={"temp_token": data["tempToken"], "code": pyotp.TOTP(secret).now()},
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["user"]["id"] == srp_user.user_id
 
 
 @pytest.mark.parametrize(("a", "m1"), MALFORMED)

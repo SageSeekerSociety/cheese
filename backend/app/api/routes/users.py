@@ -1876,7 +1876,7 @@ async def srp_login_verify(
                 "data": {
                     "requires2FA": True,
                     "tempToken": await _issue_2fa_pending_token(user.id),
-                    "serverProof": "",
+                    "serverProof": server_proof_hex,
                 },
             }
 

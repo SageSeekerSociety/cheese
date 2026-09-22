@@ -89,9 +89,11 @@ _g = _SI.hex("02")
 _k = _H(_N, _g)
 
 
-def _client_register(username: str, password: str) -> tuple[str, str]:
+def _client_register(
+    username: str, password: str, salt_hex: str | None = None
+) -> tuple[str, str]:
     """Simulate JS client registration → (salt_hex, verifier_hex)."""
-    salt_hex = os.urandom(32).hex()
+    salt_hex = salt_hex or os.urandom(32).hex()
     s = _SI.hex(salt_hex)
     x = _H(s, _H_str(f"{username}:{password}"))
     v = _g.mod_pow(x, _N)
@@ -103,13 +105,14 @@ def _client_prove(
     password: str,
     salt_hex: str,
     server_public_hex: str,
+    secret_hex: str | None = None,
 ) -> tuple[str, str, _SI]:
     """Simulate JS client login → (A_hex, M1_hex, K)."""
     s = _SI.hex(salt_hex)
     x = _H(s, _H_str(f"{username}:{password}"))
     B = _SI.hex(server_public_hex)
 
-    a = _SI.hex(os.urandom(32).hex())
+    a = _SI.hex(secret_hex or os.urandom(32).hex())
     A = _g.mod_pow(a, _N)
     u = _H(A, B)
 
@@ -232,6 +235,27 @@ class TestSrpFullFlow:
 
         success, _ = verify_session(server_sec, A_hex, salt, username, verifier, M1_hex)
         assert success is True
+
+
+class TestAgainstJsLibrary:
+    """The frontend's own library computed these; see tests/support/srp_vectors."""
+
+    def test_server_accepts_the_js_client_and_returns_its_expected_proof(
+        self,
+    ) -> None:
+        assert verify_session(
+            js.B_SECRET, js.A, js.SALT, js.USERNAME, js.VERIFIER, js.M1
+        ) == (True, js.M2)
+
+    def test_simulated_client_matches_the_js_client(self) -> None:
+        _, verifier = _client_register(js.USERNAME, js.PASSWORD, js.SALT)
+        assert verifier == js.VERIFIER
+
+        A_hex, M1_hex, K = _client_prove(
+            js.USERNAME, js.PASSWORD, js.SALT, js.B, js.A_SECRET
+        )
+        assert (A_hex, M1_hex) == (js.A, js.M1)
+        assert _H(_SI.hex(A_hex), _SI.hex(M1_hex), K).to_hex() == js.M2
 
 
 MALFORMED_HEX = ["abc", "zz", "", "0g", " 00"]
