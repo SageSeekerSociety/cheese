@@ -36,13 +36,14 @@
         "failed": "没通过",
         "success": "已通过",
         "unknown": "进行中"
-      }
+      },
+      "week": "第 {week} 周",
+      "due": "截止 {date}",
+      "noDue": "没有截止时间",
+      "openWork": "去交这一周的作业",
+      "nothingToHandIn": "这一周不用交东西"
     },
     "stage": {
-      "units": {
-        "title": "教学单元",
-        "body": "这一屏是课程的时间线：按周次的单元、课件、作业与小测，老师在这里编排并发布。内容由「教学单元」那条任务填。"
-      },
       "assignments": {
         "title": "作业与验收",
         "body": "这一屏收作业、做验收：老师看到等批的提交，学生看到这一周要交的东西。内容由「作业与验收」那条任务填。"
@@ -58,6 +59,45 @@
       "team": {
         "title": "我的小组",
         "body": "这一屏是我的小组：和谁一组、组里现在做到哪。内容由「组队」那条任务填。"
+      }
+    },
+    "units": {
+      "title": "教学单元",
+      "add": "加一个单元",
+      "weekShort": "第 {week} 周",
+      "empty": "还没有单元。一门课就是一串教学单元：加一个，写清这一周讲什么、要不要交东西，到了这一周再发布它。",
+      "draft": "未发布",
+      "published": "已发布",
+      "publish": "发布",
+      "unpublish": "撤回发布",
+      "noAssignment": "这一周没有要交的东西",
+      "assignment": "本周要交：{name}",
+      "assignmentUnknown": "本周要交一道题（编号 {id}）",
+      "due": "截止 {date}",
+      "noDue": "没有截止时间",
+      "deleteTitle": "删掉这个单元",
+      "deleteConfirm": "删掉第 {week} 周的「{title}」？",
+      "loadFailed": "读不到这门课的单元。",
+      "saveFailed": "没保存上，再试一次。",
+      "form": {
+        "createTitle": "加一个教学单元",
+        "editTitle": "改这个单元",
+        "week": "第几周",
+        "weekHint": "从 1 开始。",
+        "title": "这一周讲什么",
+        "titleHint": "一句话，学生会看到它。",
+        "summary": "说明",
+        "summaryHint": "可选。这一周的要点，或者要提醒学生的话。",
+        "assignment": "这一周要交的东西",
+        "assignmentHint": "选一道这个版里的题；纯讲义的周就不选。",
+        "noAssignment": "不布置作业",
+        "dueAt": "截止时间",
+        "dueAtHint": "可选。留空就是不设截止。",
+        "publishNow": "建好就发布",
+        "publishNowHint": "不勾就先存着，到了这一周再发布 —— 没发布的内容学生看不到。",
+        "required": "周次和标题都要填。",
+        "save": "保存",
+        "cancel": "取消"
       }
     },
     "settings": {

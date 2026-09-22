@@ -10,7 +10,7 @@ Additive only, with a server default of `{}` — and `{}` means "everything on"
 it has today and nothing needs backfilling.
 
 Revision ID: c1a5e7d93b40
-Revises: b7e4a1c9d0f2
+Revises: 93ac2aa4b5fd
 """
 
 from collections.abc import Sequence
@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision: str = "c1a5e7d93b40"
-down_revision: str | Sequence[str] | None = "b7e4a1c9d0f2"
+down_revision: str | Sequence[str] | None = "93ac2aa4b5fd"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
