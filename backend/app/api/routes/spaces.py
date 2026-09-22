@@ -277,7 +277,8 @@ def _validate_course_modules(value: dict[str, object]) -> dict[str, bool]:
     for key, flag in value.items():
         if not isinstance(flag, bool):
             raise BadRequestError(f"courseModules[{key}] must be a boolean")
-    return {key: value[key] for key in course_modules.MODULE_KEYS if key in value}
+    # `bool(...)` only satisfies the type — every entry was checked above.
+    return {key: bool(value[key]) for key in course_modules.MODULE_KEYS if key in value}
 
 
 def _expect_list(value: list | str | None, field: str) -> list:

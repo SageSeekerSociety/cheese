@@ -1,4 +1,4 @@
-import type { Page, Space, TaskSubmitterType } from '@/types'
+import type { Page, Space, SpaceTeaching, TaskSubmitterType } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -46,6 +46,8 @@ export type PatchSpaceRequestData = {
   classificationTopics?: number[]
   defaultCategoryId?: number
   visibleTaskLimit?: number | null
+  /** 这门课开着哪几个模块；省略 = 一个都不动（`{}` = 全部显示）。 */
+  courseModules?: Record<string, boolean>
 }
 
 export type PostSpaceAdminRequestData = {
@@ -66,6 +68,8 @@ export type PostSpaceCategoryRequestData = {
   name: string
   description?: string | null
   displayOrder?: number
+  /** 课程级教学配置。写上就**整份替换**（协议那套整键语义），省掉它则原样不动。 */
+  teaching?: SpaceTeaching
 }
 
 export type PatchSpaceCategoryRequestData = Partial<PostSpaceCategoryRequestData>
