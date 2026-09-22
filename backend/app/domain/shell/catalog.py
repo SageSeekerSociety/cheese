@@ -164,6 +164,22 @@ CATALOG: dict[str, Shell] = {
     for shell in (_DEFAULT, _WORKBENCH, _COURSE_STUDENT, _COURSE_TEACHER)
 }
 
+#: The 壳 a newly created 题目板's default category declares — a 题目板 *is* a
+#: course now, so a new one opens as the course template instead of a blank
+#: board. This is the name only; `SpaceService.create_space` is what writes it.
+#:
+#: It is a DEFAULT and nothing more: it rides the one chain in
+#: `app.domain.task.protocol`, so a single 题目 may replace it and a project's own
+#: `settings["shell"]` still outranks both. A board created before this existed
+#: declares nothing and keeps rendering `default` — the fallback is untouched.
+#:
+#: Student rather than teacher 壳: a 题目板's 壳 reaches the *projects* under it
+#: (a student's project inherits it through the 题目 it linked). The teacher's
+#: course views are the 题目板's own management screens, which are not projects
+#: and consume no 壳 today — so there is no second declaration to make here, and
+#: making one would be the second chain this module exists to avoid.
+DEFAULT_CATEGORY_SHELL_NAME: str = _COURSE_STUDENT.name
+
 
 def lookup(name: str | None) -> Shell:
     """The declaration for ``name``, or `default`.

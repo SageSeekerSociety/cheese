@@ -66,8 +66,8 @@ function mountPage() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/', component: { template: '<div />' } },
-      { path: '/spaces/:id', component: { template: '<div />' } },
+      { path: '/', name: 'root', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div />' } },
     ],
   })
   // PageHeader 要 pinia（它读页面标题那个 store）。
@@ -178,6 +178,61 @@ describe('space creation', () => {
     expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Course')
     await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
     await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(2))
+  })
+
+  it('says up front that a new board already is a course', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+
+    // 建版不选模板，建出来就是课程空间——这句话得在提交之前就看得见。
+    expect(page.getByText('spaces.create.courseTemplate')).toBeTruthy()
+    expect(page.getByText('spaces.create.courseTemplateTag')).toBeTruthy()
+  })
+
+  it('lands the creator in the new board instead of back on the list', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Programming course')
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
+    expect(page.router.currentRoute.value.params.spaceId).toBe('42')
+  })
+
+  it('hands over the invite code first, then lands in the new board', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({
+      data: {
+        space: { id: 7 },
+        inviteCode: {
+          id: 1,
+          spaceId: 7,
+          code: '9F3A-2C71-B8E4',
+          maxUses: 50,
+          useCount: 0,
+          expiresAt: null,
+          createdAt: 0,
+        },
+      },
+    })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Course')
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+
+    // 码先给他看，人还留在原地。
+    await waitFor(() => expect(page.getByText('9F3A-2C71-B8E4')).toBeTruthy())
+    expect(page.router.currentRoute.value.name).toBe('root')
+
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.inviteCodes.openCourse' }))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
+    expect(page.router.currentRoute.value.params.spaceId).toBe('7')
   })
 
   it('does not offer creation to signed-out visitors', async () => {

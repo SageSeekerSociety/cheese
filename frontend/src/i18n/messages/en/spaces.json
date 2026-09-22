@@ -9,7 +9,9 @@
     "visibility": "The problem board will appear in the explore list after approval.",
     "cancel": "Cancel",
     "submit": "Submit for review",
-    "failed": "Could not create the problem board. Please try again."
+    "failed": "Could not create the problem board. Please try again.",
+    "courseTemplateTag": "Course template by default",
+    "courseTemplate": "What you get is a course space: the course template is applied by default, so there is nothing to pick. You become this board's teacher and creator."
   },
   "review": {
     "applicant": "Applicant",
@@ -242,7 +244,7 @@
     "createFailed": "Could not create the invite code",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this board.",
-    "gotIt": "Got it"
+    "openCourse": "Open the course"
   },
   "index": {
     "sortOptions": {
