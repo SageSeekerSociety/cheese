@@ -125,6 +125,16 @@ async function openDialog() {
   await settle()
 }
 
+/** 走完对话框剩下的路。它是两步的（#1436）：第 1 步填项目，「你打算做什么」就在
+ *  这一步，第 2 步给这位队友取名。所以按下「创建项目」之前必须先过第 1 步——
+ *  这也正是这些用例想证的：人在第 1 步写的答案，要活着走到第 2 步发出的那个请求里。 */
+async function submitDialog() {
+  button('下一步').click()
+  await settle()
+  button('创建项目').click()
+  await settle()
+}
+
 it('carries what the person said into the create request', async () => {
   const harness = await mountApp()
   try {
@@ -132,15 +142,14 @@ it('carries what the person said into the create request', async () => {
     type(inDialog('input') as HTMLInputElement, '这学期的课')
     type(inDialog('textarea') as HTMLTextAreaElement, '帮我把这学期的课程材料整理成一份大纲')
     await settle()
-    button('创建').click()
-    await settle()
+    await submitDialog()
 
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
     const args = vi.mocked(api.createProject).mock.calls[0]
     expect(args[0]).toBe('这学期的课')
-    // createProject(name, ownerHandle, teamId, externalTaskId, forgeKind, intent)
-    // ——「你打算做什么」是最后一个参数。forgeKind 是主分支后加的，排在它前面，
-    // 所以这个下标跟着参数表走，别把它当成「第几个参数」的巧合。
+    // createProject(name, ownerHandle, teamId, externalTaskId, forgeKind, intent, agentName)
+    // ——「你打算做什么」是第 6 个参数。它和 agentName 都是主分支后加的，都排在
+    // forgeKind 之后，所以这个下标跟着参数表走，别把它当成「第几个参数」的巧合。
     expect(args[5]).toBe('帮我把这学期的课程材料整理成一份大纲')
   } finally {
     harness.dispose()
@@ -153,8 +162,7 @@ it('creates the project with an empty answer when the question was skipped', asy
     await openDialog()
     type(inDialog('input') as HTMLInputElement, '没答这一问的项目')
     await settle()
-    button('创建').click()
-    await settle()
+    await submitDialog()
 
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(api.createProject).mock.calls[0][5]).toBe('')
@@ -177,8 +185,7 @@ it('does not let one project inherit the previous answer', async () => {
 
     type(inDialog('input') as HTMLInputElement, '第二个项目')
     await settle()
-    button('创建').click()
-    await settle()
+    await submitDialog()
 
     expect(vi.mocked(api.createProject).mock.calls[0][5]).toBe('')
   } finally {
