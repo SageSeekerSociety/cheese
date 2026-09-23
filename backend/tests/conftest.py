@@ -414,8 +414,15 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
                 if subscription is not None:
                     subscriptions.append(subscription)
             await asyncio.gather(*(s.sink.queue.join() for s in subscriptions))
-            if service._settle_tasks:
-                await asyncio.gather(*tuple(service._settle_tasks))
+            settle_tasks = []
+            for task in tuple(service._settle_tasks):
+                # ChatService keeps one task set without a topic index; the
+                # real _later coroutine's closure is the available ownership key.
+                frame = getattr(task.get_coro(), "cr_frame", None)
+                if frame is not None and frame.f_locals.get("topic_id") == topic_id:
+                    settle_tasks.append(task)
+            if settle_tasks:
+                await asyncio.gather(*settle_tasks)
             for runtime in runtimes:
                 if topic_id in getattr(runtime, "_subscriptions", {}):
                     await runtime._close_topic(topic_id)
@@ -427,8 +434,11 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
                 for task, runtime in consumer_tasks.items()
                 if topic_id not in getattr(runtime, "_subscriptions", {})
             ]
-            if retired:
-                await asyncio.gather(*retired, return_exceptions=True)
+            for task in retired:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
             return
         await _REAL_SLEEP(0.01)
     raise AssertionError(

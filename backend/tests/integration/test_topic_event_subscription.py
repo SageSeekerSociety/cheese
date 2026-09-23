@@ -154,9 +154,9 @@ async def _drain(frames: AsyncIterator[dict]) -> list[dict]:
 
 
 async def test_exchange_blocks_and_usage_share_the_supplied_id(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
-    factory = business_db_factory
+    factory = client.test_factory
     _project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
@@ -201,9 +201,9 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
 
 
 async def test_human_summon_uses_message_id_as_work_attribution(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
-    factory = business_db_factory
+    factory = client.test_factory
     _project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
@@ -244,10 +244,10 @@ async def test_human_summon_uses_message_id_as_work_attribution(
 
 
 async def test_hook_without_a_live_run_reaches_the_room_from_spool(
-    business_db_factory, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     service = ChatService(
         session_factory=factory,
@@ -276,9 +276,9 @@ async def test_hook_without_a_live_run_reaches_the_room_from_spool(
 
 
 async def test_mid_run_message_is_consumed_before_the_run_succeeds(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
-    factory = business_db_factory
+    factory = client.test_factory
     _project_id, topic_id = await _seed_topic(factory)
     provider = _AnsweringLiveScreen()
     service = ChatService(
@@ -350,13 +350,13 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
 
 
 async def test_session_initiated_work_is_persisted_and_broadcast(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
     provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
-    service = ChatService(
+    ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
@@ -427,14 +427,13 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     assert ai_messages == []
     assert resumes_by == "session-autonomous"
 
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
 
 
 async def test_an_all_english_message_lands_but_stays_out_of_the_room(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
     """通篇没有中文的一条，照常落库，但带着「不露面」那一格。
 
@@ -442,11 +441,11 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
     时会怎样 —— 一样存进去、一样能查到,只是聊天区不显示它。**藏不是删**,所以
     这里既要看见 `in_room: False`,也要看见那条块确实在库里。
     """
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
     provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
-    service = ChatService(
+    ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
@@ -502,12 +501,11 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
     assert ai_messages == []
     assert any(row.content == "Now the tests:" for row in rows)
 
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
 async def test_a_subagents_boundaries_pass_through_the_room_untouched(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
     """一个会话里同时有几个工人干活时，房间该看到的东西一点没变。
 
@@ -515,11 +513,11 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     也不点亮「正在处理」。会话自己说的话、分身发出的工具调用照旧落地——分身的
     工具钩子本来就一直混在这条流里，只是从今天起带上了它是谁。
     """
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
     provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
-    service = ChatService(
+    ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
@@ -635,14 +633,11 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     ] == []
     assert "分身查完了" not in [row.content for row in rows]
 
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
-async def test_late_hook_opens_fresh_unsolicited_work(
-    business_db_factory, tmp_path
-) -> None:
-    factory = business_db_factory
+async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
     topic_key = str(topic_id)
@@ -660,7 +655,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(
             )
 
     provider = ClaudeCodeRuntime(_PlatformChannel(), router=router)
-    service = ChatService(
+    ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
@@ -720,15 +715,14 @@ async def test_late_hook_opens_fresh_unsolicited_work(
     }
     assert uuid.UUID(progress["block"]["turn_id"]) != requested_id
     assert progress["block"]["meta"]["platform_unsolicited"] is True
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
 async def test_restart_reattaches_and_replays_spooled_hooks(
-    business_db_factory, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     event_spool.append(
         ws.spool_dir(project_id, topic_id),
@@ -782,12 +776,11 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     # they were consumed is the cursor, so the tail past it must be empty.
     spool = ws.spool_dir(project_id, topic_id)
     assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
 async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
-    business_db_factory, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch
 ) -> None:
     """A reconnect pauses consumption while it builds the spool replay.
 
@@ -797,7 +790,7 @@ async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
     consumed. The opposite arrival order has separate provider coverage.
     """
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     message = {
         "hook_event_name": "MessageDisplay",
@@ -818,7 +811,7 @@ async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
     provider = ClaudeCodeRuntime(
         _RecoveringChannel(project_id, topic_id), router=router
     )
-    service = ChatService(
+    _service = ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
@@ -840,12 +833,11 @@ async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
     ]
     assert len(replies) == 1
     assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
 async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
-    business_db_factory, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch
 ) -> None:
     """#316 / #459, as a person would check it: restart the backend mid-turn and
     the turn finishes anyway — nothing re-prompted, nothing announced, every
@@ -859,7 +851,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     anyone deciding it should.
     """
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
 
     # The dead process got as far as handing the prompt to the transport.
@@ -911,12 +903,11 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     async with factory() as session:
         row = await session.get(AgentTurn, interrupted)
     assert row is not None and row.stopped_at is not None
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
 async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
-    business_db_factory, tmp_path, monkeypatch
+    client, tmp_path, monkeypatch
 ) -> None:
     """A turn spends its first seconds — or minutes, if the box has to boot —
     between opening its interval and reaching the transport. A Stop from the
@@ -928,7 +919,7 @@ async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
     投喂 → Stop, and a turn nobody fed is not what this Stop is ending.
     """
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     still_provisioning = await open_turn(
         factory, topic_id, content="新任务", age_s=5, delivered=False
@@ -957,13 +948,10 @@ async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
     async with factory() as session:
         row = await session.get(AgentTurn, still_provisioning)
     assert row is not None and row.stopped_at is None
-    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
-async def test_an_accepted_write_is_announced_to_the_runtime(
-    business_db_factory, tmp_path
-) -> None:
+async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -> None:
     """`converse` must emit `prompt_delivered` once the transport took the write.
 
     The runtime stamps the durable in-flight registry on that frame, which is
@@ -974,7 +962,7 @@ async def test_an_accepted_write_is_announced_to_the_runtime(
 
     A refused write raises out of `send` instead, so reaching this frame
     is itself the acceptance (#563)."""
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     del project_id
     provider = ClaudeCodeRuntime(_IdleChannel(), router=HookRouter())
@@ -998,9 +986,9 @@ async def test_an_accepted_write_is_announced_to_the_runtime(
 
 
 async def test_session_timeout_retires_activity_but_keeps_subscription(
-    business_db_factory, tmp_path
+    client, tmp_path
 ) -> None:
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
 
@@ -1072,7 +1060,6 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
                 "_eid": "late-after-timeout-stop",
             },
         )
-        await subscription.sink.queue.join()
         late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
 
     assert [frame["type"] for frame in late_frames] == [
@@ -1083,10 +1070,11 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     ]
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
+    await settle_turn(service, topic_id)
     await provider._close_topic(topic_id)
 
 
-async def test_a_quiet_worker_is_not_a_dead_one(business_db_factory, tmp_path) -> None:
+async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     """「那个分身还在不在」有第一手的答案，不该由安静推断出来。
 
     一个分身埋头跑四十分钟长命令、一条 block 都不落，是真实会话里就有的干法
@@ -1097,7 +1085,7 @@ async def test_a_quiet_worker_is_not_a_dead_one(business_db_factory, tmp_path) -
     「交回了一次」不判死：分身可以被再叫起来干活，那一位只收回自己的声明，看板
     退回时间戳那条老规矩 —— 沉默既不能读成活着，也不能读成死了。
     """
-    factory = business_db_factory
+    factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
     provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
@@ -1150,4 +1138,3 @@ async def test_a_quiet_worker_is_not_a_dead_one(business_db_factory, tmp_path) -
     # 接着说自己活着。
     provider._live.pop(topic_id)
     assert chat.worker_live(topic_id, "worker-1") is None
-    await provider._close_topic(topic_id)
