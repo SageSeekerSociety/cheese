@@ -222,6 +222,8 @@ def record(log, event: str, **values) -> None:
 @contextmanager
 def image_owner(options, root: Path, *, start_runtime=True):
     """Run the released owner and its packaged Go connector without code mounts."""
+    if not options.owner_revision or "@sha256:" not in options.owner_image:
+        raise ValueError("owner acceptance requires an image digest and revision")
     os.environ["SANDBOX_TOKEN"] = SECRET
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 

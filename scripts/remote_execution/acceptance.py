@@ -151,23 +151,28 @@ def read_background_output(body):
     return {"name": "Read", "input": {"file_path": path}}
 
 
-class DeviceExecutionHandler(Handler):
-    def do_POST(self):
-        if self.path != "/execution":
-            return super().do_POST()
-        assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
-        payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        wire = self.server.state["wire"]
-        return self.reply(
-            asyncio.run(
-                wire.call_executor(
-                    "acceptance-machine",
-                    self.server.state["executor_state"],
-                    payload["method"],
-                    payload.get("params", {}),
+def execution_handler(rc):
+    base = rc.handler(Handler) if rc else Handler
+
+    class DeviceExecutionHandler(base):
+        def do_POST(self):
+            if self.path != "/execution":
+                return super().do_POST()
+            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            wire = self.server.state["wire"]
+            return self.reply(
+                asyncio.run(
+                    wire.call_executor(
+                        "acceptance-machine",
+                        self.server.state["executor_state"],
+                        payload["method"],
+                        payload.get("params", {}),
+                    )
                 )
             )
-        )
+
+    return DeviceExecutionHandler
 
 
 def case(folder, options):
@@ -184,7 +189,7 @@ def case(folder, options):
     )
     server = Server(
         ("127.0.0.1", 0),
-        rc.handler(DeviceExecutionHandler) if rc else DeviceExecutionHandler,
+        execution_handler(rc),
     )
     if rc:
         rc.base = f"http://127.0.0.1:{server.server_port}"
@@ -362,10 +367,12 @@ def case(folder, options):
             env["HOME"] = str(owner)
             wire = WireOwner(options.claude, exec_env=env)
             server.state.update(wire=wire, executor_state=target["state"])
-            target = {
-                "kind": "device",
-                "url": f"http://127.0.0.1:{server.server_port}/execution",
-            }
+            if not options.ssh:
+                target = {
+                    "kind": "device",
+                    "url": f"http://127.0.0.1:{server.server_port}/execution",
+                    "mcp_servers": target["mcp_servers"],
+                }
             if rc:
                 env["CHEESE_REMOTE_CONTROL"] = "1"
             place = MachinePlace(

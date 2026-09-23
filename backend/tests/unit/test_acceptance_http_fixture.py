@@ -56,6 +56,48 @@ def test_put_failure_invalidates_acceptance(tmp_path, malformed):
         thread.join()
 
 
+def test_execution_endpoint_reaches_wire_before_rc_handler(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts/remote_execution"))
+    acceptance = load("acceptance")
+    rc = acceptance.RemoteControlFixture(tmp_path, lambda *a, **kw: None)
+    calls = []
+
+    class Wire:
+        async def call_executor(self, device, state, method, params):
+            calls.append((device, state, method, params))
+            return {"workspace": "/remote/work"}
+
+    server = acceptance.Server(("127.0.0.1", 0), acceptance.execution_handler(rc))
+    server.state = {
+        "dir": tmp_path,
+        "wire": Wire(),
+        "executor_state": "/recorded/state",
+    }
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+    try:
+        connection.request(
+            "POST",
+            "/execution",
+            json.dumps({"method": "ping", "params": {}}),
+            {
+                "Content-Type": "application/json",
+                "X-Cheese-Token": "fixture-place-token",
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read()) == {"workspace": "/remote/work"}
+        assert calls == [("acceptance-machine", "/recorded/state", "ping", {})]
+        server.assert_healthy()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
     model = load("model_fixture")
     room_class = load("room_fixture").RoomExecutor

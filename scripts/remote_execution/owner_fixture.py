@@ -15,13 +15,31 @@ from device_connection_lifecycle_acceptance import (  # noqa: E402
 )
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
 
+OWNER_ENV_DEFAULTS = {
+    "ACCEPTANCE_OWNER_IMAGE": (
+        "ghcr.io/sageseekersociety/cheese/backend@sha256:"
+        "b5fc0a2172b3eb0a398af31321526a7f3a0ba654a3d448b4c860b8ac59207732"
+    ),
+    "ACCEPTANCE_OWNER_REVISION": "fbb08b0f874ba3bdb5b567efffcbcb83156ff144",
+    "ACCEPTANCE_OWNER_PORT": "18783",
+}
+
 
 class WireOwner:
     def __init__(self, claude, *, exec_env=None):
         options = SimpleNamespace(
-            owner_image=os.environ["ACCEPTANCE_OWNER_IMAGE"],
-            owner_revision=os.environ["ACCEPTANCE_OWNER_REVISION"],
-            port=int(os.environ["ACCEPTANCE_OWNER_PORT"]),
+            owner_image=os.environ.get(
+                "ACCEPTANCE_OWNER_IMAGE", OWNER_ENV_DEFAULTS["ACCEPTANCE_OWNER_IMAGE"]
+            ),
+            owner_revision=os.environ.get(
+                "ACCEPTANCE_OWNER_REVISION",
+                OWNER_ENV_DEFAULTS["ACCEPTANCE_OWNER_REVISION"],
+            ),
+            port=int(
+                os.environ.get(
+                    "ACCEPTANCE_OWNER_PORT", OWNER_ENV_DEFAULTS["ACCEPTANCE_OWNER_PORT"]
+                )
+            ),
             claude=Path(claude),
         )
         self.context = image_owner(options, ROOT, start_runtime=False)

@@ -39,6 +39,8 @@ backend/.venv/bin/python scripts/remote_execution/suite.py \
   --output tmp/remote-execution/acceptance-1
 ```
 
+The device-launcher and ordinary-room cases require Linux amd64, Docker, and access to GHCR. They use the released owner image and packaged Go connector pinned in `scripts/remote_execution/owner_fixture.py`, with an isolated database upgraded to the current schema. CI supplies the same image and revision through `ACCEPTANCE_OWNER_IMAGE` and `ACCEPTANCE_OWNER_REVISION`, and assigns `ACCEPTANCE_OWNER_PORT` per runner slot. Suite receipts include the selected image, revision, and shared transport source hashes.
+
 The suite runs the native terminal with deterministic model responses and a loopback RC service. It checks file operations, commands, custom MCP, project instructions, dynamic skill commands, remote background output and cancellation, request replay, platform hook events and RC file controls. Failure cases disable the plugin, throw from it, stall it and disconnect the executor. All must leave the central sentinel files unchanged.
 
 Each case records its inputs, logs and result. Rerunning with the same output directory resumes passed cases only when source hashes and versions match. Changed inputs require a new directory. GitHub Actions runs the same suite on the experimental branch and uploads the receipts.
@@ -55,6 +57,8 @@ backend/.venv/bin/python scripts/remote_execution/acceptance.py \
 ```
 
 `remote-root` is a writable scratch directory on the executor. Each test creates a new workspace beneath it. Python 3.9 or later, `ripgrep` and Claude Code must already be installed there. The central process stays local.
+
+With `--ssh`, executor calls retain the SSH transport; launcher uploads still cross the released owner and Go connector on the central host. The local CI cases exercise the owner-to-connector execution path.
 
 `scripts/remote_execution/real_model.py` accepts the same SSH and output arguments. It uses an existing local Claude subscription from the normal credentials file or macOS Keychain and spends model quota. It runs the interactive terminal without registering a Remote Control session with Claude's hosted service. Credentials are passed in process environment and excluded from test receipts.
 
