@@ -714,6 +714,7 @@ async def test_agent_cloud_choice_requires_its_own_team_membership(client, monke
         )
         team = Team(
             name="Compute team",
+            handle=f"t-{uuid.uuid4().hex[:12]}",
             intro="",
             description="",
             avatar_id=1,
