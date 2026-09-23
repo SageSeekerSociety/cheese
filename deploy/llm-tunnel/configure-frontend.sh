@@ -120,6 +120,13 @@ server {
   ssl_session_cache shared:front_tls:10m;
   add_header Strict-Transport-Security "max-age=31536000" always;
 
+  # www and hk are aliases of this one site. Send them to the name sign-in
+  # callbacks and CORS are registered for, or a login begun on an alias ends
+  # on a different origin from the one the visitor started on.
+  if (\$host ~ ^(www|hk)\.okcheese\.com\$) {
+    return 301 https://okcheese.com\$request_uri;
+  }
+
   location / {
     proxy_pass http://127.0.0.1:$LISTEN_PORT;
     proxy_http_version 1.1;

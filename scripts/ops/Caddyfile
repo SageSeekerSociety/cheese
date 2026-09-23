@@ -3,19 +3,56 @@
 	# :443 and took the box down with it (2026-07-10), and every redirect this
 	# file wants is written out below, on a port Caddy already owns.
 	auto_https disable_redirects
+
+	# The public :443 belongs to the layer4 router below, not to the HTTP sites.
+	# HTTPS sites here listen on loopback :8443 and are reached through it.
+	https_port 8443
+
+	# Connections arrive at the HTTPS sites through the layer4 router, which
+	# prepends a PROXY header; without this every visitor would look like
+	# 127.0.0.1.
+	servers 127.0.0.1:8443 {
+		listener_wrappers {
+			proxy_protocol {
+				allow 127.0.0.1/32
+			}
+			tls
+		}
+	}
+
+	layer4 {
+		172.26.10.144:443 {
+			# okcheese names are NOT decrypted here: the encrypted stream goes as-is
+			# through the reverse SSH tunnel to the dev box, whose front door holds
+			# the certificate and terminates TLS in the mainland. This box never
+			# sees those requests in plaintext.
+			@okcheese tls sni okcheese.com www.okcheese.com hk.okcheese.com
+			route @okcheese {
+				proxy {
+					proxy_protocol v1
+					upstream 127.0.0.1:18443
+				}
+			}
+			# Everything else (ruc-etrip.cn, including its TLS-ALPN challenge) is
+			# handed unchanged to this Caddy's own HTTPS sites.
+			route {
+				proxy {
+					proxy_protocol v1
+					upstream 127.0.0.1:8443
+				}
+			}
+		}
+	}
 }
 
 # The etrip box's edge (deployed at /etc/caddy/Caddyfile).
 #
-# Caddy is the only front door here: it owns the public :80 and :443 on
-# 172.26.10.144 and routes by Host to three different places.
-#
-#   okcheese.com, www, hk  -> 127.0.0.1:18080, a reverse SSH tunnel from the dev
-#                             box (cheese-dev-env1-app). That box serves those
-#                             names; this one only terminates TLS for them.
+#   :443 (layer4)          -> by SNI: okcheese.com, www, hk go encrypted to
+#                             127.0.0.1:18443, a reverse SSH tunnel to the dev
+#                             box (cheese-dev-env1-app), which terminates TLS;
+#                             every other name goes to this Caddy on 127.0.0.1:8443.
 #   ruc-etrip.cn           -> 127.0.0.1:80, the etrip deployment's frontend
-#                             container (cheese_prod_frontend), which publishes
-#                             on loopback only.
+#                             container (cheese_prod_frontend), loopback only.
 #   any other Host on :80  -> the same container, so visiting the bare IP still
 #                             lands where it always did.
 #   :8080                  -> CheeseX, served from /opt/cheesex.
@@ -45,14 +82,14 @@
 	}
 }
 
-
 # ruc-etrip.cn — the etrip deployment, reached through its own container. The
 # challenge stays on TLS-ALPN: this name was first served when :80 belonged to
 # that container and http-01 was impossible, and pinning it keeps renewal on the
-# one path that has always worked here.
+# one path that has always worked here. The ACME validator's TLS-ALPN
+# connection reaches this site through the layer4 router like any visitor.
 ruc-etrip.cn {
 	encode zstd gzip
-	bind 172.26.10.144
+	bind 127.0.0.1
 	tls {
 		issuer acme {
 			disable_http_challenge
@@ -70,41 +107,23 @@ http://:8099 {
 	reverse_proxy 127.0.0.1:8099
 }
 
-# 2026-09-04: relay for the cheese dev box (hackathon). 127.0.0.1:18080 is a
-# reverse SSH tunnel from cheese-dev-env1-app; this host only terminates TLS.
-hk.okcheese.com {
-	bind 172.26.10.144
-	reverse_proxy 127.0.0.1:18080 {
-		transport http {
-			read_timeout 3600s
-		}
-	}
-}
-
-# 2026-09-04: the main domain, same relay as hk.okcheese.com. Its certificates
-# have always been issued over TLS-ALPN, because :80 belonged to the frontend
-# container when these names were first served. Caddy holds :80 now, so http-01
-# is available to it again in principle — but the redirect block below answers
-# the challenge path, so treat TLS-ALPN as the renewal path that is known to
-# work and do not remove :443 from this box expecting http-01 to cover it.
-okcheese.com, www.okcheese.com {
-	bind 172.26.10.144
-	reverse_proxy 127.0.0.1:18080 {
-		transport http {
-			read_timeout 3600s
-		}
-	}
-}
-
 # Why these redirects are written out rather than left to auto_https: the
 # frontend container used to publish :80 on every address and answered every
 # Host with its own SPA, so http://okcheese.com served a build months behind the
 # one https served — a visitor typing the bare domain reached a login page whose
 # provider list was empty and read it as a broken site. The container now
 # publishes 127.0.0.1:80 only and Caddy holds the public port.
-http://okcheese.com, http://www.okcheese.com, http://hk.okcheese.com, http://ruc-etrip.cn {
+http://okcheese.com, http://ruc-etrip.cn {
 	bind 172.26.10.144
 	redir https://{host}{uri} permanent
+}
+
+# www and hk are aliases: they go straight to the canonical name in one hop.
+# Their https side is redirected by the dev box's front door, since this box
+# never decrypts okcheese traffic.
+http://www.okcheese.com, http://hk.okcheese.com {
+	bind 172.26.10.144
+	redir https://okcheese.com{uri} permanent
 }
 
 # Every other Host on :80 (a bare-IP visitor, a scanner) keeps reaching the
