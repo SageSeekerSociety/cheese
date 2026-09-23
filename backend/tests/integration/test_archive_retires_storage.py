@@ -137,12 +137,12 @@ async def test_device_listing_uses_one_portable_shell_and_ignores_symlinks(
 
 
 async def test_the_upload_route_believes_the_pin_first_and_the_project_after(
-    client, workspace_root
+    db_factory, workspace_root
 ):
     """The machine a place is pinned to may store its transcripts and no other
     may, whatever else it serves; with no pin to go by, a machine the project
     may run on is believed. Nothing but a device token opens the route."""
-    factory = client.test_factory
+    factory = db_factory
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
@@ -179,9 +179,9 @@ async def test_the_upload_route_believes_the_pin_first_and_the_project_after(
 
 
 async def test_the_upload_route_keeps_nothing_it_refuses(
-    client, workspace_root, monkeypatch
+    db_factory, workspace_root, monkeypatch
 ):
-    factory = client.test_factory
+    factory = db_factory
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(

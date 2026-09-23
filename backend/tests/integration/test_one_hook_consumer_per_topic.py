@@ -128,13 +128,13 @@ def _flush(mid: str, idx: int, delta: str, *, final: bool = False) -> dict:
     }
 
 
-async def test_each_channel_recovers_only_the_machines_it_owns(client):
+async def test_each_channel_recovers_only_the_machines_it_owns(db_factory):
     """归属由 supply 认定：平台开的云机器归 cloud，人接进来的归 device。
 
     两条通道共用一张绑定表（cloud 也调 ``bind_topic_device``），所以「这条绑定归谁」
     只能问机器本身。答错的后果不是少认领一个话题，是同一个话题被认领两次。
     """
-    factory = client.test_factory
+    factory = db_factory
     seeded = await _seed(factory)
     hub = _Hub({str(seeded["cloud_device"]), str(seeded["own_device"])})
     device, cloud = _channels(factory, hub)
@@ -150,9 +150,9 @@ async def test_each_channel_recovers_only_the_machines_it_owns(client):
     assert on_cloud == {seeded["on_cloud"]}
 
 
-async def test_a_reconnect_does_not_hand_the_same_topic_to_both_channels(client):
+async def test_a_reconnect_does_not_hand_the_same_topic_to_both_channels(db_factory):
     """连接器重连走的是 ``recover(device_id)``，一台机器只该惊动它自己那条通道。"""
-    factory = client.test_factory
+    factory = db_factory
     seeded = await _seed(factory)
     hub = _Hub({str(seeded["cloud_device"]), str(seeded["own_device"])})
     device, cloud = _channels(factory, hub)
@@ -164,7 +164,7 @@ async def test_a_reconnect_does_not_hand_the_same_topic_to_both_channels(client)
     ]
 
 
-async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
+async def test_a_recovered_message_lands_once_and_whole(db_factory, tmp_path):
     """后端重启后，云机器上那句话在房间里只出现一条，而且是完整的一句。
 
     两个运行时（device 与 cloud）共用进程里唯一那个 ``HookRouter``，走的是生产的
@@ -172,7 +172,7 @@ async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
     那条路。修复前这条路让两个运行时都订阅上这个话题：四个分片被两条消费循环瓜分成
     两条半截消息，Stop 再补一条全文，房间里一共三条。
     """
-    factory = client.test_factory
+    factory = db_factory
     seeded = await _seed(factory)
     topic_id = seeded["on_cloud"]
     assert isinstance(topic_id, uuid.UUID)
@@ -222,12 +222,12 @@ async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
     assert said == [REPLY]
 
 
-async def test_screens_are_adopted_with_no_transaction_open(client):
+async def test_screens_are_adopted_with_no_transaction_open(db_factory):
     """Adopting a screen asks the connection owner (a network call when it
     runs as its own service). That happens after the database work of the
     device is committed, not inside it: one transaction across every room of
     a reconnecting device kept a pool connection for the whole device."""
-    factory = client.test_factory
+    factory = db_factory
     seeded = await _seed(factory)
     own_device = str(seeded["own_device"])
     open_sessions = 0

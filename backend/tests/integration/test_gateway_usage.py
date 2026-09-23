@@ -141,9 +141,9 @@ async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
 
 
 @pytest.mark.anyio
-async def test_virtual_key_minted_once_and_injected(client, tmp_path):
+async def test_virtual_key_minted_once_and_injected(db_factory, tmp_path):
     fake = FakeGateway()
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
 
     kw1, route1 = await svc._model_kwargs(pid, _in_this_process())
     kw2, route2 = await svc._model_kwargs(pid, _in_this_process())
@@ -160,10 +160,10 @@ async def test_virtual_key_minted_once_and_injected(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
-    client, tmp_path
+    db_factory, tmp_path
 ):
     fake = FailingMintGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, _factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
 
     with pytest.raises(AppError, match="project-scoped key"):
         await svc._model_kwargs(pid, _in_this_process())
@@ -172,8 +172,8 @@ async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
 
 
 @pytest.mark.anyio
-async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path):
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, None)
+async def test_gateway_disabled_does_not_require_a_virtual_key(db_factory, tmp_path):
+    svc, _factory, pid, _tid = await _mk_service(db_factory, tmp_path, None)
 
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
@@ -186,7 +186,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
 
 @pytest.mark.anyio
 async def test_non_pool_profile_keeps_its_own_credentials(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     from app.core.config import settings
 
@@ -215,7 +215,7 @@ async def test_non_pool_profile_keeps_its_own_credentials(
     )
     fake = FailingMintGateway()
     svc, factory, pid, _tid = await _mk_service(
-        client.test_factory, tmp_path, fake, profiles=profiles
+        db_factory, tmp_path, fake, profiles=profiles
     )
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
@@ -232,7 +232,7 @@ async def test_non_pool_profile_keeps_its_own_credentials(
 
 @pytest.mark.anyio
 async def test_zero_usage_turn_gets_real_usage_from_gateway(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     async def _no_sleep(_s):
         return None
@@ -243,7 +243,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
     # Simulate LiteLLM's async log lag: the first drain sees nothing — the
     # settle-retry must pick the rows up so per-turn attribution still lands.
     fake.lag_calls = 1
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, fake)
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
@@ -282,11 +282,11 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
 
 @pytest.mark.anyio
 async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, _factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     fake.lag_calls = 1
     settling = asyncio.Event()
@@ -315,7 +315,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
 
 
 @pytest.mark.anyio
-async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_path):
+async def test_key_lookup_does_not_queue_behind_the_gateway_lock(db_factory, tmp_path):
     """A project whose key is already minted and in step is answered WITHOUT
     taking `_gateway_lock`.
 
@@ -327,7 +327,7 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_pat
     concurrent admissions for a single project fanning out into a 5.8 s tail.
     """
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, _factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
 
     # Some other caller is inside the lock: a mint, a re-price, or a drain.
@@ -343,13 +343,13 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_pat
 
 
 @pytest.mark.anyio
-async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
+async def test_a_slow_spend_read_does_not_stall_key_lookup(db_factory, tmp_path):
     """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
     `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
     for as long as the gateway takes to answer."""
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
 
     reading = asyncio.Event()
@@ -383,7 +383,9 @@ async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monkeypatch):
+async def test_credits_burn_by_real_spend_not_raw_tokens(
+    db_factory, tmp_path, monkeypatch
+):
     """Gateway-routed turns consume credits from the REAL spend (cache discounts
     included), not the flat token rate — so 120+30 tokens at ¥0.02 with a
     ¥0.08/credit price burns 0.25 credits, not tokens/10k = 0.015."""
@@ -392,7 +394,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
     monkeypatch.setattr(app_settings, "llm_gateway_credit_usd", 0.08)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, fake)
 
     from app.domain.usage.repositories import ComputeGrantRepository
 
@@ -414,7 +416,9 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
 
 
 @pytest.mark.anyio
-async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeypatch):
+async def test_late_spend_rows_land_via_deferred_drain(
+    db_factory, tmp_path, monkeypatch
+):
     """LiteLLM batch-writes spend logs; when both the turn-end drain AND its
     settle retry see nothing, a deferred background drain lands the usage row
     shortly after instead of holding the turn (or losing the row)."""
@@ -426,7 +430,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (80, 20, 0.01)}
     fake.lag_calls = 2  # first drain AND its settle retry both miss
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, fake)
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
@@ -451,7 +455,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 @pytest.mark.anyio
 async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrives(
-    client, tmp_path
+    db_factory, tmp_path
 ):
     """Deploying the subscription must not move a project that chose the gateway.
 
@@ -474,7 +478,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     )
     fake = FakeGateway()
     svc, factory, pid, _tid = await _mk_service(
-        client.test_factory, tmp_path, fake, profiles=profiles
+        db_factory, tmp_path, fake, profiles=profiles
     )
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
@@ -495,14 +499,14 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
 
 @pytest.mark.anyio
 async def test_subscription_route_follows_the_capability_not_the_backend_name(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """A machine builds the metering-proxy env itself, so nothing about the
     transport travels from here — a channel that does NOT build one must keep
     its profile/gateway routing rather than fall through with no env at all and
     run on the backend process's own inherited credentials."""
     fake = FakeGateway()
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
@@ -524,7 +528,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
 
 @pytest.mark.anyio
 async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """Cloud and device are two answers to WHICH machine, never to which supply.
 
@@ -537,7 +541,7 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     meter while its traffic went through the proxy — counted once in each.
     """
     fake = FakeGateway()
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(db_factory, tmp_path, fake)
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
@@ -559,14 +563,12 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 
 @pytest.mark.anyio
 async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     from app.domain.agent_instance.configuration import AgentConfiguration
     from app.domain.agent_instance.services import AgentInstanceService
 
-    svc, factory, pid, tid = await _mk_service(
-        client.test_factory, tmp_path, FakeGateway()
-    )
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, FakeGateway())
     async with factory() as session:
         agents = AgentInstanceService(session)
         agent = await agents.create(
@@ -625,14 +627,14 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
 
 
 @pytest.mark.anyio
-async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
+async def test_usage_rows_record_their_route(db_factory, tmp_path, monkeypatch):
     async def _no_sleep(_s):
         return None
 
     _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, fake)
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
@@ -657,7 +659,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_one_drain_covers_several_models_without_absorbing_them(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """The regression this whole split exists for: one project's day mixes
     mimo and claude on the SAME key, and both must keep their own row in
@@ -673,7 +675,7 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
         "mimo-v2.6-pro": (400, 100, 0.004),
         "claude-sonnet-5": (120, 30, 0.02),
     }
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(db_factory, tmp_path, fake)
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
@@ -712,7 +714,9 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
 
 
 @pytest.mark.anyio
-async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp_path):
+async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
+    db_factory, tmp_path
+):
     """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
     is 'unknown', not 'this turn was free'. Without a meter for the route, the
     row must say unmetered."""
@@ -731,7 +735,7 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp
             )
 
     svc, factory, pid, tid = await _mk_service(
-        client.test_factory, tmp_path, None, screen=ZeroUsageScreen()
+        db_factory, tmp_path, None, screen=ZeroUsageScreen()
     )
 
     async for _ in svc.converse(

@@ -172,11 +172,11 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
 
 
 @pytest.mark.anyio
-async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
+async def test_a_room_with_no_resume_token_yet_has_not_run(db_factory, room):
     """租到机器还不算跑过——算力设置要到这条会话说出第一句才冻住。"""
     project, topic = room
     del project
-    async with client.test_factory() as db:
+    async with db_factory() as db:
         sessions = AgentSessionService(db)
         await sessions.remember_place(
             topic_id=topic,

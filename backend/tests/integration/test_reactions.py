@@ -191,12 +191,12 @@ def test_unsummoned_message_gets_no_receipt(client):
 
 
 @pytest.mark.anyio
-async def test_resume_turn_adds_no_receipt(client, tmp_path):
+async def test_resume_turn_adds_no_receipt(db_factory, tmp_path):
     """A system-initiated turn (重发 / nudge) has no human summon message —
     nothing gets 👀-acked and no reaction frame is emitted."""
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = db_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
         session_factory=factory,
