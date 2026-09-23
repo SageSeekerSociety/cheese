@@ -31,8 +31,8 @@ export default {
       name: 'SignUpVerifyEmail',
       component: () => import('@/views/account/signup/VerifyEmail.vue'),
       meta: {
-        title: '注册',
-        titleKey: 'account.verifyYourEmail',
+        title: '验证邮箱',
+        titleKey: 'account.verifyEmail.title',
       },
     },
     {

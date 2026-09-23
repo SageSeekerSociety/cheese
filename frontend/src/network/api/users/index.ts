@@ -35,6 +35,7 @@ export namespace UserApi {
 
   export type RegisterResponseDataType = {
     user: User
+    accessToken: string
   }
 
   export type RegistrationConfigDataType = {
