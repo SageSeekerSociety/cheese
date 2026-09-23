@@ -218,7 +218,8 @@ def rig(client, monkeypatch) -> SimpleNamespace:
     gateway_models.reset_cache()
 
 
-# --- 直接读库 / 改库的小工具（写库那半边是 `client` 那个库，见 test_admin_stats 的警告）
+# --- 直接读库 / 改库的小工具 -----------------------------------------------
+# （写库那半边是 `client` 那个库，见 test_admin_stats 的警告）
 
 
 def _subs_rows(client) -> list[LlmSubscription]:
@@ -580,7 +581,11 @@ def test_refresh_unreachable_gateway_is_a_503(client, as_admin, rig):
 
 _SNAPSHOT = {
     "tiers": [
-        {"name": "five_hour", "utilization": 10.0, "resets_at": "2026-09-23T00:00:00+00:00"}
+        {
+            "name": "five_hour",
+            "utilization": 10.0,
+            "resets_at": "2026-09-23T00:00:00+00:00",
+        }
     ]
 }
 
