@@ -60,6 +60,7 @@ class Handle:
 class SessionChannel(Protocol):
     name: str
     provisions_machine: bool
+    deferred_work: bool
     builds_model_env: bool
 
     def available(self) -> bool: ...
@@ -99,6 +100,10 @@ class PiRuntime:
     @property
     def provisions_machine(self) -> bool:
         return self.channel.provisions_machine
+
+    @property
+    def deferred_work(self) -> bool:
+        return self.channel.deferred_work
 
     @property
     def builds_model_env(self) -> bool:

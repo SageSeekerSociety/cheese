@@ -138,6 +138,15 @@ describe('session work machine approval', () => {
     await open()
     await fireEvent.mouseDown(screen.getByLabelText('队友会话'))
     await fireEvent.click(await screen.findByRole('option', { name: 'builder · session-' }))
+    api.setSessionWorkChoice.mockResolvedValue({
+      session: session({
+        id: 'session-b',
+        agent_handle: 'builder',
+        pending: { ...session().pending!, id: 'proposal-b' },
+      }),
+    })
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-b', device))
     api.approveSessionWorkChoice.mockResolvedValue({ session: session({ id: 'session-b', pending: null }) })
     await fireEvent.click(screen.getByRole('button', { name: '批准变更' }))
     await waitFor(() =>
@@ -159,7 +168,7 @@ describe('session work machine approval', () => {
   it('keeps the current machine visible when a choice becomes a proposal', async () => {
     await open()
     api.setSessionWorkChoice.mockResolvedValue({ session: session() })
-    await fireEvent.click(screen.getByRole('button', { name: '测试工作站' }))
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
     await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', device))
     expect(screen.getByText('当前配置：云端')).toBeTruthy()
     expect(screen.getByText('待批准：测试工作站')).toBeTruthy()

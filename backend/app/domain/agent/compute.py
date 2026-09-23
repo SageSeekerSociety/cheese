@@ -66,6 +66,9 @@ class ComputeProvider(Protocol):
     @property
     def provisions_machine(self) -> bool: ...
 
+    @property
+    def deferred_work(self) -> bool: ...
+
     # Does this backend assemble its machine's model environment itself? The
     # platform then sends the model CHOICE and nothing else, and the turn's
     # supply route is the deployment's rather than the profile's. Asked instead

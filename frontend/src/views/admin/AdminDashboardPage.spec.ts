@@ -169,8 +169,9 @@ describe('看板页', () => {
     expect(queryByText('0 ms')).toBeNull()
 
     // 这一类是唯一读**进程内存**的，口径必须写在页面上 —— 少了它，这些数会被读成
-    // 「有历史的、整个平台的」。
-    expect(await findByText(/进程内存/)).toBeTruthy()
+    // 「有历史的、整个平台的」。钉的是路由表底下那句的原话，不是 `/进程内存/`：
+    // 网速面板和机器台账也有这四个字，宽匹配会命中多条、findByText 直接抛。
+    expect(await findByText(/数在进程内存里/)).toBeTruthy()
   })
 
   it('平台那一类把机器报成存量，并写明它不是在线数', async () => {

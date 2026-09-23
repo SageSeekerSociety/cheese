@@ -2,9 +2,11 @@ import argparse
 import contextlib
 import importlib.util
 import io
+import json
 import pathlib
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -46,6 +48,211 @@ def run(run_id=1, latest=1, conclusion="success", status="completed"):
 
 
 class FeedbackReportTest(unittest.TestCase):
+    def evidence_record(self, workflow="required-ci.yml", run_id=1, latest=1):
+        return report.analyse_attempt(
+            run(run_id, latest=latest),
+            1,
+            [job("e2e / e2e")]
+            if workflow == "required-ci.yml"
+            else [job("acceptance"), job("private-chat")],
+            workflow,
+            "pull_request",
+        )
+
+    def receipt(self, suite="e2e", **changes):
+        value = dict(
+            schema_version=1,
+            run_id=1,
+            run_attempt=1,
+            head_sha="sha-1",
+            suite=suite,
+            clean=True,
+            reason="all_passed",
+            tests=31,
+            retries=0,
+            skipped=0,
+        )
+        value.update(changes)
+        return value
+
+    def archive(self, value):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as bundle:
+            bundle.writestr("evidence.json", json.dumps(value))
+        return output.getvalue()
+
+    def inspect_receipts(self, record, receipts, *, expired=False):
+        artifacts = [
+            {
+                "id": index,
+                "name": f"ci-test-evidence-1-1-{value['suite']}",
+                "expired": expired,
+            }
+            for index, value in enumerate(receipts, 1)
+        ]
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            mock.patch.object(
+                report, "gh_pages", return_value=[{"artifacts": artifacts}]
+            ),
+            mock.patch.object(
+                report.subprocess,
+                "check_output",
+                side_effect=[self.archive(value) for value in receipts],
+            ),
+        ):
+            report.collect_evidence([record], "owner/repo", pathlib.Path(folder), "now")
+        return record["test_evidence"]
+
+    def test_successful_workflow_with_retried_test_is_not_clean(self):
+        item = self.evidence_record()
+        evidence = self.inspect_receipts(
+            item, [self.receipt(clean=False, retries=1, reason="test_retried")]
+        )
+        self.assertEqual(evidence["status"], "not_clean")
+        summary = report.summarize([item])["required-ci.yml:pull_request"]
+        self.assertEqual(summary["cohort_tail_consecutive_first_attempt_successes"], 1)
+        self.assertEqual(summary["cohort_tail_consecutive_clean_first_attempts"], 0)
+
+    def test_remote_acceptance_needs_both_job_receipts(self):
+        item = self.evidence_record("remote-execution.yml")
+        self.assertEqual(
+            self.inspect_receipts(item, [self.receipt("remote-acceptance")])["status"],
+            "unknown",
+        )
+        self.assertEqual(
+            self.inspect_receipts(
+                item, [self.receipt("remote-acceptance"), self.receipt("private-chat")]
+            )["status"],
+            "clean",
+        )
+
+    def test_invalid_receipts_cannot_establish_clean_run(self):
+        for changes in (
+            {"head_sha": "other"},
+            {"run_attempt": 2},
+            {"run_id": 2},
+            {"schema_version": True},
+            {"tests": 0},
+            {"retries": 1},
+            {"skipped": 1},
+            {"tests": True},
+            {"clean": "true"},
+        ):
+            with self.subTest(changes=changes):
+                evidence = self.inspect_receipts(
+                    self.evidence_record(), [self.receipt(**changes)]
+                )
+                self.assertEqual(evidence["status"], "unknown")
+
+    def test_missing_expired_and_duplicate_artifacts_are_unknown(self):
+        for receipts, expired in (
+            ([], False),
+            ([self.receipt()], True),
+            ([self.receipt(), self.receipt()], False),
+        ):
+            with self.subTest(receipts=receipts, expired=expired):
+                self.assertEqual(
+                    self.inspect_receipts(
+                        self.evidence_record(), receipts, expired=expired
+                    )["status"],
+                    "unknown",
+                )
+
+    def test_workflow_rerun_is_not_clean_even_with_successful_receipt(self):
+        self.assertEqual(
+            self.inspect_receipts(self.evidence_record(latest=2), [self.receipt()])[
+                "status"
+            ],
+            "not_clean",
+        )
+
+    def test_artifact_api_failure_is_unknown_not_clean(self):
+        item = self.evidence_record()
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            mock.patch.object(
+                report,
+                "gh_pages",
+                side_effect=report.subprocess.CalledProcessError(1, "gh"),
+            ),
+        ):
+            report.collect_evidence([item], "owner/repo", pathlib.Path(folder), "now")
+        self.assertEqual(item["test_evidence"]["status"], "unknown")
+
+    def test_clean_streak_excludes_light_selections_but_stops_at_unknown(self):
+        records = []
+        for index, status in enumerate(
+            ("clean", "unknown", "clean", "not_applicable", "clean"), 1
+        ):
+            item = self.evidence_record(run_id=index)
+            item["test_evidence"] = {"status": status}
+            records.append(item)
+        summary = report.summarize(records)["required-ci.yml:pull_request"]
+        self.assertEqual(summary["cohort_tail_consecutive_clean_first_attempts"], 2)
+        self.assertEqual(
+            summary["first_attempt_test_evidence"],
+            dict(clean=3, unknown=1, not_clean=0, not_applicable=1),
+        )
+
+    def test_failed_or_cancelled_scope_interrupts_clean_streak(self):
+        for conclusion in ("failure", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                first = self.evidence_record(run_id=1)
+                last = self.evidence_record(run_id=3)
+                first["test_evidence"] = last["test_evidence"] = {"status": "clean"}
+                middle = report.analyse_attempt(
+                    run(2, conclusion=conclusion),
+                    1,
+                    [job("scope", conclusion), job("e2e / e2e", "skipped")],
+                    "required-ci.yml",
+                    "pull_request",
+                )
+                with tempfile.TemporaryDirectory() as folder:
+                    report.collect_evidence(
+                        [middle], "owner/repo", pathlib.Path(folder), "now"
+                    )
+                result = report.summarize([first, middle, last])[
+                    "required-ci.yml:pull_request"
+                ]
+                self.assertEqual(
+                    result["cohort_tail_consecutive_clean_first_attempts"], 1
+                )
+
+    def test_downloaded_archive_requires_only_the_normalized_receipt(self):
+        for name in ("../evidence.json", "unexpected.json"):
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as bundle:
+                bundle.writestr(name, json.dumps(self.receipt()))
+            with self.assertRaises(ValueError):
+                report.evidence_json(output.getvalue())
+
+    def test_evidence_is_rechecked_after_delayed_upload(self):
+        item = self.evidence_record()
+        artifact = {"id": 1, "name": "ci-test-evidence-1-1-e2e"}
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(
+                report, "gh_pages", return_value=[{"artifacts": []}]
+            ):
+                report.collect_evidence(
+                    [item], "owner/repo", pathlib.Path(folder), "first"
+                )
+            self.assertEqual(item["test_evidence"]["status"], "unknown")
+            with (
+                mock.patch.object(
+                    report, "gh_pages", return_value=[{"artifacts": [artifact]}]
+                ),
+                mock.patch.object(
+                    report.subprocess,
+                    "check_output",
+                    return_value=self.archive(self.receipt()),
+                ),
+            ):
+                report.collect_evidence(
+                    [item], "owner/repo", pathlib.Path(folder), "second"
+                )
+            self.assertEqual(item["test_evidence"]["status"], "clean")
+
     def test_rerun_attempts_stay_separate_but_latest_success_denominator_is_one_run(
         self,
     ):
@@ -89,7 +296,9 @@ class FeedbackReportTest(unittest.TestCase):
             "required-ci.yml",
             "pull_request",
         )
-        summary = report.summarize([first, failed, rerun])["required-ci.yml:pull_request"]
+        summary = report.summarize([first, failed, rerun])[
+            "required-ci.yml:pull_request"
+        ]
         self.assertEqual(summary["cohort_tail_consecutive_first_attempt_successes"], 0)
         self.assertEqual(summary["first_attempt_outcomes"]["success"], 1)
         self.assertEqual(summary["first_attempt_outcomes"]["failure"], 1)
@@ -150,9 +359,7 @@ class FeedbackReportTest(unittest.TestCase):
             ],
             0,
         )
-        self.assertEqual(
-            summary["cohort_tail_consecutive_first_attempt_successes"], 0
-        )
+        self.assertEqual(summary["cohort_tail_consecutive_first_attempt_successes"], 0)
 
     def test_parallel_jobs_use_final_completion_instead_of_added_durations(self):
         jobs = [

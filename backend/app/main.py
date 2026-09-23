@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.api.auth import ActorResolver
-from app.core import background
+from app.core import background, net_io, route_metrics
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import BaseError, register_exception_handlers
@@ -205,12 +205,18 @@ async def lifespan(_: FastAPI):
     for job in jobs:
         job.start()
     from app.core.loop_lag import watch_loop_lag
+    from app.core.net_io import watch_api_io, watch_net_io
     from app.domain.topic.retire import sweep_retired_storage
 
     background.spawn(
         sweep_retired_storage(async_session_factory), name="cleanup startup recovery"
     )
     background.spawn(watch_loop_lag(), name="event loop lag")
+    # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
+    # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
+    # 不只是「我们用户的流量」），重启即清零。
+    background.spawn(watch_net_io(), name="net io")
+    background.spawn(watch_api_io(), name="api io")
     forge_events = None
     if settings.forge_event_relay_url:
         from app.domain.review.events import listen
@@ -459,6 +465,17 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         _http_log.exception(
             "request failed", method=request.method, path=request.url.path
         )
+        # 异常路径也要入账：一个抛出去的处理器就是一次 5xx。不记的话，恰好是
+        # 最该被看见的那一类请求在看板上留不下痕迹。**不吞异常** ——
+        # `report_unhandled_to_room` 依赖原始异常。
+        if not probe:
+            route_metrics.record(
+                request.method,
+                _route_label(request),
+                None,
+                round((time.perf_counter() - t0) * 1000, 1),
+                minute=int(time.time() // 60),
+            )
         raise
     finally:
         if not probe:
@@ -470,9 +487,10 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     # 这两个指标在 `core/metrics.py` 里定义了很久、却一处调用都没有 —— `/metrics`
     # 一直返回一份恒为 0 的表。接上它们就是这一行。
     if not probe:
+        route_label = _route_label(request)
         labels = {
             "method": request.method,
-            "route": _route_label(request),
+            "route": route_label,
             "status": str(response.status_code),
         }
         registry.counter("http_requests_total", labels).inc()
@@ -481,6 +499,22 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             labels,
             buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
         ).observe(elapsed)
+        # 看板的路由表读的是这一份（按 (method, 路由模板) 一行，状态码是属性
+        # 不是身份）；上面那个直方图按状态码裂成三行，看板没法把它当端点读。
+        route_metrics.record(
+            request.method,
+            route_label,
+            response.status_code,
+            ms,
+            minute=int(time.time() // 60),
+        )
+        # 本进程的 HTTP 载荷字节数（上/下行的「api」那一面）。
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit():
+            net_io.note_http_bytes(request_body=int(cl))
+        cl_out = response.headers.get("content-length")
+        if cl_out and cl_out.isdigit():
+            net_io.note_http_bytes(response_body=int(cl_out))
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
         # Who and from where, when known. `auth_user_id` is set by

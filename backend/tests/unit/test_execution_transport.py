@@ -141,7 +141,7 @@ def test_chat_publication_fast_path_posts_with_session_credentials(monkeypatch, 
 
 
 @pytest.fixture
-def executor(tmp_path):
+def executor(tmp_path, request):
     home = tmp_path / "session home"
     helper = home / ".cheese/remote-execution/runtime.py"
     helper.parent.mkdir(parents=True)
@@ -154,10 +154,39 @@ def executor(tmp_path):
     state = home / ".cheese/executor"
     work = tmp_path / "project"
     work.mkdir()
+    project_servers = {}
+    if getattr(request, "param", None) == "project-mcp":
+        script = work / "repo_mcp.py"
+        script.write_text("""import json, sys
+from pathlib import Path
+for line in sys.stdin:
+    request = json.loads(line)
+    if 'id' not in request:
+        continue
+    method = request['method']
+    if method == 'initialize':
+        result = {'protocolVersion': '2024-11-05', 'capabilities': {'tools': {}},
+                  'serverInfo': {'name': 'repo', 'version': '1'}}
+    elif method == 'tools/list':
+        result = {'tools': [{'name': 'publish', 'inputSchema': {'type': 'object'}}]}
+    elif method == 'tools/call':
+        Path('published.txt').write_text(request['params']['arguments']['value'])
+        result = {'content': [{'type': 'text', 'text': str(Path.cwd())}]}
+    else:
+        result = {}
+    print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}),
+          flush=True)
+""")
+        project_servers = {"repo": {"command": sys.executable, "args": [str(script)]}}
     subprocess.run(
         [sys.executable, str(helper), "start", "--state", str(state)],
         input=json.dumps(
-            {"workspace": str(work), "claude": claude_binary(), "env": {}}
+            {
+                "workspace": str(work),
+                "claude": claude_binary(),
+                "env": {},
+                "mcp_servers": project_servers,
+            }
         ),
         text=True,
         capture_output=True,
@@ -181,13 +210,19 @@ class SocketDevice:
     def __init__(self):
         self.sizes = []
         self.devices = []
+        self.timeouts = []
         self.hub = DeviceHub()
 
-    async def call_executor(self, device_id, state, method, params, *, trace_id=None):
+    async def call_executor(
+        self, device_id, state, method, params, *, trace_id=None, timeout=660
+    ):
         self.devices.append(device_id)
+        self.timeouts.append(timeout)
         await self.hub.attach_device(device_id, self)
         await self.hub.on_device_message(device_id, {"t": "hello", "executor": True})
-        return await self.hub.call_executor(device_id, state, method, params)
+        return await self.hub.call_executor(
+            device_id, state, method, params, timeout=timeout, trace_id=trace_id
+        )
 
     async def send_json(self, message):
         if message["t"] == "welcome":
@@ -217,9 +252,14 @@ async def test_large_file_control_crosses_connector_without_truncation(executor)
     (work / "large.txt").write_text(content)
     device = SocketDevice()
     result = await execution.call(
-        target, "control", {"subtype": "read_file", "path": "large.txt"}, hub=device
+        target,
+        "control",
+        {"subtype": "read_file", "path": "large.txt"},
+        hub=device,
+        timeout=30,
     )
     assert result["contents"] == content
+    assert device.timeouts == [30]
     assert max(device.sizes) < 1 << 20
     assert set(device.devices) == {"project-device"}
     assert not (state / "relay").exists()
@@ -1196,3 +1236,172 @@ def test_a_lost_response_is_never_replayed(monkeypatch):
     with pytest.raises(ConnectionResetError):
         client.call("invoke")
     assert len(attempts) == 1
+
+
+def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
+    executor, tmp_path, monkeypatch
+):
+    _, work, state = executor
+    (work / "CLAUDE.md").write_text("Always preserve the protected file.")
+    local = tmp_path / "session-machine"
+    local.mkdir()
+    (local / "protected").write_text("session only")
+    seen = []
+    generation = str(uuid.uuid4())
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                seen.append("lease")
+                result = {
+                    "data": {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(work),
+                            "url": base + "/execute",
+                            "generation": generation,
+                        },
+                        "token": "execution-only",
+                    }
+                }
+            else:
+                seen.append(body["method"])
+                assert 0 < body["timeout"] <= 660
+                assert self.headers["X-Cheese-Token"] == "execution-only"
+                result = runtime.request(state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_port}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("CHEESE_API", base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    target_file = local / "execution.json"
+    config = {
+        "kind": "deferred",
+        "workspace": "/unavailable-project",
+        "lease_path": "/lease",
+        "target_file": str(target_file),
+    }
+    target_file.write_text(json.dumps(config))
+    client = executor_transport.RemoteClient(config)
+    request = {
+        "id": "first-write",
+        "tool": "Bash",
+        "args": {"command": "printf remote > /unavailable-project/output.txt"},
+    }
+    try:
+        assert client.call("context_fs", {"operation": "tree"})["entries"] == {}
+        assert seen == [], "Context discovery must not acquire a machine"
+        with pytest.raises(RuntimeError, match="Always preserve the protected file"):
+            client.call("invoke", request)
+        assert "invoke" not in seen
+        assert not (work / "output.txt").exists()
+        assert (
+            "CLAUDE.md"
+            in json.loads((local / "context-tree.json").read_text())["entries"]
+        )
+        result = client.call("invoke", request)
+        assert "error" not in result, result
+        assert (work / "output.txt").read_text() == "remote"
+        assert (local / "protected").read_text() == "session only"
+        assert not (local / "output.txt").exists()
+        assert seen.count("context") == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("executor", ["project-mcp"], indirect=True)
+def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
+    tmp_path, executor
+):
+    _, work, state = executor
+    calls = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(payload)
+            assert payload["method"] == "mcp"
+            assert payload["params"]["server"] == "repo"
+            reply = runtime.request(state, payload["method"], payload["params"])
+            data = json.dumps(reply).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    config = tmp_path / "project-tools.json"
+    config.write_text(
+        json.dumps(
+            {
+                "kind": "device",
+                "url": f"http://127.0.0.1:{server.server_port}/execution",
+                "workspace": "/remote-project",
+                "mcp_servers": ["repo"],
+            }
+        )
+    )
+    with (tmp_path / "transport.log").open("w") as log:
+        process = runtime.MCPProcess(
+            [sys.executable, central.__file__, "transport", str(config)],
+            str(tmp_path),
+            {
+                **os.environ,
+                "CHEESE_TOKEN": "session-credential",
+                "NO_PROXY": "127.0.0.1",
+            },
+            log,
+        )
+        try:
+            assert "project_tools" in {
+                tool["name"] for tool in process.call("tools/list")["tools"]
+            }
+
+            def invoke(**args):
+                response = process.call(
+                    "tools/call",
+                    {
+                        "name": "project_tools",
+                        "arguments": {
+                            "id": "mutation-id",
+                            "session_id": "native-session",
+                            **args,
+                        },
+                    },
+                )
+                return json.loads(response["content"][0]["text"])
+
+            assert invoke()["result"]["servers"] == ["repo"]
+            assert calls == []
+            assert invoke(server="repo")["result"]["tools"][0]["name"] == "publish"
+            assert "id" not in calls[-1]["params"]
+            assert invoke(
+                server="repo", name="publish", arguments={"value": "literal"}
+            )["result"]["content"][0]["text"] == str(work)
+            assert (work / "published.txt").read_text() == "literal"
+            assert not (tmp_path / "published.txt").exists()
+            assert calls[-1]["params"]["id"] == "mutation-id"
+            assert calls[-1]["params"]["tool"] == "mcp__repo__publish"
+        finally:
+            process.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()

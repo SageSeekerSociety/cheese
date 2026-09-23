@@ -264,10 +264,11 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
     assert backend.channel.executor is cloud
-    # Unconfigured Cloud is registered but not runnable, and it is the one
-    # backend the turn path must wait for a machine on.
+    # Registration is independent of readiness. Chat needs its session host;
+    # Cloud hands are acquired by a tool, never by turn admission.
     assert backend.available() is False
-    assert backend.provisions_machine is True
+    assert backend.provisions_machine is False
+    assert backend.deferred_work is True
 
 
 def _register_pi(monkeypatch):

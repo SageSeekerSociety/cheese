@@ -91,8 +91,9 @@ def prepare(
             from private import ensure
 
         ensure(target, directory, os.environ)
-    forwarded = target.get("kind") != "private"
-    device_forwarded = target.get("kind") == "device"
+    unavailable = target.get("kind") in {"unavailable", "deferred"}
+    forwarded = target.get("kind") not in {"private", "unavailable"}
+    device_forwarded = target.get("kind") in {"device", "deferred"}
     workspace = (
         directory / "forwarded-project"
         if forwarded
@@ -108,7 +109,7 @@ def prepare(
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
     client = RemoteClient(target)
-    info = client.call("ping")
+    info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
     if target.get("kind") == "private":
         info["workspace"] = "/work"
     target = dict(
@@ -170,7 +171,7 @@ def prepare(
         if mount_state(workspace) != MOUNT_LIVE:
             detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
             raise RuntimeError("Forwarded project mount failed: " + detail)
-    if forwarded:
+    if forwarded or unavailable:
         if __package__:
             from .release import link_forwarded_user_context
         else:
@@ -178,7 +179,11 @@ def prepare(
             from release import link_forwarded_user_context
 
         link_forwarded_user_context(
-            directory, config, workspace, context_tree, Path(__file__).parent
+            directory,
+            config,
+            workspace,
+            {"entries": {}} if unavailable else context_tree,
+            Path(__file__).parent,
         )
     plugin = directory / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
@@ -193,7 +198,13 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
-    for tool in ("invoke", "chat_send", "platform_request", "cheese_*"):
+    for tool in (
+        "invoke",
+        "chat_send",
+        "platform_request",
+        "project_tools",
+        "cheese_*",
+    ):
         if f"mcp__native__{tool}" not in allowed:
             allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
@@ -204,7 +215,7 @@ def prepare(
             matcher = group.get("matcher", "*")
             matcher = ".*" if matcher in ("*", "") else matcher
             group["matcher"] = (
-                f"^(?!mcp__native__(?:invoke|chat_send|platform_request|cheese_.*)$).*(?:{matcher})"
+                f"^(?!mcp__native__(?:invoke|chat_send|platform_request|project_tools|cheese_.*)$).*(?:{matcher})"
             )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -381,7 +392,7 @@ def sync_context(target_path, supplied_tree=None):
     import hashlib
 
     target = json.loads(Path(target_path).read_text())
-    if target.get("kind") != "private":
+    if target.get("kind") not in {"private", "unavailable"}:
         tree = supplied_tree or RemoteClient(target).call(
             "context_fs", {"operation": "tree"}
         )
@@ -414,8 +425,13 @@ def sync_context(target_path, supplied_tree=None):
     # The shell can replace even the executor's own files and responses. Keep
     # executable central configuration independent of anything it returns.
     snapshot = (
-        {"files": {}, "instructions": PRIVATE_INSTRUCTIONS}
-        if target.get("kind") == "private"
+        {
+            "files": {},
+            "instructions": MACHINE_OUT_OF_REACH
+            if target.get("kind") in {"unavailable", "deferred"}
+            else PRIVATE_INSTRUCTIONS,
+        }
+        if target.get("kind") in {"private", "unavailable", "deferred"}
         else RemoteClient(target).call("context", {"known_files": known_files})
     )
     files = snapshot["files"]
@@ -1043,6 +1059,27 @@ def transport(config, target_path):
                             },
                         },
                         {
+                            "name": "project_tools",
+                            "description": (
+                                "Discover and call configured project MCP tools "
+                                "on the work machine. Omit server to discover; "
+                                "provide server to list tools; add name and "
+                                "arguments to call one. "
+                                "This acquires work equipment only when invoked."
+                            ),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "session_id": {"type": "string"},
+                                    "server": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "arguments": {"type": "object"},
+                                },
+                                "required": ["id", "session_id"],
+                            },
+                        },
+                        {
                             "name": "platform_request",
                             "description": (
                                 "Call the Cheese backend with room credentials. "
@@ -1112,9 +1149,12 @@ def transport(config, target_path):
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
-                if tool not in ("invoke", "platform_request", "send_user_file") and (
-                    tool not in cheese.PLATFORM_TOOLS
-                ):
+                if tool not in (
+                    "invoke",
+                    "platform_request",
+                    "send_user_file",
+                    "project_tools",
+                ) and (tool not in cheese.PLATFORM_TOOLS):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 if tool == "chat_send":
@@ -1125,6 +1165,17 @@ def transport(config, target_path):
                         "args": {
                             key: payload[key]
                             for key in ("content", "reply_to", "request_id")
+                            if key in payload
+                        },
+                    }
+                elif tool == "project_tools":
+                    payload = {
+                        "id": payload["id"],
+                        "session_id": payload["session_id"],
+                        "tool": "mcp__native__project_tools",
+                        "args": {
+                            key: payload[key]
+                            for key in ("server", "name", "arguments")
                             if key in payload
                         },
                     }
@@ -1181,7 +1232,13 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
-                    if tool == "send_user_file":
+                    if tool == "project_tools":
+                        receipt = {
+                            "value": client.call(
+                                "project_tools", {**args, "id": payload["id"]}
+                            )
+                        }
+                    elif tool == "send_user_file":
                         receipt = deliver_send_user_file(
                             client, config, payload, args, invoke_on_the_machine
                         )

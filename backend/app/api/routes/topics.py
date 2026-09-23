@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1336,7 +1336,7 @@ async def get_topic_compute_profile(
             ],
             "locked": bool(
                 await AgentSessionService(db).has_run(topic_id)
-                or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+                or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
             ),
             "inherited": topic.compute_profile is None,
             "profiles": [
@@ -1357,11 +1357,287 @@ async def get_topic_compute_profile(
     )
 
 
+class WorkLeaseRequest(BaseModel):
+    env: dict[str, str] = Field(default_factory=dict)
+    timeout: float = Field(default=660, gt=0, le=660)
+
+
+@router.get("/{topic_id}/sessions/work-leases")
+async def session_work_leases(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from sqlalchemy import select
+
+    from app.domain.agent_session.models import AgentSession
+    from app.domain.machine.session_work import presentation
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    rows = await db.scalars(
+        select(AgentSession)
+        .where(AgentSession.topic_id == topic_id)
+        .order_by(AgentSession.agent_handle)
+    )
+    return ok({"sessions": [presentation(row) for row in rows]})
+
+
+@router.put("/{topic_id}/sessions/{session_id}/work-choice")
+async def request_session_work_choice(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    from pydantic import ValidationError as SchemaError
+
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.agent.compute_configs import ComputeChoice
+    from app.domain.machine import session_work as work_lease
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    if actor.via == "cheese":
+        claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+        if (
+            claims.get("session") != str(session_id)
+            or claims.get("t") != str(topic_id)
+            or claims.get("r") != str(topic.resource_id or topic.id)
+        ):
+            raise ForbiddenError("Execution credential does not own this session")
+    elif actor.via != "token":
+        raise ForbiddenError("请先登录")
+    try:
+        choice = ComputeChoice.model_validate(body.get("choice"))
+    except SchemaError as exc:
+        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    return ok(
+        {
+            "session": await work_lease.request_choice(
+                db,
+                topic_id=topic_id,
+                session_id=session_id,
+                actor=actor,
+                choice=choice,
+            )
+        }
+    )
+
+
+class WorkChoiceApproval(BaseModel):
+    proposal_id: uuid.UUID
+    acknowledge_unreachable_work: bool = False
+
+
+@router.post("/{topic_id}/sessions/{session_id}/work-choice/approve")
+async def approve_session_work_choice(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: WorkChoiceApproval,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    from app.domain.machine import session_work as work_lease
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    return ok(
+        {
+            "session": await work_lease.approve_choice(
+                db,
+                topic_id=topic_id,
+                session_id=session_id,
+                actor=actor,
+                proposal_id=body.proposal_id,
+                acknowledge_unreachable_work=body.acknowledge_unreachable_work,
+            )
+        }
+    )
+
+
+@router.get("/{topic_id}/sessions/{session_id}/dispatches")
+async def session_dispatches(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    from sqlalchemy import or_, select
+
+    from app.domain.agent.dispatch_log import DispatchRow
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    row = await AgentSessionService(db).by_id(session_id)
+    if row is None or row.topic_id != topic_id:
+        raise NotFoundError("Session not found")
+    rows = await db.scalars(
+        select(DispatchRow)
+        .where(
+            DispatchRow.place_id == topic_id,
+            or_(DispatchRow.session_id == session_id, DispatchRow.session_id.is_(None)),
+            or_(DispatchRow.outcome.is_(None), DispatchRow.outcome == "unknown"),
+        )
+        .order_by(DispatchRow.dispatched_at)
+    )
+    from app.domain.membership.services import MemberService
+
+    can_confirm = False
+    if actor.via == "token" and actor.user_id is not None:
+        try:
+            await MemberService(db).require_manager(topic.project_id, actor)
+        except ForbiddenError:
+            pass
+        else:
+            can_confirm = True
+    return ok(
+        {
+            "can_confirm": can_confirm,
+            "dispatches": [
+                {
+                    "id": str(item.id),
+                    "key": item.key,
+                    "tool": item.tool,
+                    "outcome": item.outcome or "unknown",
+                    "dispatched_at": item.dispatched_at.isoformat(),
+                    "confirmed_at": item.confirmed_at.isoformat()
+                    if item.confirmed_at
+                    else None,
+                }
+                for item in rows
+            ],
+        }
+    )
+
+
+class DispatchConfirmation(BaseModel):
+    note: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/{topic_id}/sessions/{session_id}/dispatches/{dispatch_id}/confirm")
+async def confirm_session_dispatch(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    dispatch_id: uuid.UUID,
+    body: DispatchConfirmation,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    from sqlalchemy import select
+
+    from app.domain.agent.dispatch_log import DispatchRow
+    from app.domain.agent.models import AgentTurn
+    from app.domain.membership.services import MemberService
+
+    topic = await TopicService(db).lock_for_execution(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    if actor.via != "token" or actor.user_id is None:
+        raise ForbiddenError("请项目管理者登录确认")
+    await MemberService(db).require_manager(topic.project_id, actor)
+    row = await AgentSessionService(db).by_id(session_id)
+    item = await db.scalar(
+        select(DispatchRow).where(DispatchRow.id == dispatch_id).with_for_update()
+    )
+    if (
+        row is None
+        or row.topic_id != topic_id
+        or item is None
+        or item.place_id != topic_id
+        or item.session_id not in (None, session_id)
+    ):
+        raise NotFoundError("Dispatch not found")
+    if item.outcome not in (None, "unknown"):
+        raise ConflictError("这次调用已有确定结果")
+    if await db.scalar(
+        select(AgentTurn.id)
+        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .limit(1)
+    ):
+        raise ConflictError("当前轮次仍在运行，请等它结束后再核实")
+    if item.confirmed_at is None:
+        item.confirmed_at = datetime.now(UTC)
+        item.confirmed_by = actor.handle
+        item.confirmation_note = body.note
+    await db.commit()
+    return ok(
+        {
+            "id": str(item.id),
+            "outcome": item.outcome or "unknown",
+            "confirmed_at": item.confirmed_at.isoformat(),
+        }
+    )
+
+
+@router.post("/{topic_id}/sessions/{session_id}/work-lease")
+async def acquire_session_work_lease(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: WorkLeaseRequest,
+    request: Request,
+    db: DbSession,
+) -> dict:
+    from app.core.errors import AuthenticationRequiredError
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.machine import session_work as work_lease
+
+    token = request.headers.get("x-cheese-token", "")
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise AuthenticationRequiredError("A session execution credential is required")
+    from app.core.errors import GatewayTimeoutError
+
+    try:
+        async with asyncio.timeout(body.timeout):
+            return ok(
+                await work_lease.ensure(
+                    db,
+                    topic_id=topic_id,
+                    session_id=session_id,
+                    claims=claims,
+                    token=token,
+                    env=body.env,
+                    api=str(request.base_url).rstrip("/"),
+                )
+            )
+    except TimeoutError as exc:
+        raise GatewayTimeoutError("工作机器仍在准备，对话和平台工具仍可用") from exc
+
+
 @router.put("/{topic_id}/compute-profile")
 async def set_topic_compute_profile(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """Change only this room before its first resource allocation or session."""
+    """Room defaults before startup; signed running sessions request their own hands."""
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1393,10 +1669,21 @@ async def set_topic_compute_profile(
     # 认的是**这个房间这一轮的那张令牌**，不是「说话的是个 agent」：项目级 agent
     # 凭据也是 `via == "cheese"`，而它够得着这个项目里的每一个房间（`app/main.py`
     # 上那句话），拿它当判据等于任何一张项目凭据都能动别人正跑着的房间。
-    asked_by_this_rooms_turn = resolver.speaks_for_this_rooms_turn(topic_id)
+    from app.core.sandbox_auth import scoped_token_claims
+
+    claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+    scoped_session = claims.get("session") if actor.via == "cheese" else None
+    if scoped_session and (
+        claims.get("t") != str(topic_id)
+        or claims.get("r") != str(topic.resource_id or topic.id)
+    ):
+        raise ForbiddenError("Execution credential does not own this room generation")
+    asked_by_this_rooms_turn = bool(
+        scoped_session
+    ) or resolver.speaks_for_this_rooms_turn(topic_id)
     started = bool(
         await AgentSessionService(db).has_run(topic_id)
-        or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+        or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
     )
     if started and not asked_by_this_rooms_turn:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
@@ -1412,6 +1699,17 @@ async def set_topic_compute_profile(
         )
     except SchemaError as exc:
         raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    if scoped_session:
+        from app.domain.machine import session_work as work_lease
+
+        result = await work_lease.request_choice(
+            db,
+            topic_id=topic_id,
+            session_id=uuid.UUID(scoped_session),
+            actor=actor,
+            choice=choice,
+        )
+        return ok({"session": result, "proposal": result["pending"]})
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")

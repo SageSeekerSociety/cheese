@@ -58,6 +58,7 @@ class PiChannel:
         self.channel = channel
         self.name = channel.name
         self.provisions_machine = channel.provisions_machine
+        self.deferred_work = channel.deferred_work
         self.builds_model_env = channel.builds_model_env
 
     def available(self) -> bool:

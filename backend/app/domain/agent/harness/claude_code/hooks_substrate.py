@@ -803,6 +803,10 @@ class ClaudeCodeRuntime:
         return self._channel.provisions_machine
 
     @property
+    def deferred_work(self) -> bool:
+        return self._channel.deferred_work
+
+    @property
     def builds_model_env(self) -> bool:
         return self._channel.builds_model_env
 

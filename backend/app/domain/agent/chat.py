@@ -2736,9 +2736,15 @@ class ChatService:
             usage.input_tokens or usage.output_tokens or usage.cost_usd
         ):
             usage = None
+        # One row PER MODEL, never one lump: a gateway-routed turn's spend can
+        # cover several models in one drain, and collapsing them under
+        # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
+        usages: list[AgentUsage] = []
         if self._gateway is not None and state.route == "gateway":
-            usage = await self._drain_gateway_usage(state.project_id)
-            if usage is None:
+            drained = await self._drain_gateway_usage(state.project_id)
+            if drained:
+                usages = drained
+            else:
                 # Both the turn-end drain and its settle retry saw nothing.
                 # LiteLLM batch-writes spend logs, so "nothing yet" is not
                 # "nothing" — land it in the background rather than hold the
@@ -2748,11 +2754,13 @@ class ChatService:
                 self._schedule_deferred_drain(
                     state.project_id, state.topic_id, state.work_id
                 )
+        elif usage is not None:
+            usages = [usage]
 
         action_frames: list[dict] = []
         async with self._sessions() as session:
             blocks = BlockRepository(session)
-            if usage is None:
+            if not usages:
                 await UsageRepository(session).add(
                     project_id=state.project_id,
                     topic_id=state.topic_id,
@@ -2765,20 +2773,21 @@ class ChatService:
                     turn_id=state.work_id,
                 )
             else:
-                await UsageRepository(session).add(
-                    project_id=state.project_id,
-                    topic_id=state.topic_id,
-                    model=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cost_usd=usage.cost_usd,
-                    route=state.route,
-                    turn_id=state.work_id,
-                )
-                await ComputeGrantRepository(session).consume(
-                    state.project_id,
-                    usage_to_credits(usage, spend_priced=state.route == "gateway"),
-                )
+                for u in usages:
+                    await UsageRepository(session).add(
+                        project_id=state.project_id,
+                        topic_id=state.topic_id,
+                        model=u.model or settings.agent_model,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
+                        cost_usd=u.cost_usd,
+                        route=state.route,
+                        turn_id=state.work_id,
+                    )
+                    await ComputeGrantRepository(session).consume(
+                        state.project_id,
+                        usage_to_credits(u, spend_priced=state.route == "gateway"),
+                    )
             landed = landing(
                 EventAbout.room,
                 project_id=state.project_id,
@@ -4509,31 +4518,34 @@ class ChatService:
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
-            usage = await self._drain_gateway_usage(project_id)
-            if usage is None:
+            usages = await self._drain_gateway_usage(project_id)
+            if not usages:
                 return  # still nothing — the next turn's drain picks it up
             async with self._sessions() as session:
-                await UsageRepository(session).add(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    model=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cost_usd=usage.cost_usd,
-                    route="gateway",
-                    # Same turn as the row tx2 already wrote — this is the late
-                    # half of ONE turn's spend, not a second turn.
-                    turn_id=turn_id,
-                )
-                await ComputeGrantRepository(session).consume(
-                    project_id, usage_to_credits(usage, spend_priced=True)
-                )
+                for usage in usages:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=usage.model or settings.agent_model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cost_usd=usage.cost_usd,
+                        route="gateway",
+                        # Same turn as the row tx2 already wrote — this is the
+                        # late half of ONE turn's spend, not a second turn.
+                        turn_id=turn_id,
+                    )
+                    await ComputeGrantRepository(session).consume(
+                        project_id, usage_to_credits(usage, spend_priced=True)
+                    )
                 await session.commit()
             logger.info(
-                "deferred usage drain landed for turn %s (%d+%d tokens)",
+                "deferred usage drain landed for turn %s (%s)",
                 turn_id,
-                usage.input_tokens,
-                usage.output_tokens,
+                ", ".join(
+                    f"{u.model or '?'}:{u.input_tokens}+{u.output_tokens}"
+                    for u in usages
+                ),
             )
 
         hold(
@@ -4542,12 +4554,20 @@ class ChatService:
             name=f"deferred-usage-drain-{turn_id}",
         )
 
-    async def _drain_gateway_usage(self, project_id: uuid.UUID) -> AgentUsage | None:
-        """L1: real usage for gateway-routed turns. The hooks backends can't see
-        token usage locally (interactive Claude Code reports none → usage=0), so
-        read the project's NEW spend from the gateway's log instead — an
-        exactly-once daily cumulative delta (see gateway.drain_new_usage), so
-        late-logged rows surface in a later drain instead of being lost."""
+    async def _drain_gateway_usage(
+        self, project_id: uuid.UUID
+    ) -> list[AgentUsage] | None:
+        """L1: real usage for gateway-routed turns, **one entry per model**.
+
+        The hooks backends can't see token usage locally (interactive Claude
+        Code reports none → usage=0), so read the project's NEW spend from the
+        gateway's log instead — an exactly-once daily cumulative delta per
+        model (see gateway.drain_new_usage), so late-logged rows surface in a
+        later drain instead of being lost. ``None`` covers both "nothing to
+        land yet" and "could not ask the gateway" — the callers treat them the
+        same (retry now / settle later) and only differ on whether the
+        checkpoint was advanced, which this function already did or did not
+        do."""
         if self._gateway is None:
             return None
         try:
@@ -4575,11 +4595,11 @@ class ChatService:
                     ckpt = s.get(self._GW_CKPT)
                     ckpt = ckpt if isinstance(ckpt, dict) else None
                 drained = await drain_new_usage(self._gateway, key, ckpt)
-                if not attempt and (drained is None or drained[0] + drained[1] <= 0):
+                if not attempt and (drained is None or not drained[0]):
                     continue
                 if drained is None:
                     return None
-                prompt, completion, usd, next_ckpt = drained
+                rows, next_ckpt = drained
                 # Exactly-once, and two drains can now be in flight at once: the
                 # checkpoint must still be the one we read before this drain is
                 # allowed to bill its delta. A drain that finds it already
@@ -4596,14 +4616,22 @@ class ChatService:
                         s[self._GW_CKPT] = next_ckpt
                         project.settings = s
                         await session.commit()
-                if prompt + completion <= 0:
-                    return None
-                return AgentUsage(
-                    model=settings.agent_model,
-                    input_tokens=prompt,
-                    output_tokens=completion,
-                    cost_usd=usd,
-                )
+                # `model=""` is the one pre-split migration row (see
+                # gateway.drain_new_usage): it is real spend we can only state
+                # as a total. Stamp the default name so it is still visible,
+                # exactly as before the split — do NOT invent a model.
+                usages = [
+                    AgentUsage(
+                        model=row.model,
+                        input_tokens=row.prompt_tokens,
+                        output_tokens=row.completion_tokens,
+                        cost_usd=row.spend_usd,
+                    )
+                    for row in rows
+                ]
+                # None, not []: "no rows" and "gateway unreachable" both mean
+                # there is nothing to land this pass (see the docstring).
+                return usages or None
         except Exception:  # noqa: BLE001 — metering must never fail a turn
             logger.exception("gateway usage drain failed for %s", project_id)
             return None
@@ -4945,6 +4973,27 @@ class ChatService:
             # 房间从没打开过算力选择器也照样过闸门：决定一个房间占谁的机器的是这
             # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
             # 少数情形，它和这里问的是同一个闸门。
+            if provider.deferred_work and project is not None and needs_place:
+                from app.domain.agent.compute_configs import room_choice
+
+                conversation = await AgentSessionService(session).ensure(
+                    topic_id, agent.handle, harness=wanted_harness
+                )
+                if conversation.execution_request is None:
+                    conversation.execution_request = {
+                        "generation": str(uuid.uuid4()),
+                        "choice": room_choice(topic, project.settings).model_dump(),
+                        "authorized_by": None,
+                    }
+                if provision_actor is not None and provision_actor.via == "token":
+                    conversation.execution_request = {
+                        **conversation.execution_request,
+                        "authorized_by": {
+                            "handle": provision_actor.handle,
+                            "user_id": provision_actor.user_id,
+                            "via": provision_actor.via,
+                        },
+                    }
             if project is not None:
                 actor_handle = acting_agent or agent.handle
                 policy = gate.policy_of(project.settings)
@@ -4952,7 +5001,11 @@ class ChatService:
                 # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
                 # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
                 # 上也得透明，这是每一轮都走的路。
-                if needs_place and not policy.lets_everything_through:
+                if (
+                    needs_place
+                    and not provider.deferred_work
+                    and not policy.lets_everything_through
+                ):
                     from app.domain.agent.compute_configs import (
                         machine_policy_call,
                         room_choice,
@@ -4983,7 +5036,12 @@ class ChatService:
                 if proposed is not None:
                     await session.commit()
                     return _TurnBail(_proposal_frames(proposed.landed))
-            if needs_place and compute_id == "device" and topic.compute_config is None:
+            if (
+                needs_place
+                and not provider.deferred_work
+                and compute_id == "device"
+                and topic.compute_config is None
+            ):
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,
                 )

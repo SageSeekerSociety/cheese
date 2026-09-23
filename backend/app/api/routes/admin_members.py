@@ -19,23 +19,54 @@ router」，同一个文件里的第二个 `APIRouter` 会被静默丢掉，理�
 说了算」，这里是「删不删得掉由服务端说了算」，前端拿到的名单本来就分两份。
 """
 
-from fastapi import APIRouter, Query
+from typing import Annotated
 
+from fastapi import APIRouter, Header, Query, Response
+
+from app.api.conditional import etag_for_json, if_none_match_hits
 from app.api.response import ok
 from app.api.routes.admin_common import AdminServiceDep, PlatformAdminDep
 from app.domain.admin.schemas import AdminAdd
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+#: 这份名单是**平台管理员**专有的，所以只能是 `private` —— 一份被 CDN 或中间代理
+#: 缓存下来的管理员名单，等于把它发给任何一个请求同一个 URL 的人。这是安全要求，
+#: 不是性能偏好：`public` 在这里是错的，不是慢。`no-cache` 要求每次带 `If-None-Match`
+#: 回来问一句，命中 ETag 就回 304（省的是 body，名单本身很小）。
+ADMIN_LIST_CACHE_CONTROL = "private, no-cache"
 
-@router.get("/admins")
-async def list_admins(admins: AdminServiceDep, handle: PlatformAdminDep) -> dict:
+
+@router.get("/admins", response_model=None)
+async def list_admins(
+    admins: AdminServiceDep,
+    handle: PlatformAdminDep,
+    response: Response,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> dict | Response:
     """名单，分成根（只读）和页面上加的（可删）两块给。
 
     见 `AdminService.admins_out`：两个列表而不是一个带标记的列表，因为这两块
     在页面上的**操作权不一样**，而分组规则不该由前端再定一份。
+
+    条件请求：`ETag` 由 `data` 的规范化 JSON 算出（`etag_for_json`，只依赖内容），
+    `If-None-Match` 命中就回 304、空 body —— 页面上的刷新按钮按十次，十次都只是
+    这一行 header 的往返。**命中 304 也照带那两个 header**（RFC 要求，客户端要靠
+    它们更新缓存）。没命中那条路仍然走 `ok()` 的信封：前端 `request()` 靠
+    `{code,message,data}` 解包，只有 304 这一条允许空 body。
     """
-    return ok(await admins.admins_out())
+    data = await admins.admins_out()
+    etag = etag_for_json(data)
+    cache_headers = {
+        "Cache-Control": ADMIN_LIST_CACHE_CONTROL,
+        "ETag": f'"{etag}"',
+    }
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
+    # 往注入的 `Response` 上写 header，再回常规的信封 —— 这是「200 带头、304 空体」
+    # 两种形状共用一份 header 定义的写法。
+    response.headers.update(cache_headers)
+    return ok(data)
 
 
 @router.get("/users")

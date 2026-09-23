@@ -148,6 +148,8 @@ async def execute(
             place_id=topic_id,
             key=str(key),
             tool=str(tool) if tool else payload.method,
+            session_id=session_id,
+            lease_generation=lease_generation,
         )
         if key
         else None

@@ -106,6 +106,7 @@ def _spawn(router, room_id, task_id: uuid.UUID, worker: str) -> None:
         str(room_id),
         {
             "hook_event_name": "SubagentStart",
+            "session_id": "native-parent-session",
             "agent_id": worker,
             "agent_type": "general-purpose",
             "_eid": f"start-{worker}",
@@ -227,6 +228,7 @@ async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
     for payload in (
         {
             "hook_event_name": "SubagentStart",
+            "session_id": "native-parent-session",
             "agent_id": "worker-1",
             "agent_type": "general-purpose",
             "_eid": "run-start",
@@ -278,6 +280,9 @@ async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
         task = await TaskService(session).get(task_id)
         assert task is not None
         assert task.subagent_id == "worker-1"
+        assert task.execution_parent_session_id == "native-parent-session"
+        assert task.execution_agent_instance_id is not None
+        assert task.execution_turn_id is not None
 
     await provider._close_topic(room_id)
 

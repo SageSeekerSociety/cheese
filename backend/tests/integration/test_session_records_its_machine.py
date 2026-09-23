@@ -1,31 +1,35 @@
-"""地点解析的入口是会话，不是房间。
+"""Session-owned placement and continuation identity.
 
-两条验收（PLAN P18）：
-
-* 同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话拿到各自的——
-  后者在改动之前会撞上「执行机器与本房间已经记录的位置不一致」直接报错，因为位置
-  记在房间上，一个房间只有一条。
-* 把一条会话搬到另一台会话机，下一轮它仍然引用得上上一轮自己说过的话：续接凭证
-  和位置是会话行上的两样东西，换机器动的是后者。
+Real admission and tool acquisition keep roommates' work leases separate.
+Approved hands replacement and a recorded session-host change preserve the
+resume token passed to the next launch. The latter is metadata coverage;
+transcript hydration and actual model recall are outside this fixture.
 """
 
 import json
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef, deployment_harness
-from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.supply import Supply, Visibility
+from app.domain.device.wiring import sql_device_service
+from app.domain.machine import session_work
+from app.domain.user.models import User
+from tests.integration.conftest import session_auth_headers
 
 INSTALLED = {
     "workspace": "/project",
@@ -35,7 +39,7 @@ INSTALLED = {
 
 
 @pytest.fixture
-def room(client):
+async def room(client):
     project = client.post(
         "/projects", json={"name": "Two teammates", "owner_handle": "alice"}
     ).json()["data"]
@@ -43,13 +47,44 @@ def room(client):
         "/topics",
         json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
     ).json()["data"]
-    return uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    project_id = uuid.UUID(project["id"])
+    for handle in ("ada", "linus"):
+        made = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
+        assert made.status_code == 200, made.text
+    async with client.test_factory() as db:
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        if owner is None:
+            owner = User(
+                username="alice",
+                email="alice@example.test",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            db.add(owner)
+            await db.flush()
+        devices = sql_device_service(db)
+        assigned = {}
+        for name in ("hands-a", "hands-b"):
+            code = await devices.start(name)
+            device = await devices.approve(
+                code,
+                owner_user_id=owner.id,
+                supply=Supply.self_hosted,
+                visibility=Visibility.host,
+            )
+            await devices.assign_to_project(
+                device.device_id, project_id, actor_user_id=owner.id
+            )
+            assigned[name] = device.device_id
+        await db.commit()
+    client.session_test_devices = assigned
+    return project_id, uuid.UUID(topic["id"])
 
 
 def channel(client, monkeypatch, executors=("executor",)):
     """A central channel whose executor resolution can differ per turn."""
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    online = {"center", "center-two", *executors}
+    online = {"center", "center-two", *client.session_test_devices.values()}
     hub: Any = SimpleNamespace(
         is_online=lambda device: device in online,
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
@@ -60,19 +95,50 @@ def channel(client, monkeypatch, executors=("executor",)):
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
-    central._wait_executor = AsyncMock()
+    central.test_client = client
+    monkeypatch.setattr(session_work, "device_hub", hub)
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={"tasks": []}))
     return central
 
 
 async def _open(central, project, topic, agent, executor, *, resume=None):
-    """One turn of one agent's session, through the resolution entry."""
+    """Admit a real session, then acquire its hands through the tool endpoint."""
+    client = central.test_client
+    ref = SessionRef(project, topic, agent, harness="claude-code")
+    precheck = await central.precheck(ref, needs_place=True)
+    async with client.test_factory() as db:
+        row = await AgentSessionService(db).ensure(topic, agent, harness="claude-code")
+        if row.execution_request is None:
+            row.execution_request = {
+                "generation": str(uuid.uuid4()),
+                "choice": {
+                    "name": executor,
+                    "profile": "device",
+                    "device_id": client.session_test_devices[executor],
+                },
+            }
+        await db.commit()
     await central.ensure_ready(
-        session=SessionRef(project, topic, agent, harness="claude-code"),
-        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        session=ref,
+        token=mint_scoped_token(
+            project_id=str(project),
+            topic_id=str(topic),
+            agent_handle=precheck.agent_handle,
+        ),
         env={},
         launch=ClaudeLaunch("System", resume_session_id=resume),
-        precheck=Placement(executor, 1, agent, rented=True),
+        precheck=precheck,
     )
+    opening = central._ensure_screen.await_args.kwargs
+    target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+    assert target["kind"] == "deferred"
+    response = client.post(
+        target["lease_path"],
+        headers={"X-Cheese-Token": opening["token"]},
+        json={"env": {}},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["target"]
 
 
 @pytest.mark.anyio
@@ -91,8 +157,8 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
         ada = await sessions.place(topic, "ada", harness=deployment_harness())
         linus = await sessions.place(topic, "linus", harness=deployment_harness())
     assert ada is not None and linus is not None
-    assert ada.lease["device_id"] == "hands-a"
-    assert linus.lease["device_id"] == "hands-b"
+    assert ada.lease["device_id"] == client.session_test_devices["hands-a"]
+    assert linus.lease["device_id"] == client.session_test_devices["hands-b"]
 
     # Every later turn of one session resolves the lease that session already
     # holds — it is not re-rented, and it is not the other session's.
@@ -108,7 +174,7 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
             topic, "ada", harness=deployment_harness()
         )
     assert again is not None
-    assert again.lease["device_id"] == "hands-a"
+    assert again.lease["device_id"] == client.session_test_devices["hands-a"]
     assert again.resource_id == ada.resource_id
 
 
@@ -116,10 +182,10 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
 async def test_a_session_that_moves_machine_keeps_what_it_said(
     client, room, monkeypatch
 ):
-    """搬一台会话机，下一轮在新机器上仍然接着上一轮自己说过的话。
+    """Replacing hands preserves the stored resume token passed to the harness.
 
-    ``--resume`` 只在冷启动时用得上，而搬机器正是冷启动：所以「引用得上上一轮」
-    的全部证据，就是送到新机器的那份启动计划带着上一轮的续接指针。
+    This tests continuation identity and recorded session placement, not transcript
+    hydration or the contents of a real model conversation.
     """
     project, topic = room
     central = channel(client, monkeypatch, executors=("hands-a",))
@@ -135,23 +201,34 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         )
         await db.commit()
 
-    # 搬家：进程换一台会话机，手上那棵工作树不动。
+    # Hands change through the authenticated proposal/approval API. The native
+    # session host and its files stay in place; this is not host-loss recovery.
     async with client.test_factory() as db:
-        sessions = AgentSessionService(db)
-        before = await sessions.place(topic, "ada", harness=deployment_harness())
-        assert before is not None and before.machine == "center"
-        await sessions.remember_place(
-            topic_id=topic,
-            agent_handle="ada",
-            work_lease=before.lease,
-            runtime_location={
-                "device_id": "center-two",
-                "resource_id": before.resource_id,
-                "channel": before.channel,
-            },
-            harness=deployment_harness(),
+        row = await AgentSessionService(db).ensure(
+            topic, "ada", harness=deployment_harness()
         )
-        await db.commit()
+        session_id = row.id
+        before_resource = row.work_lease["resource_id"]
+    path = f"/topics/{topic}/sessions/{session_id}/work-choice"
+    headers = session_auth_headers("alice")
+    proposal = client.put(
+        path,
+        headers=headers,
+        json={
+            "choice": {
+                "name": "Second hands",
+                "profile": "device",
+                "device_id": client.session_test_devices["hands-b"],
+            }
+        },
+    )
+    assert proposal.status_code == 200, proposal.text
+    approved = client.post(
+        path + "/approve",
+        headers=headers,
+        json={"proposal_id": proposal.json()["data"]["session"]["pending"]["id"]},
+    )
+    assert approved.status_code == 200, approved.text
 
     central._hub.call_executor.return_value = {
         **INSTALLED,
@@ -164,11 +241,41 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         resumes_by = await AgentSessionService(db).resume_token(
             topic, "ada", harness=deployment_harness()
         )
-    await _open(central, project, topic, "ada", "hands-a", resume=resumes_by)
+    target = await _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
+    assert target["device_id"] == client.session_test_devices["hands-b"]
+    assert target["resource_id"] != before_resource
 
     opened = central._ensure_screen.await_args.kwargs
-    assert opened["device_id"] == "center-two", opened
+    assert opened["device_id"] == "center", opened
     assert opened["launch"].resume_session_id == "conversation-1", opened
+
+    # Separately verify the recorded host is respected. Updating placement is
+    # only metadata here: no claim is made that transcripts reached that host.
+    async with client.test_factory() as db:
+        sessions = AgentSessionService(db)
+        before = await sessions.place(topic, "ada", harness=deployment_harness())
+        await sessions.remember_place(
+            topic_id=topic,
+            agent_handle="ada",
+            work_lease=before.lease,
+            runtime_location={
+                "device_id": "center-two",
+                "resource_id": before.resource_id,
+                "channel": before.channel,
+            },
+            harness=deployment_harness(),
+        )
+        await db.commit()
+        resumes_by = await sessions.resume_token(
+            topic, "ada", harness=deployment_harness()
+        )
+    on_new_host = await _open(
+        central, project, topic, "ada", "hands-b", resume=resumes_by
+    )
+    opened = central._ensure_screen.await_args.kwargs
+    assert opened["device_id"] == "center-two"
+    assert opened["launch"].resume_session_id == "conversation-1"
+    assert on_new_host["resource_id"] == target["resource_id"]
 
 
 @pytest.mark.anyio

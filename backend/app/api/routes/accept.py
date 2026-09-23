@@ -372,10 +372,8 @@ async def reject_card(
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
     )
     from app.domain.delivery.agent import dispatch_pending
-    from app.domain.topic.repositories import TopicRepository
 
-    topic = await TopicRepository(db).get(topic_id)
-    assert topic is not None  # _card_actor resolved this card's existing room.
+    topic = await svc._topic_or_404(topic_id)
     await svc._record_task_nudge(
         topic=topic,
         task=task,

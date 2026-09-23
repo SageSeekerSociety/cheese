@@ -60,7 +60,11 @@ def identity(place_id: uuid.UUID, call: Call) -> uuid.UUID:
 
 
 async def propose(
-    session: AsyncSession, proposal: Proposal, *, place_id: uuid.UUID
+    session: AsyncSession,
+    proposal: Proposal,
+    *,
+    place_id: uuid.UUID,
+    proposal_id: uuid.UUID | None = None,
 ) -> Block | None:
     """把这条提议落进房间并投给要点头的那个人；已经提过就什么也不做。
 
@@ -77,7 +81,7 @@ async def propose(
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
         return None
-    proposal_id = identity(place.room_id, proposal.call)
+    proposal_id = proposal_id or identity(place.room_id, proposal.call)
     already = await session.scalar(
         select(Block.id)
         .where(
