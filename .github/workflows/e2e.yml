@@ -118,11 +118,6 @@ jobs:
     # (median 7m33s) over the last 40 runs, and 15 minutes has already
     # cancelled a run at 20m01s that was slow rather than stuck.
     timeout-minutes: 25
-    # Persists backend/srp_rs's Cargo build cache outside the checkout, same
-    # as test.yml's migration-heads/test jobs — see the comment on
-    # migration-heads there for the full reasoning (why this path survives
-    # actions/checkout and is immune to docker prune, and why it's keyed per
-    # job rather than shared).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -163,9 +158,6 @@ jobs:
             "DROP DATABASE IF EXISTS \"$CHEESE_E2E_DB\" WITH (FORCE)"
           docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"$CHEESE_E2E_DB\""
-
-      - name: Point Cargo at the persistent target dir
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
 
       # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
       # See the note in test.yml's migration-heads job.
@@ -208,9 +200,6 @@ jobs:
       - name: Install backend deps
         working-directory: backend
         run: uv sync --all-extras
-
-      - name: Report Cargo target cache size
-        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Run migrations
         working-directory: backend

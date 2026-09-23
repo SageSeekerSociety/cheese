@@ -10,7 +10,7 @@ VER="${3:-2.336.0}"
 # one Postgres, one Valkey and one set of host ports, so every job has to know
 # which of them it may use — see backend/tests/isolation.py. Slot 0 lives in
 # ~/actions-runner and each further slot in ~/actions-runner-<slot>, which also
-# gives it its own RUNNER_TEMP and therefore its own uv venv and Cargo target.
+# gives it its own RUNNER_TEMP and therefore its own uv venv.
 SLOT="${4:-0}"
 # Resolved before the cd below: the files this script installs sit beside it,
 # and $0 is relative to wherever it was invoked from.

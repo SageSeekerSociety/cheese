@@ -199,9 +199,3 @@ export interface OAuthConnection {
 export type GetOAuthConnectionsResponse = {
   connections: OAuthConnection[]
 }
-
-export type InitOAuthBindingResponse = {
-  success: boolean
-  provider: string
-  bindUrl: string
-}

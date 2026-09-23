@@ -46,9 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Set the Cargo target directory
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/lint" >> "$GITHUB_ENV"
-
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
@@ -126,9 +123,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Set the Cargo target directory
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
-
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
@@ -148,9 +142,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras
-
-      - name: Report Cargo target cache size
-        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Exactly one alembic head
         run: |
@@ -242,9 +233,6 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
-      - name: Set the Cargo target directory
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
-
       - name: Ensure required test tools
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
@@ -268,9 +256,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras
-
-      - name: Report Cargo target cache size
-        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       # The resident Postgres outlives the job, and a service container used to
       # bring this database into being by being new. Empty every run on purpose:

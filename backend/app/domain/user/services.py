@@ -301,11 +301,6 @@ class UserAuthService:
         hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
 
-    async def set_srp_credentials(
-        self, user_id: int, srp_salt: str, srp_verifier: str
-    ) -> None:
-        await self._user_repo.update_password(user_id, f"SRP:{srp_salt}:{srp_verifier}")
-
     @staticmethod
     def _reject_reserved(username: str) -> None:
         """A handle the platform already uses to mean "not a person" (#345).
@@ -334,11 +329,9 @@ class UserAuthService:
         password: str,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
-        """Create a new user using legacy password-based auth.
+        """Create a new user whose password is stored as a bcrypt hash.
 
-        NOTE: This is a simplified Python-side registration:
-        - 不发送真实邮件，也不校验 emailCode。
-        - 仅覆盖最常见的用户名/邮箱 + 密码注册路径。
+        The email code is the caller's to check; this does not send mail.
         """
         self._reject_reserved(username)
         if await self._user_repo.is_username_taken(username):
@@ -355,36 +348,6 @@ class UserAuthService:
             avatar_id=default_avatar_id,
         )
 
-    async def register_with_srp(
-        self,
-        *,
-        username: str,
-        nickname: str,
-        email: str,
-        srp_salt: str,
-        srp_verifier: str,
-        default_avatar_id: int = 1,
-    ) -> tuple[User, UserProfile]:
-        """Create a new user using SRP-based auth.
-
-        SRP salt and verifier are stored as the hashed_password field for now.
-        In a full SRP implementation, separate columns would be used.
-        """
-        self._reject_reserved(username)
-        if await self._user_repo.is_username_taken(username):
-            raise ValueError("USERNAME_TAKEN")
-        if await self._user_repo.is_email_taken(email):
-            raise ValueError("EMAIL_TAKEN")
-
-        srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-        return await self._create_account(
-            username=username,
-            email=email,
-            hashed_password=srp_data,
-            nickname=nickname,
-            avatar_id=default_avatar_id,
-        )
-
     async def register_oauth_decision(
         self,
         *,
@@ -392,20 +355,13 @@ class UserAuthService:
         username: str,
         nickname: str,
         password: str | None = None,
-        srp_salt: str | None = None,
-        srp_verifier: str | None = None,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
         """Create the account chosen on the OAuth decision page. The user picked
-        the username/nickname and optionally set a password (plaintext or SRP
-        credentials); without one the account authenticates solely through the
-        provider."""
+        the username/nickname and optionally set a password; without one the
+        account authenticates solely through the provider."""
         self._reject_reserved(username)
-        hashed: str | None = None
-        if password:
-            hashed = await hash_password(password)
-        elif srp_salt and srp_verifier:
-            hashed = f"SRP:{srp_salt}:{srp_verifier}"
+        hashed = await hash_password(password) if password else None
         return await self._create_account(
             username=username,
             email=email,

@@ -133,11 +133,11 @@
             properties:
               token:
                 type: string
-              new_password:
+              password:
                 type: string
             required:
               - token
-              - new_password
+              - password
     responses:
       '200':
         description: Password reset successful
@@ -789,48 +789,6 @@
     responses:
       '200':
         description: Sudo mode activated
-
-# Password management
-/users/password/forgot:
-  post:
-    summary: Request password reset email
-    operationId: forgotPassword
-    tags: [Users]
-    requestBody:
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              email:
-                type: string
-            required:
-              - email
-    responses:
-      '200':
-        description: Reset email sent
-
-/users/password/reset:
-  post:
-    summary: Reset password with token
-    operationId: resetPasswordWithToken
-    tags: [Users]
-    requestBody:
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              token:
-                type: string
-              newPassword:
-                type: string
-            required:
-              - token
-              - newPassword
-    responses:
-      '200':
-        description: Password reset successful
 
 # User favorites
 /users/{userId}/favorites/answers:

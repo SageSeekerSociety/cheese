@@ -2,8 +2,7 @@ name: CLI Test (Go)
 
 # `cli/` is a Go module — the cheesehost binary that build.yml bakes into the
 # sandbox images — and nothing in CI has ever compiled it. `go build|go test|go
-# vet|setup-go` matched zero workflows; the two apparent hits in test.yml and
-# e2e.yml are comments about a Cargo cache. It even ships two test files
+# vet|setup-go` matched zero workflows. It even ships two test files
 # (internal/terminal, internal/update) that no job ran.
 #
 # This is the same hole the frontend had before frontend.yml: the tooling and
@@ -15,7 +14,7 @@ name: CLI Test (Go)
 # 2026-08-13 (every ubuntu-latest job is refused before it starts). The pool is
 # separate capacity from the dev box's single deploy slot, so this never queues
 # behind a deploy; Go comes from setup-go below, and `go test -race` finds the
-# gcc it needs in the pool's build-essential (installed there for srp_rs).
+# gcc it needs in the pool's build-essential (deploy/ci-runner/deps.sh).
 # backend/tests/fixtures/wire is in the path filters because the Go side reads
 # it: cli/internal/link/frames_test.go is held to the same committed frames the
 # backend is, and a fixture edited to suit one language has to face the other in

@@ -181,8 +181,8 @@ def test_a_backend_commit_does_not_rewrite_the_whole_image():
     2026-08-17 that single instruction ran for 101s and left a near-duplicate of
     .venv + connector-dist to export (51s) and push (70s), on every commit,
     because it sits below `COPY app`. Setting ownership as each COPY writes
-    costs nothing. And the compilers that build srp_rs have no runtime caller,
-    so a production stage that inherits them ships ~1.5GB nothing runs.
+    costs nothing. And build toolchains have no runtime caller, so a production
+    stage that inherits one ships what nothing runs.
     """
     lineage = _production_stage_lineage()
 

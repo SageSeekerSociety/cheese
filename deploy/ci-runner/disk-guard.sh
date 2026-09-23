@@ -2,7 +2,7 @@
 # Reclaim a cheese-ci machine's disk when it is running out, called before a job.
 #
 # Nothing else reclaims here: a pool machine only ever adds — images pulled for
-# service containers, buildx layers, uv venvs, cargo targets. The weekly prune
+# service containers, buildx layers, uv venvs. The weekly prune
 # cannot help, because it keeps `--filter until=168h` and what fills the disk is
 # what this week's jobs just pulled. Twice on 2026-09-15 a machine reached 100%
 # and dropped out of the pool: the runner listener cannot write its own log file,
@@ -36,7 +36,6 @@
 #   ~/.cache/ms-playwright   browser binaries; `pnpm exec playwright install`
 #                        refetches them, but nothing in e2e asks it to.
 #   ~/setup-pnpm         pnpm itself, installed by pnpm/action-setup.
-#   ~/.rustup, ~/.cargo  the toolchain `uv sync` compiles srp_rs with.
 # A machine that stays under the floor after tier 5 needs a bigger disk, not a
 # deeper tier: MicroCloud cannot resize, so that means asking Lg for capacity.
 set -uo pipefail

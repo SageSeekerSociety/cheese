@@ -63,8 +63,7 @@ seed_home() {
            "$HOME_DIR"/.npm/_cacache \
            "$HOME_DIR"/.cache/uv/wheels \
            "$HOME_DIR"/.cache/ms-playwright/chromium \
-           "$HOME_DIR"/setup-pnpm/node_modules \
-           "$HOME_DIR"/.rustup/toolchains
+           "$HOME_DIR"/setup-pnpm/node_modules
   : > "$HOME_DIR/actions-runner/_diag/Worker_old.log"
   : > "$HOME_DIR/actions-runner/_diag/Worker_new.log"
   : > "$HOME_DIR/actions-runner-1/_diag/Runner_old.log"
@@ -73,8 +72,7 @@ seed_home() {
   : > "$HOME_DIR/.cache/uv/wheels/numpy.whl"
   : > "$HOME_DIR/.cache/ms-playwright/chromium/headless"
   : > "$HOME_DIR/setup-pnpm/node_modules/.bin"
-  : > "$HOME_DIR/.rustup/toolchains/stable"
-  touch -t 202601010000 "$HOME_DIR/actions-runner/_diag/Worker_old.log" \
+    touch -t 202601010000 "$HOME_DIR/actions-runner/_diag/Worker_old.log" \
                         "$HOME_DIR/actions-runner-1/_diag/Runner_old.log"
 }
 
@@ -141,7 +139,6 @@ grep -q "needs a bigger disk" <<<"$out" \
 [ -f "$HOME_DIR/.cache/ms-playwright/chromium/headless" ] \
   || fail "playwright's browsers were reclaimed; nothing in e2e refetches them"
 [ -f "$HOME_DIR/setup-pnpm/node_modules/.bin" ] || fail "pnpm itself was reclaimed"
-[ -f "$HOME_DIR/.rustup/toolchains/stable" ] || fail "the rust toolchain was reclaimed"
 
 # 6. The grace period is long enough to outlive a job on this pool: the longest
 #    job timeout is 20 minutes, and an image a job built has to survive its own run.
