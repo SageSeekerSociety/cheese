@@ -8,13 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
-from app.domain.user.passwords import check_password, hash_password
+from app.domain.user.passwords import (
+    check_password,
+    hash_password,
+    password_too_long,
+)
 from app.domain.user.repositories import (
     UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
 )
+from app.domain.user.srp_verifier import srp_password_matches
 
 USERNAME_MIN_LENGTH = 4
 USERNAME_MAX_LENGTH = 32
@@ -244,19 +249,12 @@ class UserAuthService:
         username: str,
         password: str,
     ) -> tuple[User, UserProfile] | None:
-        """Validate username/password using the bcrypt hash stored in DB.
+        """Validate username/password against the stored credential.
 
         Returns (user, profile) when successful; otherwise None.
         """
         user = await self._user_repo.get_by_username(username)
-        if user is None or not user.hashed_password:
-            return None
-
-        # SRP users cannot authenticate via legacy password
-        if user.hashed_password.startswith("SRP:"):
-            return None
-
-        if not await check_password(password, user.hashed_password):
+        if user is None or not await self.verify_password(user, password):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)
@@ -266,6 +264,26 @@ class UserAuthService:
             return None
 
         return user, profile
+
+    async def verify_password(self, user: User, password: str) -> bool:
+        """Check ``password`` against the user's stored credential.
+
+        An SRP record is checked by recomputing its verifier and, on a match,
+        replaced with a bcrypt hash. A password bcrypt cannot hold (over 72
+        bytes) is accepted but leaves the SRP record in place.
+        """
+        stored = user.hashed_password or ""
+        if not stored or not password:
+            return False
+        if not stored.startswith("SRP:"):
+            return await check_password(password, stored)
+        if not srp_password_matches(stored, user.username, password):
+            return False
+        if not password_too_long(password):
+            await self._user_repo.update_password(
+                user.id, await hash_password(password)
+            )
+        return True
 
     async def get_user_with_profile(self, user_id: int) -> tuple[User, UserProfile]:
         user = await self._user_repo.get_by_id(user_id)
