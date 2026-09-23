@@ -128,6 +128,9 @@
   "dashboard": {
     "title": "看板",
     "window": "过去 7 天",
+    "noteTip": {
+      "aria": "口径说明"
+    },
     "kpi": {
       "untriaged": "待分诊",
       "inProgress": "进行中",
