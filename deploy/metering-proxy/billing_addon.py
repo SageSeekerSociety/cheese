@@ -694,6 +694,9 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         "workflow",
     }
 
+    selected_model = flow.request.headers.pop("x-cheese-child-model", "")
+    child_model = selected_model if is_subagent else ""
+
     # A subagent's /v1/messages defers everything from here to the `request`
     # hook: admission honours the model the parent named for this subagent,
     # and that name sits in the request body, which has not arrived at header
@@ -708,7 +711,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # layer, never a refusal: nothing a real turn does is lost beyond running
     # on the default instead of a named teammate, which is what every subagent
     # did before this change.
-    if is_messages and is_subagent:
+    if is_messages and is_subagent and not child_model:
         declared = flow.request.headers.get("content-length", "")
         if declared.isdigit() and int(declared) <= DEFER_BODY_LIMIT:
             flow.request.stream = False
@@ -723,7 +726,12 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     verdict = None
     if project_id and ADMISSION_URL:
         verdict = await _admit(
-            flow, project_id, topic_id, bearer, subagent=is_subagent
+            flow,
+            project_id,
+            topic_id,
+            bearer,
+            subagent=is_subagent,
+            child_model=child_model,
         )
 
     _route(
@@ -738,7 +746,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 
 
 async def _admit(
-    flow, project_id, topic_id, bearer, *, subagent, requested_model=""
+    flow, project_id, topic_id, bearer, *, subagent, requested_model="", child_model=""
 ):
     """One admission call, off the event loop and timed.
 
@@ -758,6 +766,10 @@ async def _admit(
         check_started = time.perf_counter()
         verdict = (
             ADMISSION.check(
+                project_id, topic_id, bearer, subagent=True, child_model=child_model
+            )
+            if subagent and child_model
+            else ADMISSION.check(
                 project_id,
                 topic_id,
                 bearer,

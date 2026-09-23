@@ -1051,16 +1051,12 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 |---|---|---|
 | 「这个骨架能不能拿到供应商为它铸的订阅凭据」 | **骨架接口的一个能力位** | `Harness.carries_subscription` |
 | 「这一轮的模型请求走哪条供给」 | **一张 `(骨架, 模型) → 供给` 的注册表**，不是接口 | `domain/llm/`（1136 行）+ `core/config.py` 的 `agent_harness_models` |
-| 「这一轮花了多少、记在谁头上」 | **事件（1.10）的一种**，落在这条活的卡上，记在项目的账上 | `domain/usage/`（705 行） |
+| Project usage and billing | Usage events (1.10), accounted to the project | `domain/usage/`（705 行） |
 
-**账按项目记，卡上的费用是算出来的** [已定] 结论 53：
+**Project billing** [decided, decision 53, revised 2026-09-22]
 
-- **记账单位是项目**。拒绝也在这一层——`/llm/admission` 按项目额度与启用列表判（第 11 节已定三）。
-- **卡上「这条活花了多少」从 hook 事件里的用量按线程标识归集**（1.5、4.2 的第 2 条硬性要求），
-  和卡上显示用了哪个模型是同一条路（I17 第三条：从记录算，不是被 set 的状态）。
-- **不要求模型请求自己携带卡的标识**。放弃的只有「平台按卡拒绝单个请求」这一种能力，
-  而拒绝本来就不在这一层：一条活超不超档，是它绑模型的那一刻按项目策略判的（8.1），
-  不是每个请求到了代理再判一次。
+- The project is the accounting unit. Admission applies project quotas and the enabled model list.
+- Card-level cost attribution and display are not required. Model requests do not need a card identifier.
 
 #### 四类不许静默降级（I27）
 
@@ -1122,10 +1118,9 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 
 这样 @ 是同一条规则的一个实例——**同一条规则的两个产生方，一个出口**，而不是两条规则。
 
-**策略闸门产生的提议走的也是这一条** [已定] 结论 40：
-agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另一台自托管要机主同意、超费用档位要人点头），
-这次调用就自动变成一条**给人的提议**——下一步从平台手上转到了那个人手上，按同一条规则通知他一次。
-它不是第三个产生方，是「一次列变化」的一个取值。
+换机不产生待审批提议 [已定] 结论 40：
+用户选择并确认，agent 可直接选择自己会话可用的已授权资源；资源权限或额度不满足时返回原因。
+Running background work and unfinished child tasks do not block a machine change. The picker warns that switching may interrupt tasks or lose unsaved work before the user confirms.
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
@@ -1218,7 +1213,7 @@ nobody wrote its prompt, so there is nothing to re-send」。
 
 **租约那一层挂在会话上** [已定] 结论 60（修订结论 38）：活不在这张梯子上另开一层——
 它用的是做它的那个 agent 那条会话的租约，所以租约是**一会话一份**，不是一房一份。
-**要另一双手，就是另一条会话**；同一个房间里的两个队友可以在不同机器上。
+同一会话可以更换工作机器；同一房间里的两个队友可以在不同机器上。
 
 **会话先于地点**，这是本设计与今天最大的一处倒置。
 一轮的执行顺序应当是 `解析被点名的参与者 → 取/建会话 → 问 needs_place → 需要才去租一双手`；
@@ -1249,7 +1244,7 @@ nobody wrote its prompt, so there is nothing to re-send」。
 | **轮次开始前机器不在（自托管）** | 同上 | **机主**——下一步在他手上（他去开机）。房间里写「正在等这台机器」 | 同上；不需要手的轮次照常跑完 | 不换机器、不改绑定，但照记健康账、照告知在等 |
 | **Cloud 机器正在开 / 已死** | 同上 | **不通知任何人**——下一步在平台手上；房间里留一条可见的等待事件 | 同上 | 平台：另开一台并把会话搬过去 |
 | **Cloud 机器在休眠中**（结论 39） | L0 全在库里；工作区快照原样躺在那台机器上 | **不通知任何人**——下一步在平台手上 | 一条可见的等待事件，不是一次失败 | 平台：window 内唤醒同一台，工作区原样；window 过了才走归还与收据（6.5） |
-| **换到了另一台机器** | 会话跟着走（rehome） | 房间 + 这个 agent | 「换机器了，工作区已按分支状态重建，未提交的改动没有跟过来」 | 正常继续 |
+| **换到了另一台工作机器** | 只更换工作机器，会话进程位置不变 | 房间 + 这个 agent | 「工作机器已更换，旧工作区保留，文件未自动迁移」 | 正常继续 |
 | **中心会话机离线** | L0 不动；会话身份与 transcript 增量在库；**会话的躯壳没了** | 房间里一条「正在等一台会话机」的等待事件；不通知任何人 | 同上 | 平台：等它回来，或 rehome 到另一台会话机 |
 | **后端重启** | L0 在库；**L1 的躯壳在机器上继续活着**；L2 不受影响 | 无 | 无（它没掉线） | 靠重新发现接回；在途的一轮发一次事件然后停下，**不重跑** |
 
@@ -1285,10 +1280,9 @@ Their next opening transfers the transcript; **no new prompt starts on the old h
 - **开一台机器**
 - **换到 Cloud**
 
-**策略闸门让这次调用自动变成一条给人的提议** [已定] 结论 40：
-换到另一台自托管要那台机器的主人点头，超出项目费用档位要人点头。
-闸门没放行的调用**不是一次失败**，是一条投递给那个人的提议（5.2），下一步在他手上；
-Cloud 且在档位内的，平台自己开，不问谁。
+用户选择机器后确认即可；agent 可直接更换自己会话的工作机器 [已定] 结论 40。
+目标须在项目已授权资源内，资源权限和额度限制照常检查；不满足时返回原因，不创建待审批流程。
+旧机器和工作区保留，文件不自动迁移，会话进程所在机器不变。
 
 **超时是感知，不是决策** [已定] 结论 55——它界定了结论 40 那句话的范围。两半要分清楚：
 
@@ -1301,7 +1295,7 @@ Cloud 且在档位内的，平台自己开，不问谁。
 
 这是 `agent-principles` 十二在机器这一侧的取值——平台把事实送到它面前，不替它想起来该干什么。判据是 I25。
 
-**换成功后告知丢了什么**（一张收据，结论 23）。
+换成功后说明新机器，以及仍保留在旧机器上的文件（结论 23）。
 
 这整条都不是「平台自己续跑」：agent 自己开口要资源，平台给或不给，然后照常投递。
 
@@ -1453,7 +1447,7 @@ Cloud 是一条持久的等待事件 + 连接器上来就自动重投，自托�
   这不是两套界面，是同一张卡按「这个项目的用户在哪」决定显示一条链接还是显示评审本身（4.5）。
 
 **关于模型，用户只在一个地方碰到它，而且看多于设** [已定] 结论 3：
-**卡上**，与机器并排——「在哪台机器、用哪个模型、现在在做什么、花了多少」。
+Cards show the execution machine, the model and the current activity.
 四条细则：
 
 - **聊天（房间主线程）用一个稳定的模型**：项目默认，普通成员不碰；主线程不换模型，缓存一直热。
@@ -1623,7 +1617,7 @@ so check there and not in the menu, the contract or the doc**」。
 | **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据由一次真探测答（`git push --dry-run`），探测本身要连远端，所以读路径上有一份 10 分钟的进程内缓存 | 平台开始持有远端凭据的记录时，探测改成先问记录再连远端 |
 | **事件** | `block/`（脊柱的载体）；`alert/` + `notification/` + `agent/platform_notices.py`（两张通知表） | `AuthorType` 的 `human`/`ai`/`system` 三档是种类分叉；事件的落点来自 `block/about.py` 的封闭表（`EventAbout` 三档 + `landing()`），架在现有的 `topic_id`/`task_id` 两列上，21 处产生事件的调用点无一自己挑落点（守卫 `test_event_landing_guard.py`） | ①`AuthorType` 只剩「参与者」和「平台」两档；②结论 14 列在项目总览那一档的事件都从 `EventAbout.project` 取落点：房间归档（含级联）与取消归档已经落在 `Project.root_topic_id` 那个房间而不是被归档的房间自己的时间线上，巡检决策日志同；房间创生、主干新提交、名册变化今天还没有产生方，它们出现时走同一档 |
 | **记忆** | `memory/`（`MemoryScope` 四档，`agent_project` 的 scope_id 是 `<project>:<handle>`） | `MemoryScope.project` 7 处，`dream.py:253` 把它当 shared 池写；`user` 池只在私聊读（`chat.py:4323-4324`），而且它的 scope_id 是**人的 handle**（`memory/models.py:31` 注释逐字「个人记忆: 跨项目, 跟着人走」）——跨项目、不按实例分，与结论 8 正相反；池 key 与整理 key 不相交（#1200） | ①`MemoryScope.project` 全仓零命中，**那 7 处各自指名改写到哪一份文档**（1.12）：`dream.py:253` 的 shared 写入 → 项目总览的实况文档；`chat.py:3032`、`chat.py:5187` 两个读点 → 读项目总览与本房间的实况文档；`api/routes/memory.py:92/147` 的列与删 → 改成列/删本实例的 `agent_project` 与 `user` 池，项目那一份由文档接口提供；`api/routes/projects.py:764/808`（`cheese remember` / `cheese recall` 的端点）→ 写落 `agent_project`，「写给所有人看」的那一路改成写文档（去向同时写进 8.1 的暴露面）；②`user` 池的 scope_id 变成 `<project_id>:<agent_handle>:<person>`，跨项目那一份的去向是结论 10 的个人资料（1.12）；③读关于人的池不按在场过滤——任何房间都读得到（结论 54 修订结论 9），取记忆的代码里没有一处按名册过滤池，而跨项目仍然读不到；④一条记忆是一个文件，落在「一个实例一个目录、目录下分三个子目录」那棵树上，存在平台侧、有平台给的版本，项目源仓库里零命中；⑤profile 上有一页「记忆」，能翻历史、能删，而关于某个人的文件只有当事人列得出来（结论 42） |
-| **模型供给与计量** | `llm/`（1136 行）、`usage/`（705 行）、`core/config.py` 的 `agent_harness_models` | 没有一处是 `(骨架, 模型) → 供给` 那张注册表的所有者；卡上没有「这一轮用了什么」 | ①全仓只有一处回答「这一轮走哪条供给」；②卡上的模型显示从用量记录算出来，没有一个被 set 的模型状态字段；③供给不可用时的出口只有拒绝和可见等待（I27）；④**账按项目记，卡上的费用从 hook 用量按线程标识算出来**，模型请求上没有「这是哪张卡」这个字段（结论 53） |
+| **模型供给与计量** | `llm/`（1136 行）、`usage/`（705 行）、`core/config.py` 的 `agent_harness_models` | 没有一处是 `(骨架, 模型) → 供给` 那张注册表的所有者；卡上没有「这一轮用了什么」 | ①全仓只有一处回答「这一轮走哪条供给」；②卡上的模型显示从用量记录算出来，没有一个被 set 的模型状态字段；③供给不可用时的出口只有拒绝和可见等待（I27）；④ Billing and admission are project-scoped; card-level cost attribution and display are not required (decision 53). |
 | **轮次** | `agent/chat.py` + `agent/runtime.py` | 每一轮都去要手；5 处平台自召唤 + 1 处客户端算的 `summon` | ①`needs_place` 是轮次解析里一个真的分支，`central_provider.py:100` 不再无条件 `return await self.executor.precheck(...)`；②`api/routes/chat.py:180` 的 `summon` 入参不存在；③5.4 那五处各自换成事件或投递 |
 | **前端** | `stores/workspace.ts` 一个 store 里装着项目/房间/名册/读态/地点解析五个概念 | `TopicMembers.vue:97` 渲染时拼名册；`agents/AgentEditorDialog.vue:52` 兜底 `'claude-code'`；`ProjectSettingsView.vue` 自己算禁用条件 | ①`[...people, ...agents]` 不存在，名册一份；②前端没有任何骨架名字面量；③禁用条件问 forge 能力 |
 | **连接器** | `cli/internal/` 十二个包，**全部且只属于 L2，这是对的** | `uninstall` 停并卸载服务、删 `~/.config/cheese`、删自身二进制（`daemoncmd.go:380-401`），**唯独不碰 `~/.cheese`** | `cheese uninstall` 之后机器上没有平台留下的文件（I22） |
@@ -1649,8 +1643,9 @@ so check there and not in the menu, the contract or the doc**」。
 - **自托管的「可见的等待」**：`list_ready_topic_devices` 只服务 Cloud。
 - **跨项目的个人资料**（结论 10，1.12）：今天不存在。最接近的是 `MemoryScope.user` 那个跨项目池，
   但它是 agent 的观察、由 agent 写；判据是**任何项目的芝士读到的是同一份，写它的路径只有本人一条**。
-- **项目级的导出与备份**（结论 27，I19b）：今天不存在。I19 那三张收据只管一台机器回收之前的取回，
-  管不到项目、源仓库、资料库和文档。
+- **Scheduled project backups** (decision 27, I19b) remain separate work.
+  [Project export](../project-export.md) provides an HTTP archive of caller-visible
+  persisted content, with repository HEAD and file checksums.
 
 ### 9.3 三层分层今天在哪破
 

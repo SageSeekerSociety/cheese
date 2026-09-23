@@ -54,6 +54,7 @@ class WarmPoolService:
         body: dict,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
+        session_id: uuid.UUID | None = None,
         requested_by: str | None,
         owner_user_id: int,
     ) -> ProjectMachine | None:
@@ -96,6 +97,7 @@ class WarmPoolService:
             machine = await ProjectMachineRepository(self.session).add(
                 project_id=project_id,
                 topic_id=topic_id,
+                session_id=session_id,
                 requested_by=requested_by,
                 owner_user_id=owner_user_id,
                 machine_id=warm.machine_id,
@@ -183,7 +185,9 @@ class WarmPoolService:
             warm.attempts = 0
         warm_machine_id = warm.machine_id
         claim = {
-            "claimKey": str(machine.topic_id),
+            # New allocations can coexist in a room and be replaced after
+            # migration. Legacy pending claims retain their original key.
+            "claimKey": str(machine.id if machine.session_id else machine.topic_id),
             "customerId": machine.customer_id,
             "accountId": machine.account_id,
             "newapiAccountId": machine.account_id,

@@ -15,7 +15,7 @@ value that neither format can open stops the migration and is named by table,
 column and row, instead of being dropped.
 
 Revision ID: e7033a179d9d
-Revises: b672a09ef831
+Revises: 4d0e7a91c203
 """
 
 import base64
@@ -35,7 +35,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from alembic import op
 
 revision: str = "e7033a179d9d"
-down_revision: str | Sequence[str] | None = "b672a09ef831"
+down_revision: str | Sequence[str] | None = "4d0e7a91c203"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

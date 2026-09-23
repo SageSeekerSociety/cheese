@@ -14,6 +14,8 @@ vi.mock('../api', () => ({
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
 }))
 
+import { setLocale } from '../i18n'
+
 import TopicComputePicker from './TopicComputePicker.vue'
 
 const cloud: ComputeChoice = {
@@ -118,6 +120,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
   getTopicComputeProfile.mockReset()
   setTopicComputeChoice.mockReset()
 })
@@ -163,6 +166,6 @@ describe('room compute choices', () => {
     mountPicker()
     expect(await screen.findByText('实验室工作站')).toBeTruthy()
     expect(screen.getByText('整台机器')).toBeTruthy()
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByRole('button', { name: '更换工作电脑' })).toBeTruthy()
   })
 })

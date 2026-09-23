@@ -21,7 +21,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -41,7 +41,6 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -351,18 +350,7 @@ async def reject_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """驳回一张验收卡 —— 并且**叫醒芝士去改**。
-
-    `AcceptService.reject` only writes the row: no message, no summon. So a
-    rejected topic used to sit there until a human happened to come back and
-    poke it, while a CI failure on the same card DOES summon (`_dispatch_nudges`).
-    Same card, same "去改代码" verdict, opposite behaviour — the difference was
-    invisible from the room.
-
-    The wake-up lives here rather than in the service on purpose: `chat`/`runner`
-    are request-scoped dependencies the domain layer has no handle on, and the
-    conflict branch of `accept_card` right above already does it this way.
-    """
+    """Record the rejection and its task-parent instruction in one transaction."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
@@ -383,25 +371,18 @@ async def reject_card(
         if actionable
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
     )
-    seat = (
-        await TopicMemberService(db).addressable_agent_handle(topic_id)
-        if actionable
-        else None
-    )
-    await db.commit()  # the card's new state must be readable by the woken turn
-    runner.submit(
-        chat,
-        topic_id,
-        author="system",
+    from app.domain.delivery.agent import dispatch_pending
+
+    topic = await svc._topic_or_404(topic_id)
+    await svc._record_task_nudge(
+        topic=topic,
+        task=task,
         content=(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        # 驳回的人点的是芝士的名：活还开着，下一步就在它手上。活已经关了就谁也没点
-        # 到 —— 一条没有收件人的事件落在房间里，不起任何一轮（I13）。
-        addressed=addressed_to_agent(seat),
-        nudge_event=f"{decided_by} 驳回了验收卡"
+        headline=f"{decided_by} 驳回了验收卡"
         + ("，芝士去改" if actionable else "，原任务已结束"),
-        nudge_meta=notice(
+        meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
             who=WHO_CHEESE,
@@ -409,6 +390,8 @@ async def reject_card(
             detail_label="驳回理由",
         ),
     )
+    await db.commit()
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(described)
 
 

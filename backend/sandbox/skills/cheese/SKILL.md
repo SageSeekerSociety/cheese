@@ -172,7 +172,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
-| `cheese_machine(profile, device_id?)` | 要一台机器：给这个房间要某一档算力。**房间已经跑起来之后它不当场换**——换过去会丢掉这台机器上的工作区和还没提交的改动，所以产物是一条给机主（自托管）或项目主人（Cloud）的提议，等人点头。撞上项目的档位策略时也一样：不报错、不挂着等，变成一条提议 |
+| `cheese_machine(profile, device_id?)` | 为自己的会话选择工作机器：可直接切换到项目已授权的设备或 Cloud，下次执行操作时使用新机器。旧机器和工作区保留，文件不会自动迁移，会话进程所在机器不变。资源权限和额度限制照常检查，不创建待审批提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，如实回 `delivered: false`。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
 | `cheese_feedback_propose(title, kind?, why?, what_happened?, expectation?, repro?, evidence?, user_said, summary?, problem?, visibility?, attach_logs?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |

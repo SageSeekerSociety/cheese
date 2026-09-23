@@ -926,6 +926,17 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
+export function getSessionWorkLeases(topicId: string): Promise<{ sessions: import('./cx_types').SessionWorkLease[] }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/sessions/work-leases`)
+}
+
+export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
+  return request<{ session: import('./cx_types').SessionWorkLease }>(
+    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
+    { method: 'PUT', body: JSON.stringify({ choice }) }
+  )
+}
+
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }

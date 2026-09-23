@@ -207,8 +207,8 @@ class TestOAuthCreate:
 
     @pytest.mark.parametrize(
         "password",
-        ["", "lettersonly", "x!" * 40],
-        ids=["missing", "no-symbol", "over-72-bytes"],
+        ["", "letters0nly", "no-digits!", "x!1" * 30],
+        ids=["missing", "no-symbol", "no-digit", "over-72-bytes"],
     )
     def test_create_refuses_a_password_before_spending_the_state_token(
         self, api_client: TestClient, state_token: StateToken, password: str
@@ -230,7 +230,7 @@ class TestOAuthCreate:
         # Neither the token nor the username was spent on the refusal.
         retried = api_client.post(
             "/users/oauth/create",
-            data={**form, "password": "a-valid-password"},
+            data={**form, "password": "a-valid-password-1"},
             follow_redirects=False,
         )
         assert _q(_loc(retried))["created"] == "true"

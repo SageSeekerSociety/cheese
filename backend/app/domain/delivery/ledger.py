@@ -1,87 +1,10 @@
-"""投递：先记下来，再发出去，发到了回写一笔（结论 58）。
+"""Record human delivery, mailbox rows and external-channel intent atomically.
 
-## 为什么记与发是同一个模块
-
-`deliver()` 是**走账本的唯一入口**，它的入参是寻址结果（`Addressed`），不是一句文
-案 —— 谁该收到已经由 `delivery/addressing.py` 那个纯函数答完了，这里只负责让那个答
-案真的到达。
-
-不变量 I11 的「只有一处发通知」是**现状**：社交那一侧（入队申请、邀请、审批结果、
-讨论里被 @）以前有自己的一条路，既不记账也不去重，现在和房间里那条线走同一个入
-口。全仓没有第二条发通知的路，守卫盯着这件事
-（`tests/unit/test_social_notifications_through_the_ledger.py`）。
-
-记录和发送不分成两个模块，因为它们是同一个事务边界：账本那一行必须和引发它的事件
-一起提交，否则「这条事件本该通知谁」这句话在崩溃之后就没人记得。分成 `ledger.py` 加
-一个 `send.py`，就等于把同一个事务的两半放进两个文件，而它们之间那一步顺序正是这件
-事的全部难点。
-
-## 两档「行在、`sent_at` 是 NULL」
-
-**不是崩溃窗口。** 账本那一行、收件箱那一行、`sent_at` 的回写在**同一个事务**里：进
-程在提交之前的任何一点没了，三样一起回滚，没有半成品要补。补发要救的是另一种东西
-——**事务照常提交，而这一批没算送到**，也就是 `dispatch()` 返回 False 的那两种形状。
-它们在生产里都不报错，所以只能靠替身造出来（`tests/support/failing_channels.py`，替
-身是收不下的渠道而不是会抛的账本 —— `dispatch()` 从不往外抛）。
-
-**一、渠道没全收下，站内信也没收下。** 站内信那一次写入在自己的 savepoint 里失败
-（编码、约束、会话的事务被标记成 aborted），`dispatch()` 返回 False，`sent_at` 不回
-写。收件箱里什么都没有，账本上那一行是这件事仅剩的记录。这一档靠补发救：
-`resend_unsent()` 扫 `sent_at IS NULL` 的行，重新发一遍。以前这一档是静默丢失：
-`NotificationEventHandler.dispatch` 吞掉异常，而没有任何一行记着它本该发出去。
-
-**二、站内信收下了，但这一批没算送到。** 站内信的 savepoint 提交了，排在它后面的渠
-道抛了出来（比如浏览器推送的 `push_text` 撞上一份对不上的 payload），整批
-`dispatch()` 于是返回 False，`sent_at` 同样不回写。账本上它和第一档长得一模一样，认
-不出来 —— 所以补发照样会再发一遍，而**去重键落在收件箱那一行上**：插入撞上
-`notification.delivery_key` 的唯一约束，什么也不发生，然后把 `sent_at` 补上。那条唯
-一约束就是为这一档存在的：删掉它，这一档立刻变成收件人手里的第二条通知。
-
-**账本兜不住的那一笔。** 邮件和推送把东西 rpush 进 Redis 是这条链路上唯一真正非事务
-的副作用，而它发生在调用方 commit 之前。调用方的事务随后回滚，队列里那一条已经出去
-了：账本既不记它，也不补偿它。账本管的是站内信这一份。
-
-## 补发只重投站内信这一个渠道
-
-第一次发送交给全部渠道；补发只交给站内信。因为账本的「恰好一次」只有站内信这一个
-渠道担得起 —— 去重键落在 `notification.delivery_key` 的唯一约束上，补发插第二遍什
-么也不发生。邮件与浏览器推送是往 Redis 队列里 rpush，队列里没有这个键，补发一次就
-是真的多一封信、多一条推送；而一行始终发不出去的投递每分钟被扫一次，那就成了一台
-定时发信机。
-
-队列那两个渠道也不需要账本替它们重投：它们各自的 drain 有 claim/ack、`max_retries`
-和死信队列，排进队列之后的送达由它们自己负责到底。代价说清楚：上面第一档里连站内信
-都没收下的时候，补发只救得回站内信那一条，这一次的邮件和推送不会再补。站内信是收件
-人一定看得到的那一份，另外两个是它的扩音器。
-
-## 试到第几次为止
-
-`MAX_ATTEMPTS` 次。到顶还没发出去的行留在账本里、`sent_at` 仍是 NULL、`attempts`
-到顶，补发不再扫它 —— 那一行就是死信：查得到、能人工看，但不会再每分钟重试一遍。
-
-## 去重键跟着事件走
-
-键是 `事件 id:收件人 handle`。跟着**事件**，不跟着这一次发送尝试：重试、补发、同一
-条事件被算两遍，算出来都是同一个键，所以每个人只收到一次。
-
-房间里的事件天生有 id（那条 block 的 uuid）。社交那些事件长在一条主键是自增整数的
-领域记录上 —— 一条申请、一条邀请、一条讨论回复 —— 所以它们的身份由
-`event_id_for()` 从「哪条记录上发生了哪件事」算出来，见那个函数。
-
-以前的键是 `事件类型:收件人集合:payload 的 sha1`，跟着**内容**走。差别在两头都真实
-发生：payload 里多一个时间戳，同一件事就变成两条通知；两件不同的事凑巧同一份内容，
-第二件就被吞掉。而且它住在一个带 TTL 的 Redis 键里，重启即失效。
-
-## 名册按事件发生的时刻取
-
-`record()` 当场把 handle 解析成收件箱并写进账本。补发是在事后发生的 —— 有可能是几
-分钟后，也有可能是一次重启之后 —— 那时候再按 handle 查一遍，查到的是**那时候**的
-名册。这条事件点的是事情发生时的那个人，所以名册在写入时定档，补发只照着账本发。
-
-定档的是名册，不是时间戳：补发出去的那条通知按**入库的时刻**落 `created_at`，因为
-收件箱是按 `created_at DESC` 翻页的，落一个旧时间戳会让这条通知出现在二十分钟前的
-位置 —— 未读数加一，人打开收件箱却看不到新东西。事件发生的时刻留在账本的
-`event_at` 上。
+The recipient user ID is snapshotted when the event occurs. Both mailbox rows
+and email/push intent use stable event/recipient keys, so a partial batch can be
+retried without duplicating intent. SMTP and push happen only after commit in
+their own bounded consumers; provider acceptance can still be duplicated after
+a lost response. Agent receipt state is managed by delivery.agent.
 """
 
 from __future__ import annotations
@@ -93,13 +16,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.delivery.addressing import Addressed
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
@@ -206,7 +129,6 @@ class Ledger:
         也不记 —— `reporter_handle` 可能是外部提交的一个名字，少发一条通知好过账本
         里挂一行永远发不出去的投递。
         """
-        recorded_at = self._now()
         pending: list[Pending] = []
         for recipient in addressed.recipients:
             if how_it_arrives(recipient.handle) is not Arrival.mailbox:
@@ -214,36 +136,37 @@ class Ledger:
             user = await user_by_handle(self._session, recipient.handle)
             if user is None:
                 continue
-            key = dedup_key(event.id, recipient.handle)
-            stmt = (
+            row = await self.record_mailbox(event, recipient.handle, user.id)
+            if row is not None:
+                pending.append(row)
+        return pending
+
+    async def record_mailbox(
+        self, event: DeliveryEvent, handle: str, receiver_id: int
+    ) -> Pending | None:
+        """Record a resolved mailbox, including identities snapshotted by timers."""
+        key = dedup_key(event.id, handle)
+        row_id = (
+            await self._session.execute(
                 pg_insert(Delivery)
                 .values(
                     id=uuid.uuid4(),
                     event_id=event.id,
-                    recipient_handle=recipient.handle,
-                    receiver_id=user.id,
+                    recipient_handle=handle,
+                    receiver_id=receiver_id,
                     dedup_key=key,
                     type=event.type.value,
                     payload=event.payload,
                     event_at=event.occurred_at,
-                    recorded_at=recorded_at,
+                    recorded_at=self._now(),
                 )
                 .on_conflict_do_nothing(index_elements=["dedup_key"])
                 .returning(Delivery.id)
             )
-            row_id = (await self._session.execute(stmt)).scalar_one_or_none()
-            if row_id is None:
-                continue
-            pending.append(
-                Pending(
-                    id=row_id,
-                    receiver_id=user.id,
-                    type=event.type,
-                    payload=event.payload,
-                    dedup_key=key,
-                )
-            )
-        return pending
+        ).scalar_one_or_none()
+        if row_id is None:
+            return None
+        return Pending(row_id, receiver_id, event.type, event.payload, key)
 
     async def send(
         self, pending: Sequence[Pending], channels: NotificationEventHandler
@@ -302,19 +225,28 @@ class Ledger:
         row = await self._session.get(Delivery, delivery_id)
         if row is not None and row.sent_at is None:
             row.sent_at = self._now()
+            row.state = "received"
+            await self._session.execute(
+                update(TimedDelivery)
+                .where(
+                    TimedDelivery.event_id == row.event_id,
+                    TimedDelivery.delivered_at.is_(None),
+                )
+                .values(delivered_at=row.sent_at)
+            )
             await self._session.flush()
 
     async def resend_unsent(self, *, limit: int = 200) -> int:
-        """把账本里还没送出去的补发掉，返回这一轮补成了几条。
+        """Retry snapshotted recipients without duplicating committed intent.
 
-        名册不重算：发给账本里记着的那个收件箱。渠道也不全走一遍：只重投站内信，
-        队列那两个渠道排进去之后由它们自己的 drain 负责到底。试满 `MAX_ATTEMPTS`
-        次的那些行不再扫。
+        Legacy rows retain mailbox-only retry because their external copies
+        already belong to the Redis migration drain.
         """
         rows = (
             await self._session.scalars(
                 select(Delivery)
                 .where(Delivery.sent_at.is_(None))
+                .where(Delivery.receiver_id.is_not(None))
                 .where(Delivery.attempts < MAX_ATTEMPTS)
                 .order_by(Delivery.recorded_at)
                 .limit(limit)
@@ -322,24 +254,32 @@ class Ledger:
         ).all()
         if not rows:
             return 0
-        # 补发只走这一个渠道，见模块说明「补发只重投站内信这一个渠道」。
-        mailbox_only = NotificationEventHandler(
-            session=self._session,
-            channel_handlers=[InAppNotificationHandler(session=self._session)],
-        )
-        await self.send(
-            [
-                Pending(
-                    id=row.id,
-                    receiver_id=row.receiver_id,
-                    type=NotificationType(row.type),
-                    payload=row.payload or {},
-                    dedup_key=row.dedup_key,
+        for external in (False, True):
+            selected = [row for row in rows if row.external_channels == external]
+            if not selected:
+                continue
+            channels = (
+                build_notification_event_handler(self._session)
+                if external
+                else NotificationEventHandler(
+                    session=self._session,
+                    channel_handlers=[InAppNotificationHandler(session=self._session)],
                 )
-                for row in rows
-            ],
-            mailbox_only,
-        )
+            )
+            await self.send(
+                [
+                    Pending(
+                        id=row.id,
+                        receiver_id=row.receiver_id,
+                        type=NotificationType(row.type),
+                        payload=row.payload or {},
+                        dedup_key=row.dedup_key,
+                    )
+                    for row in selected
+                    if row.receiver_id is not None
+                ],
+                channels,
+            )
         return sum(1 for row in rows if row.sent_at is not None)
 
 

@@ -13,10 +13,12 @@ paths:
 - **Transient toasts**: vuetify-sonner toasts auto-dismiss. Asserting one is a
   timing bet; prefer asserting the resulting state (URL, storage, rendered
   element) or accept the flake risk knowingly.
-- **Selectors**: Vuetify's password-visibility button gets aria-label
-  `"密码 appended action"` — a substring match; use `getByLabel('密码',
-  { exact: true })`. Project rail tiles are `.app-rail-item--tile`; the bare
-  `:not(--add)` also matches the 首页 icon which sits first.
+- **Selectors**: `getByLabel` / `getByRole` match substrings by default. The
+  show-password toggle is labelled `显示密码` and the passkey button reads
+  `使用通行密钥登录`, so use `getByLabel('密码', { exact: true })` and
+  `getByRole('button', { name: '登录', exact: true })`. Project rail tiles are
+  `.app-rail-item--tile`; the bare `:not(--add)` also matches the 首页 icon
+  which sits first.
 - **Seed chain**: alice comes from the seed migration; her PROJECT comes from
   `backend/scripts/seed_fusion_demo.py` (CI runs it in e2e.yml). A spec
   assuming a project tile without that seed passes locally on a dev DB and

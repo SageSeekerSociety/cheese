@@ -230,16 +230,11 @@ def test_a_cell_that_denies_what_the_declaration_claims_is_refused(monkeypatch) 
 def test_a_cell_that_claims_more_than_the_declaration_does_is_refused(
     monkeypatch,
 ) -> None:
-    """「关不掉」说的就是「自带」，所以 ``built_ins`` 里必须有它。
-
-    少了这一条，一份 ``built_ins=frozenset()`` 配一格「关不掉」照样画得出来：表
-    上读作「自带待办、关不掉」，而那个字段说它什么都不自带——两个都为真的答案并
-    排放着，正是这张表要消灭的东西。
-    """
+    """A disable action requires the concept to be declared as built in."""
     overclaiming = Declaration(
         pinned_version="9.9.9",
         built_ins=frozenset(),
-        how_disabled=dict.fromkeys(BuiltIn, Difference.NO_OFF_SWITCH),
+        how_disabled=dict.fromkeys(BuiltIn, "disabled through permissions"),
         verified_against="9.9.9",
     )
     monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: overclaiming)

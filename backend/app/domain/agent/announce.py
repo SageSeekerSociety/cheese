@@ -80,6 +80,7 @@ async def announce(
     turn_id: uuid.UUID | None = None,
     points_at: Event = NAMES_NOBODY,
     event_id: uuid.UUID | None = None,
+    task_id: uuid.UUID | None = None,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
 
@@ -101,10 +102,22 @@ async def announce(
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
         return None
+    if task_id is not None:
+        from app.core.errors import ValidationError
+        from app.domain.room_task.models import Task
+
+        task = await session.get(Task, task_id)
+        if (
+            task is None
+            or task.room_id != place.room_id
+            or task.project_id != place.project_id
+        ):
+            raise ValidationError("Event task does not belong to this room")
     landed = landing(
-        EventAbout.room,
+        EventAbout.task if task_id is not None else EventAbout.room,
         project_id=place.project_id,
         room_id=place.room_id,
+        task_id=task_id,
     )
     block = await BlockRepository(session).add(
         project_id=landed.project_id,

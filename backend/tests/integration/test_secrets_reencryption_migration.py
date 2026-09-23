@@ -39,7 +39,7 @@ from tests.conftest import (
 )
 
 _REVISION = "e7033a179d9d"
-_PREVIOUS = "b672a09ef831"
+_PREVIOUS = "4d0e7a91c203"
 _BACKEND = Path(__file__).resolve().parents[2]
 _FIXTURES = _BACKEND / "tests" / "fixtures" / "fernet"
 _DATA_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode()

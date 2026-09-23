@@ -1,6 +1,6 @@
 {
   "cheese": "Cheese",
-  "cheese2": "Cheese",
+  "copyright": "© {year} Cheese",
   "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",
   "transportWriteFailure": "Service temporarily unavailable. The operation may have completed. Refresh to check before trying again. (HTTP {status})",
   "cancel": "Cancel",
@@ -21,5 +21,8 @@
   "formValidation": {
     "maxLength": "Must be at most {max} characters",
     "required": "This field is required"
-  }
+  },
+  "close": "Close",
+  "loadFailed": "Couldn't load",
+  "updateFailed": "Couldn't update"
 }

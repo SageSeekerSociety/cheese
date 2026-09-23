@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 
 export const usePageTitleStore = defineStore('pageTitle', {
   state: () => ({
-    siteName: '知是社区',
     separator: ' - ',
     dynamicTitles: new Map<string | symbol, string>(),
     // 添加一个响应式触发器
@@ -24,11 +23,6 @@ export const usePageTitleStore = defineStore('pageTitle', {
   },
 
   actions: {
-    setSiteName(name: string): void {
-      this.siteName = name
-      this.triggerUpdate()
-    },
-
     setSeparator(separator: string): void {
       this.separator = separator
       this.triggerUpdate()

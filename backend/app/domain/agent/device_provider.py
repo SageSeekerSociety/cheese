@@ -1720,7 +1720,9 @@ class DeviceChannel(Channel):
         connector will resolve — and merges the two environments."""
         assert isinstance(precheck, Placement)  # from our precheck
         project_id, topic_id = session.project_id, session.topic_id
-        device_id, agent_user_id, agent_handle, rented = precheck
+        device_id = precheck.machine
+        agent_user_id, agent_handle = precheck.agent_user_id, precheck.agent_handle
+        rented = precheck.rented
         # 记忆算谁的，只决定记忆算谁的。这一轮开在哪个工作区是 ``rented`` 的事，
         # 下面那一句说；两个事实各说各的，其中一个换了另一个不跟着动。
         if memory_scope == "personal":
