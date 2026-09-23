@@ -1308,6 +1308,24 @@ async def db_factory(_pg_schema):
 
 
 @pytest.fixture
+async def business_db_factory(db_factory, stub_project_forge):
+    """Production-pooled direct business fixture with the client baseline.
+
+    Unlike the lower-level ``db_factory``, these tests expect the same forge
+    substitute, broker reset, and platform-agent identity that ``client``
+    installs. Keep this separate so live Forgejo and empty-database contract
+    tests retain their deliberately narrower fixture.
+    """
+    from app.domain.identity.services import IdentityService
+
+    get_broker().reset()
+    async with db_factory() as session:
+        await IdentityService(session).ensure_agent_user()
+        await session.commit()
+    return db_factory
+
+
+@pytest.fixture
 async def _app_engine_on_test_loop():
     """Close singleton connections before their test-owned event loop closes."""
     yield
