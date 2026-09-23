@@ -1,6 +1,6 @@
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "required_ci", Path(__file__).with_name("required-ci.py")
@@ -45,6 +45,10 @@ class RequiredCITest(unittest.TestCase):
     def test_shared_package_installer_runs_its_consumers(self):
         selected = gate.select([".github/scripts/ensure-apt.sh"])
         self.assertTrue(selected["backend"] and selected["deploy"])
+
+    def test_clean_evidence_helper_runs_its_e2e_consumer(self):
+        selected = gate.select([".github/scripts/ci-test-evidence.py"])
+        self.assertTrue(selected["e2e"])
 
     def needs(self):
         selected = gate.select(["backend/app/api/rooms.py"])

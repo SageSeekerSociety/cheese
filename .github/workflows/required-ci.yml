@@ -84,7 +84,7 @@ jobs:
 
   required:
     name: CI required
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp]
     runs-on: ubuntu-latest
     timeout-minutes: 5
