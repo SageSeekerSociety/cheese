@@ -185,6 +185,10 @@ class AccountService:
         """同 `accounts_series`，但真人 / agent 各一条。"""
         return await self._repo.accounts_series_by_kind(since=since, until=until)
 
+    async def count_accounts_between(self, *, since: datetime, until: datetime) -> int:
+        """窗口内新增的账号总数（`accounts_series` 的合计版，看板环比用）。"""
+        return await self._repo.count_accounts_between(since=since, until=until)
+
 
 class UserProfileService:
     """Profile update operations."""
