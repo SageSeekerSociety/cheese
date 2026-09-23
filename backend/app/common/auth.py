@@ -234,7 +234,9 @@ async def get_current_user_id(
     """Resolve current user ID from Authorization bearer token or X-User-Id header.
 
     - Preferred: `Authorization: Bearer <accessToken>` issued by Python auth flow.
-    - Fallback: `X-User-Id` header (used in tests / transitional environments).
+    - Fallback: `X-User-Id` header, a local-development convenience. Refused on
+      any deployment: one started by the deploy compose file, whatever
+      `environment` reads, and any whose `environment` is not development/test.
     """
     if authorization:
         token = authorization.strip()
@@ -256,9 +258,12 @@ async def get_current_user_id(
     if x_user_id is not None:
         from app.core.config import settings
 
-        if settings.environment not in ("development", "test"):
+        if settings.deployed_via_compose or settings.environment not in (
+            "development",
+            "test",
+        ):
             raise AuthenticationRequiredError(
-                "X-User-Id header is not allowed in production"
+                "X-User-Id header is not allowed on a deployment"
             )
         return x_user_id
 

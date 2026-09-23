@@ -353,9 +353,11 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    # Document-view / render-only kinds — never part of the conversation timeline.
-    # Artifacts are preview pointers surfaced in the preview window, not chat.
-    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
+    # Document-view kinds — never part of the conversation timeline. An artifact
+    # (`cheese show`) IS: 芝士 putting something in front of the room is something
+    # it said, and the chat renders it as a card the reader can open. Left out, it
+    # reached people only as the preview tab, which shows the last one alone.
+    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns produced at least one block signed by 芝士.

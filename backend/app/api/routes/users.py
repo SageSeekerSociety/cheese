@@ -181,14 +181,6 @@ class ResetPasswordRequest(BaseModel):
     srp_verifier: str | None = Field(default=None, alias="srpVerifier")
 
 
-class LinkOAuthRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    provider_id: str = Field(..., alias="providerId", min_length=1)
-    provider_user_id: str = Field(..., alias="providerUserId", min_length=1)
-    profile: dict | None = None
-
-
 class CreateInviteCodeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -4406,40 +4398,6 @@ async def oauth_bind_srp_verify(
         await session.rollback()
         logger.exception("OAuth SRP bind: binding failed")
         return _oauth_error_redirect("SRP_VERIFICATION_FAILED", "Binding failed")
-
-
-@router.post(
-    "/auth/oauth/link",
-    summary="Link OAuth account to existing user",
-)
-async def link_oauth_account(
-    payload: LinkOAuthRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    oauth_service: OAuthService = Depends(get_oauth_service),
-) -> dict:
-    provider_id = payload.provider_id
-    provider_user_id = payload.provider_user_id
-    raw_profile = payload.profile
-
-    existing = await oauth_service.get_connection_by_provider(
-        provider_id=provider_id,
-        provider_user_id=provider_user_id,
-    )
-    if existing:
-        raise BadRequestError("This OAuth account is already linked to another user")
-
-    connection = await oauth_service.create_connection(
-        user_id=auth_user.user_id,
-        provider_id=provider_id,
-        provider_user_id=provider_user_id,
-        raw_profile=raw_profile,
-    )
-
-    return {
-        "code": 201,
-        "message": "OAuth account linked successfully.",
-        "data": {"connection": connection},
-    }
 
 
 # ── Invite Code Management ──────────────────────────────────────────────
