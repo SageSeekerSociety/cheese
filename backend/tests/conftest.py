@@ -64,7 +64,7 @@ _PG_BASE = os.environ.get(
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # Redis needs the same per-worker split as Postgres. Its keys are scoped by
-# user id (2FA secrets, backup codes, the #357 attempt budgets), and user ids
+# user id (the #357 attempt budgets and lockouts), and user ids
 # restart from 1 in every worker's own database — so on ONE shared Redis, gw0's
 # user 5 and gw1's user 5 are the same account. A 15-minute lockout earned by
 # one worker would then land on an unrelated test in another, at whatever rate
