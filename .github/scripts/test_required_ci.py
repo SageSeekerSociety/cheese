@@ -10,9 +10,18 @@ spec.loader.exec_module(gate)
 
 
 class RequiredCITest(unittest.TestCase):
-    def test_finalizer_stops_when_the_workflow_is_cancelled(self):
+    def test_finalizer_stops_on_cancellation_but_reports_dependency_failure(self):
         workflow = Path(__file__).parents[1] / "workflows" / "required-ci.yml"
-        self.assertIn("    if: ${{ !cancelled() }}\n", workflow.read_text())
+        finalizer = workflow.read_text().split("\n  required:\n", 1)[1]
+        condition = next(
+            line.strip() for line in finalizer.splitlines() if line.strip().startswith("if:")
+        )
+        self.assertIn("!cancelled()", condition)
+        self.assertNotIn("always()", condition)
+
+        needs = self.needs()
+        needs["backend"]["result"] = "failure"
+        self.assertTrue(gate.failures(needs))
 
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])
