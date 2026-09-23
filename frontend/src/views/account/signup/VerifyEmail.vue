@@ -40,7 +40,7 @@
         color="primary"
         size="large"
         type="submit"
-        :loading="isSubmitting"
+        :loading="submitting"
         :disabled="otp?.length !== 6"
         style="text-transform: none; font-weight: 500; height: 48px"
         class="mb-4"
@@ -111,7 +111,7 @@ const needsPassword = !signupStore.password
 const needsConsent = !signupStore.consent
 const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 
-const { handleSubmit, defineField, isSubmitting } = useForm({
+const { handleSubmit, defineField } = useForm({
   validationSchema: computed(() =>
     toTypedSchema(
       z.object({
@@ -129,7 +129,16 @@ const [otp, otpProps] = defineField('otp', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 const error = ref('')
 
-const submit = handleSubmit(async (value) => {
+// Validation only; the request is sent by `submit` below. The form is not
+// "submitting" while the consent prompt waits for an answer, so the button
+// shows loading only once the request is really on its way.
+const validated = handleSubmit((value) => value)
+const submitting = ref(false)
+
+const submit = async () => {
+  if (submitting.value) return
+  const value = await validated()
+  if (!value) return
   error.value = ''
   if (needsConsent) {
     const consent = await consentRef.value?.confirm()
@@ -137,6 +146,7 @@ const submit = handleSubmit(async (value) => {
     signupStore.consent = consent
   }
   if (needsPassword && value.password) signupStore.password = value.password
+  submitting.value = true
   try {
     const { data } = await signupStore.signup(value.otp)
     // Registration answers with a session, the same as signing in: the person
@@ -146,8 +156,10 @@ const submit = handleSubmit(async (value) => {
     router.replace('/')
   } catch (e) {
     error.value = requestErrorMessage(e, t('account.verifyEmail.failed'))
+  } finally {
+    submitting.value = false
   }
-})
+}
 
 const handleOtpInput = (value: string) => {
   if (value.length === 6 && (!needsPassword || password.value)) {

@@ -74,7 +74,7 @@
         color="primary"
         size="large"
         type="submit"
-        :loading="isSubmitting"
+        :loading="submitting"
         :disabled="!registrationConfigReady"
         style="text-transform: none; font-weight: 500; height: 48px"
         class="mb-4"
@@ -118,7 +118,7 @@ const error = ref('')
 const requireInviteCode = ref(false)
 const registrationConfigReady = ref(false)
 
-const { handleSubmit, defineField, isSubmitting } = useForm({
+const { handleSubmit, defineField } = useForm({
   validationSchema: computed(() =>
     toTypedSchema(
       z
@@ -177,10 +177,20 @@ onMounted(async () => {
   }
 })
 
-const submit = handleSubmit(async (value) => {
+// Validation only; the request is sent by `submit` below. The form is not
+// "submitting" while the consent prompt waits for an answer, so the button
+// shows loading only once the email code is really being requested.
+const validated = handleSubmit((value) => value)
+const submitting = ref(false)
+
+const submit = async () => {
+  if (submitting.value) return
+  const value = await validated()
+  if (!value) return
   error.value = ''
   const consent = await consentRef.value?.confirm()
   if (!consent) return
+  submitting.value = true
   try {
     await signupStore.startSignup({
       ...value,
@@ -191,6 +201,8 @@ const submit = handleSubmit(async (value) => {
     router.push('/account/signup/verify-email')
   } catch (e) {
     error.value = requestErrorMessage(e, t('account.signUp.failed'))
+  } finally {
+    submitting.value = false
   }
-})
+}
 </script>

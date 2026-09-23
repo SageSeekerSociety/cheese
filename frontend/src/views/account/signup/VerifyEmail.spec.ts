@@ -163,6 +163,8 @@ describe('verifying the email', () => {
     // Submitting without the tick opens the prompt; nothing is sent until it is answered.
     const agree = await view.findByRole('button', { name: 'Agree and sign up' })
     expect(UserApi.register).not.toHaveBeenCalled()
+    const finish = view.getByRole('button', { name: 'Finish' })
+    expect(finish.classList.contains('v-btn--loading')).toBe(false)
     await fireEvent.click(agree)
 
     await waitFor(() =>
