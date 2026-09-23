@@ -148,6 +148,14 @@ def backend_waiter(
                 assert screen is not None
                 assert screen.agent_handle == "acceptance-agent"
                 assert screen.execution_target == {"home": "/acceptance"}
+                try:
+                    await backend._call_owner("unrecognised-method", {})
+                except httpx.HTTPStatusError as exc:
+                    assert exc.response.status_code == 404
+                else:
+                    raise AssertionError("owner accepted an unknown RPC method")
+                assert backend.is_online("acceptance-machine")
+                assert backend.screen("surviving-screen") is screen
             return await backend.call_executor(
                 "acceptance-machine",
                 state,
