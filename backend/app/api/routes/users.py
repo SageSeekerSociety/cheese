@@ -45,6 +45,7 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.identity.handles import is_reserved_username
+from app.domain.invite.services import InviteCodeService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -4279,6 +4280,7 @@ async def oauth_create_user(
     passwordMode: str = Form(default="none"),
     srpSalt: str | None = Form(default=None),
     srpVerifier: str | None = Form(default=None),
+    inviteCode: str | None = Form(default=None),
     session: AsyncSession = Depends(get_db),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     oauth_service: OAuthService = Depends(get_oauth_service),
@@ -4304,6 +4306,21 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Malformed SRP credentials"
         )
+    # Same gate as /users registration: an OAuth account is still a new account.
+    try:
+        invite_code = _normalize_registration_invite_code(
+            inviteCode, required=settings.require_invite_code
+        )
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect("INVITE_CODE_REQUIRED", str(exc))
+    invite_service = InviteCodeService(session)
+    if invite_code:
+        try:
+            await invite_service.validate_code(invite_code)
+        except ValueError as exc:
+            return _oauth_error_redirect(
+                "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+            )
     if is_reserved_username(username):
         # Ahead of the try/except below on purpose: that block catches
         # Exception broadly and answers with a generic "creation failed" plus an
@@ -4328,6 +4345,14 @@ async def oauth_create_user(
             srp_salt=srpSalt if passwordMode == "srp" else None,
             srp_verifier=srpVerifier if passwordMode == "srp" else None,
         )
+        if invite_code:
+            try:
+                await invite_service.consume_code(invite_code)
+            except ValueError as exc:
+                await session.rollback()
+                return _oauth_error_redirect(
+                    "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                )
         return await _complete_oauth_binding(
             auth_service=auth_service,
             oauth_service=oauth_service,
