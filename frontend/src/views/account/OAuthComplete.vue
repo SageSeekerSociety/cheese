@@ -245,8 +245,8 @@ import { useRoute } from 'vue-router'
 
 import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
 
-import { t } from '@/i18n'
 import LegalConsent from '@/components/account/LegalConsent.vue'
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 

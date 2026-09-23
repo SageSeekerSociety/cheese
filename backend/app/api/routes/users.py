@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.legal import client_context
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -46,7 +47,6 @@ from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS, ConsentService
-from app.api.routes.legal import client_context
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository

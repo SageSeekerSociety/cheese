@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
+from tests.support.consent import SIGNUP_CONSENT
 
 OVERLONG = "a!" * 36 + "b"  # 73 bytes: one past what bcrypt can take
 
@@ -92,6 +93,7 @@ def _registration(email: str, code: str, password: str = "abc123456Test!") -> di
         "nickname": f"reg{suffix}",
         "email": email,
         "emailCode": code,
+        "consent": SIGNUP_CONSENT,
         "password": password,
     }
 

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.users import _issue_oauth_state_token
 from app.domain.legal.documents import DOCUMENTS, LegalVersion
 from tests.integration.conftest import CreatedUser
+from tests.integration.test_account_uniqueness import _arm_email_code
 from tests.support.consent import (
     CURRENT_VERSIONS,
     OAUTH_CONSENT_FORM,
@@ -18,37 +19,15 @@ from tests.support.consent import (
 )
 
 
-def _arm_email_code(portal, email: str, code: str) -> None:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.verification_service import (
-        VERIFICATION_CODE_PREFIX,
-        VERIFICATION_CODE_TTL,
-    )
-
-    async def arm() -> None:
-        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-        try:
-            await redis.setex(
-                f"{VERIFICATION_CODE_PREFIX}{email}", VERIFICATION_CODE_TTL, code
-            )
-        finally:
-            await redis.aclose()
-
-    portal.call(arm)
-
-
 def _signup(api_client: TestClient, portal, name: str, **extra):
     payload = {
         "username": name,
         "nickname": name,
         "email": f"{name}@consent-test.example.com",
-        "emailCode": "123456",
         "password": "TestPassword123!",
         **extra,
     }
-    _arm_email_code(portal, payload["email"], payload["emailCode"])
+    payload["emailCode"] = portal.call(_arm_email_code, payload["email"])
     return api_client.post("/users", json=payload)
 
 

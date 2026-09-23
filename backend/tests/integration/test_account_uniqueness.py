@@ -25,7 +25,7 @@ from app.domain.passkey import services as passkey_services
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.user.models import User
-from tests.support.consent import OAUTH_CONSENT_FORM
+from tests.support.consent import OAUTH_CONSENT_FORM, SIGNUP_CONSENT
 
 pytestmark = pytest.mark.anyio
 
@@ -69,6 +69,7 @@ async def _registration(username: str, email: str) -> dict:
         "nickname": "someone",
         "email": email,
         "emailCode": code,
+        "consent": SIGNUP_CONSENT,
         "password": "TestPassword123!",
     }
 

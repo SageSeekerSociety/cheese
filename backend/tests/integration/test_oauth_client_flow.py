@@ -262,6 +262,7 @@ class TestOAuthCreate:
             "nickname": "weak_user",
             "passwordMode": "password",
             "password": password,
+            **OAUTH_CONSENT_FORM,
         }
         refused = api_client.post(
             "/users/oauth/create", data=form, follow_redirects=False
