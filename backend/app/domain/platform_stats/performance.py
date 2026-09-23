@@ -82,7 +82,6 @@ def performance_snapshot(
         omitted = len(rows) - 2000
         rows = rows[:2000]
 
-
     snap = {
         "routes": rows,
         "routes_registered": registered,

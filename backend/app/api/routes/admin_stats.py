@@ -90,7 +90,6 @@ async def platform_stats(
     return ok(await service.platform(days=days))
 
 
-
 def _http_endpoints(app) -> list[tuple[str, str]]:
     """整张 HTTP 路由表：`(method, path_template)`，一条端点一个方法一行。
 
