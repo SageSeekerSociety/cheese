@@ -105,12 +105,22 @@ def mint_scoped_token(
     return f"{body}.{_sign(body)}"
 
 
-def bind_resource_token(token: str, resource_id: str) -> str:
+def bind_resource_token(
+    token: str,
+    resource_id: str,
+    *,
+    session_id: str | None = None,
+    lease_generation: str | None = None,
+) -> str:
     """Bind an existing scoped launch credential to its allocated execution."""
     claims = scoped_token_claims(token)
     if claims is None:
         raise ValueError("A valid scoped launch credential is required")
     claims["r"] = resource_id
+    if session_id is not None:
+        claims["session"] = session_id
+    if lease_generation is not None:
+        claims["lease"] = lease_generation
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{body}.{_sign(body)}"
