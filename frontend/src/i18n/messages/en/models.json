@@ -248,11 +248,11 @@
       "delete": "Deleted a model",
       "blocked": "Blocked/unblocked a model",
       "budget": "Changed a limit",
-      "subscriptionStart": "started subscription import",
-      "subscriptionComplete": "completed subscription import",
-      "subscriptionCancel": "cancelled subscription import",
-      "subscriptionRefresh": "refreshed subscription token",
-      "subscriptionRevoke": "revoked subscription",
+      "subscriptionStart": "Started a subscription import",
+      "subscriptionComplete": "Completed a subscription import",
+      "subscriptionCancel": "Cancelled a subscription import",
+      "subscriptionRefresh": "Refreshed a subscription token",
+      "subscriptionRevoke": "Revoked a subscription",
       "other": "Other action"
     },
     "diff": {

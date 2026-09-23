@@ -441,8 +441,9 @@ export const useFeedbackStore = defineStore('feedback', {
       integrations: null,
     } as { [K in StatsKind]: StatsShapes[K] | null },
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
-       但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
-    statsKind: 'feedback' as StatsKind,
+       但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。
+       默认落点是**交付**（pipeline）：管理员早上第一个问题是「现在该我动的是哪几件」。 */
+    statsKind: 'pipeline' as StatsKind,
     /** 看板的统计窗口（7/30/90 天）。和 `statsKind` 同一个理由放 store：它决定请求
      *  的 `days` 参数，而 R 键（`AdminLayout`）那一路 `loadStats()` 不带参数 —— 窗口
      *  写死成默认 7 的话，30 天窗口下按 R 会把数据悄悄拉回 7 天。 */

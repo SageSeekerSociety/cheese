@@ -182,7 +182,7 @@ const pulseByKey = computed<Record<string, PulseRow>>(() => {
 
 /** 20 万 token 这种短写 —— 导轨上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。
  *  走 `fmtSI` 而不是手写阶梯：手写的那份止步于 M，`1e12` 会被打成 `1000000.0M`。 */
-const shortTokens = (n: number | null | undefined): string => (n ? fmtSI(n) : '—')
+const shortTokens = (n: number | null | undefined): string => (n === null || n === undefined ? '—' : fmtSI(n))
 
 /** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
 const slowestP95 = computed(() => {
@@ -279,7 +279,7 @@ const feedbackKpis = computed<KpiRow[]>(() => {
       label: t('feedback.dashboard.kpi.createdInWindow', { d: store.statsDays }),
       value: createdSum === undefined ? '' : fmtNum(createdSum),
       loading: store.statsLoading,
-      to: queue({ since: '7d' }),
+      to: queue({ since: `${store.statsDays}d` }),
       spark: f?.series.map((row) => row.created) ?? [],
       ...deltaOf(createdSum, f?.prev?.created, fmtNum(f?.prev?.created ?? 0)),
     },
@@ -288,7 +288,7 @@ const feedbackKpis = computed<KpiRow[]>(() => {
       label: t('feedback.dashboard.kpi.resolvedInWindow', { d: store.statsDays }),
       value: resolvedSum === undefined ? '' : fmtNum(resolvedSum),
       loading: store.statsLoading,
-      to: queue({ resolved_since: '7d' }),
+      to: queue({ resolved_since: `${store.statsDays}d` }),
       spark: f?.series.map((row) => row.resolved) ?? [],
       ...deltaOf(resolvedSum, f?.prev?.resolved, fmtNum(f?.prev?.resolved ?? 0)),
     },
@@ -1260,17 +1260,15 @@ function retry() {
 }
 
 onMounted(() => {
-  // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
-  // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
+  // 默认落点是**交付**（store 的 statsKind 初始值）：管理员早上第一个问题是
+  // 「现在该我动的是哪几件」，不是「今天 token 多少」。用户显式选过的分类由
+  // store 记着，重挂载原样恢复 —— 这里只补拉「当前这一类还没有数据」的情形。
   //
-  // 两条分支必须互斥，而且都要**由自己那一支**去拉：`selectKind` 会顺手拉一次，
-  // 所以这里不能再补一句「分类的切片还是 null 就拉」。`loadStats` 只写
-  // `statsBusy`、不在完成前写 `stats`，于是那一句在首次挂载时**必然**成立，
-  // 变成同一分类两个并发请求，而 store 里的序号守卫（feedback.ts 的 `statsSeq`）
-  // 会把先回来的那个响应丢掉 —— 白拉一趟，首屏还多等一个来回。
-  if (store.statsKind === 'feedback') {
-    selectKind('pipeline')
-  } else if (store.stats[store.statsKind] === null) {
+  // `loadStats` 只写 `statsBusy`、不在完成前写 `stats`，所以「切片还是 null 就拉」
+  // 在首次挂载时**必然**成立一次 —— 这正是要的；但不要在上面的分支之外再补第二句，
+  // 否则同一分类两个并发请求，store 的序号守卫（feedback.ts 的 `statsSeq`）会把先
+  // 回来的那个响应丢掉。
+  if (store.stats[store.statsKind] === null) {
     void store.loadStats(store.statsKind, store.statsDays)
   }
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
@@ -2350,7 +2348,7 @@ onBeforeUnmount(() => {
 }
 
 .ad__cell-note {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 /* 健康度。**状态色只在这一块用**（up / stalling / down），全页别处都是中性阶：一屏里

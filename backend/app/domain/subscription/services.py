@@ -31,6 +31,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -150,7 +151,15 @@ class SubscriptionService:
                 created_by_handle=(handle or "")[:64],
             )
         )
-        await self._db.flush()
+        try:
+            await self._db.flush()
+        except IntegrityError:
+            # 两个并发导入都通过了上面的 live 检查，第二个在唯一索引上撞墙 ——
+            # 这是「已有一条进行中的流程」，答 409，不是 500。
+            await self._db.rollback()
+            raise ConflictError(
+                "这个来源已有一条进行中的授权流程：完成或取消它之后再开新的"
+            ) from None
         await self._record(
             handle=handle,
             action="subscription.start",
@@ -271,7 +280,12 @@ class SubscriptionService:
         except GatewayAdminError as exc:
             # 凭据已在库（这是这次授权最值钱的东西），网关这一下没推上去可以
             # 之后用手动刷新补 —— 状态照 active 落，错误写进可读字段。
-            sub.last_refresh_error = f"凭据已入库，但推进网关失败：{exc}"
+            # 网关错误原文可能回显 token，落库前过和审计一样的脱敏。
+            from app.domain.agent import gateway_models
+
+            sub.last_refresh_error = gateway_models._scrub(
+                f"凭据已入库，但推进网关失败：{exc}", secrets
+            )
             await self._record(
                 handle=handle,
                 action="subscription.complete",
@@ -379,7 +393,15 @@ class SubscriptionService:
         done = 0
         for row in rows:
             locked = await self._repo.get_locked(row.id)
-            if locked is None or locked.status not in _REFRESHABLE:
+            if (
+                locked is None
+                or locked.status not in _REFRESHABLE
+                or (
+                    locked.token_expires_at is not None
+                    and locked.token_expires_at > now + margin
+                )
+            ):
+                # 锁等待期间别人可能已经刷过或把它移出可刷状态 —— 以锁后读到的为准。
                 continue
             try:
                 await self._refresh_locked(locked, actor="system")
@@ -470,7 +492,12 @@ class SubscriptionService:
         try:
             await self._push_to_gateway(sub, tokens.access_token)
         except GatewayAdminError as exc:
-            sub.last_refresh_error = f"凭据已刷新，但推进网关失败：{exc}"
+            # 网关错误原文可能回显请求里的 token —— 落可读字段前过和审计一样的脱敏。
+            from app.domain.agent import gateway_models
+
+            sub.last_refresh_error = gateway_models._scrub(
+                f"凭据已刷新，但推进网关失败：{exc}", secrets
+            )
             if was_expired:
                 sub.status = "refresh_failed"
             await self._record(
@@ -524,7 +551,10 @@ class SubscriptionService:
                 pass
 
         if sub.status == "reauth_required":
-            await self._mark_reauth(sub, "凭据已失效，需要重新授权")
+            # _refresh_locked 刚写入的具体原因别用笼统文案盖掉。
+            await self._mark_reauth(
+                sub, sub.last_refresh_error or "凭据已失效，需要重新授权"
+            )
             raise SubscriptionTokenInvalid("凭据已失效，需要重新授权")
 
         access = _decrypt(sub.access_token_enc, sub_id=sub.id)
@@ -532,9 +562,24 @@ class SubscriptionService:
             await self._mark_reauth(sub, "凭据无法解密（密钥可能已轮换），需要重新授权")
             raise SubscriptionTokenInvalid("凭据已失效，需要重新授权")
 
+        # 刷新试过之后 access_token 仍然过期，说明待会儿的 401 什么都不证明
+        # （它本来就该 401），不能据此把凭据判死。
+        access_known_stale = (
+            sub.token_expires_at is None or sub.token_expires_at <= _utcnow()
+        )
         try:
             snapshot = await self._oauth.fetch_quota(access, sub.chatgpt_account_id)
         except SubscriptionTokenInvalid as exc:
+            if access_known_stale:
+                if sub.quota_snapshot:
+                    return {
+                        "tiers": _quota_tiers(sub.quota_snapshot),
+                        "queried_at": _iso(sub.quota_fetched_at),
+                        "stale": True,
+                    }
+                raise SubscriptionUnreachable(
+                    "访问令牌已过期且刷新暂不可用，请稍后重试"
+                ) from exc
             await self._mark_reauth(sub, str(exc))
             raise
         except SubscriptionUnreachable:
@@ -582,11 +627,21 @@ class SubscriptionService:
         if sub.status == "revoked":
             raise BadRequestError("这条订阅已经移除")
         before = _audit_snapshot(sub)
+        was_credential_source = sub.status in _REAUTHABLE
         sub.status = "revoked"
         _clear_flow(sub)
 
         gateway_error: GatewayAdminError | None = None
-        if self._admin is not None and sub.linked_model_name:
+        if (
+            self._admin is not None
+            and sub.linked_model_name
+            and was_credential_source
+            # 只有被删行真是这个模型最后的凭据来源时才停用它 —— 重授权后删旧行，
+            # 模型正由新的活跃行服务，block 会把在服模型当场断流。
+            and not await self._repo.has_other_live_for_model(
+                sub.linked_model_name, exclude_id=sub.id
+            )
+        ):
             try:
                 models = await self._admin.models()
                 found = next(

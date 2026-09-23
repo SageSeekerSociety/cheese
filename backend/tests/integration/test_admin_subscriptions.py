@@ -329,14 +329,42 @@ def _unthrottle(client, flow_id: str) -> None:
 
 
 def test_a_stranger_gets_403_everywhere(client, as_admin, rig):
+    some_id = uuid.uuid4()
     for method, path in [
         ("GET", "/admin/subscriptions"),
         ("POST", "/admin/subscriptions/device-flows"),
+        ("POST", f"/admin/subscriptions/device-flows/{some_id}/poll"),
+        ("POST", f"/admin/subscriptions/device-flows/{some_id}/cancel"),
+        ("POST", f"/admin/subscriptions/{some_id}/refresh"),
+        ("GET", f"/admin/subscriptions/{some_id}/quota"),
+        ("DELETE", f"/admin/subscriptions/{some_id}"),
     ]:
         r = client.request(
             method, path, json={}, headers=session_auth_headers(STRANGER)
         )
-        assert r.status_code == 403, (path, r.text)
+        assert r.status_code == 403, (method, path, r.text)
+
+
+def test_poll_after_upstream_410_marks_the_flow_expired(client, as_admin, rig):
+    """上游宣告 device 会话作废（410）→ 流程落 `flow_expired`、答 expired。"""
+    started = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "label": "团队的 ChatGPT"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert started.status_code == 200, started.text
+    flow_id = started.json()["data"]["flow_id"]
+
+    rig.openai_state["poll"] = "expired"
+    r = client.post(
+        f"/admin/subscriptions/device-flows/{flow_id}/poll",
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["state"] == "expired"
+    (row,) = [s for s in _subs_rows(client) if str(s.id) == flow_id]
+    assert row.status == "flow_expired"
+    assert row.flow_device_auth_id is None
 
 
 # --- device flow 全链 ---------------------------------------------------------

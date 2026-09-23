@@ -65,7 +65,7 @@
       "deployed": "Mark shipped"
     },
     "supports": "Supports {n}",
-    "comments": "{n} comments"
+    "comments": "No comments | 1 comment | {n} comments"
   },
   "queueDetail": {
     "back": "Back",

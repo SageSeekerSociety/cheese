@@ -212,8 +212,11 @@ async function refreshQuota() {
   quotaError.value = null
   try {
     const result = await getSubscriptionQuota(current.id)
+    // 等待期间用户可能已切到另一个模型 —— 上一条订阅的读数不能挂到新模型名下。
+    if (sub.value?.id !== current.id) return
     quotaLive.value = { tiers: result.tiers, fetched_at: result.queried_at, stale: result.stale }
   } catch (e) {
+    if (sub.value?.id !== current.id) return
     // 失败照原话就地显示；旧读数留在原处 —— 「没刷成」和「没有读数」是两件事。
     quotaError.value = e instanceof Error && e.message ? e.message : t('models.page.loadFailed')
   } finally {

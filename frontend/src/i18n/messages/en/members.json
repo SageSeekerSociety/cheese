@@ -5,7 +5,7 @@
     "subtitleTitle": "These people can read all private feedback and security issues, and can add others here — being able to edit this roster is being able to open the door for yourself. The \"deployment config\" group comes from the deployment config (PLATFORM_ADMIN_HANDLES) and cannot be removed on this page: a roster that can be emptied here has no way back, so changing it takes server access."
   },
   "toolbar": {
-    "count": "{count} admins",
+    "count": "No admins | 1 admin | {count} admins",
     "refresh": "Refresh",
     "add": "Add admin"
   },

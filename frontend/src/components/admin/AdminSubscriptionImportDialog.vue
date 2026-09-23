@@ -409,7 +409,7 @@ function close() {
 .asid__pulse {
   width: 8px;
   height: 8px;
-  background: var(--accent);
+  background: var(--muted);
   border-radius: var(--radius-pill);
   animation: asid-pulse 1.6s ease-in-out infinite;
 }

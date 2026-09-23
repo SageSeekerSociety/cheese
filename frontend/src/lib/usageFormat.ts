@@ -155,21 +155,21 @@ export function fmtDuration(seconds: number | null | undefined): string {
 }
 
 /**
- * KPI \u73af\u6bd4\uff1a`+12%` / `-3.4%` / `\u00b10%` \u2014\u2014 \u5f53\u524d\u7a97\u53e3\u5bf9\u4e0a\u4e00\u7b49\u957f\u7a97\u53e3\u7684\u767e\u5206\u6bd4\u5dee\u3002
+ * KPI 环比：`+12%` / `-3.4%` / `±0%` —— 当前窗口对上一等长窗口的百分比差。
  *
- * `prev` \u4e3a 0 \u6216\u7f3a\u6570\u65f6\u7ed9**\u7a7a\u4e32**\uff08\u5361\u7247\u636e\u6b64\u4e0d\u753b delta\uff09\uff1a\u9664\u4ee5\u96f6\u6ca1\u6709\u7b54\u6848\uff0c
- * \u753b\u4e00\u4e2a\u300c+\u221e%\u300d\u662f\u628a\u300c\u4e0a\u4e00\u5468\u671f\u6ca1\u6709\u8fd9\u4e2a\u6570\u300d\u8bf4\u6210\u4e00\u4e2a\u9b3c\u6545\u4e8b\uff1b`cur` \u7f3a\u6570\u540c\u7406 \u2014\u2014
- * \u300c\u6ca1\u8bfb\u5230\u300d\u4e0d\u753b\uff0c\u7edd\u4e0d\u753b\u6210\u300c\u8f83\u4e0a\u671f \u2014%\u300d\u3002`prev=0` \u4e5f\u4e0d\u753b\uff1a\u4e0a\u4e00\u5468\u671f\u662f\u96f6\u65f6
- * \u4efb\u4f55\u767e\u5206\u6bd4\u90fd\u6ca1\u6709\u610f\u4e49\uff0c\u90a3\u5f20\u5361\u53ea\u62a5\u5f53\u524d\u503c\u3002
+ * `prev` 为 0 或缺数时给**空串**（卡片据此不画 delta）：除以零没有答案，
+ * 画一个「+∞%」是把「上一周期没有这个数」说成一个鬼故事；`cur` 缺数同理 ——
+ * 「没读到」不画，绝不画成「较上期 —%」。`prev=0` 也不画：上一周期是零时
+ * 任何百分比都没有意义，那张卡只报当前值。
  *
- * \u5206\u6863\u7167 `fmtPercent` \u7684\u7cbe\u795e\uff1a10% \u4ee5\u4e0b\u7559\u4e00\u4f4d\u5c0f\u6570\uff083.4 \u548c 3 \u662f\u771f\u5dee\u522b\uff09\uff0c
- * \u4ee5\u4e0a\u53d6\u6574\uff0812.34% \u7684\u5c0f\u6570\u4f4d\u662f\u566a\u97f3\uff09\u3002
+ * 分档照 `fmtPercent` 的精神：10% 以下留一位小数（3.4 和 3 是真差别），
+ * 以上取整（12.34% 的小数位是噪音）。
  */
 export function fmtDelta(cur: number | null | undefined, prev: number | null | undefined): string {
   if (cur === null || cur === undefined || prev === null || prev === undefined) return ''
   if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return ''
   const pct = ((cur - prev) / Math.abs(prev)) * 100
-  if (pct === 0) return '\u00b10%'
+  if (pct === 0) return '±0%'
   const abs = Math.abs(pct)
   const text = abs >= 10 ? String(Math.round(abs)) : abs.toFixed(1)
   return `${pct > 0 ? '+' : '-'}${text}%`

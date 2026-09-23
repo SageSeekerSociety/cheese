@@ -31,11 +31,18 @@ class LlmSubscriptionRepository:
         return await self._session.get(LlmSubscription, subscription_id)
 
     async def get_locked(self, subscription_id: uuid.UUID) -> LlmSubscription | None:
-        """行锁取行。会改状态的路径（轮询完成、刷新、撤销）一律走它。"""
+        """行锁取行。会改状态的路径（轮询完成、刷新、撤销）一律走它。
+
+        populate_existing 不能省：调用方往往刚在同一会话里读过这行（后台循环的
+        due_for_refresh、路由的预检查），identity map 里躺着锁前快照；不强灌的话
+        FOR UPDATE 等锁结束后看到的仍是旧值，并发刷新会拿已轮换的旧 refresh_token
+        去打上游、把健康订阅误判成 reauth_required。
+        """
         stmt = (
             select(LlmSubscription)
             .where(LlmSubscription.id == subscription_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return await self._session.scalar(stmt)
 
@@ -82,3 +89,22 @@ class LlmSubscriptionRepository:
             LlmSubscription.linked_model_name.is_not(None),
         )
         return (await self._session.scalars(stmt)).all()
+
+    async def has_other_live_for_model(
+        self, linked_model_name: str, exclude_id: uuid.UUID
+    ) -> bool:
+        """除 exclude_id 外，是否还有非终态行挂着同一个网关模型。
+
+        revoke 停用模型前用它确认被删行真是该模型最后的凭据来源 —— 重授权后
+        新行还活跃时，删旧的 superseded 行不该把在服模型停掉。
+        """
+        stmt = (
+            select(LlmSubscription.id)
+            .where(
+                LlmSubscription.linked_model_name == linked_model_name,
+                LlmSubscription.status.in_(LIVE_STATUSES),
+                LlmSubscription.id != exclude_id,
+            )
+            .limit(1)
+        )
+        return (await self._session.scalar(stmt)) is not None

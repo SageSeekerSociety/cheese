@@ -137,10 +137,18 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
 
 /* 窄屏：数字缩一档。手机上是两列、每列约 150px，23px 的六位数字会把卡片撑破一点点
    （真浏览器里量到过：`204,900` 与隔壁那张的 `55` 交叠 3px）。20px 仍是「大数字」那一档
-   （`.t-console-title` 的下一级），但它装得下。**这是视口级查询**：它防的是「这张卡
-   本身太窄」，而卡宽在窄屏由两列网格直接决定，和容器断点各司其职 —— 页面上其余的
-   断点都是容器查询（看「这一格有多宽」），两条断点体系的分工就是这样。 */
+   （`.t-console-title` 的下一级），但它装得下。两条查询各司其职：@media 管没有容器
+   祖先的页面（模型页），@container 管挂在 `.ad__inner`（container-type）下的看板 ——
+   视口 824–964px 这一带侧栏吃掉 ~240px，容器里 4 列的卡只剩 ~134–169px，纯视口查询
+   在这里失效（真评审抓到的带），所以容器版按容器宽 760 降档：4 列时卡 < ~178px、
+   2 列时容器 < ~416px 也一并覆盖。 */
 @media (max-width: 600px) {
+  .akpi__num {
+    font-size: 20px;
+  }
+}
+
+@container (max-width: 760px) {
   .akpi__num {
     font-size: 20px;
   }
