@@ -76,24 +76,26 @@ const fileSource = computed<FileSource>(() =>
   selectedTask.value && currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
 )
 
-async function loadOverview() {
+async function loadOverview(openOnly = false) {
   const room = props.topicId
   const project = props.projectId
   const epoch = sourceEpoch
   if (!room || !project || !overview.value) return
   await Promise.all(
-    taskOptions.value.map(async (task) => {
-      try {
-        const result = await getGitDiff(project, room, task.id)
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
-        delete overviewErrors.value[task.id]
-      } catch (error) {
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
-        delete overviewDiffs.value[task.id]
-      }
-    })
+    taskOptions.value
+      .filter((task) => !openOnly || task.status === 'open')
+      .map(async (task) => {
+        try {
+          const result = await getGitDiff(project, room, task.id)
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
+          delete overviewErrors.value[task.id]
+        } catch (error) {
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
+          delete overviewDiffs.value[task.id]
+        }
+      })
   )
 }
 
@@ -673,7 +675,9 @@ watch(
       // Commits and the diff only. The listing changes when a turn writes
       // files, which the turn-boundary tick already covers — putting it on the
       // timer would be a third request every 20 seconds buying nothing.
-      if (overview.value) void loadOverview()
+      // Closed tasks remain visible from the full load; polling their PR diffs
+      // every 20 seconds spends the forge quota on completed work.
+      if (overview.value) void loadOverview(true)
       else void loadGit({ silent: true })
     }, REFRESH_MS)
   },
