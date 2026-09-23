@@ -584,6 +584,7 @@ def case(folder, options):
                     },
                 )
                 assert check["value"]["stdout"] == "0", check
+        server.assert_healthy()
         summary = {
             "mode": options.mode,
             "version": run([options.claude, "--version"]).strip(),

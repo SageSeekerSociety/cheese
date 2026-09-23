@@ -313,6 +313,15 @@ class RemoteControlFixture:
 
             def do_PUT(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                return self.route("PUT", json.loads(raw or b"{}"))
+                try:
+                    body = json.loads(raw or b"{}")
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Cannot parse PUT {urlparse(self.path).path}: "
+                        f"content_type={self.headers.get('Content-Type')}, "
+                        f"content_encoding={self.headers.get('Content-Encoding')}, "
+                        f"length={len(raw)}"
+                    ) from exc
+                return self.route("PUT", body)
 
         return Handler
