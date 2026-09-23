@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import io
 import json
 import math
 import os
@@ -14,10 +15,165 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
 FAILURES = {"failure", "timed_out", "action_required", "startup_failure"}
+
+
+def evidence_suites(record: dict) -> list[str]:
+    if record["workflow"] == "remote-execution.yml":
+        return ["remote-acceptance", "private-chat"]
+    if (
+        record["workflow"] == "required-ci.yml"
+        and "e2e / e2e" in record["executed_job_names"]
+    ):
+        return ["e2e"]
+    return []
+
+
+def validate_evidence(value: dict, record: dict, suite: str) -> str | None:
+    expected = {
+        "schema_version": 1,
+        "run_id": record["run_id"],
+        "run_attempt": record["attempt"],
+        "head_sha": record["head_sha"],
+        "suite": suite,
+    }
+    if not isinstance(value, dict) or any(
+        type(value.get(key)) is not type(item) or value.get(key) != item
+        for key, item in expected.items()
+    ):
+        return "evidence_identity_mismatch"
+    if type(value.get("clean")) is not bool or not isinstance(value.get("reason"), str):
+        return "invalid_evidence_status"
+    if any(
+        type(value.get(key)) is not int or value[key] < 0
+        for key in ("tests", "retries", "skipped")
+    ):
+        return "invalid_evidence_counts"
+    if value["clean"] and (value["tests"] == 0 or value["retries"] or value["skipped"]):
+        return "contradictory_clean_evidence"
+    return None
+
+
+def evidence_json(archive: bytes) -> dict:
+    # Read only the small normalized receipt; never extract artifact paths.
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        files = bundle.infolist()
+        if (
+            len(files) != 1
+            or files[0].filename != "evidence.json"
+            or files[0].file_size > 1_000_000
+        ):
+            raise ValueError("expected one bounded evidence.json")
+        return json.loads(bundle.read(files[0]))
+
+
+def collect_evidence(records: list[dict], repo: str, output: Path, stamp: str) -> None:
+    inventories: dict[int, list[dict] | None] = {}
+    for record in records:
+        suites = evidence_suites(record)
+        evidence = {"status": "unknown", "suites": {}, "reason": "missing_evidence"}
+        record["test_evidence"] = evidence
+        if record["outcome"] != "success":
+            evidence.update(
+                status="unknown" if record["outcome"] == "pending" else "not_clean",
+                reason=f"workflow_{record['outcome']}",
+            )
+            continue
+        if not suites:
+            evidence.update(status="not_applicable", reason="no_instrumented_suite")
+            continue
+        if record["attempt"] != 1 or record["latest_attempt"] != 1:
+            evidence.update(status="not_clean", reason="workflow_rerun")
+            continue
+        run_id = record["run_id"]
+        if run_id not in inventories:
+            try:
+                pages = gh_pages(
+                    f"repos/{repo}/actions/runs/{run_id}/artifacts", {"per_page": "100"}
+                )
+                atomic_new(
+                    output / "raw" / "artifacts" / f"{stamp}-{run_id}.json", pages
+                )
+                artifacts = flatten(pages, "artifacts")
+                if any(page.get("total_count", 0) > len(artifacts) for page in pages):
+                    raise ValueError("incomplete artifact inventory")
+                inventories[run_id] = artifacts
+            except (subprocess.CalledProcessError, ValueError) as error:
+                inventories[run_id] = None
+                log_line(
+                    output / "progress.log",
+                    str(run_id),
+                    f"evidence unavailable: {type(error).__name__}",
+                )
+        for suite in suites:
+            name = f"ci-test-evidence-{run_id}-{record['attempt']}-{suite}"
+            matches = [
+                item for item in inventories[run_id] or [] if item.get("name") == name
+            ]
+            log_line(output / "progress.log", name, "evidence start")
+            item = {"status": "unknown", "reason": "missing_or_ambiguous_artifact"}
+            evidence["suites"][suite] = item
+            if len(matches) != 1 or matches[0].get("expired"):
+                log_line(
+                    output / "progress.log",
+                    name,
+                    "evidence unknown: missing, expired, or ambiguous",
+                )
+                continue
+            artifact_id = matches[0]["id"]
+            path = output / "raw" / "evidence" / f"{artifact_id}.json"
+            try:
+                if path.exists():
+                    value = json.loads(path.read_text())
+                else:
+                    value = evidence_json(
+                        subprocess.check_output(
+                            [
+                                "gh",
+                                "api",
+                                f"repos/{repo}/actions/artifacts/{artifact_id}/zip",
+                            ]
+                        )
+                    )
+                    atomic_new(path, value)
+                problem = validate_evidence(value, record, suite)
+                item.update(artifact_id=artifact_id, receipt=value)
+                item.update(
+                    status="unknown"
+                    if problem
+                    else "clean"
+                    if value["clean"]
+                    else "not_clean",
+                    reason=problem or value["reason"],
+                )
+            except (
+                subprocess.CalledProcessError,
+                ValueError,
+                zipfile.BadZipFile,
+                KeyError,
+            ) as error:
+                item.update(reason=f"unreadable_artifact:{type(error).__name__}")
+            log_line(
+                output / "progress.log",
+                name,
+                f"evidence {item['status']}: {item['reason']}",
+            )
+        states = [item["status"] for item in evidence["suites"].values()]
+        status = (
+            "not_clean"
+            if "not_clean" in states
+            else "unknown"
+            if "unknown" in states
+            else "clean"
+        )
+        evidence.update(
+            status=status,
+            reason="all_suites_clean" if status == "clean" else "see_suite_evidence",
+        )
 
 
 def utc_now() -> str:
@@ -147,13 +303,34 @@ def summarize(records: list[dict]) -> dict:
             item for item in attempts if item["attempt"] == item["latest_attempt"]
         ]
         first_attempts = [item for item in attempts if item["attempt"] == 1]
+        evidence_first = [
+            item
+            for item in first_attempts
+            if item.get("test_evidence", {}).get("status") != "not_applicable"
+        ]
+        clean_streak = 0
+        if any(
+            parse_time(item.get("run_created_at")) is None for item in evidence_first
+        ):
+            clean_streak = None
+        else:
+            for item in sorted(
+                evidence_first,
+                key=lambda item: (item["run_created_at"], item["run_id"]),
+                reverse=True,
+            ):
+                if item.get("test_evidence", {}).get("status") != "clean":
+                    break
+                clean_streak += 1
         ordered_first = sorted(
             first_attempts,
             key=lambda item: (item.get("run_created_at") or "", item["run_id"]),
         )
         streak = (
             None
-            if any(parse_time(item.get("run_created_at")) is None for item in ordered_first)
+            if any(
+                parse_time(item.get("run_created_at")) is None for item in ordered_first
+            )
             else 0
         )
         if streak is not None:
@@ -180,6 +357,14 @@ def summarize(records: list[dict]) -> dict:
         result[f"{workflow}:{event}"] = {
             "unique_run_count": len(latest),
             "attempt_count": len(attempts),
+            "cohort_tail_consecutive_clean_first_attempts": clean_streak,
+            "first_attempt_test_evidence": {
+                state: sum(
+                    item.get("test_evidence", {}).get("status", "unknown") == state
+                    for item in first_attempts
+                )
+                for state in ("clean", "not_clean", "unknown", "not_applicable")
+            },
             "cohort_tail_consecutive_first_attempt_successes": streak,
             "first_attempt_outcomes": {
                 name: sum(item["outcome"] == name for item in first_attempts)
@@ -209,9 +394,7 @@ def summarize(records: list[dict]) -> dict:
                             item["run_created_to_final_job_completed_seconds"]
                             for item in items
                             if item["outcome"] == "success"
-                            and item[
-                                "run_created_to_final_job_completed_seconds"
-                            ]
+                            and item["run_created_to_final_job_completed_seconds"]
                             is not None
                         ]
                     ),
@@ -284,7 +467,7 @@ def collect(args: argparse.Namespace) -> dict:
         "workflows": args.workflow,
         "since": args.since,
         "until": args.until,
-        "events": ["pull_request", "merge_group"],
+        "events": getattr(args, "event", None) or ["pull_request", "merge_group"],
     }
     inputs_path = output / "inputs.json"
     if inputs_path.exists():
@@ -390,6 +573,9 @@ def collect(args: argparse.Namespace) -> dict:
                         f"end outcome={record['outcome']} jobs={len(jobs)}",
                     )
 
+    # Evidence availability can change after a completed attempt (upload delay,
+    # expiration). Re-observe it without rewriting immutable attempt records.
+    collect_evidence(records, args.repo, output, stamp)
     report = {
         "generated_at": utc_now(),
         "inputs": inputs,
@@ -413,6 +599,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--workflow", action="append", required=True)
     parser.add_argument(
+        "--event",
+        action="append",
+        choices=["pull_request", "merge_group", "push", "workflow_dispatch"],
+    )
+    parser.add_argument(
         "--since", required=True, help="inclusive UTC run-created bound"
     )
     parser.add_argument(
@@ -422,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if len(set(args.workflow)) != len(args.workflow):
         parser.error("--workflow values must be unique")
+    if args.event and len(set(args.event)) != len(args.event):
+        parser.error("--event values must be unique")
     since, until = parse_time(args.since), parse_time(args.until)
     if (
         since is None
