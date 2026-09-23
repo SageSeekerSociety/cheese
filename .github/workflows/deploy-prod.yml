@@ -29,7 +29,6 @@ on:
 
 permissions:
   contents: read
-  checks: read
   actions: read
   # manual-approval opens an issue and waits for an approver to comment
   issues: write
@@ -52,39 +51,41 @@ jobs:
     # Native CLI artifacts are tool distributions, not application releases.
     if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'forgejo-cli-')
     runs-on: [self-hosted, cheese-ci]
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
     # Deliberately unbounded (GitHub's 360m default): this job blocks on a
     # human approving via manual-approval. A tight timeout here would not
     # catch a hang, it would cancel a deploy waiting on its approver.
     steps:
-      - name: Wait for Docker image build
+      - name: Check out deployment policy
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'build-backend'
-          wait-interval: 15
-
-      - name: Wait for backend tests
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Resolve release commit
+        id: candidate
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'test'
-          wait-interval: 15
-
-      # Previously missing: this gate only waited on build + pytest, so this
-      # box's releases could ship with a red (or never-run) e2e suite —
-      # "deploy only checks build success" was accurate for prod too.
-      - name: Wait for e2e tests
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          echo "sha=$(git rev-parse 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+      - name: Check images and selected tests for the release commit
+        id: check
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'e2e'
-          wait-interval: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+        run: python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+      - name: Require completed validation
+        if: github.event_name == 'release'
+        env:
+          READY: ${{ steps.check.outputs.ready }}
+        run: |
+          if [ "$READY" != true ]; then
+            echo '::error::Release images and selected tests must succeed for this commit. Rerun after validation completes.'
+            exit 1
+          fi
 
       # GitHub's native environment required-reviewers isn't available on this
       # plan (private repo), so gate on a human approving via an auto-opened
@@ -115,12 +116,20 @@ jobs:
       - name: Check out deploy tooling (default branch)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Recheck validation after approval
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.gate.outputs.sha }}
+        run: python3 deploy/check-auto-deploy.py --require-ci "$CANDIDATE_SHA"
+
       # The deployed REF only determines WHICH image sha to run. Fetch it and
       # peel to the commit (annotated tags point at a tag object, not the commit).
       - name: Resolve image tag from the release/ref (monorepo commit sha)
         id: img
         env:
-          REF: ${{ github.event.release.tag_name || inputs.ref }}
+          # Preserve the validated commit while approval is pending.
+          REF: ${{ needs.gate.outputs.sha || inputs.ref }}
         run: |
           git fetch --depth=1 origin "$REF"
           echo "sha=$(git rev-parse --short=7 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"

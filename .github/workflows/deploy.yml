@@ -1,7 +1,7 @@
 name: Deploy
 
 # Production deploy to the etrip box (Aliyun HK, Dockerized). Fires on a
-# published GitHub Release (gated: waits for the release commit's CI to be green),
+# published GitHub Release (gated on successful CI for the release commit),
 # or manually via workflow_dispatch (controlled deploy of a specific ref, with a
 # dry-run option to validate connectivity without changing anything).
 #
@@ -27,12 +27,9 @@ on:
         type: boolean
         default: false
 
-# GitHub tightened the default GITHUB_TOKEN to read-only contents — the
-# wait-on-check-action needs checks:read to list check-runs (every release
-# deploy since 2026-06 failed with 403 without this).
+# The release gate reads workflow runs for the exact candidate commit.
 permissions:
   contents: read
-  checks: read
   actions: read
   # manual-approval opens an issue and waits for an approver to comment
   issues: write
@@ -47,35 +44,35 @@ jobs:
   wait-for-ci:
     if: github.event_name == 'release' && !startsWith(github.event.release.tag_name, 'forgejo-cli-')
     runs-on: ubuntu-latest
-    # Deliberately unbounded: this blocks until the release commit's CI
-    # finishes, which is however long the box's queue is that day.
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
     steps:
-      - name: Wait for Docker image build
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+      - name: Check out deployment policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'build-backend'
-          wait-interval: 15
-
-      - name: Wait for backend tests
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'test'
-          wait-interval: 15
-
-      # Previously missing: this job only waited on build + pytest, so a
-      # release could ship with a red (or never-run) e2e suite — "prod deploy
-      # only checks build success" was accurate. e2e.yml's job id is `e2e`.
-      - name: Wait for e2e tests
-        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
-        with:
-          ref: ${{ github.event.release.tag_name }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'e2e'
-          wait-interval: 15
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Resolve release commit
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          echo "sha=$(git rev-parse 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+      - name: Check images and selected tests for the release commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+        run: python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+      - name: Require completed validation
+        env:
+          READY: ${{ steps.check.outputs.ready }}
+        run: |
+          if [ "$READY" != true ]; then
+            echo '::error::Release images and selected tests must succeed for this commit. Rerun after validation completes.'
+            exit 1
+          fi
 
   deploy:
     needs: wait-for-ci
@@ -103,9 +100,24 @@ jobs:
           issue-title: "Approve production deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
           issue-body: "Deploying to the etrip production box. Comment `approve` to proceed or `deny` to cancel."
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check out deployment policy after approval
+        if: github.event_name == 'release'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Recheck validation after approval
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.wait-for-ci.outputs.sha }}
+        run: python3 deploy/check-auto-deploy.py --require-ci "$CANDIDATE_SHA"
+
+      - name: Check out the validated release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Keep the checked SHA even if the tag moves while approval is pending.
+          ref: ${{ needs.wait-for-ci.outputs.sha || inputs.ref }}
 
       - name: Resolve deploy image tag (monorepo commit sha — built for both images)
         id: img

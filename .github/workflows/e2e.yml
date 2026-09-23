@@ -1,14 +1,6 @@
 name: E2E Tests
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - 'e2e/**'
-      - '.github/scripts/ci-test-evidence.py'
-      - '.github/workflows/e2e.yml'
   workflow_call:
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine). test.yml and build.yml already do

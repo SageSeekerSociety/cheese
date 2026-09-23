@@ -20,12 +20,6 @@ name: CLI Test (Go)
 # backend is, and a fixture edited to suit one language has to face the other in
 # the same run or it is not a shared fixture.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'cli/**'
-      - 'backend/tests/fixtures/wire/**'
-      - '.github/workflows/cli.yml'
   workflow_call:
 permissions:
   contents: read
