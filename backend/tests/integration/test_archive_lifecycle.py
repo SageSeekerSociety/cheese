@@ -16,14 +16,14 @@ from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 
-pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
+pytestmark = pytest.mark.anyio
 
 
 async def test_archive_deadline_is_stable_across_retries_and_configuration_changes(
-    db_factory, monkeypatch
+    business_db_factory, monkeypatch
 ):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 37)
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="owner")
         service = TopicService(session)
         room = await service.create(
@@ -36,7 +36,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
         await session.commit()
         room_id = room.id
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 900)
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         service = TopicService(session)
         room = await service.archive(room_id, by="owner")
         assert room.cleanup_due_at == deadline
@@ -320,7 +320,7 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
 
 
 async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
-    db_factory, monkeypatch
+    business_db_factory, monkeypatch
 ):
     """Every device reconnect asks for a sweep; after a restart that is dozens
     at once. Only one runs, and the asks are not lost: the running sweep goes
@@ -347,11 +347,12 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
         await asyncio.sleep(0.05)
     assert not retire._sweeping
     monkeypatch.setattr(retire, "_sweep_once", slow_pass)
-    first = asyncio.create_task(retire.sweep_retired_storage(db_factory))
+    first = asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
     await asyncio.wait_for(started.wait(), timeout=5)
     # Two more asks while the first is still running: neither starts a sweep.
     waiting = [
-        asyncio.create_task(retire.sweep_retired_storage(db_factory)) for _ in range(2)
+        asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
+        for _ in range(2)
     ]
     await asyncio.sleep(0.05)
     assert passes == 1, "a second sweep started while one was running"

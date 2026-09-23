@@ -61,15 +61,17 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     response = client.put(route, json={"configuration": {"model": "opus"}})
     assert response.status_code == 200, response.text
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(),
         base_system_prompt="Test",
         workspace_root=str(tmp_path / "ws"),
     )
-    kwargs, _ = await chat._model_kwargs(
-        uuid.UUID(pid),
-        ClaudeCodeRuntime(DeviceChannel()),
-        uuid.UUID(project["root_topic_id"]),
+    kwargs, _ = client.portal.call(
+        lambda: chat._model_kwargs(
+            uuid.UUID(pid),
+            ClaudeCodeRuntime(DeviceChannel()),
+            uuid.UUID(project["root_topic_id"]),
+        )
     )
     assert "opus" in kwargs["model"]
     assert kwargs["env"]["CLAUDE_CODE_GATEWAY_HINT_HEADERS"] == "1"

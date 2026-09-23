@@ -19,7 +19,7 @@ from app.domain.memory.redundant import agent_checkout_search
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 
-pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
+pytestmark = pytest.mark.anyio
 
 HANDS_OF_THE_REVIEWER = "reviewer-hands"
 HANDS_OF_THE_DEFAULT = "default-hands"
@@ -57,7 +57,7 @@ def _recording(monkeypatch) -> list[dict]:
 
 
 async def test_another_teammates_hands_are_not_this_agents_checkout(
-    db_factory, monkeypatch
+    business_db_factory, monkeypatch
 ):
     """房间里坐着另一位队友那双手，问的人是 reviewer——那双手不是它的。
 
@@ -65,7 +65,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
     拒绝。reviewer 自己有手之后，查的才是它自己那条。
     """
     asked = _recording(monkeypatch)
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
         sessions = AgentSessionService(session)
@@ -98,10 +98,10 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
 
 
 async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
-    db_factory, monkeypatch
+    business_db_factory, monkeypatch
 ):
     asked = _recording(monkeypatch)
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
         await AgentSessionService(session).remember_place(

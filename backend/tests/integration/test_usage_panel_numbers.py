@@ -23,8 +23,6 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
 
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
-
 
 async def _seed(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
@@ -82,12 +80,12 @@ def _proxy_line(pid, tid, *, ts: float, inp=1000, out=200, cache_read=0) -> str:
 
 
 @pytest.mark.anyio
-async def test_turns_counts_turns_not_rows(db_factory):
+async def test_turns_counts_turns_not_rows(business_db_factory):
     """Three turns' worth of rows — including a deferred gateway backfill for
     one of them — must read as three turns, not five."""
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     turns = [uuid.uuid4() for _ in range(3)]
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         repo = UsageRepository(session)
         for turn in turns:
             await repo.add(
@@ -114,7 +112,7 @@ async def test_turns_counts_turns_not_rows(db_factory):
             )
         await session.commit()
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
 
     assert agg["turns"] == 3
@@ -124,16 +122,16 @@ async def test_turns_counts_turns_not_rows(db_factory):
 
 @pytest.mark.anyio
 async def test_proxy_lines_collapse_into_the_turn_that_was_running(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
     """The 3-轮-shows-43 bug, end to end: many proxy lines per turn."""
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     lines = []
     first = datetime.now(UTC) - timedelta(hours=1)
     for n in range(3):
         started = first + timedelta(minutes=10 * n)
-        await _run_turn(db_factory, pid, tid, uuid.uuid4(), started)
+        await _run_turn(business_db_factory, pid, tid, uuid.uuid4(), started)
         # A turn makes many /v1/messages calls; each writes its own line.
         lines += [
             _proxy_line(pid, tid, ts=(started + timedelta(seconds=i + 1)).timestamp())
@@ -141,10 +139,10 @@ async def test_proxy_lines_collapse_into_the_turn_that_was_running(
         ]
     log.write_text("".join(lines))
 
-    result = await ingest_once(db_factory, log)
+    result = await ingest_once(business_db_factory, log)
     assert result["landed"] == 42
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 3, "42 proxy lines over 3 turns is 3 turns"
     assert agg["total_tokens"] == 42 * 1200
@@ -152,11 +150,11 @@ async def test_proxy_lines_collapse_into_the_turn_that_was_running(
 
 @pytest.mark.anyio
 async def test_traffic_outside_any_known_turn_is_not_folded_into_one(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
     """Unattributable spend counts as its own turn rather than silently joining
     someone else's — the aggregate never invents an attribution."""
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     # No blocks were ever written for this topic: nothing says which turn.
     log.write_text(
@@ -164,31 +162,31 @@ async def test_traffic_outside_any_known_turn_is_not_folded_into_one(
         + _proxy_line(pid, tid, ts=1_786_000_060.0)
     )
 
-    await ingest_once(db_factory, log)
+    await ingest_once(business_db_factory, log)
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 2
 
 
 @pytest.mark.anyio
 async def test_traffic_long_after_the_last_turn_is_not_glued_onto_it(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
     """A line logged a day later did not belong to yesterday's turn. Past the
     attribution window the honest answer is "cannot say", not the nearest turn."""
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     started = datetime.now(UTC) - timedelta(days=2)
-    await _run_turn(db_factory, pid, tid, uuid.uuid4(), started)
+    await _run_turn(business_db_factory, pid, tid, uuid.uuid4(), started)
     log = tmp_path / "usage.jsonl"
     log.write_text(
         _proxy_line(pid, tid, ts=(started + timedelta(seconds=5)).timestamp())
         + _proxy_line(pid, tid, ts=(started + timedelta(days=1)).timestamp())
     )
 
-    await ingest_once(db_factory, log)
+    await ingest_once(business_db_factory, log)
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     # One attributed row (the turn) + one that names no turn = two.
     assert agg["turns"] == 2
@@ -196,13 +194,13 @@ async def test_traffic_long_after_the_last_turn_is_not_glued_onto_it(
 
 @pytest.mark.anyio
 async def test_subscription_tokens_are_reported_as_unpriced_never_as_zero_cost(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
     """2.28M tokens must not read as $0.0000 spent. The row has no USD price —
     the aggregate says so, so the panel can print 未知."""
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     started = datetime.now(UTC) - timedelta(minutes=5)
-    await _run_turn(db_factory, pid, tid, uuid.uuid4(), started)
+    await _run_turn(business_db_factory, pid, tid, uuid.uuid4(), started)
     log = tmp_path / "usage.jsonl"
     log.write_text(
         _proxy_line(
@@ -215,9 +213,9 @@ async def test_subscription_tokens_are_reported_as_unpriced_never_as_zero_cost(
         )
     )
 
-    await ingest_once(db_factory, log)
+    await ingest_once(business_db_factory, log)
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["total_tokens"] == 2_280_000
     assert agg["cost_usd"] == 0.0
@@ -226,10 +224,10 @@ async def test_subscription_tokens_are_reported_as_unpriced_never_as_zero_cost(
 
 
 @pytest.mark.anyio
-async def test_priced_turns_report_no_unpriced_tokens(db_factory):
+async def test_priced_turns_report_no_unpriced_tokens(business_db_factory):
     """A gateway turn has a real price; nothing about it is unknown."""
-    pid, tid = await _seed(db_factory)
-    async with db_factory() as session:
+    pid, tid = await _seed(business_db_factory)
+    async with business_db_factory() as session:
         await UsageRepository(session).add(
             project_id=pid,
             topic_id=tid,
@@ -242,7 +240,7 @@ async def test_priced_turns_report_no_unpriced_tokens(db_factory):
         )
         await session.commit()
 
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["cost_usd"] == pytest.approx(0.42)
     assert agg["unpriced_tokens"] == 0

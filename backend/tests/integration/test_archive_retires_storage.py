@@ -26,7 +26,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.main import app as asgi_app
 
-pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
+pytestmark = pytest.mark.anyio
 
 
 async def _put(path: str, body: bytes, *, token: str | None) -> httpx.Response:
@@ -137,12 +137,12 @@ async def test_device_listing_uses_one_portable_shell_and_ignores_symlinks(
 
 
 async def test_the_upload_route_believes_the_pin_first_and_the_project_after(
-    db_factory, workspace_root
+    python_client, workspace_root, stub_project_forge
 ):
     """The machine a place is pinned to may store its transcripts and no other
     may, whatever else it serves; with no pin to go by, a machine the project
     may run on is believed. Nothing but a device token opens the route."""
-    factory = db_factory
+    factory = python_client.test_factory
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
@@ -179,9 +179,9 @@ async def test_the_upload_route_believes_the_pin_first_and_the_project_after(
 
 
 async def test_the_upload_route_keeps_nothing_it_refuses(
-    db_factory, workspace_root, monkeypatch
+    python_client, workspace_root, monkeypatch, stub_project_forge
 ):
-    factory = db_factory
+    factory = python_client.test_factory
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
