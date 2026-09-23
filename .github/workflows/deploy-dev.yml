@@ -247,7 +247,3 @@ jobs:
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"
-
-      - name: Deploy metering addon when its files changed
-        if: steps.release.outputs.skip != 'true'
-        run: bash deploy/deploy-metering-proxy.sh /home/nictheboy/cheese-proxy-new/deploy/metering-proxy "$(git rev-parse --short=7 HEAD)"
