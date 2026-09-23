@@ -163,6 +163,6 @@ describe('room compute choices', () => {
     mountPicker()
     expect(await screen.findByText('实验室工作站')).toBeTruthy()
     expect(screen.getByText('整台机器')).toBeTruthy()
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByRole('button', { name: '会话执行机器' })).toBeTruthy()
   })
 })

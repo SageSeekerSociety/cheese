@@ -987,6 +987,24 @@ export interface ComputeChoice {
   disk_gb: number | null
 }
 
+export interface SessionWorkLease {
+  id: string
+  agent_handle: string
+  harness: string
+  choice: ComputeChoice
+  lease: { device_id: string; generation: number; status: string; online: boolean } | null
+  pending: { id: string; choice: ComputeChoice; approver: string; source_generation: number } | null
+}
+
+export interface SessionDispatch {
+  id: string
+  key: string
+  tool: string
+  outcome: string | null
+  dispatched_at: string | null
+  confirmed_at: string | null
+}
+
 export interface ProjectComputeConfigs {
   default: ComputeChoice
   favorites: ComputeChoice[]

@@ -922,6 +922,45 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
+export function getSessionWorkLeases(topicId: string): Promise<{ sessions: import('./cx_types').SessionWorkLease[] }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/sessions/work-leases`)
+}
+
+export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
+  return request<{ session: import('./cx_types').SessionWorkLease }>(
+    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
+    { method: 'PUT', body: JSON.stringify({ choice }) }
+  )
+}
+
+export function approveSessionWorkChoice(
+  topicId: string,
+  sessionId: string,
+  proposalId: string,
+  acknowledgeUnreachableWork = false
+) {
+  return request<{ session: import('./cx_types').SessionWorkLease }>(
+    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice/approve`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ proposal_id: proposalId, acknowledge_unreachable_work: acknowledgeUnreachableWork }),
+    }
+  )
+}
+
+export function getSessionDispatches(topicId: string, sessionId: string) {
+  return request<{ dispatches: import('./cx_types').SessionDispatch[]; can_confirm: boolean }>(
+    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/dispatches`
+  )
+}
+
+export function confirmSessionDispatch(topicId: string, sessionId: string, dispatchId: string, note: string) {
+  return request(
+    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/dispatches/${encodeURIComponent(dispatchId)}/confirm`,
+    { method: 'POST', body: JSON.stringify({ note }) }
+  )
+}
+
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }
