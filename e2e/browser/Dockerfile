@@ -3,7 +3,9 @@ FROM mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551d
 ARG PLAYWRIGHT_VERSION
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # CI uses Chromium headless shell; the other browsers would consume runner cache space.
-RUN npm install --global --omit=dev "playwright@${PLAYWRIGHT_VERSION}" \
+# The runner's egress supports the Debian mirror over HTTPS, not plain HTTP.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && npm install --global --omit=dev "playwright@${PLAYWRIGHT_VERSION}" \
  && playwright install --with-deps --only-shell chromium \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
