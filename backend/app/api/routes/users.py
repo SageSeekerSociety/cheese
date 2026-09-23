@@ -4712,6 +4712,7 @@ async def list_oauth_connections(
 async def delete_oauth_connection(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     connection_id: Annotated[int, Path(alias="connectionId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
@@ -4719,6 +4720,12 @@ async def delete_oauth_connection(
         raise ForbiddenError(
             "Only the user themselves can unbind their OAuth connections."
         )
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.OAUTH_UNBIND,
+    )
 
     deleted = await oauth_service.delete_connection(connection_id, user_id)
 
