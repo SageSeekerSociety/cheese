@@ -123,6 +123,10 @@ def bind_resource_token(
         claims["lease"] = lease_generation
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    if "session" in claims:
+        # Old owners must reject this capability, even at their legacy URL.
+        # The signed prefix cannot be stripped to obtain an older credential.
+        body = "cxss_" + body
     return f"{body}.{_sign(body)}"
 
 
@@ -145,18 +149,8 @@ def verify_scoped_token(
 ) -> bool:
     """True iff `token` is a valid scoped token (good signature, unexpired) whose
     claims match the given project_id / topic_id (whichever are provided)."""
-    try:
-        body, sig = token.split(".", 1)
-    except ValueError:
-        return False
-    if not hmac.compare_digest(sig, _sign(body)):
-        return False
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict) or payload.get("exp", 0) < time.time():
+    payload = scoped_token_claims(token)
+    if payload is None:
         return False
     if project_id is not None and payload.get("p") != project_id:
         return False
@@ -175,6 +169,8 @@ def scoped_token_claims(token: str) -> dict | None:
         return None
     if not hmac.compare_digest(sig, _sign(body)):
         return None
+    if body.startswith("cxss_"):
+        body = body.removeprefix("cxss_")
     try:
         padded = body + "=" * (-len(body) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
