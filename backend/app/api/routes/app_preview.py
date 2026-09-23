@@ -227,7 +227,7 @@ async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID) -> None:
         stream.close()
         try:
             await websocket.close()
-        except RuntimeError:
+        except (RuntimeError, WebSocketDisconnect):
             pass
 
 
