@@ -18,6 +18,7 @@ from app.domain.user.services import (
     faces_by_handle,
     search_accounts,
     user_by_handle,
+    users_by_handle,
 )
 
 
@@ -86,6 +87,17 @@ class AdminService:
         handle**：回退了客户端就分不出「他叫这个」和「他还没起名字」，而这两件事
         在页面上本来就该长得不一样。
 
+        每行还带**账号状态 / 注册时间 / agent 标记**三件，回答「这行权限是不是
+        死的」：平台上没有（或已注销）这个账号、这个 handle 是 agent，都是配置里
+        写了但永远用不上的权限 —— 三种死权限在页面上各自有形状，所以每一样都是
+        一个显式字段，不许客户端靠 `nickname is None` 隐式猜。
+
+        查询预算：每次未缓存读 = 既有 3 条（`list_admins` + `faces_by_handle` 的
+        users/profiles）+ 这里的 3 条（`users_by_handle`、`agents_among` 的
+        users/bindings），全部批量、走主键/索引，不随名单长度涨。名单长到三位数
+        时，这三次 handle→user 翻译可以合并成一次传下去；今天名单是个位数到几十
+        行，不为它做。
+
         要查名字和脸的那批 handle 就取自 `list_admins()` 这一次读的结果，不再为了
         `root` 单独问一遍。
 
@@ -102,10 +114,25 @@ class AdminService:
         # 把它置 None，下一个请求才看得见新值。
         self._admin_handles = merged
         faces = await faces_by_handle(self._session, merged)
+        accounts = await users_by_handle(self._session, merged)
+        agents = await IdentityService(self._session).agents_among(sorted(merged))
 
-        def face(handle: str) -> dict[str, str | int | None]:
+        def face(handle: str) -> dict[str, str | int | bool | None]:
             nickname, avatar_id = faces.get(handle, (None, None))
-            return {"handle": handle, "nickname": nickname, "avatar_id": avatar_id}
+            user = accounts.get(handle)
+            return {
+                "handle": handle,
+                "nickname": nickname,
+                "avatar_id": avatar_id,
+                # 平台上没有（或已注销）这个账号 = False。根配置里写错一个名字是允许的，
+                # 但那一行是死权限，页面要画得出它和「没设昵称」的区别。
+                "has_account": user is not None,
+                "registered_at": user.created_at.isoformat() if user else None,
+                # agent 不能做任何管理动作（refuse_management_action），所以一个 agent
+                # 行也是死权限。只能从根配置混进来（页面加人服务端拒 agent），但混进来
+                # 就要看得见。
+                "is_agent": handle in agents,
+            }
 
         return {
             "root": [face(h) for h in sorted(root_admin_handles())],

@@ -5,7 +5,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import StatusRail from '@/components/admin/StatusRail.vue'
-import { statusMeta } from '@/lib/feedbackMeta'
+import { priorityMeta, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
 /**
@@ -99,6 +99,15 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
       </button>
 
       <span class="qrow__meta t-num">
+        <!-- 优先级字只画「高 / 紧急」两档：分诊排序的第一信号。低 / 普通不画 ——
+             满屏「普通」是噪音，缺省即普通。颜色走语义类而不是 `:style` 绑
+             `priorityMeta().ink`：颜色字面量要留在 stylelint 看得见的 CSS 里。 -->
+        <template v-if="item.priority === 'high' || item.priority === 'urgent'">
+          <span class="qrow__pri" :class="item.priority === 'urgent' ? 'qrow__pri--urgent' : 'qrow__pri--high'">
+            {{ priorityMeta(item.priority).label }}
+          </span>
+          <span class="qrow__sep" aria-hidden="true">·</span>
+        </template>
         <template v-if="showStatusWord">
           <span class="qrow__word">{{ status.label }}</span>
           <span class="qrow__sep" aria-hidden="true">·</span>
@@ -110,6 +119,8 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
         <span>{{ createdAt }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
         <span>{{ t('feedback.queue.supports', { n: item.supports }) }}</span>
+        <span class="qrow__sep" aria-hidden="true">·</span>
+        <span>{{ t('feedback.queue.comments', { n: item.comments }) }}</span>
       </span>
     </span>
 
@@ -211,6 +222,21 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 
 .qrow__word {
   flex: 0 0 auto;
+}
+
+/* 优先级字：meta 行首，只有高 / 紧急两档会画出来（理由在模板那段注释里）。
+   新项都在 meta 行首 / 尾：窄屏 `overflow: hidden` 截断时先切新项，61px 算式不动。 */
+.qrow__pri {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.qrow__pri--high {
+  color: var(--warn-ink);
+}
+
+.qrow__pri--urgent {
+  color: var(--danger-ink);
 }
 
 .qrow__sep {

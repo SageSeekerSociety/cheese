@@ -13,12 +13,15 @@ export interface ChartSeries {
 </script>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-// 看板上的折线图（§4.2 的左卡，配色见 §7.5）。
+import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import { fmtNum } from '@/lib/usageFormat'
+
+// 看板上的折线图（配色见 §7.5）。
 //
-// **手写 SVG，不引图表库。** 这一张图只有两条线、七个点，库要带来的是一份自己的主题、
+// **手写 SVG，不引图表库。** 这一张图只有两三条线，库要带来的是一份自己的主题、
 // 一套尺寸协议、一个图例 DOM，以及一份要跟着这份设计系统再对齐一遍的配色 —— 而
 // 项目里其实没有任何图表依赖（package.json 里没有 chart/d3/echarts 这一类），为两张
 // 图装一个是把整条依赖链引进来换几十行路径。
@@ -27,13 +30,15 @@ import { useI18n } from 'vue-i18n'
 // （§7.3：浅色下 2.65:1，当线色读不出来），而随便挑几个色相必然有一个落在低对比度
 // 上；线型这一重信号在灰度截图里也活着（§14 第 7 条就是这么量的）。
 //
-// 坐标按设计尺寸（628×180）算，再用 `viewBox` 缩放到容器宽：容器按 §4.2 就是 660px
-// （卡内 628），缩放比因此是 1 —— 字号与线宽都是设计值。换别的宽度时整张图等比缩放，
-// 不会出现「线宽 2px、点被拉扁」。
+// **真实像素渲染，不再 viewBox 等比缩放。** 旧版按设计尺寸 628px 算坐标、用 viewBox
+// 缩放到容器宽 —— 宽档容器（~840px）会把 12px 轴字等比放大到 ~16px，有效字号脱离
+// 档位。现在根 div 挂 ResizeObserver，画布宽跟着容器走（280–1400 收口），SVG 永远
+// 1:1，字号线宽永远是设计值。
 //
 // 图形本身 `aria-hidden`：图里没有读得出来的东西。数据在下面那张表里 —— §7.5 要求的
-// 表格孪生体，默认折叠，`<details>` 原生的键盘行为（Tab 到、回车展开）就够了。
-// 点某一天 `emit('select', i)`，由页面把它翻成队列的筛选参数。
+// 表格孪生体，默认折叠，`<details>` 原生的键盘行为（Tab 到、回车展开）就够了；hover
+// tooltip 只是指针用户的快捷方式，不替代它。点某一天 `emit('select', i)`，由页面把它
+// 翻成队列的筛选参数。
 
 const props = withDefaults(
   defineProps<{
@@ -42,6 +47,8 @@ const props = withDefaults(
     xLabels: string[]
     series: ChartSeries[]
     loading?: boolean
+    /** 口径注。给了就在标题旁画 info tip（散行注脚的归宿，见 §8 收编）。 */
+    note?: string
   }>(),
   { loading: false }
 )
@@ -50,15 +57,38 @@ const emit = defineEmits<{ (e: 'select', index: number): void }>()
 
 const { t } = useI18n()
 
-/** 画布的设计尺寸。轴标签要占位置，所以绘图区比画布小一圈。 */
-const VIEW_W = 628
+/** 画布高恒定 180；宽跟着容器走（下方 ResizeObserver），上下界是「还能读」的两端：
+ *  窄于 280 轴字会互相压，宽于 1400 折线被拉成近乎直线的平坡。 */
 const VIEW_H = 180
-const PAD_LEFT = 32
+const MIN_W = 280
+const MAX_W = 1400
+/** 首次渲染的设计宽（RO 回调前的一帧；也是 happy-dom 这类没有 RO 的环境里的工作值）。 */
+const FALLBACK_W = 628
 const PAD_RIGHT = 8
 const PAD_TOP = 8
 const PAD_BOTTOM = 20
-const PLOT_W = VIEW_W - PAD_LEFT - PAD_RIGHT
 const PLOT_H = VIEW_H - PAD_TOP - PAD_BOTTOM
+
+const canvasW = ref(FALLBACK_W)
+const root = ref<HTMLElement | null>(null)
+
+let observer: ResizeObserver | null = null
+
+onMounted(() => {
+  // happy-dom 与老浏览器没有 ResizeObserver：守住 `undefined`，画布停在 FALLBACK_W
+  // （设计宽），图照样读得完 —— 只是轴字不再随容器微调。
+  if (!root.value || typeof ResizeObserver === 'undefined') return
+  observer = new ResizeObserver((entries) => {
+    const w = entries[0]?.contentRect.width
+    if (w) canvasW.value = Math.min(MAX_W, Math.max(MIN_W, Math.round(w)))
+  })
+  observer.observe(root.value)
+})
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = null
+})
 
 /** 线型是第一重信号（灰度下也在），颜色是第二重。三条线各占一档中性色，深浅跟着
  *  「走到哪一步」走：新增最深、解决次之、上线最浅。 */
@@ -88,16 +118,50 @@ const empty = computed(() => props.xLabels.length === 0 || props.series.length =
 /** 纵轴上界。全是 0 时取 1，否则所有点都落在 y=0、看起来像没画出东西。 */
 const maxValue = computed(() => Math.max(1, ...props.series.flatMap((s) => s.values)))
 
-const step = computed(() => (props.xLabels.length > 1 ? PLOT_W / (props.xLabels.length - 1) : 0))
+/** y 轴四条刻度：上界、2/3、1/3、0。**相邻等值去重** —— max ≤ 2 时中间档会和两端
+ *  撞成同一个数（max=1 的刻度表是 1/1/0/0），重画一遍只是在同一个位置叠两遍字。
+ *  文案用 `fmtNum` 全值（不用 `fmtSI`：缩写给读屏和 number-display 契约制造麻烦，
+ *  四个刻度用全值摆得下，PAD_LEFT 已经动态）。 */
+const yTicks = computed(() => {
+  const max = maxValue.value
+  const raw = [max, Math.round((2 * max) / 3), Math.round(max / 3), 0]
+  return raw.filter((v, i) => i === 0 || v !== raw[i - 1])
+})
 
-const x = (i: number): number => PAD_LEFT + i * step.value
+/** y 轴刻度文案最长者的字符数 —— 90 天窗口的七位数刻度不该被裁掉。 */
+const maxLabelLen = computed(() => Math.max(...yTicks.value.map((v) => fmtNum(v).length)))
+
+/** 左 padding 跟着刻度文案走：每字符约 7px（12px 轴字的数字宽），两端各留一口气。 */
+const padLeft = computed(() => 8 + 7 * maxLabelLen.value)
+
+const plotW = computed(() => canvasW.value - padLeft.value - PAD_RIGHT)
+
+const step = computed(() => (props.xLabels.length > 1 ? plotW.value / (props.xLabels.length - 1) : 0))
+
+const x = (i: number): number => padLeft.value + i * step.value
 const y = (v: number): number => PAD_TOP + PLOT_H - (v / maxValue.value) * PLOT_H
 
-/** 四条横线，含 0 与上界。等分而不是「按整数刻度」：这一页的绝对值不重要（点进去才是
- *  数据），重要的是形状。 */
-const gridLines = computed(() => [0, 1, 2, 3].map((i) => PAD_TOP + (PLOT_H * i) / 3))
-
 const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)} ${y(v)}`).join('')
+
+/** x 轴抽稀：标 `ceil((n-1)/6)` 的倍数位与最后一天 —— 7 天全标（stride=1），
+ *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
+ *  走向，中间的交给 hover。 */
+const xTicks = computed(() => {
+  const n = props.xLabels.length
+  if (n === 0) return []
+  const stride = Math.max(1, Math.ceil((n - 1) / 6))
+  const out: { i: number; anchor: 'start' | 'middle' | 'end' }[] = []
+  for (let i = 0; i < n; i += stride) {
+    out.push({ i, anchor: i === 0 ? 'start' : 'middle' })
+  }
+  if (n - 1 > out[out.length - 1]!.i) out.push({ i: n - 1, anchor: 'end' })
+  else out[out.length - 1]!.anchor = 'end'
+  return out
+})
+
+/** 点标记只在点数 ≤ 45 时画：90 个点在 1400px 宽下间距 ~15px，实心圆会糊成一条粗线
+ *  —— 那时线本身就是形状，点只剩噪音。tooltip 不受点数影响。 */
+const POINTS_LIMIT = 45
 
 const hover = ref<number | null>(null)
 
@@ -106,8 +170,8 @@ const hover = ref<number | null>(null)
 function indexAt(event: MouseEvent): number {
   const rect = (event.currentTarget as SVGRectElement).ownerSVGElement?.getBoundingClientRect()
   if (!rect || rect.width === 0 || props.xLabels.length === 0) return 0
-  const canvasX = ((event.clientX - rect.left) / rect.width) * VIEW_W
-  const raw = step.value > 0 ? Math.round((canvasX - PAD_LEFT) / step.value) : 0
+  const canvasX = ((event.clientX - rect.left) / rect.width) * canvasW.value
+  const raw = step.value > 0 ? Math.round((canvasX - padLeft.value) / step.value) : 0
   return Math.min(props.xLabels.length - 1, Math.max(0, raw))
 }
 
@@ -120,12 +184,21 @@ const onLeave = (): void => {
 const onClick = (event: MouseEvent): void => {
   emit('select', indexAt(event))
 }
+
+/** tooltip 的横坐标：跟着数据点走是它的职责（「hover 不改位置」管的是被 hover 的
+ *  元素自己不动），两端各留 8% 防止浮层被卡片边缘裁掉。 */
+const tooltipLeft = computed(() => {
+  if (hover.value === null) return 0
+  const px = x(hover.value)
+  return Math.min(canvasW.value * 0.92, Math.max(canvasW.value * 0.08, px))
+})
 </script>
 
 <template>
-  <div class="alc">
+  <div ref="root" class="alc">
     <div class="alc__head">
       <span class="alc__title t-eyebrow-read">{{ title }}</span>
+      <AdminNoteTip v-if="note" :text="note" />
       <span class="alc__legend">
         <span v-for="s in series" :key="s.name" class="alc__legend-item">
           <!-- 图例里的线样和图上那条线是同一套参数（颜色 + `DASH` 那张表），换了线型
@@ -157,78 +230,123 @@ const onClick = (event: MouseEvent): void => {
     </p>
 
     <template v-else>
-      <svg class="alc__plot" :viewBox="`0 0 ${VIEW_W} ${VIEW_H}`" aria-hidden="true">
-        <line
-          v-for="(gy, i) in gridLines"
-          :key="`grid-${i}`"
-          class="alc__grid"
-          :x1="PAD_LEFT"
-          :x2="VIEW_W - PAD_RIGHT"
-          :y1="gy"
-          :y2="gy"
-        />
-        <line
-          class="alc__baseline"
-          :x1="PAD_LEFT"
-          :x2="VIEW_W - PAD_RIGHT"
-          :y1="PAD_TOP + PLOT_H"
-          :y2="PAD_TOP + PLOT_H"
-        />
-        <path
-          v-for="s in series"
-          :key="s.name"
-          class="alc__line"
-          :d="path(s)"
-          :style="{ stroke: SERIES_COLOR[s.style] }"
-          :stroke-dasharray="DASH[s.style]"
-        />
-        <!-- 标记：实线系列是实心圆，虚线系列是空心圆（§7.5，判据见 `hollow`）。空心那
-             一种用卡片的底色填，而不是 `fill: none` —— 后者会让线从洞里穿过去，看起来
-             还是实心的。 -->
-        <template v-for="s in series" :key="`pt-${s.name}`">
-          <circle
-            v-for="(v, i) in s.values"
-            :key="i"
-            class="alc__point"
-            :cx="x(i)"
-            :cy="y(v)"
-            r="2"
-            :stroke-width="hollow(s) ? 2 : 0"
-            :style="{
-              fill: hollow(s) ? 'var(--surface)' : SERIES_COLOR[s.style],
-              stroke: SERIES_COLOR[s.style],
-            }"
-          />
-        </template>
-        <line
-          v-if="hover !== null"
-          class="alc__hover"
-          :x1="x(hover)"
-          :x2="x(hover)"
-          :y1="PAD_TOP"
-          :y2="PAD_TOP + PLOT_H"
-        />
-        <text class="alc__ink" :x="PAD_LEFT" :y="VIEW_H - 4" text-anchor="start">{{ xLabels[0] }}</text>
-        <text class="alc__ink" :x="VIEW_W - PAD_RIGHT" :y="VIEW_H - 4" text-anchor="end">
-          {{ xLabels[xLabels.length - 1] }}
-        </text>
-        <text class="alc__ink" :x="PAD_LEFT - 4" :y="PAD_TOP + 4" text-anchor="end">{{ maxValue }}</text>
-        <text class="alc__ink" :x="PAD_LEFT - 4" :y="PAD_TOP + PLOT_H" text-anchor="end">0</text>
-        <!-- 整块绘图区是一张点击面，放在最后（在最上层才收得到指针）。它同时管 hover
-             竖线：竖线本身是 1px、收不到指针，只能由这一层算。 -->
-        <rect
-          class="alc__hit"
-          x="0"
-          y="0"
-          :width="VIEW_W"
+      <div class="alc__stage">
+        <svg
+          class="alc__plot"
+          :width="canvasW"
           :height="VIEW_H"
-          fill="none"
-          pointer-events="all"
-          @mousemove="onMove"
-          @mouseleave="onLeave"
-          @click="onClick"
-        />
-      </svg>
+          :viewBox="`0 0 ${canvasW} ${VIEW_H}`"
+          aria-hidden="true"
+        >
+          <line
+            v-for="(tick, i) in yTicks"
+            :key="`grid-${i}`"
+            class="alc__grid"
+            :x1="padLeft"
+            :x2="canvasW - PAD_RIGHT"
+            :y1="y(tick)"
+            :y2="y(tick)"
+          />
+          <line
+            class="alc__baseline"
+            :x1="padLeft"
+            :x2="canvasW - PAD_RIGHT"
+            :y1="PAD_TOP + PLOT_H"
+            :y2="PAD_TOP + PLOT_H"
+          />
+          <path
+            v-for="s in series"
+            :key="s.name"
+            class="alc__line"
+            :d="path(s)"
+            :style="{ stroke: SERIES_COLOR[s.style] }"
+            :stroke-dasharray="DASH[s.style]"
+          />
+          <!-- 标记：实线系列是实心圆，虚线系列是空心圆（§7.5，判据见 `hollow`）。空心那
+               一种用卡片的底色填，而不是 `fill: none` —— 后者会让线从洞里穿过去，看起来
+               还是实心的。点数 > 45 不画（见 `POINTS_LIMIT`）。 -->
+          <template v-for="s in series" :key="`pt-${s.name}`">
+            <template v-if="s.values.length <= POINTS_LIMIT">
+              <circle
+                v-for="(v, i) in s.values"
+                :key="i"
+                class="alc__point"
+                :cx="x(i)"
+                :cy="y(v)"
+                r="2"
+                :stroke-width="hollow(s) ? 2 : 0"
+                :style="{
+                  fill: hollow(s) ? 'var(--surface)' : SERIES_COLOR[s.style],
+                  stroke: SERIES_COLOR[s.style],
+                }"
+              />
+            </template>
+          </template>
+          <line
+            v-if="hover !== null"
+            class="alc__hover"
+            :x1="x(hover)"
+            :x2="x(hover)"
+            :y1="PAD_TOP"
+            :y2="PAD_TOP + PLOT_H"
+          />
+          <text
+            v-for="tick in xTicks"
+            :key="`x-${tick.i}`"
+            class="alc__ink"
+            :x="x(tick.i)"
+            :y="VIEW_H - 4"
+            :text-anchor="tick.anchor"
+          >
+            {{ xLabels[tick.i] }}
+          </text>
+          <text
+            v-for="(tick, i) in yTicks"
+            :key="`y-${i}`"
+            class="alc__ink"
+            :x="padLeft - 4"
+            :y="y(tick) + 4"
+            text-anchor="end"
+          >
+            {{ fmtNum(tick) }}
+          </text>
+          <!-- 整块绘图区是一张点击面，放在最后（在最上层才收得到指针）。它同时管 hover
+               竖线：竖线本身是 1px、收不到指针，只能由这一层算。 -->
+          <rect
+            class="alc__hit"
+            x="0"
+            y="0"
+            :width="canvasW"
+            :height="VIEW_H"
+            fill="none"
+            pointer-events="all"
+            @mousemove="onMove"
+            @mouseleave="onLeave"
+            @click="onClick"
+          />
+        </svg>
+
+        <!-- hover 读数：日期 + 各系列当天的值。`pointer-events: none` —— 它跟着指针
+             的数据走，自己绝不收指针（否则会挡住 hit 层、闪烁）。出现/消失不做过渡。 -->
+        <div v-if="hover !== null" class="alc__tooltip" :style="{ left: `${tooltipLeft}px` }">
+          <span class="alc__tip-date t-eyebrow-read">{{ xLabels[hover] }}</span>
+          <span v-for="s in series" :key="s.name" class="alc__tip-row">
+            <svg class="alc__swatch" width="16" height="4" viewBox="0 0 16 4" aria-hidden="true">
+              <line
+                x1="0"
+                y1="2"
+                x2="16"
+                y2="2"
+                stroke-width="2"
+                :style="{ stroke: SERIES_COLOR[s.style] }"
+                :stroke-dasharray="DASH[s.style]"
+              />
+            </svg>
+            <span class="alc__tip-name">{{ s.name }}</span>
+            <span class="alc__tip-val t-dense t-num">{{ fmtNum(s.values[hover] ?? 0) }}</span>
+          </span>
+        </div>
+      </div>
 
       <details class="alc__data">
         <summary class="alc__toggle">{{ t('feedback.chart.dataTable') }}</summary>
@@ -269,7 +387,6 @@ const onClick = (event: MouseEvent): void => {
 .alc__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
@@ -277,6 +394,7 @@ const onClick = (event: MouseEvent): void => {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-left: auto;
 }
 
 .alc__legend-item {
@@ -298,10 +416,53 @@ const onClick = (event: MouseEvent): void => {
   flex: 0 0 auto;
 }
 
+/* 画布与 tooltip 的舞台：tooltip 按像素绝对定位在这里，横坐标与 SVG 画布同一把尺。 */
+.alc__stage {
+  position: relative;
+}
+
 .alc__plot {
   display: block;
-  width: 100%;
+  max-width: 100%;
   height: auto;
+}
+
+.alc__tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+  /* 浮层允许投影（design-system §3.4：菜单/弹窗/抽屉那一类）。 */
+  box-shadow: var(--shadow-1);
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.alc__tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.alc__tip-name {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.alc__tip-val {
+  margin-left: auto;
+  color: var(--ink);
 }
 
 .alc__grid {

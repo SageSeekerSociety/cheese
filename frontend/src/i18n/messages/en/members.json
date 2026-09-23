@@ -1,0 +1,71 @@
+{
+  "header": {
+    "title": "Members",
+    "subtitle": "These people can read all private feedback and security issues, and can add others here — being able to edit this roster is being able to open the door for yourself.",
+    "subtitleTitle": "These people can read all private feedback and security issues, and can add others here — being able to edit this roster is being able to open the door for yourself. The \"deployment config\" group comes from the deployment config (PLATFORM_ADMIN_HANDLES) and cannot be removed on this page: a roster that can be emptied here has no way back, so changing it takes server access."
+  },
+  "toolbar": {
+    "count": "No admins | 1 admin | {count} admins",
+    "refresh": "Refresh",
+    "add": "Add admin"
+  },
+  "table": {
+    "label": "Platform admin roster",
+    "colMember": "Admin",
+    "colStatus": "Account",
+    "colRegistered": "Registered",
+    "colSource": "Source",
+    "colAddedInfo": "Added",
+    "colActions": "Actions"
+  },
+  "group": {
+    "root": "Root admins from deployment config",
+    "added": "Added on this page",
+    "personUnit": " member(s)"
+  },
+  "row": {
+    "sourceRoot": "Config",
+    "sourceAdded": "This page",
+    "notRemovable": "Cannot remove",
+    "remove": "Remove",
+    "addedBy": "added by {by} · {time}",
+    "noAccount": "No such account",
+    "noAccountTitle": "This handle has no account on the platform (or the account was deleted) — check the spelling in the deployment config; changing it takes server access",
+    "agentBadge": "agent",
+    "agentBadgeTitle": "Agents cannot perform management actions, so this row's permission is unusable — check this name in the deployment config"
+  },
+  "empty": {
+    "root": "Nobody in the config (normal for local dev; required for deployment)",
+    "added": "No admins have been added on this page — everyone on the roster comes from the deployment config."
+  },
+  "addDialog": {
+    "title": "Add admin",
+    "searchLabel": "Search accounts",
+    "searchPlaceholder": "Type a handle or nickname",
+    "alreadyAdmin": "Already an admin",
+    "hint": "People added here can immediately read private feedback and security issues, and can add others themselves.",
+    "cancel": "Cancel",
+    "submit": "Add"
+  },
+  "confirm": {
+    "title": "Remove admin",
+    "body": "Remove {handle} from the roster? They will immediately lose access to private feedback and security issues, and can no longer add people here.",
+    "cancel": "Cancel",
+    "submit": "Remove"
+  },
+  "notice": {
+    "added": "Added: {handles}",
+    "removed": "Removed: {handle}",
+    "alreadyAbsent": "{handle} was not on the roster",
+    "refusedEntry": "{handle}: {reason}",
+    "listJoin": ", ",
+    "refusedJoin": "; "
+  },
+  "error": {
+    "loadFailed": "Failed to load the admin roster",
+    "searchFailed": "Account search failed",
+    "addFailed": "Could not add this person",
+    "removeFailed": "Could not remove this person",
+    "retry": "Retry"
+  }
+}

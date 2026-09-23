@@ -58,6 +58,23 @@ _NEW_MODEL = {
     "capabilities": {"reasoning": True, "vision": False},
 }
 
+#: 网关里一条**运行时**模型（`db_model` 为真，origin=runtime，可改）。订阅导入
+#: 挂的那种模型就长这样：`extra_headers` 三件套已经在 litellm_params 里。
+_RUNTIME_MODEL = {
+    "model_name": "runtime-x",
+    "litellm_params": {
+        "model": "openai/gpt-5.2-codex",
+        "input_cost_per_token": 2.5e-6,
+        "output_cost_per_token": 1e-5,
+        "extra_headers": {
+            "chatgpt-account-id": "acct-1",
+            "originator": "codex_cli_rs",
+            "version": "0.153.4",
+        },
+    },
+    "model_info": {"id": "rt-1", "cheese_selectable": True, "db_model": True},
+}
+
 
 @pytest.fixture
 def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -67,7 +84,9 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     return ADMIN
 
 
-def _stub_transport(calls: list[httpx.Request]) -> httpx.MockTransport:
+def _stub_transport(
+    calls: list[httpx.Request], models: list | None = None
+) -> httpx.MockTransport:
     """一台够管理页用的假网关：模型表里有一条 config 模型，用量与写接口各答一句。
 
     只实现管理客户端真正会用的那几条路，其它一律 404 —— 实现要是走了一条没预料到的
@@ -80,7 +99,9 @@ def _stub_transport(calls: list[httpx.Request]) -> httpx.MockTransport:
         if path == "/health/readiness":
             return httpx.Response(200, json={"status": "healthy"})
         if path == "/model/info":
-            return httpx.Response(200, json={"data": [_CONFIG_MODEL]})
+            return httpx.Response(
+                200, json={"data": [_CONFIG_MODEL] if models is None else models}
+            )
         if path == "/user/daily/activity/aggregated":
             return httpx.Response(200, json={"results": [], "metadata": {}})
         if path == "/model/new":
@@ -253,3 +274,96 @@ def test_a_failed_write_is_recorded_too(client, as_admin, gateway):
         "declared",
     )
     assert "config.yaml" in detail
+
+
+# --- extra_headers 的 PATCH 合并语义 与 审计读回 -------------------------------
+
+
+@pytest.fixture
+def runtime_gateway(client, monkeypatch) -> SimpleNamespace:
+    """模型表里有一条**运行时**模型的假网关（订阅导入挂的那种，头上已带三件套）。"""
+    gateway_models.reset_cache()
+    calls: list[httpx.Request] = []
+    _install(
+        client,
+        GatewayAdmin(
+            "http://gw", "mk", transport=_stub_transport(calls, [_RUNTIME_MODEL])
+        ),
+    )
+    refreshed: list[object] = []
+
+    async def _refresh(g):
+        refreshed.append(g)
+        return True
+
+    monkeypatch.setattr(gateway_catalog, "refresh", _refresh)
+    yield SimpleNamespace(calls=calls, refreshed=refreshed)
+    client.app.dependency_overrides.pop(get_gateway_admin, None)
+    gateway_models.reset_cache()
+
+
+def _patches(calls: list[httpx.Request]) -> list[dict]:
+    return [
+        json.loads(c.content)
+        for c in calls
+        if c.method == "PATCH" and c.url.path.endswith("/update")
+    ]
+
+
+def test_a_patch_without_extra_headers_leaves_the_gateway_side_alone(
+    client, as_admin, runtime_gateway
+):
+    """PATCH 合并语义在**客户端**兑现：表单不知道订阅头（v1 不暴露编辑），改
+    标签的 PATCH 里不带 `extra_headers` —— 带了就是整组替换，会把订阅导入
+    写进去的三件套弄丢。"""
+    r = client.patch(
+        "/admin/gateway/models/runtime-x",
+        json={"label": "新标签"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    sent = _patches(runtime_gateway.calls)
+    assert len(sent) == 1
+    # 标签只动 model_info：litellm_params 整个不出现（或出现了也不带头），
+    # 网关侧的既有三件套因此原样保留。
+    assert "extra_headers" not in sent[0].get("litellm_params", {})
+
+
+def test_a_patch_with_extra_headers_replaces_the_whole_set(
+    client, as_admin, runtime_gateway
+):
+    """给了才整组替换（订阅导入/刷新推进走的就是这条路）。"""
+    headers = {
+        "chatgpt-account-id": "acct-2",
+        "originator": "codex_cli_rs",
+        "version": "0.154.0",
+    }
+    r = client.patch(
+        "/admin/gateway/models/runtime-x",
+        json={"extra_headers": headers},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    sent = _patches(runtime_gateway.calls)
+    assert len(sent) == 1
+    assert sent[0]["litellm_params"]["extra_headers"] == headers
+
+
+def test_the_audit_endpoint_answers_what_changed(client, as_admin, gateway):
+    """审计读回 before/after：审计区从「谁改了」升级成「改了什么」就靠这两个
+    字段。写入时已 `_redact`，所以这里也不该见到凭据。"""
+    r = client.post(
+        "/admin/gateway/models",
+        json=_NEW_MODEL,
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    audit = client.get("/admin/gateway/audit", headers=session_auth_headers(as_admin))
+    assert audit.status_code == 200, audit.text
+    items = audit.json()["data"]["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["before"] is None
+    assert item["after"]["name"] == "test-model"
+    assert "sk-upstream-secret" not in json.dumps(item)

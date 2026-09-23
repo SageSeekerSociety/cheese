@@ -18,10 +18,11 @@ filtered by ``api_key`` = sha256 of the key; verified live — a key's
 ``user_id`` does not reach the rows), grouped by the row's ``model``, and
 consume each difference against the stored checkpoint. Cumulative sums are
 monotone, so a delta is consumed exactly once even when LiteLLM logs rows late
-(they simply enlarge a later drain). Day rollover finalizes yesterday once per
-model, then starts today. **The per-model split is not optional**: summing the
-rows and stamping one name attributes a mixed day to whatever model the caller
-happened to hold, which is how mimo went uncounted on the dashboard.
+(they simply enlarge a later drain). Each drain finalizes every day since its
+checkpoint once per model, then starts today. **The per-model split is not
+optional**: summing the rows and stamping one name attributes a mixed day to
+whatever model the caller happened to hold, which is how mimo went uncounted
+on the dashboard.
 
 Everything here is best-effort: a gateway/admin failure logs and returns an
 explicit unknown result — it must never fail a turn, but it must not be mistaken
@@ -33,7 +34,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -311,6 +312,20 @@ def utc_today() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
+def _prior_days(checkpoint_date: str, today: str) -> list[str] | None:
+    """Every unfinalized UTC day, including the checkpoint day."""
+    first = date.fromisoformat(checkpoint_date)
+    current = date.fromisoformat(today)
+    if first > current:
+        logger.warning("gateway checkpoint is in the future; preserving checkpoint")
+        return None
+    days = []
+    while first < current:
+        days.append(first.isoformat())
+        first += timedelta(days=1)
+    return days
+
+
 def _snapshot(by: dict[str, ModelSpend]) -> dict[str, dict]:
     """Day totals as the JSON-able checkpoint body (project.settings)."""
     return {
@@ -408,8 +423,8 @@ async def drain_new_usage(
 
     Exactly-once is unchanged: cumulative per-model sums are monotone, so a
     delta is consumed once even when LiteLLM logs rows late (they enlarge a
-    later drain). Day rollover finalizes yesterday per model, then starts today
-    from zero.
+    later drain). Day rollover finalizes every day since the checkpoint per
+    model, then starts today from zero.
 
     **v1 checkpoints** (flat ``prompt``/``completion``/``spend_usd``, written
     before the split) can only yield an UNATTRIBUTED delta — the model split of
@@ -425,14 +440,23 @@ async def drain_new_usage(
     prev_date = str(ckpt.get("date")) if ckpt else today
     prev = _prev_models(ckpt)
 
+    days = _prior_days(prev_date, today)
+    if days is None:
+        return None
     new: list[ModelSpend] = []
-    if prev_date != today:
-        # Finalize the checkpoint day (catch rows logged after its last drain)…
-        final = await gateway.daily_spend_by_model(key, prev_date)
+    for day in days:
+        # Finalize the checkpoint day, then every untouched intervening day.
+        final = await gateway.daily_spend_by_model(key, day)
         if final is None:
             return None
+        if day == prev_date and _regressed(final, prev):
+            logger.warning(
+                "gateway cumulative spend regressed; preserving checkpoint",
+                extra={"date": day},
+            )
+            return None
         new.extend(_deltas(final, prev))
-        prev = {}  # …then start today from zero.
+        prev = {}
     cur = await gateway.daily_spend_by_model(key, today)
     if cur is None:
         return None
@@ -464,8 +488,11 @@ async def _drain_pre_split(
 
     new_p = new_c = 0
     new_u = 0.0
-    if prev_date != today:
-        final = await gateway.daily_spend(key, prev_date)
+    days = _prior_days(prev_date, today)
+    if days is None:
+        return None
+    for day in days:
+        final = await gateway.daily_spend(key, day)
         if final is None:
             return None
         new_p += max(0, final.prompt_tokens - prev_p)

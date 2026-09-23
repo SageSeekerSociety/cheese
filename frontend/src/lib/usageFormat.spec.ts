@@ -2,7 +2,18 @@ import type { UsageStats } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { costLabel, costNote, fmtCompact, fmtCost, fmtDuration, fmtMs, fmtNum, fmtPercent, fmtSI } from './usageFormat'
+import {
+  costLabel,
+  costNote,
+  fmtCompact,
+  fmtCost,
+  fmtDelta,
+  fmtDuration,
+  fmtMs,
+  fmtNum,
+  fmtPercent,
+  fmtSI,
+} from './usageFormat'
 
 function stats(over: Partial<UsageStats> = {}): UsageStats {
   return {
@@ -132,5 +143,22 @@ describe('fmtDuration', () => {
     expect(fmtDuration(3 * 3600 + 20 * 60)).toBe('3\u00a0h\u00a020\u00a0min')
     expect(fmtDuration(2 * 86400 + 5 * 3600)).toBe('2\u00a0d\u00a05\u00a0h')
     expect(fmtDuration(undefined)).toBe('\u2014')
+  })
+})
+
+describe('fmtDelta', () => {
+  it('prints the direction, one decimal under 10%, integer above', () => {
+    expect(fmtDelta(112, 100)).toBe('+12%')
+    expect(fmtDelta(96.6, 100)).toBe('-3.4%')
+    expect(fmtDelta(100, 100)).toBe('±0%')
+    expect(fmtDelta(0, 50)).toBe('-100%')
+  })
+
+  it('stays silent when either side is missing or the base is zero', () => {
+    // prev=0：除以零没有答案 —— 「+∞%」是鬼话，卡片只报当前值。
+    expect(fmtDelta(5, 0)).toBe('')
+    expect(fmtDelta(null, 3)).toBe('')
+    expect(fmtDelta(3, null)).toBe('')
+    expect(fmtDelta(undefined, undefined)).toBe('')
   })
 })

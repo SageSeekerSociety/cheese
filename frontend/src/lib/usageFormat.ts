@@ -153,3 +153,24 @@ export function fmtDuration(seconds: number | null | undefined): string {
   const h = Math.floor((s % 86400) / 3600)
   return h ? `${d}${NBSP}d${NBSP}${h}${NBSP}h` : `${d}${NBSP}d`
 }
+
+/**
+ * KPI 环比：`+12%` / `-3.4%` / `±0%` —— 当前窗口对上一等长窗口的百分比差。
+ *
+ * `prev` 为 0 或缺数时给**空串**（卡片据此不画 delta）：除以零没有答案，
+ * 画一个「+∞%」是把「上一周期没有这个数」说成一个鬼故事；`cur` 缺数同理 ——
+ * 「没读到」不画，绝不画成「较上期 —%」。`prev=0` 也不画：上一周期是零时
+ * 任何百分比都没有意义，那张卡只报当前值。
+ *
+ * 分档照 `fmtPercent` 的精神：10% 以下留一位小数（3.4 和 3 是真差别），
+ * 以上取整（12.34% 的小数位是噪音）。
+ */
+export function fmtDelta(cur: number | null | undefined, prev: number | null | undefined): string {
+  if (cur === null || cur === undefined || prev === null || prev === undefined) return ''
+  if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return ''
+  const pct = ((cur - prev) / Math.abs(prev)) * 100
+  if (pct === 0) return '±0%'
+  const abs = Math.abs(pct)
+  const text = abs >= 10 ? String(Math.round(abs)) : abs.toFixed(1)
+  return `${pct > 0 ? '+' : '-'}${text}%`
+}
