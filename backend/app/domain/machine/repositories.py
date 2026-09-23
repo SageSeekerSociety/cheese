@@ -119,13 +119,28 @@ class ProjectMachineRepository:
         )
 
     async def get_active_for_topic(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        """The legacy room allocation, never an arbitrary agent's allocation."""
         result = await self._session.execute(
             select(ProjectMachine).where(
                 ProjectMachine.topic_id == topic_id,
+                ProjectMachine.session_id.is_(None),
                 ProjectMachine.released_at.is_(None),
             )
         )
         return result.scalars().one_or_none()
+
+    async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
+        """All unreleased resources, including superseded VMs awaiting cleanup."""
+        return list(
+            await self._session.scalars(
+                select(ProjectMachine)
+                .where(
+                    ProjectMachine.topic_id == topic_id,
+                    ProjectMachine.released_at.is_(None),
+                )
+                .order_by(ProjectMachine.created_at, ProjectMachine.id)
+            )
+        )
 
     async def list_ready_topic_devices(
         self, device_id: str | None = None
@@ -135,6 +150,9 @@ class ProjectMachineRepository:
         connected)."""
         conditions = [
             ProjectMachine.topic_id.is_not(None),
+            # Session allocations are polled by their own lazy tool admission;
+            # the legacy ready callback would bind this device to the whole room.
+            ProjectMachine.session_id.is_(None),
             ProjectMachine.released_at.is_(None),
             ProjectMachine.status == MachineStatus.running,
             ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
@@ -154,6 +172,7 @@ class ProjectMachineRepository:
         rows = await self._session.execute(
             select(ProjectMachine).where(
                 ProjectMachine.topic_id.is_not(None),
+                ProjectMachine.session_id.is_(None),
                 ProjectMachine.released_at.is_(None),
                 or_(
                     ProjectMachine.status == MachineStatus.error,

@@ -120,7 +120,13 @@ class ProjectMachine(UuidPk, Timestamps, Base):
             "uq_project_machines_active_topic",
             "topic_id",
             unique=True,
-            postgresql_where=text("released_at IS NULL"),
+            postgresql_where=text("released_at IS NULL AND session_id IS NULL"),
+        ),
+        Index(
+            "uq_project_machines_active_session",
+            "session_id",
+            unique=True,
+            postgresql_where=text("released_at IS NULL AND superseded_at IS NULL"),
         ),
     )
 
@@ -130,8 +136,16 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     warm_claim_pending: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
-    # NULL is a manually provisioned legacy/project machine. A Cloud-pool row is
-    # leased to exactly one topic until archive stamps released_at.
+    # Keep the durable lease owner even if its session is deleted: an external
+    # VM must not disappear from the resource ledger through a cascading FK.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    # A migrated session no longer uses this VM, but its files and quota remain
+    # until explicit cleanup. released_at would prematurely free the quota.
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # NULL is a manually provisioned project machine. Rows without session_id
+    # retain their legacy room ownership; migration must not guess an agent.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
