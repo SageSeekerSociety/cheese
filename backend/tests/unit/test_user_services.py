@@ -1329,3 +1329,34 @@ class TestEmailVerificationService:
         # The code exists: a second request meets the resend cooldown.
         with pytest.raises(BadRequestError, match="Please wait"):
             await svc.send_verification_code(email)
+
+    @pytest.mark.anyio
+    async def test_a_code_goes_out_through_the_fallback_mailbox(
+        self, redis, email, monkeypatch
+    ) -> None:
+        """A deployment with a fallback SMTP account still mails the code
+        when the primary account refuses it."""
+        from app.core import email as email_module
+        from app.core.config import settings
+        from app.domain.user.verification_service import EmailVerificationService
+
+        sent: list = []
+
+        async def fake_send(msg, *, hostname, **_kwargs):
+            if hostname == "primary.example":
+                raise OSError("primary unavailable")
+            sent.append((hostname, msg))
+
+        monkeypatch.setattr(email_module.aiosmtplib, "send", fake_send)
+        monkeypatch.setattr(settings, "email_smtp_host", "primary.example")
+        monkeypatch.setattr(settings, "email_from_address", "noreply@primary.example")
+        monkeypatch.setattr(settings, "email_fallback_smtp_host", "fallback.example")
+        monkeypatch.setattr(
+            settings, "email_fallback_from_address", "someone@fallback.example"
+        )
+
+        svc = EmailVerificationService(redis)
+        await svc.send_verification_code(email)
+
+        assert [host for host, _msg in sent] == ["fallback.example"]
+        assert sent[0][1]["To"] == email

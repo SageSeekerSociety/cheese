@@ -89,6 +89,10 @@ class FallbackEmailSender:
         self._primary = primary
         self._fallback = fallback
 
+    @property
+    def is_configured(self) -> bool:
+        return self._primary.is_configured or self._fallback.is_configured
+
     async def send(
         self,
         *,
