@@ -34,3 +34,8 @@ export function takeOAuthRedirect(): string {
   localStorage.removeItem(OAUTH_REDIRECT_KEY)
   return postLoginTarget({ redirect: path })
 }
+
+// 登录页每次打开都是一次新的登录：上一次 OAuth 出站没走完留下的地址不能带进来。
+export function forgetOAuthRedirect() {
+  localStorage.removeItem(OAUTH_REDIRECT_KEY)
+}

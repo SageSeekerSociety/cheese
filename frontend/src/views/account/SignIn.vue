@@ -178,7 +178,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
-import { postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
+import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const router = useRouter()
@@ -367,6 +367,7 @@ const getProviderIcon = (providerId: string) => {
 }
 
 onMounted(() => {
+  forgetOAuthRedirect()
   fetchOAuthProviders()
 })
 </script>
