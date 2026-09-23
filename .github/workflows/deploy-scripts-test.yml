@@ -97,6 +97,8 @@ jobs:
 
       - name: CI runner disk guard
         run: bash deploy/tests/test-ci-runner-disk-guard.sh
+      - name: CI runner scheduled prune retirement
+        run: bash deploy/tests/test-ci-runner-prune-retirement.sh
 
       - name: Dev-box cache reclaim
         run: bash deploy/tests/test-dev-box-disk-cleanup.sh
