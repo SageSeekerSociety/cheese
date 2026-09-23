@@ -1,0 +1,192 @@
+{
+  "page": {
+    "title": "Models",
+    "subtitle": "The models on the gateway, their prices, and each project's limit",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "add": "Add a model",
+    "days": "Last {n} days",
+    "loadFailed": "Could not load. Try again.",
+    "saveFailed": "Could not save. Try again.",
+    "deleteFailed": "Could not delete. Try again.",
+    "blockFailed": "Could not change. Try again.",
+    "budgetFailed": "Could not set the limit. Try again.",
+    "section": {
+      "models": "Models",
+      "budgets": "Limits",
+      "audit": "Recent actions"
+    },
+    "gateway": {
+      "unconfigured": "This deployment has no gateway admin key, so models and limits can neither be read nor written.",
+      "unreachable": "Could not read the gateway's model list. Check that the gateway is running, then retry."
+    }
+  },
+  "kpi": {
+    "models": "Models",
+    "offered": "Offered",
+    "spend": "Spend in window",
+    "failed": "Failed requests"
+  },
+  "table": {
+    "label": "Models",
+    "empty": "No models yet",
+    "calls": "calls",
+    "blocked": "Blocked",
+    "readOnly": "Read-only",
+    "column": {
+      "name": "Model",
+      "origin": "Origin",
+      "price": "Price",
+      "capabilities": "Capabilities",
+      "usage": "Usage in window",
+      "offered": "Offered",
+      "actions": "Actions"
+    },
+    "origin": {
+      "config": "Config file",
+      "runtime": "Added at runtime"
+    },
+    "offered": {
+      "on": "Offered",
+      "off": "Not offered"
+    },
+    "action": {
+      "edit": "Edit",
+      "delete": "Delete",
+      "block": "Block",
+      "unblock": "Unblock"
+    }
+  },
+  "price": {
+    "input": "Input",
+    "output": "Output",
+    "cacheRead": "Cache read",
+    "cacheCreation": "Cache write",
+    "unpriced": "Unpriced"
+  },
+  "usage": {
+    "tokens": "tokens"
+  },
+  "capability": {
+    "reasoning": "Reasoning",
+    "vision": "Vision",
+    "adaptiveThinking": "Adaptive thinking"
+  },
+  "detail": {
+    "title": "Model details",
+    "close": "Close",
+    "loadFailed": "Could not load the details. Try again.",
+    "empty": "No such model",
+    "upstream": "Upstream",
+    "upstreamModel": "Upstream model",
+    "upstreamHost": "Upstream host",
+    "trend": "Daily usage",
+    "platformUsage": "Platform-side usage",
+    "calls": "Calls",
+    "tokens": "tokens",
+    "cost": "Cost",
+    "configYaml": "Config snippet",
+    "copy": "Copy",
+    "copied": "Copied",
+    "configNote": "This model comes from the config file. It can only be changed in deploy/gateway/config.yaml, then the gateway is published.",
+    "series": {
+      "tokens": "tokens"
+    }
+  },
+  "dialog": {
+    "cancel": "Cancel",
+    "create": "Add",
+    "save": "Save",
+    "add": {
+      "title": "Add a model"
+    },
+    "edit": {
+      "title": "Edit model"
+    },
+    "field": {
+      "name": "Model",
+      "nameHint": "1–64 characters: letters, digits, dot, underscore and hyphen",
+      "label": "Label",
+      "upstreamModel": "Upstream model",
+      "upstreamModelHint": "For example anthropic/glm-4.7",
+      "apiBase": "Upstream host",
+      "apiBaseHint": "Must start with https://; leave empty for the upstream default endpoint",
+      "apiKey": "Upstream key",
+      "apiKeyHint": "The upstream service's key, stored on the gateway and never shown here.",
+      "apiKeyKeep": "Leave empty to keep the saved upstream key.",
+      "selectable": "Offer in the selector"
+    },
+    "group": {
+      "prices": "Prices",
+      "capabilities": "Capabilities"
+    },
+    "priceUnit": "Prices are in USD per million tokens, the same unit the table shows.",
+    "selectableNeedsPrice": "Offering needs both input and output prices above 0; an unpriced model silently disables a project's budget brake."
+  },
+  "notice": {
+    "added": "Added “{name}”",
+    "updated": "Saved “{name}”",
+    "deleted": "Deleted “{name}”",
+    "blocked": "Blocked “{name}”",
+    "unblocked": "Unblocked “{name}”",
+    "budgetSet": "Updated the limit for “{name}”"
+  },
+  "confirm": {
+    "delete": {
+      "title": "Delete model",
+      "body": "Delete “{name}”? The gateway stops routing it immediately, and this cannot be undone.",
+      "confirm": "Delete"
+    },
+    "block": {
+      "title": "Block model",
+      "body": "Block “{name}”? Once blocked it leaves the selector, and projects pointing at it are refused.",
+      "confirm": "Block"
+    },
+    "unblock": {
+      "title": "Unblock model",
+      "body": "Unblock “{name}”? If it is priced it returns to the selector.",
+      "confirm": "Unblock"
+    }
+  },
+  "budget": {
+    "label": "Limits",
+    "empty": "No projects yet",
+    "unlimited": "Unlimited",
+    "summary": "{projects} projects, {withKey} with a key, {over} over budget, {unlimited} unlimited",
+    "used": "Used {used} / {total}",
+    "derived": "Derived from credits: {value}",
+    "override": "Overridden",
+    "none": "Not set",
+    "column": {
+      "project": "Project",
+      "spend": "Spend in window",
+      "usage": "Usage in window",
+      "credits": "Compute credits",
+      "brake": "Brake"
+    },
+    "action": {
+      "set": "Set limit"
+    },
+    "dialog": {
+      "title": "Set the budget cap",
+      "field": "Cap (USD)",
+      "hint": "The default brake is derived from compute credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
+      "clear": "Clear override"
+    }
+  },
+  "audit": {
+    "empty": "No actions yet",
+    "result": {
+      "ok": "OK",
+      "failed": "Failed"
+    },
+    "action": {
+      "add": "Added a model",
+      "update": "Changed a model",
+      "delete": "Deleted a model",
+      "blocked": "Blocked/unblocked a model",
+      "budget": "Changed a limit",
+      "other": "Other action"
+    }
+  }
+}

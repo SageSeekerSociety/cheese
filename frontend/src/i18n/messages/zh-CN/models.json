@@ -1,0 +1,192 @@
+{
+  "page": {
+    "title": "模型管理",
+    "subtitle": "网关上的模型、单价与每个项目的额度",
+    "refresh": "刷新",
+    "retry": "重试",
+    "add": "新增模型",
+    "days": "过去 {n} 天",
+    "loadFailed": "加载失败，请重试。",
+    "saveFailed": "没保存上，请重试。",
+    "deleteFailed": "没删掉，请重试。",
+    "blockFailed": "没改成功，请重试。",
+    "budgetFailed": "额度没设上，请重试。",
+    "section": {
+      "models": "模型",
+      "budgets": "额度",
+      "audit": "最近操作"
+    },
+    "gateway": {
+      "unconfigured": "这个部署没有配网关管理密钥，模型与额度都读写不了。",
+      "unreachable": "读不到网关的模型清单。确认网关在运行，然后重试。"
+    }
+  },
+  "kpi": {
+    "models": "模型",
+    "offered": "已上架",
+    "spend": "窗口内花费",
+    "failed": "失败请求"
+  },
+  "table": {
+    "label": "模型",
+    "empty": "暂无模型",
+    "calls": "次调用",
+    "blocked": "已停用",
+    "readOnly": "只读",
+    "column": {
+      "name": "模型名",
+      "origin": "来源",
+      "price": "单价",
+      "capabilities": "能力",
+      "usage": "窗口内用量",
+      "offered": "上架",
+      "actions": "操作"
+    },
+    "origin": {
+      "config": "配置文件",
+      "runtime": "运行时新增"
+    },
+    "offered": {
+      "on": "已上架",
+      "off": "未上架"
+    },
+    "action": {
+      "edit": "编辑",
+      "delete": "删除",
+      "block": "停用",
+      "unblock": "启用"
+    }
+  },
+  "price": {
+    "input": "输入",
+    "output": "输出",
+    "cacheRead": "缓存读",
+    "cacheCreation": "缓存写",
+    "unpriced": "未定价"
+  },
+  "usage": {
+    "tokens": "token"
+  },
+  "capability": {
+    "reasoning": "推理",
+    "vision": "视觉",
+    "adaptiveThinking": "自适应思考"
+  },
+  "detail": {
+    "title": "模型详情",
+    "close": "关闭",
+    "loadFailed": "详情加载失败，请重试。",
+    "empty": "暂无此模型",
+    "upstream": "上游",
+    "upstreamModel": "上游模型",
+    "upstreamHost": "上游地址",
+    "trend": "每天用量",
+    "platformUsage": "平台侧用量",
+    "calls": "调用",
+    "tokens": "token",
+    "cost": "费用",
+    "configYaml": "配置片段",
+    "copy": "复制",
+    "copied": "已复制",
+    "configNote": "这个模型来自配置文件，只能在 deploy/gateway/config.yaml 里改，然后发布网关。",
+    "series": {
+      "tokens": "token"
+    }
+  },
+  "dialog": {
+    "cancel": "取消",
+    "create": "新增",
+    "save": "保存",
+    "add": {
+      "title": "新增模型"
+    },
+    "edit": {
+      "title": "编辑模型"
+    },
+    "field": {
+      "name": "模型名",
+      "nameHint": "1–64 个字符，可用字母、数字、点、下划线和连字符",
+      "label": "标签",
+      "upstreamModel": "上游模型",
+      "upstreamModelHint": "例如 anthropic/glm-4.7",
+      "apiBase": "上游地址",
+      "apiBaseHint": "以 https:// 开头；留空用上游默认端点",
+      "apiKey": "上游密钥",
+      "apiKeyHint": "上游服务的密钥，保存在网关，页面上不回显。",
+      "apiKeyKeep": "留空则沿用已保存的上游密钥。",
+      "selectable": "上架到选择器"
+    },
+    "group": {
+      "prices": "单价",
+      "capabilities": "能力"
+    },
+    "priceUnit": "单价按每百万 token 的美元数填（和表里显示的口径一致）。",
+    "selectableNeedsPrice": "上架要求输入与输出单价都大于 0；无价模型会让项目的额度刹车静默失效。"
+  },
+  "notice": {
+    "added": "已新增「{name}」",
+    "updated": "已保存「{name}」",
+    "deleted": "已删除「{name}」",
+    "blocked": "已停用「{name}」",
+    "unblocked": "已启用「{name}」",
+    "budgetSet": "已更新「{name}」的额度"
+  },
+  "confirm": {
+    "delete": {
+      "title": "删除模型",
+      "body": "删掉「{name}」？网关会立刻停止为它路由，这一步撤不回来。",
+      "confirm": "删除"
+    },
+    "block": {
+      "title": "停用模型",
+      "body": "停用「{name}」？停用后它从选择器里消失，指向它的项目调它会被拒。",
+      "confirm": "停用"
+    },
+    "unblock": {
+      "title": "启用模型",
+      "body": "启用「{name}」？已定价的话它会重新出现在选择器里。",
+      "confirm": "启用"
+    }
+  },
+  "budget": {
+    "label": "额度",
+    "empty": "暂无项目",
+    "unlimited": "不限量",
+    "summary": "{projects} 个项目，{withKey} 个有密钥，{over} 个超出额度，{unlimited} 个不限量",
+    "used": "已用 {used} / {total}",
+    "derived": "按额度折为 {value}",
+    "override": "有覆盖",
+    "none": "未设",
+    "column": {
+      "project": "项目",
+      "spend": "窗口内花费",
+      "usage": "窗口内用量",
+      "credits": "算力额度",
+      "brake": "刹车值"
+    },
+    "action": {
+      "set": "设额度"
+    },
+    "dialog": {
+      "title": "设额度上限",
+      "field": "上限（美元）",
+      "hint": "默认刹车值由算力额度折出（{derived}）；填一个数会立刻覆盖它并落到网关，留空则清除覆盖。",
+      "clear": "清除覆盖"
+    }
+  },
+  "audit": {
+    "empty": "暂无操作记录",
+    "result": {
+      "ok": "成功",
+      "failed": "失败"
+    },
+    "action": {
+      "add": "新增模型",
+      "update": "改模型",
+      "delete": "删模型",
+      "blocked": "停用/启用模型",
+      "budget": "改额度",
+      "other": "其它操作"
+    }
+  }
+}

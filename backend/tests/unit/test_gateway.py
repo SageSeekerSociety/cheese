@@ -241,11 +241,17 @@ async def test_a_gateway_that_cannot_be_asked_does_not_answer_nothing():
 
 
 @pytest.mark.anyio
-async def test_a_model_added_to_the_running_gateway_is_not_offered_yet():
-    """Adding a model through the gateway's admin API skips config.yaml, and
-    with it the review of the one field nobody can check by looking at the
-    model: its price. Until that is decided, such a model routes but is not a
-    menu item."""
+async def test_a_priced_model_added_at_runtime_is_offered_like_a_config_one():
+    """A runtime model (``db_model``, added through the gateway's admin API
+    rather than ``config.yaml``) is offered on the same terms as one declared in
+    config: the price decides, not the source. ``db_model`` is left in the
+    report only so the admin page knows which models it may edit. The price
+    invariant is enforced in code on this path, since config.yaml's second pair
+    of eyes is exactly what adding a model at runtime skips."""
+    priced = {
+        "input_cost_per_token": 0.000004,
+        "output_cost_per_token": 0.000004,
+    }
     client = gw.LlmGateway(
         "http://gw",
         "mk",
@@ -254,32 +260,55 @@ async def test_a_model_added_to_the_running_gateway_is_not_offered_yet():
                 [
                     {
                         "model_name": "added-at-runtime",
-                        "litellm_params": {
-                            "model": "anthropic/x",
-                            "input_cost_per_token": 0.000004,
-                            "output_cost_per_token": 0.000004,
-                        },
-                        "model_info": {
-                            "cheese_selectable": True,
-                            "db_model": True,
-                        },
+                        "litellm_params": {"model": "anthropic/x", **priced},
+                        "model_info": {"cheese_selectable": True, "db_model": True},
                     },
                     {
                         "model_name": "declared-in-config",
-                        "litellm_params": {
-                            "model": "anthropic/y",
-                            "input_cost_per_token": 0.000004,
-                            "output_cost_per_token": 0.000004,
-                        },
-                        "model_info": {
-                            "cheese_selectable": True,
-                            "db_model": False,
-                        },
+                        "litellm_params": {"model": "anthropic/y", **priced},
+                        "model_info": {"cheese_selectable": True, "db_model": False},
                     },
                 ]
             )
         ),
     )
     reported = {m.id: m for m in await client.models()}
-    assert reported["added-at-runtime"].selectable is False
+    assert reported["added-at-runtime"].selectable is True
     assert reported["declared-in-config"].selectable is True
+
+
+@pytest.mark.anyio
+async def test_a_blocked_model_is_never_offered():
+    """The gateway still lists a blocked model, so the catalogue alone would put
+    it in the picker — and the gateway would then refuse to route it, handing
+    someone a route that cannot be called. A price does not rescue it: being
+    priced and being blocked are independent, and only both together with the
+    selectable mark produce a model worth offering."""
+    priced = {
+        "input_cost_per_token": 0.000004,
+        "output_cost_per_token": 0.000004,
+    }
+    client = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=_transport(
+            _model_info_response(
+                [
+                    {
+                        "model_name": "closed-again",
+                        "litellm_params": {"model": "anthropic/z", **priced},
+                        "model_info": {"cheese_selectable": True, "blocked": True},
+                    },
+                    {
+                        "model_name": "still-open",
+                        "litellm_params": {"model": "anthropic/w", **priced},
+                        "model_info": {"cheese_selectable": True, "blocked": False},
+                    },
+                ]
+            )
+        ),
+    )
+    reported = {m.id: m for m in await client.models()}
+    assert reported["closed-again"].priced is True
+    assert reported["closed-again"].selectable is False
+    assert reported["still-open"].selectable is True

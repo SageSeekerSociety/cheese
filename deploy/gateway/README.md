@@ -65,23 +65,31 @@ them, the pinned gateway removes the thinking settings sent by Claude Code.
 
 ## Putting a model in front of people
 
-Add it to `config.yaml` with its route and its price, and mark it
-`cheese_selectable: true` under `model_info`. That is the whole change: cheese
-reads this file back through `/model/info` and keeps no list of its own, so
-nothing in the backend has to be edited or shipped for the model to appear in
-agent settings. The marker is opt-in because the gateway also routes models that
-are not menu items — `glm-4.5` is where the subagent alias points.
+There are two ways to add one, and both end in the same place: cheese reads the
+gateway back through `/model/info` and keeps no list of its own, so a model
+appears in agent settings as soon as the gateway reports it, without a backend
+release.
 
-Adding a model through the gateway's admin API instead (`STORE_MODEL_IN_DB` is
-on) routes it, but does not offer it to anyone: that path skips config.yaml and
-with it the review of the price. Opening it is a deliberate decision, and one
-clause in `LlmGateway.models` — not something to discover by accident.
+**In `config.yaml`** — add the route and the price and mark it
+`cheese_selectable: true` under `model_info`. This is the baseline that ships
+with the image, so a deployment's always-on models belong here; changing it
+means releasing the gateway. The marker is opt-in because the
+gateway also routes models that are not menu items — `glm-4.5` is where the
+subagent alias points.
 
-A selectable model with no price is not offered at all. Its tokens would meter
-at zero, the project's `max_budget` would never trip, and the first sign of
-trouble would be the invoice; a model missing from the picker gets noticed, a
-brake that quietly stopped working does not. `check_config.py` asserts this for
-every selectable entry, so run it after editing the list.
+**On the admin models page** — administrators add, edit, disable, and delete
+runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is
+audited with the acting handle, and a successful write refreshes the catalogue
+so the model is pickable immediately. Models declared in `config.yaml` appear
+there read-only, because the gateway refuses to write them.
+
+Both routes owe one invariant, and the service behind the admin page enforces it
+as surely as `check_config.py` enforces it for the file: a selectable model with
+no price is not offered at all. Its tokens would meter at zero, the project's
+`max_budget` would never trip, and the first sign of trouble would be the
+invoice; a model missing from the picker gets noticed, a brake that quietly
+stopped working does not. `check_config.py` asserts this for every selectable
+entry, so run it after editing the list.
 
 Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
