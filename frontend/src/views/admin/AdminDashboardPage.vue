@@ -280,7 +280,7 @@ const feedbackKpis = computed<KpiRow[]>(() => {
       value: createdSum === undefined ? '' : fmtNum(createdSum),
       loading: store.statsLoading,
       to: queue({ since: '7d' }),
-      spark: f?.series.map((row) => row.created),
+      spark: f?.series.map((row) => row.created) ?? [],
       ...deltaOf(createdSum, f?.prev?.created, fmtNum(f?.prev?.created ?? 0)),
     },
     {
@@ -289,7 +289,7 @@ const feedbackKpis = computed<KpiRow[]>(() => {
       value: resolvedSum === undefined ? '' : fmtNum(resolvedSum),
       loading: store.statsLoading,
       to: queue({ resolved_since: '7d' }),
-      spark: f?.series.map((row) => row.resolved),
+      spark: f?.series.map((row) => row.resolved) ?? [],
       ...deltaOf(resolvedSum, f?.prev?.resolved, fmtNum(f?.prev?.resolved ?? 0)),
     },
   ]
@@ -385,7 +385,7 @@ const usageKpis = computed<KpiRow[]>(() => {
       label: t('feedback.dashboard.usage.tokens'),
       value: num(u?.totals.tokens),
       loading: store.statsLoading,
-      spark: u?.series.map((row) => row.tokens),
+      spark: u?.series.map((row) => row.tokens) ?? [],
       ...deltaOf(u?.totals.tokens, u?.prev?.tokens, fmtNum(u?.prev?.tokens ?? 0)),
     },
     {
@@ -393,7 +393,7 @@ const usageKpis = computed<KpiRow[]>(() => {
       label: t('feedback.dashboard.usage.calls'),
       value: num(u?.totals.calls),
       loading: store.statsLoading,
-      spark: u?.series.map((row) => row.calls),
+      spark: u?.series.map((row) => row.calls) ?? [],
       ...deltaOf(u?.totals.calls, u?.prev?.calls, fmtNum(u?.prev?.calls ?? 0)),
     },
     {
@@ -401,7 +401,7 @@ const usageKpis = computed<KpiRow[]>(() => {
       label: t('feedback.dashboard.cost.kpi'),
       value: u ? fmtCost(u.totals.cost_usd) : '',
       loading: store.statsLoading,
-      spark: u?.series.map((row) => row.cost_usd),
+      spark: u?.series.map((row) => row.cost_usd) ?? [],
       ...deltaOf(u?.totals.cost_usd, u?.prev?.cost_usd, u?.prev ? fmtCost(u.prev.cost_usd) : ''),
       note: costNote,
     },
@@ -698,7 +698,7 @@ const productKpis = computed<KpiRow[]>(() => [
     label: t('feedback.dashboard.product.northStar', { d: store.statsDays }),
     value: num(product.value?.north_star.total),
     loading: store.statsLoading,
-    spark: product.value?.north_star.series.map((row) => row.accepted),
+    spark: product.value?.north_star.series.map((row) => row.accepted) ?? [],
     ...deltaOf(
       product.value?.north_star.total,
       product.value?.north_star.prev_total,
@@ -1119,7 +1119,7 @@ const peopleKpis = computed<KpiRow[]>(() => [
     label: t('feedback.dashboard.people.newInWindow', { d: store.statsDays }),
     value: num(platform.value?.people.new),
     loading: store.statsLoading,
-    spark: platform.value?.people.series.map((row) => row.created),
+    spark: platform.value?.people.series.map((row) => row.created) ?? [],
     ...deltaOf(
       platform.value?.people.new,
       platform.value?.people.prev_new,
@@ -1203,19 +1203,31 @@ function onSelectDay(index: number) {
 
 /* ---- 时效性：时间戳、轮询、重试 ------------------------------------------ */
 
+/** 「HH:MM」（补零）。直接读 `Date` 的时分，不把字符串交给 `Date` 解析。 */
+function hhmm(at: number): string {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** 页头那句「更新于 HH:MM」。当前类还没成功拉到过（`statsAt` 为 null）时是空串；
- *  超过 5 分钟追加「· N 分钟前」—— 切回旧类时一眼看出这份数据有多旧。时间格式
- *  直接读 `Date` 的时分（补零），不把字符串交给 `Date` 解析。 */
+ *  超过 5 分钟追加「· N 分钟前」—— 切回旧类时一眼看出这份数据有多旧。 */
 const stampText = computed(() => {
   const at = store.statsAt[kind.value]
   if (at === null) return ''
-  const d = new Date(at)
-  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   const ageMin = Math.floor((Date.now() - at) / 60_000)
   return ageMin >= 5
-    ? t('feedback.dashboard.updatedAtStale', { time, n: ageMin })
-    : t('feedback.dashboard.updatedAt', { time })
+    ? t('feedback.dashboard.updatedAtStale', { time: hhmm(at), n: ageMin })
+    : t('feedback.dashboard.updatedAt', { time: hhmm(at) })
 })
+
+/** 导轨卡的 `title`：口径提示句，加上那一类的更新时刻（§10.4 —— 常驻年龄行是
+ *  噪音，但指针停上去时「这份数据是什么时候的」要拿得到）。 */
+function kindTitle(k: StatsKind): string {
+  const hint = pulseByKey.value[k]?.hint ?? ''
+  const at = store.statsAt[k]
+  if (at === null) return hint
+  return `${hint} · ${t('feedback.dashboard.updatedAt', { time: hhmm(at) })}`
+}
 
 /** 轮询只覆盖「这一刻」的两类（平台健康、接口耗时），60s。窗口类（交付/产品/反馈/
  *  用量）有手动 R 和切窗口已经足够；integrations 是存量慢变（它的死信/未发在
@@ -1320,7 +1332,7 @@ onBeforeUnmount(() => {
           class="ad__kind"
           :class="{ 'ad__kind--on': k === store.statsKind }"
           :aria-pressed="k === store.statsKind"
-          :title="pulseByKey[k]?.hint"
+          :title="kindTitle(k)"
           @click="selectKind(k)"
         >
           <span class="ad__kind-label t-eyebrow-read">{{ t(TAB_KEY[k]) }}</span>

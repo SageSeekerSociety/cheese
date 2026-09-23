@@ -45,7 +45,9 @@ const props = withDefaults(
     delta?: string
     /** delta 的口径句，挂 title（「上一周期（再前 7 天）：1,024」）。 */
     deltaTitle?: string
-    /** 迷你折线的逐日值；null 断段；全 null 或空数组不画。 */
+    /** 迷你折线的逐日值；null 断段；全 null 或空数组不画。**传了数组（哪怕是空的）
+     *  这张卡就有第三行** —— 调用方在数据没到齐时传 `?? []`，骨架才能和真卡同形
+     *  （到货不重排）；`undefined` 才是「这张卡没有第三行」。 */
     spark?: (number | null)[]
     /** 口径注。给了才在 label 旁画 info tip —— **只在无 `to` 时生效**（见文件头）。 */
     note?: string
@@ -57,7 +59,7 @@ const shown = computed(() => (props.value.trim() === '' ? '—' : props.value))
 
 /** 有没有第三行 —— 决定高度档（92 → 108）。grid 行默认 stretch，同一排里
  *  有第三行和没有第三行的卡自动同高。 */
-const hasThirdRow = computed(() => Boolean(props.delta) || Boolean(props.spark?.length))
+const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undefined)
 </script>
 
 <template>

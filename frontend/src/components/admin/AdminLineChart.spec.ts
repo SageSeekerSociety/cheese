@@ -89,7 +89,7 @@ const SEVEN = {
 
 /** 轴上某个刻字出现了几次（按精确文本匹配，x 轴与 y 轴都算；模板插值自带换行
  *  缩进，所以比之前先 trim）。 */
-function tickCount(container: HTMLElement, text: string): number {
+function tickCount(container: Element, text: string): number {
   return Array.from(container.querySelectorAll('.alc__plot text')).filter((el) => el.textContent?.trim() === text)
     .length
 }
