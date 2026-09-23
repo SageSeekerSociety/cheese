@@ -7,7 +7,8 @@
  * 被外壳裁掉，且没有任何滚动条——输入框也跟着看不见。
  *
  * 这是 CSS，jsdom 量不到布局，照仓库的老办法用源码断言钉住（见
- * `panels/PanelCard.spec.ts` 末尾那两节）。
+ * `panels/PanelCard.spec.ts` 末尾那两节）。规则和这个菜单一起住在
+ * `room/RoomComposer.vue` 里。
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -15,11 +16,11 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ChatPanel.vue'), 'utf8')
+const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'room/RoomComposer.vue'), 'utf8')
 
 function rule(selector: string): string {
   const start = src.indexOf(`\n${selector} {`)
-  if (start < 0) throw new Error(`ChatPanel.vue 里没有这条规则：${selector}`)
+  if (start < 0) throw new Error(`RoomComposer.vue 里没有这条规则：${selector}`)
   const body = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start))
   // 注释里也会出现 `overflow-y: auto` 这种词，先摘掉再断言，免得注释把测试骗绿。
   return body.replace(/\/\*[\s\S]*?\*\//g, '')

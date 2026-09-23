@@ -109,8 +109,17 @@ function buttons(container: Element): HTMLButtonElement[] {
 function buttonByText(container: Element, text: string): HTMLButtonElement | undefined {
   return buttons(container).find((b) => b.textContent?.trim() === text)
 }
+/** 改动那一条横条上的 ⋯：范围、版本、下载、刷新都在里面。 */
+async function fromMenu(container: Element, name: string) {
+  const more = container.querySelector('.panel-changes [aria-label="更多"]')
+  expect(more, '找不到改动横条上的 ⋯').toBeTruthy()
+  await fireEvent.click(more!)
+  await flush()
+  await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
+  await flush()
+}
 async function chooseSource(container: Element, name: string) {
-  await fireEvent.click(buttonByText(container, '切换来源')!)
+  await fireEvent.click(container.querySelector('.panel-changes [title="切换来源"]')!)
   await flush()
   await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
   await flush()
@@ -132,10 +141,7 @@ async function openFilesTool(container: Element) {
     await fireEvent.click(group)
     await flush()
   }
-  const seg = buttonByText(container, '全部文件')
-  expect(seg, '找不到 全部文件 范围').toBeTruthy()
-  await fireEvent.click(seg!)
-  await flush()
+  await fromMenu(container, '全部文件')
 }
 
 beforeAll(() => {
@@ -235,7 +241,7 @@ describe('文件面板', () => {
     await flush()
     await openFilesTool(container)
     await chooseSource(container, '项目当前代码')
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     expect(editor(container)!.readOnly).toBe(true)
@@ -265,8 +271,9 @@ describe('文件面板', () => {
       ],
       total: 1,
     })
-    await fireEvent.click(container.querySelector('button[title="刷新"]')!)
+    await fromMenu(container, '刷新')
     await flush()
+    expect(container.querySelector('.source-status')?.textContent).toBe('已完成 · 只读')
     expect(editor(container)!.readOnly).toBe(true)
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     await fireEvent.update(editor(container)!, 'late edit')
@@ -302,7 +309,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
     expect(finishOldRead).toBeTypeOf('function')
     await chooseSource(container, 'two')
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
     finishOldRead(textFile('a.py', '迟到的第一条任务\n', 'v-old'))
     await flush()
@@ -395,13 +402,13 @@ describe('文件面板', () => {
     await flush()
     await openFilesTool(container)
     await fireEvent.update(editor(container)!, 'Unsaved human draft')
-    await fireEvent.click(buttonByText(container, '已提交版本')!)
+    await fromMenu(container, '已提交版本')
     await flush()
     expect(editor(container)?.value).toBe('Committed content')
     expect(editor(container)?.readOnly).toBe(true)
     expect(buttonByText(container, '保存')).toBeUndefined()
     expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', 'task-topic-A', 'committed')
-    await fireEvent.click(buttonByText(container, '机器实时文件')!)
+    await fromMenu(container, '机器实时文件')
     await flush()
     expect(editor(container)?.value).toBe('Unsaved human draft')
     await fireEvent.click(buttonByText(container, '保存')!)
@@ -528,7 +535,7 @@ new file mode 100644
   it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {
     const { container } = mountPanel('topic-A')
     await openChanges(container)
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
 
     readFile.mockResolvedValue(textFile('untouched.txt', 'x\n'))
@@ -544,6 +551,25 @@ new file mode 100644
 })
 
 describe('task file navigation', () => {
+  it('总览不重复页签的名字；项目当前代码是列表末尾的一个来源', async () => {
+    const { container } = mountPanel('topic-A')
+    await flush()
+    const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
+    await fireEvent.click(tab!)
+    await flush()
+    const panel = container.querySelector('.panel-changes')!
+    expect(panel.textContent).not.toContain('房间改动')
+
+    const projectCode = buttons(panel).find((b) => b.textContent?.includes('项目当前代码'))
+    expect(projectCode, '总览里找不到项目当前代码').toBeTruthy()
+    await fireEvent.click(projectCode!)
+    await flush()
+
+    expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', null, 'committed')
+    expect(panel.querySelector('.source-heading')?.textContent).toContain('项目当前代码')
+    expect(panel.querySelector('.source-status')?.textContent).toBe('只读')
+  })
+
   const diff = `diff --git a/a.py b/a.py
 --- a/a.py
 +++ b/a.py
@@ -578,7 +604,7 @@ describe('task file navigation', () => {
     await fireEvent.click(groups[1].querySelector('.task-change-file')!)
     await flush()
     expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two', 'live')
-    expect(container.querySelector('.source-current')?.textContent).toContain('two')
+    expect(container.querySelector('.source-heading')?.textContent).toContain('two')
     expect(container.querySelector('.task-select')).toBeNull()
   })
 
@@ -605,7 +631,7 @@ describe('task file navigation', () => {
     expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A', 'live')
     finishRead(textFile('a.py', 'directed content'))
     await flush()
-    expect(container.querySelector('.file-bar__path')?.textContent).toBe('a.py')
+    expect(container.querySelector('.changes-bar__path')?.textContent).toBe('a.py')
   })
 
   it('does not resurrect a draft after the user undoes all changes', async () => {
@@ -684,7 +710,7 @@ describe('task file navigation', () => {
     await fireEvent.click(container.querySelector('.task-change-heading')!)
     await flush()
     expect(container.textContent).toContain('任务版本不可用')
-    expect(container.querySelector('.source-current')?.textContent).toContain('one')
+    expect(container.querySelector('.source-heading')?.textContent).toContain('one')
     expect(listFiles.mock.calls.every((call) => call[2] === 'task-topic-A')).toBe(true)
   })
 })

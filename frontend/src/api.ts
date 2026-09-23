@@ -83,6 +83,38 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // namespace that separated them has nothing left to separate.
 export const BASE = '/api'
 
+export interface ProjectJoinLink {
+  token: string
+  expires_at: string
+}
+
+export interface ProjectJoinPreview {
+  project_id: string
+  project_name: string
+  already_member: boolean
+  expires_at: string
+}
+
+export function getProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink | null>(`/projects/${encodeURIComponent(projectId)}/join-link`)
+}
+
+export function createProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'POST' })
+}
+
+export function revokeProjectJoinLink(projectId: string) {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'DELETE' })
+}
+
+export function previewProjectJoinLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}`)
+}
+
+export function joinProjectByLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, { method: 'POST' })
+}
+
 // Chat requests use the same access token as AccountService.
 export function authToken(): string {
   try {
@@ -1970,6 +2002,17 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
 export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/membership`, {
     method: 'DELETE',
+  })
+}
+
+// 转让项目给名册上的另一个人。所有者自己退不掉（后端会拒，得先转让），这是他
+// 离得开的那条路的第一步。新所有者必须已经在名册上（后端会验，不在就退回来一句
+// 「请先把 TA 加进项目成员」）；他接手之后，原所有者就只剩成员身份，再退出一次
+// 才真的走（membership/services.py 的 leave）。
+export function setProjectOwner(projectId: string, ownerHandle: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/owner`, {
+    method: 'PUT',
+    body: JSON.stringify({ owner_handle: ownerHandle }),
   })
 }
 

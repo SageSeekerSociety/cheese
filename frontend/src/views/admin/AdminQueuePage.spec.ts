@@ -23,7 +23,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AdminQueuePage from './AdminQueuePage.vue'
 
@@ -161,8 +161,17 @@ describe('队列页', () => {
     const { container, findByText, getByText, getByPlaceholderText } = await mountQueue()
     await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
 
-    await fireEvent.update(getByPlaceholderText('搜索反馈'), 'zzz-没有这条')
+    const before = listCalls
+    vi.useFakeTimers()
+    try {
+      await fireEvent.update(getByPlaceholderText('搜索反馈'), 'zzz-没有这条')
+      expect(listCalls).toBe(before)
+      await vi.runOnlyPendingTimersAsync()
+    } finally {
+      vi.useRealTimers()
+    }
 
+    await waitFor(() => expect(listCalls).toBeGreaterThan(before))
     expect(await findByText('没有符合条件的反馈')).toBeTruthy()
     expect(container.querySelectorAll('.qrow').length).toBe(0)
 

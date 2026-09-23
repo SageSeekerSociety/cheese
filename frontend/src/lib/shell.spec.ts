@@ -74,8 +74,8 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
       'workspace',
       'inbox',
     ])
-    // 侧栏那一面 default 只摆资料库：日历和名册在项目名旁边的 ⋯ 菜单里，
-    // 看板就是首页（项目名那一行点下去就到），所以它们不在 nav.project 里。
+    // 侧栏那一面：资料库和名册是常驻那两格，日历默认收进项目名旁边那个 ⋯ 菜单。
+    // 看板不在里面——它就是首页，项目名那一行点下去就到。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual(['calendar', 'project-library', 'project-members'])
   })
 })
@@ -105,12 +105,13 @@ describe('termParams: 词表切文案，壳没说就回落 catalog', () => {
 })
 
 describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', () => {
-  it('default 壳下侧栏只摆资料库，其余全在「更多」里', () => {
+  it('default 壳下侧栏摆资料库和名册，其余全在「更多」里', () => {
     // 「更多」就是项目名旁边那个 ⋯ 菜单（`TopicSidebar.vue` 的 menuPages）。
-    // default 下它是 看板 / 日历 / 名册 —— 一格都没丢，只是不占那条竖线。
+    // default 下它是 看板 / 日历 —— 一格都没丢，只是不占那条竖线。名册不在里头：
+    // 「退出项目」长在名册页上，收进 ⋯ 就是把「怎么退出」也一起藏了。
     const plan = projectPagePlan(DEFAULT_SHELL, KNOWN, new Set())
-    expect(plan.visible).toEqual(['project-library'])
-    expect(plan.more).toEqual(['workspace-running', 'calendar', 'project-members'])
+    expect(plan.visible).toEqual(['project-library', 'project-members'])
+    expect(plan.more).toEqual(['workspace-running', 'calendar'])
   })
 
   it('hidden 里的页落进「更多」', () => {

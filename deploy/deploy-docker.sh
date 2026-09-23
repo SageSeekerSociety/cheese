@@ -234,7 +234,6 @@ ensure_application_router() {
   if [ "$router_changed" = true ]; then
     docker exec cheese-app-router nginx -s reload || fail "application router could not reload"
   fi
-  wait_for_healthz 18085 "application router" || fail "application router is not healthy"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     curl -fsS -m 3 http://127.0.0.1:18086/ >/dev/null \
       || fail "application router cannot reach the serving frontend"
@@ -846,6 +845,9 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
     || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
   rollout_backend
+  # Forge migration stops the old backend. Probe the routed backend only after
+  # its replacement is serving, including retries from a persisted cutover.
+  wait_for_healthz 18085 "application router" || fail "application router is not healthy"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     rollout_frontend
   else

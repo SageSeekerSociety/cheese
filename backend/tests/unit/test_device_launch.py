@@ -88,7 +88,25 @@ def test_warm_adoption_waits_for_room_configuration(
     tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
     tmux.chmod(0o700)
     script = tmp_path / "launch.sh"
-    script.write_text(device_launch.build_launch_script())
+    launch = device_launch.build_launch_script()
+    staged = launch.index("cheese_launch_phase warm_staged")
+    configured = launch.index('mv "$HOME/.cheese/cheese-drain.env.tmp"')
+    adopted = launch.index('if [ -n "$WARM_ROOT" ]; then', configured)
+    assert staged < configured < adopted
+    # Exercise the generated staging and adoption programs around the generated
+    # configuration write. The intervening launcher work has independent tests
+    # and made this ordering contract depend on the elapsed time of the complete launch.
+    prefix_end = launch.index("# The platform's own directory", staged)
+    config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
+    config_end = launch.index("\n", configured) + 1
+    adoption_end = launch.index("\nfi\n", adopted) + len("\nfi\n")
+    script.write_text(
+        launch[:prefix_end]
+        + 'mkdir -p "$HOME/.cheese"\n'
+        + launch[config_start:config_end]
+        + 'cd "$CHEESE_WORK"\n'
+        + launch[adopted:adoption_end]
+    )
     with (tmp_path / "launcher.log").open("w") as output:
         process = subprocess.Popen(
             ["sh", str(script)],
@@ -1003,9 +1021,22 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         CHEESE_API="https://fixture.invalid",
         CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
     )
+    # Keep this skills/Claude contract from starting the independent detached
+    # document-tool fetch after the assertions have finished.
+    chain = owner / ".cheese/toolchain"
+    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        target = chain / (
+            "fonts/" + machine_launcher.toolchain.fonts_pin()
+            if kind == "font"
+            else f"{tool}/{version}"
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_text("fixture")
+        (target / name).chmod(0o755)
+    curl_calls = tmp_path / "curl.calls"
     curl = tmp_path / "bin/curl"
     curl.write_text(
-        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        f'#!/bin/sh\necho call >> "{curl_calls}"\nwhile [ "$#" -gt 0 ]; do\n'
         'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
         "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
         'if [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
@@ -1019,6 +1050,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
     )
     assert result.returncode == 0, result.stderr
+    assert curl_calls.read_text().splitlines() == ["call"]
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
@@ -1815,6 +1847,28 @@ def test_no_mcp_server_is_planted_in_a_sandbox():
 def test_a_summarisation_stream_that_stalls_is_bounded():
     """Keep the model-stream watchdog enabled alongside page-fetch handling."""
     assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
+
+
+def test_the_stream_watchdog_cannot_cut_a_turn_before_the_platform_does():
+    """The watchdog's idle window must not be the shortest one on the path.
+
+    Left to itself the CLI uses 180 s whenever it believes it is on the
+    first-party API — which this deployment is, since `ANTHROPIC_BASE_URL` is
+    deliberately unset — and no hop writes a keepalive byte, so a thinking
+    window looks exactly like a dead connection and the turn is killed
+    mid-stream. Setting the variable is what leaves that 180 s branch; the value
+    has to sit above the platform's own silence gates so the CLI cannot cut
+    first, on less information, with a number nobody here chose.
+    """
+    from app.core.config import settings
+
+    env = device_launch.hooks_settings()["env"]
+    assert int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > 180_000, (
+        "still on the CLI's firstParty default"
+    )
+    assert (
+        int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > settings.agent_idle_suspect_s * 1000
+    )
 
 
 def _claude_json_from(script: str) -> dict:

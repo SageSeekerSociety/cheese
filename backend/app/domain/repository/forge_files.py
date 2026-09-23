@@ -374,7 +374,8 @@ class ProjectFiles:
             )
             if data is None:
                 raise NotFoundError("已提交的目录不存在")
-            entries.extend(data["tree"])
+            # Forgejo serializes an empty tree as null.
+            entries.extend(data["tree"] or [])
             if not data.get("truncated"):
                 return entries
             if "page" not in data or not data["tree"]:

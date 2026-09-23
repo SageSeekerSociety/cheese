@@ -28,10 +28,32 @@ marker = b"    async def post(\n"
 assert http_source.count(marker) == 1
 class_marker = b"class AsyncHTTPHandler:"
 assert http_source.count(class_marker) == 1
+# Only POST supplies model streams; transfer retry-client ownership to the body.
+post_start = http_source.index(marker)
+post_end = http_source.index(b"    async def put(", post_start)
+post_source = http_source[post_start:post_end]
+assert post_source.count(b"return await self.single_connection_post_request(") == 1
+assert post_source.count(b"            finally:\n                await new_client.aclose()") == 1
+post_source = post_source.replace(
+    b"return await self.single_connection_post_request(",
+    b"response = await self.single_connection_post_request(",
+).replace(
+    b"            finally:\n                await new_client.aclose()",
+    b"            except BaseException:\n"
+    b"                await new_client.aclose()\n"
+    b"                raise\n"
+    b"            if stream:\n"
+    b"                response.stream = ClientOwnedStream(response.stream, new_client)\n"
+    b"            else:\n"
+    b"                await new_client.aclose()\n"
+    b"            return response",
+)
+http_source = http_source[:post_start] + post_source + http_source[post_end:]
 http_path.write_bytes(
     http_source.replace(
         class_marker,
-        b"from .provider_http_timing import trace_post\n\n\n" + class_marker,
+        b"from .provider_http_timing import trace_post\n"
+        b"from .retry_stream import ClientOwnedStream\n\n\n" + class_marker,
     ).replace(marker, b"    @trace_post\n" + marker)
 )
 
