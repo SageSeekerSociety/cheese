@@ -100,18 +100,24 @@ def hooks_settings(
         # Stream liveness is separate from WebFetch's response-error handling.
         "env": {
             "CLAUDE_ENABLE_STREAM_WATCHDOG": "1",
-            # The watchdog aborts a stream that has produced no BYTES for its idle
-            # window, and its window is shorter than a turn can legitimately go
-            # quiet: the CLI uses 180 s whenever it believes it is on the
-            # first-party API — which is exactly this deployment, since
-            # `ANTHROPIC_BASE_URL` is deliberately left unset (provider_env.py) so
-            # the metering proxy stays transparent. Nothing on the path writes a
-            # keepalive byte either: LiteLLM and mitmproxy both stay silent while
-            # the provider thinks, so a long extended-thinking window is
-            # indistinguishable from a dead connection and the CLI kills the turn.
-            # Setting this variable at all leaves the 180 s branch, and the CLI
-            # floors it at 300 s, so the value here is the platform's own turn
-            # ceiling (`agent_turn_timeout_s`) rather than a second, shorter one.
+            # The watchdog aborts a stream that has produced no BYTES for its
+            # idle window, and left alone that window is SHORTER than this
+            # deployment's own silence handling: the CLI uses 180 s whenever it
+            # believes it is on the first-party API, which is exactly what an
+            # unset `ANTHROPIC_BASE_URL` means (provider_env.py leaves it unset
+            # so the metering proxy stays transparent). Nothing on the path
+            # writes a keepalive byte either — LiteLLM holds the first chunk
+            # until TTFT and mitmproxy stays silent while the provider thinks —
+            # so a long thinking window is indistinguishable from a dead
+            # connection, and the CLI kills the turn mid-stream before the
+            # platform's own gates ever look at it.
+            #
+            # Setting this variable at all is what leaves that 180 s branch (the
+            # CLI floors it at 300 s and never honours anything lower), so the
+            # number here is a ceiling for the CLI, not a second opinion on how
+            # long a turn may run. It is deliberately above every gate the
+            # platform applies to a hooks-driven turn, so the CLI can never cut
+            # first, on less information, with a number nobody here chose.
             "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "900000",
         },
         # Previews belong in Cheese, not on claude.ai via the Artifact tool.
