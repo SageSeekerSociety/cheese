@@ -1920,38 +1920,111 @@ function routes(url: URL, method: string, body: unknown): MockReply {
    *     看见的一版。
    */
   function performanceStats(): Record<string, unknown> {
+    // 形状逐字照抄 `domain/platform_stats/performance.py`：**每一条注册过的端点一行**，
+    // 没被访问过的也占一行（`count: 0`、分位数 null）。状态码是属性不是身份。
+    const spark = [12, 14, 11, 18, 22, 19, 16, 15, 17, 21, 24, 20, 18, 17, 16, 15, 14, 16, 18, 19, 21, 23, 22, 20]
     const routes = [
-      { method: 'GET', route: '/feedback', status: '200', count: 412, p50: 18.4, p95: 61.2, p99: 143.8 },
-      { method: 'GET', route: '/projects', status: '200', count: 188, p50: 22.1, p95: 48.9, p99: 96.4 },
-      { method: 'GET', route: '/feedback/{feedback_id}', status: '200', count: 96, p50: 12.7, p95: 33.5, p99: 71.2 },
+      {
+        method: 'GET',
+        route: '/feedback',
+        count: 412,
+        error_count: 2,
+        status: { '2xx': 405, '3xx': 5, '4xx': 2, '5xx': 0 },
+        p50: 18.4,
+        p95: 61.2,
+        p99: 143.8,
+        spark,
+      },
+      {
+        method: 'GET',
+        route: '/projects',
+        count: 188,
+        error_count: 0,
+        status: { '2xx': 188, '3xx': 0, '4xx': 0, '5xx': 0 },
+        p50: 22.1,
+        p95: 48.9,
+        p99: 96.4,
+        spark,
+      },
+      {
+        method: 'GET',
+        route: '/feedback/{feedback_id}',
+        count: 96,
+        error_count: 1,
+        status: { '2xx': 95, '3xx': 0, '4xx': 1, '5xx': 0 },
+        p50: 12.7,
+        p95: 33.5,
+        p99: 71.2,
+        spark,
+      },
       {
         method: 'POST',
         route: '/topics/{topic_id}/messages',
-        status: '200',
         count: 54,
+        error_count: 0,
+        status: { '2xx': 54, '3xx': 0, '4xx': 0, '5xx': 0 },
         p50: 41.3,
         p95: 122.6,
         p99: 251.9,
+        spark,
       },
-      { method: 'GET', route: '/admin/stats/feedback', status: '200', count: 31, p50: 9.8, p95: 24.1, p99: 38.7 },
-      // 刚加过路由、还没人访问过的那一条：分位数是 null，页面画「—」。
+      {
+        method: 'GET',
+        route: '/admin/stats/feedback',
+        count: 31,
+        error_count: 0,
+        status: { '2xx': 31, '3xx': 0, '4xx': 0, '5xx': 0 },
+        p50: 9.8,
+        p95: 24.1,
+        p99: 38.7,
+        spark,
+      },
+      // 刚加过路由、还没人访问过的那几条：分位数是 null，页面画「—」。
       {
         method: 'GET',
         route: '/spaces/{space_id}/discussions',
-        status: '200',
         count: 0,
+        error_count: 0,
+        status: { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 },
         p50: null,
         p95: null,
         p99: null,
+        spark: [],
+      },
+      {
+        method: 'DELETE',
+        route: '/admin/admins/{handle}',
+        count: 0,
+        error_count: 0,
+        status: { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 },
+        p50: null,
+        p95: null,
+        p99: null,
+        spark: [],
       },
     ]
+    const net = {
+      available: true,
+      iface: 'eth0',
+      scope: 'host',
+      rx_bps: 184_320.5,
+      tx_bps: 2_411_724.8,
+      samples: Array.from({ length: 24 }, (_, i) => ({
+        rx_bps: 120_000 + i * 4000,
+        tx_bps: 1_800_000 + i * 22_000,
+      })),
+      note_key: 'perf.netHost',
+    }
     return {
-      routes_total: routes.length,
-      routes_shown: routes.length,
-      // 注册的全部路由（FastAPI 路由表的条数）。**和 `routes_total` 不是一回事**：
-      // 这里画出来的 6 条是「有样本的」，分母是这个 app 真有的那么多条路由。
-      routes_registered: 214,
+      routes_registered: 562,
+      routes_with_samples: routes.filter((r) => r.count > 0).length,
+      routes_omitted: 0,
+      dropped_series: 0,
       routes,
+      network: {
+        uplink: net,
+        api: { ...net, iface: null, scope: 'process', note_key: 'perf.apiIO' },
+      },
       active_requests: 2,
       uptime_seconds: 5 * 3600 + 37 * 60,
       loop_lag: { recent_ms: 3.4, worst_ms: 182.6 },

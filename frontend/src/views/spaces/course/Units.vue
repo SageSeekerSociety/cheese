@@ -51,6 +51,14 @@
 
         <template #append>
           <v-btn
+            :prepend-icon="unit.quizId ? 'mdi-pencil-outline' : 'mdi-plus'"
+            variant="text"
+            size="small"
+            :to="{ name: 'SpacesCourseQuiz', params: { spaceId }, query: { unit: String(unit.id) } }"
+          >
+            {{ unit.quizId ? t('spaces.course.units.editQuiz') : t('spaces.course.units.addQuiz') }}
+          </v-btn>
+          <v-btn
             :prepend-icon="unit.publishedAt ? 'mdi-eye-off-outline' : 'mdi-send-outline'"
             variant="text"
             size="small"

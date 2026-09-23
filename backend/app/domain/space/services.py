@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME, is_course_shell
+from app.domain.space.course_modules import normalize as normalize_course_modules
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -240,6 +241,7 @@ class SpaceService:
         default_category_id: int | None = None,
         visible_task_limit: int | None = None,
         set_visible_task_limit: bool = False,
+        course_modules: dict[str, bool] | None = None,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
@@ -275,6 +277,10 @@ class SpaceService:
                     data={"spaceId": space_id, "categoryId": default_category_id},
                 )
             space.default_category_id = default_category_id
+        if course_modules is not None:
+            # Only what was declared; absent keys keep meaning ON, so the map
+            # stays a list of exceptions rather than a copy of the whole board.
+            space.course_modules = normalize_course_modules(course_modules)
 
         space.updated_at = datetime.now(UTC)
         return await self._repo.save(space)

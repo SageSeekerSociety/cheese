@@ -83,6 +83,38 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // namespace that separated them has nothing left to separate.
 export const BASE = '/api'
 
+export interface ProjectJoinLink {
+  token: string
+  expires_at: string
+}
+
+export interface ProjectJoinPreview {
+  project_id: string
+  project_name: string
+  already_member: boolean
+  expires_at: string
+}
+
+export function getProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink | null>(`/projects/${encodeURIComponent(projectId)}/join-link`)
+}
+
+export function createProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'POST' })
+}
+
+export function revokeProjectJoinLink(projectId: string) {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'DELETE' })
+}
+
+export function previewProjectJoinLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}`)
+}
+
+export function joinProjectByLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, { method: 'POST' })
+}
+
 // Chat requests use the same access token as AccountService.
 export function authToken(): string {
   try {
@@ -2402,7 +2434,18 @@ export interface StatsUsage {
  *  里，库里没有可以查的那一列。 */
 export interface StatsPlatform {
   days: number
-  people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
+  people: {
+    total: number
+    new: number
+    admins: number
+    /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。
+     *  `total`/`new`/`series[].created` 仍是和，拆分是附加列。 */
+    humans: number
+    agents: number
+    new_humans: number
+    new_agents: number
+    series: { date: string; created: number; human_created: number; agent_created: number }[]
+  }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
   health: {
@@ -2438,6 +2481,18 @@ export interface StatsPlatform {
   }
 }
 
+/** 一个网络平面的速率读数。见 `core/net_io.py` 的模块 docstring。 */
+export interface NetIoBlock {
+  available: boolean
+  iface: string | null
+  scope: 'host' | 'container' | 'process' | null
+  /** 字节/秒。读不到是 `null`，**绝不为 0**。 */
+  rx_bps: number | null
+  tx_bps: number | null
+  samples: { rx_bps: number | null; tx_bps: number | null }[]
+  note_key: string
+}
+
 /** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
  *
  *  所以它**没有 `days`**（没有窗口）、重启即清零，而且只覆盖这一个进程 —— 生产上
@@ -2447,22 +2502,35 @@ export interface StatsPlatform {
  *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
  *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
 export interface StatsPerformance {
-  /** 采集到耗时的路由**总数**（不是画出来的条数）。**是「有样本的」，不是注册的全部** ——
-   *  没被访问过的路由在这里不出现。分母见 `routes_registered`。 */
-  routes_total: number
-  routes_shown: number
-  /** 这个 app 注册的全部路由。和 `routes_total` 一起读才答得了「是不是太少了」。 */
+  /** 这个 app 注册的全部路由（**每一条端点都在 `routes` 里有一行**，没样本的也在）。 */
   routes_registered?: number | null
+  /** 有样本的路由数。和 `routes_registered` 一起读才答得了「是不是太少了」。 */
+  routes_with_samples: number
+  /** 线上护栏截断掉的条数。**非 0 就必须在页面上说出来** —— 静默截断读起来像「就这些」。 */
+  routes_omitted?: number
+  /** 溢出桶丢掉的样本（`core/route_metrics.py` 的 `MAX_ROUTE_SERIES`）。 */
+  dropped_series?: number
   routes: {
     method: string
     /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */
     route: string
-    status: string
     count: number
+    error_count: number
+    status: { '2xx': number; '3xx': number; '4xx': number; '5xx': number }
+    /** 毫秒。**最近 256 个样本窗口上的精确分位**，不是全生命期；没有样本是 `null` 不是 0。 */
     p50: number | null
     p95: number | null
     p99: number | null
+    /** 每分钟平均耗时，最多 24 点；空槽是 `null` 不是 0。 */
+    spark: (number | null)[]
   }[]
+  /** 平台网络：两面都给，各自有口径（见 `core/net_io.py`）。
+   *  `uplink` 是**这台机器的网卡**（含计量代理到 LLM 的出向流量），`api` 是本进程的
+   *  HTTP 载荷。**读不到是 `null` 不是 0** —— 0 说「网是闲的」，null 说「看不见」。 */
+  network?: {
+    uplink: NetIoBlock
+    api: NetIoBlock
+  }
   /** 这一刻正在处理的请求数。**探针（`/health`、`/metrics`）不算**，否则读它的那一次
    *  自己就在里面、这个数恒 ≥1。 */
   active_requests: number
@@ -2702,18 +2770,31 @@ export type { FeedbackNote }
  * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
  * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
 
-/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
- *  仍然要说得出是谁加的。 */
+/** 名单里的一行「这个人是谁」。**两组同一个形状**：`root` 不再是一串裸 handle ——
+ *  「这一行是谁」在两组里是同一个问题，两份形状就得让人自己把两处对起来。
+ *
+ *  两格都可能为 null，而 null 各有各的意思，界面**不许回退**：`nickname` 为 null =
+ *  这个人没有 profile 行（或平台上根本没有这个账号），回退成 handle 之后界面就分不清
+ *  「没设昵称」和「他叫这个 handle」；`avatar_id` 为 null = 他从没自己挑过头像
+ *  （判据在服务端 `UserProfileRepository.chosen_avatar_ids`，不是硬比 id），界面这时
+ *  画彩色首字母 —— `getAvatarUrl` 对空值回的那张默认图是所有人共用的一张脸。 */
 export interface PlatformAdminRow {
   handle: string
+  nickname: string | null
+  avatar_id: number | null
+}
+
+/** 页面上加进名单的一行：在「这个人是谁」之上多两格出处。`added_by_handle` 是快照：
+ *  加人的那个人注销之后，这一行仍然要说得出是谁加的。 */
+export interface PlatformAdminAddedRow extends PlatformAdminRow {
   added_by_handle: string
   created_at: string
 }
 
 export interface PlatformAdminsPayload {
   /** 部署配置里那份。列得出来，删不掉。 */
-  root: string[]
-  added: PlatformAdminRow[]
+  root: PlatformAdminRow[]
+  added: PlatformAdminAddedRow[]
 }
 
 export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {

@@ -425,9 +425,9 @@ const handleAddPasskey = async () => {
   addingPasskey.value = true
   try {
     await withSudo(
-      async () => {
+      async (sudoTicket) => {
         // 1. 获取注册选项
-        const optionsResponse = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!)
+        const optionsResponse = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
         const optionsJSON = optionsResponse.data.options
 
         // 2. 开始注册流程
@@ -471,16 +471,23 @@ const handleDeletePasskey = async (credentialId: string) => {
 
   if (!confirmed) return
 
+  await deletePasskey(credentialId)
+}
+
+// 验证后回到本页时从这里重试：用户已经确认过，不再弹确认框
+const deletePasskey = async (credentialId: string) => {
+  if (!currentUserId.value) return
+
   deletingPasskey.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.deletePasskey(currentUserId.value!, credentialId)
+      async (sudoTicket) => {
+        await UserApi.deletePasskey(currentUserId.value!, credentialId, sudoTicket)
         await fetchPasskeys()
         toast.success('密钥已删除')
       },
       'deletePasskey',
-      null,
+      { credentialId },
       router
     )
   } catch (error: any) {
@@ -525,6 +532,10 @@ onMounted(async () => {
       disableTOTP: handleDisableTOTP,
       generateBackupCodes: handleConfirmGenerateBackupCodes,
       addPasskey: handleAddPasskey,
+      deletePasskey: async () => {
+        const credentialId = sudoStore.retryOperation?.opData?.credentialId
+        if (credentialId) await deletePasskey(credentialId)
+      },
       initTOTP: handleInitTOTP,
       update2FASettings: async () => {
         if (sudoStore.retryOperation?.opData !== undefined) {
@@ -533,25 +544,13 @@ onMounted(async () => {
         }
       },
       changePassword: async () => {
-        if (sudoStore.retryOperation?.opData?.newPassword) {
-          // 直接使用保存的新密码信息进行修改
-          if (!currentUserId.value || !currentUserName.value) return
-
-          const newPwd = sudoStore.retryOperation.opData.newPassword
-          const srpSalt = srp.generateSalt()
-          const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPwd)
-          const srpVerifier = srp.deriveVerifier(privateKey)
-
-          try {
-            await UserApi.changePassword(currentUserId.value, {
-              srpSalt,
-              srpVerifier,
-            })
-            toast.success('密码修改成功')
-          } catch (error: any) {
-            console.error('Failed to change password:', error)
-            toast.error(error.message || '密码修改失败')
-          }
+        const newPwd = sudoStore.retryOperation?.opData?.newPassword
+        if (!newPwd) return
+        try {
+          await submitNewPassword(newPwd)
+        } catch (error: any) {
+          console.error('Failed to change password:', error)
+          toast.error(error.message || '密码修改失败')
         }
       },
     }
@@ -571,8 +570,8 @@ const handleInitTOTP = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        const response = await UserApi.initializeTOTP(currentUserId.value!)
+      async (sudoTicket) => {
+        const response = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
         totpSecret.value = response.data.secret
         qrCodeData.value = response.data.qrcode
         showTOTPSetup.value = true
@@ -675,8 +674,8 @@ const handleConfirmGenerateBackupCodes = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        const response = await UserApi.generateBackupCodes(currentUserId.value!)
+      async (sudoTicket) => {
+        const response = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
         backupCodes.value = response.data.backup_codes
         showGenerateBackupCodesDialog.value = false
         setupStep.value = 'backup'
@@ -700,8 +699,8 @@ const handleUpdateSettings = async (value: boolean) => {
   settingsLoading.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.update2FASettings(currentUserId.value!, value)
+      async (sudoTicket) => {
+        await UserApi.update2FASettings(currentUserId.value!, value, sudoTicket)
       },
       'update2FASettings',
       value,
@@ -737,33 +736,39 @@ const handleChangePassword = async () => {
 
   isChangingPassword.value = true
   try {
-    await withSudo(
-      async () => {
-        if (!currentUserId.value || !currentUserName.value) return
-
-        // 生成新的 SRP 盐值和验证器
-        const srpSalt = srp.generateSalt()
-        const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPassword.value)
-        const srpVerifier = srp.deriveVerifier(privateKey)
-
-        await UserApi.changePassword(currentUserId.value, {
-          srpSalt,
-          srpVerifier,
-        })
-
-        toast.success('密码修改成功')
-        handleCancelChangePassword()
-      },
-      'changePassword',
-      { newPassword: newPassword.value }, // 将新密码信息保存在 data 中
-      router
-    )
+    await submitNewPassword(newPassword.value)
+    handleCancelChangePassword()
   } catch (error: any) {
     console.error('Failed to change password:', error)
     passwordError.value = error.message || '密码修改失败'
   } finally {
     isChangingPassword.value = false
   }
+}
+
+// 按钮和验证后的重试都走这里，重试时才拿得到票
+const submitNewPassword = async (newPwd: string) => {
+  await withSudo(
+    async (sudoTicket) => {
+      if (!currentUserId.value || !currentUserName.value) return
+
+      // 生成新的 SRP 盐值和验证器
+      const srpSalt = srp.generateSalt()
+      const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPwd)
+      const srpVerifier = srp.deriveVerifier(privateKey)
+
+      await UserApi.changePassword(currentUserId.value, {
+        srpSalt,
+        srpVerifier,
+        sudoTicket,
+      })
+
+      toast.success('密码修改成功')
+    },
+    'changePassword',
+    { newPassword: newPwd }, // 将新密码信息保存在 data 中
+    router
+  )
 }
 
 // 取消修改密码

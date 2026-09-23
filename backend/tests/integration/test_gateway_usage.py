@@ -82,7 +82,9 @@ class FakeGateway:
     def __init__(self) -> None:
         self.minted: list[uuid.UUID] = []
         self.budgets: list[tuple[str, float]] = []
-        self.days: dict[str, tuple[int, int, float]] = {}
+        # date → {model: (prompt, completion, usd)}. Model-keyed on purpose: a
+        # flat total is what swallowed mimo into the default model's row.
+        self.days: dict[str, dict[str, tuple[int, int, float]]] = {}
 
     async def mint_project_key(self, project_id):
         self.minted.append(project_id)
@@ -92,17 +94,24 @@ class FakeGateway:
         self.budgets.append((key, max_budget_usd))
         return True
 
-    lag_calls = 0  # >0 → the first N daily_spend calls return nothing (log lag)
+    lag_calls = 0  # >0 → the first N spend reads see no rows yet (log lag)
 
-    async def daily_spend(self, key, date):
+    async def daily_spend_by_model(self, key, date):
         if self.lag_calls > 0:
             self.lag_calls -= 1
-            return gw.DailySpend(
-                date=date, prompt_tokens=0, completion_tokens=0, spend_usd=0.0
-            )
-        p, c, usd = self.days.get(date, (0, 0, 0.0))
+            return {}
+        return {
+            name: gw.ModelSpend(name, p, c, usd)
+            for name, (p, c, usd) in self.days.get(date, {}).items()
+        }
+
+    async def daily_spend(self, key, date):
+        by = await self.daily_spend_by_model(key, date)
         return gw.DailySpend(
-            date=date, prompt_tokens=p, completion_tokens=c, spend_usd=usd
+            date=date,
+            prompt_tokens=sum(m.prompt_tokens for m in by.values()),
+            completion_tokens=sum(m.completion_tokens for m in by.values()),
+            spend_usd=sum(m.spend_usd for m in by.values()),
         )
 
 
@@ -230,7 +239,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
 
     _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     # Simulate LiteLLM's async log lag: the first drain sees nothing — the
     # settle-retry must pick the rows up so per-turn attribution still lands.
     fake.lag_calls = 1
@@ -242,17 +251,33 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
         pass
     await settle_turn(svc, tid)
 
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
     from app.domain.usage.repositories import UsageRepository
 
     async with factory() as session:
         agg = await UsageRepository(session).for_project(pid)
         project = await ProjectRepository(session).get(pid)
+        rows = (
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            )
+            .scalars()
+            .all()
+        )
     assert (agg["input_tokens"], agg["output_tokens"]) == (120, 30)
     assert agg["cost_usd"] == pytest.approx(0.02)
-    # Checkpoint persisted → a second drain would consume nothing new.
+    # Landed under the model that actually spent it — not the default.
+    assert {r.model for r in rows} == {"claude-sonnet-5"}
+    # Checkpoint persisted (v2, per-model) → a second drain consumes nothing.
     assert project is not None
     ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
-    assert ckpt and ckpt["prompt"] == 120 and ckpt["completion"] == 30
+    assert ckpt and set(ckpt["models"]) == {"claude-sonnet-5"}
+    seen = ckpt["models"]["claude-sonnet-5"]
+    assert (seen["prompt"], seen["completion"]) == (120, 30)
 
 
 @pytest.mark.anyio
@@ -260,7 +285,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
     client, tmp_path, monkeypatch
 ):
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     fake.lag_calls = 1
@@ -279,12 +304,82 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
         other = await asyncio.wait_for(svc._drain_gateway_usage(pid), timeout=1)
         assert other is not None
-        assert (other.input_tokens, other.output_tokens) == (120, 30)
+        assert [(u.model, u.input_tokens, u.output_tokens) for u in other] == [
+            ("claude-sonnet-5", 120, 30)
+        ]
     finally:
         resume.set()
         retried = await pending
     # The paused drain must read the checkpoint advanced by the other drain.
     assert retried is None
+
+
+@pytest.mark.anyio
+async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_path):
+    """A project whose key is already minted and in step is answered WITHOUT
+    taking `_gateway_lock`.
+
+    That lock is process-wide (`get_chat_service` is `@lru_cache`d, so there is
+    one ChatService per process) and the metering proxy asks for a key per
+    request. A lookup that takes it queues every admission on the box behind
+    whichever holder is slow, and that wait is what `/llm/admission`'s p95 is
+    made of — measured on dev 2026-09-23 at 8.9 s, and reproduced with 20
+    concurrent admissions for a single project fanning out into a 5.8 s tail.
+    """
+    fake = FakeGateway()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    # Some other caller is inside the lock: a mint, a re-price, or a drain.
+    await svc._gateway_lock.acquire()
+    try:
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        svc._gateway_lock.release()
+
+    # And answering from the persisted row wrote nothing back.
+    assert fake.minted == [pid]
+    assert fake.budgets == []
+
+
+@pytest.mark.anyio
+async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
+    """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
+    `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
+    for as long as the gateway takes to answer."""
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_daily_spend_by_model(api_key, date):
+        reading.set()
+        await release.wait()
+        return await FakeGateway.daily_spend_by_model(fake, api_key, date)
+
+    fake.daily_spend_by_model = slow_daily_spend_by_model  # type: ignore[method-assign]
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    try:
+        await asyncio.wait_for(reading.wait(), timeout=2)
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        release.set()
+
+    # The drain itself still lands its usage and advances the checkpoint.
+    drained = await pending
+    assert drained is not None
+    assert [(u.model, u.input_tokens, u.output_tokens) for u in drained] == [
+        ("claude-sonnet-5", 120, 30)
+    ]
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+    assert project is not None
+    ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
+    assert ckpt and ckpt["models"]["claude-sonnet-5"]["prompt"] == 120
+    assert ckpt["models"]["claude-sonnet-5"]["completion"] == 30
 
 
 @pytest.mark.anyio
@@ -296,7 +391,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
 
     monkeypatch.setattr(app_settings, "llm_gateway_credit_usd", 0.08)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     from app.domain.usage.repositories import ComputeGrantRepository
@@ -329,7 +424,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
     _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (80, 20, 0.01)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (80, 20, 0.01)}
     fake.lag_calls = 2  # first drain AND its settle retry both miss
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
@@ -536,7 +631,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
 
     _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     async for _ in svc.converse(
@@ -558,6 +653,62 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
             ).scalars()
         )
     assert rows and all(r.route == "gateway" for r in rows)
+
+
+@pytest.mark.anyio
+async def test_one_drain_covers_several_models_without_absorbing_them(
+    client, tmp_path, monkeypatch
+):
+    """The regression this whole split exists for: one project's day mixes
+    mimo and claude on the SAME key, and both must keep their own row in
+    `by_model`. Collapsing them under `settings.agent_model` is exactly how
+    mimo went uncounted on the dashboard."""
+
+    async def _no_sleep(_s):
+        return None
+
+    _replace_chat_sleep(monkeypatch, _no_sleep)
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {
+        "mimo-v2.6-pro": (400, 100, 0.004),
+        "claude-sonnet-5": (120, 30, 0.02),
+    }
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    async with factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by = {r.model: r for r in rows}
+    assert set(by) == {"mimo-v2.6-pro", "claude-sonnet-5"}
+    assert (by["mimo-v2.6-pro"].input_tokens, by["mimo-v2.6-pro"].output_tokens) == (
+        400,
+        100,
+    )
+    assert by["mimo-v2.6-pro"].cost_usd == pytest.approx(0.004)
+    assert (
+        by["claude-sonnet-5"].input_tokens,
+        by["claude-sonnet-5"].output_tokens,
+    ) == (
+        120,
+        30,
+    )
 
 
 @pytest.mark.anyio

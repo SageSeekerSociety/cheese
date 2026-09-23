@@ -47,3 +47,37 @@ method.
 
 The feedback targets and remaining optimization work are tracked in
 [issue #1279](https://github.com/SageSeekerSociety/cheese/issues/1279).
+
+## Recurring measurement
+
+CI feedback measurement runs at 00:23, 06:23, 12:23 and 18:23 UTC. Each run measures one
+non-overlapping six-hour UTC block after a further six hours for runs to settle. A manual dispatch may supply both UTC bounds to reproduce a
+different fixed cohort. Each run retains the report, immutable attempt records,
+raw paginated API responses, inputs and progress log for 90 days.
+
+The report keeps pull-request and merge-group events separate. It reports
+first-attempt outcomes and the cohort-tail first-attempt success streak separately
+from latest outcomes after reruns. Timing is also grouped by the jobs that
+actually ran, so a documentation-only selection is not evidence for a full
+backend or E2E selection. The workflow records observations only; it does not
+activate a gate.
+
+The scheduled collector includes Required CI and Remote execution acceptance,
+keeping pull-request, merge-group, push, and manual events separate. Browser E2E
+and both remote-execution jobs publish a small `evidence.json` receipt identifying
+the run, attempt, revision, and suite. The collector validates that identity and
+requires every instrumented suite's receipt before counting a clean run. A test
+retry, resumed test execution, skipped case, or workflow rerun cannot count as clean.
+Missing, expired, malformed, or contradictory receipts are unknown. A successful Required CI
+selection without browser E2E is not applicable to the browser clean-run streak.
+
+`cohort_tail_consecutive_clean_first_attempts` counts only consecutive clean runs
+at the end of this window. Unknown or unsuccessful runs interrupt the streak.
+It is distinct from the workflow-success streak, which does not inspect test
+retries. Older runs without receipts remain unknown. Evidence availability is
+refreshed on resume while the original attempt records remain unchanged; raw
+artifact inventories and downloaded receipts are retained beside the report.
+To assess the 20-clean-run criterion across multiple scheduled windows, collect
+the full contiguous interval in one report. Do not add window-tail streaks or mix
+different workflows and events. Reaching 20 is evidence for reviewing the gate,
+not an automatic change to branch protection.

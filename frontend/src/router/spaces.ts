@@ -183,6 +183,13 @@ export default {
       name: 'SpacesCourseTeam',
       component: () => import('@/views/spaces/course/Team.vue'),
     },
+    // 课程模板的配置（模块开关 + 教学参数）。放在「设置」那一块下 —— 它是老师配
+    // 这门课的地方，不是一个课程页；侧栏那一条也只对课程里出现。
+    {
+      path: 'course/settings',
+      name: 'SpacesCourseSettings',
+      component: () => import('@/views/spaces/course/CourseSettings.vue'),
+    },
     {
       path: 'tasks/audit',
       name: 'SpacesDetailAuditTasks',

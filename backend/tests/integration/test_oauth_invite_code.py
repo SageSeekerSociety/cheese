@@ -8,15 +8,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import _mint_oauth_state_token
+from app.api.routes.users import _issue_oauth_state_token
 from app.core.config import settings
 from app.domain.invite.models import InviteCode
 from app.domain.invite.services import InviteCodeService
 from app.domain.user.repositories import UserRepository
 
 
-def _create(api_client: TestClient, uid: str, username: str, **extra: str):
-    token = _mint_oauth_state_token(
+def _create(api_client: TestClient, _portal, uid: str, username: str, **extra: str):
+    token = _portal.call(
+        _issue_oauth_state_token,
         "ruc",
         {
             "id": uid,
@@ -76,13 +77,15 @@ def _use_count(db_session: AsyncSession, _portal, code: str) -> int:
 @pytest.mark.usefixtures("invite_required")
 class TestOAuthCreateRequiresInviteCode:
     def test_missing_code_is_refused(self, api_client: TestClient, db_session, _portal):
-        _loc, params = _create(api_client, "uid-invite-none", "oauth_invite_none")
+        _loc, params = _create(
+            api_client, _portal, "uid-invite-none", "oauth_invite_none"
+        )
         assert params["error_code"] == "INVITE_CODE_REQUIRED"
         assert not _account_exists(db_session, _portal, "oauth_invite_none")
 
     def test_unknown_code_is_refused(self, api_client: TestClient, db_session, _portal):
         _loc, params = _create(
-            api_client, "uid-invite-bad", "oauth_invite_bad", inviteCode="nope"
+            api_client, _portal, "uid-invite-bad", "oauth_invite_bad", inviteCode="nope"
         )
         assert params["error_code"] == "INVALID_INVITE_CODE"
         assert not _account_exists(db_session, _portal, "oauth_invite_bad")
@@ -91,7 +94,11 @@ class TestOAuthCreateRequiresInviteCode:
         self, api_client: TestClient, invite_code: str, db_session, _portal
     ):
         loc, params = _create(
-            api_client, "uid-invite-ok", "oauth_invite_ok", inviteCode=invite_code
+            api_client,
+            _portal,
+            "uid-invite-ok",
+            "oauth_invite_ok",
+            inviteCode=invite_code,
         )
         assert loc.startswith(
             f"{settings.frontend_url}{settings.frontend_oauth_success_path}"
@@ -102,7 +109,11 @@ class TestOAuthCreateRequiresInviteCode:
 
         # The single use is gone: a second account cannot reuse it.
         _loc, params = _create(
-            api_client, "uid-invite-again", "oauth_invite_again", inviteCode=invite_code
+            api_client,
+            _portal,
+            "uid-invite-again",
+            "oauth_invite_again",
+            inviteCode=invite_code,
         )
         assert params["error_code"] == "INVALID_INVITE_CODE"
         assert not _account_exists(db_session, _portal, "oauth_invite_again")
@@ -112,6 +123,6 @@ def test_code_is_ignored_when_not_required(
     api_client: TestClient, invite_code: str, db_session, _portal, monkeypatch
 ):
     monkeypatch.setattr(settings, "require_invite_code", False)
-    _loc, params = _create(api_client, "uid-invite-open", "oauth_invite_open")
+    _loc, params = _create(api_client, _portal, "uid-invite-open", "oauth_invite_open")
     assert params["created"] == "true"
     assert _use_count(db_session, _portal, invite_code) == 0

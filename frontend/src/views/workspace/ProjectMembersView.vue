@@ -34,7 +34,9 @@ import {
 } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
+import ProjectJoinLinkDialog from '@/components/ProjectJoinLinkDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
+import { t } from '@/i18n'
 import { label, PROJECT_ROLE } from '@/labels'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
@@ -246,6 +248,7 @@ const canTransfer = computed(() => project.value !== null && (isOwner.value || m
 // 所以填完先去查这个人存不存在，把查到的名字摆出来给人确认——邀请是个加人进项目
 // 的动作，「我以为我加的是他」这种错必须在按下按钮之前就露出来。
 const inviteOpen = ref(false)
+const joinLinkOpen = ref(false)
 const inviteUid = ref('')
 const inviteRole = ref<Role>('member')
 const inviting = ref(false)
@@ -320,7 +323,7 @@ async function submitInvite() {
 <template>
   <div class="members-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-4 d-flex align-center">
+      <div class="mb-4 d-flex align-center flex-wrap ga-2">
         <div>
           <div class="t-eyebrow mb-1">项目</div>
           <h1 class="t-page-title">成员</h1>
@@ -338,6 +341,9 @@ async function submitInvite() {
         >
           转让项目
         </v-btn>
+        <v-btn v-if="canManage" variant="text" prepend-icon="mdi-link-variant" @click="joinLinkOpen = true">
+          {{ t('work.joinLink.title') }}
+        </v-btn>
         <v-btn
           v-if="canManage"
           color="primary"
@@ -349,6 +355,8 @@ async function submitInvite() {
           邀请成员
         </v-btn>
       </div>
+
+      <ProjectJoinLinkDialog v-if="canManage" v-model="joinLinkOpen" :project-id="projectId" />
 
       <p class="t-body c-muted mb-5" style="max-width: 640px">
         {{ people.length }} 个人<span v-if="agents.length"> + {{ agents.length }} 个 AI 队友</span

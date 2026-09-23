@@ -15,8 +15,9 @@
    渠道收下 vs 渠道收了但批量标记未送出），行上分不开。
 2. OAuth 的 `token_expires` 是**写死的过期时刻**，不是「刚刚用失败了」。一个还没
    到期也可能已经被服务端吊销了 —— 真正的失败信号在调用点的异常里，那一侧没有计数。
-3. passkey 覆盖率的分母是**全部账号**（`user` 表，去掉软删的），不是「活跃账号」
-   —— 后者今天没有判据（`user` 没有 `last_login`）。
+3. passkey 覆盖率的分母是**全部未删的真人账号**，不是活跃账号（`user` 没有
+   `last_login`，今天没有「活跃」的判据）——也**不含 agent**：agent 不登录、
+   不能被发密钥，算进分母就是一个管理员永远补不上的缺口。
 """
 
 from __future__ import annotations
@@ -24,11 +25,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery.ledger import MAX_ATTEMPTS
 from app.domain.delivery.models import Delivery
+from app.domain.identity.models import AgentBinding
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.passkey.models import PasskeyCredential
 from app.domain.user.models import User
@@ -82,13 +84,34 @@ class IntegrationsRepository:
     # ---- passkey / 2FA 覆盖率 ----------------------------------------------
 
     async def passkey_coverage(self) -> dict[str, Any]:
-        """有 passkey 的账号占比。分母是**全部未删账号**，不是活跃账号。
+        """有 passkey 的账号占比。分母是**全部未删的真人账号**，不是活跃账号。
+
+        **agent 不进分母**：agent 没有密码、不登录、也不能被发一把密钥。把它们
+        算进分母会让覆盖率永远低一截，而管理员没有任何动作能把那个缺口补上。判据
+        和 people 块的真人/agent 拆分是同一份（`agent_bindings`），不在这里另写
+        一种「什么算 agent」。
 
         TOTP 的开关住在 Redis（`login_security.py` 的前缀键），**不在库里** ——
         所以「2FA 覆盖率」今天只能按 passkey 数，页面上写的是「passkey 覆盖率」，
         不写「2FA 覆盖率」。要两个都报得先把 TOTP 的启用状态落到库。
         """
-        users = await self._count(User, User.deleted_at.is_(None))
+        agent = exists().where(AgentBinding.user_id == User.id)
+        users = int(
+            (
+                await self._session.execute(
+                    select(func.count(User.id)).where(User.deleted_at.is_(None), ~agent)
+                )
+            ).scalar_one()
+            or 0
+        )
+        excluded_agents = int(
+            (
+                await self._session.execute(
+                    select(func.count(User.id)).where(User.deleted_at.is_(None), agent)
+                )
+            ).scalar_one()
+            or 0
+        )
         with_passkey = int(
             (
                 await self._session.execute(
@@ -101,6 +124,7 @@ class IntegrationsRepository:
             "accounts": users,
             "with_passkey": with_passkey,
             "coverage": (with_passkey / users) if users else None,
+            "agent_accounts_excluded": excluded_agents,
             "note_key": "integrations.passkeyNote",
         }
 
