@@ -488,9 +488,11 @@ def _reject_overlong_password(password: str) -> None:
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
-# At least 8 characters, a letter and a character that is neither a letter
-# nor a digit: the symbols the web client's rule accepts are all admitted here.
-_NEW_PASSWORD_PATTERN = re.compile(r"^(?=.*[a-zA-Z])(?=.*[^a-zA-Z0-9]).{8,}$")
+# At least 8 characters, a letter and an ASCII symbol. The symbol class is the
+# web client's (REGEX_PASSWORD), so the form and the server agree on it.
+_NEW_PASSWORD_PATTERN = re.compile(
+    r"^(?=.*[a-zA-Z])(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
+)
 
 
 def _require_new_password(password: str) -> None:
