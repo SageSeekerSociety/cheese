@@ -2,11 +2,21 @@
   "queue": {
     "label": "Feedback queue",
     "tab": {
-      "all": "All"
+      "all": "All",
+      "scope": "This page only",
+      "scopeHint": "Status tabs filter only the page in hand; other pages may have more with this status"
     },
     "search": {
       "placeholder": "Search feedback",
       "scope": "Titles, summaries, bodies and submitters"
+    },
+    "window": {
+      "label": "Date filters",
+      "since": "Submitted: {v}",
+      "resolved": "Resolved: {v}",
+      "deployed": "Deployed: {v}",
+      "days": "Last {n} days",
+      "clear": "Clear this date filter"
     },
     "lane": {
       "label": "Scope",
@@ -54,7 +64,8 @@
       "resolved": "Mark fixed",
       "deployed": "Mark shipped"
     },
-    "supports": "Supports {n}"
+    "supports": "Supports {n}",
+    "comments": "{n} comments"
   },
   "queueDetail": {
     "back": "Back",
