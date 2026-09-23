@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AdminCandidate, PlatformAdminRow, PlatformAdminsPayload } from '@/api'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminCandidates } from '@/api'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
@@ -54,11 +54,54 @@ const adding = ref(false)
 const removing = ref<string | null>(null)
 const confirmHandle = ref<string | null>(null)
 
-const added = computed<PlatformAdminRow[]>(() => roster.value?.added ?? [])
-const root = computed<string[]>(() => roster.value?.root ?? [])
+const added = computed(() => roster.value?.added ?? [])
+const root = computed(() => roster.value?.root ?? [])
+
+/** 画一行要的那几样，从契约那一行摊平 —— 模板里存不下中间结果，摊平一次比在模板里
+ *  对同一个函数调三遍清楚。 */
+interface RowView {
+  handle: string
+  /** 传给 `FeedbackAuthorAvatar` 的 `avatarId`。为 null = 从没挑过头像，**必须**走
+   *  彩色首字母（理由在 api.ts 与那个组件顶上）。 */
+  avatarId: number | null
+  /** 主行那串字：昵称；没有昵称时是 handle。 */
+  primary: string
+  /** 仅在它和昵称**不是同一个串**时画。否则为 null —— 同一个串画两遍是这一版要修的
+   *  毛病之一。 */
+  secondary: string | null
+  /** 被 ellipsis 截断时 `title` 要拿到的全串。 */
+  label: string
+}
+
+/** 页面上加的那一组多两格出处。 */
+interface AddedRowView extends RowView {
+  addedBy: string
+  createdAt: string
+}
+
+function toRowView(row: PlatformAdminRow): RowView {
+  // `nickname` 为 null（平台上没有这个账号 / 没 profile 行）或本来就等于 handle 时，
+  // 主行只有 handle 一个串可画 —— 判据是「两串相不相同」，不是「昵称有没有值」。
+  const nick = row.nickname
+  const primary = nick !== null && nick !== row.handle ? nick : row.handle
+  const secondary = nick !== null && nick !== row.handle ? row.handle : null
+  return {
+    handle: row.handle,
+    avatarId: row.avatar_id,
+    primary,
+    secondary,
+    label: secondary ? `${primary} ${secondary}` : primary,
+  }
+}
+
+const rootRows = computed<RowView[]>(() => root.value.map(toRowView))
+const addedRows = computed<AddedRowView[]>(() =>
+  added.value.map((row) => ({ ...toRowView(row), addedBy: row.added_by_handle, createdAt: row.created_at }))
+)
 
 /** 四条列。**只有「添加信息」那一列是 `null`**（自适应）—— `table-layout: fixed`
- *  下没有宽度的列会平分剩余空间，多给一列就散架。 */
+ *  下没有宽度的列会平分剩余空间，多给一列就散架。第一列要装下头像 + 昵称 + handle，
+ *  320px 够（超长的由 ellipsis 收，`title` 里拿全文）。 */
 const COLS: (string | null)[] = ['320px', '160px', null, '120px']
 const BONE_WIDTHS = ['62%', '48%', '64%', '40%']
 
@@ -167,6 +210,25 @@ async function remove() {
   }
 }
 
+/** 打开确认框的那颗「移出」。**自己记一下**，因为 Vuetify 的 `VDialog` 在没有
+ *  `activator`（这里是 `v-model` 驱动的，没有触发元素插槽）时不会把焦点还回去 ——
+ *  关掉之后焦点落到 `body`，键盘用户被扔回页面开头，得重新 Tab 一路找回来。 */
+let removeTrigger: HTMLElement | null = null
+
+function askRemove(event: Event, handle: string) {
+  removeTrigger = event.currentTarget as HTMLElement | null
+  confirmHandle.value = handle
+}
+
+// 确认框关掉（取消 / Esc / 点外面 / 移出成功）时把焦点送回触发它的那颗按钮。
+// **移出成功那一支不送**：那一行连同按钮已经没了（`isConnected` 为假），focus 一个
+// 脱离文档的节点是空操作，还不如留给 Vuetify 自己的收尾。
+watch(confirmHandle, async (now, was) => {
+  if (!was || now) return
+  await nextTick()
+  if (removeTrigger?.isConnected) removeTrigger.focus()
+})
+
 onMounted(load)
 </script>
 
@@ -224,19 +286,30 @@ onMounted(load)
 
         <!-- 组头行。**名字和人数是两个元素**，不是一个字符串拼出来的：它们是两种
              东西（这一组叫什么 / 有几个人），拼在一起会让读屏把它们念成一串数字
-             加名字，也让人没法单独抓那个数。 -->
+             加名字，也让人没法单独抓那个数。
+             `role="rowheader"` 让读屏把这一格当成表头，而不是一个普通单元格。人数后面
+             藏了一个「 人」补单位：屏幕上「2」紧挨着组名（「部署配置里的根管理员 2」），
+             看得出来是什么的数；读屏顺着格子念时却只剩一个光秃秃的数字。
+             **不改 `<th>`**：表壳只给 `tbody td` 内边距，换元素就得在这里把表壳那份
+             几何抄一遍，而抄一份就会和表壳飘开。 -->
         <tr class="am__group">
-          <td colspan="4" class="am__groupcell">
+          <td colspan="4" class="am__groupcell" role="rowheader">
             <span class="am__grouplabel">部署配置里的根管理员</span>
-            <span class="am__groupcount">{{ root.length }}</span>
+            <span class="am__groupcount">{{ rootRows.length }}<span class="visually-hidden"> 人</span></span>
           </td>
         </tr>
 
-        <tr v-for="handle in root" :key="handle" class="am__row">
-          <td class="am__cell">
+        <tr v-for="row in rootRows" :key="row.handle" class="am__row">
+          <td class="am__cell" :title="row.label">
             <span class="am__who">
-              <FeedbackAuthorAvatar :handle="handle" :size="20" />
-              <span>{{ handle }}</span>
+              <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。包一层
+                   `aria-hidden` 而不是把属性透传给 FeedbackAuthorAvatar —— 它的根是
+                   组件，属性不保证落到底层的 `<img>`/`<div>` 上。 -->
+              <span class="am__pfp" aria-hidden="true">
+                <FeedbackAuthorAvatar :handle="row.handle" :avatar-id="row.avatarId" :size="20" />
+              </span>
+              <span class="am__name-main">{{ row.primary }}</span>
+              <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
             </span>
           </td>
           <td class="am__cell"><span class="am__dim">部署配置</span></td>
@@ -245,38 +318,43 @@ onMounted(load)
                写出来比留白省一次阅读。 -->
           <td class="am__cell am__cell--actions"><span class="am__dim">不可移出</span></td>
         </tr>
-        <tr v-if="!root.length" class="am__row">
+        <tr v-if="!rootRows.length" class="am__row">
           <td colspan="4" class="am__cell am__none">配置里没写人（本地开发如此；部署时必须填）</td>
         </tr>
 
         <tr class="am__group">
-          <td colspan="4" class="am__groupcell">
+          <td colspan="4" class="am__groupcell" role="rowheader">
             <span class="am__grouplabel">页面上添加的</span>
-            <span class="am__groupcount">{{ added.length }}</span>
+            <span class="am__groupcount">{{ addedRows.length }}<span class="visually-hidden"> 人</span></span>
           </td>
         </tr>
 
-        <tr v-for="row in added" :key="row.handle" class="am__row">
-          <td class="am__cell">
+        <tr v-for="row in addedRows" :key="row.handle" class="am__row">
+          <td class="am__cell" :title="row.label">
             <span class="am__who">
-              <FeedbackAuthorAvatar :handle="row.handle" :size="20" />
-              <span>{{ row.handle }}</span>
+              <span class="am__pfp" aria-hidden="true">
+                <FeedbackAuthorAvatar :handle="row.handle" :avatar-id="row.avatarId" :size="20" />
+              </span>
+              <span class="am__name-main">{{ row.primary }}</span>
+              <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
             </span>
           </td>
           <td class="am__cell"><span class="am__dim">页面添加</span></td>
-          <td class="am__cell">
-            <span class="am__dim">{{ row.added_by_handle }} 加的 · {{ relTime(row.created_at) }}</span>
+          <td class="am__cell" :title="`${row.addedBy} 加的 · ${relTime(row.createdAt)}`">
+            <span class="am__dim">{{ row.addedBy }} 加的 · {{ relTime(row.createdAt) }}</span>
           </td>
           <td class="am__cell am__cell--actions">
             <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密
                  反馈」，它得看得出来是一个真正界内的按钮，而不是一行可以随手划过的
                  文字。确认在同名的对话框里。（**没有 `aria-label`** —— 加了会把可及
-                 名字覆盖掉，读屏念的就不再是「移出」这两个字了。） -->
+                 名字覆盖掉，读屏念的就不再是「移出」这两个字了。）
+                 颜色**留中性**（不写 `color`）：每行一颗红按钮会把这张表变吵，而这一页
+                 唯一的琥珀是「添加管理员」；破坏性那一颗的红留给确认框里那一颗。 -->
             <v-btn
               variant="outlined"
               size="small"
               :loading="removing === row.handle"
-              @click="confirmHandle = row.handle"
+              @click="askRemove($event, row.handle)"
             >
               移出
             </v-btn>
@@ -355,7 +433,11 @@ onMounted(load)
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="confirmHandle = null">取消</v-btn>
-          <v-btn color="primary" :loading="!!removing" @click="remove">移出</v-btn>
+          <!-- `color="error"`（→ `--danger`）：琥珀按设计系统只给一屏唯一的主操作，
+               而这一页的主操作是「添加管理员」（工具条里那颗）。移出是不可逆的破坏性
+               动作，红是它该有的颜色；本仓先例：MyDevicesView、ProjectLibraryView、
+               teams/detail/Members 的删除按钮。 -->
+          <v-btn color="error" :loading="!!removing" @click="remove">移出</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -461,11 +543,40 @@ onMounted(load)
   text-align: right;
 }
 
+/* 头像 + 昵称 + handle 排成一行。头像是**装饰**（名字就在旁边），模板那一层
+   `aria-hidden` 把它摘出可及性树；这里只管几何。
+   头像 `flex: 0 0 auto`：它比文字先该保住的宽度，被裁的应该是字，不是脸。 */
 .am__who {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 100%;
+  gap: 8px;
+  min-width: 0;
+}
+
+.am__pfp {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* 昵称和 handle 同一行、两个字号（13 / 12）。`min-width: 0` 是 flex 子项能缩到比内容
+   还窄、从而吃到 `text-overflow` 的前提 —— 不给它，长昵称会把定死的列撑开。被裁掉
+   的那半在单元格的 `title` 里。*/
+.am__name-main {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am__name-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .am__dim {

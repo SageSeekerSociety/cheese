@@ -2734,18 +2734,31 @@ export type { FeedbackNote }
  * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
  * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
 
-/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
- *  仍然要说得出是谁加的。 */
+/** 名单里的一行「这个人是谁」。**两组同一个形状**：`root` 不再是一串裸 handle ——
+ *  「这一行是谁」在两组里是同一个问题，两份形状就得让人自己把两处对起来。
+ *
+ *  两格都可能为 null，而 null 各有各的意思，界面**不许回退**：`nickname` 为 null =
+ *  这个人没有 profile 行（或平台上根本没有这个账号），回退成 handle 之后界面就分不清
+ *  「没设昵称」和「他叫这个 handle」；`avatar_id` 为 null = 他从没自己挑过头像
+ *  （判据在服务端 `UserProfileRepository.chosen_avatar_ids`，不是硬比 id），界面这时
+ *  画彩色首字母 —— `getAvatarUrl` 对空值回的那张默认图是所有人共用的一张脸。 */
 export interface PlatformAdminRow {
   handle: string
+  nickname: string | null
+  avatar_id: number | null
+}
+
+/** 页面上加进名单的一行：在「这个人是谁」之上多两格出处。`added_by_handle` 是快照：
+ *  加人的那个人注销之后，这一行仍然要说得出是谁加的。 */
+export interface PlatformAdminAddedRow extends PlatformAdminRow {
   added_by_handle: string
   created_at: string
 }
 
 export interface PlatformAdminsPayload {
   /** 部署配置里那份。列得出来，删不掉。 */
-  root: string[]
-  added: PlatformAdminRow[]
+  root: PlatformAdminRow[]
+  added: PlatformAdminAddedRow[]
 }
 
 export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
