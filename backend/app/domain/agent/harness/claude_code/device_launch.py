@@ -28,7 +28,7 @@ from uuid import uuid4
 from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
-from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
+from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, disallowed_tools
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
@@ -387,7 +387,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         ensure_ascii=False,
     )
     claude_args = (
-        " --dangerously-skip-permissions --remote-control Cheese"
+        " --dangerously-skip-permissions --remote-control Cheese --disallowedTools "
+        + " ".join(disallowed_tools(remote_control=True))
         if remote_control
         else CLAUDE_BASE_ARGS
     )

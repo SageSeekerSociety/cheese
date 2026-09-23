@@ -42,7 +42,7 @@ from pathlib import Path
 
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
+from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, disallowed_tools
 from app.domain.agent.harness.launch import (
     ExecutorLaunch,
     LaunchSpec,
@@ -105,7 +105,7 @@ def hooks_settings(
         "enableArtifact": False,
         # Native questions need the RC answer channel. Without it, keep the
         # matching CLI deny rule so a question cannot strand the turn.
-        "permissions": {"deny": [] if remote_control else list(DISALLOWED_TOOLS)},
+        "permissions": {"deny": disallowed_tools(remote_control=remote_control)},
         # Set before the first turn: changing this later cannot remove a URL
         # already present in the conversation's model-visible history.
         **({"attribution": {"sessionUrl": False}} if remote_control else {}),

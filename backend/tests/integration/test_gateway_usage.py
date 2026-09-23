@@ -172,6 +172,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
     }
 
 
@@ -393,6 +394,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
@@ -419,6 +421,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert kwargs["model"] == "claude-sonnet-5"
 
@@ -458,6 +461,7 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     assert set(cloud_kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert fake.minted == []  # no gateway key is minted for either
 

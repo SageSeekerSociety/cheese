@@ -463,7 +463,18 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
     # The remote user cannot reach the terminal's native option picker.
-    assert set(s["permissions"]["deny"]) == {"AskUserQuestion"}
+    assert set(s["permissions"]["deny"]) == {
+        "AskUserQuestion",
+        "TodoWrite",
+        "TaskCreate",
+        "TaskUpdate",
+        "TaskList",
+        "TaskGet",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+    }
 
 
 def _screen_launch(
