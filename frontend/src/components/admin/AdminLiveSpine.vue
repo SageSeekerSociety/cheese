@@ -84,7 +84,9 @@ function dwellDetail(stage: { p90Seconds?: number | null; maxSeconds?: number | 
             <span class="als__ribbon" :style="{ width: ribbonWidth(stage.count) }" />
           </span>
           <span class="als__count t-console-title t-num">{{ stage.count }}</span>
-          <span class="als__dwell t-meta-read t-num" :title="dwellDetail(stage)">{{ dwellText(stage.dwellSeconds) }}</span>
+          <span class="als__dwell t-meta-read t-num" :title="dwellDetail(stage)">{{
+            dwellText(stage.dwellSeconds)
+          }}</span>
         </li>
       </ol>
 

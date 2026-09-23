@@ -127,16 +127,26 @@
   },
   "dashboard": {
     "title": "Dashboard",
-    "window": "Last 7 days",
+    "kindsAria": "Sections",
+    "window": {
+      "switchAria": "Stats window",
+      "d7": "7 days",
+      "d30": "30 days",
+      "d90": "90 days"
+    },
+    "updatedAt": "Updated {time}",
+    "updatedAtStale": "Updated {time} · {n} min ago",
+    "retry": "Retry",
     "noteTip": {
       "aria": "About this metric"
     },
     "kpi": {
       "untriaged": "Untriaged",
       "inProgress": "In progress",
-      "resolved7d": "Resolved · 7d",
-      "created7d": "New · 7d",
+      "resolvedInWindow": "Resolved ({d}d)",
+      "createdInWindow": "New ({d}d)",
       "unread": "Unread",
+      "vsPrev": "Previous {d}d: {v}",
       "urgent": "{n} of them urgent and unassigned",
       "urgentShort": "{n} urgent",
       "untriagedShort": "untriaged {n}"
@@ -157,8 +167,7 @@
       "desc": "The platform hasn't produced any data yet."
     },
     "error": {
-      "title": "Couldn't load the dashboard",
-      "desc": "Check your connection and try again."
+      "title": "Couldn't load the dashboard"
     },
     "perf": {
       "active": "In flight",
@@ -166,6 +175,9 @@
       "lag": "Event-loop lag",
       "routes": "Routes with samples",
       "routesTruncated": "{shown} of {total}",
+      "tableTitle": "Latency by route",
+      "sparkTitle": "Per-minute mean, last 24 points",
+      "dropped": "{n} more samples dropped (overflow)",
       "durationMinutes": "{n} min",
       "durationHours": "{h} h {m} min",
       "durationDays": "{d} d {h} h",
@@ -207,7 +219,7 @@
       "total": "Accounts",
       "humans": "Humans",
       "agents": "Agents",
-      "new": "New · 7d",
+      "newInWindow": "New ({d}d)",
       "admins": "Platform admins",
       "chart": "New accounts per day"
     },
@@ -254,6 +266,7 @@
     },
     "spine": {
       "title": "Delivery chain",
+      "dwellDetail": "p90 {p90} · max {max}",
       "note": "Four stations are throughput at different moments, not a funnel over one cohort. The merge station counts PR cards only — a card without a PR has pr_merged_at empty forever. The machine gate is retired and not on the chain (#296)."
     },
     "dwell": {
@@ -266,13 +279,13 @@
       "all": "All {n}"
     },
     "pipeline": {
-      "title": "Delivery pipeline",
       "kpi": {
         "live": "In flight",
         "stuck": "Stuck",
         "dwell": "Filed to decision",
         "needsYou": "Needs you",
-        "needsYouShort": "needs you {n}"
+        "needsYouShort": "needs you {n}",
+        "blockingRefile": "Refile blocked"
       },
       "station": {
         "filed": "Filed",
@@ -289,6 +302,7 @@
         "title": "Needs you",
         "empty": "Nothing is waiting on you",
         "note": "Three reasons only — the closed set in delivery/addressing.py (reviewer / reporter / asked).",
+        "breakdown": "Reviewer {r} · Reporter {p} · Mentioned {a}",
         "task": "Task",
         "room": "Room"
       },
@@ -321,8 +335,7 @@
       }
     },
     "product": {
-      "title": "Product health",
-      "northStar": "Accepted AI artifacts",
+      "northStar": "Accepted in {d}d",
       "northStarNote": "Bucketed by decided_at. It is the LAST decision time and revoke overwrites it — a card accepted then revoked loses its accept moment.",
       "rejection": {
         "title": "Where filed cards ended",
@@ -347,11 +360,9 @@
         "note": "No data source. Any number here would have to be invented.",
         "summon": "Acceptance rate after summoning the agent: agent_turns has no summon flag and accept_cards has no origin turn — there is no foreign key between them.",
         "churn": "Churn after credits exhausted: compute_grants has no exhausted_at, user has no last_login."
-      },
-      "northStarShort": "week {n}"
+      }
     },
     "integrations": {
-      "title": "Integrations",
       "oauth": {
         "title": "OAuth credentials",
         "total": "Connections",
@@ -368,6 +379,7 @@
         "title": "Delivery ledger",
         "unsent": "Will retry",
         "dead": "Dead letters",
+        "oldest": "Oldest pending {time}",
         "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike.",
         "deadShort": "dead {n}"
       },
@@ -387,9 +399,24 @@
       "unlimited": "Unlimited",
       "burn": "Burn rate",
       "eta": "Exhaust eta",
+      "burnDetail": "Priced {priced}, flat-rate {flat}",
       "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —."
     },
     "extras": {
+      "title": "Quotas and gaps",
+      "warmStates": "Warm machines by state",
+      "projectStates": "Project machines by status",
+      "machineState": {
+        "preparing": "Preparing",
+        "ready": "Ready",
+        "claimed": "Claimed",
+        "error": "Error"
+      },
+      "projectStatus": {
+        "leased": "Leased",
+        "released": "Released",
+        "error": "Error"
+      },
       "disk": {
         "title": "Disk (this backend)",
         "note": "Covers only this host's workspace_root. Remote devices and cloud machines have their own disks and are invisible here."
@@ -399,12 +426,12 @@
         "note": "Process memory, cleared on restart. This process only, not platform-wide."
       },
       "machines": {
-        "title": "Machine census",
         "note": "Rows and state distribution across four ledgers, not a container count — one-container-per-room has no transport yet."
       }
     },
     "reliability": {
       "title": "Delivery and events",
+      "oldest": "Oldest unread {age}",
       "note": "Delivery backlog is stock, not a failure rate. Spool unread is an UPPER bound (reading is not consuming) and only sees this host's spool."
     }
   },

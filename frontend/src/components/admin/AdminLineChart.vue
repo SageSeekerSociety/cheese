@@ -230,7 +230,13 @@ const tooltipLeft = computed(() => {
 
     <template v-else>
       <div class="alc__stage">
-        <svg class="alc__plot" :width="canvasW" :height="VIEW_H" :viewBox="`0 0 ${canvasW} ${VIEW_H}`" aria-hidden="true">
+        <svg
+          class="alc__plot"
+          :width="canvasW"
+          :height="VIEW_H"
+          :viewBox="`0 0 ${canvasW} ${VIEW_H}`"
+          aria-hidden="true"
+        >
           <line
             v-for="(tick, i) in yTicks"
             :key="`grid-${i}`"

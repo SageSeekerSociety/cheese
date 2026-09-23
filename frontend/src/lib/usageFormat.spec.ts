@@ -2,7 +2,18 @@ import type { UsageStats } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { costLabel, costNote, fmtCompact, fmtCost, fmtDelta, fmtDuration, fmtMs, fmtNum, fmtPercent, fmtSI } from './usageFormat'
+import {
+  costLabel,
+  costNote,
+  fmtCompact,
+  fmtCost,
+  fmtDelta,
+  fmtDuration,
+  fmtMs,
+  fmtNum,
+  fmtPercent,
+  fmtSI,
+} from './usageFormat'
 
 function stats(over: Partial<UsageStats> = {}): UsageStats {
   return {
