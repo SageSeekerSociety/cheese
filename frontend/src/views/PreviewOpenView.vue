@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestPreviewSession } from '../api'
@@ -9,7 +9,7 @@ const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const needsLogin = ref(!authToken())
-const loginLink = computed(() => ({ name: 'SignIn', query: { redirect: route.fullPath } }))
+const loginLink = { name: 'SignIn' }
 let generation = 0
 
 async function openPreview() {

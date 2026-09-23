@@ -68,6 +68,16 @@ describe('打不开一个项目的时候', () => {
     expect(store.error).not.toBeNull()
   })
 
+  // 深链接被拦下 → 登录 → 回到同一个项目：这时的「重新进入」不是从首页回来，
+  // 手里没有旧的树可保留，说明必须撤掉、内容必须真的去取。
+  it('登录后回到同一个项目，说明撤掉、内容取回来', async () => {
+    const store = await open(new ApiError(401, 'Login required to access a project'))
+    listTopics.mockResolvedValue({ data: [{ id: 't1', kind: 'root' }] })
+    await store.openProject('p1')
+    expect(store.accessDenied).toBeNull()
+    expect(store.topics.map((t) => t.id)).toEqual(['t1'])
+  })
+
   it('换一个进得去的项目，说明就撤掉', async () => {
     const store = await open(new ApiError(403, '你不是这个项目的成员，无权查看'))
     listTopics.mockResolvedValue({ data: [] })
