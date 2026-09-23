@@ -2746,7 +2746,9 @@ class ChatService:
         # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
         usages: list[AgentUsage] = []
         if self._gateway is not None and state.route == "gateway":
-            drained = await self._drain_gateway_usage(state.project_id)
+            drained = await self._drain_gateway_usage(
+                state.project_id, state.topic_id, state.work_id
+            )
             if drained:
                 usages = drained
             else:
@@ -2777,7 +2779,7 @@ class ChatService:
                     route=state.route,
                     turn_id=state.work_id,
                 )
-            else:
+            elif state.route != "gateway" or self._gateway is None:
                 for u in usages:
                     await UsageRepository(session).add(
                         project_id=state.project_id,
@@ -4481,27 +4483,9 @@ class ChatService:
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
-            usages = await self._drain_gateway_usage(project_id)
+            usages = await self._drain_gateway_usage(project_id, topic_id, turn_id)
             if not usages:
                 return  # still nothing — the next turn's drain picks it up
-            async with self._sessions() as session:
-                for usage in usages:
-                    await UsageRepository(session).add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        model=usage.model or settings.agent_model,
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                        cost_usd=usage.cost_usd,
-                        route="gateway",
-                        # Same turn as the row tx2 already wrote — this is the
-                        # late half of ONE turn's spend, not a second turn.
-                        turn_id=turn_id,
-                    )
-                    await ComputeGrantRepository(session).consume(
-                        project_id, usage_to_credits(usage, spend_priced=True)
-                    )
-                await session.commit()
             logger.info(
                 "deferred usage drain landed for turn %s (%s)",
                 turn_id,
@@ -4518,7 +4502,7 @@ class ChatService:
         )
 
     async def _drain_gateway_usage(
-        self, project_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> list[AgentUsage] | None:
         """L1: real usage for gateway-routed turns, **one entry per model**.
 
@@ -4526,7 +4510,8 @@ class ChatService:
         Code reports none → usage=0), so read the project's NEW spend from the
         gateway's log instead — an exactly-once daily cumulative delta per
         model (see gateway.drain_new_usage), so late-logged rows surface in a
-        later drain instead of being lost. ``None`` covers both "nothing to
+        later drain instead of being lost. Usage rows, credits and the checkpoint
+        commit together. ``None`` covers both "nothing to
         land yet" and "could not ask the gateway" — the callers treat them the
         same (retry now / settle later) and only differ on whether the
         checkpoint was advanced, which this function already did or did not
@@ -4573,9 +4558,36 @@ class ChatService:
                         project = await ProjectRepository(session).get(project_id)
                         if project is None:
                             return None
+                        # Another backend process can drain during a rollout.
+                        # Lock and refresh the row before comparing checkpoints.
+                        await session.refresh(project, with_for_update=True)
                         s = dict(project.settings or {})
                         if s.get(self._GW_CKPT) != ckpt:
                             return None
+                        usages = [
+                            AgentUsage(
+                                model=row.model,
+                                input_tokens=row.prompt_tokens,
+                                output_tokens=row.completion_tokens,
+                                cost_usd=row.spend_usd,
+                            )
+                            for row in rows
+                        ]
+                        for usage in usages:
+                            await UsageRepository(session).add(
+                                project_id=project_id,
+                                topic_id=topic_id,
+                                model=usage.model or settings.agent_model,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                                cost_usd=usage.cost_usd,
+                                route="gateway",
+                                turn_id=turn_id,
+                            )
+                            await ComputeGrantRepository(session).consume(
+                                project_id,
+                                usage_to_credits(usage, spend_priced=True),
+                            )
                         s[self._GW_CKPT] = next_ckpt
                         project.settings = s
                         await session.commit()
@@ -4583,15 +4595,6 @@ class ChatService:
                 # gateway.drain_new_usage): it is real spend we can only state
                 # as a total. Stamp the default name so it is still visible,
                 # exactly as before the split — do NOT invent a model.
-                usages = [
-                    AgentUsage(
-                        model=row.model,
-                        input_tokens=row.prompt_tokens,
-                        output_tokens=row.completion_tokens,
-                        cost_usd=row.spend_usd,
-                    )
-                    for row in rows
-                ]
                 # None, not []: "no rows" and "gateway unreachable" both mean
                 # there is nothing to land this pass (see the docstring).
                 return usages or None

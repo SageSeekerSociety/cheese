@@ -286,7 +286,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
 ):
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, _factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     fake.lag_calls = 1
     settling = asyncio.Event()
@@ -297,12 +297,14 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         await resume.wait()
 
     _replace_chat_sleep(monkeypatch, wait_for_rows)
-    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
     try:
         await asyncio.wait_for(settling.wait(), timeout=2)
         # New inference must proceed while an earlier turn waits for spend rows.
         assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
-        other = await asyncio.wait_for(svc._drain_gateway_usage(pid), timeout=1)
+        other = await asyncio.wait_for(
+            svc._drain_gateway_usage(pid, tid, uuid.uuid4()), timeout=1
+        )
         assert other is not None
         assert [(u.model, u.input_tokens, u.output_tokens) for u in other] == [
             ("claude-sonnet-5", 120, 30)
@@ -312,6 +314,50 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         retried = await pending
     # The paused drain must read the checkpoint advanced by the other drain.
     assert retried is None
+
+
+@pytest.mark.anyio
+async def test_failed_usage_insert_does_not_advance_gateway_checkpoint(
+    client, tmp_path, monkeypatch
+):
+    from app.domain.usage.repositories import UsageRepository
+
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+    await svc.project_gateway_key(pid)
+    turn_id = uuid.uuid4()
+    add = UsageRepository.add
+    calls = 0
+
+    async def fail_once(self, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("usage insert failed")
+        return await add(self, **kwargs)
+
+    monkeypatch.setattr(UsageRepository, "add", fail_once)
+    assert await svc._drain_gateway_usage(pid, tid, turn_id) is None
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        aggregate = await UsageRepository(session).for_project(pid)
+    assert project is not None
+    assert "llm_gateway_usage_ckpt" not in (project.settings or {})
+    assert aggregate["total_tokens"] == 0
+
+    assert await svc._drain_gateway_usage(pid, tid, turn_id) is not None
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        aggregate = await UsageRepository(session).for_project(pid)
+    assert project is not None
+    assert (aggregate["input_tokens"], aggregate["output_tokens"]) == (120, 30)
+    assert (
+        project.settings["llm_gateway_usage_ckpt"]["models"]["claude-sonnet-5"][
+            "prompt"
+        ]
+        == 120
+    )
 
 
 @pytest.mark.anyio
@@ -349,7 +395,7 @@ async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
     for as long as the gateway takes to answer."""
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
 
     reading = asyncio.Event()
@@ -361,7 +407,7 @@ async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
         return await FakeGateway.daily_spend_by_model(fake, api_key, date)
 
     fake.daily_spend_by_model = slow_daily_spend_by_model  # type: ignore[method-assign]
-    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
     try:
         await asyncio.wait_for(reading.wait(), timeout=2)
         assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
