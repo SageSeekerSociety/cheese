@@ -27,7 +27,7 @@ import type { TopicPhase } from '../lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
-import { fileIcon, previewCanShow } from '../lib/fileKind'
+import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
@@ -231,8 +231,8 @@ watch(
 // screen. ----
 const previewLatest = ref<string | null>(null)
 const previewSeen = ref<string | null>(null)
-// 当前预览指着的那份文件。网页和跑着的应用只有预览那一格画得出来，所以点开的是它
-// 就去那一格。
+// 当前预览指着的那份文件。跑着的应用只有预览那一格画得出来（它是个进程，没有文件
+// 可指），所以点开的是它就去那一格。
 const previewPath = ref<string | null>(null)
 const previewHasNew = computed(() => !!previewLatest.value && previewLatest.value !== previewSeen.value)
 
@@ -423,11 +423,14 @@ async function openFile(path: string, taskId?: string | null) {
   // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
   // names a place inside the file, not a file, and neither store knows it.
   const want = path.replace(/:\d+(?:-\d+)?$/, '')
-  if (previewCanShow(want) && (await inRoomFiles(want))) {
+  // 「房间文件」这一档包含网页：内容域按路径服务房间里的任意一份，所以一份 html
+  // 在这里画得出来。仓库树里的 .html 不在此列（那不是房间文件），仍然去「改动」
+  // 那格看 diff。
+  if (previewCanShowInRoom(want) && (await inRoomFiles(want))) {
     openFileTab(want)
     return
   }
-  // 画不出来的那几种（网页、应用）只剩预览那一格。它指着谁要现问：芝士一轮里摆出来
+  // 剩下的画不出来的（跑着的应用）只剩预览那一格。它指着谁要现问：芝士一轮里摆出来
   // 的东西，这里手上那份记录要等这一轮结束才更新。
   await pollPreviewPointer()
   if (want === previewPath.value) {
