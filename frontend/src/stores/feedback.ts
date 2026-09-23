@@ -21,7 +21,7 @@
  * （见下面那几个模块级计数器），否则慢的那次后到，会把快的那次覆盖掉。
  */
 
-import type { FeedbackAdminPatch, FeedbackListQuery, StatsKind, StatsShapes } from '@/api'
+import type { FeedbackAdminPatch, FeedbackListQuery, StatsDays, StatsKind, StatsShapes } from '@/api'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -119,6 +119,10 @@ const statsSeq: Record<StatsKind, number> = {
   product: 0,
   integrations: 0,
 }
+/** 有窗口语义的那几类（响应里带 `days`、切 7/30/90 要重拉的那几类）。
+ *  `performance` 读进程内存（只有此刻）、`integrations` 是存量问题，两类都没有
+ *  窗口 —— `setStatsDays` 跳过重拉它们，页头也不给它们画窗口切换器。 */
+export const WINDOWED_KINDS: StatsKind[] = ['pipeline', 'product', 'feedback', 'usage', 'platform']
 /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
  *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
 let adminDetailSeq = 0
@@ -439,6 +443,22 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
        但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
     statsKind: 'feedback' as StatsKind,
+    /** 看板的统计窗口（7/30/90 天）。和 `statsKind` 同一个理由放 store：它决定请求
+     *  的 `days` 参数，而 R 键（`AdminLayout`）那一路 `loadStats()` 不带参数 —— 窗口
+     *  写死成默认 7 的话，30 天窗口下按 R 会把数据悄悄拉回 7 天。 */
+    statsDays: 7 as StatsDays,
+    /** 每一类各自**成功**那一刻（epoch ms，null = 还没成功过）—— 页头那句「更新于
+     *  HH:MM」读它。失败**不动**旧时间戳：旧数据继续配旧时刻展示，不能因为重试失败
+     *  就把它刷成「刚更新」。 */
+    statsAt: {
+      feedback: null,
+      usage: null,
+      platform: null,
+      performance: null,
+      pipeline: null,
+      product: null,
+      integrations: null,
+    } as Record<StatsKind, number | null>,
     /** 看板**每一类各自**的加载中。**不能是一把全局的布尔**：那个标志会被任何一类的
      *  响应在 `finally` 里清掉（判据只比它自己那一类的代次），于是「前一类的请求还在飞、
      *  后一类先回来了」这一瞬间，当前这一类的骨架会提前收掉、数字画成「—」、折线图落进
@@ -1567,31 +1587,48 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /* ---- 看板 ---- */
 
-    /** 拉看板的**一个分类**。`kind` 缺省是当前停着的那一类，`days` 由页面给（默认 7，
-     *  就是页头上那句「过去 7 天」）—— 窗口是页面的问题，不是 store 的：将来多一个
-     *  「过去 30 天」就是换个参数。
+    /** 拉看板的**一个分类**。`kind` 缺省是当前停着的那一类，`days` 缺省读
+     *  `this.statsDays`（**不再硬默认 7**）—— 窗口是这一页的状态，R 键那一路
+     *  `loadStats()` 不传参数，在 30 天窗口下也不该把数据偷偷拉回 7 天。
      *
      *  **切分类要把当时那一类钉住**：请求发出去之后人才切的分类，回来的那一份是给上一个
      *  分类的，写进 `stats[kind]` 才对；写进「现在这一类」就成了「切到用量、画出来的是
      *  反馈的数」。所以 `kind` 在这里被捕获，不读 `this.statsKind`。
      *
      *  和列表一样要扔掉过期响应：R 键连按两次会发两个请求，而先发的那次可能后到。 */
-    async loadStats(kind?: StatsKind, days = 7): Promise<void> {
+    async loadStats(kind?: StatsKind, days?: StatsDays): Promise<void> {
       // `kind` 缺省是「当前停着的那一类」，但**在这里定下来**（不写进参数默认值：
       // 参数默认值里的 `this` 在 options store 里没有类型，而它读的正是 this）。
       const wanted: StatsKind = kind ?? this.statsKind
+      const daysToUse = days ?? this.statsDays
       const seq = ++statsSeq[wanted]
       this.statsBusy[wanted] = true
       this.error = null
       try {
-        const stats = await getStats(wanted, { days })
+        const stats = await getStats(wanted, { days: daysToUse })
         if (seq !== statsSeq[wanted]) return
         assignStats(this.stats, wanted, stats)
+        // 时间戳只记**成功**那一趟：失败留着旧数据就配旧时刻（见 state 上的注释）。
+        this.statsAt[wanted] = Date.now()
       } catch (error) {
         if (seq !== statsSeq[wanted]) return
         this.error = message(error, '看板加载失败')
       } finally {
         if (seq === statsSeq[wanted]) this.statsBusy[wanted] = false
+      }
+    },
+
+    /** 切统计窗口（7/30/90）：**缓存键就是窗口** —— `stats[kind]` 只存一份，不保留
+     *  多窗口副本（保留的话，导轨短值会混窗口：用量卡显示 30 天的、反馈卡显示 7 天的）。
+     *  所以切窗口 = 把**已加载的窗口类**全部重拉一遍；还没加载的类等切过去时按新窗口拉。
+     *
+     *  `performance` / `integrations` 没有窗口语义，跳过重拉。每类各自的并发由 per-kind
+     *  `statsSeq` / `statsBusy` 守卫覆盖：重拉期间当前类进骨架，其余类的旧数留到新数到货。 */
+    setStatsDays(days: StatsDays) {
+      if (days === this.statsDays) return
+      this.statsDays = days
+      for (const kind of WINDOWED_KINDS) {
+        if (this.stats[kind] !== null) void this.loadStats(kind, days)
       }
     },
 

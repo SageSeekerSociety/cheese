@@ -37,12 +37,14 @@ test.beforeEach(({ page }) => {
   page.on('pageerror', (err) => consoleNoise.push(`[pageerror] ${err.message}`));
 });
 
-/** 记下这一页打过哪几条看板接口，连同它们的响应码。 */
+/** 记下这一页打过哪几条看板接口，连同它们的响应码与 query（窗口切换钉的是 query）。 */
 function watchStats(page: Page) {
-  const seen: { path: string; status: number }[] = [];
+  const seen: { path: string; search: string; status: number }[] = [];
   page.on('response', (res) => {
-    const path = new URL(res.url()).pathname;
-    if (path.startsWith('/api/admin/stats/')) seen.push({ path, status: res.status() });
+    const url = new URL(res.url());
+    if (url.pathname.startsWith('/api/admin/stats/')) {
+      seen.push({ path: url.pathname, search: url.search, status: res.status() });
+    }
   });
   return seen;
 }
@@ -149,4 +151,100 @@ test('后台能切到私密那一栏 —— 它就在 URL 里，也只在 URL �
 
   await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
   await expect(page.getByText('队列加载失败')).toHaveCount(0);
+});
+
+test('切窗口（7→30 天）后，已加载的类带 days=30 重拉、新切的类按 30 天拉', async ({ page }) => {
+  await login(page);
+  const seen = watchStats(page);
+
+  await page.goto('/admin/dashboard');
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 })
+    .toBe(true);
+
+  // 切 30 天：此刻唯一已加载的窗口类（pipeline）带着 days=30 重拉。
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/pipeline' && r.search === '?days=30'), {
+      timeout: 30_000,
+    })
+    .toBe(true);
+
+  // 切到用量：按新窗口拉（days=30），KPI 标签跟着窗口变。
+  await kindTab(page, '用量').click();
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/usage' && r.search === '?days=30'), {
+      timeout: 30_000,
+    })
+    .toBe(true);
+  await expect(page.locator('.ad__kpis').getByText('窗口内 token')).toBeVisible();
+
+  // 整轮每一条都是 2xx（「请求发出去了」和「服务端认这条参数」是两件事）。
+  expect(seen.filter((r) => r.status >= 400)).toEqual([]);
+  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
+});
+
+test('看板拉取失败：错误块显示服务端原话，「重试」真重拉', async ({ page }) => {
+  await login(page);
+
+  // 第一趟 pipeline 回 500（带服务端原话），之后放行。「错误块显示原话不改写」
+  // 和「重试真重拉」是两条仓库口味，一起钉。
+  let failedOnce = false;
+  await page.route('**/api/admin/stats/pipeline**', async (route) => {
+    if (!failedOnce) {
+      failedOnce = true;
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 500, message: '数据库连接池满了', data: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto('/admin/dashboard');
+  await expect(page.getByText('看板加载失败')).toBeVisible();
+  await expect(page.getByText('数据库连接池满了')).toBeVisible();
+
+  await page.getByRole('button', { name: '重试' }).click();
+  // 第二次放行之后交付那一屏正常渲染，错误块整个消失。
+  await expect(page.locator('.ad__kpis').getByText('等你处理')).toBeVisible();
+  await expect(page.getByText('看板加载失败')).toHaveCount(0);
+
+  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
+});
+
+test('下钻：用量横条指向项目页，性能表 chevron 展开分钟级 spark', async ({ page }) => {
+  await login(page);
+  const seen = watchStats(page);
+
+  await page.goto('/admin/dashboard');
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 })
+    .toBe(true);
+
+  // top_projects：整行是指向 /projects/{project_id} 的链接（project_id 一直在响应里）。
+  await kindTab(page, '用量').click();
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/usage'), { timeout: 30_000 })
+    .toBe(true);
+  const projectLink = page.locator('.abr a[href*="/projects/"]').first();
+  await expect(projectLink).toBeVisible();
+  await expect(projectLink).toHaveAttribute('href', /\/projects\/[0-9a-f-]{36}/);
+
+  // 性能：第一行 chevron 展开这条路由的分钟级 spark（响应里一直回、此前没人读）。
+  await kindTab(page, '性能').click();
+  await expect
+    .poll(() => seen.some((r) => r.path === '/api/admin/stats/performance'), { timeout: 30_000 })
+    .toBe(true);
+  const toggle = page.locator('.ad__perf-toggle').first();
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByText('近 24 个分钟点的平均耗时')).toBeVisible();
+
+  expect(seen.filter((r) => r.status >= 400)).toEqual([]);
+  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
 });
