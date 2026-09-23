@@ -1072,6 +1072,7 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
                 "_eid": "late-after-timeout-stop",
             },
         )
+        await subscription.sink.queue.join()
         late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
 
     assert [frame["type"] for frame in late_frames] == [
