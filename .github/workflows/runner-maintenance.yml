@@ -74,8 +74,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [1, 2, 3, 4, 5, 6]
-    runs-on: [self-hosted, cheese-ci]
+        box: [1, 2, 3]
+    runs-on: [self-hosted, cheese-ci, "cheese-ci-box-${{ matrix.box }}"]
     timeout-minutes: 5
     steps:
       - name: Update the disk guard without restarting runners
@@ -93,7 +93,9 @@ jobs:
           updated=0
           for guard in "$HOME"/actions-runner*/disk-guard.sh; do
             [ -f "$guard" ] || continue
-            cp -p "$guard" "$guard.before-$GITHUB_RUN_ID-$RUNNER_NAME"
+            backup="$guard.before-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$RUNNER_NAME"
+            [ ! -e "$backup" ]
+            cp -p "$guard" "$backup"
             install -m 0755 "$candidate" "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME"
             mv "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME" "$guard"
             cmp "$candidate" "$guard"
@@ -102,5 +104,17 @@ jobs:
           done
           [ "$updated" -gt 0 ]
 
-      - name: Hold so the other slots land on other runners
-        run: sleep 45
+      - name: Retire scheduled global Docker prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/retire-docker-prune-$GITHUB_RUN_ID.sh"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github.raw+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/deploy/ci-runner/retire-docker-prune.sh?ref=$GITHUB_SHA" \
+            -o "$candidate"
+          bash -n "$candidate"
+          bash "$candidate" "$HOME/ci-maintenance-backups/prune-retirement-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "runner=$RUNNER_NAME revision=$GITHUB_SHA scheduled Docker prune retired" >> "$GITHUB_STEP_SUMMARY"
