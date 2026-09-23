@@ -150,7 +150,8 @@ async def performance_stats(
     「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
     毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
     """
-    return ok(await service.performance(routes_registered=list(_http_endpoints(request.app))))
+    endpoints = list(_http_endpoints(request.app))
+    return ok(await service.performance(routes_registered=endpoints))
 
 
 @router.get("/pipeline")

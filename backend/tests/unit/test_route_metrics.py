@@ -21,7 +21,7 @@ def test_percentiles_are_exact_over_the_ring_window():
 
 def test_ring_overwrites_the_oldest_sample():
     rm.record("GET", "/a", 200, 9999.0, minute=0)  # will be evicted
-    for i in range(rm.RING):
+    for _ in range(rm.RING):
         rm.record("GET", "/a", 200, 1.0, minute=0)
     row = rm.snapshot()[0]
     assert row["count"] == rm.RING + 1
