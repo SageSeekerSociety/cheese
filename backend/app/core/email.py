@@ -77,5 +77,50 @@ class EmailSender:
             return False
 
 
-def get_email_sender() -> EmailSender:
-    return EmailSender()
+class FallbackEmailSender:
+    """Send through the primary account; if that fails, through the fallback.
+
+    The fallback exists because the primary is a free-plan mailbox with a daily
+    recipient cap: a verification code that cannot go out blocks a signup, so
+    one more attempt through another account is worth a second From address.
+    """
+
+    def __init__(self, primary: EmailSender, fallback: EmailSender) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    async def send(
+        self,
+        *,
+        to: str | Sequence[str],
+        subject: str,
+        body_html: str,
+        body_text: str | None = None,
+    ) -> bool:
+        message = {
+            "to": to,
+            "subject": subject,
+            "body_html": body_html,
+            "body_text": body_text,
+        }
+        if await self._primary.send(**message):
+            return True
+        logger.warning("Primary SMTP failed for %s; trying the fallback", to)
+        return await self._fallback.send(**message)
+
+
+def get_email_sender() -> EmailSender | FallbackEmailSender:
+    primary = EmailSender()
+    if not settings.email_fallback_smtp_host:
+        return primary
+    return FallbackEmailSender(
+        primary,
+        EmailSender(
+            host=settings.email_fallback_smtp_host,
+            port=settings.email_fallback_smtp_port,
+            username=settings.email_fallback_smtp_username,
+            password=settings.email_fallback_smtp_password,
+            from_address=settings.email_fallback_from_address,
+            use_ssl=settings.email_fallback_smtp_ssl,
+        ),
+    )

@@ -178,12 +178,15 @@ def _is_mid_turn_block(block: Block) -> bool:
 
     「是不是芝士的」按署名判：事件行的档位只说得出「参与者还是平台」，而一个房间
     里的参与者有好几个。
+
+    摆出来的一份东西（`cheese show`）也是一轮的中间：摆完总要说一句它是什么，一轮
+    停在「摆出来」上，和停在一个工具动作上是同一种断法。
     """
-    return (
-        block.kind == BlockKind.event
-        and looks_like_agent_handle(block.author)
-        and bool((block.meta or {}).get("tool"))
-    )
+    if not looks_like_agent_handle(block.author):
+        return False
+    if block.kind == BlockKind.artifact:
+        return True
+    return block.kind == BlockKind.event and bool((block.meta or {}).get("tool"))
 
 
 def _stall_block_summary(block: Block | None) -> dict | None:

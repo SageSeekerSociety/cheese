@@ -175,6 +175,32 @@ describe('文件面板', () => {
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
   })
 
+  it('loads closed task diffs on opening but only polls open tasks', async () => {
+    const tasks = await listRoomTasks('topic-A')
+    tasks.data[1]!.status = 'closed'
+    const originalList = vi.mocked(listRoomTasks).getMockImplementation()!
+    vi.mocked(listRoomTasks).mockResolvedValue(tasks)
+    const intervals = vi.spyOn(window, 'setInterval')
+    const panel = mountPanel('topic-A')
+    try {
+      await flush()
+      const tab = buttons(panel.container).find((button) => button.getAttribute('title')?.startsWith('改动'))
+      await fireEvent.click(tab!)
+      await flush()
+      expect(getGitDiff).toHaveBeenCalledWith('p1', 'topic-A', 'task-topic-A-two')
+      const tick = intervals.mock.calls.find((call) => call[1] === 20_000)?.[0]
+      expect(typeof tick).toBe('function')
+      getGitDiff.mockClear()
+      ;(tick as () => void)()
+      await flush()
+      expect(getGitDiff.mock.calls).toEqual([['p1', 'topic-A', 'task-topic-A']])
+    } finally {
+      panel.unmount()
+      intervals.mockRestore()
+      vi.mocked(listRoomTasks).mockImplementation(originalList)
+    }
+  })
+
   // Two topics are two worktrees of the SAME repo, so the same path usually
   // exists in both. That is what made the carried-over draft dangerous: the open
   // path was still valid in the new topic, so nothing forced a re-read, and the

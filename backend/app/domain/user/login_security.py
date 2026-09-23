@@ -47,6 +47,11 @@ STEP_UP_PASSWORD_LOCKOUT_PREFIX = "cheese:sudo_password_lockout:"
 TOTP_SECRET_PREFIX = "cheese:totp_secret:"
 TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
 TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
+# The secret offered by the first step of 2FA setup, awaiting its confirming
+# code. Only a secret offered here can be confirmed, so the re-authentication
+# the first step asks for covers the whole setup.
+TOTP_PENDING_PREFIX = "cheese:totp_pending:"
+TOTP_PENDING_TTL_S = 600
 SESSION_PREFIX = "cheese:session:"
 USER_SESSIONS_PREFIX = "cheese:user_sessions:"
 PASSWORD_RESET_PREFIX = "cheese:password_reset:"
@@ -233,13 +238,33 @@ class TOTPService:
         secret_str = secret.decode() if isinstance(secret, bytes) else secret
         return self.verify_code(secret_str, code)
 
+    async def offer_secret(self, user_id: int) -> str:
+        """Generate a secret for this user to confirm, replacing any earlier
+        offer."""
+        secret = self.generate_secret()
+        await self._redis.set(
+            f"{TOTP_PENDING_PREFIX}{user_id}", secret, ex=TOTP_PENDING_TTL_S
+        )
+        return secret
+
     async def enable_2fa(self, user_id: int, secret: str, code: str) -> bool:
-        """Confirm setup against a client-round-tripped secret (reference
-        contract: init hands the secret to the client, confirm sends it back
-        with a live code) and persist it. Returns False on a bad code."""
-        if not self.verify_code(secret, code):
+        """Confirm setup and persist the secret. Returns False unless ``secret``
+        is the one last offered to this user and ``code`` is live for it.
+
+        The client echoes the secret back (reference contract), but only an
+        offered one is accepted: otherwise the confirming step would take any
+        secret at all, and the step that offered it — the one gated on
+        re-authentication — could simply be skipped.
+        """
+        pending_key = f"{TOTP_PENDING_PREFIX}{user_id}"
+        offered = await self._redis.get(pending_key)
+        if offered is None:
+            return False
+        offered_str = offered.decode() if isinstance(offered, bytes) else offered
+        if offered_str != secret or not self.verify_code(secret, code):
             return False
         await self._redis.set(f"{TOTP_SECRET_PREFIX}{user_id}", secret)
+        await self._redis.delete(pending_key)
         return True
 
     async def disable_2fa(self, user_id: int) -> bool:

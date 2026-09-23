@@ -1,4 +1,28 @@
 {
+  "joinLink": {
+    "title": "Invitation link",
+    "description": "Anyone with this link can sign in and confirm to join as a member with access to all project topics. The link lasts 7 days.",
+    "expires": "Expires {date}",
+    "revokeHint": "Revoking immediately disables this link. People who already joined remain members.",
+    "empty": "No active invitation link",
+    "close": "Close",
+    "create": "Create link",
+    "copy": "Copy link",
+    "copied": "Copied",
+    "copyFailed": "Could not copy. Select the link and copy it manually.",
+    "revoke": "Revoke link",
+    "failed": "Something went wrong. Please try again.",
+    "loading": "Loading",
+    "joinTitle": "Join project",
+    "loginHint": "Sign in to see the project name and decide whether to join.",
+    "login": "Sign in to continue",
+    "invalid": "This invitation link is no longer valid. Ask the project owner for a new one.",
+    "alreadyMember": "You are already a project member.",
+    "joinHint": "Confirm to join as a member with access to all project topics.",
+    "enter": "Open project",
+    "join": "Confirm and join",
+    "retry": "Retry"
+  },
   "models": {
     "title": "Model settings",
     "readOnly": "Project managers can change the default models",

@@ -269,8 +269,20 @@ class TestLoginBudget:
     ):
         user = authenticated_user
         forget_redis_state(user)
+        sudo = api_client.post(
+            "/users/auth/sudo",
+            headers=auth_headers,
+            json={
+                "method": "password",
+                "credentials": {"password": user.password},
+                "purpose": "2fa:enable",
+            },
+        )
+        assert sudo.status_code == 200, sudo.text
         init = api_client.post(
-            f"/users/{user.user_id}/2fa/enable", headers=auth_headers, json={}
+            f"/users/{user.user_id}/2fa/enable",
+            headers=auth_headers,
+            json={"sudoTicket": sudo.json()["data"]["sudoTicket"]},
         )
         secret = init.json()["data"]["secret"]
         confirm = api_client.post(

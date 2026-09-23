@@ -16,7 +16,7 @@ import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
-import { fmtCost, fmtNum } from '@/lib/usageFormat'
+import { fmtCompact, fmtCost, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
@@ -185,18 +185,22 @@ const pulse = computed(() => {
   return rows
 })
 
-/** 20 万 token 这种短写 —— 摘要条上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。 */
-function shortTokens(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 10_000) return `${Math.round(n / 1000)}k`
-  return String(n)
-}
+/** 一键一格，给上面那条导轨按 `StatsKind` 取短值用。`pulse` 仍是数组（渲染顺序），
+ *  这里只是同一批数据的按名索引。 */
+const pulseByKey = computed<Record<string, (typeof pulse.value)[number]>>(() => {
+  const out: Record<string, (typeof pulse.value)[number]> = {}
+  for (const row of pulse.value) out[row.key] = row
+  return out
+})
+
+/** 20 万 token 这种短写 —— 导轨上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。
+ *  走 `fmtSI` 而不是手写阶梯：手写的那份止步于 M，`1e12` 会被打成 `1000000.0M`。 */
+const shortTokens = (n: number | null | undefined): string => (n ? fmtSI(n) : '—')
 
 /** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
 const slowestP95 = computed(() => {
   const row = perf.value?.routes?.[0]
-  return row?.p95 === undefined || row.p95 === null ? '—' : `${row.p95} ms`
+  return row?.p95 === undefined || row.p95 === null ? '—' : fmtMs(row.p95)
 })
 
 const kind = computed(() => store.statsKind)
@@ -912,13 +916,32 @@ const routesText = computed(() => {
   const p = perf.value
   if (!p) return ''
   const registered = p.routes_registered
-  if (registered === undefined || registered === null) {
-    return p.routes_total > p.routes_shown
-      ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
-      : String(p.routes_total)
-  }
-  return t('feedback.dashboard.perf.routesOf', { shown: p.routes_total, total: registered })
+  // **每一条注册过的端点都占一行**（没样本的也在），所以这里报的是「有样本 X / 共 Y」。
+  // 截断（线上护栏）必须说出来：静默截断读起来像「就这些」。
+  const shown = p.routes_omitted
+    ? t('feedback.dashboard.perf.routesTruncated', {
+        shown: p.routes.length,
+        total: p.routes_registered ?? p.routes.length,
+      })
+    : null
+  if (shown) return shown
+  return registered === undefined || registered === null
+    ? String(p.routes_with_samples)
+    : t('feedback.dashboard.perf.routesOf', {
+        shown: p.routes_with_samples,
+        total: registered,
+      })
 })
+
+/** 网络吞吐的短读数。**读不到画「—」，绝不画 0** —— 0 说「网是闲的」，null 说
+ *  「看不见」，两者在屏幕上必须长得不一样。 */
+function bps(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '—'
+  return `${fmtSI(v, 'B/s')}`
+}
+
+const netUplink = computed(() => perf.value?.network?.uplink)
+const netApi = computed(() => perf.value?.network?.api)
 
 const lagText = computed(() => {
   const lag = perf.value?.loop_lag
@@ -932,6 +955,20 @@ const peopleKpis = computed(() => [
     key: 'accounts',
     label: t('feedback.dashboard.people.total'),
     value: num(platform.value?.people.total),
+    loading: store.statsLoading,
+  },
+  // 真人 / agent 分开报，不是一个总数让人自己猜。判据是 `agent_bindings`（和后端
+  // `IdentityService.is_agent` 同一份），所以这两个数必然加得回 `total`。
+  {
+    key: 'humans',
+    label: t('feedback.dashboard.people.humans'),
+    value: num(platform.value?.people.humans),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'agents',
+    label: t('feedback.dashboard.people.agents'),
+    value: num(platform.value?.people.agents),
     loading: store.statsLoading,
   },
   {
@@ -1005,11 +1042,20 @@ function onSelectDay(index: number) {
 onMounted(() => {
   // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
   // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
-  if (store.statsKind === 'feedback') selectKind('pipeline')
+  //
+  // 两条分支必须互斥，而且都要**由自己那一支**去拉：`selectKind` 会顺手拉一次，
+  // 所以这里不能再补一句「分类的切片还是 null 就拉」。`loadStats` 只写
+  // `statsBusy`、不在完成前写 `stats`，于是那一句在首次挂载时**必然**成立，
+  // 变成同一分类两个并发请求，而 store 里的序号守卫（feedback.ts 的 `statsSeq`）
+  // 会把先回来的那个响应丢掉 —— 白拉一趟，首屏还多等一个来回。
+  if (store.statsKind === 'feedback') {
+    selectKind('pipeline')
+  } else if (store.stats[store.statsKind] === null) {
+    void store.loadStats(store.statsKind, DAYS)
+  }
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
   // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
-  if (store.stats[store.statsKind] === null) void store.loadStats(store.statsKind, DAYS)
 })
 </script>
 
@@ -1021,9 +1067,19 @@ onMounted(() => {
         <span class="ad__window t-meta-read">{{ t('feedback.dashboard.window') }}</span>
       </header>
 
-      <!-- 分类控件是这一页的**第一个控件**：读的人先决定看哪一类，再看数字。
-           `v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头那条 `--line-2` 抢同一种
-           「这里是边界」的意思，而分类不是边界，是一次筛选。 -->
+      <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
+           看哪一类，再看数字。`v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头
+           那条 `--line-2` 抢同一种「这里是边界」的意思，而分类不是边界，是一次筛选。
+
+           **两行并成一行**（管理员指着两排问过「这两行是同一个东西」）。原本下面还
+           有一条摘要条 `.ad__pulse`，和这里同一批键、同一批标签、同一个 `selectKind`，
+           只多带一个短值 —— 于是每个目的地在页面上出现两次。现在短值就长在这一行里，
+           摘要条整条删除。
+
+           短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它，按钮的
+           accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
+           `getByRole('button', { name: '反馈', exact: true })` 会因为名字变成
+           「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。 -->
       <div class="ad__kinds">
         <v-btn-toggle
           :model-value="store.statsKind"
@@ -1033,33 +1089,17 @@ onMounted(() => {
           divided
           @update:model-value="selectKind($event as StatsKind)"
         >
-          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small">
+          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small" :title="pulseByKey[k]?.hint">
             {{ t(TAB_KEY[k]) }}
+            <span
+              v-if="pulseByKey[k]"
+              class="ad__kinds-val t-dense t-num"
+              :class="`ad__kinds-val--${pulseByKey[k]!.tone}`"
+              aria-hidden="true"
+              >{{ pulseByKey[k]!.value }}</span
+            >
           </v-btn>
         </v-btn-toggle>
-      </div>
-
-      <!-- 摘要条：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
-           切过去），不是独立卡片。
-           **它是文字 chip，不是第二排大数字卡**：下面那排 KPI 卡已经是「标签 + 大数
-           字」，摘要条再摆一排同样式的大数字就是同一件事说两遍（管理员指着两排问过
-           「这两行是同一个东西」）。所以这里只有名字 + 一个短值，高度压到 chip 档，
-           大数字全留给下面那一排。 -->
-      <div class="ad__pulse" role="tablist" aria-label="看板各块摘要">
-        <button
-          v-for="row in pulse"
-          :key="row.key"
-          type="button"
-          class="ad__pulse-cell"
-          :class="{ 'ad__pulse-cell--on': kind === row.key, [`ad__pulse-cell--${row.tone}`]: true }"
-          role="tab"
-          :aria-selected="kind === row.key"
-          :title="row.hint"
-          @click="selectKind(row.key as StatsKind)"
-        >
-          <span class="ad__pulse-label t-eyebrow-read">{{ row.label }}</span>
-          <span class="ad__pulse-value t-dense t-num">{{ row.value }}</span>
-        </button>
       </div>
 
       <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
@@ -1414,27 +1454,53 @@ onMounted(() => {
                 <th scope="col">p50</th>
                 <th scope="col">p95</th>
                 <th scope="col">p99</th>
+                <th scope="col">{{ t('feedback.dashboard.perf.col.errors') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route} ${row.status}`">
-                <!-- 方法 + 路由**模板** + 状态码。模板里那个 `{id}` 要看得见：读者
-                     说「这条慢」时，指的正是这个模板。 -->
+              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route}`">
+                <!-- 方法 + 路由**模板**。模板里那个 `{id}` 要看得见：读者说「这条慢」
+                     时，指的正是这个模板。状态码是**属性**不是身份，收在 errors 一列。 -->
                 <td class="ad__perf-where">
                   <span class="ad__perf-method">{{ row.method }}</span>
-                  <span class="ad__perf-path">{{ row.route }}</span>
-                  <span class="t-num ad__perf-status">{{ row.status }}</span>
+                  <span class="ad__perf-path num-leaf">{{ row.route }}</span>
                 </td>
-                <td class="t-num ad__perf-num">{{ fmtNum(row.count) }}</td>
+                <td class="t-num ad__perf-num">{{ row.count ? fmtNum(row.count) : '—' }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
+                <td class="t-num ad__perf-num">{{ row.error_count ? fmtNum(row.error_count) : '—' }}</td>
               </tr>
             </tbody>
           </table>
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
           <p class="ad__perf-note t-meta-read">{{ t('feedback.dashboard.perf.routesNote') }}</p>
         </div>
+
+        <!-- 网络吞吐：两面都给，各有口径（见 `core/net_io.py`）。上行是**这台机器的
+             网卡**（含计量代理到 LLM 的出向流量），api 是本进程的 HTTP 载荷。
+             读不到画「—」—— 0 会把「看不见」说成「网是闲的」。 -->
+        <section v-if="netUplink || netApi" class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.perf.network.title') }}</h2>
+          <div class="ad__split-grid">
+            <div v-if="netUplink" class="ad__split-cell">
+              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
+              <span class="t-dense num-leaf" :title="netUplink.note_key">
+                ↓ {{ bps(netUplink.rx_bps) }} · ↑ {{ bps(netUplink.tx_bps) }}
+              </span>
+              <p class="ad__block-note t-meta-read">
+                {{ t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' }) }}
+              </p>
+            </div>
+            <div v-if="netApi" class="ad__split-cell">
+              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
+              <span class="t-dense num-leaf" :title="netApi.note_key">
+                ↓ {{ bps(netApi.rx_bps) }} · ↑ {{ bps(netApi.tx_bps) }}
+              </span>
+              <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.perf.network.apiNote') }}</p>
+            </div>
+          </div>
+        </section>
 
         <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
         <section v-if="reliability" class="ad__split">
@@ -1709,60 +1775,24 @@ onMounted(() => {
   line-height: var(--lh-12);
 }
 
-/* 四块摘要 —— 这一页的**第一眼**。四格并排、整块可点，所以它是导航不是卡片：
-   高度比 KPI 卡矮一档（72px），但那一格的数用同一档字号（`t-console-title`），因为
-   「哪块需要我」和「这块的数是多少」是同一眼要读走的。 */
-.ad__pulse {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 0;
-}
-
-/* chip，不是卡片：高度 28px、横向排、字号 `.t-dense`。大数字只有下面那排 KPI
-   卡才有 —— 摘要条再摆一排 `.t-console-title` 就是同一件事说两遍。 */
-.ad__pulse-cell {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  background: var(--fill);
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ad__pulse-cell:hover {
-    background: var(--fill-2);
-  }
-}
-
-.ad__pulse-cell--on {
-  background: var(--surface);
-  border-color: var(--line-2);
-}
-
-.ad__pulse-label {
+/* 分类导轨里那个短值 —— 摘要条并进来之后的归宿。它是附属读数，所以字色压一档、
+   不跟标签抢注意力；只有警示/健康/危险三档会改色，其余用 `--muted`。 */
+.ad__kinds-val {
+  margin-left: 6px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.ad__pulse-value {
-  color: var(--ink);
-}
-
-.ad__pulse-cell--warn .ad__pulse-value {
+.ad__kinds-val--warn {
   color: var(--warn-ink);
 }
 
-.ad__pulse-cell--ok .ad__pulse-value {
-  color: var(--ok-ink);
+.ad__kinds-val--ok {
+  color: var(--ok-ink, var(--muted));
 }
 
-.ad__pulse-cell--danger .ad__pulse-value {
-  color: var(--danger-ink);
+.ad__kinds-val--danger {
+  color: var(--danger-ink, var(--warn-ink));
 }
 
 /* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个

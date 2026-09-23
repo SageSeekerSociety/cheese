@@ -38,8 +38,20 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
             return httpx.Response(
                 200,
                 json=[
-                    {"prompt_tokens": 10, "completion_tokens": 2, "spend": 0.001},
-                    {"prompt_tokens": 5, "completion_tokens": 1, "spend": 0.0005},
+                    {
+                        "model": "mimo-v2.6-pro",
+                        "prompt_tokens": 10,
+                        "completion_tokens": 2,
+                        "spend": 0.001,
+                    },
+                    {
+                        "model": "claude-sonnet-5",
+                        "prompt_tokens": 5,
+                        "completion_tokens": 1,
+                        "spend": 0.0005,
+                    },
+                    # no model field → counted under the empty name
+                    {"prompt_tokens": 3, "completion_tokens": 0, "spend": 0.0},
                     "not-a-dict",  # tolerated
                 ],
             )
@@ -49,9 +61,29 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
     assert await g.mint_project_key(PID) == "sk-virtual"
     assert await g.set_key_budget("sk-virtual", 1.5) is True
     day = await g.daily_spend("sk-virtual", gw.utc_today())
-    assert (day.prompt_tokens, day.completion_tokens) == (15, 3)
+    assert (day.prompt_tokens, day.completion_tokens) == (18, 3)
     assert day.spend_usd == pytest.approx(0.0015)
-    assert [p for _m, p in calls] == ["/key/generate", "/key/update", "/spend/logs"]
+    # The split is the point: each model keeps its own books.
+    by = await g.daily_spend_by_model("sk-virtual", gw.utc_today())
+    assert set(by) == {"mimo-v2.6-pro", "claude-sonnet-5", ""}
+    assert (
+        by["mimo-v2.6-pro"].prompt_tokens,
+        by["mimo-v2.6-pro"].completion_tokens,
+    ) == (
+        10,
+        2,
+    )
+    assert by["mimo-v2.6-pro"].spend_usd == pytest.approx(0.001)
+    assert by["claude-sonnet-5"].prompt_tokens == 5
+    assert by[""].prompt_tokens == 3
+    # One spend-log read per public reader — `daily_spend` derives its total
+    # from `daily_spend_by_model`, so exercising both is two reads, not three.
+    assert [p for _m, p in calls] == [
+        "/key/generate",
+        "/key/update",
+        "/spend/logs",
+        "/spend/logs",
+    ]
 
 
 @pytest.mark.anyio
@@ -79,6 +111,7 @@ async def test_failed_read_cannot_reset_checkpoint_and_rebill_prior_spend():
             200,
             json=[
                 {
+                    "model": "mimo-v2.6-pro",
                     "prompt_tokens": 150,
                     "completion_tokens": 30,
                     "spend": 0.015,
@@ -95,62 +128,180 @@ async def test_failed_read_cannot_reset_checkpoint_and_rebill_prior_spend():
     }
 
     failed = await gw.drain_new_usage(gateway, "sk-virtual", checkpoint)
-    checkpoint_after_failure = checkpoint if failed is None else failed[3]
-    prompt, completion, spend, _ = await gw.drain_new_usage(
+    checkpoint_after_failure = checkpoint if failed is None else failed[1]
+    rows, _ckpt = await gw.drain_new_usage(
         gateway, "sk-virtual", checkpoint_after_failure
     )
 
-    assert (prompt, completion) == (50, 10)
-    assert spend == pytest.approx(0.005)
+    # A pre-split checkpoint can only state the delta as a total — it lands
+    # under the empty model name rather than a fabricated one.
+    assert len(rows) == 1
+    assert rows[0].model == ""
+    assert (rows[0].prompt_tokens, rows[0].completion_tokens) == (50, 10)
+    assert rows[0].spend_usd == pytest.approx(0.005)
 
 
 class _StubGateway:
-    """daily_spend stub: {date: (prompt, completion, usd)}."""
+    """Per-model day stub: {date: {model: (prompt, completion, usd)}}."""
 
     def __init__(self, days: dict) -> None:
         self.days = days
 
+    async def daily_spend_by_model(self, key, date):
+        return {
+            name: gw.ModelSpend(name, p, c, usd)
+            for name, (p, c, usd) in self.days.get(date, {}).items()
+        }
+
     async def daily_spend(self, key, date):
-        p, c, usd = self.days.get(date, (0, 0, 0.0))
+        by = await self.daily_spend_by_model(key, date)
         return gw.DailySpend(
-            date=date, prompt_tokens=p, completion_tokens=c, spend_usd=usd
+            date=date,
+            prompt_tokens=sum(m.prompt_tokens for m in by.values()),
+            completion_tokens=sum(m.completion_tokens for m in by.values()),
+            spend_usd=sum(m.spend_usd for m in by.values()),
         )
+
+
+def _totals(rows: list) -> tuple[int, int, float]:
+    return (
+        sum(r.prompt_tokens for r in rows),
+        sum(r.completion_tokens for r in rows),
+        sum(r.spend_usd for r in rows),
+    )
+
+
+@pytest.mark.anyio
+async def test_drain_splits_by_model_so_no_model_is_absorbed_by_another():
+    """The bug this exists to pin: a mixed day must not land as one lump under
+    whatever model the caller happened to hold. mimo spent alongside claude is
+    mimo's row in `by_model`, full stop."""
+    today = gw.utc_today()
+    g = _StubGateway(
+        {
+            today: {
+                "mimo-v2.6-pro": (100, 30, 0.004),
+                "claude-sonnet-5": (50, 10, 0.02),
+            }
+        }
+    )
+    rows, ckpt = await gw.drain_new_usage(g, "k", None)
+    by = {r.model: r for r in rows}
+    assert set(by) == {"mimo-v2.6-pro", "claude-sonnet-5"}
+    assert (
+        by["mimo-v2.6-pro"].prompt_tokens,
+        by["mimo-v2.6-pro"].completion_tokens,
+    ) == (
+        100,
+        30,
+    )
+    assert by["mimo-v2.6-pro"].spend_usd == pytest.approx(0.004)
+    assert by["claude-sonnet-5"].prompt_tokens == 50
+    assert set(ckpt["models"]) == {"mimo-v2.6-pro", "claude-sonnet-5"}
+    # Exactly once: nothing new on the next pass.
+    rows2, _ = await gw.drain_new_usage(g, "k", ckpt)
+    assert rows2 == []
 
 
 @pytest.mark.anyio
 async def test_drain_same_day_delta_is_exactly_once():
     today = gw.utc_today()
-    g = _StubGateway({today: (100, 30, 0.01)})
+    g = _StubGateway({today: {"m": (100, 30, 0.01)}})
     # First drain from a checkpoint that already saw (60, 10).
-    p, c, usd, ckpt = await gw.drain_new_usage(
-        g, "k", {"date": today, "prompt": 60, "completion": 10, "spend_usd": 0.004}
+    rows, ckpt = await gw.drain_new_usage(
+        g,
+        "k",
+        {
+            "date": today,
+            "models": {"m": {"prompt": 60, "completion": 10, "spend_usd": 0.004}},
+        },
     )
+    p, c, usd = _totals(rows)
     assert (p, c) == (40, 20) and usd == pytest.approx(0.006)
-    # Nothing new → second drain yields zero (cumulative sums are monotone).
-    p2, c2, _usd2, _ = await gw.drain_new_usage(g, "k", ckpt)
-    assert (p2, c2) == (0, 0)
+    assert rows[0].model == "m"
+    # Nothing new → second drain yields nothing (cumulative sums are monotone).
+    rows2, _ = await gw.drain_new_usage(g, "k", ckpt)
+    assert _totals(rows2)[:2] == (0, 0)
 
 
 @pytest.mark.anyio
-async def test_drain_day_rollover_finalizes_yesterday():
+async def test_drain_day_rollover_finalizes_yesterday_per_model():
     today = gw.utc_today()
     yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
-    # Yesterday ended at (50, 5); the old checkpoint had only seen (30, 5) —
-    # 20 late-logged prompt tokens must still be billed. Today adds (7, 3).
-    g = _StubGateway({yesterday: (50, 5, 0.0), today: (7, 3, 0.0)})
-    p, c, _usd, ckpt = await gw.drain_new_usage(
-        g, "k", {"date": yesterday, "prompt": 30, "completion": 5, "spend_usd": 0.0}
+    # Yesterday ended at (50, 5) for m; the checkpoint had only seen (30, 5) —
+    # 20 late-logged prompt tokens must still be billed, to m, not to a lump.
+    # Today adds (7, 3) for mimo.
+    g = _StubGateway(
+        {
+            yesterday: {"m": (50, 5, 0.0)},
+            today: {"mimo-v2.6-pro": (7, 3, 0.0)},
+        }
     )
-    assert (p, c) == (20 + 7, 0 + 3)
-    assert ckpt["date"] == today and ckpt["prompt"] == 7
+    rows, ckpt = await gw.drain_new_usage(
+        g,
+        "k",
+        {
+            "date": yesterday,
+            "models": {"m": {"prompt": 30, "completion": 5, "spend_usd": 0.0}},
+        },
+    )
+    by = {r.model: r for r in rows}
+    assert by["m"].prompt_tokens == 20 and by["m"].completion_tokens == 0
+    assert by["mimo-v2.6-pro"].prompt_tokens == 7
+    assert ckpt["date"] == today
+    assert set(ckpt["models"]) == {"mimo-v2.6-pro"}
 
 
 @pytest.mark.anyio
 async def test_drain_without_checkpoint_starts_today():
     today = gw.utc_today()
-    g = _StubGateway({today: (11, 4, 0.0)})
-    p, c, _usd, ckpt = await gw.drain_new_usage(g, "k", None)
+    g = _StubGateway({today: {"m": (11, 4, 0.0)}})
+    rows, ckpt = await gw.drain_new_usage(g, "k", None)
+    p, c, _ = _totals(rows)
     assert (p, c) == (11, 4) and ckpt["date"] == today
+
+
+@pytest.mark.anyio
+async def test_drain_preserves_checkpoint_when_a_model_disappears_from_the_read():
+    """A model that had spend and then vanishes from the response is an
+    incomplete read (LiteLLM lag), not a refund. Persisting the under-count
+    would re-bill the difference next pass."""
+    today = gw.utc_today()
+    g = _StubGateway({today: {"claude-sonnet-5": (50, 10, 0.02)}})
+    ckpt = {
+        "date": today,
+        "models": {
+            "mimo-v2.6-pro": {"prompt": 100, "completion": 30, "spend_usd": 0.004},
+            "claude-sonnet-5": {"prompt": 50, "completion": 10, "spend_usd": 0.02},
+        },
+    }
+    assert await gw.drain_new_usage(g, "k", ckpt) is None
+
+
+@pytest.mark.anyio
+async def test_drain_pre_split_checkpoint_lands_one_unattributed_row_then_upgrades():
+    """v1 → v2 migration: the old checkpoint only ever recorded day totals, so
+    the first drain after the split can only state its delta as a total. It
+    must not invent a model — and the checkpoint it leaves behind is split, so
+    this happens once and never again."""
+    today = gw.utc_today()
+    g = _StubGateway(
+        {today: {"mimo-v2.6-pro": (70, 20, 0.006), "claude-sonnet-5": (30, 10, 0.02)}}
+    )
+    rows, ckpt = await gw.drain_new_usage(
+        g, "k", {"date": today, "prompt": 40, "completion": 10, "spend_usd": 0.004}
+    )
+    assert len(rows) == 1 and rows[0].model == ""
+    p, c, usd = _totals(rows)
+    assert (p, c) == (60, 20)
+    assert usd == pytest.approx(0.022)
+    assert set(ckpt["models"]) == {"mimo-v2.6-pro", "claude-sonnet-5"}
+    # From here on, attribution works.
+    g.days[today]["mimo-v2.6-pro"] = (80, 25, 0.007)
+    rows2, _ = await gw.drain_new_usage(g, "k", ckpt)
+    by = {r.model: r for r in rows2}
+    assert set(by) == {"mimo-v2.6-pro"}
+    assert by["mimo-v2.6-pro"].prompt_tokens == 10
 
 
 def _model_info_response(rows):

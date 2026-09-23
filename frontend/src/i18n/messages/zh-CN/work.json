@@ -1,4 +1,28 @@
 {
+  "joinLink": {
+    "title": "邀请链接",
+    "description": "持有链接的人登录并确认后，可作为普通成员加入项目并访问项目内全部话题；链接有效期为 7 天",
+    "expires": "有效期至 {date}",
+    "revokeHint": "撤销后，旧链接立即失效，已加入的成员不受影响",
+    "empty": "暂无有效邀请链接",
+    "close": "关闭",
+    "create": "生成链接",
+    "copy": "复制链接",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请选择链接后手动复制",
+    "revoke": "撤销链接",
+    "failed": "操作失败，请重试",
+    "loading": "加载中",
+    "joinTitle": "加入项目",
+    "loginHint": "登录后可查看项目名称，再确认是否加入",
+    "login": "登录并继续",
+    "invalid": "邀请链接已失效，请联系项目负责人获取新链接",
+    "alreadyMember": "你已是项目成员",
+    "joinHint": "确认后，你将成为普通成员，可以访问项目内全部话题",
+    "enter": "进入项目",
+    "join": "确认加入",
+    "retry": "重试"
+  },
   "models": {
     "title": "模型设置",
     "readOnly": "项目负责人可以修改默认模型",

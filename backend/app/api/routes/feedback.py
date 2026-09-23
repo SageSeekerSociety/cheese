@@ -25,6 +25,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
+from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,
@@ -43,6 +44,8 @@ from app.domain.feedback.schemas import (
     FeedbackMeta,
     SupportOut,
 )
+from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -104,13 +107,40 @@ async def _detail(
 
 
 async def _is_admin(
-    service: feedback_services.FeedbackService, handle: str | None
+    db: DbSession,
+    service: feedback_services.FeedbackService,
+    who: Actor,
 ) -> bool:
-    return await service.is_admin(handle)
+    """这个人在**这个面上**算不算平台管理员 —— 全路由只有这一处答案。
+
+    名单回答的是「是不是管理员」（`AdminService.admin_handles`），它不是全部：
+    `authz.policy.refuse_management_action` 还要问两件名单问不到的事 —— 凭证是不是
+    作用域设备凭证（`via == "cheese"`），以及这条 handle 带不带 agent 绑定。管理面
+    （`/admin/*` 的 `require_platform_admin`）两个问题都问，而这里以前只问名单，
+    于是同一条 handle 在两个面上得到两个答案：`/admin/feedback` 回 403，而
+    `/feedback/{id}` 让它读私密条目、拿到内部管理备注、删掉别人的反馈 —— 全仓库唯一
+    的「删整条反馈」路由恰好长在公共面上。
+
+    **这里只降级、不拒绝**，和 `require_platform_admin` 不一样，因为两件事不是一回事：
+    管理面的每个 endpoint 都只是一个管理动作，agent 来敲门就没有别的意思；而
+    `/feedback/*` 是公共面，一个 agent 是来读**它自己提过的那条**的合法读者，整个
+    403 掉会砸掉正常用法。所以问题不是「放不放它进来」，是「把管理员那一支给它吗」——
+    不给。理由仍是 `refuse_management_action` 那两句，只是在这里读作「这条 handle 带
+    agent 绑定（或拿着作用域凭证），于是它在这个面上不是管理员」。
+    """
+    if not who.authenticated or not who.handle:
+        return False
+    if not await service.is_admin(who.handle):
+        return False
+    refusal = await policy.refuse_management_action(
+        who, carries_agent_binding=IdentityService(db).is_agent
+    )
+    return refusal is None
 
 
 @router.get("/meta")
 async def get_feedback_meta(
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -131,7 +161,7 @@ async def get_feedback_meta(
         hot_score=feedback_services.repo.HOT_SCORE,
         hot_half_life_days=feedback_services.repo.HOT_HALF_LIFE_DAYS,
         hot_min_items=feedback_services.repo.HOT_MIN_ITEMS,
-        is_admin=await _is_admin(service, who.handle if who.authenticated else None),
+        is_admin=await _is_admin(db, service, who),
     )
     return ok(meta.model_dump(mode="json"))
 
@@ -247,6 +277,7 @@ async def list_feedback(
 @router.post("")
 async def create_feedback(
     body: FeedbackCreate,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -272,7 +303,7 @@ async def create_feedback(
     )
     return ok(
         await _detail(
-            service, row, handle=who.handle, is_admin=await service.is_admin(who.handle)
+            service, row, handle=who.handle, is_admin=await _is_admin(db, service, who)
         )
     )
 
@@ -280,25 +311,22 @@ async def create_feedback(
 @router.get("/{feedback_id}")
 async def get_feedback(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
     """一条反馈的全部内容。看不见的 id 回 404，不是 403 —— 见 `visible_row`。"""
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
-    row = await service.visible_row(
-        feedback_id, handle=handle, is_admin=await service.is_admin(handle)
-    )
-    return ok(
-        await _detail(
-            service, row, handle=handle, is_admin=await service.is_admin(handle)
-        )
-    )
+    is_admin = await _is_admin(db, service, who)
+    row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+    return ok(await _detail(service, row, handle=handle, is_admin=is_admin))
 
 
 @router.delete("/{feedback_id}")
 async def delete_feedback(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -320,7 +348,7 @@ async def delete_feedback(
     await service.delete_feedback(
         feedback_id,
         handle=who.handle,
-        is_admin=await service.is_admin(who.handle),
+        is_admin=await _is_admin(db, service, who),
     )
     return ok({"deleted": True})
 
@@ -328,6 +356,7 @@ async def delete_feedback(
 @router.get("/{feedback_id}/comments")
 async def list_feedback_comments(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
     after: Annotated[str | None, Query(max_length=128)] = None,
@@ -356,7 +385,7 @@ async def list_feedback_comments(
     """
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
-    is_admin = await service.is_admin(handle)
+    is_admin = await _is_admin(db, service, who)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
     try:
         if parent_id is not None:
@@ -391,13 +420,14 @@ async def list_feedback_comments(
 async def create_feedback_comment(
     feedback_id: uuid.UUID,
     body: CommentCreate,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
-    is_admin = await service.is_admin(who.handle)
+    is_admin = await _is_admin(db, service, who)
     comment, _ = await service.comment(
         feedback_id,
         body.body,
@@ -423,6 +453,7 @@ async def create_feedback_comment(
 async def delete_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -433,7 +464,7 @@ async def delete_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=await service.is_admin(who.handle),
+        is_admin=await _is_admin(db, service, who),
     )
     return ok({"deleted": True})
 
@@ -442,6 +473,7 @@ async def delete_feedback_comment(
 async def like_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -458,7 +490,7 @@ async def like_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=await service.is_admin(who.handle),
+        is_admin=await _is_admin(db, service, who),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -467,6 +499,7 @@ async def like_feedback_comment(
 async def unlike_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -477,7 +510,7 @@ async def unlike_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=await service.is_admin(who.handle),
+        is_admin=await _is_admin(db, service, who),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -485,6 +518,7 @@ async def unlike_feedback_comment(
 @router.post("/{feedback_id}/supports")
 async def support_feedback(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -496,7 +530,7 @@ async def support_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.support(
-        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
 
@@ -504,6 +538,7 @@ async def support_feedback(
 @router.delete("/{feedback_id}/supports")
 async def unsupport_feedback(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -511,6 +546,6 @@ async def unsupport_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.unsupport(
-        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))

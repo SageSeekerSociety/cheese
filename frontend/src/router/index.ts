@@ -19,6 +19,12 @@ import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 
 const routes: RouteRecordRaw[] = [
+  {
+    name: 'project-join',
+    path: '/project-invites/:token',
+    component: () => import('@/views/ProjectJoinView.vue'),
+    meta: { titleKey: 'work.joinLink.joinTitle', isFullPage: true },
+  },
   AccountRoutes,
   HomeRoutes,
   UserRoutes,

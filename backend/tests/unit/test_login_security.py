@@ -233,6 +233,7 @@ class TestTOTPService:
         import pyotp
 
         secret = pyotp.random_base32()
+        mock_redis.get.return_value = secret.encode()
         code = pyotp.TOTP(secret).now()
         assert await totp_service.enable_2fa(123, secret, code) is True
         mock_redis.set.assert_called_once()
@@ -241,7 +242,20 @@ class TestTOTPService:
     async def test_enable_2fa_invalid_code_rejected(
         self, totp_service, mock_redis
     ) -> None:
+        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
         assert await totp_service.enable_2fa(123, "JBSWY3DPEHPK3PXP", "000000") is False
+        mock_redis.set.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_enable_2fa_refuses_a_secret_it_never_offered(
+        self, totp_service, mock_redis
+    ) -> None:
+        import pyotp
+
+        secret = pyotp.random_base32()
+        mock_redis.get.return_value = None
+        code = pyotp.TOTP(secret).now()
+        assert await totp_service.enable_2fa(123, secret, code) is False
         mock_redis.set.assert_not_called()
 
     @pytest.mark.anyio

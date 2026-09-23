@@ -32,7 +32,7 @@ vi.mock('@/api', async () => {
 import FeedbackCenterPage from './FeedbackCenterPage.vue'
 
 import FeedbackRoutes from '@/router/feedback'
-import { useFeedbackStore } from '@/stores/feedback'
+import { resetFeedbackCaches, useFeedbackStore } from '@/stores/feedback'
 
 const CARD = {
   id: 'fb-1',
@@ -48,6 +48,10 @@ beforeEach(() => {
   vi.useRealTimers()
   pinia = createPinia()
   setActivePinia(pinia)
+  // 列表缓存是**模块级**的，跨用例活着（见 feedback.cache.spec.ts 的文件头）。不清的
+  // 话，后一个用例挂载时命中前一个用例留下的那一页，`items` 一开始就不是空的 ——
+  // 于是「空列表说什么」这类用例量到的是上一个用例的世界。
+  resetFeedbackCaches()
   listFeedback.mockReset()
   getFeedbackMeta.mockReset()
   getFeedbackMeta.mockResolvedValue({ is_admin: false, hot_min_items: 5 })
@@ -103,5 +107,45 @@ describe('反馈中心的筛选', () => {
     vi.useRealTimers()
 
     await waitFor(() => expect(useFeedbackStore().filterAuthor).toBe(''))
+  })
+
+  /** 筛空之后**说的那句话**必须对得上为什么空。
+   *
+   * 这一页有三种「没有」：一条都没有 / 搜索没结果 / 筛选之后没有。判据以前只算了
+   * 搜索词和栏位，把这四个筛选漏在外面 —— 于是被「类型」筛空的人看到的是「暂无反馈。
+   * 你提交的反馈会出现在这里。」，读起来就是**平台一条反馈都没有**，而空块里那颗
+   * 清除筛选的按钮也一起不画（工具栏那颗还在，所以还不至于走不出去）。
+   */
+  it('被筛选筛空时说「没有符合条件的反馈」，不说「暂无反馈」', async () => {
+    const { baseElement, findByText } = await mount()
+    await findByText('导出报表偶发 502')
+
+    // 服务端按筛选回空：筛选是真的生效了，不是平台没有反馈。
+    listFeedback.mockResolvedValue({
+      data: [],
+      total: 0,
+      counts: { all: 1, hot: 0, active: 0, resolved: 0, unread: 0 },
+    })
+    useFeedbackStore().setFilter({ kind: 'other' })
+
+    await waitFor(() => expect(baseElement.querySelector('.fb-empty__title')?.textContent).toBe('No feedback matches'))
+    // 空块里那颗按钮说的也是筛选 —— 否则「清除筛选」只挂在工具栏上。
+    await waitFor(() =>
+      expect(baseElement.querySelector('.fb-empty__action')?.textContent?.trim()).toBe('Clear filters')
+    )
+  })
+
+  it('什么筛都没加、列表真的空时，仍然说「暂无反馈」', async () => {
+    listFeedback.mockResolvedValue({
+      data: [],
+      total: 0,
+      counts: { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 },
+    })
+    const { baseElement } = await mount()
+
+    // 挂载时用的 i18n 是**测试环境默认那一档**（英文），所以这里比的是英文文案 ——
+    // 两个语言里这一对都得是**两句不同的话**，而这条与上一条合起来钉的正是「选对了
+    // 哪一句」。
+    await waitFor(() => expect(baseElement.querySelector('.fb-empty__title')?.textContent).toBe('No feedback yet'))
   })
 })

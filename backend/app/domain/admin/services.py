@@ -15,6 +15,7 @@ from app.domain.admin import repositories as repo
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import (
     chosen_avatars_by_handle,
+    faces_by_handle,
     search_accounts,
     user_by_handle,
 )
@@ -79,13 +80,38 @@ class AdminService:
         区域（一块说明白「这几个来自部署配置」，一块带删除按钮），给一个扁平数组
         加个标记，等于让前端自己按标记分组 —— 分组规则就成了第二份判据，哪天服务
         端多一种来源，前端画不出来而且不会报错。
+
+        每一行是这个人的 **handle + 昵称 + 挑过的头像**（`faces_by_handle`：两条
+        查询，不分行 N+1）。没有昵称回 null、没挑过头像回 null，**不在这里回退成
+        handle**：回退了客户端就分不出「他叫这个」和「他还没起名字」，而这两件事
+        在页面上本来就该长得不一样。
+
+        要查名字和脸的那批 handle 就取自 `list_admins()` 这一次读的结果，不再为了
+        `root` 单独问一遍。
+
+        这张表在一个请求里仍然被读**两次**，但那不是这里造成的：门
+        （`PlatformAdminDep` → `require_admin` → `admin_handles`）在 handler 之前
+        先读一次，这里是第二次。把 `list_admins()` 的结果回填 memo，是为了让本函数
+        返回的 `added` 和同一请求后续再问的 `is_admin` 同源 —— 中间有人并发加人时，
+        回给页面的名单与「谁能进来」不会分别来自两个快照（memo 的作用域与理由写在
+        `admin_handles`，`add_admin` / `remove_admin` 改完照旧把它置 None）。
         """
         rows = await self._repo.list_admins()
+        merged = root_admin_handles() | {row.handle for row in rows}
+        # 同一个快照填 memo（root | added）。`add_admin` / `remove_admin` 改完仍然
+        # 把它置 None，下一个请求才看得见新值。
+        self._admin_handles = merged
+        faces = await faces_by_handle(self._session, merged)
+
+        def face(handle: str) -> dict[str, str | int | None]:
+            nickname, avatar_id = faces.get(handle, (None, None))
+            return {"handle": handle, "nickname": nickname, "avatar_id": avatar_id}
+
         return {
-            "root": sorted(root_admin_handles()),
+            "root": [face(h) for h in sorted(root_admin_handles())],
             "added": [
                 {
-                    "handle": row.handle,
+                    **face(row.handle),
                     "added_by_handle": row.added_by_handle,
                     "created_at": row.created_at.isoformat(),
                 }
