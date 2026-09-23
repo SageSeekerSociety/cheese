@@ -2,7 +2,7 @@
 """Exercise release ordering against a real commit graph and a fake Docker host."""
 
 import importlib.util
-import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -53,7 +53,9 @@ class ReleaseOrdering(unittest.TestCase):
         self.images = {}
         self.api_failed = False
         self.health = {}
-        self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese"})
+        self.environment = patch.dict(os.environ, {
+            "GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese", "GH_TOKEN": "test-token",
+        })
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
@@ -68,19 +70,26 @@ class ReleaseOrdering(unittest.TestCase):
                 return self.health.get(args[-1], "healthy")
             # Retagging an unchanged image leaves this old OCI revision intact.
             return self.base
-        if args[:2] == ("gh", "api"):
-            if self.api_failed:
-                raise subprocess.CalledProcessError(1, args)
-            base, head = args[2].rsplit("/", 1)[-1].split("...")
-            base, head = self.git("rev-parse", base), self.git("rev-parse", head)
-            if base == head:
-                return "identical"
-            ancestor = self.git("merge-base", base, head)
-            return "ahead" if ancestor == base else "behind" if ancestor == head else "diverged"
         raise AssertionError(args)
 
+    def github_api(self, path, params=None):
+        if self.api_failed:
+            raise OSError("GitHub API unavailable")
+        if "/compare/" in path:
+            base, head = path.rsplit("/", 1)[-1].split("...")
+            base, head = self.git("rev-parse", base), self.git("rev-parse", head)
+            if base == head:
+                status = "identical"
+            else:
+                ancestor = self.git("merge-base", base, head)
+                status = "ahead" if ancestor == base else "behind" if ancestor == head else "diverged"
+            return {"status": status}
+        return {"workflow_runs": []}
+
     def check(self, candidate):
-        with patch.object(GUARD, "command", side_effect=self.command):
+        with patch.object(GUARD, "command", side_effect=self.command), patch.object(
+            GUARD, "github_api", side_effect=self.github_api
+        ):
             return GUARD.should_skip(candidate)
 
     def test_late_old_build_cannot_roll_back_newer_running_release(self):
@@ -144,7 +153,7 @@ class ReleaseOrdering(unittest.TestCase):
     def test_api_failure_does_not_allow_a_release(self):
         self.images = {"backend": f"registry/backend:{self.middle[:7]}"}
         self.api_failed = True
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaises(OSError):
             self.check(self.newest)
 
     def test_manual_rollback_bypasses_policy_even_without_its_script(self):
@@ -174,10 +183,12 @@ class CandidateCI(unittest.TestCase):
                 "status": "completed", "conclusion": "success", **changes}
 
     def ready(self, build, ci):
-        def command(*args):
-            records = build if "/build.yml/" in args[-1] else ci
-            return json.dumps([{"workflow_runs": records}])
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=command):
+        def github_api(path, params=None):
+            records = build if "/build.yml/" in path else ci
+            return {"workflow_runs": records}
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "test-token"}), patch.object(
+            GUARD, "github_api", side_effect=github_api
+        ):
             return GUARD.ci_ready(self.candidate)
 
     def test_both_completion_orders_require_both_successes(self):
@@ -215,9 +226,21 @@ class CandidateCI(unittest.TestCase):
         self.assertFalse(self.ready([self.run_record(), pending], [self.run_record()]))
 
     def test_api_failure_stops_eligibility(self):
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=subprocess.CalledProcessError(1, "gh")):
-            with self.assertRaises(subprocess.CalledProcessError):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "test-token"}), patch.object(
+            GUARD, "github_api", side_effect=OSError("GitHub API unavailable")
+        ):
+            with self.assertRaises(OSError):
                 GUARD.ci_ready(self.candidate)
+
+    def test_github_api_uses_bearer_token_without_a_cli(self):
+        response = io.BytesIO(b'{"status":"ahead"}')
+        with patch.dict(os.environ, {"GH_TOKEN": "test-token"}), patch.object(
+            GUARD, "urlopen", return_value=response
+        ) as open_url:
+            self.assertEqual(GUARD.github_api("repos/example/app/compare/base...head"), {"status": "ahead"})
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
