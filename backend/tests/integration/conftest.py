@@ -218,7 +218,10 @@ class UserCreator:
         nickname: str | None = None,
         avatar_id: int | None = None,
         intro: str | None = None,
+        hashed_password: str | None = None,
     ) -> CreatedUser:
+        """``hashed_password`` stores that credential as is (e.g. an
+        ``SRP:{salt}:{verifier}`` record) instead of hashing ``password``."""
         username = username or self._test_username()
         password = password or self._test_password()
         email = email or self._test_email()
@@ -228,7 +231,9 @@ class UserCreator:
 
         # rounds=4 in tests (vs default 12) saves ~300ms per user creation.
         # Tests don't need brute-force resistance.
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        hashed = hashed_password or (
+            bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        )
 
         async def _coro() -> int:
             return await self._do_insert(
