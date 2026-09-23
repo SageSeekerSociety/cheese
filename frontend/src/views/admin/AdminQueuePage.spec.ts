@@ -29,6 +29,7 @@ import AdminQueuePage from './AdminQueuePage.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { useFeedbackStore } from '@/stores/feedback'
 
 /** 管理端的列表路由。详情是 `/api/admin/feedback/{id}`，所以这里按**整段相等**匹配。 */
 const LIST_PATH = '/api/admin/feedback'
@@ -42,6 +43,10 @@ const READ_PATH = '/api/feedback/read'
 let preview: typeof window.fetch
 let listCalls = 0
 let readCalls = 0
+/** 最近一次列表请求的完整 URL。窗口折算是「发出去那一刻」的事（`lib/feedbackWindows.ts`），
+ *  fixtures 对 `Date.parse('7d')=NaN` 放行、preview 不会 422，所以「'7d' 没有原样打到
+ *  后端」这条只有打在 URL 上才断得到。 */
+let lastListUrl: string | null = null
 /** 头几次列表请求打 500，之后放行 —— 于是「重试能救回来」是测得到的，不只是「按钮在」。 */
 let failTimes = 0
 
@@ -56,6 +61,7 @@ beforeAll(() => {
 beforeEach(() => {
   listCalls = 0
   readCalls = 0
+  lastListUrl = null
   failTimes = 0
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -63,6 +69,7 @@ beforeEach(() => {
     if (url.pathname === READ_PATH) readCalls += 1
     if (url.pathname === LIST_PATH && (init?.method ?? 'GET').toUpperCase() === 'GET') {
       listCalls += 1
+      lastListUrl = url.toString()
       if (failTimes > 0) {
         failTimes -= 1
         return new Response(JSON.stringify({ code: 500, message: '后端炸了', data: null }), {
@@ -79,18 +86,27 @@ beforeEach(() => {
  *  而 layout 由 `v-app` 提供（`views/admin/AdminLayout.spec.ts` 也是这样挂的）。 */
 const Wrapper = { components: { AdminQueuePage }, template: '<v-app><AdminQueuePage /></v-app>' }
 
-async function mountQueue() {
+async function mountQueue(query: Record<string, string> = {}) {
   const router = createRouter({
     history: createWebHashHistory(),
     routes: [{ path: '/admin/queue', component: Wrapper }],
   })
-  await router.push('/admin/queue')
+  await router.push({ path: '/admin/queue', query })
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
-  return render(Wrapper as unknown as Component, { global: { plugins: [vuetify, createPinia(), router, i18n] } })
+  const pinia = createPinia()
+  const rendered = render(Wrapper as unknown as Component, { global: { plugins: [vuetify, pinia, router, i18n] } })
+  return { ...rendered, router, pinia }
 }
 
 const rows = (container: Element) => container.querySelectorAll('.qrow')
+
+/** 按 display_id 找行（`FB-1042` 这串在标题里不会出现，只在 meta 行）。 */
+const rowOf = (container: Element, display: string) => {
+  const el = Array.from(container.querySelectorAll('.qrow')).find((r) => r.textContent?.includes(display))
+  expect(el, `${display} 不在手上这一页`).toBeTruthy()
+  return el!
+}
 
 describe('队列页', () => {
   it('把服务端那一页渲染成队列行，页头和工具行都在', async () => {
@@ -177,6 +193,134 @@ describe('队列页', () => {
 
     await fireEvent.click(getByText('清除筛选'))
     await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+  })
+})
+
+describe('日期窗口 chips 与页签口径', () => {
+  it('相对窗口深链：chip 画「近 7 天」，发出去的请求折成 ISO 日期（修 422 的物证）', async () => {
+    const { container, findByText, queryByText } = await mountQueue({ since: '7d' })
+
+    // 折算发生在「发出去那一刻」，所以断言必须打在 URL 上：fixtures 对
+    // `Date.parse('7d')=NaN` 放行，「'7d' 原样打到后端」在这条链上看不见。
+    expect(await findByText('提交：近 7 天')).toBeTruthy()
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+    expect(queryByText('队列加载失败')).toBeNull()
+    expect(lastListUrl, '挂载后该有一次列表请求').toBeTruthy()
+    const since = new URL(lastListUrl!, window.location.origin).searchParams.get('since')
+    expect(since).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('chip 的 ×：恰好多一次列表请求、chip 消失、地址里的键摘掉、焦点落在搜索框', async () => {
+    const { container, getAllByRole, getByPlaceholderText, router } = await mountQueue({ since: '7d' })
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    const before = listCalls
+    // × 的 aria-label 是「清除这个日期筛选：提交：近 7 天」，整页只有这一颗。
+    await fireEvent.click(getAllByRole('button', { name: /清除这个日期筛选/ })[0]!)
+
+    // setter 自己重拉 —— 一次，不多不少（窗口是服务端的问法，清掉就是换了一个问题）。
+    await waitFor(() => expect(listCalls).toBe(before + 1))
+    expect(container.querySelector('.qpage__windows')).toBeNull()
+    // F5 不该复活人刚亲手清掉的筛选。
+    await waitFor(() => expect(router.currentRoute.value.query.since).toBeUndefined())
+    // chip 没了，焦点不能落空。
+    await waitFor(() => expect(document.activeElement).toBe(getByPlaceholderText('搜索反馈')))
+  })
+
+  it('几个窗口各占一颗 chip（绝对日期原样画），全清后 chips 行整个消失', async () => {
+    const { container, findByText, getAllByRole } = await mountQueue({
+      resolved_since: '2026-09-01',
+      deployed_since: '2026-09-10',
+    })
+
+    expect(await findByText('解决：2026-09-01')).toBeTruthy()
+    expect(await findByText('上线：2026-09-10')).toBeTruthy()
+
+    for (const n of [2, 1]) {
+      expect(getAllByRole('button', { name: /清除这个日期筛选/ }).length).toBe(n)
+      await fireEvent.click(getAllByRole('button', { name: /清除这个日期筛选/ })[0]!)
+    }
+    await waitFor(() => expect(container.querySelector('.qpage__windows')).toBeNull())
+  })
+
+  it('状态页签的口径注：非「全部」时出现「只筛这一页」，而且一个请求都不发', async () => {
+    const { container, findByText, getByRole, queryByText } = await mountQueue()
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    const before = listCalls
+    // 按 role 点而不是按字点：「已收录」在行上的状态芯片里也有一份。
+    await fireEvent.click(getByRole('radio', { name: '已收录' }))
+    expect(await findByText('只筛这一页')).toBeTruthy()
+    // 页签是本地筛（服务端没有 status 这个参数）—— 和 C-10 同一条断言。
+    expect(listCalls).toBe(before)
+
+    await fireEvent.click(getByRole('radio', { name: '全部' }))
+    await waitFor(() => expect(queryByText('只筛这一页')).toBeNull())
+  })
+
+  it('清除筛选连带摘掉地址里的窗口键', async () => {
+    const { container, findByText, getByText, getByPlaceholderText, router, pinia } = await mountQueue({
+      since: '7d',
+    })
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    vi.useFakeTimers()
+    try {
+      await fireEvent.update(getByPlaceholderText('搜索反馈'), 'zzz-没有这条')
+      await vi.runOnlyPendingTimersAsync()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(await findByText('没有符合条件的反馈')).toBeTruthy()
+    await fireEvent.click(getByText('清除筛选'))
+
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+    expect(useFeedbackStore(pinia).adminSince).toBeNull()
+    // 按钮写着「清除筛选」，地址里留着这键的话 F5 会把人送回筛空态。
+    await waitFor(() => expect(router.currentRoute.value.query.since).toBeUndefined())
+  })
+})
+
+describe('行 meta 与列表脚', () => {
+  it('meta 行：高 / 紧急画优先级字（语义类），普通不画；评论数在行尾', async () => {
+    const { container, getByRole } = await mountQueue()
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    // fb-1010（FILLER，登出之后还能看见上一个账号的草稿）：公共栏里的 urgent。
+    const urgent = rowOf(container, 'FB-1010')
+    expect(urgent.querySelector('.qrow__pri--urgent')?.textContent?.trim()).toBe('紧急')
+    // fb-1037：公共栏里的 high。
+    expect(rowOf(container, 'FB-1037').querySelector('.qrow__pri--high')?.textContent?.trim()).toBe('高')
+    // fb-1042 的线程是 fixtures 里手写的那 18 条（c-1…c-18）。
+    expect(rowOf(container, 'FB-1042').textContent).toContain('评论 18')
+    // fb-1036 是普通优先级：缺省即普通，不画字。
+    expect(rowOf(container, 'FB-1036').querySelector('.qrow__pri')).toBeNull()
+
+    // 安全栏那条手写的 urgent（proto-feedback-fixtures.ts:594，私密 + 安全问题，
+    // 公共栏里看不见它，得换栏位 —— 换栏位是服务端的问法，会重新取数）。
+    await fireEvent.click(getByRole('radio', { name: '安全' }))
+    await waitFor(() => expect(rowOf(container, 'FB-1033').querySelector('.qrow__pri--urgent')?.textContent?.trim()).toBe('紧急'))
+  })
+
+  it('两个视图共用同一只脚：行数与「已到底」一致，各自只有一只', async () => {
+    const { container, getByText } = await mountQueue()
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    const footText = () => container.querySelector('.qfoot')?.textContent ?? ''
+    // fixtures 公共栏一页装得下（< 50 条），所以 `adminHasNext` 是 false，「已到底」在。
+    expect(container.querySelectorAll('.qfoot').length).toBe(1)
+    expect(container.querySelector('.qlist__foot .qfoot')).toBeTruthy()
+    expect(footText()).toContain(`${rows(container).length} 行`)
+    expect(footText()).toContain('已到底')
+    const inList = footText()
+
+    await fireEvent.click(getByText('表格'))
+    await waitFor(() => expect(container.querySelector('.aft')).toBeTruthy())
+    expect(container.querySelectorAll('.qfoot').length).toBe(1)
+    expect(container.querySelector('.aft__foot .qfoot')).toBeTruthy()
+    // 同一份数据、同一份内容件：换视图不该让脚变样。
+    expect(footText()).toBe(inList)
   })
 })
 
