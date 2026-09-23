@@ -1367,7 +1367,7 @@ async def python_client(
 
     # ONE get_db across the whole app (app.db.session re-exports app.core.db's),
     # so a single override moves every route — cheesex and 知是 alike — onto the
-    # per-worker test factory (NullPool, isolated DB, loop-safe).
+    # per-worker request factory (production QueuePool, isolated DB, loop-owned).
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_chat_service] = override_get_chat_service
 
