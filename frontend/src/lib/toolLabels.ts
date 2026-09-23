@@ -74,6 +74,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_members: '列出话题成员',
   cheese_gh_token: '获取 GitHub 令牌',
   cheese_status: '查看平台状态',
+  cheese_sync_agents: '刷新队友分身定义',
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
