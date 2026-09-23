@@ -595,8 +595,6 @@ def case(folder, options):
             "central_unchanged": True,
             "passed": True,
         }
-        dump(folder / "summary.json", summary)
-        print(json.dumps(summary), flush=True)
     finally:
         if center_fd is not None:
             os.close(center_fd)
@@ -617,6 +615,9 @@ def case(folder, options):
         if server:
             server.shutdown()
             server.server_close()
+
+    dump(folder / "summary.json", summary)
+    print(json.dumps(summary), flush=True)
 
 
 def main():

@@ -68,6 +68,7 @@ def main():
             timeout=90,
         )
     server.shutdown()
+    server.server_close()
     headers = [
         json.loads(path.read_text()) for path in sorted(folder.glob("headers-*.json"))
     ]

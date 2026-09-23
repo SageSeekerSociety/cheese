@@ -169,7 +169,7 @@ class RemoteControlFixture:
                     self.wfile.write(b": connected\n\n")
                     self.wfile.flush()
                     fixture.connected.set()
-                    while True:
+                    while not self.server.closing:
                         try:
                             event = fixture.events.get(timeout=5)
                             if stream_number != fixture.stream_count:
@@ -197,6 +197,7 @@ class RemoteControlFixture:
                             self.wfile.flush()
                         except OSError:
                             return
+                    return
                 if path.endswith("/worker/events"):
                     for event in (body or {}).get("events", []):
                         payload = event.get("payload", {})
