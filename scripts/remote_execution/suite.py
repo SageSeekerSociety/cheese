@@ -26,6 +26,14 @@ def main():
         parser.error("Both the pinned Claude Code build and redis-server are required")
     folder = options.output.resolve()
     folder.mkdir(parents=True, exist_ok=True)
+    invocation_file = folder / "invocation.json"
+    invocation = (
+        json.loads(invocation_file.read_text())
+        if invocation_file.exists()
+        else {"count": 0}
+    )
+    invocation["count"] += 1
+    dump(invocation_file, invocation)
     sources = [
         *ROOT.glob("backend/app/domain/agent/harness/claude_code/**/*.py"),
         *ROOT.glob("backend/app/domain/agent/harness/claude_code/**/*.js"),
@@ -68,6 +76,7 @@ def main():
         with logfile.open("w") as output:
             process = subprocess.run(
                 command,
+                check=False,
                 cwd=cwd,
                 env=env,
                 stdout=output,
@@ -165,6 +174,8 @@ def main():
                     "tests/unit/test_device_launch.py",
                     "tests/unit/test_device_launch_route.py",
                     "-q",
+                    "--junitxml",
+                    str(folder / "backend-regressions.xml"),
                 ],
                 cwd=ROOT / "backend",
                 env=dict(env, REDIS_URL=f"redis://127.0.0.1:{port}/0"),
