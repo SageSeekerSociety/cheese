@@ -22,7 +22,17 @@ def log(path, value):
 
 
 class Server(ThreadingHTTPServer):
-    daemon_threads = True
+    daemon_threads = False
+    closing = False
+
+    def shutdown(self):
+        self.closing = True
+        super().shutdown()
+
+    def server_close(self):
+        # ThreadingHTTPServer joins request handlers before the final health check.
+        super().server_close()
+        self.assert_healthy()
 
     def handle_error(self, request, client_address):
         error = traceback.format_exc()
@@ -31,7 +41,9 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
     def assert_healthy(self):
-        assert not self.state.get("handler_errors"), self.state["handler_errors"]
+        # HTTPServer closes itself on bind failure, before state is assigned.
+        errors = getattr(self, "state", {}).get("handler_errors", [])
+        assert not errors, errors
 
 
 class Handler(BaseHTTPRequestHandler):

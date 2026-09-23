@@ -434,18 +434,15 @@ def main():
         server.assert_healthy()
         dump(folder / "provider-requests.json", requests)
         terminal()
-        dump(
-            folder / "summary.json",
-            {
-                "passed": True,
-                "turns": len(platform_events),
-                "platform_system_exact": True,
-                "platform_events": list(event_prompts()),
-                "model_requests": len(server.state["requests"]),
-                "central_file_unchanged": True,
-                **({"checkout_after_the_round": checkout} if checkout else {}),
-            },
-        )
+        summary = {
+            "passed": True,
+            "turns": len(platform_events),
+            "platform_system_exact": True,
+            "platform_events": list(event_prompts()),
+            "model_requests": len(server.state["requests"]),
+            "central_file_unchanged": True,
+            **({"checkout_after_the_round": checkout} if checkout else {}),
+        }
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
         if room:
@@ -457,12 +454,16 @@ def main():
                 # See acceptance.py: a dead mount is the one that has to go, and
                 # it is the one `os.path.ismount` reports as nothing at all.
                 assert execution_release.release_mount(mountpoint), mountpoint
-        server.shutdown()
-        server.server_close()
-        if room:
-            room.close()
-        else:
-            release(config)
+        try:
+            if room:
+                room.close()
+            else:
+                release(config)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    dump(folder / "summary.json", summary)
 
 
 if __name__ == "__main__":

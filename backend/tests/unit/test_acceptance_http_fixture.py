@@ -52,6 +52,66 @@ def test_put_failure_invalidates_acceptance(tmp_path, malformed):
     finally:
         connection.close()
         server.shutdown()
+        if malformed:
+            with pytest.raises(AssertionError, match="Cannot parse PUT"):
+                server.server_close()
+        else:
+            server.server_close()
+        thread.join()
+
+
+def test_late_handler_failure_invalidates_server_close(tmp_path):
+    model = load("model_fixture")
+    entered, finish = threading.Event(), threading.Event()
+
+    class LateFailure(model.Handler):
+        def do_GET(self):
+            entered.set()
+            assert finish.wait(3)
+            raise ValueError("late fixture failure")
+
+    server = model.Server(("127.0.0.1", 0), LateFailure)
+    server.state = {"dir": tmp_path}
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+    try:
+        connection.request("GET", "/late")
+        assert entered.wait(3)
+        server.assert_healthy()
+        server.shutdown()
+        finish.set()
+        with pytest.raises(RemoteDisconnected):
+            connection.getresponse()
+        with pytest.raises(AssertionError, match="late fixture failure"):
+            server.server_close()
+    finally:
+        finish.set()
+        connection.close()
+        server.shutdown()
+        thread.join()
+
+
+def test_open_event_stream_finishes_when_fixture_closes(tmp_path):
+    model = load("model_fixture")
+    rc = load("rc_fixture").RemoteControlFixture(tmp_path, lambda *a, **kw: None)
+    server = model.Server(("127.0.0.1", 0), rc.handler(model.Handler))
+    server.state = {"dir": tmp_path}
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=8)
+    try:
+        connection.request("GET", f"/v1/code/sessions/{rc.sid}/worker/events/stream")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert rc.connected.wait(3)
+        server.shutdown()
+        # Read through EOF while the client remains connected.
+        assert response.read().startswith(b": connected\n\n")
+        server.server_close()
+    finally:
+        connection.close()
+        server.shutdown()
         server.server_close()
         thread.join()
 
