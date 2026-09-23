@@ -916,13 +916,32 @@ const routesText = computed(() => {
   const p = perf.value
   if (!p) return ''
   const registered = p.routes_registered
-  if (registered === undefined || registered === null) {
-    return p.routes_total > p.routes_shown
-      ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
-      : String(p.routes_total)
-  }
-  return t('feedback.dashboard.perf.routesOf', { shown: p.routes_total, total: registered })
+  // **每一条注册过的端点都占一行**（没样本的也在），所以这里报的是「有样本 X / 共 Y」。
+  // 截断（线上护栏）必须说出来：静默截断读起来像「就这些」。
+  const shown = p.routes_omitted
+    ? t('feedback.dashboard.perf.routesTruncated', {
+        shown: p.routes.length,
+        total: p.routes_registered ?? p.routes.length,
+      })
+    : null
+  if (shown) return shown
+  return registered === undefined || registered === null
+    ? String(p.routes_with_samples)
+    : t('feedback.dashboard.perf.routesOf', {
+        shown: p.routes_with_samples,
+        total: registered,
+      })
 })
+
+/** 网络吞吐的短读数。**读不到画「—」，绝不画 0** —— 0 说「网是闲的」，null 说
+ *  「看不见」，两者在屏幕上必须长得不一样。 */
+function bps(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '—'
+  return `${fmtSI(v, 'B/s')}`
+}
+
+const netUplink = computed(() => perf.value?.network?.uplink)
+const netApi = computed(() => perf.value?.network?.api)
 
 const lagText = computed(() => {
   const lag = perf.value?.loop_lag
@@ -1426,27 +1445,53 @@ onMounted(() => {
                 <th scope="col">p50</th>
                 <th scope="col">p95</th>
                 <th scope="col">p99</th>
+                <th scope="col">{{ t('feedback.dashboard.perf.col.errors') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route} ${row.status}`">
-                <!-- 方法 + 路由**模板** + 状态码。模板里那个 `{id}` 要看得见：读者
-                     说「这条慢」时，指的正是这个模板。 -->
+              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route}`">
+                <!-- 方法 + 路由**模板**。模板里那个 `{id}` 要看得见：读者说「这条慢」
+                     时，指的正是这个模板。状态码是**属性**不是身份，收在 errors 一列。 -->
                 <td class="ad__perf-where">
                   <span class="ad__perf-method">{{ row.method }}</span>
-                  <span class="ad__perf-path">{{ row.route }}</span>
-                  <span class="t-num ad__perf-status">{{ row.status }}</span>
+                  <span class="ad__perf-path num-leaf">{{ row.route }}</span>
                 </td>
-                <td class="t-num ad__perf-num">{{ fmtNum(row.count) }}</td>
+                <td class="t-num ad__perf-num">{{ row.count ? fmtNum(row.count) : '—' }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
                 <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
+                <td class="t-num ad__perf-num">{{ row.error_count ? fmtNum(row.error_count) : '—' }}</td>
               </tr>
             </tbody>
           </table>
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
           <p class="ad__perf-note t-meta-read">{{ t('feedback.dashboard.perf.routesNote') }}</p>
         </div>
+
+        <!-- 网络吞吐：两面都给，各有口径（见 `core/net_io.py`）。上行是**这台机器的
+             网卡**（含计量代理到 LLM 的出向流量），api 是本进程的 HTTP 载荷。
+             读不到画「—」—— 0 会把「看不见」说成「网是闲的」。 -->
+        <section v-if="netUplink || netApi" class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.perf.network.title') }}</h2>
+          <div class="ad__split-grid">
+            <div v-if="netUplink" class="ad__split-cell">
+              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
+              <span class="t-dense num-leaf" :title="netUplink.note_key">
+                ↓ {{ bps(netUplink.rx_bps) }} · ↑ {{ bps(netUplink.tx_bps) }}
+              </span>
+              <p class="ad__block-note t-meta-read">
+                {{ t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' }) }}
+              </p>
+            </div>
+            <div v-if="netApi" class="ad__split-cell">
+              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
+              <span class="t-dense num-leaf" :title="netApi.note_key">
+                ↓ {{ bps(netApi.rx_bps) }} · ↑ {{ bps(netApi.tx_bps) }}
+              </span>
+              <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.perf.network.apiNote') }}</p>
+            </div>
+          </div>
+        </section>
 
         <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
         <section v-if="reliability" class="ad__split">
