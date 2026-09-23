@@ -123,6 +123,10 @@ test('同名文件按任务打开，切换来源后草稿仍在', async ({ page 
     const panel = page.locator('.panel-changes');
     const firstGroup = panel.getByRole('article', { name: '调整登录样式' });
     const secondGroup = panel.getByRole('article', { name: '修复登录校验' });
+    // 每个任务自带的改动清单默认收起：这一行先只有标题、状态和文件数。
+    await expect(firstGroup.getByRole('button', { name: /src\/login.txt/ })).toHaveCount(0);
+    await firstGroup.getByRole('button', { name: /展开/ }).click();
+    await secondGroup.getByRole('button', { name: /展开/ }).click();
     await expect(firstGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
     await expect(secondGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('task-files-overview.png'), fullPage: true });
