@@ -161,6 +161,22 @@ class TestRegistrationEmailCode:
         accepted = api_client.post("/users", json=_registration(email, code))
         assert accepted.status_code == 200, accepted.text
 
+    def test_the_sixth_code_within_an_hour_is_refused(
+        self, api_client: TestClient, outbox: _Outbox, monkeypatch
+    ):
+        import app.domain.user.mail_quota as mail_quota
+
+        monkeypatch.setattr(mail_quota, "MAIL_COOLDOWN_SECONDS", 0)
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+
+        for _ in range(5):
+            resp = api_client.post("/users/verify/email", json={"email": email})
+            assert resp.status_code == 200, resp.text
+
+        refused = api_client.post("/users/verify/email", json={"email": email})
+        assert refused.status_code == 400, refused.text
+        assert len(outbox.sent) == 5
+
 
 class TestOverlongPasswords:
     def test_logging_in_with_one_is_a_wrong_password_that_counts(
