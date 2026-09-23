@@ -29,8 +29,6 @@
   "invalidPasswordResetLink": "Invalid password reset link",
   "invitationCode": "Invitation code",
   "joinCheese": "Join Cheese",
-  "learnTogetherBuildTogether": "Learn together. Build together.",
-  "madeBy": "Made by",
   "newPassword": "New password",
   "newToCheese": "New to Cheese?",
   "noMatchingPasskeyFound": "No matching passkey found",
@@ -50,7 +48,6 @@
   "resetYourPassword": "Reset your password",
   "sendResetEmail": "Send reset email",
   "sentenceEnd2": "",
-  "sentenceEnd3": "",
   "setANewPassword": "Set a new password",
   "signIn": "Sign in",
   "signIn2": "Sign in",
@@ -73,10 +70,12 @@
   "weRecommendA": "We recommend a",
   "weSentAVerificationCodeTo": "We sent a verification code to",
   "welcomeBackToCheese": "Welcome back to Cheese",
-  "with": "with",
   "workEmail": "work email",
   "yourAccountIsReadySignInTo": "Your account is ready. Sign in to continue.",
   "yourBrowserDoesNotSupportPasskeys": "Your browser does not support passkeys",
   "yourPasswordHasBeenResetSignIn": "Your password has been reset. Sign in with your new password.",
-  "yourPasswordMustContainALetterA": "Your password must contain a letter, a number, and a special character"
+  "yourPasswordMustContainALetterA": "Your password must contain a letter, a number, and a special character",
+  "layout": {
+    "home": "Cheese home"
+  }
 }

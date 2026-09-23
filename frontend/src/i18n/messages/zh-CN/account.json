@@ -29,8 +29,6 @@
   "invalidPasswordResetLink": "无效的重置链接",
   "invitationCode": "邀请码",
   "joinCheese": "加入知是社区",
-  "learnTogetherBuildTogether": "知无界，识有光",
-  "madeBy": "由",
   "newPassword": "新密码",
   "newToCheese": "还没有账号？",
   "noMatchingPasskeyFound": "未找到匹配的通行密钥",
@@ -50,7 +48,6 @@
   "resetYourPassword": "重置账户密码",
   "sendResetEmail": "发送重置邮件",
   "sentenceEnd2": "发送了验证码",
-  "sentenceEnd3": "做出来的",
   "setANewPassword": "设置新密码",
   "signIn": "登录",
   "signIn2": "立即登录",
@@ -73,10 +70,12 @@
   "weRecommendA": "建议使用",
   "weSentAVerificationCodeTo": "我们已向",
   "welcomeBackToCheese": "欢迎回到知是社区",
-  "with": "用",
   "workEmail": "企业邮箱",
   "yourAccountIsReadySignInTo": "注册成功，请使用新账号登录",
   "yourBrowserDoesNotSupportPasskeys": "当前浏览器不支持通行密钥",
   "yourPasswordHasBeenResetSignIn": "密码重置成功，请使用新密码登录",
-  "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符"
+  "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
+  "layout": {
+    "home": "知是首页"
+  }
 }
