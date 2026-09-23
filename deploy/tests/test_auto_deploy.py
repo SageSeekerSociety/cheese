@@ -280,7 +280,11 @@ class CandidateCI(unittest.TestCase):
             triggers = child.get("on", child.get(True))
             with self.subTest(workflow=job["uses"]):
                 self.assertIn("workflow_call", triggers)
-                self.assertNotIn("push", triggers)
+                if job["uses"] == "./.github/workflows/remote-execution.yml":
+                    self.assertEqual(triggers["push"]["branches"], ["experiment/remote-execution"])
+                    self.assertNotIn("pull_request", triggers)
+                else:
+                    self.assertNotIn("push", triggers)
         for filename in ("harness-contract.yml", "mcp-contract.yml"):
             child = yaml.safe_load((workflows / filename).read_text())
             self.assertIn("workflow_dispatch", child.get("on", child.get(True)))
