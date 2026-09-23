@@ -28,16 +28,17 @@ class AgentInstanceUpdate(BaseModel):
 class AgentInstanceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID | None
+    id: uuid.UUID
     project_id: uuid.UUID
     handle: str
+    # The handle this agent sits on room rosters as. Inviting it into a room is
+    # adding this to the roster, the same call that adds a person.
+    seat_handle: str
     type_name: str | None
     display_name: str
     configuration: AgentConfiguration
     # Whether this is the project's default — what a new topic gets.
     is_default: bool = False
-    # Retained for older clients; every project roster entry now has a saved row.
-    configured: bool = True
     # False = retired. Still listed, still resolvable by the rooms already on
     # it, still owns its memory — just not on offer for new work.
     is_active: bool = True
@@ -48,7 +49,3 @@ class ProjectDefaultAgentIn(BaseModel):
     """Select the saved agent that new rooms start with."""
 
     instance_id: uuid.UUID
-
-
-class TopicAgentIn(BaseModel):
-    instance_id: uuid.UUID | None = None

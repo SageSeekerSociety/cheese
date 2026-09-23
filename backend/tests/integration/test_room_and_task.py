@@ -7,8 +7,11 @@ room stay open for the next piece of work, and for anything delivered into it
 later.
 """
 
-from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import _make_card
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _project(client) -> str:
@@ -40,18 +43,10 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
 
 
 def _accept(client, topic_id: str) -> None:
-    card = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
-        headers=delivery_headers(client, topic_id),
-        json={
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": "alice",
-            "routing_reason": "最懂",
-        },
-    ).json()["data"]
+    card = _make_card(client, topic_id)
     r = client.post(
-        f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": "alice"},
+        f"/accept-cards/{card}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200

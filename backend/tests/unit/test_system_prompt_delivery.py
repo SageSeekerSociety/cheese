@@ -97,7 +97,12 @@ class _RecordingHub:
 
 
 @pytest.mark.anyio
-async def test_device_screen_opens_with_the_system_prompt():
+async def test_device_screen_opens_with_the_system_prompt(_pg_schema):
+    # `_ensure_screen` looks the device's API base up in Postgres. Naming the
+    # schema fixture is how a test in this tree says so — `_pg_schema_gate` reads
+    # the fixture list and provisions nothing for a test that asks for nothing,
+    # so without this the row lookup ran against whatever database a neighbour in
+    # the same worker happened to have migrated first.
     hub = _RecordingHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")  # type: ignore[arg-type]
 
@@ -119,3 +124,21 @@ async def test_device_screen_opens_with_the_system_prompt():
     assert _heredoc_body(script) == _PROMPT
     assert _FLAG in script
     assert "/.cheese/launch/" in hub.opened[0].command[2]
+
+
+def test_device_launch_turns_off_claude_codes_own_feedback_tool():
+    """启动行里必须带 `DISABLE_FEEDBACK_COMMAND=1`。
+
+    两个意图相同的工具并排放在同一个清单里，模型会选错那一个：它撞到的毛病是**这个
+    平台**的，而 Claude Code 自带的 `/feedback` 与 `SendFeedback` 把草稿写进本机
+    队列、由人自己找地方发出去 —— 结果是「提了、但没到平台的反馈里」。
+
+    必须是**环境变量**：那个开关按设计只在进程启动时读一次，改 settings.json 不管用。
+
+    断言落在 `MachineLaunch.env` 上，**不是启动脚本里**：这几段 shell 里没有它，env 是
+    由通道并进「会话启动时的那一份环境」的（见 `launch.MachineLaunch` 的 docstring）。
+    我第一版把断言写在 `build_launch_script()` 的输出上，红得莫名其妙 —— 那句话本来就
+    不该在那儿。
+    """
+    holes = device_launch.launch_holes(system_prompt=_PROMPT)
+    assert holes.env["DISABLE_FEEDBACK_COMMAND"] == "1"

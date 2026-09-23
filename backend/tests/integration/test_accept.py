@@ -1,9 +1,8 @@
 """Integration tests for the Accept-card / Review domain (spec §4.4, §6.3).
 
-Exercises the 验收 state machine through the FastAPI TestClient on an in-memory
-SQLite DB: create card -> accept (marks the topic delivered, does NOT archive
-it), the AI-can't-accept-own rule, double-accept, reject, and revoke (clears the
-delivery marker).
+Exercises the 验收 state machine through the FastAPI TestClient on PostgreSQL
+with a simulated remote forge: delivery keeps the room active, agents cannot
+approve their own work, and rejection and revocation preserve task state.
 
 The decision endpoints (accept/reject/revoke/reassign/approve) require a real
 authenticated actor (Authorization: Bearer <session token>) and, for
@@ -13,8 +12,17 @@ test_accept_authorization.py for the security-focused cases.
 
 import uuid
 
+import pytest
+
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
+
+
+@pytest.fixture(autouse=True)
+def remote_delivery(client, app_world):
+    client.test_forge_world = app_world
 
 
 def _make_project(client) -> str:
@@ -44,6 +52,10 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     assert card["status"] == "pending"
     assert card["reviewer_handle"] == reviewer
     assert card["routing_reason"] == "最懂"
+    world = client.test_forge_world
+    number = len(world["fake"].prs) + 1
+    head = _give_card_a_pr(client, world, topic_id, card["id"], number)
+    world["fake"].check_state_by_sha[head] = ("success", "全部通过")
     return card["id"]
 
 
@@ -90,7 +102,7 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
@@ -116,25 +128,25 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
 
 
 def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
-    from app.domain.workspace import service as ws
-
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    def fail_merge(*_args, **_kwargs):
-        raise RuntimeError("git object database unavailable")
+    async def fail_merge(*_args, **_kwargs):
+        raise ConnectionError("remote forge unavailable")
 
-    monkeypatch.setattr(ws, "merge_topic", fail_merge)
+    monkeypatch.setattr(
+        client.test_forge_world["fake"], "merge_pull_request", fail_merge
+    )
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
 
     assert r.status_code == 422
-    assert "could not be merged" in r.json()["message"]
+    assert "合并结果暂时无法确认" in r.json()["message"]
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
     assert cards[0]["approvals"] == []
@@ -150,7 +162,7 @@ def test_ai_cannot_accept_own_work_collaborative(client):
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "cheese"},
+        json={"decided_by": "cheese", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("cheese"),
     )
     assert r.status_code == 422
@@ -170,14 +182,14 @@ def test_double_accept_422(client):
     assert (
         client.post(
             f"/accept-cards/{cid}/accept",
-            json={"decided_by": "alice"},
+            json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
             headers=session_auth_headers("alice"),
         ).status_code
         == 200
     )
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
@@ -223,7 +235,7 @@ def test_reject_then_accept_422(client):
     )
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
@@ -236,7 +248,7 @@ def test_revoke_clears_the_delivery_marker(client):
 
     client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     assert (
@@ -301,7 +313,7 @@ def test_no_new_card_after_delivery(client):
     cid = _make_card(client, tid)
     client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     r = client.post(
@@ -328,7 +340,7 @@ def test_revoke_requires_authority(client):
     cid = _make_card(client, tid)
     client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
 
@@ -368,148 +380,41 @@ def test_revoke_404_for_missing_card(client):
     assert r.status_code == 404
 
 
-def _main_log(pid: str, fmt: str) -> str:
-    import subprocess
-
-    from app.domain.workspace import service as ws
-
-    return subprocess.run(
-        ["git", "log", "-1", f"--format={fmt}", "main"],
-        cwd=ws.ensure_repo(uuid.UUID(pid)),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-
-
-def test_accept_squashes_the_delivery_with_the_cards_words(client):
-    """拍板 #363 (2026-09-07): an unbound project's accept lands ONE squash
-    commit whose subject/body are the card's and whose trailers are pr_text's —
-    same shape as the GitHub lane's product — with 芝士 as the committer. And
-    before anything merges, the card reads CLEAN: no checks exist to wait for,
-    so nothing may dress the wait up as an unknown (#718 的词表)."""
-    import subprocess
-
-    from app.domain.workspace import service as ws
-    from tests.machine_work import machine_commits
-
+def test_accept_sends_the_cards_words_to_the_forge(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    machine_commits(uuid.UUID(pid), delivery_task_id(client, tid), {"a.txt": "one\n"})
-    machine_commits(uuid.UUID(pid), delivery_task_id(client, tid), {"b.txt": "two\n"})
-
-    r = client.post(
-        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
-        headers=delivery_headers(client, tid),
-        json={
-            "change_subject": "feat: deliver a and b",
-            "change_body": "Two files, one delivery.",
-            "reviewer_handle": "alice",
-        },
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["merge_state"]["state"] == "clean"
-    assert card["has_external_checks"] is False
-    assert card["merge_state"]["who"] == "human"
-
-    before = subprocess.run(
-        ["git", "rev-list", "--count", "main"],
-        cwd=ws.ensure_repo(uuid.UUID(pid)),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    r = client.post(
-        f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-
-    after = subprocess.run(
-        ["git", "rev-list", "--count", "main"],
-        cwd=ws.ensure_repo(uuid.UUID(pid)),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert int(after) == int(before) + 1  # two branch commits → one on main
-
-    body = _main_log(pid, "%B")
-    assert body.splitlines()[0] == "feat: deliver a and b"
-    assert "Two files, one delivery." in body
-    assert "Reviewed-by: alice <alice@zhishi.local>" in body
-    assert f"/topics/{tid}" in body
-    assert f"Cheese-Card: {card['id']}" in body
-    parents = _main_log(pid, "%P").split()
-    assert len(parents) == 1  # squashed, not a merge commit
-    committer = _main_log(pid, "%cn %ce").strip()
-    assert committer == "芝士 cheese@zhishi.local"
-
-
-def test_conflict_card_reads_dirty(client, stub_hooks):
-    """The one signal an unbound project has: the last merge hit a conflict.
-    The card then says dirty (芝士处理中), not clean."""
-    import subprocess
-
-    from app.domain.workspace import service as ws
-    from tests.machine_work import machine_commits
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    machine_commits(
-        uuid.UUID(pid), delivery_task_id(client, tid), {"f.txt": "branch version\n"}
-    )
-    repo = ws.ensure_repo(uuid.UUID(pid))
-    (repo / "f.txt").write_text("base version\n", encoding="utf-8")
-    for args in (
-        ["add", "-A"],
-        ["-c", "user.name=x", "-c", "user.email=x@y", "commit", "-q", "-m", "base"],
-    ):
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-
     cid = _make_card(client, tid)
-    r = client.post(
+    response = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "conflict"
+    assert response.status_code == 200, response.text
+    [merge] = client.test_forge_world["fake"].merge_calls
+    assert merge["commit_title"].startswith("chore(test): file an accept card (#")
+    assert "Reviewed-by: alice <alice@zhishi.local>" in merge["commit_message"]
+    assert f"/topics/{tid}" in merge["commit_message"]
+    assert f"Cheese-Card: {cid}" in merge["commit_message"]
 
-    from tests.conftest import wait_work_idle
 
-    wait_work_idle()
-    prompt = stub_hooks.last_prompt or ""
-    assert "cheese worktree" in prompt
-    assert "git merge origin/" in prompt
-    assert "cheese sync --task" in prompt
-    assert "cheese push-fix" not in prompt
-
-    card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert card["merge_state"]["state"] == "dirty"
-    assert card["merge_state"]["who"] == "human"
-
-    # The conflicted accept already materialized the merge (markers committed
-    # on the branch) and dispatched 芝士 — resolving is an ordinary commit in
-    # the topic worktree, and the retry then squashes cleanly.
-    wt = ws.topic_worktree(uuid.UUID(pid), delivery_task_id(client, tid))
-    assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
-    (wt / "f.txt").write_text("resolved version\n", encoding="utf-8")
-    for args in (
-        ["add", "-A"],
-        ["-c", "user.name=芝士", "-c", "user.email=c@z.l", "commit", "-q", "-m", "fix"],
-    ):
-        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
-
-    r = client.post(
+def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client):
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    fake = client.test_forge_world["fake"]
+    number = next(iter(fake.prs))
+    fake.mergeable_by_number[number] = False
+    fake.mergeable_state_by_number[number] = "dirty"
+    response = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "accepted"
-    assert "resolved version" in ws.read_file(uuid.UUID(pid), "f.txt")
-    parents = _main_log(pid, "%P").split()
-    assert len(parents) == 1  # the retry still lands ONE squash commit
+    assert response.status_code == 422, response.text
+    assert "dirty" in response.json()["message"]
+    assert fake.merge_calls == []
+    task = client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
+        "data"
+    ]
+    assert task["status"] == "open"
+    assert task["accepted_at"] is None

@@ -45,7 +45,7 @@ jobs:
   # Gate on the release commit's build + tests. Only for release events; a manual
   # dispatch trusts the operator's chosen ref.
   wait-for-ci:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !startsWith(github.event.release.tag_name, 'forgejo-cli-')
     runs-on: ubuntu-latest
     # Deliberately unbounded: this blocks until the release commit's CI
     # finishes, which is however long the box's queue is that day.
@@ -98,7 +98,7 @@ jobs:
         uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
         with:
           secret: ${{ github.token }}
-          approvers: andylizf
+          approvers: andylizf,HuanCheng65
           minimum-approvals: 1
           issue-title: "Approve production deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
           issue-body: "Deploying to the etrip production box. Comment `approve` to proceed or `deny` to cancel."

@@ -14,8 +14,6 @@
 # Env (with safe defaults baked into the compose file):
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
-#   VIKING_HOST_PATH   host dir holding the openviking memory tree (created by
-#                      this script if missing; default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
 #                      enrolling machines (same treatment; default in compose)
 #   TRANSCRIPTS_HOST_PATH  host dir holding the transcript archives uploaded
@@ -79,7 +77,13 @@ export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 # runner's per-run re-checkout, so the deploy carries them itself — no box-side
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
+case " $COMPOSE_OVERLAYS " in
+  *docker-compose.forgejo.yml*) ;;
+  *) COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:+$COMPOSE_OVERLAYS }docker-compose.forgejo.yml" ;;
+esac
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
+FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
+FORGE_EXECUTOR_RESTART="$(dirname "$FORGE_CUTOVER_PENDING")/restart-host-executor"
 
 # Only environments wired for sibling agent containers need the large runtime
 # images. Dev's subscription overlay is that signal; production app-only boxes
@@ -119,28 +123,154 @@ ensure_device_connection_owner() {
   fail "device connection owner is not healthy; the running backend was not touched"
 }
 
-reload_api_front_routes() {
+ensure_forgejo() {
+  local container waited=0
+  container="$(dc ps -q forgejo 2>/dev/null | head -n 1 || true)"
+  if [ -z "$container" ] || [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != true ]; then
+    dc up -d --no-deps forgejo || fail "repository service did not start"
+  fi
+  while [ "$waited" -lt 90 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/healthz" >/dev/null; then
+      log "repository service is healthy; its data volume survives app releases"
+      container="$(dc ps -q forgejo)"
+      python3 "$HERE/bootstrap-forgejo.py" \
+        --container "$container" \
+        --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+        --api-url "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/v1" \
+        || fail "repository administrator setup failed; app release aborted"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "repository service is not healthy; app release aborted"
+}
+
+ensure_forge_events() {
+  [ "$FORGE_EVENTS_LOCAL" = true ] || return 0
+  local waited=0 public_config
+  public_config="$(dc run --rm --no-deps backend python -m scripts.forge_event_public_key)" \
+    || fail "could not export the GitHub App public key"
+  printf '%s' "$public_config" | python3 "$HERE/bootstrap-forgejo.py" \
+    --configure-github-events \
+    --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+    --relay-env "$FORGE_EVENTS_ENV_FILE" \
+    || fail "could not configure GitHub event subscriptions"
+  dc up -d --no-deps forge-events || fail "forge event relay did not start"
+  while [ "$waited" -lt 60 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then
+      log "forge event relay is healthy"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "forge event relay is not healthy; app release aborted"
+}
+
+migrate_project_repositories() {
+  local pending=0 legacy
+  # The backend's persistent HOME keeps immutable source backups and receipts.
+  # Check before stopping writers: later releases retain their normal rollout.
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --check || pending=$?
+  case "$pending" in
+    0) log "all project repositories have migration receipts"; return 0 ;;
+    2) ;;
+    *) fail "repository migration preflight failed; running backend was not touched" ;;
+  esac
+  log "pausing repository writers for the first forge migration"
+  mkdir -p "$(dirname "$FORGE_CUTOVER_PENDING")"
+  touch "$FORGE_CUTOVER_PENDING"
+  dc stop backend || fail "could not stop repository writers"
+  # Native sessions can share the legacy worktrees without a Docker mount.
+  # Retain the restart receipt across failures, just like the cutover guard.
+  if command -v systemctl >/dev/null && systemctl is-active --quiet cheese.service; then
+    [ "$(systemctl show cheese.service -p KillMode --value)" = control-group ] \
+      || fail "host executor preserves child processes on stop; quiesce its sessions before retrying migration"
+    touch "$FORGE_EXECUTOR_RESTART"
+    sudo -n systemctl stop cheese.service || fail "could not stop the host executor"
+  fi
+  # This service is absent from the new compose file but may still be running
+  # from the previous release; stop it before freezing its receive-pack store.
+  while IFS= read -r legacy; do
+    [ -z "$legacy" ] || docker stop "$legacy" \
+      || fail "could not stop the previous Git receiver"
+  done < <(docker ps -q \
+    --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter "label=com.docker.compose.service=git")
+  sudo -n python3 "$HERE/check-forge-workspace-writers.py" \
+    "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
+    || fail "legacy workspace users remain; migration has not started"
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --apply --writers-stopped \
+    || fail "repository migration failed; writers remain stopped; retry this release to resume from receipts"
+  log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
+}
+
+ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup
+  local config backup frontend_backup changed=false router_changed=false port
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
-  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" && return 0
+  # Seed from the actual serving frontend, including a successor left serving
+  # by an interrupted rollout. Never guess the target during migration.
+  if [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
+    port="${FRONTEND_PORT:-8080}"
+    if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+      port="$(sed -n 's/^upstream frontend_active { server 127\.0\.0\.1:\([0-9]*\); }.*/\1/p' "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
+      [ -n "$port" ] || fail "cannot identify the serving frontend before ingress migration"
+    fi
+    printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$port" > "$ACTIVE_BACKEND_DIR/frontend.conf"
+  fi
+  if ! cmp -s "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"; then
+    [ ! -f "$ACTIVE_BACKEND_DIR/app-router.conf" ] || router_changed=true
+    cp "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"
+  fi
+  ACTIVE_BACKEND_DIR="$ACTIVE_BACKEND_DIR" docker compose \
+    -p cheese-dataplane -f "$HERE/llm-tunnel/app-router-compose.yml" up -d app-router \
+    || fail "cannot start application router; the existing ingress was not changed"
+  docker exec cheese-app-router nginx -t || fail "application router config rejected"
+  if [ "$router_changed" = true ]; then
+    docker exec cheese-app-router nginx -s reload || fail "application router could not reload"
+  fi
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    curl -fsS -m 3 http://127.0.0.1:18086/ >/dev/null \
+      || fail "application router cannot reach the serving frontend"
+  fi
+
   backup="${config}.pre-device-connection"
   cp "$config" "$backup"
-  cp "$HERE/llm-tunnel/nginx.conf" "$config"
+  if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
+    cp "$HERE/llm-tunnel/nginx.conf" "$config"
+    changed=true
+  fi
+  frontend_backup=""
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
+    cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
+    bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT"
+    cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
+  fi
+  if [ "$changed" = false ]; then
+    rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+    return 0
+  fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
     cp "$backup" "$config"
+    [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
     rm -f "$backup"
     fail "api-front rejected the device connection route; restored its config"
   fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -s reload; then
     cp "$backup" "$config"
+    [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
     docker exec "$API_FRONT_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
     rm -f "$backup"
     fail "api-front could not reload the device connection route; restored its config"
   fi
-  rm -f "$backup"
-  log "api-front now routes device WebSockets to the stable connection owner"
+  rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+  log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
 }
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
@@ -168,6 +298,23 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
+
+event_environment="$(python3 "$HERE/bootstrap-forgejo.py" --configure-events \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+  ${FORGE_EVENTS_ENV_FILE:+--relay-env "$FORGE_EVENTS_ENV_FILE"})" \
+  || fail "event relay configuration failed; running services were not touched"
+eval "$event_environment"
+if [ "$FORGE_EVENTS_LOCAL" = true ]; then
+  COMPOSE_OVERLAYS="$COMPOSE_OVERLAYS $HERE/forge-events/compose.yml"
+  export FORGE_EVENTS_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
+fi
+
+# Every deployment needs a repository service for projects without GitHub.
+# Preparation emits only shell-quoted public addresses, never credentials.
+forge_environment="$(python3 "$HERE/bootstrap-forgejo.py" --prepare \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}")" \
+  || fail "repository configuration failed; running services were not touched"
+eval "$forge_environment"
 
 # Resolve overlays now that fail() is defined; abort if deploy.env names one that
 # was not checked out, rather than silently deploying without the wiring.
@@ -457,34 +604,20 @@ fi
 
 log_disk "after pull"
 
+ensure_forgejo
+ensure_forge_events
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
-# The backend now runs as the same uid as the sandbox's `node` (1000) so the two
-# stop locking each other out of the shared git store — see
-# fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
-# hands once, BEFORE the new backend starts and finds it cannot read them.
-# Idempotent: a marker in each path makes later deploys a no-op.
-# APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
-# and git reads its global config out of there.
+# Persistent files must be readable by the backend's uid (1000), including
+# legacy repository files that the migration archives. Ownership repair uses
+# a marker in each path so later releases leave existing ownership alone.
+# APPHOME contains the backend's persistent configuration and migration receipts.
 #
-# ORDER MATTERS, and it is why this block sits here rather than before the
-# migration. Handing 2.2M files to another uid is the one step of this deploy
-# that cannot be undone by simply not proceeding: whatever fails after it leaves
-# the box holding a backend of one uid and a workspace tree of another, which is
-# a project-wide 422 on the file panel. It ran before the migration and the
-# credential check until 2026-08-11, when the credential check aborted
-# deploy-dev *after* the trees had already moved and took dev down until the
-# next deploy (run 31466502982). So: last fallible step first, irreversible step
-# last, and nothing between it and `dc up` that can fail.
-VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
-# Create it here, not by letting the bind mount conjure it: a missing source
-# path makes docker create it as root:root, and the backend (uid 1000) then
-# cannot write the memory tree it was just told to keep there. Making it first
-# also puts it in reach of the handover below, which skips paths that do not
-# exist yet.
-mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
+# Schema and credential checks precede ownership repair. Repository migration
+# follows it because the new backend uid must read the old workspace files;
+# a failed repository migration leaves writers stopped until a release retries.
 # Same story for the claude binaries the backend serves to the machines it
 # enrols: a cache the container has to be able to write, and that has to
 # outlive the container (see the compose file).
@@ -504,7 +637,6 @@ OWNERSHIP_PATHS=(
   "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}"
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
-  "$VIKING_PATH"
   "$CLAUDE_CACHE_PATH"
   "$PI_CACHE_PATH"
   "$TRANSCRIPTS_PATH"
@@ -519,12 +651,15 @@ OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
 rm -f "$OWNERSHIP_REPORT"
 
+migrate_project_repositories
+
 # ---- Backend rollout without downtime (boxes with an api-front switch) ----
-# ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
-# deploy/llm-tunnel) reads its backend upstream from. When it is set, the
+# ACTIVE_BACKEND_DIR names the directory app-router reads its upstreams from.
+# The persistent api-front routes business traffic to this separate process.
+# When it is set, the
 # backend is not recreated in place: a second container comes up on the new
-# image first, api-front is pointed at it, the compose backend is recreated
-# behind it, api-front is pointed back, and the second container goes away.
+# image first, app-router is pointed at it, the compose backend is recreated
+# behind it, app-router is pointed back, and the second container goes away.
 # The box's :8081 — and the frontend's /api, which a rollout box points at it
 # (API_UPSTREAM) — never has a moment without a healthy backend behind it.
 # Measured before this existed: every deploy cut the backend for the ~13 s the
@@ -537,7 +672,13 @@ API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_PORT="${BACKEND_PORT:-8081}"
 BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
-DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-5}"
+# app-router retires workers after 30s; allow the signal one second to arrive
+# before removing their upstream. Longer business streams still reconnect.
+DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
+if [ "$DRAIN_SECONDS" -lt 31 ]; then
+  log "raising application drain from ${DRAIN_SECONDS}s to 31s to cover the nginx worker deadline"
+  DRAIN_SECONDS=31
+fi
 NEXT_BACKEND="${PROJECT}-backend-next"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -582,9 +723,9 @@ switch_active_backend() {
   # Rename, never rewrite in place: nginx re-reads the file on reload and a
   # half-written one would take the whole server config down with it.
   mv -f "$tmp" "$ACTIVE_BACKEND_DIR/backend.conf"
-  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
-    || fail "api-front did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
-  log "api-front now sends backend traffic to $target"
+  docker exec cheese-app-router nginx -s reload \
+    || fail "app-router did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
+  log "app-router now sends backend traffic to $target"
 }
 
 # $1 = host port, $2 = what is expected there. Polls the published port from
@@ -605,6 +746,9 @@ wait_for_healthz() {
 }
 
 rollout_backend() {
+  if grep -Fq "server 127.0.0.1:$BACKEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/backend.conf"; then
+    fail "backend router is still on :$BACKEND_PORT_NEXT from a previous rollout; recover it before redeploying"
+  fi
   docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
   log "starting the next backend as $NEXT_BACKEND on :${BACKEND_PORT_NEXT}…"
   # A one-off from the service definition: same image, env file, mounts and
@@ -619,6 +763,7 @@ rollout_backend() {
     fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
+  sleep "$DRAIN_SECONDS"
   log "recreating backend on the new image behind ${NEXT_BACKEND}…"
   dc up -d --no-deps backend \
     || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
@@ -635,13 +780,14 @@ rollout_backend() {
 
 switch_active_frontend() {
   local port="$1" previous
-  previous="$(cat "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
-  bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" "$port" "$FRONTEND_PROXY_PORT"
-  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
-    printf '%s\n' "$previous" > "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+  previous="$(cat "$ACTIVE_BACKEND_DIR/frontend.conf")"
+  printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$port" > "$ACTIVE_BACKEND_DIR/frontend.conf.next"
+  mv "$ACTIVE_BACKEND_DIR/frontend.conf.next" "$ACTIVE_BACKEND_DIR/frontend.conf"
+  if ! docker exec cheese-app-router nginx -t; then
+    printf '%s\n' "$previous" > "$ACTIVE_BACKEND_DIR/frontend.conf"
     fail "frontend proxy configuration rejected; running nginx was not reloaded"
   fi
-  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+  docker exec cheese-app-router nginx -s reload \
     || fail "frontend proxy reload failed; both frontends remain running"
   log "frontend proxy now sends traffic to :$port"
 }
@@ -665,7 +811,7 @@ rollout_frontend() {
   [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
   # A failed prior switch may still be using this container. Never remove it
   # automatically while the standing proxy names its port.
-  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"; then
+  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/frontend.conf"; then
     fail "frontend proxy is still on :$FRONTEND_PORT_NEXT from a previous rollout; recover it before redeploying"
   fi
   docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
@@ -692,13 +838,16 @@ rollout_frontend() {
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
-reload_api_front_routes
+ensure_application_router
 check_session_base_survives_release
 
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
     || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
   rollout_backend
+  # Forge migration stops the old backend. Probe the routed backend only after
+  # its replacement is serving, including retries from a persisted cutover.
+  wait_for_healthz 18085 "application router" || fail "application router is not healthy"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     rollout_frontend
   else
@@ -770,6 +919,9 @@ done
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
   printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
+  if [ -f "$FORGE_CUTOVER_PENDING" ]; then
+    fail "repository migration completed; refusing to restart the legacy repository writer; retry this release from migration receipts"
+  fi
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
     # Rolling the images back without rolling the ownership back is not a
@@ -800,6 +952,14 @@ if [ "$code" != ok ]; then
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
+
+# Keep the cutover guard across failed releases until the new app is healthy.
+if [ -f "$FORGE_EXECUTOR_RESTART" ]; then
+  sudo -n systemctl start cheese.service || fail "could not restore the host executor"
+  systemctl is-active --quiet cheese.service || fail "host executor did not become active"
+  rm -f "$FORGE_EXECUTOR_RESTART"
+fi
+rm -f "$FORGE_CUTOVER_PENDING"
 
 # Host clock survives API rollouts. Non-systemd installations must arrange an
 # external minute trigger; startup/reconnect recovery alone is not a timer.

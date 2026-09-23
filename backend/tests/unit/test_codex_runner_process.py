@@ -26,7 +26,6 @@ from app.domain.agent.service import AgentMessage, AgentResult
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(shutil.which("codex") is None, reason="Codex binary required")
 @pytest.mark.parametrize("attempt_host_write", [False, True])
 async def test_standalone_owner_survives_client_disconnect(
     tmp_path, attempt_host_write
@@ -241,7 +240,7 @@ async def test_standalone_owner_survives_client_disconnect(
             assert not CodexBacklog(mirror).unread()
             consume, activity = AsyncMock(), AsyncMock()
             subscription = Subscription(
-                SessionRef(uuid.uuid4(), uuid.uuid4()),
+                SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex"),
                 tmp_path / "subscription.sqlite",
                 rpc,
                 consume,

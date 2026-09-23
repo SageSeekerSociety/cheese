@@ -11,8 +11,10 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final, NoReturn
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
@@ -20,11 +22,11 @@ from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
-    EVENT_ACCEPT_CONFLICT,
     EVENT_ACCEPT_DISMISSED,
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_READY,
     EVENT_ACCEPT_STOPPED,
+    EVENT_ARTIFACT_DECLARED,
     EVENT_CARD_FILED,
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -44,12 +46,18 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.runtime import addressed_to_agent
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.library import service as library
 from app.domain.membership.repositories import MemberRepository
+from app.domain.project import artifacts
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import identity
 from app.domain.review import (
     archive,
     commit_message,
@@ -61,7 +69,12 @@ from app.domain.review import (
 )
 from app.domain.review import forge as forge_mod
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
-from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
+from app.domain.review.models import (
+    AcceptCard,
+    AcceptStatus,
+    DeliverableKind,
+    GateOutcome,
+)
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.room_task.models import Task, TaskStatus
@@ -69,8 +82,8 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.webhook import service as webhook_service
-from app.domain.workspace import identity
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -83,13 +96,6 @@ logger = logging.getLogger("cheesex.review")
 #
 # 不带 emoji：卡自己按 `note_level` 画轻重（前端 TopicAcceptCard），开头再放一个
 # 表情就是同一件事说两遍——一遍是结构，一遍是屏幕阅读器会念出来的一个字符。
-#: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
-#: for_github_pr` 是**非强制**推送，一旦本地分支被 rebase / reset 挪到了 PR
-#: 分支的祖先或旁支上，plain push 就会
-#: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
-#: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
-#: note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
-_REPUSH_DIVERGED_PREFIX = "本地分支与 PR 分支已分叉"
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
@@ -181,19 +187,14 @@ _NUDGE_TAIL_LIMIT = 4000
 def _ci_log_howto(repo_full_name: str) -> str:
     """The "where do I read the rest" paragraph of a CI-failure nudge.
 
-    The excerpt above it is deliberately short, so the message has to say how
-    to get the whole thing — and that path was undocumented everywhere 芝士
-    can read (not in `.claude/`, not in `CLAUDE.md`): the token is a
-    `cheese gh-token` away, but nothing told it so, and nothing told it the
-    repo's name either, which `gh api repos/:owner/:repo/...` needs. Both are
-    in hand right here, at the one moment they're wanted.
+    Name the repository so the native CLI can fetch the complete job log.
+    The launcher supplies credentials for this invocation.
     """
     repo = repo_full_name or "<owner>/<repo>"
     return (
         "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
         "要看完整日志，在本话题的工作区里跑：\n"
         "```bash\n"
-        "export GH_TOKEN=$(cheese gh-token)   # 本仓库的 GitHub token，约 1 小时过期\n"
         f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
         "```\n"
         "（`<job_id>` 就是上面 Actions 链接里 `/job/` 后面那串数字；"
@@ -344,6 +345,104 @@ def approvals_required_of(project: Project | None) -> int:
     return branch_protection_of(project).approvals_required
 
 
+#: 交文件、交地址的交付要说清动的是清单上哪一项 —— 沿用一项，或者声明一项新的
+#: (#1085 结论三)。两个参数而不是一个，是因为「沿用」和「新建」是两个不同的动作：
+#: 合成一个参数的话，写错的名字会被当成新建，而那是错得最安静的一种 ——
+#: `报告` 和 `结题报告` 都是合法名字，清单于是多出一项看着像重复的东西，并且从此
+#: 每一轮的开场都带着它。
+#:
+#: 合并型的交付走不到这里，见 `_ARTIFACT_ACTION_UNWANTED`。
+_ARTIFACT_ACTION_MISSING = (
+    "没说这次交付动的是哪一项产物。交出去一份文件或一个地址时，两种说法选一种：\n"
+    "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
+    "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
+    "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
+    "新建的那一次会把新的 id 返回来。"
+)
+
+_ARTIFACT_ACTION_BOTH = (
+    "--artifact 和 --new-artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
+    "要么做出了一样清单上还没有的东西。"
+)
+
+#: 合并交出去的是项目那个仓库本身，而一个项目只有一个仓库 —— 没有什么可判断的，
+#: 所以这里不收声明，平台自己认得出是哪一项。
+#:
+#: 打回而不是默默忽略：一个收下了却不起作用的参数，读起来跟起了作用一模一样，而
+#: 传它的那一方正以为自己说清了一件要紧的事。
+_ARTIFACT_ACTION_UNWANTED = (
+    "合并交出去的是这个项目的仓库本身，不用声明产物 —— 平台认得出是清单上哪一项，"
+    "这次交付会成为它的新一版。--artifact / --new-artifact / --about 是交一份文件"
+    "（--deliver）或一个地址（--deliver-url）时才要说的。"
+)
+
+
+def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None:
+    reuse, claim = (artifact or "").strip(), (new_artifact or "").strip()
+    if reuse and claim:
+        raise ValidationError(_ARTIFACT_ACTION_BOTH)
+    if not reuse and not claim:
+        raise ValidationError(_ARTIFACT_ACTION_MISSING)
+
+
+def _no_artifact_action(
+    artifact: str | None, new_artifact: str | None, about: str | None
+) -> None:
+    """合并那条路上，这三个参数一个都不收。
+
+    `about` 一起挡掉，理由和另外两个一样：那一句话是给下一次交付判断「我做出来的
+    是不是它的新一版」用的，而合并那条路上没有这个判断 —— 交出去的是这个项目的仓
+    库，它是哪一项不需要任何人读一句话才知道。收下一个不起作用的参数，读起来跟起
+    了作用一模一样。
+    """
+    if (
+        (artifact or "").strip()
+        or (new_artifact or "").strip()
+        or (about or "").strip()
+    ):
+        raise ValidationError(_ARTIFACT_ACTION_UNWANTED)
+
+
+#: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
+#: 那就是交出去这次合并本身（代码仓库这类项目交的就是主干往前走一步）。
+_DELIVERABLE_BOTH = (
+    "--deliver 和 --deliver-url 只能给一个：这次交出去的要么是一份文件，"
+    "要么是一个地址。"
+)
+
+#: 单份交付物的上限。成品不进库，所以这个数管的是平台那块盘，而不是用户的仓库。
+_DELIVERABLE_MAX_BYTES = 80 * 1024 * 1024
+
+
+def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
+    path, url = (deliver or "").strip(), (deliver_url or "").strip()
+    if path and url:
+        raise ValidationError(_DELIVERABLE_BOTH)
+    if url and not url.startswith(("http://", "https://")):
+        raise ValidationError(
+            "--deliver-url 要是一个能打开的网址（http:// 或 https://）"
+        )
+
+
+async def _read_deliverable(
+    session: AsyncSession, project_id: uuid.UUID, task_id: uuid.UUID, path: str
+) -> tuple[str, bytes]:
+    """把交付物从这一轮的工作目录里读出来，连同它的文件名。
+
+    读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
+    """
+    from app.domain.repository.forge_files import ProjectFiles
+
+    data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
+    if len(data) > _DELIVERABLE_MAX_BYTES:
+        raise ValidationError(
+            f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
+            f"{_DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
+            "交出去的是一个地址时用 --deliver-url 记地址。"
+        )
+    return PurePosixPath(path).name, data
+
+
 class AcceptService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -456,6 +555,11 @@ class AcceptService:
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
+        artifact: str | None = None,
+        new_artifact: str | None = None,
+        about: str | None = None,
+        deliver: str | None = None,
+        deliver_url: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -470,26 +574,71 @@ class AcceptService:
             subject = commit_message.check_subject(subject)
         except commit_message.InvalidSubject as exc:
             raise ValidationError(str(exc)) from exc
+        # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
+        # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
+        #
+        # 交出去的是什么，决定了产物还要不要声明 —— 所以先问这一句。合并交出去的
+        # 是项目那个仓库，一个项目只有一个，平台自己认得出；只有交文件、交地址才
+        # 真的有得选。
+        _one_deliverable(deliver, deliver_url)
+        hands_over_repository = (
+            not (deliver or "").strip() and not (deliver_url or "").strip()
+        )
+        if hands_over_repository:
+            _no_artifact_action(artifact, new_artifact, about)
+        else:
+            _one_artifact_action(artifact, new_artifact)
+        about = artifacts.clean_about(about, subject=subject)
         existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        from app.domain.workspace import service as ws
+        from app.domain.repository.forge_files import ProjectFiles
 
-        if not await asyncio.to_thread(
-            ws.branch_has_commits,
-            task.project_id,
-            task.branch_name,
-            base=task.base_branch,
-        ):
+        comparison = await ProjectFiles(
+            self._session, task.project_id, task.id
+        ).comparison()
+        if not comparison or not comparison.get("total_commits"):
             raise ValidationError(f"任务分支 {task.branch_name} 没有可交付的提交")
         reviewer_handle = await self._reviewer_or_project_default(
             await self._projects.get(topic.project_id),
             reviewer_handle,
             from_work=[task],
         )
+        # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
+        # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
+        # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
+        # 在清单上留下一项。
+        handed_over = (deliver or "").strip()
+        snapshot = (
+            await _read_deliverable(
+                self._session, task.project_id, task.id, handed_over
+            )
+            if handed_over
+            else None
+        )
+        is_new = bool((new_artifact or "").strip())
+        if hands_over_repository:
+            project = await self._projects.get(topic.project_id)
+            declared = await artifacts.for_repository(
+                self._session,
+                project_id=topic.project_id,
+                project_name=project.name if project else "项目",
+            )
+        elif is_new:
+            declared = await artifacts.claim(
+                self._session,
+                project_id=topic.project_id,
+                name=new_artifact or "",
+                about=about,
+            )
+        else:
+            declared = await artifacts.reuse(
+                self._session, project_id=topic.project_id, artifact_id=artifact or ""
+            )
+            await artifacts.describe(self._session, declared, about=about)
         card = await self._repo.add(
             topic_id=topic_id,
             task_id=task.id,
@@ -499,13 +648,37 @@ class AcceptService:
             change_subject=subject,
             change_body=change_body or None,
             delivered_task_ids=[task.id],
+            artifact_id=declared.id,
+            # 和上面那个「要不要声明产物」问的是同一句话，所以答案从同一个地方来：
+            # 两处各算一次的话，有一天它们会对不上，而对不上的那一天没有任何报错。
+            deliverable_kind=(
+                DeliverableKind.merge
+                if hands_over_repository
+                else DeliverableKind.file
+                if snapshot is not None
+                else DeliverableKind.link
+            ),
+            deliverable_name=snapshot[0] if snapshot else None,
+            deliverable_url=(deliver_url or "").strip() or None,
         )
+        if snapshot is not None:
+            await asyncio.to_thread(
+                library.write_artifact_snapshot,
+                task.project_id,
+                card.id,
+                snapshot[0],
+                snapshot[1],
+            )
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
-        await self._announce_filed(topic, card, task)
+        await self._announce_filed(topic, card, task, artifact=declared.name)
+        if is_new:
+            await self._announce_new_artifact(topic, declared.name)
         await self._warn_about_a_second_pending_migration(topic, task.id)
         return card
 
-    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
+    async def _announce_filed(
+        self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
+    ) -> None:
         """递卡说一声，并通知等着这件事的两个人。
 
         卡的每一种结局在房间里都有一行 —— 驳回、作废、改描述、合了、卡住了 ——
@@ -528,7 +701,7 @@ class AcceptService:
         await announce(
             self._session,
             place_id=topic.id,
-            content=f"验收卡已提交，待 {card.reviewer_handle} 验收",
+            content=(f"《{artifact}》的这次更新已提交，待 {card.reviewer_handle} 验收"),
             meta=notice(
                 EVENT_CARD_FILED,
                 severity=SEVERITY_INFO,
@@ -536,7 +709,40 @@ class AcceptService:
                 detail=detail or None,
                 detail_label="这次改动",
             ),
-            recipients=(card.reviewer_handle, task.reporter_handle or ""),
+            points_at=Event(
+                reviewers=(card.reviewer_handle,),
+                reporter=task.reporter_handle,
+            ),
+        )
+
+    async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
+        """清单上多出一项 —— 在房间里说一声 (#1085 结论三)。
+
+        新建产物是少见动作：一个项目交出去的东西就那么几样，往后每一次交付都沿用
+        同一个名字。而它错起来是无声的 —— 把《报告》写成《结题报告》不会报错，只
+        会在清单上多一项看着像重复的东西，然后这份清单进了每个新房间的开场，错的
+        那一项从此在每一轮里重复一遍。所以这一下当场说出来，就在声明它的那一轮
+        里，那时人还认得出这是不是他要的名字。
+
+        展开区里摆的是清单现在的全部内容 —— 判断「这是不是刚才那一项换了个说法」
+        要的正是把两个名字放在一起看，而这一行本身只说得出新的那一个。
+        """
+        listed = await artifacts.list_for_project(self._session, topic.project_id)
+        await announce(
+            self._session,
+            place_id=topic.id,
+            content=f"这次交付新建了产物《{name}》，此前项目里没有这一项",
+            meta=notice(
+                EVENT_ARTIFACT_DECLARED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail="\n".join(
+                    f"《{a.name}》"
+                    + (f" 第 {a.version} 版" if a.version else " 尚未交付")
+                    for a in listed
+                ),
+                detail_label="项目现在的产物清单",
+            ),
         )
 
     async def _warn_about_a_second_pending_migration(
@@ -560,16 +766,23 @@ class AcceptService:
         Best-effort throughout: a git read that fails, or a room that won't take
         the message, must never stop someone filing a card.
         """
-        from app.domain.workspace import service as ws
+        from app.domain.repository.forge_files import ProjectFiles
 
-        def migrations(topic_id: uuid.UUID) -> list[str]:
+        async def migrations(task_id: uuid.UUID) -> list[str]:
             try:
-                added = ws.topic_added_files(topic.project_id, topic_id)
+                comparison = await ProjectFiles(
+                    self._session, topic.project_id, task_id
+                ).comparison()
+                added = [
+                    entry["filename"]
+                    for entry in (comparison or {}).get("files", [])
+                    if entry.get("status") == "added"
+                ]
             except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
                 return []
             return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
 
-        mine = migrations(task_id)
+        mine = await migrations(task_id)
         if not mine:
             return
         others = await self._repo.list_live_in_project(
@@ -580,7 +793,7 @@ class AcceptService:
             for other in others
             if other.task_id is not None
             and other.task_id != task_id
-            and migrations(other.task_id)
+            and await migrations(other.task_id)
         ]
         if not collisions:
             return
@@ -651,7 +864,9 @@ class AcceptService:
         cards = await self._repo.list_for_topic(topic_id)
         return cards, len(cards)
 
-    async def open_pr_card_ids(self) -> list[uuid.UUID]:
+    async def open_pr_card_ids(
+        self, project_id: uuid.UUID | None = None
+    ) -> list[uuid.UUID]:
         """Pending PR cards and returned batches awaiting external merge.
 
         只回 id 不回对象：调度器一张卡一个事务，跨事务复用 ORM 对象拿到的是过期状态。
@@ -661,7 +876,7 @@ class AcceptService:
         孤儿卡修复 (2026-08-10) 的那条判据也在这里面：已归档话题上的卡不算——
         跟进它们等于拿 GitHub 凭据去动没人跟的活儿。
         """
-        cards = await self._repo.list_awaiting_merge_on_active_topics()
+        cards = await self._repo.list_awaiting_merge_on_active_topics(project_id)
         return [c.id for c in cards]
 
     async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
@@ -708,15 +923,104 @@ class AcceptService:
         # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。
         level = notes.note_level(card.note_code, card.note)
         data["note_level"] = level.value if level else None
+        # 这次交付更新的是哪一项产物。卡面上要有它：验收的人正在决定这一版要不要
+        # 成为《报告》的当前版本，而卡上别的字段一个都没说出这件事。
+        declared = (
+            await artifacts.summary(self._session, card.artifact_id)
+            if card.artifact_id is not None
+            else None
+        )
+        data["artifact"] = (
+            None
+            if declared is None
+            else {
+                "id": str(declared.id),
+                "name": declared.name,
+                # 这张卡自己是第几版。`ArtifactSummary.version` 数的是已采纳的卡
+                # （`artifacts._claims`），所以还没采纳的这一张要自己加上一版：人
+                # 正在决定的是「这一版要不要成为《报告》的当前版本」，卡上写着前
+                # 一版的号码等于把他要定的那件事写错。
+                "version": declared.version
+                + (0 if card.status is AcceptStatus.accepted else 1),
+            }
+        )
+        # 这一版交出去的是什么。卡面上要有它，因为验收的人要审的正是这一份：文件
+        # 在递卡那一刻就落下来了，所以他能在点采纳之前打开它。
+        data["deliverable"] = (
+            None
+            if card.deliverable_kind is None
+            else {
+                "kind": card.deliverable_kind.value,
+                "filename": card.deliverable_name,
+                "url": card.deliverable_url,
+            }
+        )
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
-        forge = await self._resolve_forge(topic.project_id, card=card)
-        data["has_external_checks"] = forge.has_external_checks
+        try:
+            forge: forge_mod.Forge | None = await self._resolve_forge(
+                topic.project_id, card=card
+            )
+        except ValidationError:
+            # 读一张卡不是挑一条车道。采纳那一侧照旧 fail-closed（#362）：读不出
+            # 事实就拒绝，绝不摸黑合一次。但这条读路径上同样的失败过去会把整个
+            # 卡列表端点打成 422 —— 一个项目的 git 出问题，所有项目的卡都看不
+            # 了。这里改成在卡面上如实说「暂时读不出」，失败一点没被盖住（I19），
+            # 只是不再连累别的卡。
+            forge = None
+        caps = forge.capabilities if forge is not None else None
+        # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
+        # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
+        #
+        # 「项目有没有绑外部仓库」不在这里（不变量 I21②）。它是一个能力位，由
+        # `PlatformForge` 读去决定卡上说哪句话，说完就已经在 `declaration` 里；
+        # 再发一遍，就是把那个布尔摆到产品面前请它自己分叉，而这正是按能力分派
+        # 要取消的那件事。
+        data["forge"] = (
+            {
+                "kind": forge.kind.value,
+                "reports_checks": caps.reports_checks,
+                "hosts_proposals": caps.hosts_proposals,
+                "can_write_remote": caps.can_write_remote,
+                "pushes_to_external_remote": caps.pushes_to_external_remote,
+                "identity": caps.identity.value,
+                "declaration": forge.declaration,
+            }
+            if forge is not None and caps is not None
+            else {
+                "kind": forge_mod.FORGE_KIND_UNKNOWN,
+                # 一位都不敢说是，因为一位都没读出来。界面上每一处「这个托管方能
+                # 做什么」的判断因此都收敛到最保守的那一边。
+                "reports_checks": False,
+                "hosts_proposals": False,
+                "can_write_remote": False,
+                "pushes_to_external_remote": False,
+                "identity": forge_mod.ForgeIdentity.platform.value,
+                "declaration": forge_mod.FORGE_UNKNOWN_DECLARATION,
+            }
+        )
         data["approvals_required"] = approvals_required_of(project)
         # External checks stay unknown until the PR has a mirrored state.
         # Local acceptance has no checks; only a recorded merge conflict blocks it.
-        if forge.has_external_checks:
+        if caps is None:
+            # 按钮灰着，理由就写在卡上：后端这会儿真去采纳也会拒（同一个失败），
+            # 所以闸门和采纳还是同一条线。
+            data["merge_state"] = {
+                "state": "unknown",
+                "who": "platform",
+                "reasons": [
+                    {
+                        "kind": "no_signal",
+                        "checks": [],
+                        "detail": forge_mod.FORGE_UNKNOWN_DECLARATION,
+                    }
+                ],
+                "head_sha": None,
+                "checked_at": None,
+                "since": None,
+            }
+        elif caps.reports_checks:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
                 "state": "unknown",
@@ -757,8 +1061,9 @@ class AcceptService:
 
         data["auto_merge"] = {
             "allowed": (
-                branch_protection_of(project).auto_merge_allowed
-                and forge.has_external_checks
+                caps is not None
+                and branch_protection_of(project).auto_merge_allowed
+                and caps.reports_checks
                 and card.pr_number is not None
             ),
             "armed_by": card.auto_merge_armed_by,
@@ -1025,7 +1330,6 @@ class AcceptService:
         读 head 是尽力而为：读不到就刷新一张没有 head 的卡（轮询器下一跳会补
         上），但**绝不**因此放行——放行的前提是人看过某一版，读不到 head 恰恰
         说明没有任何一版可看。"""
-        from app.domain.review import github_pr
 
         number = card.pr_number
         assert number is not None  # PR lane only; the caller checked
@@ -1036,7 +1340,8 @@ class AcceptService:
         else:
             try:
                 owner, repo = await self._pr_repo_of(card, topic)
-                live = await github_pr.default_client().pull_request_head_sha(
+                client = await self._status_client(topic.project_id)
+                live = await client.pull_request_head_sha(
                     owner=owner, repo=repo, number=number, token=creds.read
                 )
             except Exception as exc:  # noqa: BLE001 — refuse anyway; refresh with what we have
@@ -1127,383 +1432,110 @@ class AcceptService:
             return await self._merge_pr_for_accept(
                 card, topic, decided_by, seen_head=seen_head
             )
-        if (card.change_subject or "").strip():
+        work = (
+            await TaskService(self._session).get(card.task_id) if card.task_id else None
+        )
+        if (card.change_subject or "").strip() or (work and work.branch_name):
             await self._stop_accept_no_branch(card, topic)
         # A legacy discussion without a branch has no change to merge.
-        return await self._accept_platform(card, topic, decided_by, note="")
+        return await self._accept_discussion(card, topic, decided_by)
 
-    async def _accept_platform(
-        self,
-        card: AcceptCard,
-        topic: Topic,
-        decided_by: str,
-        *,
-        note: str,
+    async def _accept_discussion(
+        self, card: AcceptCard, topic: Topic, decided_by: str
     ) -> AcceptCard:
-        """Squash into the platform repository and record the delivery."""
-        card_id = card.id
-        unbound_note = note
-
-        # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
-        # conflict must never silently archive the topic while the work is
-        # stranded on its branch (that shipped a lie once): the card moves to
-        # `conflict`, 芝士 gets dispatched to resolve, a human retries.
-        #
-        # The platform forge squashes (#363), same shape as the GitHub lane's
-        # product: one commit, the card's subject and body, the pr_text
-        # trailers, authored by the acting agent (committer stays 芝士). The
-        # message and author are resolved HERE because merge_topic has no DB
-        # session to read the card or the roster with.
-        from app.domain.workspace import service as ws
-
-        if card.task_id is None:
-            raise ValidationError("历史验收卡没有可合并的任务")
-        await TaskService(self._session).require_in_room(topic.id, card.task_id)
-        who = await identity.attribution(
-            self._session, topic, card=card, decided_by=decided_by
-        )
-        try:
-            merged = await asyncio.to_thread(
-                ws.merge_topic,
-                topic.project_id,
-                card.task_id,
-                message=pr_text.local_merge_commit_message(
-                    topic, decided_by, card, who
-                ),
-                author=who.author,
-            )
-        except Exception as exc:  # noqa: BLE001 — surface, don't invent success
-            logger.exception(
-                "accept merge raised for project=%s topic=%s",
-                topic.project_id,
-                topic.id,
-            )
-            self._notify_merge_result(
-                topic,
-                "采纳未完成：合并出错",
-                meta=notice(
-                    EVENT_ACCEPT_STOPPED,
-                    severity=SEVERITY_ERROR,
-                    who=WHO_HUMAN,
-                    detail=f"请检查工作区状态后重试采纳。\n{exc}",
-                    detail_label="合并报错",
-                ),
-            )
-            raise ValidationError(_MERGE_FAILED_MESSAGE) from exc
-
-        if not merged.get("merged"):
-            # The conflicts key means an attempted merge failed. An empty list
-            # is still a failure: Git can error before it identifies paths.
-            if "conflicts" in merged and merged.get("conflicts"):
-                await self._repo.add_approval(card_id, decided_by)
-                card.status = AcceptStatus.conflict
-                card.decided_by = decided_by
-                card.decided_at = datetime.now(UTC)
-                notes.record(
-                    card, notes.NoteCode.merge_conflict, merged.get("reason", "")
-                )
-                await self._session.flush()
-                await self._session.refresh(card)
-                self._notify_merge_result(
-                    topic,
-                    "采纳未完成：合并冲突",
-                    meta=notice(
-                        EVENT_ACCEPT_CONFLICT,
-                        severity=SEVERITY_ERROR,
-                        who=WHO_CHEESE,
-                        detail=(
-                            f"芝士解决冲突后重试采纳。\n{card.note}"
-                            if card.note
-                            else "芝士解决冲突后重试采纳。"
-                        ),
-                        detail_label="冲突详情",
-                    ),
-                )
-                return card
-
-            # Discussion-only topics and a topic already on the base branch
-            # intentionally have nothing to merge and remain acceptable.
-            if merged.get("noop") is not True:
-                logger.error(
-                    "accept merge failed for project=%s topic=%s result=%r",
-                    topic.project_id,
-                    topic.id,
-                    merged,
-                )
-                self._notify_merge_result(
-                    topic,
-                    "采纳未完成：合并失败",
-                    meta=notice(
-                        EVENT_ACCEPT_STOPPED,
-                        severity=SEVERITY_ERROR,
-                        who=WHO_HUMAN,
-                        detail="请检查工作区状态后重试采纳。",
-                        detail_label="怎么办",
-                    ),
-                )
-                raise ValidationError(_MERGE_FAILED_MESSAGE)
-
-        # Merged (or nothing to merge — e.g. a discussion topic with no branch
-        # work): the accept completes as before.
-        await self._repo.add_approval(card_id, decided_by)
+        """Record acceptance of a discussion with no code delivery."""
+        await self._repo.add_approval(card.id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-        # The merge into the platform's own repo is where this accept ends:
-        # nothing is pushed anywhere (#718) — the platform holds no credential
-        # for a remote it is not bound to, and a project on the App forge never
-        # takes this path.
         notes.clear(card)
-        if unbound_note:
-            # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
-            notes.annotate(card, unbound_note)
-
-        # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
-        # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
         await self._stamp_delivery(card, topic, by=decided_by, at=now)
-        await self._mark_task_merged(card, delivered_head=merged.get("delivered_head"))
-
+        await self._mark_task_merged(card)
         await self._session.flush()
         await self._session.refresh(card)
-        done_detail = "话题保持活跃，归档由人决定。"
-        if card.note:
-            done_detail += f"\n{card.note}"
-        self._notify_merge_result(
-            topic,
-            f"{decided_by} 采纳了这次改动，已合并",
-            meta=notice(
-                EVENT_ACCEPT_DONE,
-                severity=SEVERITY_INFO,
-                who=WHO_PLATFORM,
-                detail=done_detail,
-                detail_label="交付说明",
-            ),
-        )
         return card
 
     # ---- 两阶段采纳 (PR迭代式, 2026-08-09) ----------------------------------
-
-    def _local_topic_branch_head(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> str | None:
-        """The topic branch head as it stands — local-only (no network), used to
-        decide whether a re-push to the PR branch is needed before touching
-        GitHub at all.
-
-        It READS the branch and never moves it. It used to snapshot the
-        workspace first, which turned every poll tick into a potential new
-        commit: any write at all — a scratch file, a line in the living doc —
-        became a commit, the commit moved the head, the head moved the PR, and
-        `cancel-in-progress` killed the CI run that was already going. One
-        branch measured 17 runs of the backend suite, 14 of them cancelled, for
-        a single PR. Nothing was wrong with the code; the poller was racing the
-        agent.
-
-        The head still moves on its own at a boundary that means something —
-        the end-of-turn snapshot — and `push_fix` is the way to move it on
-        purpose in between. Both are intentional; a 60-second timer is not.
-
-        None if the repo/branch genuinely doesn't exist yet (nothing to push).
-        """
-        import subprocess
-
-        from app.domain.workspace import service as ws
-
-        repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_task(topic_id)
-        result = subprocess.run(
-            ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
-
-    def _remote_head_ff_from_local(
-        self, project_id: uuid.UUID, remote_head: str, local_head: str
-    ) -> bool:
-        """Would a plain (non-force) push of `local_head` fast-forward the PR
-        branch that is currently at `remote_head`? True only when `remote_head`
-        is an ancestor of `local_head` in the platform's own repo.
-
-        采纳即合并 (#296): `push_topic_branch_for_github_pr` pushes WITHOUT
-        --force, so a local head that is behind or diverged from the remote PR
-        branch (a reset moved the branch backwards) can never land — GitHub
-        rejects it non-fast-forward. Re-attempting that push every poll tick is
-        the loop this guards. Fails CLOSED: if the remote commit isn't even
-        present locally to compare (git errors, exit ≠ 0/1), treat it as "cannot
-        fast-forward" and skip — never a blind push that would just be rejected
-        again. `git merge-base --is-ancestor` is reflexive, so an identical head
-        also returns True, but the caller has already excluded that case."""
-        import subprocess
-
-        from app.domain.workspace import service as ws
-
-        if not remote_head or not local_head:
-            return False
-        repo_path = ws.ensure_repo(project_id)
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_path),
-                "merge-base",
-                "--is-ancestor",
-                remote_head,
-                local_head,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0
-
-    async def _repush_if_local_head_moved(
-        self,
-        *,
-        card: AcceptCard,
-        topic: Topic,
-        owner: str,
-        repo: str,
-        token: str,
-        remote_head: str,
-        remote_branch: str = "",
-    ) -> bool:
-        """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
-        fix since the last push, push it to the PR branch ourselves (芝士's
-        sandbox has no GitHub credentials and no network to github.com, so it
-        cannot do this itself; see `_ci_nudge`). Compares the LOCAL branch
-        head (cheap, no network) against `card.pr_head_sha` (last known
-        pushed/remote head) so an unchanged branch costs nothing — never a
-        blind force-push every poll tick. A push failure (expired token,
-        network hiccup, non-fast-forward) degrades gracefully: logged, card
-        left untouched, next poll tick just retries — never a permanent
-        failure and never silent.
-
-        Returns True only when a push actually landed (so the caller knows the
-        PR head it read a moment ago may be stale).
-
-        采纳即合并 (#296): before pushing, confirm the push CAN fast-forward the
-        PR branch (`remote_head`, the head the caller just read live). A plain
-        push of a local head that is behind / diverged from the remote branch is
-        rejected non-fast-forward, and re-attempting it every 60s poll lands
-        nothing forever (card 946bf5de). When it cannot fast-forward, the
-        platform declines to push — it does not force-push over commits already
-        on the PR — and says so once so 芝士 reconciles in its workspace.
-
-        红鲱鱼警告 (2026-08-10): cards #210/#211 wore the note
-        `⚠️ 平台自动重推失败（refusing to allow ... without workflows
-        permission）` and that note says NOTHING about whether their work
-        landed — it was a *symptom* of the stuck-card bug, not the cause. The
-        PRs had already been merged by hand; the poller kept coming back here
-        anyway, and a re-push first merges the base branch in, so main's
-        `.github/workflows/build.yml` changes (#212/#214) became part of the
-        payload and GitHub rejected the push for lacking the `workflows`
-        scope. `_advance_pr_checks`'s up-front merged-check now returns before
-        this function on the first tick that observes the merge, so the loop —
-        and the noise — stops on its own."""
-        from app.domain.workspace import service as ws
-
-        if card.task_id is None:
-            raise ValidationError("历史验收卡没有可同步的任务")
-        await TaskService(self._session).require_in_room(topic.id, card.task_id)
-        local_head = await asyncio.to_thread(
-            self._local_topic_branch_head, topic.project_id, card.task_id
-        )
-        if local_head is None or local_head in (card.pr_head_sha, remote_head):
-            return False
-        # A plain push can only fast-forward. If the local branch was rewound /
-        # diverged from the PR branch, pushing it is a doomed non-fast-forward —
-        # skip it (never force-push over what's already on the PR) and leave one
-        # named note for 芝士 to merge the PR branch in. Adopt the live remote
-        # head as our record so the caller's own head-sync doesn't wipe the note.
-        can_ff = await asyncio.to_thread(
-            self._remote_head_ff_from_local,
-            topic.project_id,
-            remote_head,
-            local_head,
-        )
-        if not can_ff:
-            logger.warning(
-                "card %s: local head %s cannot fast-forward PR branch "
-                "%s (rewound/diverged) — not re-pushing, waiting on 芝士",
-                card.id,
-                local_head,
-                remote_head,
-            )
-            if remote_head:
-                card.pr_head_sha = remote_head
-            if card.note_code is not notes.NoteCode.repush_diverged:
-                notes.record(
-                    card,
-                    notes.NoteCode.repush_diverged,
-                    f"{_REPUSH_DIVERGED_PREFIX}：本地话题分支（{local_head[:8]}）"
-                    f"落后于/偏离了 PR 分支（{remote_head[:8]}），平台不会强推覆盖 PR "
-                    "上已有的提交。请在这个话题的工作区里把 PR 分支的新提交合并进来"
-                    "再提交，平台会自动把结果同步到这个 PR。",
-                )
-            await self._session.flush()
-            return False
-        try:
-            pushed = await asyncio.to_thread(
-                ws.push_topic_branch_for_github_pr,
-                topic.project_id,
-                card.task_id,
-                owner=owner,
-                repo=repo,
-                # The PR's own head branch when the caller could read it off
-                # the PR; the derived name only as a fallback (that is what
-                # the personal-token lane's PRs are always called anyway).
-                remote_branch=remote_branch or ws.branch_for_task(card.task_id),
-                token=token,
-            )
-        except ValidationError as exc:
-            logger.warning(
-                "card %s: re-push of local commit %s failed (%s) — "
-                "will retry next poll tick",
-                card.id,
-                local_head,
-                exc,
-            )
-            # Visible on the card, not just logger (agent has no host SSH):
-            # otherwise 芝士 believes its fix was pushed and just waits forever.
-            # Dedup by code — this fires every 60s poll tick until the push
-            # succeeds, and must not spam the note each time.
-            if card.note_code is not notes.NoteCode.repush_failed:
-                notes.record(
-                    card,
-                    notes.NoteCode.repush_failed,
-                    f"平台自动重推失败，下一轮还会重试：{exc}",
-                )
-                await self._session.flush()
-            return False
-        card.pr_head_sha = pushed["head_sha"]
-        # 芝士推了新东西 → 换基的账重新算。上限管的是「同一段落后里换了几次还没
-        # 赶上」，不是一张卡一辈子的额度。
-        card.rebase_count = 0
-        notes.clear(card)
-        await self._session.flush()
-        return True
 
     async def _pr_repo_of(self, card: AcceptCard, topic: Topic) -> tuple[str, str]:
         """(owner, repo) the card's PR lives in — from the card when recorded,
         else resolved from the project's upstream and backfilled onto the card
         (pr_publish records only pr_number/pr_url at filing time)."""
-        from app.domain.review.github_pr import parse_github_repo
-        from app.domain.workspace import service as ws
+        from urllib.parse import urlsplit
 
-        if card.pr_repo and "/" in card.pr_repo:
-            owner, _, repo = card.pr_repo.partition("/")
-            return owner, repo
-        upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
-        parsed = parse_github_repo(upstream)
-        if parsed is None:
-            raise ValidationError(
-                f"读不到 PR #{card.pr_number} 该合进哪个仓库（上游不是 GitHub）"
-            )
-        card.pr_repo = f"{parsed[0]}/{parsed[1]}"
-        return parsed
+        from app.domain.project.forge import binding_for_project
+
+        binding = await binding_for_project(topic.project_id, self._session)
+        if binding is None:
+            raise ValidationError("项目没有代码仓库，无法操作评审")
+        if card.pr_repo and card.pr_repo != binding.repo:
+            raise ValidationError("项目仓库已变化，不能将原来的评审应用到新仓库")
+        if card.pr_url and urlsplit(card.pr_url).netloc != urlsplit(binding.url).netloc:
+            raise ValidationError("评审所属的托管服务与项目仓库不一致")
+        card.pr_repo = binding.repo
+        owner, repo = binding.repo.split("/", 1)
+        return owner, repo
+
+    async def _status_client(self, project_id: uuid.UUID):
+        from app.domain.project.forge import status_client
+
+        return await status_client(project_id, self._session)
+
+    async def _dependency_block_reason(
+        self, card: AcceptCard, status: "PullRequestStatus"
+    ) -> str | None:
+        if card.task_id is None:
+            return None
+        task = await TaskService(self._session).get(card.task_id)
+        if task is None or task.base_task_id is None:
+            return None
+        parent = await TaskService(self._session).get(task.base_task_id)
+        if parent is None or not status.base_ref:
+            return "暂时无法确认这条活需要等待的任务，请稍后刷新"
+        if status.base_ref == parent.branch_name:
+            return f"等「{parent.title}」先被采纳，或由芝士调整这条活后重新递交"
+        if status.base_ref != task.base_branch:
+            return "这条活的对照已改变，请刷新后重新查看"
+        return None
+
+    async def _sync_dependency_target(
+        self,
+        card: AcceptCard,
+        status: "PullRequestStatus",
+    ) -> bool:
+        """Record a native PR retarget and invalidate reviews of its previous diff."""
+        if card.task_id is None or not status.base_ref:
+            return False
+        task = await TaskService(self._session).get(card.task_id)
+        return await self._sync_task_dependency_target(task, status)
+
+    async def _sync_task_dependency_target(
+        self, task, status: "PullRequestStatus", *, drop_dependency: bool = False
+    ) -> bool:
+        from app.domain.project.forge import default_branch
+
+        if (
+            task is None
+            or task.base_task_id is None
+            or (task.base_branch == status.base_ref and not drop_dependency)
+        ):
+            return False
+        if status.base_ref != await default_branch(task.project_id, self._session):
+            return False
+        task.base_branch = status.base_ref
+        # The agent explicitly chose a different target on the forge. A later
+        # parent-close sweep must not overwrite that decision.
+        task.base_task_id = None
+        for related in await self._repo.list_for_task(task.id):
+            if related.status in (AcceptStatus.pending, AcceptStatus.conflict):
+                await self._repo.clear_approvals(related.id)
+                related.auto_merge_armed_by = None
+                related.auto_merge_armed_at = None
+                related.pr_head_sha = None
+                related.merge_state = None
+        await self._session.flush()
+        return True
 
     async def _pr_verdict(
         self,
@@ -1526,12 +1558,19 @@ class AcceptService:
         the poller's event table reads facts the verdict may have folded away:
         a conflicted PR is `dirty` no matter what its checks say, but a red
         check on it is still 芝士's to fix and must still reach it)."""
+        from app.domain.project.forge import default_branch
         from app.domain.project.protection import branch_protection_of
-        from app.domain.workspace import service as ws
 
         project = await self._projects.get(topic.project_id)
         protection = branch_protection_of(project)
-        enforces = await _github_enforces(f"{owner}/{repo}", creds.read)
+        from app.domain.project.forge import binding_for_project
+
+        binding = await binding_for_project(topic.project_id, self._session)
+        enforces = (
+            await _github_enforces(f"{owner}/{repo}", creds.read)
+            if binding is not None and binding.kind == "github_app"
+            else False
+        )
 
         raw_runs = await client.list_check_runs(
             owner=owner, repo=repo, ref=ref, token=creds.read
@@ -1556,7 +1595,12 @@ class AcceptService:
         # path-scoped required check. Failures degrade to None — the verdict's
         # documented conservative fallbacks take over (scope unknown = the
         # check stays required; ancestry unknown = strict does not block).
-        base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
+        work = (
+            await TaskService(self._session).get(card.task_id) if card.task_id else None
+        )
+        base = (work.base_branch if work else None) or await default_branch(
+            topic.project_id, self._session
+        )
         ancestry: str | None = None
         if protection.strict:
             try:
@@ -1587,6 +1631,15 @@ class AcceptService:
             github_enforces=enforces,
             draft=status.draft,
         )
+        dependency = await self._dependency_block_reason(card, status)
+        if dependency:
+            verdict = MergeVerdict(
+                state="blocked",
+                reasons=(
+                    merge_state.MergeReason(kind="dependency", detail=dependency),
+                ),
+            )
+            return verdict, "agent", protection, False, runs
         return verdict, whose_move(verdict), protection, enforces, runs
 
     def _write_merge_mirror(
@@ -1643,7 +1696,6 @@ class AcceptService:
         #422's whole authorize-then-drift apparatus is replaced by this one API
         parameter plus dismiss-stale.
         """
-        from app.domain.review import github_pr
 
         number = card.pr_number
         assert number is not None  # caller checked; keeps the type checker honest
@@ -1658,7 +1710,7 @@ class AcceptService:
         except ValidationError as exc:
             await self._stop_accept_pr_unavailable(card, topic, str(exc))
 
-        client = github_pr.default_client()
+        client = await self._status_client(topic.project_id)
         try:
             status = await client.pull_request_status(
                 owner=owner, repo=repo, number=number, token=creds.read
@@ -1733,17 +1785,31 @@ class AcceptService:
         attribution = await identity.attribution(
             self._session, topic, card=card, decided_by=decided_by
         )
-        result = await client.merge_pull_request(
-            owner=owner,
-            repo=repo,
-            number=number,
-            token=creds.write,
-            commit_title=pr_text.merge_commit_title(card, topic, number),
-            commit_message=pr_text.merge_commit_message(
-                topic, decided_by, card, attribution
-            ),
-            sha=seen,
-        )
+        from app.domain.project.forge import ensure_author_email
+
+        if attribution.author:
+            await ensure_author_email(
+                topic.project_id, self._session, attribution.author.email
+            )
+        try:
+            result = await client.merge_pull_request(
+                owner=owner,
+                repo=repo,
+                number=number,
+                token=creds.write,
+                commit_title=pr_text.merge_commit_title(card, topic, number),
+                commit_message=pr_text.merge_commit_message(
+                    topic, decided_by, card, attribution
+                ),
+                sha=seen,
+            )
+        except Exception:  # noqa: BLE001 — the remote may have merged before disconnecting
+            logger.exception("merge request failed for card %s", card.id)
+            await self._stop_accept_pr_unavailable(
+                card,
+                topic,
+                f"PR #{number} 的合并结果暂时无法确认，请重试以核对仓库状态",
+            )
         if result.stale_head:
             # 芝士在点击和合并之间又推了 —— GitHub 拦下了那个没人看过的 commit。
             live = ""
@@ -1758,6 +1824,9 @@ class AcceptService:
                 f"PR #{number} 的 head 在采纳瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再采纳"
             )
+        if result.queued:
+            await self._record_queue_entry(card, decided_by)
+            return card
         if result.sha is None:
             # A faithful 405: GitHub (or its enforced protection) said no.
             reason = result.blocked_reason or "未说明原因"
@@ -1778,6 +1847,33 @@ class AcceptService:
         await self._mark_task_merged(card, delivered_head=seen)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         return await self._conclude_pr_accept(card, topic, decided_by)
+
+    async def _record_queue_entry(self, card: AcceptCard, decided_by: str) -> None:
+        card.decided_by = decided_by
+        card.decided_at = datetime.now(UTC)
+        card.auto_merge_armed_by = None
+        card.auto_merge_armed_at = None
+        await self._repo.add_approval(card.id, decided_by)
+        self._write_merge_mirror(
+            card,
+            MergeVerdict(
+                state="blocked",
+                reasons=(
+                    merge_state.MergeReason(
+                        kind="ci_running", detail="等待合并队列检查"
+                    ),
+                ),
+            ),
+            "ci",
+            card.pr_head_sha or "",
+        )
+        notes.record(
+            card,
+            notes.NoteCode.waiting_merge_queue,
+            f"PR #{card.pr_number} 已进入合并队列，等待队列检查和实际合并。",
+        )
+        await self._session.flush()
+        await self._session.refresh(card)
 
     async def _conclude_pr_accept(
         self,
@@ -1870,16 +1966,16 @@ class AcceptService:
         self, topic: Topic
     ) -> tuple[_GitHubCredentials | None, str]:
         """The platform App's installation tokens for this project's repo."""
-        from app.domain.agent.github_app import github_app_tokens_for_project
+        from app.domain.project.forge import tokens_for_project
 
-        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
+        tokens = await tokens_for_project(topic.project_id, self._session)
         if tokens is None:
-            return None, "平台 GitHub App 对这个项目不可用"
+            return None, "这个项目的代码托管凭据不可用"
         try:
             write, _ = await tokens.write_token()
             read, _ = await tokens.installation_token()
         except Exception as exc:  # noqa: BLE001 — pause this tick, don't crash
-            return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
+            return None, f"获取代码托管凭据失败（{type(exc).__name__}）"
         return _GitHubCredentials(write=write, read=read), ""
 
     async def advance_pr_card(
@@ -1890,9 +1986,17 @@ class AcceptService:
         onto the card, send the events the 「谁的活」 table names (deduped
         through the nudge ledger), and merge a card whose auto-merge is armed
         once the rules are satisfied. Called by
-        SchedulerService.poll_open_prs(); never raises for a transient GitHub
+        `review/pr_poll.py::poll_open_prs`; never raises for a transient GitHub
         hiccup — the next poll just retries."""
-        card = await self._card_or_404(card_id)
+        # A webhook and the reconciliation clock may observe the same card.
+        # Only one transaction may advance it or emit its notifications.
+        card = await self._session.scalar(
+            select(AcceptCard)
+            .where(AcceptCard.id == card_id)
+            .with_for_update(skip_locked=True)
+        )
+        if card is None:
+            return
         if (
             card.status not in (AcceptStatus.pending, AcceptStatus.rejected)
             or card.pr_number is None
@@ -1966,7 +2070,7 @@ class AcceptService:
 
         from app.domain.review import github_pr
 
-        client = github_pr.default_client()
+        client = await self._status_client(topic.project_id)
         try:
             await self._poll_pr_card(
                 card=card,
@@ -2015,18 +2119,9 @@ class AcceptService:
         """The App-token client for this project's upstream, or None when the
         project has no GitHub side at all (no installation, or an upstream that
         is not a GitHub https remote)."""
-        from app.domain.agent.github_app import github_app_tokens_for_project
-        from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
-        from app.domain.workspace import service as ws
+        from app.domain.project.forge import proposal_client
 
-        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
-        if tokens is None:
-            return None
-        upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
-        parsed = parse_github_repo(upstream)
-        if parsed is None:
-            return None
-        return GitHubPRClient(*parsed, tokens)
+        return await proposal_client(topic.project_id, self._session)
 
     async def mark_ready(self, room_id: uuid.UUID, task_id: uuid.UUID) -> dict:
         """Mark this task's PR ready; acceptance remains a separate human action."""
@@ -2143,23 +2238,53 @@ class AcceptService:
         await self._session.refresh(card)
         return card
 
-    async def push_fix(self, place_id: uuid.UUID) -> dict:
-        """Put this place's branch on the PR it is riding, NOW.
-
-        The agent commits its own work and pushes the branch back here; this is
-        how it then says "put that on the PR now" rather than waiting for the
-        next poll. A push corresponds to somebody deciding the work is worth
-        showing.
-
-        Returns a dict the CLI prints verbatim rather than raising for the
-        ordinary "nothing to do" answers: no card, no PR, nothing new to push.
-        None of those are errors, and an agent that gets an exception for "your
-        work was already pushed" learns to stop calling this.
-        """
+    async def push_fix(
+        self, place_id: uuid.UUID, *, drop_dependency: bool = False
+    ) -> dict:
+        """Observe the branch the CLI already pushed directly to the forge."""
         cards = await self._repo.list_live_for_places(
             [place_id], statuses=(AcceptStatus.pending, AcceptStatus.conflict)
         )
         cards = [c for c in cards if c.pr_number is not None]
+        if drop_dependency:
+            from app.domain.project.forge import default_branch
+            from app.domain.review import github_pr
+
+            task = await TaskService(self._session).get(place_id)
+            if task is None or task.pr_number is None:
+                raise ValidationError("任务尚无 PR，请先同步提交后再移除依赖")
+            topic = await self._topic_or_404(task.room_id)
+            for card in cards:
+                await self._pr_repo_of(card, topic)
+            publisher = await self._app_pr_client(topic)
+            if publisher is None:
+                raise ValidationError("项目的代码仓库暂时不可用，无法移除依赖")
+            base = await default_branch(task.project_id, self._session)
+            try:
+                await publisher.update_pr(task.pr_number, base=base)
+                status = await publisher.pr_status(task.pr_number)
+            except (github_pr.GitHubPrError, github_pr.GitHubPRError) as exc:
+                raise ValidationError(f"暂时无法更新 PR 的目标分支：{exc}") from exc
+            if status.base_ref != base:
+                raise ValidationError("仓库尚未确认新的目标分支，请稍后重试")
+            pushed = await self._sync_task_dependency_target(
+                task, status, drop_dependency=True
+            )
+            for card in cards:
+                if pushed or card.pr_head_sha != status.head_sha:
+                    pushed = True
+                    await self._dismiss_stale_accept(card=card, topic=topic)
+                    card.pr_head_sha = status.head_sha
+                    card.merge_state = None
+                    card.rebase_count = 0
+                    notes.clear(card)
+            await self._session.flush()
+            return {
+                "pushed": pushed,
+                "pr_number": task.pr_number,
+                "pr_url": task.pr_url,
+                "reason": "" if pushed else "任务已无依赖，PR 没有新提交",
+            }
         if not cards:
             return {"pushed": False, "reason": "这个话题手上没有骑着 PR 的验收卡"}
         card = cards[0]
@@ -2176,21 +2301,20 @@ class AcceptService:
 
         from app.domain.review import github_pr
 
-        client = github_pr.default_client()
+        client = await self._status_client(topic.project_id)
         try:
             status = await client.pull_request_status(
                 owner=owner, repo=repo, number=card.pr_number, token=creds.read
             )
-            pushed = await self._repush_if_local_head_moved(
-                card=card,
-                topic=topic,
-                owner=owner,
-                repo=repo,
-                token=creds.write,
-                remote_head=status.head_sha,
-                remote_branch=status.head_ref,
-            )
-        except github_pr.GitHubPrError as exc:
+            retargeted = await self._sync_dependency_target(card, status)
+            pushed = retargeted or status.head_sha != card.pr_head_sha
+            if pushed:
+                await self._dismiss_stale_accept(card=card, topic=topic)
+                card.pr_head_sha = status.head_sha
+                card.merge_state = None
+                card.rebase_count = 0
+                notes.clear(card)
+        except (github_pr.GitHubPrError, github_pr.GitHubPRError) as exc:
             # Same reasoning as the poll path: say it on the card, because the
             # person waiting is looking at the card and not at a log file.
             self._note_poll_failed(card, exc)
@@ -2206,7 +2330,7 @@ class AcceptService:
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on
-        something other than a GitHub error (the scheduler's own catch-all).
+        something other than a GitHub error (the poller's own catch-all).
 
         Its caller rolled the failed tick back, so this runs on a fresh session
         and is a no-op for a card that has since settled or lost its PR.
@@ -2272,12 +2396,10 @@ class AcceptService:
                 # fact about the batch, including the head that actually landed.
                 card.pr_merged_at = status.merged_at or datetime.now(UTC)
                 await self._mark_task_merged(card, delivered_head=status.head_sha)
-                sync_note = await self._sync_merged_base(topic)
                 await self._session.flush()
                 self._notify_merge_result(
                     topic,
-                    f"PR #{number} 已在 GitHub 合并，批次已关闭；"
-                    f"原退回记录保留{sync_note}",
+                    f"PR #{number} 已在 GitHub 合并，批次已关闭；原退回记录保留",
                     meta=notice(
                         EVENT_ACCEPT_DONE,
                         severity=SEVERITY_INFO,
@@ -2295,6 +2417,26 @@ class AcceptService:
         if status.state == "closed":
             await self._note_pr_closed_unmerged(card=card, topic=topic)
             await self._session.flush()
+            return
+
+        if card.note_code == notes.NoteCode.waiting_merge_queue:
+            if await client.merge_queue_entry(
+                owner=owner, repo=repo, number=number, token=creds.read
+            ):
+                return
+            # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+            card.auto_merge_armed_by = None
+            card.auto_merge_armed_at = None
+            notes.record(
+                card,
+                notes.NoteCode.merge_refused,
+                f"PR #{number} 已离开合并队列但尚未确认合并，"
+                "请检查 GitHub 后重新采纳。",
+            )
+            await self._session.flush()
+            return
+
+        if await self._sync_dependency_target(card, status):
             return
 
         live = status.head_sha
@@ -2454,7 +2596,7 @@ class AcceptService:
 
         绿必须绿在当前基线上（strict）。各自绿在旧基上的两个 PR 相加可以是红
         的。换基后 head 变化，下一轮从新 CI 重新等起；反复换基追不上 main 就
-        叫人（上限 3，芝士推新提交时清零 —— `_repush_if_local_head_moved`）。"""
+        叫人（上限 3，芝士推新提交时清零）。"""
         if card.rebase_count >= 3:
             await self._note_needs_human(
                 card=card,
@@ -2555,7 +2697,7 @@ class AcceptService:
             content=content,
             meta={"source": "accept", **meta},
             author="accept",
-            recipients=(card.reviewer_handle, *also),
+            points_at=Event(reviewers=(card.reviewer_handle, *also)),
         )
 
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
@@ -2637,6 +2779,12 @@ class AcceptService:
         attribution = await identity.attribution(
             self._session, topic, card=card, decided_by=armer
         )
+        from app.domain.project.forge import ensure_author_email
+
+        if attribution.author:
+            await ensure_author_email(
+                topic.project_id, self._session, attribution.author.email
+            )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2651,6 +2799,9 @@ class AcceptService:
         if result.stale_head:
             # head 在这一拍里又动了 —— 下一拍镜像到新 head，作废条款接手。
             await self._session.flush()
+            return
+        if result.queued:
+            await self._record_queue_entry(card, armer)
             return
         if result.sha is None:
             await self._note_merge_blocked(
@@ -2730,7 +2881,11 @@ class AcceptService:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
             card.pr_head_sha = status.merge_commit_sha
-        await self._finish_pr_accept(card=card, topic=topic, merged_externally=True)
+        await self._finish_pr_accept(
+            card=card,
+            topic=topic,
+            merged_externally=card.note_code != notes.NoteCode.waiting_merge_queue,
+        )
 
     async def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
         """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
@@ -2832,7 +2987,15 @@ class AcceptService:
                 f"```\n{reason[:1500]}\n```\n"
                 f"{action}"
             ),
-            summon=actionable,
+            # 合不上这件事点的是芝士的名：活还开着，改在它手上。活关了就谁也没点到，
+            # 房间里照样看得见这一行，只是不会有人被叫起来（I13）。
+            addressed=addressed_to_agent(
+                await TopicMemberService(self._session).addressable_agent_handle(
+                    topic.id
+                )
+                if actionable
+                else None
+            ),
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
@@ -2867,11 +3030,6 @@ class AcceptService:
         就能顶掉它（2026-08-10 那次 `⚠️ 轮询暂停` 吞掉全部 CI 失败，就是这条的极端
         形态）。现在去重按内容走账本（`_dispatch_nudges`），卡面爱怎么写怎么写。
         """
-        if card.note_code in (
-            notes.NoteCode.repush_failed,
-            notes.NoteCode.repush_diverged,
-        ):
-            return None
         # CI 日志是仓库外的人能控制的字符串（谁都能提个 PR 让 workflow 打印任意
         # 字节），而它最终会被贴进芝士的终端。控制字符在这里就洗掉。
         clean = pr_signals.sanitize_external(tail)
@@ -3049,6 +3207,11 @@ class AcceptService:
             await TaskService(self._session).get(card.task_id) if card.task_id else None
         )
         actionable = task is not None and task.status == TaskStatus.open
+        seat = (
+            await TopicMemberService(self._session).addressable_agent_handle(topic.id)
+            if actionable
+            else None
+        )
         for nudge in fresh:
             if nudge.capped:
                 continue
@@ -3063,7 +3226,7 @@ class AcceptService:
                     else f"{nudge.event}。原任务已关闭或不存在；"
                     "如需继续修改，请由新任务承接。"
                 ),
-                summon=actionable,
+                addressed=addressed_to_agent(seat),
                 nudge_event=nudge.event,
                 nudge_meta=notice(
                     nudge.event_type,
@@ -3115,7 +3278,6 @@ class AcceptService:
             else "已合并"
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
-        settled += await self._sync_merged_base(topic)
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         await self._stamp_delivery(card, topic, by=by, at=now)
@@ -3142,31 +3304,6 @@ class AcceptService:
             ),
         )
 
-    async def _sync_merged_base(self, topic: Topic) -> str:
-        """Refresh local main after a known merge, returning any failure to show.
-
-        A fetch failure cannot undo the merge. Both acceptance and a returned
-        batch's external merge report it without rewriting that fact.
-        """
-        try:
-            from app.domain.agent.github_app import github_app_read_token_for_project
-            from app.domain.workspace import service as ws
-
-            token = await github_app_read_token_for_project(
-                topic.project_id, self._session
-            )
-            synced = await asyncio.to_thread(
-                ws.sync_upstream, topic.project_id, token=token
-            )
-            if not synced.get("synced"):
-                note = f"；本地同步待补：{synced.get('reason', '')}"
-                if synced.get("conflicts"):
-                    note += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
-                return note
-        except Exception as exc:  # noqa: BLE001 — the merge already happened
-            return f"；本地同步待补：{exc}"
-        return ""
-
     async def _resolve_forge(
         self, project_id: uuid.UUID, *, card: AcceptCard | None = None
     ) -> "forge_mod.Forge":
@@ -3174,25 +3311,9 @@ class AcceptService:
         lane is decided (see app.domain.review.forge)."""
         return await forge_mod.resolve(
             project_id=project_id,
-            is_github_bound=self._github_bound,
+            session=self._session,
             proposal_url=card.pr_url if card is not None else None,
         )
-
-    async def _github_bound(self, project_id: uuid.UUID) -> bool:
-        """Is this project bound to GitHub — an App installation resolved for
-        it AND a GitHub https upstream? The single judgment the accept path
-        branches on (#363): bound → accepting merges a PR and only a PR;
-        unbound → the platform IS the forge, and the local merge is the one
-        legitimate accept semantics (not a degrade)."""
-        from app.domain.agent.github_app import github_app_tokens_for_project
-        from app.domain.review.github_pr import parse_github_repo
-        from app.domain.workspace import service as ws
-
-        tokens = await github_app_tokens_for_project(project_id, self._session)
-        if tokens is None:
-            return False
-        upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-        return parse_github_repo(upstream) is not None
 
     async def _stop_accept_pr_unavailable(
         self, card: AcceptCard, topic: Topic, reason: str
@@ -3258,14 +3379,13 @@ class AcceptService:
         row lock this doomed transaction still holds. Everything the note and
         notification need is read while the instances are live, before the
         rollback expires them."""
-        from app.domain.workspace import service as ws
-
         card_id = card.id
         subject = (card.change_subject or "").strip()
         if card.task_id is None:
             raise ValidationError("历史交付卡没有关联任务，请新建任务后交付")
         task_id = card.task_id
-        branch = await asyncio.to_thread(ws.branch_for_task, task_id)
+        work = await TaskService(self._session).require_in_room(topic.id, task_id)
+        branch = work.branch_name
         note = (
             f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），开不出能承载"
             f"「{subject}」的 PR。改动可能被提交到了别的分支——"
@@ -3318,7 +3438,7 @@ class AcceptService:
         request back — the card must keep the PR it now rides, or the next
         attempt would look PR-less again. `open_pr_for_card` can still return
         None (its own not-applicable checks); with the caller pre-checking
-        `_github_bound`, in practice that means a topic with no tree branch.
+        `hosts_proposals`, in practice that means a topic with no tree branch.
         The card is left untouched, and the CALLER decides what a branchless
         topic means: a legacy card with no delivery claim proceeds into the
         no-op local merge, while a card claiming a change stops the accept
@@ -3408,6 +3528,26 @@ class AcceptService:
         except Exception:  # noqa: BLE001
             logger.exception("could not record the PR-open failure on card %s", card_id)
 
+    async def _cancel_queued_accept(self, card: AcceptCard) -> None:
+        if card.note_code != notes.NoteCode.waiting_merge_queue:
+            return
+        assert card.pr_number is not None
+        topic = await self._topic_or_404(card.topic_id)
+        creds, why = await self._pr_poll_credentials(card, topic)
+        if creds is None:
+            raise ValidationError(f"无法退出合并队列：{why}")
+        owner, repo = await self._pr_repo_of(card, topic)
+        client = await self._status_client(topic.project_id)
+        dequeue = getattr(client, "dequeue_pull_request", None)
+        if dequeue is None:
+            raise ValidationError("当前仓库连接无法退出合并队列，请检查仓库连接。")
+        await dequeue(owner=owner, repo=repo, number=card.pr_number, token=creds.write)
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+        )
+        if status.merged:
+            raise ValidationError("PR 已经合并，不能撤销队列中的合并请求，请刷新卡片。")
+
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
     ) -> AcceptCard:
@@ -3417,6 +3557,7 @@ class AcceptService:
         if decided_by != card.reviewer_handle:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权驳回")
 
+        await self._cancel_queued_accept(card)
         card.status = AcceptStatus.rejected
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
@@ -3549,10 +3690,15 @@ class AcceptService:
         if creds is None:
             raise ValidationError(f"暂时拿不到合并这个 PR 用的 GitHub 凭据（{why}）")
 
-        from app.domain.review import github_pr
-
         owner, repo = await self._pr_repo_of(card, topic)
-        client = github_pr.default_client()
+        client = await self._status_client(topic.project_id)
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+        )
+        if not status.merged:
+            dependency = await self._dependency_block_reason(card, status)
+            if dependency:
+                raise ValidationError(dependency)
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
         state: str | None = None
         try:
@@ -3574,6 +3720,10 @@ class AcceptService:
         who = await identity.attribution(
             self._session, topic, card=card, decided_by=decided_by
         )
+        from app.domain.project.forge import ensure_author_email
+
+        if who.author:
+            await ensure_author_email(topic.project_id, self._session, who.author.email)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3590,6 +3740,9 @@ class AcceptService:
                 f"PR #{number} 的 head 在放行瞬间变了（GitHub 409），卡已刷新 —— "
                 "请重新看过再放行"
             )
+        if result.queued:
+            await self._record_queue_entry(card, decided_by)
+            return card
         if result.sha is None:
             raise ValidationError(
                 f"GitHub 拒绝合并 PR #{number}：{result.blocked_reason or '未说明原因'}"
@@ -3668,6 +3821,7 @@ class AcceptService:
         if decided_by not in allowed:
             raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
 
+        await self._cancel_queued_accept(card)
         was = card.status
         reason = f" 理由：{note.strip()}" if note.strip() else ""
         headline = (
@@ -3695,11 +3849,20 @@ class AcceptService:
         await self._session.flush()
         await self._session.refresh(card)
 
-        await BlockRepository(self._session).add(
+        # 作废的是这张卡，落点就是这张卡（结论 14）：房间主线那一档只留给为房间
+        # 本身递的卡（`task_id` 空）。
+        landed = landing(
+            EventAbout.task if card.task_id is not None else EventAbout.room,
             project_id=topic.project_id,
-            topic_id=topic.id,
+            room_id=topic.id,
+            task_id=card.task_id,
+        )
+        await BlockRepository(self._session).add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="cheese",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"<@{decided_by}> 作废了这张验收卡",
             kind=BlockKind.event,
             meta={

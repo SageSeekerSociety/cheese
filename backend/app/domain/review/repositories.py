@@ -6,7 +6,12 @@ from datetime import datetime
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
+from app.domain.review.models import (
+    AcceptApproval,
+    AcceptCard,
+    AcceptStatus,
+    DeliverableKind,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -26,6 +31,10 @@ class AcceptCardRepository:
         change_body: str | None = None,
         task_id: uuid.UUID | None = None,
         delivered_task_ids: list[uuid.UUID] | None = None,
+        artifact_id: uuid.UUID | None = None,
+        deliverable_kind: DeliverableKind | None = None,
+        deliverable_name: str | None = None,
+        deliverable_url: str | None = None,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
@@ -38,6 +47,10 @@ class AcceptCardRepository:
             change_subject=change_subject,
             change_body=change_body,
             delivered_task_ids=[str(t) for t in (delivered_task_ids or [])],
+            artifact_id=artifact_id,
+            deliverable_kind=deliverable_kind,
+            deliverable_name=deliverable_name,
+            deliverable_url=deliverable_url,
         )
         self._session.add(card)
         await self._session.flush()
@@ -268,7 +281,9 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_awaiting_merge_on_active_topics(self) -> list[AcceptCard]:
+    async def list_awaiting_merge_on_active_topics(
+        self, project_id: uuid.UUID | None = None
+    ) -> list[AcceptCard]:
         """Pending PRs and returned batches that can still merge externally.
 
         孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
@@ -300,6 +315,8 @@ class AcceptCardRepository:
                 AcceptCard.created_at.desc(),
             )
         )
+        if project_id is not None:
+            stmt = stmt.where(Topic.project_id == project_id)
         cards = []
         seen_trees: set[uuid.UUID] = set()
         for card in (await self._session.scalars(stmt)).all():

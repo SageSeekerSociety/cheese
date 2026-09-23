@@ -1,0 +1,12 @@
+{
+  "verb": "deliver",
+  "why": "The bare form of send: no opening, no turn opened, nothing started. False means there is no live session here — and it has to be false rather than a started one, because the caller is on the hot path with a person waiting and a deliver that started a session would open a turn nobody asked for.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "deliver", "text": "文档变了", "returns": false },
+    { "call": "ensure", "opened": true },
+    { "call": "deliver", "text": "文档变了", "returns": true },
+    { "call": "close" },
+    { "call": "deliver", "text": "文档又变了", "returns": false }
+  ]
+}

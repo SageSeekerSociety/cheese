@@ -16,9 +16,8 @@ def setup_incident(client, monkeypatch):
     topic_id = room(client, project_id)
     chat = client.app.dependency_overrides[get_chat_service]()
     runner = SimpleNamespace(
-        submit=Mock(),
-        submit_kickoff=Mock(return_value=uuid.uuid4()),
-        kickoff_pending=lambda turn_id: True,
+        submit=Mock(return_value=uuid.uuid4()),
+        turn_pending=lambda turn_id: True,
     )
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
 
@@ -40,7 +39,7 @@ def setup_incident(client, monkeypatch):
             return root_id, str(incident.id)
 
     root_id, incident_id = client.portal.call(initialize)
-    assert runner.submit_kickoff.call_count == 1
+    assert runner.submit.call_count == 1
     return project_id, topic_id, root_id, incident_id, owner, chat, runner
 
 
@@ -104,7 +103,7 @@ def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
     state["attempt"] = "first"
     repaired = client.post(path, headers=headers, json=body)
     assert repaired.status_code == 200, repaired.text
-    assert runner.submit_kickoff.call_count == 2
+    assert runner.submit.call_count == 2
     assert client.post(path, headers=headers, json=body).status_code == 422
     unchanged = client.get(f"/projects/{p}/environment", headers=owner).json()["data"]
     assert unchanged["config"]["setup_script"] == ""
@@ -123,7 +122,7 @@ def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
             ] == "needs_help"
 
     client.portal.call(fail_again)
-    assert runner.submit_kickoff.call_count == 2
+    assert runner.submit.call_count == 2
 
 
 def test_overview_uses_base_environment_and_workroom_keeps_project_scripts(
@@ -178,7 +177,7 @@ def test_lost_dispatch_becomes_visible_and_queued_work_is_not_mistaken_for_loss(
     assert (
         client.get(path, headers=owner).json()["data"]["recovery_state"] == "requested"
     )
-    runner.kickoff_pending = lambda turn_id: False
+    runner.turn_pending = lambda turn_id: False
     assert (
         client.get(path, headers=owner).json()["data"]["recovery_state"] == "needs_help"
     )
@@ -203,7 +202,7 @@ def test_overview_can_record_missing_credentials_without_restarting(
     )
     assert result.status_code == 200, result.text
     assert result.json()["data"]["state"] == "needs_help"
-    assert runner.submit_kickoff.call_count == 1
+    assert runner.submit.call_count == 1
 
 
 def test_real_failed_turn_preserves_overview_and_room_messages(
@@ -220,7 +219,7 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
     original = stub_hooks.ensure_ready
 
     async def fail_room(**kwargs):
-        if kwargs["topic_id"] == t:
+        if kwargs["session"].topic_id == t:
             raise EnvironmentPreparationError(
                 {"state": "failed", "attempt": "actual", "stage": "setup"}
             )
@@ -239,7 +238,9 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
                 topic_id=topic, author="alice", content=content, summon=False
             ):
                 pass
-        async for _ in chat.kickoff(topic_id=t, prompt="start work"):
+        async for _ in chat.converse(
+            topic_id=t, author="system", content="start work", summon=True
+        ):
             pass
         for _ in range(500):
             if "/environment/recovery/rooms/" in (stub_hooks.last_prompt or ""):
@@ -249,7 +250,9 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
         assert f"/environment/recovery/rooms/{t}" in stub_hooks.last_prompt
         await settle_turn(chat, root)
         monkeypatch.setattr(stub_hooks, "ensure_ready", original)
-        async for _ in chat.kickoff(topic_id=t, prompt="continue after repair"):
+        async for _ in chat.converse(
+            topic_id=t, author="system", content="continue after repair", summon=True
+        ):
             pass
         assert "room backlog marker" in stub_hooks.last_prompt
         assert "continue after repair" in stub_hooks.last_prompt

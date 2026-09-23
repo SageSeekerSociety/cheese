@@ -37,6 +37,9 @@ class MachineStatus(enum.StrEnum):
     provisioning = "provisioning"
     starting = "starting"
     running = "running"
+    suspending = "suspending"
+    suspended = "suspended"
+    resuming = "resuming"
     stopping = "stopping"
     stopped = "stopped"
     deleting = "deleting"
@@ -49,6 +52,8 @@ class MachineStatus(enum.StrEnum):
 TRANSITIONAL = {
     MachineStatus.provisioning,
     MachineStatus.starting,
+    MachineStatus.suspending,
+    MachineStatus.resuming,
     MachineStatus.stopping,
     MachineStatus.deleting,
 }
@@ -134,8 +139,12 @@ class ProjectMachine(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     # MicroCloud's own ids. Kept so a later call never has to re-resolve them by
-    # listing and matching on a name.
-    machine_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    # listing and matching on a name. NULL while the machine is being created:
+    # the row is the reservation that counts against the team's quota, written
+    # under the quota lock before the provider is asked (see `provision`).
+    machine_id: Mapped[int | None] = mapped_column(
+        BigInteger, index=True, nullable=True
+    )
     customer_id: Mapped[int] = mapped_column(BigInteger)
     account_id: Mapped[int] = mapped_column(BigInteger)
     offering_id: Mapped[int] = mapped_column(BigInteger)

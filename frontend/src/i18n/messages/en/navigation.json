@@ -1,8 +1,26 @@
 {
   "home": "Home",
   "inbox": "Inbox",
-  "newProject": "New project",
-  "spaces": "Spaces",
+  "myWork": "My work",
+  "newProject": "New {project}",
+  "project": {
+    "board": "Board",
+    "calendar": "Calendar",
+    "library": "Library",
+    "members": "Members"
+  },
+  "spaces": "Problem boards",
   "teams": "Teams",
-  "workspace": "Workspace"
+  "term": {
+    "project": "project",
+    "topic": "topic"
+  },
+  "workspace": "Workspace",
+  "feedback": {
+    "label": "Help and feedback",
+    "unread": "Help and feedback, unread updates",
+    "center": "Feedback center",
+    "mine": "My feedback",
+    "admin": "Admin console"
+  }
 }

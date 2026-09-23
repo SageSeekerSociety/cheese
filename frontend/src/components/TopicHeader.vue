@@ -89,8 +89,18 @@ watch(
     topicUsage.value = null
     projectUsage.value = null
     usageOpen.value = false
+    machineNotice.value = null
   }
 )
+
+// 这个房间能看到整台机器。算力选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
+// 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
+const machineNotice = ref<string | null>(null)
+
+function toggleFocus() {
+  usageOpen.value = false
+  emit('toggle-focus')
+}
 </script>
 
 <template>
@@ -102,50 +112,67 @@ watch(
        Teleport resolves it after App has rendered the new mobile bar. -->
   <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
-      <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
-         390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
+      <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title">{{ topic.title }}</span>
-        <span v-if="!mdAndUp" class="topic-header__meta t-meta">
-          <template v-if="isWorkTopic">#{{ shortId }}</template>
+        <span class="topic-header__title t-title" :title="topic.title">{{ topic.title }}</span>
+        <span class="topic-header__meta">
           <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-          <template v-if="!connected">未连接</template>
+          <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
+            <span class="status-dot status-dot--warn" />整台机器
+          </span>
+          <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>
       </div>
-      <template v-if="mdAndUp">
-        <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
-        <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-        <span
-          class="status-dot"
-          :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-          :title="connected ? '已连接' : '未连接'"
-        />
-      </template>
-
-      <v-spacer />
-
-      <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
-           「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
-           手机上这一行没有它的位置，它浮在对话上方（TopicChatColumn）。 -->
-      <TopicComputePicker v-if="mdAndUp && isWorkTopic" :key="topic.id" :topic-id="topic.id" />
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
 
-      <!-- 用量: was the 资源 drawer. -->
-      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+      <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
+           「你现在在专注模式里」的那句话。进去的入口在 ⋯ 里。 -->
+      <v-btn
+        v-if="mdAndUp && focus"
+        icon="mdi-arrow-collapse"
+        size="small"
+        variant="text"
+        class="topic-header__on"
+        title="退出专注模式"
+        aria-label="退出专注模式"
+        @click="emit('toggle-focus')"
+      />
+
+      <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的：编号、用量、
+           算力（首轮之后就锁死了）、专注模式。eager：算力选择器要在菜单合着的时候
+           就挂上，才能说出「整台机器」。 -->
+      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end" eager>
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
-            icon="mdi-chart-box-outline"
+            icon="mdi-dots-horizontal"
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="用量"
+            title="更多"
+            aria-label="更多"
           />
         </template>
         <v-card min-width="280" class="usage-card">
+          <div class="usage-details">
+            <span v-if="isWorkTopic" class="t-meta" :title="topic.id">#{{ shortId }}</span>
+            <span class="t-meta">{{ connected ? '已连接' : '未连接' }}</span>
+          </div>
+          <!-- 算力：这个话题的轮次在哪儿跑。它是话题的属性（发完第一条就锁死），
+               不是某条消息的动作，所以不在输入区。 -->
+          <div v-if="isWorkTopic" class="menu-row">
+            <span class="t-meta">运行环境</span>
+            <TopicComputePicker :key="topic.id" :topic-id="topic.id" @machine-access="machineNotice = $event" />
+          </div>
+          <!-- 专注模式：面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
+               永远只有一个窗格，没有第二栏可以让开。 -->
+          <button v-if="mdAndUp" type="button" class="menu-row menu-row--action" @click="toggleFocus">
+            <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
+            <span>{{ focus ? '退出专注模式' : '专注模式' }}</span>
+          </button>
           <div v-if="usageLoading" class="d-flex justify-center py-6">
             <v-progress-circular indeterminate color="primary" size="24" />
           </div>
@@ -189,18 +216,6 @@ watch(
           </div>
         </v-card>
       </v-menu>
-
-      <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
-         永远只有一个窗格，没有第二栏可以让开。 -->
-      <v-btn
-        v-if="mdAndUp"
-        :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-        size="small"
-        variant="text"
-        :class="focus ? 'topic-header__on' : 'c-muted'"
-        :title="focus ? '退出专注模式' : '专注模式'"
-        @click="emit('toggle-focus')"
-      />
     </div>
   </Teleport>
 </template>
@@ -221,6 +236,8 @@ watch(
 }
 /* 填进顶栏的那一份不画自己的高度、底色和底线——那三样归顶栏。 */
 .topic-header--bar {
+  flex: 1 1 0;
+  min-width: 0;
   height: 100%;
   padding: 0;
   background: none;
@@ -228,15 +245,15 @@ watch(
 }
 .topic-header__text {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
   /* 这一块吃掉整行剩下的宽度，标题才有得截断；不写 min-width 的话 flex 子项
      以内容为最小宽度，右边的按钮会被挤出去。 */
   min-width: 0;
   flex: 1 1 auto;
-  gap: 1px;
+  gap: 10px;
 }
 .topic-header__title {
+  min-width: 0;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -245,14 +262,33 @@ watch(
 .topic-header__meta {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 6px;
   line-height: 1.2;
   overflow: hidden;
   white-space: nowrap;
 }
-.topic-header__num {
-  font-weight: 400;
+.topic-header--bar .topic-header__text {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+}
+.topic-header--bar .topic-header__title {
+  max-width: 100%;
+}
+.topic-header__disconnected {
+  color: var(--warn-ink);
+  font-size: 12px;
   flex: 0 0 auto;
+}
+.topic-header__machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: var(--warn-ink);
+  font-size: 12px;
 }
 .topic-header__on {
   color: var(--ink);
@@ -269,11 +305,8 @@ watch(
   border-radius: 6px;
 }
 .pr-state--open {
-  /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where
-     white ink drops to 2.34:1. --surface IS #fff in light, so the badge looks
-     exactly as it does today, and flips to near-black ink on dark. */
-  color: var(--surface);
-  background: var(--ok);
+  color: var(--muted);
+  background: var(--fill);
 }
 .pr-state--merged {
   color: var(--muted);
@@ -297,6 +330,36 @@ watch(
 }
 .usage-card {
   border: 1px solid var(--line);
+}
+.usage-details {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.menu-row--action {
+  justify-content: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.menu-row--action:hover {
+  background: var(--fill);
 }
 .usage-grid {
   display: grid;

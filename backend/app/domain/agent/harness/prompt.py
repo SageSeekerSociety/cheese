@@ -1,9 +1,33 @@
-"""Platform instructions shared by every agent harness."""
+"""Platform instructions shared by every agent harness.
+
+**教学配置的生效语义 (#8d772257)。** 改一次课程配置，三种项目分别什么时候看见
+它——这是设计决定，不是实现细节，所以写在这里而不是让人从代码里猜：
+
+1. **新建的项目**：建出来就带最新配置。建项目那一轮本来就要组装一次 prompt，
+   读到的就是当时项目集里的那一份，没有缓存层要等。
+2. **已有项目的新会话**：启动时读到最新配置。prompt 每一轮都从库里重新组装
+   （`chat._assemble_turn` 每次都重新 resolve），所以新开的会话拿到的一定是
+   此刻的配置。
+3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
+   的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
+   prompt 交给它，而它**在启动时读一次**那个文件
+   （`claude_code/session_launch.py` 的模块注释，`hooks_substrate` 里
+   「reads a system prompt exactly once — at launch」）。文件每轮都重写，重写是
+   给**下一次**冷启动看的。
+
+   所以「第 3 周改成了第 4 周」这件事，一个正在跑的会话当天听不到。这是有意接受
+   的：往一个已经跑起来、上下文里全是第 3 周内容的会话里塞第 4 周的范围，比让它
+   按第 3 周做完这一轮更糟。要立刻生效就重开会话（换机器/重建屏幕都会重开）。
+
+`prompt_text`（逐轮的用户消息）里**不放**教学上下文，这是第 3 条的实现保证：
+它只走 system prompt 这一条路，没有第二条路能让它在会话中途变脸。
+"""
 
 import re
 import uuid
 
 from app.domain.block.models import BlockKind
+from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -12,6 +36,75 @@ _BARE_PATH_RE = re.compile(
 
 def chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
+
+
+def teaching_section(context: TeachingContext) -> str | None:
+    """本周教学范围 —— 课程级的那一段，或者 None。
+
+    **None 是默认，而且是字面意义上的「一个字都不加」。** 一个不是课程的项目
+    没有教学安排，而「这周教到哪了」对它是一句废话：说了会让 agent 以为自己在
+    一门课里。所以这里不是渲染一个空标题，是整段不存在（`build_system_prompt`
+    对 None 直接跳过），而且配套的取数在 `task.teaching.for_project` 里同样没
+    有发生——不取，不是取了再说空话。
+
+    **位置在角色之后、技能之前。** 教学安排不是人设（那是角色），也不是工具箱
+    （那是技能）。它约束的是「这一周该做什么」，得在读具体怎么做之前先立住。
+    """
+    teaching = context.teaching
+    if teaching.is_empty:
+        return None
+    # 课程名和「第几周」都可能缺：一个项目集配了教学安排却没说自己叫什么，仍然
+    # 要有一段读得通的话，而不是一个空括号。
+    where = []
+    if context.course:
+        where.append(f"课程：{context.course}")
+    if teaching.current_week is not None:
+        where.append(f"第 {teaching.current_week} 周")
+    parts = ["## 本周教学范围" + (f"（{' · '.join(where)}）" if where else "")]
+    if teaching.system_prompt:
+        parts.append(teaching.fill(teaching.system_prompt))
+    if teaching.allowed_topics:
+        parts.append(
+            "本周只做这些：\n"
+            + "\n".join(f"- {topic}" for topic in teaching.allowed_topics)
+        )
+    if teaching.avoid_in_code:
+        # 说清「避开」是什么意思。不说的版本会被读成禁令，agent 于是绕开一个它
+        # 本来可以用的写法去做同一件事——这一周的练习照样练不到点子上。
+        parts.append(
+            "**本周的课还没讲到这些**，代码里请避开（这一周的练习不是练它）：\n"
+            + "\n".join(f"- {item}" for item in teaching.avoid_in_code)
+        )
+    if context.materials:
+        parts.append(
+            "### 本周课件\n"
+            + "\n".join(f"- 《{m['name']}》{m['url']}" for m in context.materials)
+        )
+    if context.knowledge:
+        # 只给名字和描述，正文留在知识库里按 id 取：一份上传可以有多大，不是这门
+        # 课说了算的，prompt 不跟着别人的文件长。
+        parts.append(
+            "### 本周知识材料（要正文用 id 自己去取）\n"
+            + "\n".join(
+                f"- 《{k['name']}》"
+                + (f"（id={k['id']}）" if k.get("id") else "")
+                + (f" {k['description']}" if k.get("description") else "")
+                for k in context.knowledge
+            )
+        )
+    return "\n\n".join(parts)
+
+
+#: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
+#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
+#: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
+#: 重派一次（结论 43）。只 commit 不 push 的活过不了这台机器。
+ALWAYS_PUSH = (
+    "## 随时 push（所有 agent，主 agent 也一样）\n"
+    "干活期间**随时 push**，不要攒到交付那一下才推。你的工作树在这台机器上，而机器"
+    "随时可能被回收；接着干下去的办法是从分支上重来一次，所以没推上去的改动，到不了"
+    "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
+)
 
 
 def build_system_prompt(
@@ -23,8 +116,11 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    artifacts: list[dict] | None = None,
+    overview_doc: str | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
+    teaching: TeachingContext | None = None,
     memories_omitted: int = 0,
     memories_core_omitted: int = 0,
 ) -> str:
@@ -37,13 +133,16 @@ def build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            '`cheese_title(text="<标题>")` 起个 ≤12 字简短标题，'
+            "`cheese title <标题>` 起个 ≤12 字简短标题，"
             "然后再照常回应、干活。"
             "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
         )
+    parts.append(ALWAYS_PUSH)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
+    if teaching is not None and (section := teaching_section(teaching)):
+        parts.append(section)
     if skills:
         parts.append(skills)
     if stage_guide:
@@ -68,6 +167,68 @@ def build_system_prompt(
             "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
             + lines
         )
+    if artifacts is not None:
+        # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
+        # 名字 —— 而先说清哪一次交付根本不用点名：交出去这次合并本身的，交的是这
+        # 个项目的仓库，平台自己认得出是哪一项。那条路上没有名字可写错，也就没有
+        # 什么可嘱咐的。
+        #
+        # 剩下交一份文件、交一个地址的，才真的有得选（一个项目可以既交一份报告又
+        # 交一个网站），所以下面那几行是说给它们听的。
+        #
+        # **清单空着的时候这一段照样出现。** 那是必须说话的那一次：一个交文件的项
+        # 目，第一次交付只能新建，而它起的那个名字会留在清单上，进后面每一轮的开
+        # 场。这一段不在的话，提示里没有一个字提到产物，只剩递卡被打回这一条路能
+        # 让人知道要声明——而递卡是一整轮工作的最后一步。
+        head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
+        # 这一版交出去的是什么，也在递卡时说 (#1085 结论五)。它排在最前面，因为它
+        # 的答案决定了后面那两段要不要读。
+        hands_over = (
+            "**先说这一版交出去的是什么**，因为它决定了后面还要不要说别的：\n"
+            "- 两个都不给 = 交出去这次**合并**本身（代码仓库这类项目交的就是它）。"
+            "这种交付**不用声明产物** —— 交出去的是这个项目的仓库，一个项目只有一"
+            "个，平台认得出是清单上哪一项。传了 `artifact` / `new_artifact` 反而会"
+            "被打回。\n"
+            "- `deliver=<工作目录里的路径>` = 交出去一份文件（平台在递卡这一刻留一"
+            "份快照，所以**先把它构建出来再递卡** —— 过了这一轮那份文件就没了）。\n"
+            "- `deliver_url=<网址>` = 交出去一个地址。\n"
+            "后两种要接着说清动的是清单上哪一项："
+        )
+        # 那一句话怎么写 —— 规则加检验方法。规则会忘，检验方法当场能自查，所以两
+        # 者一起给。同一条检验对名字也成立，因此这里说一次，管名字也管那句话。
+        about_rule = (
+            "\n\n`about` 那一句话说的是**这样东西本身**（是什么、给谁的），不是这"
+            "一版做了什么 —— 这一版做了什么在 `subject` 上，已经有了。三条检验，起"
+            "名字用的是同一条第 1 条：\n"
+            "1. 这句话（这个名字）在**第 1 版和第 20 版都成立**。一交新版就得改的，"
+            "就是写错了。正因为写对了，它不必每版重写。\n"
+            "2. 换到清单上另一项头上**也说得通，就是白写**，重写。\n"
+            "3. 别把改动标题抄进来 —— 那条路的尽头是清单长成一份改动列表。"
+        )
+        if artifacts:
+            lines = "\n".join(
+                f"- 《{a['name']}》"
+                + (f"　第 {a['version']} 版" if a["version"] else "　还没交付过")
+                + (f"　{a['about']}" if a.get("about") else "")
+                + f"　id={a['id']}"
+                for a in artifacts
+            )
+            parts.append(
+                head + hands_over + "交付下面某一项的新一版，用 `artifact=<id>` 点名"
+                "它（**照抄下面那一行的 id，不要写名字**——名字写错不会报错，只会在清"
+                "单上多一项看着像重复的东西）；确实做出了一样下面没有的东西，用 "
+                "`new_artifact=<真名>` 加 `about=<一句话>` 声明它，返回里带着新的 id。"
+                "两个都不给、或者两个都给，递卡会被打回。" + about_rule + "\n\n" + lines
+            )
+        else:
+            parts.append(
+                head
+                + "清单还空着，这个项目一样东西都还没交出去过。\n\n"
+                + hands_over
+                + "清单上还没有可沿用的，所以用 `new_artifact=<真名>` 加 "
+                "`about=<一句话>` 声明它，返回里带着它的 id，以后交付它的新一版用 "
+                "`artifact=<id>` 点名。" + about_rule
+            )
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
@@ -77,6 +238,17 @@ def build_system_prompt(
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
             "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
+        )
+    if overview_doc:
+        # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
+        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。所以「所有人都该
+        # 知道」的事实写这里，而不是记进记忆——记忆是这一个实例自己的观察。
+        parts.append(
+            "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
+            "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
+            "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
+            "（`cheese remember --everyone <事实>`），不要记进只有你自己读得到的"
+            "记忆池。\n" + overview_doc
         )
     if doc:
         parts.append(
@@ -99,7 +271,7 @@ def build_system_prompt(
                 f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
                 "**不会自动出现在这里**——核心记忆之外的都要自己查。"
                 "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese_recall(query="<关键词>")` 查一次。'
+                "用 `cheese recall --query <关键词>` 查一次。"
                 "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
             )
         if memories_core_omitted:
@@ -108,7 +280,7 @@ def build_system_prompt(
             block += (
                 f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
                 "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
+                "了——挑几条降级成普通记忆（`cheese remember` 不带 `--core`）。"
             )
         parts.append(block)
     if session_opening:
@@ -120,17 +292,6 @@ def build_system_prompt(
             + "\n".join(session_opening)
         )
     return "\n\n".join(parts)
-
-
-KICKOFF_PROMPT = (
-    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
-    "现在开工：\n"
-    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
-    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
-    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
-)
 
 
 def thread_relay_prompt(
@@ -148,34 +309,10 @@ def thread_relay_prompt(
         f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
         f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
-        "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，新分身的"
+        "prompt 里照旧写这条活的线程标识。"
+        "回话说在这条活上（`cheese tell <这条活> <说明>`），别只在房间里说，"
         "问话的人看的是那边。"
-    )
-
-
-def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
-    """The ROOM's wake-up instruction when one of its messages became a thread.
-
-    Addressed to the room because a thread is a 分身 inside the room's own
-    session and has no session to wake. The platform writes the row, its card
-    block and its brief; raising the worker is the room's, and so is naming the
-    thread — it is created untitled and nothing else is in a position to name it.
-    """
-    return (
-        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
-        f"---\n{source_message}\n---\n\n"
-        "接下来是你的事：\n"
-        f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
-        "——它现在还叫「新话题」，"
-        "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
-        "——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
     )
 
 
@@ -186,17 +323,8 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str, *, is_private: bool = False) -> str:
+def publication_prompt(content: str) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
-    if is_private:
-        return (
-            content
-            + "\n\n"
-            + platform_prompt(
-                "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 chat_send 重复发送同一答复。"
-            )
-        )
     return (
         content
         + "\n\n"

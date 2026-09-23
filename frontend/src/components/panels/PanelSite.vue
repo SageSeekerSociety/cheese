@@ -6,8 +6,12 @@ import type { Block, Topic } from '../../cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { isAgentBlock } from '../../lib/authorship'
 import {
   countLines,
+  eventArg,
+  eventFailed,
+  eventVerb,
   formatSpan,
   groupByTurn,
   isLongSiteEntry,
@@ -15,7 +19,7 @@ import {
   shouldKeepPinning,
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
-import { isPlatformEvent, toolLabel } from '../../lib/toolLabels'
+import { isPlatformEvent } from '../../lib/toolLabels'
 import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -27,14 +31,14 @@ const props = withDefaults(
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
-    // 这个房间现在交给的那个 AI 队友叫什么。一个项目可以有好几个队友，房间随时
-    // 能换，所以这里不能写死「芝士」——这一栏和对话栏说的是同一个人。
-    agentName?: string
+    // 房间名册 handle → 名字。这一栏给每一行署的是它的作者，和对话栏一个规矩：
+    // 一个房间可以先后交给两个队友，各自的话各自署名，不能写死「芝士」。
+    memberNames?: Record<string, string>
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
   }>(),
-  { active: false, agentName: '芝士', working: false }
+  { active: false, memberNames: () => ({}), working: false }
 )
 
 const loading = ref(false)
@@ -173,7 +177,8 @@ watch(
 )
 
 function authorLabel(b: Block): string {
-  return b.author_type === 'ai' ? props.agentName : b.author
+  // 同对话栏：名册上没有的 AI 作者显示成「芝士」，不把 handle 摆出来。
+  return props.memberNames[b.author] || (isAgentBlock(b) ? '芝士' : b.author)
 }
 
 function fmtTime(iso: string): string {
@@ -181,41 +186,10 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-// 施工现场 tool-event lines: backend stores "verb\npreview"; legacy rows are
-// "🔧 toolname". Split into the action verb and an optional argument preview.
-const LEGACY_VERB: Record<string, string> = {
-  update_doc: '更新文档',
-  remember: '记入记忆',
-  notify: '发送通知',
-  request_accept: '提交验收卡',
-  pin_milestone: '添加里程碑',
-  write_file: '写入文件',
-  record_decision: '记录决策',
-}
-// Meta-first rendering: an event block with structured meta ({tool, arg}) is
-// translated at DISPLAY time via the full toolLabels table — so a verb missing
-// from the table at write time is never frozen untranslated. Rows without meta
-// (pre-meta data) fall back to the baked content text.
-function eventVerb(b: Block): string {
-  // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
-  // tool 仍然如实记着真正跑的是哪个工具。
-  if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
-  const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
-  return LEGACY_VERB[first] ?? first
-}
-function eventArg(b: Block): string {
-  if (b.meta?.tool) return b.meta.arg ?? ''
-  const nl = b.content.indexOf('\n')
-  return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
-}
 // 摊开这一行之后显示的那一份：参数原文，一个字都没剪。没有第二份时摊开的仍是
 // 这一行本身 —— 面板窄到把它省略掉时，展开是唯一能看全的办法。
 function eventDetail(b: Block): string {
   return b.meta?.detail || eventArg(b)
-}
-// 这一步挂了没有。后端只在挂了的时候写这两个字段，所以「没有」就是「没挂」。
-function eventFailed(b: Block): boolean {
-  return b.meta?.failed === true
 }
 function eventError(b: Block): string {
   return b.meta?.error ?? ''
@@ -316,8 +290,8 @@ function isLive(index: number): boolean {
             </div>
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
             <div v-else class="site-msg">
-              <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
-              <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
+              <!-- 头像上的字和它右边写的名字同一个来源：这一行的作者。 -->
+              <CheeseAvatar :size="26" :name="authorLabel(b)" class="site-msg__av" />
               <div class="site-msg__main">
                 <div class="site-msg__meta">
                   <span class="site-msg__name">{{ authorLabel(b) }}</span>

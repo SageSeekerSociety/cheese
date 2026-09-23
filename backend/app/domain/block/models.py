@@ -51,17 +51,33 @@ class BlockKind(enum.StrEnum):
     # A renderable product 芝士 explicitly points at (spec §9.1): content = the
     # worktree-relative file path, mime_type = how to render it (text/html,
     # image/svg+xml). The latest artifact of a topic is its "current preview";
-    # created via `cheese artifact`. Never inferred from prose — the AI names it.
+    # created via `cheese show`. Never inferred from prose — the AI names it.
     artifact = "artifact"
+    # 一份周报 (spec §7.1 周报集): content = 周报正文，meta 里的 `since`/`until`
+    # 是它讲的那一周。和 `decision` 同属「项目自己的话」——项目文档页按项目列出
+    # 它们。区别是它讲的是一段历史而不是一个当前状态，所以带时间窗：并排摆着
+    # 的几份周报，是那个窗口把它们分开的。
+    weekly = "weekly"
 
 
 class AuthorType(enum.StrEnum):
-    human = "human"
-    ai = "ai"  # 芝士 (本体 or 分身)
-    system = "system"
+    """谁写下了这条事件：一个参与者，还是平台自己。
+
+    人和 agent 是同一种参与者（结论 1），所以这一列不回答「是人还是 AI」——
+    那个问题由署名（``Block.author``，一个 handle）回答，而且只有它回答得了：
+    一个房间里坐着好几个人和好几个 agent，一个档位说不出是哪一个。
+
+    读这一列的唯一落点是 ``app.domain.block.authorship``。
+    """
+
+    participant = "participant"
+
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。
+    platform = "platform"
 
 
-# `meta` key carried by every new human message/attachment. Its value is null
+# `meta` key carried by every new message/attachment that arrives as an input.
+# Its value is null
 # while the input is pending, then the id of the agent turn that actually read
 # it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
 # tracked pending input from a legacy block created before turn accounting.

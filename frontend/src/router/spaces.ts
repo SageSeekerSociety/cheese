@@ -26,7 +26,7 @@ export default {
       component: () => import('@/layouts/spaces/SpacesTasks.vue'),
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
-        title: '赛题',
+        title: '题目',
         icon: { type: 'icon', value: 'mdi-cube-outline' },
       },
       children: [
@@ -82,7 +82,7 @@ export default {
             header: () => import('@/components/common/PageHeader.vue'),
           },
           meta: {
-            title: '赛题',
+            title: '题目',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
@@ -91,7 +91,7 @@ export default {
               name: 'TasksDetail',
               component: () => import('@/views/tasks/detail/Overview.vue'),
               meta: {
-                title: '赛题概览',
+                title: '题目概览',
                 disableBreadcrumbLink: true,
               },
             },
@@ -139,11 +139,56 @@ export default {
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
-            title: '编辑赛题',
+            title: '编辑题目',
             backTo: 'TasksDetail',
           },
         },
       ],
+    },
+    // 一门课自己的几屏。题目板是不是课看 `Space.isCourse`（服务端按默认分组声明
+    // 的壳算的），能不能看见哪几格看 `lib/courseNav.ts`。这六条路由**一次加齐**：
+    // 教学单元 / 作业与验收 / 学生与分组 / 小测 由后面的任务填组件，它们不再动这个
+    // 文件，也不再动侧栏。
+    //
+    // 注意 `SpacesCourseHome` 一条路由两种人看：老师看到课程总览，学生看到我的
+    // 课程。分叉在页面里按 `space.admins` 判，不按地址分叉 —— 同一个人今天教书、
+    // 明天可能只是学员，地址不该因为「你是谁」而变。
+    {
+      path: 'course',
+      name: 'SpacesCourseHome',
+      component: () => import('@/views/spaces/course/CourseHome.vue'),
+    },
+    {
+      path: 'course/units',
+      name: 'SpacesCourseUnits',
+      component: () => import('@/views/spaces/course/Units.vue'),
+    },
+    {
+      path: 'course/assignments',
+      name: 'SpacesCourseAssignments',
+      component: () => import('@/views/spaces/course/Assignments.vue'),
+    },
+    {
+      path: 'course/people',
+      name: 'SpacesCoursePeople',
+      component: () => import('@/views/spaces/course/People.vue'),
+    },
+    {
+      path: 'course/quiz',
+      name: 'SpacesCourseQuiz',
+      component: () => import('@/views/spaces/course/Quiz.vue'),
+    },
+    {
+      path: 'course/team',
+      name: 'SpacesCourseTeam',
+      component: () => import('@/views/spaces/course/Team.vue'),
+    },
+    // 课程模板的配置（模块开关 + 教学参数）。放在「设置」那一块下 —— 它是老师配
+    // 这门课的地方，不是一个课程页；侧栏那一条也只对课程里出现。
+    {
+      path: 'course/settings',
+      name: 'SpacesCourseSettings',
+      component: () => import('@/views/spaces/course/CourseSettings.vue'),
     },
     {
       path: 'tasks/audit',
@@ -208,6 +253,13 @@ export default {
           name: 'SpacesDetailAnalyticsParticipants',
           component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
         },
+        {
+          // 学习读的是学生项目里的对话，上面五格读的是赛题与报名表 —— 两套数据，
+          // 所以筛选那一栏里它只认时间，学生与知识点是这一格自己的。
+          path: 'learning',
+          name: 'SpacesDetailAnalyticsLearning',
+          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
+        },
       ],
     },
     {
@@ -224,6 +276,11 @@ export default {
       path: 'manage/domain-groups',
       name: 'SpacesDetailManageDomainGroups',
       component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
+    },
+    {
+      path: 'manage/invite-codes',
+      name: 'SpacesDetailManageInviteCodes',
+      component: () => import('@/views/spaces/detail/ManageInviteCodes.vue'),
     },
     {
       path: 'discussions',

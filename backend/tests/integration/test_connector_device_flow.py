@@ -5,6 +5,8 @@ NO agent. Also: the /agent WS rejects a bad token, and approve requires a logged
 human.
 """
 
+import pytest
+
 from tests.conftest import seed_user
 
 
@@ -139,6 +141,43 @@ def test_connect_requires_login(client):
     # No bearer → not an authenticated human → 401.
     r = client.post("/connector/connect", json={"device_code": code})
     assert r.status_code == 401
+
+
+@pytest.mark.parametrize("member", [False, True])
+def test_project_binding_requires_membership_before_approval(client, member):
+    owner = _login(client, "binding-owner")
+    project = client.post(
+        "/projects",
+        json={"name": "Private project", "owner_handle": "binding-owner"},
+        headers=_bearer(owner),
+    ).json()["data"]
+    token = _login(client, "device-owner")
+    if member:
+        added = client.post(
+            f"/projects/{project['id']}/members",
+            json={"user_handle": "device-owner"},
+            headers=_bearer(owner),
+        )
+        assert added.status_code == 200, added.text
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "test-device"}
+    ).json()["device_code"]
+    response = client.post(
+        "/connector/connect",
+        json={"device_code": code, "project_id": project["id"]},
+        headers=_bearer(token),
+    )
+    assert response.status_code == (200 if member else 403), response.text
+    polled = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()
+    assert polled["status"] == ("approved" if member else "pending")
+    if not member:
+        # A denied project binding must leave the enrollment usable.
+        retry = client.post(
+            "/connector/connect", json={"device_code": code}, headers=_bearer(token)
+        )
+        assert retry.status_code == 200, retry.text
 
 
 def test_agent_ws_rejects_unknown_token(client):

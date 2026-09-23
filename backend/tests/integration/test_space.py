@@ -1,7 +1,13 @@
-import pytest
-from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
-from tests.integration.conftest import UserCreator, unique_int
+import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.shell.service import resolve_shell
+from app.domain.space.models import SpaceCategory
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestSpaceIntegration:
@@ -13,8 +19,8 @@ class TestSpaceIntegration:
         )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "This is a test space.",
@@ -54,8 +60,8 @@ class TestSpaceIntegration:
         )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "This is a test space.",
@@ -91,8 +97,8 @@ class TestSpaceIntegration:
     ):
         creator = setup_space["creator"]
         space_name = setup_space["space_name"]
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "Another space",
@@ -164,6 +170,109 @@ class TestSpaceIntegration:
         assert resp.status_code == 404
 
 
+class TestNewBoardOpensAsACourse:
+    """建出来就是课程空间：默认分组已经带上课程壳，不再是一个空白版。
+
+    The assertion runs the whole path a student's project actually walks —
+    the created row, the 机构协议 chain, the catalog — rather than reading the
+    column back, because the column is not what the user sees.
+    """
+
+    def test_a_project_under_a_new_board_runs_the_course_shell(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
+    ):
+        creator = user_client.create_user()
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
+        resp = api_client.post(
+            "/spaces",
+            json={"name": f"Course ({unique_int(10000000, 99999999)})"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+        space = resp.json()["data"]["space"]
+        space_id = space["id"]
+        category_id = space["defaultCategoryId"]
+        assert category_id is not None
+
+        async def _shell_name() -> str:
+            category = await db_session.get(SpaceCategory, category_id)
+            assert category is not None and category.space_id == space_id
+            return resolve_shell(
+                project=_project_row(),
+                task=_task_row(),
+                category=category,
+            ).name
+
+        assert _portal.call(_shell_name) == "course-student"
+
+    def test_a_board_says_whether_it_is_a_course(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
+    ):
+        """哪块板是课：新建的说是，分组那一列空的说不是。
+
+        题目板自己的屏幕不是项目、读不到壳，所以 `isCourse` 是它们唯一能凭的
+        东西。它错了不报错：一门课会长成题目列表，一个老题目板会长出课程格子。
+        """
+        creator = user_client.create_user()
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        resp = create_approved_space(
+            api_client,
+            json={"name": f"Course ({unique_int(10000000, 99999999)})"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        space = resp.json()["data"]["space"]
+        space_id = space["id"]
+        category_id = space["defaultCategoryId"]
+        assert category_id is not None
+        assert space["isCourse"] is True
+
+        detail = api_client.get(f"/spaces/{space_id}", headers=headers)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["space"]["isCourse"] is True
+
+        listed = api_client.get("/spaces", params={"pageSize": 200}, headers=headers)
+        assert listed.status_code == 200, listed.text
+        rows = {s["id"]: s for s in listed.json()["data"]["spaces"]}
+        assert rows[space_id]["isCourse"] is True
+
+        # 老题目板：这一列没有值（它就产生于这一列存在之前）。
+        async def _undeclare() -> None:
+            category = await db_session.get(SpaceCategory, category_id)
+            assert category is not None
+            category.shell = None
+            await db_session.commit()
+
+        _portal.call(_undeclare)
+
+        again = api_client.get(f"/spaces/{space_id}", headers=headers)
+        assert again.status_code == 200, again.text
+        assert again.json()["data"]["space"]["isCourse"] is False
+
+
+def _project_row():
+    return SimpleNamespace(
+        id="probe", settings=None, external_task_id=1, created_at=None
+    )
+
+
+def _task_row():
+    return SimpleNamespace(protocol_override=None)
+
+
 class TestSpaceEnumeration:
     def test_enumerate_spaces(self, user_client: UserCreator, api_client: TestClient):
         creator = user_client.create_user()
@@ -172,8 +281,8 @@ class TestSpaceEnumeration:
         )
         for i in range(3):
             suffix = unique_int(10000000, 99999999)
-            api_client.post(
-                "/spaces",
+            create_approved_space(
+                api_client,
                 json={
                     "name": f"Enum Space ({suffix}) {i}",
                     "intro": "Test",
@@ -201,8 +310,8 @@ class TestSpaceEnumeration:
         )
         for i in range(5):
             suffix = unique_int(10000000, 99999999)
-            api_client.post(
-                "/spaces",
+            create_approved_space(
+                api_client,
                 json={
                     "name": f"Page Space ({suffix}) {i}",
                     "intro": "Test",
@@ -231,8 +340,8 @@ class TestSpaceCategories:
             api_client, creator.username, creator.password
         )
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Category Space ({suffix})",
                 "intro": "Test",
@@ -479,8 +588,8 @@ class TestSpacePermissions:
         other = user_client.create_user()
         other.token = user_client.login(api_client, other.username, other.password)
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Permission Space ({suffix})",
                 "intro": "Test",
@@ -539,8 +648,8 @@ class TestSpaceAdmins:
             api_client, new_owner.username, new_owner.password
         )
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Admin Space ({suffix})",
                 "intro": "Test",
@@ -666,8 +775,8 @@ class TestSpaceDomainGroups:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"DG Space ({suffix})",
                 "intro": "Domain group test",
@@ -732,10 +841,21 @@ class TestSpaceDomainGroups:
         api_client: TestClient,
     ):
         """Regression test: non-admin users must be able to list domain groups
-        so they can select access-control domains when publishing/editing tasks."""
+        so they can select access-control domains when publishing/editing tasks.
+
+        A member, not an admin — that was always the point. They have to be in
+        the 题目版 to read anything of it at all, so the owner puts them in.
+        """
         space_id = setup_space_with_groups["space_id"]
+        owner = setup_space_with_groups["owner"]
         other = user_client.create_user()
         other.token = user_client.login(api_client, other.username, other.password)
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": other.user_id},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         resp = api_client.get(
             f"/spaces/{space_id}/domain-groups",

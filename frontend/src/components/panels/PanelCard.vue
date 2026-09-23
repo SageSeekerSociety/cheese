@@ -12,9 +12,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 
 import { getRoomTask, sayOnRoomTask } from '../../api'
+import { isAgentBlock } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
+import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
@@ -90,8 +92,35 @@ watch(
 
 const dotStyle = computed(() => (card.value ? columnDotStyle(card.value.presentation.column) : {}))
 
-/** 对话里值得显示的块。事件（工具调用）留给「现场」，这里只放说过的话。 */
-const said = computed(() => (card.value?.blocks ?? []).filter((b) => b.kind === 'message' && (b.content || '').trim()))
+// 这张卡的时间线：说过的话，和话与话之间它做过的事。
+//
+// 只放话的话，一条跑了半小时的活在这里就是一句「开始了」和一句「做完了」，中间
+// 发生过什么只能去「现场」翻——而现场是整个房间的，分不出哪几步是这一件。所以
+// 两句话之间连着的几步操作并成一行「N 步操作」，默认折着，点开是流水账。
+// 芝士自言自语的那种事件（没显式发布的输出）是话，不是操作。
+type Entry = { kind: 'say'; block: Block } | { kind: 'steps'; key: string; blocks: Block[] }
+
+const entries = computed<Entry[]>(() => {
+  const out: Entry[] = []
+  for (const b of card.value?.blocks ?? []) {
+    if (b.kind === 'event' && !isNarration(b.meta)) {
+      const last = out[out.length - 1]
+      if (last?.kind === 'steps') last.blocks.push(b)
+      else out.push({ kind: 'steps', key: b.id, blocks: [b] })
+    } else if ((b.kind === 'message' || b.kind === 'event') && (b.content || '').trim()) {
+      out.push({ kind: 'say', block: b })
+    }
+  }
+  return out
+})
+
+// 摊开了哪几段。按那一段头一步的 id 记，重拉之后同一段还是摊开的。
+const openSteps = ref(new Set<string>())
+function toggleSteps(key: string) {
+  const next = new Set(openSteps.value)
+  if (!next.delete(key)) next.add(key)
+  openSteps.value = next
+}
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(markdown.parse(text, { async: false, breaks: true }))
@@ -166,16 +195,36 @@ async function send() {
       </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
-        <div v-if="!said.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
-        <div v-for="b in said" :key="b.id" class="card-msg">
-          <span class="card-msg__who t-meta">{{ b.author }}</span>
-          <div
-            v-if="b.author_type === 'ai'"
-            class="card-msg__text card-markdown t-body"
-            v-html="renderMarkdown(b.content)"
-          />
-          <span v-else class="card-msg__text t-body">{{ b.content }}</span>
-        </div>
+        <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
+        <template v-for="e in entries" :key="e.kind === 'say' ? e.block.id : e.key">
+          <div v-if="e.kind === 'say'" class="card-msg">
+            <span class="card-msg__who t-meta">{{ e.block.author }}</span>
+            <div
+              v-if="isAgentBlock(e.block)"
+              class="card-msg__text card-markdown t-body"
+              v-html="renderMarkdown(e.block.content)"
+            />
+            <span v-else class="card-msg__text t-body">{{ e.block.content }}</span>
+          </div>
+          <div v-else class="card-steps">
+            <button
+              type="button"
+              class="card-steps__head t-meta"
+              :aria-expanded="openSteps.has(e.key)"
+              @click="toggleSteps(e.key)"
+            >
+              <v-icon size="14">{{ openSteps.has(e.key) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+              <span>{{ e.blocks.length }} 步操作</span>
+              <span v-if="e.blocks.some(eventFailed)" class="card-steps__failed">有失败</span>
+            </button>
+            <ol v-if="openSteps.has(e.key)" class="card-steps__list">
+              <li v-for="b in e.blocks" :key="b.id" class="card-step" :class="{ 'card-step--failed': eventFailed(b) }">
+                <span class="card-step__verb">{{ eventVerb(b) }}</span>
+                <span v-if="eventArg(b)" class="card-step__arg" :title="eventArg(b)">{{ eventArg(b) }}</span>
+              </li>
+            </ol>
+          </div>
+        </template>
       </div>
 
       <!-- 卡下能说话，但说出去的话不是直接给分身的：做这条活的分身住在房间的会话
@@ -288,6 +337,56 @@ async function send() {
 .card-msg__text {
   color: var(--ink);
   white-space: pre-wrap;
+}
+/* 两句话之间的那几步操作：默认一行，点开是流水账。字比话小一档、颜色淡一档——
+   它是过程，不是这张卡要你读的东西。 */
+.card-steps {
+  padding: 2px 0;
+}
+.card-steps__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.card-steps__head:hover {
+  background: var(--fill);
+}
+.card-steps__failed {
+  color: var(--danger-ink);
+}
+.card-steps__list {
+  margin: 2px 0 4px 20px;
+  padding: 0;
+  list-style: none;
+}
+.card-step {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+.card-step__verb {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+.card-step__arg {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-step--failed .card-step__verb {
+  color: var(--danger-ink);
 }
 .card-markdown {
   white-space: normal;

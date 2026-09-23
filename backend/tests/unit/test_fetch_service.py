@@ -172,8 +172,10 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
     project, topic = _uuid.uuid4(), _uuid.uuid4()
     monkeypatch.setattr(
         auth_mod,
-        "IdentityService",
-        lambda _session: SimpleNamespace(is_agent=AsyncMock(return_value=True)),
+        "TopicMemberService",
+        lambda _session: SimpleNamespace(
+            resolve_agent_handle=AsyncMock(side_effect=lambda t: f"cheese-{t.hex[:12]}")
+        ),
     )
     monkeypatch.setattr(
         auth_mod,
@@ -200,7 +202,7 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
     actor = await resolver().resolve(
         fallback_handle=None, topic_id=topic, project_id=project
     )
-    assert actor.is_agent and actor.handle.startswith("cheese-")
+    assert actor.authenticated and actor.handle.startswith("cheese-")
 
 
 async def test_distillation_asks_for_the_model_this_deployment_runs(monkeypatch):

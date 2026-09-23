@@ -13,14 +13,17 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { t } from '../../i18n'
 import { useDocumentBytes } from '../../lib/documentBytes'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
-import { postPreviewSession } from '../../lib/previewSession'
+import { postPreviewSession, roomFileDestination } from '../../lib/previewSession'
+import AttachmentImage from '../AttachmentImage.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
+import RoomOutputs from './preview/RoomOutputs.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -28,13 +31,21 @@ const props = withDefaults(
     projectId: string | null
     active?: boolean
     refreshTick?: number
+    /**
+     * 这一格看的是房间里指定的哪一份文件（工作面板自由区的一个页签）。不给就是
+     * 固定的「预览」那一格：芝士最后摆出来的那一样，要跟着它走、要轮询。给了就只
+     * 看这一份，房间的当前预览换成什么都和它无关。
+     */
+    path?: string | null
   }>(),
-  { active: false, refreshTick: 0 }
+  { active: false, refreshTick: 0, path: null }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
   (e: 'locate', message: string): void
+  /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
+  (e: 'open-file', path: string): void
 }>()
 const panelElement = ref<HTMLElement | null>(null)
 const frameName = `cheese-preview-${useId()}`
@@ -58,8 +69,14 @@ const previewReadError = ref<string | null>(null)
 let loadedArtifact: string | null = null
 let generation = 0
 
-function openPreviewInNewTab() {
-  if (props.topicId) window.open(`/previews/${encodeURIComponent(props.topicId)}`, '_blank', 'noopener')
+/** 在新标签页打开这一格看着的东西。
+ *
+ *  给了 `path` 就是房间里的某一份文件（自由区的一个页签）——它不跟着当前预览走，
+ *  所以要把它自己的地址带过去；不给就是当前预览，那一条路本来就落在预览域根上。 */
+function openPreviewInNewTab(path?: string | null) {
+  if (!props.topicId) return
+  const query = path ? `?path=${encodeURIComponent(roomFileDestination(path))}` : ''
+  window.open(`/previews/${encodeURIComponent(props.topicId)}${query}`, '_blank', 'noopener')
 }
 
 // 文档类交付物: a report, a deck or a budget is what the room was asked for, and
@@ -74,7 +91,7 @@ function openPreviewInNewTab() {
 // text it already is, parsed by the same renderer the chat uses.
 //
 // 图片读不成文本（`content` 是 null），但那不是「没法显示」——内容域就是拿
-// image/png、image/jpeg 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
+// 对应的 image/* 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
 // 同住 `lib/fileKind`：一个文件是哪种类型只能有一个答案。
 
 const documentSuffix = computed(() => suffixOf(previewFile.value?.path ?? ''))
@@ -105,7 +122,6 @@ const {
   loading: docLoading,
   error: docError,
   rendererMissing,
-  forget: forgetDocument,
 } = useDocumentBytes({
   topicId: () => props.topicId,
   path: () => previewFile.value?.path ?? null,
@@ -183,21 +199,19 @@ async function fullscreen() {
   }
 }
 
-// ---- 读者点开的某一份房间文件 ----
+// ---- 指定的一份文件（自由区的页签） ----
 // 消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件都在这里，芝士
-// 点名的当前预览也只是其中一份——所以点开一份别的文件是同一个动作，不是另一处
-// 界面。点开之后轮询停手：它会把当前预览取回来，而读者要看的是他点的那一份。
-const asked = ref<string | null>(null)
-
-async function openFile(path: string): Promise<boolean> {
+// 点名的当前预览也只是其中一份，所以看其中任何一份都是同一套显示，只是不跟着当前
+// 预览走。
+async function loadFile(path: string, opts: { silent?: boolean } = {}) {
   const tid = props.topicId
-  if (!tid) return false
+  if (!tid) return
   const current = ++generation
-  loading.value = true
+  if (opts.silent) refreshing.value = true
+  else loading.value = true
   try {
     const content = await readPreviewFile(tid, path)
-    if (current !== generation || props.topicId !== tid) return false
-    asked.value = path
+    if (current !== generation || props.topicId !== tid) return
     previewUrl.value = null
     previewAppNote.value = ''
     previewError.value = null
@@ -207,28 +221,61 @@ async function openFile(path: string): Promise<boolean> {
     previewMime.value = ''
     loadedArtifact = null
     previewFile.value = content
-    return true
-  } catch {
-    // 不在这个库里。调用方接着去别处找，所以这里一句错误都不留——留下来它会顶掉
-    // 屏幕上那份本来好好的交付物。
-    return false
+    if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
+  } catch (e) {
+    if (current !== generation || props.topicId !== tid) return
+    previewFile.value = null
+    previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
   } finally {
-    if (current === generation) loading.value = false
+    if (current === generation) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
 }
 
-function backToArtifact() {
-  asked.value = null
-  forgetDocument()
-  void load({ reload: true })
+// 房间里的一份网页：它和「当前预览」走的是同一条路——内容域 + 沙箱 iframe——只是
+// destination 指这一份文件，不指房间当前产出的那一样。内容域按路径服务它，所以页面
+// 里的相对资源（`./style.css`）正好落在文件自己旁边。
+//
+// 网页不由本组件渲染：`readPreviewFile` 拿回来的只有那几行源码，挂上去读者看到的是
+// 标签本身。字节交给 iframe。
+const webMountedVersion = ref<string | null>(null)
+
+async function mountWebPage(
+  tid: string,
+  path: string,
+  content: FileContent,
+  current: number,
+  opts: { silent?: boolean }
+) {
+  // 已经画着这一份、而它没变（一轮收工的重读）：不动它。重新 POST 一次是让 iframe
+  // 整个重新导航，读者在这个页面里的状态会没掉。
+  if (opts.silent && previewUrl.value && webMountedVersion.value === (content.version ?? null)) return
+  let session: Awaited<ReturnType<typeof requestPreviewSession>>
+  try {
+    session = await requestPreviewSession(tid)
+  } catch (e) {
+    // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
+    if (current !== generation || props.topicId !== tid) return
+    previewError.value = e instanceof Error ? e.message : '预览授权失败'
+    return
+  }
+  if (current !== generation || props.topicId !== tid) return
+  previewMime.value = webMimeOf(suffixOf(path))
+  previewUrl.value = session.url
+  webMountedVersion.value = content.version ?? null
+  // Mount the named frame before POSTing: a missing target opens a new tab.
+  loading.value = false
+  await nextTick()
+  if (current !== generation || props.topicId !== tid) return
+  postPreviewSession(session, { target: frameName, path: roomFileDestination(path) })
 }
 
-defineExpose({ openFile })
-
 async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
+  if (props.path) return loadFile(props.path, opts)
   // Metadata polling must not cancel an explicit refresh's pending grant.
   if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
-  if (asked.value && !opts.reload) return
   const tid = props.topicId
   const pid = props.projectId
   if (!tid || !pid) return
@@ -286,7 +333,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
       if (!stillCurrent()) return
       // 两种「读不到文本」的情形分开走：
       // - 图片：它的内容本来就是字节，null 是正常的，交给 iframe 直接显示，
-      //   否则会掉进下面那句「这个文件不是文本」——预览域本身是拿 image/png
+      //   否则会掉进下面那句「这个文件不是文本」——预览域本身是拿 image/*
       //   把这些字节发出来的，浏览器画得出来。
       // - 其它二进制（docx/xlsx 走 documentType 那份分支，这里指没认出来的）：
       //   没有 iframe 能显示它，停下。
@@ -338,6 +385,12 @@ watch(
   { immediate: true }
 )
 watch(
+  () => props.path,
+  () => {
+    if (props.active) void load()
+  }
+)
+watch(
   () => props.refreshTick,
   () => {
     if (props.active) void load({ silent: true })
@@ -354,7 +407,8 @@ watch(
   () => props.active,
   (active) => {
     stopAutoRefresh()
-    if (!active) return
+    // 指定了文件的那一格不轮询：它不跟着当前预览走，文件变了靠每一轮收工那一下重读。
+    if (!active || props.path) return
     refreshTimer = setInterval(() => {
       if (!document.hidden) void load({ silent: true })
     }, 20_000)
@@ -369,7 +423,6 @@ watch(
   () => props.topicId,
   () => {
     generation += 1
-    asked.value = null
     previewUrl.value = null
     previewAppNote.value = ''
     previewNamedPath.value = ''
@@ -378,6 +431,7 @@ watch(
     previewReadError.value = null
     previewNamed.value = false
     loadedArtifact = null
+    webMountedVersion.value = null
     if (props.active) void load()
   }
 )
@@ -385,15 +439,20 @@ watch(
 
 <template>
   <div ref="panelElement" class="panel-preview">
-    <div class="preview-head">
+    <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
+         格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
+         条上（见下面）。 -->
+    <div v-if="!path" class="preview-head">
+      <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
+           想把它发出去，这是唯一要跳出去的一下。 -->
       <v-btn
         v-if="projectId"
-        :to="{ name: 'project-delivery', params: { projectId } }"
+        :to="{ name: 'workspace-running', params: { projectId } }"
         size="small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
       >
-        导出与发布
+        发布网站
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
@@ -401,16 +460,16 @@ watch(
           icon="mdi-open-in-new"
           size="small"
           variant="text"
-          class="c-muted"
+          color="medium-emphasis"
           title="在新标签页打开"
-          @click="openPreviewInNewTab"
+          @click="openPreviewInNewTab()"
         />
         <v-btn
           v-if="fullscreenSupported && previewUrl"
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
           size="small"
           variant="text"
-          class="c-muted"
+          color="medium-emphasis"
           :title="previewFull ? '退出全屏' : '全屏预览'"
           @click="fullscreen"
         />
@@ -419,7 +478,7 @@ watch(
         icon="mdi-refresh"
         size="small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
         title="刷新"
         :loading="refreshing"
         @click="load({ silent: true, reload: true })"
@@ -427,13 +486,6 @@ watch(
     </div>
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
-
-    <!-- 读者点开的是房间里某一份文件，不是芝士点名的那一份。说清现在看的是哪一份，
-         并留一条回去的路——否则这一格看起来像是交付物被换掉了。 -->
-    <div v-if="asked" class="asked px-3 py-2" data-testid="asked">
-      <span class="t-meta c-muted">正在看 {{ asked.split('/').pop() }}</span>
-      <v-btn variant="text" size="x-small" @click="backToArtifact">回到当前预览</v-btn>
-    </div>
 
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
@@ -444,6 +496,27 @@ watch(
         <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
         <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
         <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
+        <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
+             页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
+        <template v-if="path">
+          <v-spacer />
+          <v-btn
+            icon="mdi-open-in-new"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="在新标签页打开"
+            @click="openPreviewInNewTab(path)"
+          />
+          <v-btn
+            icon="mdi-download"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="下载"
+            @click="downloadArtifact"
+          />
+        </template>
       </div>
       <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
       <iframe
@@ -461,7 +534,8 @@ watch(
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>指定的文件读不到</div>
-      <div class="text-caption mt-1">
+      <div v-if="path" class="text-caption mt-1">{{ path }} 现在读不出来：{{ previewReadError }}</div>
+      <div v-else class="text-caption mt-1">
         芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
       </div>
     </div>
@@ -471,12 +545,12 @@ watch(
            gone. Collapsing them told people to summon 芝士 again for a tunnel
            that no summon brings back. -->
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-      <div>应用暂时不在线</div>
+      <div>{{ t('tasks.preview.unavailable') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        那台机器还连着，但登记的端口上没有服务在应答。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+        {{ t('tasks.preview.appUnavailable') }}
       </div>
       <div v-else class="text-caption mt-1">
-        跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
+        {{ t('tasks.preview.connectionUnavailable') }}
       </div>
     </div>
     <div v-else-if="documentType && previewFile" class="doc">
@@ -485,7 +559,13 @@ watch(
         <span class="doc__name">{{ documentName }}</span>
         <span class="doc__type t-meta">{{ documentType.label }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" class="c-muted" prepend-icon="mdi-download" @click="downloadArtifact">
+        <v-btn
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          prepend-icon="mdi-download"
+          @click="downloadArtifact"
+        >
           下载
         </v-btn>
       </div>
@@ -561,15 +641,35 @@ watch(
           <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
             发送
           </v-btn>
-          <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" title="取消" @click="clearLocator" />
+          <v-btn
+            icon="mdi-close"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="取消"
+            @click="clearLocator"
+          />
         </div>
       </Transition>
+    </div>
+    <!-- 指定的一张图：图片不在 iframe 那条路上（那一条是给网页和跑着的应用的），
+         这里按路径取字节，和聊天里的图是同一个组件。 -->
+    <div v-else-if="path && previewFile && isImageArtifact" class="file-image">
+      <AttachmentImage :topic-id="topicId" :path="path" />
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>这个文件不是文本</div>
       <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
-      <v-btn class="mt-3" size="small" variant="tonal" prepend-icon="mdi-open-in-new" @click="openPreviewInNewTab">
+      <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
+           一句话在这一格同样成立——它带着文件自己的地址过去。 -->
+      <v-btn
+        class="mt-3"
+        size="small"
+        variant="tonal"
+        prepend-icon="mdi-open-in-new"
+        @click="openPreviewInNewTab(path)"
+      >
         在新窗口打开
       </v-btn>
     </div>
@@ -578,6 +678,10 @@ watch(
       <div>暂无预览</div>
       <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
     </div>
+
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
   </div>
 </template>
 
@@ -591,11 +695,12 @@ watch(
   overflow-y: auto;
   background: var(--surface);
 }
-.asked {
+.file-image {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--line);
+  flex: 1 1 auto;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
 }
 .preview-head {
   display: flex;

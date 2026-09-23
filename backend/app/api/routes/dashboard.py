@@ -1,4 +1,4 @@
-"""Aggregation routes — project overview (§7.2) and Space board (§7.3)."""
+"""Aggregation routes — 成员页 (§7.2) and Space board (§7.3)."""
 
 import uuid
 from typing import Annotated
@@ -20,19 +20,6 @@ router = APIRouter(prefix="", tags=["dashboard"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-@router.get("/projects/{project_id}/overview")
-async def project_overview(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """事维度总览 — for a verified caller; 等你处理的事 shows THEIR items plus
-    broadcasts, never other members' mailboxes (those ids/titles used to leak
-    here unauthenticated)."""
-    viewer = await resolver.resolve_recipient(
-        requested=None, project_id=project_id, allow_anonymous=False
-    )
-    return ok(await DashboardService(db).project_overview(project_id, viewer=viewer))
-
-
 @router.get("/spaces/{space_id}/dashboard")
 async def space_dashboard(space_id: int, db: DbSession) -> dict:
     return ok(await DashboardService(db).space_board(space_id))
@@ -48,9 +35,17 @@ async def member_summary(
     """成员页 (spec §7.2): one member's topics + waiting items + role.
 
     ``user_handle`` says whose page this is, not who is asking — the caller is
-    resolved like on /overview above, and ``waiting_on_you`` is trimmed to what
-    the viewer may see (this route used to hand the named member's inbox to
-    anyone unauthenticated)."""
+    resolved from the credential, and ``waiting_on_you`` is trimmed to what the
+    viewer may see (this route used to hand the named member's inbox to anyone
+    unauthenticated).
+
+    The half that is the same for everyone is still project content: the names
+    of the members who started these topics, the topics' titles and statuses,
+    and how much each of them wrote this week. So the 项目成员 door is here too,
+    and it is the door that decides, not the mailbox — being signed in is not
+    being in the project."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     viewer = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
     )
@@ -108,8 +103,16 @@ async def project_credits(
 
 
 @router.get("/projects/{project_id}/contributions")
-async def contributions(project_id: uuid.UUID, db: DbSession) -> dict:
-    """贡献统计 (spec §10.1): human vs AI + per author."""
+async def contributions(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """贡献统计 (spec §10.1): human vs AI + per author.
+
+    Names each author and how much of the project they wrote — the same
+    project content ``/usage`` next door has always guarded, and the same
+    judgment (项目成员) now guards it here."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     return ok(await DashboardService(db).contributions(project_id))
 
 

@@ -16,6 +16,11 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
+      # Host NIC counters for the board's uplink plane (read-only, no privileges).
+      # Missing mount (Docker Desktop, CI) degrades to the container's own
+      # /sys/class/net and the board says `perf.netContainer` — see
+      # `app/core/net_io.py`.
+      - /sys/class/net:/host-sys-class/net:ro
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     logging:

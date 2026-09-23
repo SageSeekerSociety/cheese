@@ -4,19 +4,17 @@ those threads work on."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import (
-    Task,
-    TaskStatus,
-)
+from app.domain.room_task.models import Task
 
 
 class TaskRepository:
-    # Same exclusions the topic timeline uses: doc nodes, inline comments and
-    # artifacts belong to the document view, not to the conversation.
+    # Doc nodes and inline comments belong to the document view. Artifacts are in
+    # the room's timeline, but a card's timeline has no way to show one yet, so
+    # it leaves them out rather than send rows nothing renders.
     _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
 
     def __init__(self, session: AsyncSession):
@@ -24,17 +22,6 @@ class TaskRepository:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._session.get(Task, task_id)
-
-    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
-        """Record that the thread's raw session files reached the platform.
-        False when no thread has this id."""
-        stamped = await self._session.execute(
-            update(Task)
-            .where(Task.id == task_id)
-            .values(transcripts_archived_at=at)
-            .returning(Task.id)
-        )
-        return stamped.scalar() is not None
 
     async def add(
         self,
@@ -62,30 +49,6 @@ class TaskRepository:
         self._session.add(task)
         await self._session.flush()
         return task
-
-    async def open_by_subagent(
-        self, room_id: uuid.UUID, subagent_id: str
-    ) -> Task | None:
-        """The open thread in *room_id* this worker is doing, if any.
-
-        `open` is part of the question, not a filter on the answer: a worker id
-        is only meaningful while the work is live, and a finished thread that
-        kept its id would silently swallow the events of whatever came after it.
-
-        Newest first so that even if a stale binding somehow survived, the
-        events land on the work that is actually going on.
-        """
-        stmt = (
-            select(Task)
-            .where(
-                Task.room_id == room_id,
-                Task.subagent_id == subagent_id,
-                Task.status == TaskStatus.open,
-            )
-            .order_by(Task.created_at.desc(), Task.id)
-            .limit(1)
-        )
-        return (await self._session.scalars(stmt)).first()
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
         """These threads, oldest first. Ids that name nothing are simply absent

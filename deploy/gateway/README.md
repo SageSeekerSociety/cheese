@@ -25,32 +25,73 @@ A stack of its own, on purpose: `deploy-docker.sh` takes one compose file and
 brings up exactly `backend frontend`, and that file is shared with prod. App
 deploys never touch the gateway, and restarting the gateway never restarts the app.
 
-```sh
-cd deploy/compose
-cat > .env <<EOF
-LITELLM_MASTER_KEY=sk-...        # also the backend's LLM_GATEWAY_ADMIN_KEY
-LITELLM_DB_PASSWORD=...
-ZHIPU_API_KEY=...                # the same upstream keys already in use
-DEEPSEEK_API_KEY=...
-EOF
-chmod 600 .env
-docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
-```
+The existing image build pipeline builds `gateway` when `deploy/gateway/`
+changes. Otherwise, it reuses the previous gateway image and publishes it under
+the current commit tag. The Docker build runs
+the adapter and timing tests without provider requests.
 
-Then, in the box's `backend/.env`:
+For the existing dev gateway, use the **Release gateway** workflow on `main`.
+Supply the full SHA of a commit on `main` whose image build succeeded and explicitly
+acknowledge stream interruption. Replacing the gateway can interrupt active model streams; it does
+not restart the application or gateway database. This workflow does not target
+production.
+
+The release reads credentials from `$HOME/gateway/compose/.env`, pulls the
+CI-built image, saves the running image ID and configuration under
+`$HOME/gateway/releases/`, and tests image preservation before changing the service.
+It uses the configuration bundled in the image. If the new container fails its
+health check, the release restores the saved image and configuration and reports
+failure. Both the old and new configurations remain in the release directory.
+
+Kimi K3 uses the native Messages endpoint at
+`https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
+`$HOME/gateway/compose/.env` before releasing a configuration that includes it.
+Its budget prices convert the published CNY rates at the existing RMB 7.1/USD
+convention; they are estimates, not a live exchange rate. The pinned adapter
+keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
+unsupported adaptive-thinking field.
+
+The box's `backend/.env` must contain:
 
 ```
 LLM_GATEWAY_ADMIN_BASE=http://litellm:4000
-LLM_GATEWAY_ADMIN_KEY=<the master key above>
+LLM_GATEWAY_ADMIN_KEY=<LITELLM_MASTER_KEY from $HOME/gateway/compose/.env>
 ```
 
-and recreate the backend — `docker restart` will not do, since environment is
-fixed when a container is created, not when its process starts.
+Changes to these settings take effect through the application deployment pipeline.
 
 The `deepseek-flash` entry declares its thinking and effort capabilities. Without
 them, the pinned gateway removes the thinking settings sent by Claude Code.
-Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
-models. Saving a different model refreshes the native session at the next task
+
+## Putting a model in front of people
+
+There are two ways to add one, and both end in the same place: cheese reads the
+gateway back through `/model/info` and keeps no list of its own, so a model
+appears in agent settings as soon as the gateway reports it, without a backend
+release.
+
+**In `config.yaml`** — add the route and the price and mark it
+`cheese_selectable: true` under `model_info`. This is the baseline that ships
+with the image, so a deployment's always-on models belong here; changing it
+means releasing the gateway. The marker is opt-in because the
+gateway also routes models that are not menu items — `glm-4.5` is where the
+subagent alias points.
+
+**On the admin models page** — administrators add, edit, disable, and delete
+runtime models (`STORE_MODEL_IN_DB` is on) without a release. Every write is
+audited with the acting handle, and a successful write refreshes the catalogue
+so the model is pickable immediately. Models declared in `config.yaml` appear
+there read-only, because the gateway refuses to write them.
+
+Both routes owe one invariant, and the service behind the admin page enforces it
+as surely as `check_config.py` enforces it for the file: a selectable model with
+no price is not offered at all. Its tokens would meter at zero, the project's
+`max_budget` would never trip, and the first sign of trouble would be the
+invoice; a model missing from the picker gets noticed, a brake that quietly
+stopped working does not. `check_config.py` asserts this for every selectable
+entry, so run it after editing the list.
+
+Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
 Auxiliary and subagent model aliases follow the selected API model. API-backed
 Remote Control sessions receive Cheese project identity and control policy from
@@ -86,6 +127,30 @@ Check the loaded configuration's request transformation and nonzero token prices
 docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
 ```
 
+## Health checks
+
+The gateway keeps up to five 20 MB log files; recreating its container does not preserve its stdout history.
+
+The scheduled check calls `/health/readiness` and the authenticated model catalog.
+It checks the gateway database and admin authentication without generating tokens;
+provider quota and inference remain untested. For a bounded inference check, run
+the existing supply probe with `--generate --model kimi-k3`:
+
+```sh
+docker exec -i cheese-gateway-litellm-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
+```
+
+It makes one native Messages request with a 512-token output limit and a 60-second
+deadline. A missing terminal event fails the probe, as do authentication, quota,
+rate-limit, and transport errors. Reaching the output limit is reported separately
+from a broken stream. The probe prints categories and token counts, never provider
+error messages or generated text.
+
+Failure records distinguish observed DNS, TLS, timeout, HTTP authentication,
+rate-limit, and documented quota errors; an unknown HTTP 500 is not labeled a
+network cause. Timing completion means HTTP EOF, while the supply probe also
+checks the Messages terminal event.
+
 ## Two things that will bite
 
 **No published port.** The gateway joins the app's docker network instead. A
@@ -93,15 +158,6 @@ host binding is either loopback, which containers cannot reach (the app sits on
 its own bridge), or a bridge address, which puts the upstream keys and the admin
 API on the box's LAN. Joining the network removes the choice.
 
-**Pulling the image.** The box is logged into ghcr for its own private images,
-and docker offers that credential for every ghcr pull — including public ones,
-where it is rejected rather than falling back to anonymous. Pull with an empty
-credential store:
-
-```sh
-D=$(mktemp -d); DOCKER_CONFIG=$D docker pull ghcr.io/berriai/litellm@sha256:...; rm -rf $D
-```
-
-The image is pinned by digest because berriai publishes no tag for the version
-this repo pins as a library (checked against the registry), and `main-latest`
-moves.
+**Image versions.** CI builds from an upstream digest and publishes a commit tag.
+The release workflow verifies main ancestry and a successful build before pulling
+that tag. It does not build or retag an image on the deployment host.

@@ -24,6 +24,27 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
+    # 这次交付动的是清单上哪一项产物 (#1085 结论三): `artifact` 沿用一项，by id —
+    # a name would let one typo grow a near-duplicate silently; `new_artifact`
+    # declares one the list does not have yet, and that is the call that hands
+    # back the new id. Exactly
+    # one of them, enforced in review/services.py rather than here for the same
+    # reason `change_subject` is: the answer to "you named neither" has to be
+    # the sentence that teaches the two actions apart, not pydantic's
+    # `Field required`.
+    artifact: str | None = None
+    new_artifact: str | None = None
+    # 这一项产物是什么东西、给谁的 —— 一句话，清单上跟着名字一起显示，下一次交付
+    # 靠它判断「我做出来的是不是它的新一版」。新声明一项时必填，沿用一项时可给可
+    # 不给（给了就以新的为准）：写对了的那句话说的是这样东西本身，交一版新的不会
+    # 让它变得不对。长度和「别抄改动标题」由 project/artifacts.py 的 clean_about
+    # 挡，不在这里 —— 同一个理由，那里答得出为什么。
+    about: str | None = None
+    # 这一版交出去的是什么 (#1085 结论五)：`deliver` 是工作目录里那一份（建卡时落
+    # 一份快照，因为构建产物过了这一轮就没了），`deliver_url` 是一个地址。两个都不
+    # 给就是交出去这次合并本身，代码仓库这类项目交的就是它。
+    deliver: str | None = Field(default=None, max_length=512)
+    deliver_url: str | None = Field(default=None, max_length=1024)
 
 
 class AcceptCardDescribe(BaseModel):

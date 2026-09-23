@@ -1,0 +1,58 @@
+{
+  "backend": [
+    "backend/**",
+    "deploy/metering-proxy/**",
+    ".pre-commit-config.yaml",
+    ".github/scripts/ensure-apt.sh",
+    ".github/workflows/test.yml"
+  ],
+  "frontend": [
+    "frontend/**",
+    ".github/workflows/frontend.yml"
+  ],
+  "e2e": [
+    "backend/**",
+    "frontend/**",
+    "e2e/**",
+    ".github/scripts/ci-test-evidence.py",
+    ".github/workflows/e2e.yml"
+  ],
+  "cli": [
+    "cli/**",
+    "backend/tests/fixtures/wire/**",
+    ".github/workflows/cli.yml"
+  ],
+  "guards": [
+    "backend/**",
+    "frontend/**",
+    "deploy/**",
+    ".claude/scripts/**",
+    ".github/workflows/**"
+  ],
+  "deploy": [
+    "deploy/**",
+    ".github/scripts/ensure-apt.sh",
+    "backend/scripts/gateway_supply_probe.py",
+    "backend/scripts/test_gateway_supply_probe.py",
+    ".github/workflows/deploy-drift.yml",
+    ".github/workflows/deploy-scripts-test.yml",
+    ".github/workflows/deploy-dev.yml",
+    ".github/workflows/build.yml",
+    ".github/scripts/plan-image-builds.sh",
+    ".github/scripts/test-plan-image-builds.sh"
+  ],
+  "harness": [
+    "backend/app/domain/agent/**",
+    "backend/tests/**",
+    "backend/scripts/test_harness_contracts.py",
+    "backend/scripts/assert_suite_ran.py",
+    "backend/uv.lock",
+    ".github/workflows/harness-contract.yml"
+  ],
+  "mcp": [
+    "scripts/remote_execution/mcp_contract.py",
+    "scripts/remote_execution/package.json",
+    "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+    ".github/workflows/mcp-contract.yml"
+  ]
+}

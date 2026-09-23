@@ -3,8 +3,10 @@
 WAL at the next turn start — idempotently (no duplicate if it was also persisted
 live). This is the W1 half of the event-durability fix."""
 
+import asyncio
 import json
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -14,12 +16,14 @@ import pytest
 from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
@@ -69,6 +73,55 @@ def _event_blocks_for(rows, eid: str):
         and isinstance(b.meta, dict)
         and b.meta.get("eid") == eid
     ]
+
+
+@pytest.mark.anyio
+async def test_slow_spool_retention_does_not_block_other_requests(
+    client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(QuietScreen()),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        await session.commit()
+    _spool_event(ws.spool_dir(project.id, topic.id), "retention-event")
+    entered = threading.Event()
+    progressed = threading.Event()
+    observed = []
+    prune = event_spool.prune
+
+    def slow_prune(*args, **kwargs):
+        entered.set()
+        observed.append(progressed.wait(timeout=1))
+        return prune(*args, **kwargs)
+
+    monkeypatch.setattr(event_spool, "prune", slow_prune)
+
+    async def other_request():
+        while not entered.is_set():
+            await asyncio.sleep(0.005)
+        progressed.set()
+
+    async def reconcile():
+        return [
+            frame
+            async for frame in svc._reconcile_spool(
+                project.id, topic.id, None, harness=CLAUDE_CODE
+            )
+        ]
+
+    await asyncio.wait_for(asyncio.gather(reconcile(), other_request()), timeout=10)
+    assert observed == [True]
+    assert _unread(ws.spool_dir(project.id, topic.id)) == []
 
 
 @pytest.mark.anyio
@@ -394,7 +447,7 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
         for b in rows
         if b.kind == BlockKind.event
         and (b.meta or {}).get("progress")
-        and b.author_type == AuthorType.ai
+        and looks_like_agent_handle(b.author)
         and "交给你了" in (b.content or "")
     ]
     assert len(matches) == 1  # one copy, whichever path landed it
@@ -461,7 +514,7 @@ def _ai_messages(rows, *, exclude: tuple[str, ...] = ("ok",)) -> list:
         b
         for b in rows
         if b.kind == BlockKind.message
-        and b.author_type == AuthorType.ai
+        and looks_like_agent_handle(b.author)
         and b.content not in exclude
     ]
 

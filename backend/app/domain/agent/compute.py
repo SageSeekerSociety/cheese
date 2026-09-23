@@ -15,9 +15,10 @@ import uuid
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.config import settings
-from app.domain.agent.harness import AgentRuntime, runtime_for
+from app.domain.agent.harness import CODEX, HARNESSES, PI, AgentRuntime, runtime_for
 
 if TYPE_CHECKING:
+    from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
         ActivityConsumer,
         Backlog,
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
         SessionRef,
         UnreadProbe,
     )
-    from app.domain.agent.harness.channel import Channel
 
 
 class ComputeProvider(Protocol):
@@ -115,7 +115,7 @@ class ComputePool:
     """
 
     def __init__(self, backends: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import DEFAULT_HARNESS
+        from app.domain.agent.harness import deployment_harness
 
         # Every backend runs a harness. Checked HERE, once, at wiring time: the
         # turn path then reads `runtime_for` as an answer rather than as a
@@ -125,7 +125,9 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
-        self._default = (default_name, DEFAULT_HARNESS)
+        # 部署跑的那个骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，
+        # 而不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
+        self._default = (default_name, deployment_harness())
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
         self._owners: dict[uuid.UUID, AgentRuntime] = {}
@@ -177,8 +179,11 @@ class ComputePool:
                 return True
         return False
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
-        """Ask the machine that owns this room to put its platform tools back.
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
+        """Ask the machine that owns this room to put this agent's platform
+        tools back; without an agent, the one that answers for the room.
 
         Only a backend that can lose them answers; everything else says no, so
         the caller needs no test for which machine a room is on.
@@ -189,7 +194,7 @@ class ComputePool:
                 continue
             runtime = runtime_for(backend)
             if self._owners.get(topic_id) is runtime or runtime.holds(topic_id):
-                return await recover(topic_id)
+                return await recover(topic_id, agent_handle)
         return False
 
     def bind_events(
@@ -287,7 +292,7 @@ class ComputePool:
         return self._backends.get((machine, harness_name(harness)))
 
 
-def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
+def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputePool:
     """Build the ComputePool from settings.
 
     Every machine here belongs to someone a person can name: the device
@@ -303,6 +308,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
+    from app.domain.agent import place
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.channel import Channel
@@ -328,7 +334,14 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             no_progress_s=settings.agent_no_progress_s,
         )
 
-    channels: list[Channel] = [DeviceChannel()]
+    # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次、可能再被
+    # `PiChannel` 包一次，而这两个包装读的是设备传输自己的 `_hub` 与
+    # `_session_factory`。所以 `DeviceChannel` 在这里不是一条判断，是那两个包装本来
+    # 就要的东西写出来：原来标成 `Channel` 的那个签名兑现不了——真递一条别的
+    # `Channel` 进来，`CentralChannel(c)` 当场 AttributeError。
+    #
+    # 「这条通道上挂不挂得住 pi」是另一回事，在下面问能力位：那是一个会变的事实。
+    channels: list[DeviceChannel] = [DeviceChannel()]
     if cloud_channel is not None:
         channels.append(cloud_channel)
     # The default has to name a machine THIS pool actually holds — the pool
@@ -342,22 +355,38 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     backends: list[ComputeProvider] = [
         runs_claude_code(CentralChannel(c)) for c in channels
     ]
-    backends.extend(
-        CodexRuntime(
-            CodexChannel(CentralChannel(c), executor_launch),
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+    # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
+    # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
+    # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
+    # `bind_events` 照样把房间侧的持久化交给它，`deliver` 在没有 owner 的时候照样
+    # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
+    # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
+    if CODEX in HARNESSES:
+        backends.extend(
+            CodexRuntime(
+                CodexChannel(CentralChannel(c), executor_launch),
+                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            )
+            for c in channels
         )
-        for c in channels
-    )
     # pi is the one backend NOT wrapped in CentralChannel: it runs on the
     # machine that holds the workspace, so there is no second machine to assign
     # and no executor to route its tools through. See pi/channel.py.
-    backends.extend(
-        PiRuntime(
-            PiChannel(c),
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+    #
+    # 所以这里问的是地点的能力位 `HANDS_HERE`，不是通道的类。按类问过一次：
+    # `isinstance(c, DeviceChannel)` 读起来像一条排除规则，而这个池里装得进来的两
+    # 条通道都继承 `DeviceChannel`，它恒为真——**今天它排除的是空集**，换成能力位
+    # 也不会少挂一个 backend。换的是判据的形状：pi 挂不挂得住，取决于手在不在跑会
+    # 话的那台机器上（一个会变的事实），不取决于通道的类（一个不会变的事实）。多
+    # 一条手在别处的通道进这个池的那天，它声明 `hands_here = False` 就够，这一行不
+    # 用跟着改——`tests/unit/test_compute_pool.py` 的 `Elsewhere` 钉的就是这一句。
+    if PI in HARNESSES:
+        backends.extend(
+            PiRuntime(
+                PiChannel(c),
+                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            )
+            for c in channels
+            if place.HANDS_HERE in c.capabilities()
         )
-        for c in channels
-        if isinstance(c, DeviceChannel)
-    )
     return ComputePool(backends, default_name)

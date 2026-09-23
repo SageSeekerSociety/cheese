@@ -32,8 +32,22 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
 export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 
 /** 浏览器自己画得出来的图片。它们不是文档，所以不在上面那张表里，但预览域按
- *  image/png、image/jpeg 把字节发出来，浏览器画得出来。 */
-export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
+ *  对应的 image/* 把字节发出来，浏览器画得出来。 */
+export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+
+/** 图片字节的 mime。预览域按 artifact 自己的 mime 发字节，改动那一格从原始字节
+ *  造 Blob 时要的是同一个答案。 */
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+}
+
+export function imageMimeOf(suffix: string): string {
+  return IMAGE_MIME[suffix] ?? 'image/jpeg'
+}
 
 /** 预览面板自己显示得出这个文件吗。
  *
@@ -42,6 +56,26 @@ export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg'])
 export function previewCanShow(path: string): boolean {
   const suffix = suffixOf(path)
   return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix)
+}
+
+/** 房间里这一份，预览面板画得出来吗。
+ *
+ *  和 `previewCanShow` 只差网页这一档，而那一档恰恰由「它在哪个库」决定：仓库树里
+ *  的 .html 是源码，该开在「改动」那格看 diff；房间文件没有树、只有那几行字节，所
+ *  以把它交给预览域的沙箱 iframe。 */
+export function previewCanShowInRoom(path: string): boolean {
+  return previewCanShow(path) || isWebPage(path)
+}
+
+/** 网页类文件：浏览器自己画得出，但要有内容域才画得出来（见 `WEB_TYPES`）。 */
+export function isWebPage(path: string): boolean {
+  return suffixOf(path) in WEB_TYPES
+}
+
+/** 网页类文件按什么 mime 发出去。内容域按路径的扩展名猜，这里说的是同一件事，
+ *  只是面板在把地址递过去之前就要把类型写在预览条上。 */
+export function webMimeOf(suffix: string): string {
+  return WEB_MIME[suffix] ?? 'text/html'
 }
 
 /** 文本 diff 读不了的文档。
@@ -69,5 +103,30 @@ export function suffixOf(path: string): string {
 /** 附件块左边那个方格里的图标，给没有缩略图可画的类型用。认不出的拿一张白纸:
  *  不是出错，只是这个类型没有更具体的说法。 */
 export function fileIcon(path: string): string {
-  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+}
+
+/** 浏览器直接画得出、因此 DOCUMENT_TYPES 里没有的那几种。
+ *
+ *  它们不进 DOCUMENT_TYPES 是有讲究的：那张表同时决定 `previewCanShow`，而一枚
+ *  指着仓库里某个 .html 源文件的 chip 该开在「改动」那一格去看 diff，不是开进
+ *  阅读器。这里只管「它叫什么」，不管「谁来显示它」——所以「房间里那一种开在哪里」
+ *  是 `previewCanShowInRoom` 说的，它多认这一档。 */
+const WEB_TYPES: Record<string, { label: string; icon: string }> = {
+  html: { label: '网页', icon: 'mdi-language-html5' },
+  htm: { label: '网页', icon: 'mdi-language-html5' },
+  svg: { label: '矢量图', icon: 'mdi-vector-square' },
+}
+
+const WEB_MIME: Record<string, string> = {
+  html: 'text/html',
+  htm: 'text/html',
+  svg: 'image/svg+xml',
+}
+
+/** 说给人听的类型名（「PDF」「网页」「表格」）。认不出就是中性的「文件」——
+ *  一个说不出的类型不该在界面上变成一段后缀。 */
+export function fileLabel(path: string): string {
+  const suffix = suffixOf(path)
+  return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? '文件'
 }

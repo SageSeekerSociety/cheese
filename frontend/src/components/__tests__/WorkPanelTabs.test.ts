@@ -58,6 +58,8 @@ vi.mock('../../api', async () => {
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    readPreviewFile: vi.fn().mockRejectedValue(new Error('file not found')),
   }
 })
 
@@ -200,8 +202,8 @@ describe('工作面板 · Tab 容器', () => {
     expect(visible(container, '.panel-changes')).toBe(true)
     expect(visible(container, '.panel-overview')).toBe(false)
     // ……而且是它的文件半边，开着的正是被点的那个文件。
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null)
-    expect(container.querySelector('.file-bar__path')?.textContent?.trim()).toBe('src/b.ts')
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null, 'committed')
+    expect(container.querySelector('.changes-bar__path')?.textContent?.trim()).toBe('src/b.ts')
   })
 
   // 规则 1: 能力不存在时，入口就不该存在。判定读的是「这个话题手上有什么」，

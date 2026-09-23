@@ -13,6 +13,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.agent import environment_runner
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -531,15 +533,16 @@ async def test_channels_ignore_old_failure_but_wait_for_new_attempt(
     monkeypatch.setattr(device_provider, "environment_status", read)
     monkeypatch.setattr(device_provider.asyncio, "sleep", AsyncMock())
     actual = await channel.ensure_ready(
-        project_id=uuid.UUID(int=1),
-        topic_id=uuid.UUID(int=2),
+        session=SessionRef(
+            uuid.UUID(int=1), uuid.UUID(int=2), "agent", harness="claude-code"
+        ),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert read.await_count == 4
@@ -588,15 +591,16 @@ async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypat
     read = AsyncMock(side_effect=[{"state": "preparing"}, {"state": "ready"}])
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id=uuid.UUID(int=1),
-        topic_id=uuid.UUID(int=2),
+        session=SessionRef(
+            uuid.UUID(int=1), uuid.UUID(int=2), "agent", harness="claude-code"
+        ),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert read.await_count == 2
@@ -627,15 +631,16 @@ async def test_ready_environment_is_rechecked_only_after_screen_replacement(
     )
     monkeypatch.setattr(device_provider, "environment_status", read)
     request = channel.ensure_ready(
-        project_id=uuid.UUID(int=1),
-        topic_id=uuid.UUID(int=2),
+        session=SessionRef(
+            uuid.UUID(int=1), uuid.UUID(int=2), "agent", harness="claude-code"
+        ),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     if replacement and next_state == "failed":
         with pytest.raises(device_provider.EnvironmentPreparationError):
@@ -664,15 +669,16 @@ async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch)
 
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id=uuid.UUID(int=1),
-        topic_id=uuid.UUID(int=2),
+        session=SessionRef(
+            uuid.UUID(int=1), uuid.UUID(int=2), "agent", harness="claude-code"
+        ),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert time.monotonic() - started < 1
@@ -709,15 +715,16 @@ async def test_long_environment_returns_to_low_frequency_checks(monkeypatch):
     monkeypatch.setattr(device_provider.asyncio, "sleep", sleep)
     monkeypatch.setattr(device_provider, "environment_status", read)
     actual = await channel.ensure_ready(
-        project_id=uuid.UUID(int=1),
-        topic_id=uuid.UUID(int=2),
+        session=SessionRef(
+            uuid.UUID(int=1), uuid.UUID(int=2), "agent", harness="claude-code"
+        ),
         token="token",
         env={"CHEESE_ENVIRONMENT": "{}"},
         memory_scope=None,
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert 14 <= clock.seconds < 16

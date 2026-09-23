@@ -65,9 +65,9 @@ def _connection(**overrides):
     return SimpleNamespace(**defaults)
 
 
-def _make_service(repo=None, redis=None) -> tuple[OAuthService, AsyncMock]:
+def _make_service(repo=None) -> tuple[OAuthService, AsyncMock]:
     repo = repo or AsyncMock()
-    svc = OAuthService(repo=repo, redis=redis)
+    svc = OAuthService(repo=repo)
     return svc, repo
 
 
@@ -244,125 +244,96 @@ class TestGitHubProviderRefreshAccessToken:
 # ---------------------------------------------------------------------------
 
 
+def _routed_client(routes: dict[str, tuple[int, object]]) -> AsyncMock:
+    """An httpx.AsyncClient stand-in answering GETs by URL; unknown URLs 404."""
+
+    async def _get(url, **_kwargs):
+        status, body = routes.get(url, (404, None))
+        resp = MagicMock()
+        resp.status_code = status
+        resp.json.return_value = body
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    client = AsyncMock()
+    client.get.side_effect = _get
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+_GH_USER = "https://api.github.com/user"
+_GH_EMAILS = "https://api.github.com/user/emails"
+
+
+async def _github_info(profile_email, emails_status, emails) -> OAuthUserInfo:
+    client = _routed_client(
+        {
+            _GH_USER: (
+                200,
+                {
+                    "id": 12345,
+                    "email": profile_email,
+                    "name": "GitHub User",
+                    "login": "ghuser",
+                },
+            ),
+            _GH_EMAILS: (emails_status, emails),
+        }
+    )
+    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+        return await GitHubProvider(_github_config()).get_user_info("token123")
+
+
 class TestGitHubProviderGetUserInfo:
     @pytest.mark.anyio
-    async def test_with_email_in_profile(self):
-        provider = GitHubProvider(_github_config())
-
-        user_response = MagicMock()
-        user_response.json.return_value = {
-            "id": 12345,
-            "email": "user@github.com",
-            "name": "GitHub User",
-            "login": "ghuser",
-        }
-        user_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = user_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("token123")
+    async def test_maps_profile_and_verified_primary_email(self):
+        info = await _github_info(
+            None,
+            200,
+            [
+                {"email": "secondary@github.com", "primary": False, "verified": True},
+                {"email": "primary@github.com", "primary": True, "verified": True},
+            ],
+        )
 
         assert info.id == "12345"
-        assert info.email == "user@github.com"
+        assert info.email == "primary@github.com"
         assert info.name == "GitHub User"
         assert info.username == "ghuser"
         assert info.preferred_username == "ghuser"
 
     @pytest.mark.anyio
-    async def test_without_email_fetches_from_emails_endpoint(self):
-        provider = GitHubProvider(_github_config())
-
-        user_response = MagicMock()
-        user_response.json.return_value = {
-            "id": 12345,
-            "email": None,
-            "name": "GitHub User",
-            "login": "ghuser",
-        }
-        user_response.raise_for_status = MagicMock()
-
-        emails_response = MagicMock()
-        emails_response.status_code = 200
-        emails_response.json.return_value = [
-            {"email": "secondary@github.com", "primary": False},
-            {"email": "primary@github.com", "primary": True},
-        ]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [user_response, emails_response]
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("token123")
-
+    async def test_public_profile_email_is_not_adopted(self):
+        info = await _github_info(
+            "public@example.com",
+            200,
+            [{"email": "primary@github.com", "primary": True, "verified": True}],
+        )
         assert info.email == "primary@github.com"
 
-    @pytest.mark.anyio
-    async def test_without_email_and_emails_endpoint_fails(self):
-        provider = GitHubProvider(_github_config())
-
-        user_response = MagicMock()
-        user_response.json.return_value = {
-            "id": 12345,
-            "email": None,
-            "name": "GitHub User",
-            "login": "ghuser",
-        }
-        user_response.raise_for_status = MagicMock()
-
-        emails_response = MagicMock()
-        emails_response.status_code = 403
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [user_response, emails_response]
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("token123")
-
+        info = await _github_info("public@example.com", 403, None)
         assert info.email is None
 
     @pytest.mark.anyio
-    async def test_without_email_no_primary_in_list(self):
-        provider = GitHubProvider(_github_config())
+    async def test_unverified_primary_email_is_not_adopted(self):
+        info = await _github_info(
+            None,
+            200,
+            [
+                {"email": "primary@github.com", "primary": True, "verified": False},
+                {"email": "other@github.com", "primary": False, "verified": True},
+            ],
+        )
+        assert info.email is None
 
-        user_response = MagicMock()
-        user_response.json.return_value = {
-            "id": 12345,
-            "email": None,
-            "name": "GitHub User",
-            "login": "ghuser",
-        }
-        user_response.raise_for_status = MagicMock()
-
-        emails_response = MagicMock()
-        emails_response.status_code = 200
-        emails_response.json.return_value = [
-            {"email": "other@github.com", "primary": False},
-        ]
-
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [user_response, emails_response]
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("token123")
-
+    @pytest.mark.anyio
+    async def test_no_primary_email_means_no_email(self):
+        info = await _github_info(
+            None,
+            200,
+            [{"email": "other@github.com", "primary": False, "verified": True}],
+        )
         assert info.email is None
 
 
@@ -400,28 +371,25 @@ class TestGoogleProviderExchangeCode:
 # ---------------------------------------------------------------------------
 
 
+async def _google_info(profile: dict) -> OAuthUserInfo:
+    client = _routed_client(
+        {"https://www.googleapis.com/oauth2/v2/userinfo": (200, profile)}
+    )
+    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+        return await GoogleProvider(_google_config()).get_user_info("goog-token")
+
+
 class TestGoogleProviderGetUserInfo:
     @pytest.mark.anyio
-    async def test_with_email(self):
-        provider = GoogleProvider(_google_config())
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "id": "goog-id-1",
-            "email": "user@gmail.com",
-            "name": "Google User",
-        }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("goog-token")
+    async def test_with_verified_email(self):
+        info = await _google_info(
+            {
+                "id": "goog-id-1",
+                "email": "user@gmail.com",
+                "verified_email": True,
+                "name": "Google User",
+            }
+        )
 
         assert info.id == "goog-id-1"
         assert info.email == "user@gmail.com"
@@ -429,25 +397,16 @@ class TestGoogleProviderGetUserInfo:
         assert info.username == "user"
 
     @pytest.mark.anyio
+    async def test_unverified_email_is_not_adopted(self):
+        for flag in ({"verified_email": False}, {}):
+            info = await _google_info(
+                {"id": "goog-id-3", "email": "user@example.com", "name": "U", **flag}
+            )
+            assert info.email is None
+
+    @pytest.mark.anyio
     async def test_without_email(self):
-        provider = GoogleProvider(_google_config())
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "id": "goog-id-2",
-            "name": "No Email User",
-        }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
-            info = await provider.get_user_info("goog-token")
+        info = await _google_info({"id": "goog-id-2", "name": "No Email User"})
 
         assert info.email is None
         assert info.username is None
@@ -829,32 +788,13 @@ class TestGenerateAuthorizationUrl:
 
         assert "state=custom-state" in url
 
-    def test_auto_generates_state_when_none(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github")
-
-        assert "state=" in url
-
-    def test_auto_generates_state_when_empty_string(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github", state="")
-
-        # Empty string is falsy, so auto-generated state is used
-        assert "state=" in url
-
     def test_provider_not_found(self):
         svc, _repo = _make_service()
         svc._initialized = True
         svc._providers = {}
 
         with pytest.raises(NotFoundError):
-            svc.generate_authorization_url("unknown")
+            svc.generate_authorization_url("unknown", "state")
 
 
 # ---------------------------------------------------------------------------
@@ -1347,98 +1287,6 @@ class TestListUserConnections:
         assert result[0]["login"] is None
         assert result[0]["tokenExpires"] is None
         assert result[0]["hasRefreshToken"] is False
-
-
-# ---------------------------------------------------------------------------
-# OAuthService.delete_connection
-# ---------------------------------------------------------------------------
-
-
-class TestDeleteConnection:
-    @pytest.mark.anyio
-    async def test_success(self):
-        svc, repo = _make_service()
-        repo.delete_by_id.return_value = True
-
-        result = await svc.delete_connection(connection_id=1, user_id=42)
-
-        repo.delete_by_id.assert_awaited_once_with(1, 42)
-        assert result is True
-
-    @pytest.mark.anyio
-    async def test_not_found(self):
-        svc, repo = _make_service()
-        repo.delete_by_id.return_value = False
-
-        result = await svc.delete_connection(connection_id=999, user_id=42)
-
-        assert result is False
-
-
-# ---------------------------------------------------------------------------
-# OAuthService.store_oauth_state
-# ---------------------------------------------------------------------------
-
-
-class TestStoreOAuthState:
-    @pytest.mark.anyio
-    async def test_with_redis(self):
-        redis = AsyncMock()
-        svc, _repo = _make_service(redis=redis)
-
-        await svc.store_oauth_state("state-token", {"provider": "github"})
-
-        redis.set.assert_awaited_once()
-        call_args = redis.set.call_args
-        assert call_args[0][0] == "oauth_state:state-token"
-        assert '"provider"' in call_args[0][1]
-        assert call_args[1]["ex"] == 600
-
-    @pytest.mark.anyio
-    async def test_without_redis_is_noop(self):
-        svc, _repo = _make_service(redis=None)
-
-        # Should not raise
-        await svc.store_oauth_state("state-token", {"provider": "github"})
-
-
-# ---------------------------------------------------------------------------
-# OAuthService.get_oauth_state
-# ---------------------------------------------------------------------------
-
-
-class TestGetOAuthState:
-    @pytest.mark.anyio
-    async def test_with_redis_found(self):
-        redis = AsyncMock()
-        redis.get.return_value = '{"provider": "github"}'
-        svc, _repo = _make_service(redis=redis)
-
-        result = await svc.get_oauth_state("state-token")
-
-        redis.get.assert_awaited_once_with("oauth_state:state-token")
-        redis.delete.assert_awaited_once_with("oauth_state:state-token")
-        assert result == {"provider": "github"}
-
-    @pytest.mark.anyio
-    async def test_with_redis_not_found(self):
-        redis = AsyncMock()
-        redis.get.return_value = None
-        svc, _repo = _make_service(redis=redis)
-
-        result = await svc.get_oauth_state("missing-token")
-
-        redis.get.assert_awaited_once()
-        redis.delete.assert_not_awaited()
-        assert result is None
-
-    @pytest.mark.anyio
-    async def test_without_redis_returns_none(self):
-        svc, _repo = _make_service(redis=None)
-
-        result = await svc.get_oauth_state("state-token")
-
-        assert result is None
 
 
 # ---------------------------------------------------------------------------

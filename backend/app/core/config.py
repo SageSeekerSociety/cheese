@@ -3,7 +3,7 @@
 import hashlib
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The gateway mounts this whole app under `/api` and strips that one segment
@@ -17,8 +17,19 @@ GATEWAY_MOUNT = "/api"
 
 
 class Settings(BaseSettings):
+    # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
+    # it carries a `validation_alias` (so the deploy keeps working through the
+    # env-name change), and in pydantic a field with an alias is otherwise
+    # reachable ONLY by that alias — `Settings(platform_admin_handles=[...])`,
+    # which the unit tests and any in-process caller write, would be silently
+    # dropped by `extra="ignore"` and read back as the empty default. The flag
+    # is per-model, not per-field, but no other field here has an alias, so for
+    # them it changes nothing.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_by_name=True,
     )
 
     # --- Database ---
@@ -46,13 +57,19 @@ class Settings(BaseSettings):
     # that as the rooms mysteriously 401-ing and recovering, several times a day,
     # once per deploy.
     #
-    # So the ceiling is per-process but the budget is shared: 3 x (size +
-    # overflow) has to leave room for the migration the deploy runs and for
-    # anyone holding a psql. 3 x 25 = 75 of the 97 a default PostgreSQL offers
-    # once its superuser reserve is taken out. A box whose server is configured
-    # larger can raise these; a box that adds a fourth pool has to lower them.
-    db_pool_size: int = 15
-    db_max_overflow: int = 10
+    # So the ceiling is per-process but the budget is shared: the two backends
+    # at (size + overflow) each, plus the connection owner's own pool, have to
+    # leave room for the migration the deploy runs and for anyone holding a
+    # psql. The owner registers devices and answers bindings; it never fans out
+    # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
+    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
+    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
+    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # box whose server is configured larger can raise these; a box that adds a
+    # fourth pool has to lower them. dev's server was raised to 200 on
+    # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
+    db_pool_size: int = 20
+    db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
@@ -126,6 +143,7 @@ class Settings(BaseSettings):
     frontend_oauth_error_path: str = "/account/oauth/error"
     frontend_oauth_verify_path: str = "/account/oauth/verify"
     frontend_oauth_complete_path: str = "/account/oauth/complete"
+    frontend_2fa_verify_path: str = "/account/verify-2fa"
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
@@ -142,12 +160,22 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
+    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
+    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
+    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
+    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
+    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harness: str = ""
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
-    private_chat_executor_image: str = "cheese-private-executor:2.1.265"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
+    # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
+    # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
+    # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
+    claude_code_max_subagent_spawn_depth: int = 1
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -213,6 +241,56 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
+    # Handles that are platform administrators — the people who read and route
+    # the whole feedback queue (`/admin/feedback`) and who manage everything else
+    # that turns out to need an admin. JSON list in env, e.g. '["alice","bob"]'.
+    # A settings list rather than a role because no production path assigns
+    # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
+    # and lock the surface for everyone.
+    #
+    # This is the **root** half of the admin list: the other half is the
+    # `platform_admins` table (the 成员管理 screen), and the judge is their union
+    # (`AdminService.admin_handles`). Rows added on the page can be removed
+    # there; these cannot, because adding admins is itself an admin action — a
+    # list you can empty from the UI is a door that locks from the inside.
+    #
+    # The env name is `PLATFORM_ADMIN_HANDLES`. It used to be
+    # `FEEDBACK_ADMIN_HANDLES`, from when the only thing an admin administered
+    # was feedback; that name is still read (a deployment's env file is not
+    # something a code change can edit), so an unmigrated box keeps booting, but
+    # the new name wins when both are set. Drop the old choice once the deploy
+    # workflow and the boxes carry the new one.
+    #
+    # REQUIRED on a deployment: an empty list is not "no admins configured yet",
+    # it is a feedback queue that accepts submissions and can never be worked —
+    # and the users who submit cannot tell the difference from "nobody has
+    # picked this up yet". `_require_platform_admins_on_deployment` fails the
+    # boot instead. Local dev and the test suite keep the empty default.
+    platform_admin_handles: list[str] = Field(
+        default=[],
+        validation_alias=AliasChoices(
+            "PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"
+        ),
+    )
+    # How many feedback PROPOSAL cards one topic may see per day. The cap exists
+    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # once per turn, and a number in settings is the difference between a bad
+    # afternoon and a topic nobody can read. Proposal cards are the one kind of
+    # "the next step is on a person" that nobody is waiting on, so unlike a
+    # decision request it is safe to drop — and this is what drops it.
+    feedback_proposals_per_topic_per_day: int = 2
+    # How many reports ONE AUTHOR may publish per rolling 24 hours. This is the
+    # human path, and it exists because deleting a spam report is cleanup, not
+    # prevention: the only thing standing between a script and the public list
+    # was a person noticing and pressing delete, one row at a time.
+    #
+    # Deliberately far above any honest day. Somebody working through a bad
+    # release can file a dozen real bugs, and a cap that refuses *them* is the
+    # failure this must not have — the message says which limit was hit and when
+    # it lifts, so the one person this is aimed at is a runaway loop, not a
+    # tester. Not shared with the proposal cap above: that one is per TOPIC and
+    # protects a room's reading; this one is per PERSON and protects the list.
+    feedback_reports_per_author_per_day: int = 30
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is
@@ -303,10 +381,11 @@ class Settings(BaseSettings):
     # client would change what the provider sees. The meter is instead a proxy the
     # traffic passes through — same observability, different place.
     #
-    # OFF by default: with no proxy configured a sandbox would resolve
-    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
-    # deployment decision that needs the proxy actually running.
-    subscription_enabled: bool = False
+    # This is the ONE shape a machine is launched in (结论 46): no base URL, the
+    # metering proxy on HTTPS_PROXY, a fake ticket. The proxy asks
+    # `/llm/admission` per request and sends it to the subscription pool or
+    # rewrites it to the gateway. A deployment without a reachable proxy has no
+    # second shape to fall back to — it refuses and says so.
     # Address the SANDBOX reaches the metering proxy at. The docker bridge address
     # (not loopback, which no container can reach; not 0.0.0.0, which would put the
     # subscription on the LAN).
@@ -439,9 +518,7 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Its own switch, NOT the
-    # project scheduler's: that one spends model budget on 定期巡检 and ships
-    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
     # topic's first turn crosses this clock twice (running → switch the AI
     # channel, ready → enroll), and at 60s a person waited up to two minutes on
     # a timer for a machine that was already there. A tick with nothing
@@ -555,13 +632,6 @@ class Settings(BaseSettings):
     # rises with it, until a per-machine gate exists.
     max_concurrent_turns: int = 16
 
-    # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
-    # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
-    # (manual heartbeat only; default off so dev/tests don't burn model calls).
-    scheduler_interval_seconds: int = 0
-    # Idle rooms consolidate memory but keep their running environment.
-    sandbox_reap_interval_seconds: int = 3600
-    sandbox_idle_hours: float = 8
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -575,10 +645,10 @@ class Settings(BaseSettings):
     # The most one upload may carry. A device that sends more gets 413 and
     # keeps its home; the sweep says so every tick until somebody looks.
     transcripts_max_bytes: int = 512 * 1024 * 1024
-    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
-    # unlike the heartbeat above: it consumes no model calls unless it actually
-    # finds a killed turn, and its whole purpose is catching the case where
-    # nothing else will ever look — a turn dying without the process dying.
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
+    # default: it consumes no model calls unless it actually finds a killed
+    # turn, and its whole purpose is catching the case where nothing else will
+    # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
@@ -594,73 +664,10 @@ class Settings(BaseSettings):
     # without adding a block.
     turn_stall_signal_s: float = 600.0
 
-    # --- Memory backend (spec §8.4 / §15 Q9) ---
-    # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
-    # "openviking": real layered memory on embedded OpenViking (viking:// FS,
-    # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
-    # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
-    memory_backend: str = "db"
-
-    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
-    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
-    # topic and organize what it learned into the project's memory pools.
-    #
-    # OFF by default, and the default is the honest one. This spends model
-    # budget on a background trigger, which is the exact shape of the thing this
-    # repo parked once already (SchedulerService.tick): a clock cannot tell
-    # "there is something worth saying" from "say something". What makes this
-    # different is that the trigger is a real event — the screen is about to be
-    # closed, so this is the last moment anything CAN be checked against the
-    # workspace — not that the cost went away. Turning it on costs roughly one
-    # agent turn per organized topic, and no more than
-    # `dream_max_per_sweep` of them per sweep.
-    dream_enabled: bool = False
-    # How many topics one sweep may organize. A sweep that finds thirty idle
-    # screens must not start thirty turns at once; the rest are picked up an
-    # hour later, and nothing is lost because those screens were not closed
-    # either.
-    dream_max_per_sweep: int = 1
-    # Below this many blocks a topic is not worth a turn — a three-message
-    # topic has nothing in it that reading the transcript later would not give.
-    dream_min_blocks: int = 20
-
-    # Local storage root for the embedded OpenViking instance (AGFS + vectors).
-    openviking_data_dir: str = "./.viking"
-    # OpenAI-compatible endpoints OpenViking uses internally. These are separate
-    # from anthropic_base_url (the agent gateway speaks the Anthropic protocol;
-    # OpenViking needs the OpenAI protocol). For Zhipu the same API key works on
-    # both gateways. api keys default to anthropic_auth_token when unset.
-    openviking_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_llm_model: str = "glm-4.5-air"
-    openviking_llm_api_key: str | None = None
-    openviking_embedding_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_embedding_model: str = "embedding-3"
-    openviking_embedding_api_key: str | None = None
-    openviking_embedding_dimension: int = 2048
-    # 知识沉淀是副产品 (spec §8.4): commit each finished turn to OpenViking so
-    # memories are extracted in the background. Only effective on "openviking".
-    openviking_auto_extract: bool = True
-    # Memory types OpenViking's extractor may write (built-in taxonomy names).
-    # Curated to the omem-style durable kinds — omem:user→profile/preferences,
-    # omem:feedback→preferences, omem:project→events, omem:reference→entities.
-    # identity/soul are the extractor's anchor files and MUST stay allowed
-    # (verified: without them the extraction loop writes nothing at all).
-    # trajectories/experiences are agent-SOP records that bloat recall: off.
-    openviking_memory_types: list[str] = [
-        "profile",
-        "preferences",
-        "entities",
-        "events",
-        "tools",
-        "identity",
-        "soul",
-    ]
-
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
     # and mints short-lived installation tokens from it. Unset = the
-    # /sandbox/github-token endpoint answers "not configured"; nothing else
-    # changes.
+    # /sandbox/forge-token endpoint cannot issue GitHub credentials.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
     # Which installation to mint a token for is resolved per-project via the
@@ -668,6 +675,21 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+
+    forgejo_url: str = ""
+    forgejo_api_url: str = ""
+    forgejo_admin_token: str = ""
+    forge_attribution_default: bool = True
+    forge_event_relay_url: str = ""
+    forge_event_secret: str = ""
+    # Only the public relay loads the deployment -> shared secret mapping.
+    forge_event_relay_keys: dict[str, str] = {}
+    forge_event_github_secret: str = ""
+    forge_event_github_app_id: int | None = None
+    forge_event_github_public_key: str = ""
+    # GitHub App installation ID -> deployments authorized for that installation.
+    forge_event_github_installations: dict[str, list[str]] = {}
+    forge_webhook_url: str = ""
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -680,27 +702,23 @@ class Settings(BaseSettings):
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 60
+    accept_pr_poll_interval_s: int = 300
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
-    # 自动同步上游: how often to pull the upstream's default branch into each
-    # linked project's base. Falling behind is what makes accepts unable to push
-    # (see SchedulerService.sync_upstreams), so this only has to run often
-    # enough that the gap stays small — not on every commit. 0 disables it.
-    upstream_sync_interval_s: int = 1800
     # --- notifications and deadlines ---
-    # Three jobs nothing in a request path can do. An aggregation window that
-    # never closes is a notification written and never delivered; an undrained
-    # email queue is an inbox that never receives; an unswept deadline is a
-    # promise the platform made and quietly did not keep. Each failure is
-    # silent, which is why the intervals are on by default. 0 disables one.
-    notification_finalize_interval_s: int = 60
+    # Two jobs nothing in a request path can do. An undrained email queue is an
+    # inbox that never receives; an unswept deadline is a promise the platform
+    # made and quietly did not keep. Each failure is silent, which is why the
+    # intervals are on by default. 0 disables one.
     notification_email_drain_interval_s: int = 60
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
     notification_push_drain_interval_s: int = 15
+    #: 投递账本的补发。「写入之后、发出之前崩掉」那一档没有别的出路：那一行已经和
+    #: 事件一起提交了，发送这一半没人再碰它。不跑就是一份丢失记录，不是一次补救。
+    delivery_resend_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
@@ -808,10 +826,23 @@ class Settings(BaseSettings):
     email_smtp_username: str = Field(default="", alias="EMAIL_SMTP_USERNAME")
     email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
     email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
-
-    notification_dedup_ttl_seconds: int = Field(
-        default=10 * 60, alias="NOTIFICATION_DEDUP_TTL_SECONDS"
+    #: A second SMTP account tried when the one above fails to send. Unset
+    #: (empty host) means there is no fallback and a failure is final.
+    email_fallback_from_address: str = Field(
+        default="", alias="EMAIL_FALLBACK_FROM_ADDRESS"
     )
+    email_fallback_smtp_host: str = Field(default="", alias="EMAIL_FALLBACK_SMTP_HOST")
+    email_fallback_smtp_port: int = Field(default=587, alias="EMAIL_FALLBACK_SMTP_PORT")
+    email_fallback_smtp_username: str = Field(
+        default="", alias="EMAIL_FALLBACK_SMTP_USERNAME"
+    )
+    email_fallback_smtp_password: str = Field(
+        default="", alias="EMAIL_FALLBACK_SMTP_PASSWORD"
+    )
+    email_fallback_smtp_ssl: bool = Field(
+        default=False, alias="EMAIL_FALLBACK_SMTP_SSL_ENABLE"
+    )
+
     notification_email_batch_size: int = Field(
         default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
     )
@@ -909,8 +940,8 @@ class Settings(BaseSettings):
           described above. Under it, ``environment`` saying "development" is
           evidence the env file failed, not evidence this is a dev box.
         - ``environment`` outside dev/test — the line the rest of the app already
-          draws (secure cookies, the X-User-Id gate). Still checked, for any
-          deployment that does not run through this compose file.
+          draws (secure cookies). Still checked, for any deployment that does
+          not run through this compose file.
 
         Local dev and the test suite set neither, keep the default secret and
         never trip this, which is why fail-closed does not take the suite down.
@@ -961,6 +992,91 @@ class Settings(BaseSettings):
             "Booting on the default silently invalidates every session on the "
             "next restart that loads the real secret — every user is logged "
             f"out with no error (#342). Generate one with: {generate}"
+        )
+
+    @model_validator(mode="after")
+    def _require_platform_admins_on_deployment(self) -> "Settings":
+        """Fail the boot when a deployment has nobody who can work the queue.
+
+        ``platform_admin_handles`` is the **root** admin list, and it is still
+        the only way in: no role behind it, no default member set, nothing in the
+        UI that promotes you. A deployment can now add admins from the page
+        (`platform_admins`, the 成员管理 block) — but **adding one is itself an
+        admin action**, so an empty root list is not "we have not got round to
+        appointing an admin yet". It is a deployment where nobody can ever
+        appoint one. Read from every seat in the product, it says *nobody is
+        looking at this*:
+
+        - A submitter writes a report, watches its status stay at 已收录, and has
+          no way to tell that apart from "someone will get to it". The feedback
+          centre looks fully functional while being a write-only table.
+        - The admin page is unreachable for everyone including the operator, who
+          finds this out by opening it and reading "你的账号不在管理员名单里" —
+          a sentence that names the wrong problem.
+        - The agent-side proposal path still spends its daily quota filing
+          proposals that no one can act on.
+        - 成员管理 — the screen whose whole job is adding the next admin — is
+          admin-only too, so there is no way back in from the product at all.
+          This is why the root list is the half the page cannot delete: one
+          mis-click on a list that was the only copy would lock everyone out
+          permanently.
+
+        Nothing in the running system can detect that state from the inside,
+        which is why it is checked at boot (#338/#439's rule: an unset
+        credential that degrades silently becomes a loud, boot-time event).
+
+        Same two-signal test as the JWT guard above, for the same #342 reason —
+        ``deployed_via_compose`` is authority because it cannot fall back, and
+        ``environment`` covers deployments that do not run through that compose
+        file. Local dev and the test suite trip neither, so they keep the empty
+        default and the suite still runs with no config.
+
+        RuntimeError rather than ValueError, so the message is not wrapped by
+        pydantic's ValidationError repr (which dumps the whole input dict —
+        including every secret in it) — same reason as the guard above.
+        """
+        # An entry that is empty or whitespace is worse than a missing entry:
+        # the list is non-empty, so this guard passes, and the handle it names is
+        # one that no account can ever authenticate as.
+        blank = [h for h in self.platform_admin_handles if not h.strip()]
+        if blank:
+            raise RuntimeError(
+                "PLATFORM_ADMIN_HANDLES contains an empty entry. Handles are "
+                "matched against the account's handle exactly, so an empty "
+                "string can never match anyone — this is a list with a typo in "
+                "it, not a list with an admin in it. Set it to a JSON list of "
+                'handles, e.g. PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\'.'
+            )
+
+        if self.platform_admin_handles:
+            return self
+
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+
+        raise RuntimeError(
+            "PLATFORM_ADMIN_HANDLES is empty on a deployment ("
+            f"ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). This is the only thing that opens /admin/feedback — the page "
+            "itself can add admins, but only an admin can do that, so an empty "
+            "list here is a deployment nobody can get into: no one can read or "
+            "route the feedback queue, and neither a submitter nor the agent "
+            "path can tell that apart from 'nobody has picked it up yet'. The "
+            "whole feedback surface looks healthy and is write-only. Set it to "
+            "the handles that should administer feedback (they are the ones the "
+            "page cannot remove), as a JSON list: "
+            'PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\' (see '
+            "deploy/.env.prod.example). If you are sure nobody should administer "
+            "feedback, set it to a handle you control rather than leaving it "
+            "empty."
         )
 
 

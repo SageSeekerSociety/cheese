@@ -7,15 +7,9 @@ on:
       - 'backend/**'
       - 'frontend/**'
       - 'e2e/**'
+      - '.github/scripts/ci-test-evidence.py'
       - '.github/workflows/e2e.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - 'e2e/**'
-      - '.github/workflows/e2e.yml'
-
+  workflow_call:
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine). test.yml and build.yml already do
 # this; e2e.yml was the one workflow still missing it — any backend/frontend
@@ -49,11 +43,9 @@ jobs:
   # See test.yml: merged squash commits contain the exact PR tree already gated.
   # The cheap API decision preserves full CI for direct main pushes.
   scope:
-    # On the cheese-ci pool, not a hosted runner: identical `gh api`-only job as
-    # test.yml's scope, moved for the same reason — the org's Actions billing
-    # lapsed on 2026-08-13, so every ubuntu-latest job is refused before it
-    # starts. The pool has no `gh`, so a step below installs it per-machine.
-    runs-on: [self-hosted, cheese-ci]
+    # This API-only decision must not wait for the finite E2E runner pool.
+    # Hosted Ubuntu includes gh; the repository is public.
+    runs-on: ubuntu-latest
     # Same job as test.yml's scope: measured median 0.2m, wide margin.
     timeout-minutes: 5
     permissions:
@@ -63,28 +55,12 @@ jobs:
     outputs:
       run_heavy: ${{ steps.decide.outputs.run_heavy }}
     steps:
-      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
-      # it once per machine into a dir that survives actions/checkout's
-      # workspace reset, then prepend it to PATH — same trick test.yml's scope
-      # uses. (No `working-directory` override needed: this workflow sets no
-      # `backend` default.)
-      - name: Ensure gh CLI
-        run: |
-          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
-          if [ ! -x "$gh_dir/bin/gh" ]; then
-            gh_version=2.63.2
-            mkdir -p "$gh_dir"
-            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
-              | tar -xz -C "$gh_dir" --strip-components=1
-          fi
-          echo "$gh_dir/bin" >> "$GITHUB_PATH"
-          "$gh_dir/bin/gh" --version
-
       - name: Decide whether this commit already passed PR CI
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
-          WORKFLOW_FILE: e2e.yml
+          # PR runs now belong to the caller, not this reusable workflow.
+          WORKFLOW_FILE: required-ci.yml
         run: |
           run_heavy=true
           if [ "$GITHUB_EVENT_NAME" = push ]; then
@@ -109,6 +85,10 @@ jobs:
 
   e2e:
     needs: scope
+    env:
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      DOCKER_CONTEXT: default
     # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
     # it answers "did this exact commit already pass CI on its PR, so can the
     # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
@@ -157,11 +137,16 @@ jobs:
         run: |
           slot="${CHEESE_CI_SLOT:-0}"
           echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
-          # Playwright starts a backend and a frontend on fixed ports; two runs
-          # on one machine would take the same two.
+          # Playwright starts a backend, a frontend and the stub gateway on fixed
+          # ports; two runs on one machine would take the same ones.
           echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_STUB_GATEWAY_PORT=$((4010 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PORT=$((33100 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_S3_PORT=$((33200 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PROJECT=cheese-e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_TOKEN_FILE=$RUNNER_TEMP/e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-token" >> "$GITHUB_ENV"
           root="postgresql+asyncpg://postgres:postgres@localhost:5442"
           echo "DATABASE_URL=$root/cheese_e2e_$slot" >> "$GITHUB_ENV"
           # Redis keys are scoped by user id, and user ids restart from 1 in each
@@ -203,10 +188,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: |
-            frontend/pnpm-lock.yaml
-            e2e/pnpm-lock.yaml
 
       # The venv is built per job out of uv's cache, which is the thing worth
       # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
@@ -235,6 +216,9 @@ jobs:
         working-directory: backend
         run: uv run alembic upgrade head
 
+      - name: Start the isolated project forge
+        run: bash backend/tests/forgejo/start.sh
+
       # alice (seeded by the migration above) owns no project until this runs;
       # the app-shell / topic / chat specs need her to land on a real project
       # rail tile. This is the same fusion demo the dev box is seeded with.
@@ -242,17 +226,15 @@ jobs:
         working-directory: backend
         run: uv run python -m scripts.seed_fusion_demo
 
+      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+
       - name: Install frontend deps
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install E2E deps
         working-directory: e2e
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       # Non-default ports: this job used to run on the dev box, which serves the
       # dev deployment on 8081, and Playwright died with "8081 is already used"
@@ -260,13 +242,43 @@ jobs:
       # nothing else listens, but the overrides stay — they cost nothing and the
       # config's defaults (8081/3000) still collide with a local dev stack.
       - name: Run E2E tests
+        id: e2e_tests
         working-directory: e2e
         env:
           # Ports, DATABASE_URL and REDIS_URL come from the slot step above.
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
-        run: pnpm exec playwright test
+        run: bash ./run-isolated.sh
+
+      - name: Produce E2E CLEAN evidence
+        id: clean_evidence
+        if: ${{ !cancelled() }}
+        env:
+          CI_STEPS_JSON: ${{ toJSON(steps) }}
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 .github/scripts/ci-test-evidence.py
+          --suite e2e
+          --source e2e/test-results/playwright-results.json
+          --output "$RUNNER_TEMP/ci-test-evidence/e2e/evidence.json"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --head-sha "$EVIDENCE_HEAD_SHA"
+          --tested-sha "$GITHUB_SHA"
+          --steps-json "$CI_STEPS_JSON"
+          --require-step e2e_tests
+
+      - name: Upload E2E CLEAN evidence
+        if: ${{ !cancelled() && steps.clean_evidence.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-e2e
+          path: ${{ runner.temp }}/ci-test-evidence/e2e/evidence.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Upload test report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -275,13 +287,19 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
-        if: always()
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        # Keep reports for red runs and for failed attempts whose retry passed.
+        # Clean green runs previously accounted for 454 MB across 78 uploads in one week.
+        if: ${{ !cancelled() && (failure() || hashFiles('e2e/test-results/**/trace.zip') != '') }}
         with:
           name: playwright-report
           path: |
             e2e/playwright-report/
             e2e/test-results/
-          retention-days: 7
+          retention-days: 3
 
       # Same reclaim test.yml does, and for the same reason: every run's
       # postgres service container leaves an anonymous volume behind. This job
@@ -298,3 +316,7 @@ jobs:
         run: |
           docker volume prune -f >/dev/null 2>&1 || true
           df -h / | tail -1
+
+      - name: Remove the isolated project forge
+        if: always()
+        run: docker compose -p "$FORGEJO_TEST_PROJECT" -f backend/tests/forgejo/compose.yml down --volumes

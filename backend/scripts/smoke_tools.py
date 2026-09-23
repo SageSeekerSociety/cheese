@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.domain.agent.service import AgentService, AgentToolUse
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
-from app.domain.memory.models import MemoryScope
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
@@ -68,7 +68,10 @@ async def main() -> int:
     # Verify platform state actually changed.
     async with async_session_factory() as s:
         children = await TopicRepository(s).list_children(topic_id)
-        memories = await DbMemoryStore(s).recall(MemoryScope.project, str(project_id))
+        # 记忆是写下它的那位芝士自己的（结论 8）：这里问的就是它那个池。
+        proj = await ProjectService(s).get_or_404(project_id)
+        cheese = await AgentInstanceService(s).for_project(proj)
+        memories = await DbMemoryStore(s).recall(*memory_pool(project_id, cheese))
 
     print(f"Sub-topics created: {[c.title for c in children]}")
     print(f"Project memories: {memories}")

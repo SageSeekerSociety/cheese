@@ -15,9 +15,14 @@ The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen
 ``data`` (base64 raw screen bytes or one uploaded file), ``path`` (file upload),
 and the exec set
 ``cwd``/``stdin``/``timeout``/``stdout``/``stderr``/``exit``/``truncated``.
+
+本机目录授权 rides in ``value`` (``localfs.grants`` down with the grant set for the
+machine, ``localfs.op`` down with one read/write/list, and ``localfs.*.result`` up),
+so the union itself is unchanged.
 """
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -179,6 +184,57 @@ def exec_cmd(
 
 def exec_cancel(exec_id: str) -> dict[str, Any]:
     return {"t": "exec.cancel", "id": exec_id}
+
+
+def local_fs_grants(
+    *, grants_id: str, device_id: str, grants: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Hand the device its copy of the grant set (本机目录授权).
+
+    The device keeps its own copy and enforces from it, so this is not a
+    notification — it is what the device is allowed to do. ``grants`` is the
+    complete live set for this machine, not a delta: a grant missing from it is a
+    revoked grant, and a device that merged deltas could not express a revoke.
+
+    The payload rides in ``value``, the same way session.list carries its screens,
+    so no new field is added to the frozen ``link.Msg`` union.
+    """
+    return {
+        "t": "localfs.grants",
+        "id": grants_id,
+        "value": {"device_id": device_id, "grants": grants},
+    }
+
+
+def local_fs_op(*, op_id: str, op: dict[str, Any]) -> dict[str, Any]:
+    """Ask the device to read, write or list inside a granted directory.
+
+    ``op`` is ``localfs.Op`` on the Go side: kind, path, project_id, and for a
+    write the content. The device decides again, with the disk in front of it —
+    this message is a question, never an instruction the device is expected to
+    obey. See cli/internal/localfs/wire.go.
+    """
+    return {"t": "localfs.op", "id": op_id, "value": op}
+
+
+def execution_call(
+    *, call_id: str, state: str, method: str, params: dict[str, Any], timeout: int
+) -> dict[str, Any]:
+    """Ask the resident executor under ``state`` to run one method.
+
+    ``stdin`` is the request the connector writes verbatim into the executor
+    socket (``cli/internal/host/executor.go``), so its bytes are part of the
+    contract, not an encoding detail of this process: the frame is pinned by
+    ``backend/tests/fixtures/wire/execution-call.json``, which the Go side reads
+    too.
+    """
+    return {
+        "t": "execution.call",
+        "id": call_id,
+        "path": state,
+        "stdin": json.dumps({"method": method, "params": params}),
+        "timeout": int(timeout),
+    }
 
 
 def update() -> dict[str, Any]:

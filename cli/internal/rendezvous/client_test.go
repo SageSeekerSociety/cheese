@@ -202,6 +202,9 @@ func TestWrongTokenIsRefusedAtDial(t *testing.T) {
 	if !errors.Is(err, ErrRejected) {
 		t.Fatalf("dial with a bad token returned %v, want ErrRejected", err)
 	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Fatal("an authenticated connection failure must not permit session recreation")
+	}
 }
 
 func TestInitialPromptArrivesBeforeHandshakeWaitEnds(t *testing.T) {
@@ -314,6 +317,9 @@ func TestDialGivesUpWithAClearError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not appear") {
 		t.Fatalf("error should say the socket never appeared, got: %v", err)
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a failed connection must expose ErrUnavailable: %v", err)
 	}
 }
 

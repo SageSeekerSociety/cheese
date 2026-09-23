@@ -36,11 +36,9 @@ describe('the project frame', () => {
     [`/topics/${TOPIC}`, 'workspace-topic'],
     ['/dm/agent:cheese', 'workspace-dm'],
     ['/docs/decisions', 'project-docs'],
-    ['/overview', 'overview'],
     ['/calendar', 'calendar'],
-    ['/agents', 'project-agents'],
+    ['/library', 'project-library'],
     ['/settings', 'project-settings'],
-    ['/delivery', 'project-delivery'],
     ['/members/lisi', 'member'],
   ])('renders %s inside the frame, not beside it', (suffix, name) => {
     const resolved = router().resolve(`/projects/${PROJECT}${suffix === '/' ? '' : suffix}`)
@@ -52,8 +50,42 @@ describe('the project frame', () => {
     expect(resolved.params.projectId).toBe(PROJECT)
   })
 
+  // AI 队友并进了项目设置，而发出去的 /agents 链接还在外面。重定向只在真正导航
+  // 时才跑，所以这里 push 而不是 resolve。
+  //
+  // 下面三条给了更长的预算，而它们断言的东西一点不慢：`push` 会把落点那个视图的
+  // 整条模块图现编出来（这个文件开头说的「不把整个工作区的视图拖进测试」，说的
+  // 正是 `resolve` 不干这件事），第一条 push 因此要背下全部编译时间——本地 2.1
+  // 秒，CI 的机器慢上两三倍就顶穿默认的 5 秒。超时红在这里说的是机器有多忙，不是
+  // 重定向有没有落对，所以预算按「编译一个视图要多久」给，而不是按断言给。
+  const NAV = 20_000
+
+  it(
+    'sends the old /agents page to the project settings',
+    async () => {
+      const r = router()
+      await r.push(`/projects/${PROJECT}/agents`)
+      expect(r.currentRoute.value.name).toBe('project-settings')
+      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/settings`)
+    },
+    NAV
+  )
+
+  // 总览和「导出与发布」退役了：前者答的每个问题都有一处答得更准的地方，后者整页
+  // 只有一块发布网站，现在摆在首页的产物清单旁边。两条旧链接都落到项目首页。
+  it.each(['overview', 'delivery'])(
+    'sends the retired /%s page to the project home',
+    async (suffix) => {
+      const r = router()
+      await r.push(`/projects/${PROJECT}/${suffix}`)
+      expect(r.currentRoute.value.name).toBe('workspace-running')
+      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/running`)
+    },
+    NAV
+  )
+
   it('renders a sidebar and a content view at the frame level', () => {
-    const frame = router().resolve(`/projects/${PROJECT}/overview`).matched[0]
+    const frame = router().resolve(`/projects/${PROJECT}/calendar`).matched[0]
     expect(Object.keys(frame.components ?? {}).sort()).toEqual(['default', 'sidebar'])
   })
 
@@ -105,10 +137,9 @@ describe('页面栈的末端', () => {
     const paths = [
       `/projects/${PROJECT}/topics/t1`,
       `/projects/${PROJECT}/docs/charter`,
-      `/projects/${PROJECT}/overview`,
+      `/projects/${PROJECT}/running`,
       `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
-      `/projects/${PROJECT}/delivery`,
       `/projects/${PROJECT}/members`,
       `/projects/${PROJECT}/members/alice`,
     ]

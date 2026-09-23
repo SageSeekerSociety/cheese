@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import Channel
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -18,6 +19,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentResult,
+    AgentSessionInfo,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
@@ -25,16 +27,20 @@ from app.domain.agent.service import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
+
+#: 一张卡的线程标识，平台开卡时算出来的那个样子。
+_THREAD_LABEL = "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
 
 
 class _ImmediateScreen(StubChannel):
@@ -182,11 +188,12 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
         block
         for block in rows
         if (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
-        and block.author_type in {AuthorType.human, AuthorType.ai}
+        and block.author_type == AuthorType.participant
     ]
-    assert [block.author_type for block in conversation] == [
-        AuthorType.human,
-        AuthorType.ai,
+    # 一句人说的，一句芝士说的 —— 两条同档，分得开的是署名。
+    assert [looks_like_agent_handle(block.author) for block in conversation] == [
+        False,
+        True,
     ]
     assert {block.turn_id for block in conversation} == {work_id}
     assert len(usage_rows) == 1
@@ -221,7 +228,8 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         answers = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.ai and (block.meta or {}).get("progress")
+            if looks_like_agent_handle(block.author)
+            and (block.meta or {}).get("progress")
         ]
     assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
@@ -332,7 +340,9 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    answer = next(block.content for block in rows if block.author_type == AuthorType.ai)
+    answer = next(
+        block.content for block in rows if looks_like_agent_handle(block.author)
+    )
     # One answer, covering both messages: the second reached the session that
     # was already working, rather than queueing behind the turn.
     assert "Handle A" in answer
@@ -407,12 +417,12 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE
+            topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     ai_messages = [
         row
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ]
     assert ai_messages == []
     assert resumes_by == "session-autonomous"
@@ -486,7 +496,7 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
     ai_messages = [
         row
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ]
     assert ai_messages == []
     assert any(row.content == "Now the tests:" for row in rows)
@@ -531,6 +541,22 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
 
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
+        # 先是房间起分身的那次调用——标识写在给分身的 prompt 里，骨架这边没有
+        # 别的字段装得下它（hook_events.SubThreads）。
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Agent",
+                "tool_use_id": "call-1",
+                "tool_input": {
+                    "description": "查一下 TODO",
+                    "prompt": f"简报……线程标识：{_THREAD_LABEL}",
+                    "subagent_type": "general-purpose",
+                },
+                "_eid": "subagent-spawn-1",
+            },
+        )
         assert router.push(
             str(topic_id),
             {
@@ -572,28 +598,30 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
                 "_eid": "stop-subagent-1",
             },
         )
-        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(6)]
 
     kinds = [frame["type"] for frame in frames]
     assert kinds == [
         "turn_started",
         "event_block",
         "event_block",
+        "event_block",
         "done",
         "turn_finished",
     ]
-    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
-    assert frames[2]["block"]["content"] == "会话答完了"
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-spawn-1"
+    assert frames[2]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[3]["block"]["content"] == "会话答完了"
 
     started = [e for e in handed if isinstance(e, AgentSubagentStart)]
     stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
-    assert [(e.agent_id, e.agent_type) for e in started] == [
-        ("worker-1", "general-purpose")
+    assert [(e.agent_id, e.thread_label) for e in started] == [
+        ("worker-1", _THREAD_LABEL)
     ]
     assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
     # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
-    tool = next(e for e in handed if isinstance(e, AgentToolUse))
-    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
+    tool = next(e for e in handed if isinstance(e, AgentToolUse) and e.name == "Bash")
+    assert tool.thread_label == _THREAD_LABEL
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -601,7 +629,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     assert [
         row.content
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ] == []
     assert "分身查完了" not in [row.content for row in rows]
 
@@ -634,9 +662,17 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
         compute=ComputePool([provider], provider.name),
     )
     requested_id = uuid.uuid4()
+    # WHO this turn acts as. `ChatService` reads it off the room's roster before
+    # it ever reaches a runtime, and a runtime holds no roster of its own — so a
+    # turn driven straight at the provider has to carry the same answer, or it
+    # mints a project-scoped token that names nobody.
+    async with factory() as session:
+        acting = await TopicMemberService(session).resolve_agent_handle(topic_id)
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
+            agent_handle=acting,
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -743,6 +779,63 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     await provider._close_topic(topic_id)
 
 
+async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A reconnect pauses consumption while it builds the spool replay.
+
+    The hook endpoint can deliver the same event after the subscription exists
+    but before replay starts. The live copy is then ahead of the replay copy in
+    the queue; the room must still show one reply, and the spool must be fully
+    consumed. The opposite arrival order has separate provider coverage.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    message = {
+        "hook_event_name": "MessageDisplay",
+        "delta": "重连期间只说一次",
+        "_eid": "live-before-replay-message",
+    }
+    stop = {
+        "hook_event_name": "Stop",
+        "last_assistant_message": "重连期间只说一次",
+        "session_id": "session-live-before-replay",
+        "_eid": "live-before-replay-stop",
+    }
+    spool = ws.spool_dir(project_id, topic_id)
+    event_spool.append(spool, message["_eid"], message)
+    event_spool.append(spool, stop["_eid"], stop)
+
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=router
+    )
+    _service = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    recovered = await provider.recover()
+    assert len(recovered) == 1
+    assert router.push(str(topic_id), dict(message))
+    assert router.push(str(topic_id), dict(stop))
+    await provider.replay(recovered[0], known_texts=set())
+
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    replies = [
+        block
+        for block in blocks
+        if block.content == "重连期间只说一次" and (block.meta or {}).get("progress")
+    ]
+    assert len(replies) == 1
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+    await provider._close_topic(topic_id)
+
+
 async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     client, tmp_path, monkeypatch
 ) -> None:
@@ -802,10 +895,10 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     assert [
         b.content
         for b in blocks
-        if b.author_type == AuthorType.ai and (b.meta or {}).get("progress")
+        if looks_like_agent_handle(b.author) and (b.meta or {}).get("progress")
     ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
-    assert [b for b in blocks if b.author_type == AuthorType.system] == []
+    assert [b for b in blocks if b.author_type == AuthorType.platform] == []
     # And the Stop closed the books on the interval the dead process opened.
     async with factory() as session:
         row = await session.get(AgentTurn, interrupted)
@@ -978,3 +1071,69 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
     await provider._close_topic(topic_id)
+
+
+async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
+    """「那个分身还在不在」有第一手的答案，不该由安静推断出来。
+
+    一个分身埋头跑四十分钟长命令、一条 block 都不落，是真实会话里就有的干法
+    （实测），而那四十分钟里它的时间戳和一个死掉的分身长得一模一样 —— 只按时间戳
+    算，真正在干的活会被误报成失联。分身的起止是这条流里唯一带着「是谁」的生死
+    消息，而且是从会话自己的进程里发出来的，所以这一位从那里来。
+
+    「交回了一次」不判死：分身可以被再叫起来干活，那一位只收回自己的声明，看板
+    退回时间戳那条老规矩 —— 沉默既不能读成活着，也不能读成死了。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    chat = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+    consumer = provider._event_consumer
+    assert consumer is not None
+
+    async def deliver(event: object) -> None:
+        await consumer(project_id, topic_id, uuid.uuid4(), event, None, False, False)
+
+    # 屏幕起来了，平台记下它跑在哪个会话上（分身的声明都是对这块屏幕说的）。
+    await deliver(AgentSessionInfo(session_id="session-1"))
+
+    # 没听见过这个分身：没有谁在替它说话。
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    await deliver(AgentSubagentStop(agent_id="worker-1", text="先交一版"))
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    # 被再叫起来干活，它就又是在做。
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    # 换了一块屏幕：新会话没听说过旧会话的孩子，所以旧声明作废 —— 不然后面那块
+    # 屏幕会替一个它从没跑过的分身说「还活着」。
+    await deliver(AgentSessionInfo(session_id="session-2"))
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    # 屏幕没了，声明跟着没：那个分身住在房间的会话里。这也是这一位唯一会注意到
+    # 屏幕没了的地方 —— 不在这里丢掉，一条声明就会活过它的屏幕，在下一块屏幕上
+    # 接着说自己活着。
+    provider._live.pop(topic_id)
+    assert chat.worker_live(topic_id, "worker-1") is None

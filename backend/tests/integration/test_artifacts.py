@@ -1,4 +1,4 @@
-"""Render-by-type: 芝士 points at a renderable artifact (cheese artifact),
+"""Render-by-type: 芝士 points at a renderable artifact (cheese show),
 which becomes the topic's current preview (spec §9.1)."""
 
 import uuid
@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
+from tests.integration.conftest import chat_ws_url
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +31,7 @@ def test_a_remote_artifact_is_readable_without_a_git_push(client):
     pid, tid = _topic(client, "alice")
     html = "<h1>Result from the remote machine</h1>"
     response = client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={
             "path": "site/report.html",
             "content": html,
@@ -63,7 +64,7 @@ def test_a_room_file_reads_by_path_and_not_only_as_the_current_preview(client):
     headers = session_auth_headers("alice")
     for path, content in (("初稿.md", "# 初稿\n"), ("定稿.md", "# 定稿\n")):
         made = client.post(
-            f"/topics/{tid}/artifact", json={"path": path, "content": content}
+            f"/topics/{tid}/shown", json={"path": path, "content": content}
         )
         assert made.status_code == 200, made.text
 
@@ -95,7 +96,7 @@ def test_artifact_sets_current_preview(client):
     # No artifact yet → no preview.
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "report.html"})
+    r = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
     assert r.status_code == 200
     block = r.json()["data"]
     assert block["kind"] == "artifact"
@@ -113,7 +114,7 @@ def test_artifact_sets_current_preview(client):
 
 def test_artifact_type_maps_to_mime(client):
     _pid, tid = _topic(client)
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "chart.svg", "as": "svg"})
+    r = client.post(f"/topics/{tid}/shown", json={"path": "chart.svg", "as": "svg"})
     assert r.status_code == 200
     assert r.json()["data"]["mime_type"] == "image/svg+xml"
     assert client.get(f"/topics/{tid}/preview").json()["data"]["mime"] == (
@@ -123,58 +124,71 @@ def test_artifact_type_maps_to_mime(client):
 
 @pytest.mark.parametrize("size", [100, 1024 * 1024 + 1])
 def test_editing_the_same_artifact_changes_preview_version(client, size):
-    from app.domain.workspace import service as ws
+    from app.domain.library import service as library
 
     pid, tid = _topic(client)
     project, topic = uuid.UUID(pid), uuid.UUID(tid)
-    ws.write_room_file(project, topic, "report.html", b"a" * size)
-    response = client.post(f"/topics/{tid}/artifact", json={"path": "report.html"})
+    library.write_room_file(project, topic, "report.html", b"a" * size)
+    response = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
     assert response.status_code == 200
     first = client.get(f"/topics/{tid}/preview").json()["data"]
     assert first["version"]
-    ws.write_room_file(project, topic, "report.html", b"a" * size)
+    library.write_room_file(project, topic, "report.html", b"a" * size)
     unchanged = client.get(f"/topics/{tid}/preview").json()["data"]
     assert unchanged["version"] == first["version"]
-    ws.write_room_file(project, topic, "report.html", b"b" * size)
+    library.write_room_file(project, topic, "report.html", b"b" * size)
     edited = client.get(f"/topics/{tid}/preview").json()["data"]
     assert edited["artifact_id"] == first["artifact_id"]
     assert edited["version"] != first["version"]
 
 
 def test_latest_artifact_wins(client):
-    # Re-running cheese artifact repoints the current preview to the newest file.
+    # Re-running cheese show repoints the current preview to the newest file.
     _pid, tid = _topic(client)
-    client.post(f"/topics/{tid}/artifact", json={"path": "old.html"})
-    client.post(f"/topics/{tid}/artifact", json={"path": "new.html"})
+    client.post(f"/topics/{tid}/shown", json={"path": "old.html"})
+    client.post(f"/topics/{tid}/shown", json={"path": "new.html"})
     assert client.get(f"/topics/{tid}/preview").json()["data"]["path"] == ("new.html")
 
 
-def test_artifact_is_not_in_conversation_timeline(client):
-    # An artifact is a preview pointer, not a chat message.
+def test_a_shown_file_is_in_the_conversation(client):
+    # 芝士 putting something in front of the room is something it said: the chat
+    # shows it as a card. Every earlier one stays there too — the preview tab
+    # only ever shows the last.
     _pid, tid = _topic(client)
-    client.post(f"/topics/{tid}/artifact", json={"path": "report.html"})
+    first = client.post(f"/topics/{tid}/shown", json={"path": "old.html"}).json()
+    second = client.post(f"/topics/{tid}/shown", json={"path": "report.html"}).json()
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    assert not any(b["kind"] == "artifact" for b in blocks)
+    shown = [b for b in blocks if b["kind"] == "artifact"]
+    assert [b["id"] for b in shown] == [first["data"]["id"], second["data"]["id"]]
+    assert [b["content"] for b in shown] == ["old.html", "report.html"]
+
+
+def test_a_shown_file_reaches_the_room_live(client):
+    # The reader is usually in the room while 芝士 works: the card appears then,
+    # not on the next reload.
+    _pid, tid = _topic(client, owner="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        block = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
+        frame = ws.receive_json()
+    assert frame == {"type": "assistant_block", "block": block.json()["data"]}
 
 
 def test_artifact_rejects_unsupported_type(client):
     _pid, tid = _topic(client)
-    r = client.post(
-        f"/topics/{tid}/artifact", json={"path": "deck.pptx", "as": "slides"}
-    )
+    r = client.post(f"/topics/{tid}/shown", json={"path": "deck.pptx", "as": "slides"})
     assert r.status_code == 422
 
 
 def test_artifact_rejects_path_traversal(client):
     _pid, tid = _topic(client)
     for bad in ["../etc/passwd", "/abs/report.html", ".git/config"]:
-        r = client.post(f"/topics/{tid}/artifact", json={"path": bad})
+        r = client.post(f"/topics/{tid}/shown", json={"path": bad})
         assert r.status_code == 422, bad
 
 
 def test_artifact_requires_path(client):
     _pid, tid = _topic(client)
-    assert client.post(f"/topics/{tid}/artifact", json={"path": ""}).status_code == 422
+    assert client.post(f"/topics/{tid}/shown", json={"path": ""}).status_code == 422
 
 
 def test_an_unknown_artifact_type_is_refused_by_name(client):
@@ -182,7 +196,7 @@ def test_an_unknown_artifact_type_is_refused_by_name(client):
     says which ones exist — otherwise the caller has to guess twice."""
     _pid, tid = _topic(client)
 
-    r = client.post(f"/topics/{tid}/artifact", json={"path": "scan.tiff", "as": "tiff"})
+    r = client.post(f"/topics/{tid}/shown", json={"path": "scan.tiff", "as": "tiff"})
 
     assert r.status_code == 422
     assert "html" in r.json()["message"], "must name the types that do work"
@@ -204,10 +218,11 @@ def test_a_declared_type_is_not_needed_when_the_name_says_it(client):
         ("预算.xlsx", "spreadsheetml"),
         ("结题报告.pdf", "application/pdf"),
         ("页面.html", "text/html"),
+        ("动画.gif", "image/gif"),
+        ("图.webp", "image/webp"),
     ):
         assert (
-            client.post(f"/topics/{tid}/artifact", json={"path": name}).status_code
-            == 200
+            client.post(f"/topics/{tid}/shown", json={"path": name}).status_code == 200
         )
         assert expected in client.get(f"/topics/{tid}/preview").json()["data"]["mime"]
 
@@ -225,7 +240,7 @@ def test_an_office_file_survives_the_trip_to_the_platform(client):
     raw = b"PK\x03\x04binary\x00\xff payload"
 
     r = client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={"path": "报告.docx", "content_b64": base64.b64encode(raw).decode()},
     )
 
@@ -239,7 +254,7 @@ def test_malformed_base64_is_refused_rather_than_written(client):
     _pid, tid = _topic(client)
 
     r = client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={"path": "报告.docx", "content_b64": "not base64 at all!!"},
     )
 
@@ -298,7 +313,7 @@ def _detach(topic_id: str, machine) -> None:
 def test_app_artifact_and_preview(client):
     """`cheese serve` declares a RUNNING app; the preview knocks on it live and
     hands the browser a path a browser can actually fetch."""
-    from app.domain.workspace import service as ws
+    from app.domain.library import service as library
 
     pr = client.post("/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]
@@ -308,7 +323,7 @@ def test_app_artifact_and_preview(client):
     machine = _preview_machine(tid, alive=True)
     try:
         r = client.post(
-            f"/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
+            f"/topics/{tid}/shown", json={"path": "Vue dev server", "as": "app"}
         )
         assert r.status_code == 200, r.text
 
@@ -340,9 +355,9 @@ def test_app_artifact_and_preview(client):
     # A later file artifact supersedes the app as the current preview.
     import uuid as _uuid
 
-    wt = ws.room_files_root(_uuid.UUID(pid), _uuid.UUID(tid))
+    wt = library.room_files_root(_uuid.UUID(pid), _uuid.UUID(tid))
     (wt / "r.html").write_text("<h1>hi</h1>")
-    client.post(f"/topics/{tid}/artifact", json={"path": "r.html", "as": "html"})
+    client.post(f"/topics/{tid}/shown", json={"path": "r.html", "as": "html"})
     d = client.get(f"/topics/{tid}/preview").json()["data"]
     assert d["kind"] == "file" and d["path"] == "r.html"
 
@@ -358,11 +373,11 @@ def test_serve_is_refused_when_the_machine_carries_no_preview_out(client, monkey
     monkeypatch.setattr(topics_routes, "_PREVIEW_ATTACH_WAIT_S", 0.05)
 
     r = client.post(
-        f"/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
+        f"/topics/{tid}/shown", json={"path": "Vue dev server", "as": "app"}
     )
 
     assert r.status_code == 422, r.text
-    assert "cheese_artifact" in r.json()["message"], "must name the way that works"
+    assert "cheese show" in r.json()["message"], "must name the way that works"
     # And nothing was recorded — an unreachable app must not become the preview.
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 
@@ -375,7 +390,7 @@ def test_serve_is_refused_when_nothing_answers_on_the_declared_port(client):
 
     dead = _preview_machine(tid, alive=False)
     try:
-        r = client.post(f"/topics/{tid}/artifact", json={"path": "app", "as": "app"})
+        r = client.post(f"/topics/{tid}/shown", json={"path": "app", "as": "app"})
     finally:
         _detach(tid, dead)
 
@@ -397,7 +412,7 @@ def test_a_word_report_is_converted_so_a_browser_can_show_it(client, monkeypatch
     _pid, tid = _topic(client)
     raw = b"PK\x03\x04a word file"
     client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={"path": "评审简报.docx", "content_b64": base64.b64encode(raw).decode()},
     )
 
@@ -427,7 +442,7 @@ def test_a_spreadsheet_is_never_sent_for_conversion(client):
 
     _pid, tid = _topic(client)
     client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={
             "path": "预算表.xlsx",
             "content_b64": base64.b64encode(b"PK\x03\x04").decode(),
@@ -446,7 +461,7 @@ def test_a_deployment_without_a_renderer_says_so_rather_than_failing(client):
 
     _pid, tid = _topic(client)
     client.post(
-        f"/topics/{tid}/artifact",
+        f"/topics/{tid}/shown",
         json={
             "path": "报告.docx",
             "content_b64": base64.b64encode(b"PK\x03\x04").decode(),

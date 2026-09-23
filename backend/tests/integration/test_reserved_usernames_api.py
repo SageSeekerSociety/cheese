@@ -33,27 +33,39 @@ async def test_registration_refuses_the_platforms_own_words(client, name: str):
     assert "保留" in r.json()["message"], r.text
 
 
-async def _arm_email_code(email: str, code: str) -> None:
-    """把验证码直接放进 Redis —— 注册路由是真的会校验它的。
+async def _arm_email_code(email: str) -> str:
+    """走真实的发码路径拿到验证码 —— 注册路由是真的会校验它的。
 
     不 monkeypatch 校验函数：那样对照组就不再证明「整条注册路径是通的」，而这正是
-    它存在的唯一理由。走真实的键和真实的 TTL。
+    它存在的唯一理由。只替换发信这一步，验证码从信里读出来。
     """
+    import re
+
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
-    from app.domain.user.verification_service import (
-        VERIFICATION_CODE_PREFIX,
-        VERIFICATION_CODE_TTL,
-    )
+    from app.domain.user.verification_service import EmailVerificationService
 
+    class _Outbox:
+        is_configured = True
+        body = ""
+
+        async def send(self, **kwargs) -> bool:
+            self.body = kwargs["body_text"]
+            return True
+
+    outbox = _Outbox()
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        await redis.setex(
-            f"{VERIFICATION_CODE_PREFIX}{email}", VERIFICATION_CODE_TTL, code
-        )
+        service = EmailVerificationService(redis)
+        service._sender = outbox
+        await service.send_verification_code(email)
     finally:
         await redis.aclose()
+
+    match = re.search(r"\b(\d{6})\b", outbox.body)
+    assert match, outbox.body
+    return match.group(1)
 
 
 async def test_an_ordinary_name_still_registers(client):
@@ -62,7 +74,7 @@ async def test_an_ordinary_name_still_registers(client):
 
     第一版就是这么翻的：五条全 422，其中挂掉的原因是验证码，跟保留字毫无关系。"""
     payload = _payload("anonymouszhang")
-    await _arm_email_code(payload["email"], payload["emailCode"])
+    payload["emailCode"] = await _arm_email_code(payload["email"])
 
     r = client.post("/users", json=payload)
 

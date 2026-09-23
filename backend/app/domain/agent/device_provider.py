@@ -17,7 +17,6 @@ Per request:
 """
 
 import asyncio
-import base64
 import hashlib
 import inspect
 import json
@@ -32,15 +31,26 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-from app.domain.agent import machine_launcher, provider_env
+from app.core.sandbox_auth import (
+    mint_scoped_token,
+    scoped_token_claims,
+    token_agent_handle,
+)
+from app.domain.agent import machine_launcher, place, provider_env
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceHub,
     DeviceOffline,
     HubScreen,
     device_hub,
 )
-from app.domain.agent.harness.channel import Channel, ScreenSetupError
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import (
+    Channel,
+    Placement,
+    PromptSocketUnavailable,
+    ScreenSetupError,
+)
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
@@ -49,6 +59,11 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+from app.domain.agent.place import (
+    CHECKOUT_DIR,
+    footprint_root,
+    session_platform_dirs,
+)
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -57,13 +72,13 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
     Supply,
-    default_visibility,
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.library import service as library
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
+from app.domain.user.services import user_by_handle
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
@@ -73,6 +88,8 @@ logger = logging.getLogger(__name__)
 # How long the launcher file write may go unanswered. The hub adds 5s of grace
 # on top for the exec.result frame itself.
 _LAUNCHER_SHIP_TIMEOUT_S = 30
+_SESSION_RECONNECT_GRACE_S = 10.0
+_SESSION_RECONNECT_POLL_S = 0.25
 
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
@@ -163,17 +180,19 @@ async def resolve_pinned_device(
     # does; a machine judged dead is named in the room (``agent.host_failure``)
     # and waited for, because a pin that can quietly change is the original drift
     # bug.
-    healthy = await service.healthy_devices_for_project(project_id, is_online)
-    for device in healthy:
-        # The same fact the market catalogue publishes as `default=True`, read from
-        # one place so the picker can never advertise a 档 the resolver does not
-        # bind. Today that resolves to `host`, because `isolated` has no transport;
-        # when #358 step 2 supplies one, this and the catalogue move together.
-        await service.bind_topic_device(
-            topic_id, device.device_id, visibility=default_visibility()
-        )
-        return device.device_id
-    return None
+    device = await service.first_healthy_device(project_id, is_online)
+    if device is None:
+        return None
+    # The same fact the market catalogue publishes as `default=True`, read from
+    # one place so the picker can never advertise a 档 the resolver does not
+    # bind. Today that resolves to `host`, because `isolated` has no transport;
+    # when #358 step 2 supplies one, this and the catalogue move together.
+    await service.bind_topic_device(
+        topic_id,
+        device.device_id,
+        visibility=await service.binding_visibility(device.device_id),
+    )
+    return device.device_id
 
 
 # Addresses that only mean something ON the box. Routing the box's own turns
@@ -288,7 +307,7 @@ def _launch_identity(
                 "agent": agent_configuration,
                 "harness": harness_contract,
                 "target": execution_target,
-                "root": machine_launcher.PLATFORM_DIR,
+                "root": footprint_root(),
             },
             sort_keys=True,
         ).encode()
@@ -296,41 +315,39 @@ def _launch_identity(
 
 
 def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
-    # ANTHROPIC_BASE_URL is the gateway route; HTTPS_PROXY is the subscription's
-    # CONNECT route to the metering proxy. Either one pointing at a box-local
-    # address fails identically off-box.
-    for key in ("ANTHROPIC_BASE_URL", "HTTPS_PROXY"):
-        value = env.get(key, "")
-        # A configured tunnel intentionally points HTTPS_PROXY at the helper on
-        # the device's own loopback; that address is not a backend-host leak.
-        if key == "HTTPS_PROXY" and env.get("CHEESE_TUNNEL_URL"):
-            continue
-        if any(h in value for h in _BOX_LOCAL_HOSTS):
-            logger.error(
-                "device %s received %s=%s, which only "
-                "resolves on the backend's own host — its turns will fail to "
-                "reach a model. Give devices a reachable address "
-                "(subscription_device_proxy_host for the metering proxy) or "
-                "configure subscription_tunnel_url.",
-                device_id,
-                key,
-                value,
-            )
+    # HTTPS_PROXY is the machine's CONNECT route to the metering proxy, and the
+    # only way its traffic reaches a model at all. Pointing it at a box-local
+    # address fails off-box.
+    value = env.get("HTTPS_PROXY", "")
+    # A configured tunnel intentionally points HTTPS_PROXY at the helper on
+    # the device's own loopback; that address is not a backend-host leak.
+    if env.get("CHEESE_TUNNEL_URL"):
+        return
+    if any(h in value for h in _BOX_LOCAL_HOSTS):
+        logger.error(
+            "device %s received HTTPS_PROXY=%s, which only "
+            "resolves on the backend's own host — its turns will fail to "
+            "reach a model. Give devices a reachable address "
+            "(subscription_device_proxy_host for the metering proxy) or "
+            "configure subscription_tunnel_url.",
+            device_id,
+            value,
+        )
 
 
 def _read_proxy_ca() -> str:
     """The metering proxy's CA, read where THIS backend can see it — required for
-    a subscription device turn (the launcher embeds it; without it the screen's
-    `claude` cannot trust the proxy and fails as an opaque TLS error). Raising
-    here, with the setting named, beats the silent alternative: falling back to
-    the gateway would swap the model out from under the user — the exact failure
-    #325 G2 removes."""
+    every device turn (the launcher embeds it; without it the screen's `claude`
+    cannot trust the proxy and fails as an opaque TLS error). Raising here, with
+    the setting named, is the only exit: there is no second launch shape to fall
+    back to, and falling back to one would swap the model out from under the
+    user — the exact failure #325 G2 removes."""
     path = settings.subscription_ca_backend_path.strip()
     if not path:
         raise ScreenSetupError(
-            "subscription_enabled 但未设置 SUBSCRIPTION_CA_BACKEND_PATH——"
-            "device 屏幕需要后端能读到计费代理的 CA（部署侧把代理的 "
-            "mitmproxy-ca-cert.pem 只读挂载进后端并指向它）"
+            "未设置 SUBSCRIPTION_CA_BACKEND_PATH——device 屏幕需要后端能读到"
+            "计费代理的 CA（部署侧把代理的 mitmproxy-ca-cert.pem 只读挂载进"
+            "后端并指向它）"
         )
     try:
         ca = Path(path).read_text(encoding="utf-8")
@@ -388,12 +405,14 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-# Where a place's isolated claude home lives on the device, relative to the
-# device's own `$HOME` (expanded by its shell, never by us). The path is spelled
-# in one place because two sides depend on it agreeing: the launcher that
-# creates it and the retirement that removes it (topic/retire.py).
-DEVICE_HOME_ROOT = "$HOME/.cheese/home"
-DEVICE_WORK_ROOT = "$HOME/.cheese/work"
+# The platform's footprint on the device, and a place's isolated claude home
+# inside it, relative to the device's own `$HOME` (expanded by its shell, never
+# by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
+# creates these, the retirement that removes them (topic/retire.py) and the
+# connector's `uninstall` are all naming one directory.
+DEVICE_ROOT = f"$HOME/{footprint_root()}"
+DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
+DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
 # Where a PROJECT's rooms share the packages they install, on the machine they
 # share. Per project rather than per room because every room of a project
 # installs the same lockfile, while a room's home is its own — and uv and pnpm
@@ -417,7 +436,7 @@ DEVICE_WORK_ROOT = "$HOME/.cheese/work"
 # this store into an isolated room read-only would give that room the isolation
 # and take the dedup straight back. The two levers are not the same lever, and
 # a design that assumes they are will re-discover 236GB.
-DEVICE_STORE_ROOT = "$HOME/.cheese/store"
+DEVICE_STORE_ROOT = f"{DEVICE_ROOT}/store"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
@@ -432,6 +451,11 @@ def device_store_dir(project_id: uuid.UUID) -> str:
     return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
+def launcher_path(topic_id: uuid.UUID) -> str:
+    """The launcher file a screen runs, where `_ship_launcher` writes it."""
+    return f"{DEVICE_ROOT}/launch/{topic_id}.sh"
+
+
 # Where a place's environment runner may have been left, relative to that
 # place's home, in precedence order. Every root the platform has ever installed
 # into belongs here, because a place prepared under an earlier one keeps the
@@ -440,11 +464,12 @@ def device_store_dir(project_id: uuid.UUID) -> str:
 # of them keep their state in the same `$HOME/.cheese-environment/status.json`,
 # so whichever one we find answers for the place. Probing only the current root
 # is what made a place prepared by another launcher read as `pending` forever:
-# the ready status was on disk, one directory over. Every place that WRITES the
-# runner has to appear in this list — see test_environment_status_probe.py.
-ENVIRONMENT_RUNNER_PATHS = (
-    "$HOME/.cheese/cheese-environment.py",
-    "$HOME/.claude/cheese-environment.py",
+# the ready status was on disk, one directory over. Which directories those are
+# is `place.session_platform_dirs()`, so one the platform adds or drops reaches
+# the probe by itself — see test_environment_status_probe.py. The `$HOME` below
+# is the place's own: the command that reads these exports it first.
+ENVIRONMENT_RUNNER_PATHS = tuple(
+    f"$HOME/{directory}/cheese-environment.py" for directory in session_platform_dirs()
 )
 
 
@@ -458,8 +483,15 @@ async def environment_status(
     wait_ready: bool = False,
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
+    # Inside the place's home, like everything else in this command: it runs
+    # after the `export HOME` below, so `$HOME` here is `home` and not the
+    # machine's own. Spelling it `DEVICE_ROOT` would read as the machine root
+    # and land in the same place anyway, which is the kind of agreement that
+    # survives until someone believes it.
+    place_root = session_platform_dirs()[0]
     reset_marker = (
-        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
+        f'mkdir -p "$HOME/{place_root}"; '
+        f'touch "$HOME/{place_root}/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -487,7 +519,7 @@ async def environment_status(
 
 def _launcher_command(topic_id: uuid.UUID) -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
-    return ["bash", "-lc", f'exec bash "$HOME/.cheese/launch/{topic_id}.sh"']
+    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id)}"']
 
 
 class DeviceChannel(Channel):
@@ -499,15 +531,20 @@ class DeviceChannel(Channel):
     ``ClaudeCodeRuntime``."""
 
     name = "device"
+    # 人接入的机器：平台只能停止使用它，不能销毁它。「谁开的」是一个常量，不从机器
+    # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
+    supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
-    # — the metering-proxy env under a subscription, the backend's /llm route and
-    # a scoped token without one. Either way the machine holds no provider
-    # credential, so the platform must hand this transport the model choice and
-    # nothing else. Every transport that reaches a machine over a link inherits
+    # — one shape, the metering-proxy env, and no other. The machine holds no
+    # provider credential and no model name; both are settled per request at
+    # admission. Every transport that reaches a machine over a link inherits
     # this build, and inherits the declaration with it.
     builds_model_env = True
     needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
     timeout_message = "device 轮次超时"
+    # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
+    # 就停」那条分支三种供给是同一条——所以变的是这一句，不是那条分支。
+    no_machine_message = "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
 
     def __init__(
         self,
@@ -531,17 +568,6 @@ class DeviceChannel(Channel):
         """Whether any device is currently connected (online). Project-level checks
         happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
-
-    def owns(self, supply: Supply) -> bool:
-        """Is a machine that entered this way THIS channel's to listen to?
-
-        Both channels bind their topics into the same table, so a pin does not
-        say which of them made it — the machine does, and ``Supply`` is the axis
-        that separates them (the platform opened it → Cloud's; a human enrolled
-        it → this one's). ``_resolve_device_agent`` on the Cloud side already
-        refuses a machine of the wrong supply for the same reason.
-        """
-        return supply is not Supply.cloud
 
     async def discover(
         self, device_id: str | None = None
@@ -590,10 +616,15 @@ class DeviceChannel(Channel):
         self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Rebuild screen identities for the rooms this channel owns in the DB."""
-        inventories = {
-            device_id: await self._hub.list_screens(device_id)
-            for device_id in {scope[2] for scope in scopes}
-        }
+        inventories = {}
+        for device_id in {scope[2] for scope in scopes}:
+            try:
+                inventories[device_id] = await self._hub.list_screens(device_id)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Screen recovery failed for device %s: %s", device_id, exc
+                )
+                inventories[device_id] = []
         if not any(inventories.values()):
             return [(project, topic, None, None) for project, topic, _ in scopes]
         factory = self._session_factory
@@ -602,48 +633,81 @@ class DeviceChannel(Channel):
 
             factory = async_session_factory
         restored = []
+        # What the database knows, gathered first and committed, so that the
+        # adoptions below — a call to the connection owner each when it runs as
+        # its own service — run with no transaction open. One transaction across
+        # every room of a reconnecting device kept a pool connection for as long
+        # as the whole device took (dev, 2026-09-19).
+        rooms: list[
+            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list, tuple]
+        ] = []
         async with factory() as session:
             for project_id, topic_id, device_id in scopes:
-                screen = None
                 room = await TopicService(session).get(topic_id)
                 current_resource = (room.resource_id or topic_id) if room else None
-                for entry in inventories[device_id]:
-                    env = entry.get("env", {})
-                    if (env.get("CHEESE_PROJECT"), env.get("CHEESE_TOPIC")) != (
-                        str(project_id),
-                        str(topic_id),
-                    ):
-                        continue
-                    agent = await IdentityService(session).ensure_topic_agent_user(
+                entries = [
+                    entry
+                    for entry in inventories[device_id]
+                    if (
+                        entry.get("env", {}).get("CHEESE_PROJECT"),
+                        entry.get("env", {}).get("CHEESE_TOPIC"),
+                    )
+                    == (str(project_id), str(topic_id))
+                ]
+                identity: tuple = ()
+                if entries:
+                    agent = await IdentityService(session).ensure_room_agent_user(
                         topic_id
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered = self._hub.adopt_screen(
+                    identity = (agent.id, agent.username)
+                rooms.append(
+                    (
+                        project_id,
+                        topic_id,
                         device_id,
-                        entry["sid"],
-                        token=entry["screen"],
-                        agent_user_id=agent.id,
-                        agent_handle=agent.username,
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        resource_id=uuid.UUID(
-                            env.get("CHEESE_RESOURCE_ID") or str(topic_id)
-                        ),
-                        command=entry["command"],
-                        hook_key=str(topic_id),
-                        credential_expires=int(expiry) if expiry else None,
-                        execution_target=json.loads(target) if target else None,
-                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                        current_resource,
+                        entries,
+                        identity,
                     )
-                    if inspect.isawaitable(recovered):
-                        recovered = await recovered
-                    # Retired generations remain registered for durable cleanup;
-                    # only the room's current generation can resume its turn.
-                    if recovered.resource_id == current_resource:
-                        screen = recovered
-                restored.append((project_id, topic_id, screen, None))
+                )
             await session.commit()
+        for (
+            project_id,
+            topic_id,
+            device_id,
+            current_resource,
+            entries,
+            identity,
+        ) in rooms:
+            screen = None
+            for entry in entries:
+                env = entry.get("env", {})
+                expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                target = env.get("CHEESE_EXECUTION_TARGET")
+                recovered = self._hub.adopt_screen(
+                    device_id,
+                    entry["sid"],
+                    token=entry["screen"],
+                    agent_user_id=identity[0],
+                    agent_handle=identity[1],
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    resource_id=uuid.UUID(
+                        env.get("CHEESE_RESOURCE_ID") or str(topic_id)
+                    ),
+                    command=entry["command"],
+                    hook_key=str(topic_id),
+                    credential_expires=int(expiry) if expiry else None,
+                    execution_target=json.loads(target) if target else None,
+                    agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                )
+                if inspect.isawaitable(recovered):
+                    recovered = await recovered
+                # Retired generations remain registered for durable cleanup;
+                # only the room's current generation can resume its turn.
+                if recovered.resource_id == current_resource:
+                    screen = recovered
+            restored.append((project_id, topic_id, screen, None))
         return restored
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
@@ -687,36 +751,16 @@ class DeviceChannel(Channel):
             factory = async_session_factory
         async with factory() as session:
             service = sql_device_service(session)
-            from app.domain.topic.services import TopicService
-
-            place = await TopicService(session).place_or_404(topic_id)
-            if place.room.is_private:
-                from app.domain.agent.private_chat import execution_target
-                from app.domain.device.supply import Visibility
-
-                placement = place.room.session_placement
-                device_id = execution_target(
-                    project_id,
-                    topic_id,
-                    device_id=placement["device_id"] if placement else None,
-                )["device_id"]
-                if not self._hub.is_online(device_id):
-                    raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
-                binding = await service.topic_binding(topic_id)
-                if binding is None or binding.device_id != device_id:
-                    await service.bind_topic_device(
-                        topic_id, device_id, visibility=Visibility.host
-                    )
-            else:
-                device_id = await resolve_pinned_device(
-                    service, self._hub.is_online, project_id, topic_id
-                )
+            device_id = await resolve_pinned_device(
+                service, self._hub.is_online, project_id, topic_id
+            )
             if device_id is None:
                 return None
-            # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
-            # run on a self-hosted box is attributable to the same identity as one
-            # run locally — the device stays pure compute either way.
-            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
+            # The screen acts as the agent that answers this room (its own
+            # agent-user), so a turn run on a self-hosted box is attributable to the
+            # same identity as one run locally — the device stays pure compute
+            # either way.
+            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
             # Persist the pin created above (first turn) before the turn proceeds, so a
             # concurrent/next turn sees the same device.
             await session.commit()
@@ -813,7 +857,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return f"{device_home_dir(project_id, topic_id)}/room"
+        return f"{device_home_dir(project_id, topic_id)}/{CHECKOUT_DIR}"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -850,11 +894,11 @@ class DeviceChannel(Channel):
         instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
-        path = f"$HOME/.cheese/launch/{topic_id}.sh"
+        path = launcher_path(topic_id)
         transfer, exec_env = self._screen_file_refresh(
             home_dir, release_state=release_state, execution_token=execution_token
         )
-        transfer = f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}" && ' + transfer
+        transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
         try:
             result = await self._hub.exec(
@@ -905,7 +949,7 @@ class DeviceChannel(Channel):
         token (rotated every turn), and a read of the release marker when the
         caller tracks one. Shared by the launcher ship and the live-screen
         refresh, so both paths write the same files the same way."""
-        hook_dir = f"{home_dir}/.cheese"
+        hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
         transfer = (
             f'mkdir -p "{hook_dir}"'
             f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
@@ -977,8 +1021,10 @@ class DeviceChannel(Channel):
             return False
         from app.domain.agent.remote_control import store
 
+        # A screen is launched as one named agent and records it, so this is
+        # the agent whose control session to look for — no second answer.
         control = store()
-        session = await control.current(str(screen.topic_id))
+        session = await control.current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1071,7 +1117,9 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Put this room's platform tools back, and say whether they were gone.
 
         A turn that publishes nothing is the symptom: 芝士 answered in its
@@ -1087,7 +1135,22 @@ class DeviceChannel(Channel):
         """
         from app.domain.agent.remote_control import store
 
-        session = await store().current(str(topic_id))
+        if agent_handle is None:
+            # Whose tools: the agent that answers for this room — the same one
+            # a room-scoped credential acts as. Asked here rather than of the
+            # caller, which reaches this after a turn has already ended.
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
+            async with factory() as db:
+                from app.domain.topic_membership.services import TopicMemberService
+
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    topic_id
+                )
+        session = await store().current(str(topic_id), agent_handle)
         if not session or session["status"] != "active":
             return False
         request = self._native_control(session)
@@ -1206,12 +1269,6 @@ class DeviceChannel(Channel):
         execution_target = None
         if (env or {}).get("CHEESE_EXECUTION_TARGET"):
             execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
-        if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
-            from app.domain.agent.private_chat import execution_target as private_target
-
-            execution_target = private_target(
-                project_id, topic_id, resource_id, device_id=device_id
-            )
         if (
             existing is not None
             and (env or {}).get("CHEESE_ENVIRONMENT")
@@ -1258,127 +1315,105 @@ class DeviceChannel(Channel):
         home_dir = device_home_dir(project_id, resource_id)
         work_dir = self._work_dir(project_id, resource_id)
         api_base = await self._device_api_base(device_id)
-        ca_pem = ""
-        if settings.subscription_enabled:
-            # Every request from every machine reached this way runs on the
-            # subscription through the metering proxy — an enrolled device and a
-            # leased Cloud box alike, since both are launched from right here
-            # (#325 G2). This is what ``builds_model_env`` declares: the platform
-            # sends the model choice, and the env around it is assembled below.
-            # The machine holds no real credential either way: the env ships a
-            # scoped cheese token as the fake login, the proxy verifies it and
-            # injects the real token backend-side. The gateway route is NOT a
-            # fallback here — falling back silently is exactly the model swap
-            # this branch exists to kill (dev shipped device screens with
-            # CLAUDE_MODEL=deepseek-chat while users thought they were talking
-            # to Claude).
-            ca_pem = _read_proxy_ca()
-            # Session-length TTL, not the 1h default. This token is baked into the
-            # bare process's HTTPS_PROXY (CONNECT credential) and
-            # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
-            # hot-refreshed; the screen is reused across turns (a reassert only
-            # re-attaches, it does not relaunch claude). A 1h token
-            # thus expires under a still-running process, and every turn after the
-            # first hour is rejected by the metering proxy (407) — the agent looks
-            # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
-            session_token = mint_scoped_token(
-                project_id=str(project_id),
-                topic_id=str(topic_id),
-                ttl_s=SESSION_TOKEN_TTL_S,
-                remote_control=True,
-                resource_id=str(resource_id),
-                model=launch.model,
-                # WHO acts with it. The launcher has known this all along and
-                # let the minter fall back to a handle derived from the room —
-                # which is the one thing a room cannot answer once it may seat
-                # more than one agent.
-                agent_handle=agent_handle,
-            )
-            tunnel_url = settings.subscription_tunnel_url.strip()
-            via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
-            tunnel_port = tunnel_port_for_topic(topic_id)
-            connect_proxy_url = connect_transport(
-                session_token=session_token,
-                via_tunnel=via_tunnel,
-                tunnel_port=tunnel_port,
-            )
-            sub = provider_env.subscription_provider(
-                ca_path=_DEVICE_PROXY_CA_PATH,
-                project_id=str(project_id),
-                topic_id=str(topic_id),
-                session_token=session_token,
-                connect_proxy_url=connect_proxy_url,
-                no_proxy=self._no_proxy_hosts(),
-            )
-            # The subscription env WINS over the caller's `env` — that env is
-            # the gateway shape (BASE_URL + model pins), and any of those keys
-            # surviving flips the CLI into API-key mode or asks the subscription
-            # for a model it does not serve. Dropped, not overridden, because
-            # subscription_provider only ADDS keys.
-            merged = {**(env or {})}
-            for k in (
-                "ANTHROPIC_BASE_URL",
-                "CLAUDE_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            ):
-                merged.pop(k, None)
-            merged.update(sub.env)
-            if launch.model and not launch.model.startswith("claude-"):
-                # Native auxiliary calls and subagents must use the selected
-                # gateway model too; LiteLLM does not serve Claude aliases.
-                for family in ("HAIKU", "SONNET", "OPUS"):
-                    merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
-            merged["CHEESE_REMOTE_CONTROL"] = "1"
-            # The tunnel's CONNECT credential must carry the same place and RC
-            # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
-            merged["CHEESE_CONNECT_TOKEN"] = session_token
-            # These scopes describe the Cheese control credential. The model
-            # provider still authenticates inference at its existing proxy hop.
-            merged["CLAUDE_CODE_OAUTH_SCOPES"] = (
-                "user:inference user:profile user:sessions:claude_code"
-            )
-            if connect_proxy_url:
-                # The meter accepts model hosts, not package registries.
-                merged["CHEESE_MODEL_PROXY"] = "1"
-            if via_tunnel:
-                # Read by the launch script: it writes the helper and the token
-                # file, and starts the helper before `claude`. Carried on the env
-                # rather than as arguments because a remote machine's launch is
-                # built entirely from `extra_env` — there is no other channel
-                # into that builder.
-                merged["CHEESE_TUNNEL_URL"] = tunnel_url
-                merged["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
-            elif await self._device_ccproxy_upstream(device_id):
-                # A device with its own ccproxy identity runs on the machine-ticket
-                # model: the launcher's reconcile hands claude the device's
-                # own ticket instead of our scoped token, and admission tells
-                # the meter which identity to relay it over. Without this flag
-                # such a device silently falls onto the platform-credential swap
-                # path — the #393 dependency this model exists to remove.
-                merged["CHEESE_MACHINE_TICKET"] = "1"
-            model_env = merged
-            # Preserve the birth expiry across device and backend restarts.
-            credential_expires = _credential_expiry(session_token)
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
-        else:
-            # No subscription deployed: the machine gets the backend's own model
-            # route and its scoped token — never the upstream provider key. The
-            # backend substitutes the project's virtual key, so the credential
-            # stays on the box and spend is attributed without having to trust
-            # the machine to report it.
-            provider = provider_env.api_key_provider(
-                gateway_base=f"{self._public_base}/llm",
-                key=token,
-                model=launch.model or settings.agent_model,
-            )
-            model_env = {**provider.env, **(env or {})}
-            # Same stamp on the gateway path: the model credential is the scoped
-            # `token`, and its expiry is what both the launcher and the reuse gate
-            # check before adopting.
-            credential_expires = _credential_expiry(token)
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
+        # 一台机器只有一种启动环境（结论 46）。Every request from every machine
+        # reached this way runs through the metering proxy — an enrolled device
+        # and a leased Cloud box alike, since both are launched from right here
+        # (#325 G2) — and the proxy asks `/llm/admission` per request whether it
+        # goes to the subscription pool or is rewritten to the gateway. There is
+        # no second shape and no fallback: falling back silently is exactly the
+        # model swap this kills (dev shipped device screens with
+        # CLAUDE_MODEL=deepseek-chat while users thought they were talking to
+        # Claude). This is what ``builds_model_env`` declares.
+        #
+        # The machine holds no real credential: the env ships a scoped cheese
+        # token as the fake login, and the proxy injects the real one.
+        ca_pem = _read_proxy_ca()
+        # Session-length TTL, not the 1h default. This token is baked into the
+        # bare process's HTTPS_PROXY (CONNECT credential) and
+        # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
+        # hot-refreshed; the screen is reused across turns (a reassert only
+        # re-attaches, it does not relaunch claude). A 1h token
+        # thus expires under a still-running process, and every turn after the
+        # first hour is rejected by the metering proxy (407) — the agent looks
+        # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
+        session_token = mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            ttl_s=SESSION_TOKEN_TTL_S,
+            remote_control=True,
+            resource_id=str(resource_id),
+            # WHO acts with it — a room cannot answer that once it may seat
+            # more than one agent, so the launcher, which knows, says it.
+            agent_handle=agent_handle,
+        )
+        tunnel_url = settings.subscription_tunnel_url.strip()
+        via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
+        tunnel_port = tunnel_port_for_topic(topic_id)
+        connect_proxy_url = connect_transport(
+            session_token=session_token,
+            via_tunnel=via_tunnel,
+            tunnel_port=tunnel_port,
+        )
+        sub = provider_env.subscription_provider(
+            ca_path=_DEVICE_PROXY_CA_PATH,
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            session_token=session_token,
+            connect_proxy_url=connect_proxy_url,
+            no_proxy=self._no_proxy_hosts(),
+        )
+        # 启动环境里没有模型这件事。Which model a request runs on is decided at
+        # one control point — admission, when the request reaches the metering
+        # proxy (结论 46) — and the proxy writes the answer into the REQUEST
+        # BODY on its way out. So nothing here names a model: not
+        # `claude --model`, not the three family aliases the CLI addresses
+        # subagents by. A key here would be a second declaration of what the
+        # binding on the card already says, and nobody could write down which
+        # of the two wins (I4a).
+        model_env = {**(env or {})}
+        # Dropped, not overridden: `subscription_provider` only ADDS keys, and
+        # any of these surviving from a caller's env flips the CLI out of
+        # subscription mode or asks a pool for a model nobody bound.
+        for key in (
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ):
+            model_env.pop(key, None)
+        model_env.update(sub.env)
+        model_env["CHEESE_REMOTE_CONTROL"] = "1"
+        # The tunnel's CONNECT credential must carry the same place and RC
+        # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
+        model_env["CHEESE_CONNECT_TOKEN"] = session_token
+        # These scopes describe the Cheese control credential. The model
+        # provider still authenticates inference at its existing proxy hop.
+        model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
+            "user:inference user:profile user:sessions:claude_code"
+        )
+        if connect_proxy_url:
+            # The meter accepts model hosts, not package registries.
+            model_env["CHEESE_MODEL_PROXY"] = "1"
+        if via_tunnel:
+            # Read by the launch script: it writes the helper and the token
+            # file, and starts the helper before `claude`. Carried on the env
+            # rather than as arguments because a remote machine's launch is
+            # built entirely from `extra_env` — there is no other channel
+            # into that builder.
+            model_env["CHEESE_TUNNEL_URL"] = tunnel_url
+            model_env["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
+        elif await self._device_ccproxy_upstream(device_id):
+            # A device with its own ccproxy identity runs on the machine-ticket
+            # model: the launcher's reconcile hands claude the device's
+            # own ticket instead of our scoped token, and admission tells
+            # the meter which identity to relay it over. Without this flag
+            # such a device silently falls onto the platform-credential swap
+            # path — the #393 dependency this model exists to remove.
+            model_env["CHEESE_MACHINE_TICKET"] = "1"
+        # Preserve the birth expiry across device and backend restarts.
+        credential_expires = _credential_expiry(session_token)
+        model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         _warn_if_model_endpoint_is_box_local(model_env, device_id)
         # 运行环境预览's dial-out address. Derived from the base this machine already
         # reaches for hooks, git and the CLI rather than configured separately:
@@ -1405,8 +1440,6 @@ class DeviceChannel(Channel):
             project_id=str(project_id),
             topic_id=str(topic_id),
             agent_handle=agent_handle,
-            # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{api_base}/projects/{project_id}/git",
             execution_target=execution_target,
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
@@ -1422,7 +1455,6 @@ class DeviceChannel(Channel):
         if execution_target is not None:
             # The assigned executor already owns the checkout and its environment.
             for name in (
-                "CHEESE_GIT_REMOTE",
                 "CHEESE_GIT_BRANCH",
                 "CHEESE_BRANCH_URL",
                 "CHEESE_ENVIRONMENT",
@@ -1563,25 +1595,113 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
+    def _sessions(self):
+        """一条数据库连接。Cloud 通道从这里继承它——同一个问题，同一份答案。"""
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        return factory()
+
+    async def _resolve_session_host(self, db, session: SessionRef) -> str:
+        """读取这条会话自己的机器。在线等待由调用方在归还数据库连接后完成。
+
+        机器从会话行上读，不是项目钉住的那台工作机。问的是这条会话而不是这个房间：
+        一间房里的两个队友各有一条会话，可能坐在两台机器上。
+        """
+        from app.domain.agent_session.services import AgentSessionService
+
+        await TopicService(db).get_or_404(session.topic_id)
+        place = await AgentSessionService(db).place(
+            session.topic_id, session.agent_handle, harness=session.harness
+        )
+        host = place.machine if place else settings.agent_session_device_id
+        if not host:
+            logger.error("session_host_unconfigured topic=%s", session.topic_id)
+            raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+        return host
+
+    async def _wait_for_session_host(self, host: str, session: SessionRef) -> None:
+        """Give the pinned connector time to reconnect after an ingress reload.
+
+        Call after releasing the database session: simultaneous room starts
+        must leave the connection pool available while transport recovers.
+        """
+        if self._hub.is_online(host):
+            return
+        logger.info(
+            "session_host_reconnecting topic=%s host=%s", session.topic_id, host
+        )
+        deadline = time.monotonic() + _SESSION_RECONNECT_GRACE_S
+        while not self._hub.is_online(host):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "session_host_offline topic=%s host=%s", session.topic_id, host
+                )
+                raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+            await asyncio.sleep(min(_SESSION_RECONNECT_POLL_S, remaining))
+
+    async def _session_agent(self, db, session: SessionRef):
+        """Resolve the selected conversation's project handle to its author."""
+        from app.domain.agent_instance.services import AgentInstanceService
+        from app.domain.project.services import ProjectService
+
+        if not session.agent_handle:
+            return await IdentityService(db).ensure_room_agent_user(session.topic_id)
+        project = await ProjectService(db).get_or_404(session.project_id)
+        agents = AgentInstanceService(db)
+        instance = await agents.for_handle(project, session.agent_handle)
+        handle = await agents.ensure_identity(instance)
+        user = await user_by_handle(db, handle)
+        assert user is not None
+        return user
+
+    async def _session_host_agent(self, session: SessionRef) -> Placement:
+        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上答
+        这间房的那个 agent。
+
+        身份不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
+        是同一个问题，答案就只有这一份。
+        """
+        async with self._sessions() as db:
+            host = await self._resolve_session_host(db, session)
+            agent = await self._session_agent(db, session)
+            await db.commit()
+            placement = Placement(host, agent.id, agent.username, rented=False)
+        await self._wait_for_session_host(host, session)
+        return placement
+
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
-        Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
-        resolved = await self._resolve_device_agent(project_id, topic_id)
+        Raises ``ScreenSetupError`` (offline pinned device, or none online).
+
+        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机。pi 直接用
+        这条通道 (它是唯一没有包在 ``CentralChannel`` 外面的 backend)，所以「要不
+        要一双手」这一问在这里也必须答得出来——答不出来，一间私聊就会因为项目没
+        有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。答案随 ``Placement``
+        交给 ``ensure_ready``，由它决定这一轮开在草稿区还是项目工作区。"""
+        if not needs_place:
+            return await self._session_host_agent(session)
+        resolved = await self._resolve_device_agent(
+            session.project_id, session.topic_id
+        )
         if resolved is None:
-            raise ScreenSetupError(
-                "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
-            )
-        return resolved
+            raise ScreenSetupError(self.no_machine_message)
+        if self._device_resolver is not None:
+            return Placement(*resolved, rented=True)
+        async with self._sessions() as db:
+            agent = await self._session_agent(db, session)
+            await db.commit()
+            return Placement(resolved[0], agent.id, agent.username, rented=True)
 
     async def ensure_ready(
         self,
         *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         token: str,
         env: dict[str, str] | None,
         memory_scope: str | None,
@@ -1598,46 +1718,72 @@ class DeviceChannel(Channel):
         every harness (``machine_launcher``) while the harness fills the rest.
         This channel says where — the home, the workdir, the state directory the
         connector will resolve — and merges the two environments."""
-        assert isinstance(precheck, tuple)  # from our precheck
-        device_id, agent_user_id, agent_handle = precheck
+        assert isinstance(precheck, Placement)  # from our precheck
+        project_id, topic_id = session.project_id, session.topic_id
+        device_id, agent_user_id, agent_handle, rented = precheck
+        # 记忆算谁的，只决定记忆算谁的。这一轮开在哪个工作区是 ``rented`` 的事，
+        # 下面那一句说；两个事实各说各的，其中一个换了另一个不跟着动。
         if memory_scope == "personal":
-            env = dict(
-                env or {}, CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal"
-            )
+            env = dict(env or {}, CHEESE_MEMORY_SCOPE="personal")
             if owner:
                 env["CHEESE_OWNER"] = owner
-        prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
-            (env or {}).get("CHEESE_EXECUTION_TARGET")
-            or (env or {}).get("CHEESE_PRIVATE_CHAT") == "1"
+        prepares_environment = (
+            bool((env or {}).get("CHEESE_ENVIRONMENT"))
+            and rented
+            and not (env or {}).get("CHEESE_EXECUTION_TARGET")
         )
         try:
             from app.core.db import async_session_factory
 
             factory = self._session_factory or async_session_factory
+            # Read which generation of the room this is, then let the connection
+            # go: nothing below writes, and every path into `ensure_ready` runs
+            # under ChatService's per-topic lock (`_prompt_lock`), so the row
+            # lock serialized nothing this process was not serializing already.
+            # Held across the device work it cost a pool connection, and the
+            # room's own row, for as long as starting an agent on a remote
+            # machine takes — which queued every writer of that row (a title, an
+            # archive, a read mark) behind it, each holding a connection of its
+            # own until the start finished.
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-                before = (
-                    await environment_status(
-                        self._hub, device_id, project_id, resource_id
-                    )
-                    if prepares_environment
-                    else {}
+                # Use the same actor for the repository and for tools, including
+                # a non-default teammate whose identity differs from the machine
+                # precheck. A token that names nobody keeps the precheck identity.
+                actor = token_agent_handle(token)
+                if actor and actor != agent_handle:
+                    user = await user_by_handle(room_session, actor)
+                    if user is None:
+                        raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                    agent_user_id, agent_handle = user.id, user.username
+            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
+            # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
+            # 择的是「租到手没有」，不是「这间房是不是私聊」。
+            if not rented:
+                from app.domain.agent.private_chat import scratch_target
+
+                env["CHEESE_EXECUTION_TARGET"] = json.dumps(
+                    scratch_target(project_id, resource_id, device_id=device_id)
                 )
-                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    launch=launch,
-                    environment_before=before,
-                )
-                await room_session.commit()
+            before = (
+                await environment_status(self._hub, device_id, project_id, resource_id)
+                if prepares_environment
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            screen = await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=env,
+                launch=launch,
+                environment_before=before,
+            )
             self._subscription_devices[topic_id] = device_id
             if prepares_environment:
                 # A process started before this feature keeps its environment
@@ -1719,9 +1865,16 @@ class DeviceChannel(Channel):
     ) -> tuple[list[dict], list[dict]]:
         """Copy each uploaded image onto the machine this screen runs on.
 
-        The upload landed in the backend's own worktree; a device is a different
-        filesystem, so without this the prompt's `@uploads/x.png` points at
-        nothing and 芝士 is handed a mention that resolves to no image.
+        The upload landed on the platform's own disk; a device is a different
+        filesystem, so without this the prompt's mention points at nothing and
+        芝士 is handed an @path that resolves to no image.
+
+        It lands in the session's home, NOT in the checkout the screen works in
+        (结论 49，不变量 I21b): an attachment is something the platform puts on
+        the machine, and a file the platform put in somebody's repository shows
+        up in their `git status` as an untracked file they did not add. The
+        mention is therefore the absolute path the machine answers with —
+        `place.write` is the one place that knows where that is.
 
         Per image, and never fatal. One that cannot be staged — the connector
         predates the file frame (this is real: the binary deployed on the dev
@@ -1733,36 +1886,26 @@ class DeviceChannel(Channel):
         """
         if screen.project_id is None or screen.topic_id is None:
             # A screen adopted without its coordinates cannot be told which
-            # worktree the file came from. Say so rather than send a mention
-            # that resolves to nothing.
+            # room the file came from. Say so rather than send a mention that
+            # resolves to nothing.
             return [], list(images)
+        home = device_home_dir(screen.project_id, screen.resource_id or screen.topic_id)
         staged: list[dict] = []
         lost: list[dict] = []
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_room_file(screen.project_id, screen.topic_id, path)
-                await self._hub.put_file(
-                    screen.device_id,
-                    screen.sid,
-                    path,
+                data = library.read_attachment(screen.project_id, screen.topic_id, path)
+                landed = await place.write(
                     data,
+                    home=home,
+                    name=path,
+                    hub=self._hub,
+                    device_id=screen.device_id,
+                    screen=screen.sid,
+                    execution_target=screen.execution_target,
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
-                if screen.execution_target:
-                    from app.domain.agent import private_chat
-
-                    target = screen.execution_target
-                    if target:
-                        await private_chat.control(
-                            target,
-                            {
-                                "subtype": "stage_file",
-                                "path": path,
-                                "data": base64.b64encode(data).decode(),
-                            },
-                            hub=self._hub,
-                        )
             except Exception as exc:  # noqa: BLE001 — an image is not the message
                 # `str(exc)` is EMPTY for the failure this actually hits — a bare
                 # `TimeoutError` from a connector too old to know `file.put`, which
@@ -1778,7 +1921,7 @@ class DeviceChannel(Channel):
                 )
                 lost.append(image)
             else:
-                staged.append(image)
+                staged.append({**image, "path": landed})
         return staged, lost
 
     async def send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
@@ -1801,12 +1944,26 @@ class DeviceChannel(Channel):
             # NOT "启动失败": by this point the screen is up. Saying what actually
             # failed is the difference between someone re-@ing the agent and
             # someone going to look at the machine.
-            raise ScreenSetupError(
+            error_type = (
+                PromptSocketUnavailable
+                if getattr(exc, "failure_code", None) == "prompt_socket_unavailable"
+                else ScreenSetupError
+            )
+            raise error_type(
                 f"提示词没能送进机器上的会话：{str(exc) or exc.__class__.__name__}"
             ) from exc
         if isinstance(result, dict) and isinstance(result.get("ready"), bool):
             return result["ready"]
         return None
+
+    async def retire_unreachable(self, screen: HubScreen) -> bool:
+        if await self.confirm_alive(screen):
+            return False
+        assert screen.topic_id is not None
+        await self._retire_screen(
+            screen, topic_id=screen.topic_id, reason="prompt_socket_unavailable"
+        )
+        return True
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

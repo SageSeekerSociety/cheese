@@ -3,7 +3,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestDiscussionIntegration:
@@ -16,8 +16,8 @@ class TestDiscussionIntegration:
             api_client, creator.username, creator.password
         )
         suffix = unique_int(10000000, 99999999)
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Disc Space ({suffix})",
                 "intro": "Test",
@@ -46,8 +46,7 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        if task_resp.status_code != 200:
-            pytest.skip(f"Task creation failed: {task_resp.json()}")
+        assert task_resp.status_code == 200, f"Task creation failed: {task_resp.json()}"
         task_id = task_resp.json()["data"]["task"]["id"]
         return {
             "creator": creator,

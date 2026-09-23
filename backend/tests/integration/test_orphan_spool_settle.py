@@ -15,14 +15,15 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
@@ -107,7 +108,9 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
+        resumes_by = await AgentSessionService(session).resume_token(
+            tid, CHEESE_HANDLE, harness=deployment_harness()
+        )
     finals = [
         b
         for b in rows
@@ -151,7 +154,9 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     assert await svc.settle_spool(tid) == 1
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
+        resumes_by = await AgentSessionService(session).resume_token(
+            tid, CHEESE_HANDLE, harness=deployment_harness()
+        )
     finals = [b for b in rows if b.content == "只有Stop带回来的结论"]
     assert len(finals) == 1
     assert finals[0].kind == BlockKind.event
@@ -225,7 +230,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     verdicts = [
         b
         for b in rows
-        if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
+        if b.author_type == AuthorType.platform and "部署中断" in (b.content or "")
     ]
     assert verdicts == []
     assert await open_turn_ids(factory) == set()
@@ -254,7 +259,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             project_id=_pid,
             topic_id=tid,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="修一下登录页",
             kind=BlockKind.message,
         )
@@ -344,7 +349,7 @@ def test_completed_live_turn_settles_before_another_prompt(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
     with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
-        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        socket.send_json({"type": "message", "content": "@芝士 hello"})
         while True:
             frame = socket.receive_json()
             assert frame["type"] != "error", frame

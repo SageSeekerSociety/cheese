@@ -134,6 +134,24 @@ describe('chat attachments', () => {
     expect(onError).toHaveBeenCalledWith('每条消息最多添加 9 个附件')
   })
 
+  // 贴进来的那一份不进资料库：资料库按名字寻址，而剪贴板里的截图没有名字。
+  // 这一格只证明「来路」跟着请求走——不进库那一步在后端。
+  it('says a pasted file came off the clipboard, and a picked one did not', async () => {
+    const { addFiles, onPaste } = usePendingAttachments(() => 't1')
+    const pasted = file('image.png', 'image/png')
+    onPaste({
+      clipboardData: { items: [{ kind: 'file', getAsFile: () => pasted }] },
+      preventDefault: () => {},
+    } as unknown as ClipboardEvent)
+    await new Promise((r) => setTimeout(r, 0))
+    await addFiles([file('预算表.xlsx', 'application/octet-stream')])
+
+    const origins = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) =>
+      (c[1] as { body: FormData }).body.get('origin')
+    )
+    expect(origins).toEqual(['clipboard', 'file'])
+  })
+
   it('reports an oversized file and uploads the next one', async () => {
     const onError = vi.fn()
     const large = file('large.pdf', 'application/pdf')

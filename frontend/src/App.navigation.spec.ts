@@ -17,6 +17,8 @@ import i18n, { setLocale } from './i18n'
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
   listProjects: vi.fn(async () => ({ data: [] })),
   listProjectAgents: vi.fn(async () => ({ data: [] })),
 }))
@@ -88,13 +90,15 @@ async function mountApp(path: string, width: number) {
         component: Room,
         meta: { barSlot: true, backTo: 'workspace-project' },
       },
-      { path: '/projects/p1/agents', name: 'project-agents', component: blank },
       { path: '/projects/p1/dm/agent:cheese', name: 'workspace-dm', component: blank },
       {
         path: '/home',
         component: Home,
         meta: { barSlot: true },
         children: [
+          // 手机上那一格分段里也有「我的工作」：这一页的假路由要和真路由一致，
+          // 否则点它就是在往一个不存在的地址推。
+          { path: 'work', name: 'HomeWork', component: blank },
           { path: 'spaces', name: 'HomeSpaces', component: blank },
           { path: 'teams', name: 'HomeTeams', component: blank },
         ],
@@ -174,8 +178,8 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
 )
 
 it.each([
-  { locale: 'zh-CN' as const, spaces: '空间', teams: '小队' },
-  { locale: 'en' as const, spaces: 'Spaces', teams: 'Teams' },
+  { locale: 'zh-CN' as const, spaces: '题目板', teams: '小队' },
+  { locale: 'en' as const, spaces: 'Problem boards', teams: 'Teams' },
 ])('mounts $locale home tabs into the mobile bar after a breakpoint change', async ({ locale, spaces, teams }) => {
   setLocale(locale)
   const app = await mountApp('/home/spaces', 1280)

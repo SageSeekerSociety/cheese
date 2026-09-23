@@ -20,6 +20,8 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
+    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -156,7 +158,6 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     expect(JSON.parse(sent[0].payload)).toMatchObject({
       content: '<@cheese-topica> 帮我起草一份项目介绍',
-      summon: true,
     })
   })
 
@@ -182,7 +183,7 @@ describe('对话栏自己的输入栏', () => {
           kind: 'message',
           content: '我打算把这学期的课程材料整理成一份大纲',
           author: 'alice',
-          author_type: 'human',
+          author_type: 'participant',
           created_at: '2026-09-16T10:00:00Z',
         } as never,
       ],
@@ -206,7 +207,7 @@ describe('对话栏自己的输入栏', () => {
           kind: 'message',
           content: '好，我先把材料归拢一下，再跟你确认大纲的结构。',
           author: 'cheese-topica',
-          author_type: 'ai',
+          author_type: 'participant',
           created_at: '2026-09-16T10:01:00Z',
         } as never,
       ],
@@ -379,7 +380,7 @@ describe('对话栏自己的输入栏', () => {
           content: 'uploads/id/report.docx',
           mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           author: 'alice',
-          author_type: 'human',
+          author_type: 'participant',
           created_at: '2026-09-07T12:00:00Z',
         } as never,
       ],
@@ -433,7 +434,8 @@ describe('对话栏自己的输入栏', () => {
     expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 
-  it('@ 了芝士的那条消息才召唤它', async () => {
+  // 帧上没有「叫不叫它」那一位：叫谁写在正文里，后端从正文解析。
+  it('@ 了芝士的那条消息才召唤它，而那个 @ 就在正文里', async () => {
     const { container } = mountPanel()
     await flush()
 
@@ -442,14 +444,14 @@ describe('对话栏自己的输入栏', () => {
     await fireEvent.update(box, '看看这个')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
-    expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false])
+    expect(JSON.parse(sent[0].payload).content).toBe('看看这个')
+    expect(JSON.parse(sent[0].payload).summon).toBeUndefined()
 
     box.focus()
     await fireEvent.update(box, '@芝士 再看看')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
-    expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false, true])
     // 发出去的是规范形式，和 @ 一个人完全一样。
     expect(JSON.parse(sent[1].payload).content).toBe('<@cheese-topica> 再看看')
   })
@@ -579,13 +581,12 @@ describe('对话栏自己的输入栏', () => {
     // 时间线上那条消息里的 @ 得指向**这个房间**那位，不是项目名册上共用的那位。
     expect(JSON.parse(sent[0].payload)).toMatchObject({
       content: '<@cheese-topicL> 看看这个',
-      summon: true,
     })
   })
 
-  // ⌘/Ctrl+Enter 是键盘上的同一个入口。它把 @ 写进正文再发，而不是在帧上偷偷把
-  // summon 置真：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁也
-  // 没 @ 的消息、芝士却动了。
+  // ⌘/Ctrl+Enter 是键盘上的同一个入口。它把 @ 写进正文再发 —— 帧上再没有第二条
+  // 路可走：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁也没 @
+  // 的消息、芝士却动了。
   it('⌘/Ctrl+Enter 不用打 @ 也召唤，且发出去的正文里看得见那个 @', async () => {
     const { container } = mountPanel({}, 'topic-summon-key')
     await flush()
@@ -598,8 +599,9 @@ describe('对话栏自己的输入栏', () => {
 
     expect(JSON.parse(sent[0].payload)).toMatchObject({
       content: '<@cheese-topica> 看看这个',
-      summon: true,
     })
+    // 这一下以前是在帧上把 summon 置真：它是最后一条能绕开正文的路。
+    expect(JSON.parse(sent[0].payload).summon).toBeUndefined()
   })
 
   // 空输入框上按下这个快捷键，最坏的结果是发出一条光秃秃的 @——它把芝士叫起来，
@@ -644,7 +646,7 @@ describe('对话栏自己的输入栏', () => {
     await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
     await flush()
 
-    expect(JSON.parse(sent[0].payload)).toMatchObject({ content: '看看这个', summon: false })
+    expect(JSON.parse(sent[0].payload)).toMatchObject({ content: '看看这个' })
   })
 
   it('@ 一个人不会把芝士叫起来', async () => {
@@ -657,6 +659,6 @@ describe('对话栏自己的输入栏', () => {
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
-    expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false])
+    expect(JSON.parse(sent[0].payload).content).toBe('<@bobby> 你看下')
   })
 })

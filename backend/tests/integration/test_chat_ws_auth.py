@@ -48,7 +48,7 @@ def test_expired_token_is_refused_not_downgraded(client):
         assert frame["type"] == "error"
         assert frame["code"] == "auth_expired"
         with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
-            ws.send_json({"type": "message", "content": "偷偷发一条", "summon": False})
+            ws.send_json({"type": "message", "content": "偷偷发一条"})
             ws.receive_json()
 
     assert _blocks(client, tid) == []
@@ -145,3 +145,66 @@ def test_anonymous_escape_hatch_never_covers_a_bad_token(client, monkeypatch):
     with client.websocket_connect(f"/topics/{tid}/chat?token={stale}") as ws:
         frame = ws.receive_json()
     assert frame["code"] == "auth_expired"
+
+
+def test_a_peer_that_drops_under_a_send_ends_the_socket_quietly(client, monkeypatch):
+    """A browser that goes away is found out by the write that fails, and that
+    write is swallowed on purpose (the relay must not die on it). The next read
+    on a socket we have already closed must then end the handler, not raise: the
+    RuntimeError it used to raise reached uvicorn as 「Exception in ASGI
+    application」, an alert for nothing more than a tab closing."""
+    from fastapi import WebSocket
+
+    original_send = WebSocket.send
+    peer_gone = False
+
+    async def send_to_a_dropped_peer(self, message):
+        if peer_gone and message["type"] == "websocket.send":
+
+            async def fail(_message):
+                raise OSError("Broken pipe")
+
+            self._send = fail
+        await original_send(self, message)
+
+    monkeypatch.setattr(WebSocket, "send", send_to_a_dropped_peer)
+    _, tid = _project_topic(client, owner="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        peer_gone = True
+        # The pong for this one finds the peer gone. Leaving the block then
+        # re-raises whatever the handler raised, which must be nothing.
+        ws.send_json({"type": "ping"})
+    assert _blocks(client, tid) == []
+
+
+@pytest.mark.parametrize("failure", ["business", "unexpected"])
+def test_message_failure_identifies_the_message_and_keeps_socket_usable(
+    client, monkeypatch, failure
+):
+    from app.core.errors import ForbiddenError
+    from app.domain.agent.runtime import InProcessBroker
+
+    _, tid = _project_topic(client, owner="alice")
+
+    async def fail(*args, **kwargs):
+        if failure == "business":
+            raise ForbiddenError("房间已关闭")
+        raise RuntimeError("private diagnostic")
+
+    monkeypatch.setattr(InProcessBroker, "receive_message", fail)
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "hello", "client_id": "pending-1"})
+        frame = ws.receive_json()
+        while frame["type"] != "error":
+            frame = ws.receive_json()
+        assert frame["client_id"] == "pending-1"
+        assert frame["code"] == (
+            "ForbiddenError" if failure == "business" else "message_receive_failed"
+        )
+        assert "private diagnostic" not in frame["message"]
+        if failure == "business":
+            assert frame["message"] == "房间已关闭"
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json()["type"] == "pong"

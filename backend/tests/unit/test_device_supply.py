@@ -146,6 +146,61 @@ def test_the_default_is_the_most_conservative_runnable_visibility():
         supply_mod.has_runnable_transport = original
 
 
+def test_the_binding_visibility_follows_the_supply_and_nothing_else():
+    """一条新绑定的档由机器的供给决定，不由哪个调用点在绑决定。
+
+    平台开的机器一个房间一台，它本身就是那个盒子——「看得见整台机器」在上面不多给
+    任何能力，这根轴在这一档塌掉了。人接入的机器上，档是「哪个档今天真有传输层」
+    推出来的那一个，所以 #358 第二步给 `isolated` 接上传输层那天，它和市场目录一
+    起移动，而不是留下四个各写一个字面量的绑定点。
+    """
+    from app.domain.device.supply import binding_visibility, default_visibility
+
+    assert binding_visibility(Supply.cloud) is Visibility.host
+    assert binding_visibility(Supply.self_hosted) is default_visibility()
+
+    from app.domain.device import supply as supply_mod
+
+    original = supply_mod.has_runnable_transport
+    try:
+        supply_mod.has_runnable_transport = lambda _v: True
+        assert binding_visibility(Supply.self_hosted) is Visibility.isolated
+        # 而 Cloud 那一档不跟着动：它不是「最小爆炸半径」的问题，是这根轴在一台
+        # 一次性、一个房间独占的机器上没有第二个取值。
+        assert binding_visibility(Supply.cloud) is Visibility.host
+    finally:
+        supply_mod.has_runnable_transport = original
+
+
+def test_no_binding_point_picks_a_visibility_of_its_own():
+    """四个绑定点都问，没有一个自己挑。
+
+    自己挑的那些年里，「这个档默认是什么」在代码里有四份声明，而选择器读的是第五
+    份——人在界面上被告知自己的房间是沙盒，而每一个房间实际拿到的都是整台机器。这
+    道守卫盯的就是那个形状：把一个字面量写回任何一个绑定点，这里红。
+    """
+    import ast
+    from pathlib import Path
+
+    from app.domain.device import supply as supply_mod
+
+    root = Path(supply_mod.__file__).resolve().parents[3]
+    offenders = []
+    for path in sorted((root / "app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, "attr", None) != "bind_topic_device":
+                continue
+            for value in [*node.args, *(kw.value for kw in node.keywords)]:
+                if (
+                    isinstance(value, ast.Attribute)
+                    and getattr(value.value, "id", None) == "Visibility"
+                ):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert offenders == []
+
+
 def test_the_catalogue_default_is_the_one_the_resolver_would_bind():
     """The picker and the resolver must agree, and exactly one 档 is the default.
 

@@ -6,7 +6,8 @@
 //     rides),
 //   - through the screen's own rendezvous socket, where a prompt is enqueued as
 //     human-origin input without passing through the terminal at all,
-//   - and by staging files into the screen's workspace.
+//   - and by staging files under the platform's own footprint on this machine,
+//     which is where a server-sent file goes and the only place it may go.
 //
 // The host wires those together and ascribes no meaning to any of it; all
 // behavior lives in the server.
@@ -17,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,6 +33,8 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -53,6 +57,13 @@ type Host struct {
 
 	execMu sync.Mutex
 	execs  map[string]context.CancelFunc // in-flight exec id -> cancel
+
+	// 本机目录授权: the folders on this machine the assistant has been granted, as
+	// the platform last sent them, and the check that keeps an op inside them.
+	// Held here rather than fetched per request so that an unreachable platform
+	// does not turn every access into a failure — see localfs.LoadStore.
+	localFSMu  sync.Mutex
+	localFSSet *localfs.GrantSet
 
 	updating atomic.Bool // guards against concurrent / re-entrant self-updates
 }
@@ -118,6 +129,10 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 // `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
 	h.ctx = ctx
+	// Restore what this machine was last granted, before the connection is up, so
+	// that an op arriving immediately after a reconnect is answered from the set
+	// rather than from nothing.
+	h.loadLocalFS()
 	h.publishState()
 	defer h.clearState()
 	defer h.releaseAll()
@@ -236,8 +251,10 @@ func (h *Host) onMsg(m link.Msg) {
 			go h.serveCall(m, s)
 		}
 	case "file.put":
+		// The screen still has to exist: the ack is what keeps the prompt from
+		// racing the bytes, and there is nothing to keep it behind otherwise.
 		if s := h.session(m.Sid); s != nil {
-			go h.putFile(m, s)
+			go h.putFile(m)
 		} else {
 			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
 		}
@@ -252,11 +269,18 @@ func (h *Host) onMsg(m link.Msg) {
 			}
 		}
 	case "exec": // run a one-shot command on this machine and return its output
-		go h.runExec(m)
+		h.startExec(m)
 	case "execution.call":
 		go h.runExecutor(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
+	case "localfs.grants": // the platform's copy of what this machine may touch
+		// Synchronous, and deliberately so: this is the read loop, so applying the
+		// set before the next message is read is what guarantees an op that
+		// follows a revoke cannot be answered from the set that still had it.
+		h.setLocalFSGrants(m)
+	case "localfs.op": // read, write or list inside a granted directory
+		go h.runLocalFSOp(m)
 	case "update": // server-pushed forced update: update in place and re-exec
 		go h.performUpdate()
 	case "screen.resize":
@@ -306,6 +330,20 @@ func (h *Host) createSession(m link.Msg) {
 	// path; HasSession is the ground truth we act on.
 	var term *terminal.Session
 	if h.tm.HasSession(m.Sid) {
+		identities, err := h.tm.Identities(h.base)
+		if err != nil {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
+		var birth link.Msg
+		data, exists := identities[m.Sid]
+		if !exists || json.Unmarshal([]byte(data), &birth) != nil || birth.Sid != m.Sid {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: "Cannot adopt session without its saved launch identity"})
+			return
+		}
+		// The running model still listens at its original socket. A reassertion
+		// can carry a fresh launch environment, which no process has consumed.
+		m = birth
 		term = h.tm.Adopt(m.Sid)
 	} else {
 		var err error
@@ -479,26 +517,32 @@ const (
 // A cold screen (image pull, node start, TUI mount) has been measured well over
 // a minute; giving up early is what made the old driver abandon a prompt while
 // the session was merely still starting.
-const rvDialWindow = 120 * time.Second
+var rvDialWindow = 120 * time.Second
 
 const maxScreenFileBytes = 10 << 20
 
 // putFile stages an uploaded image before its @path is submitted over rendezvous.
 // The acknowledgement is the ordering boundary: the prompt cannot race ahead of
 // the bytes on a remote device.
-func (h *Host) putFile(m link.Msg, s *sess) {
+//
+// It lands under the platform's footprint on this machine and nowhere else. The
+// server sends an absolute, $HOME-anchored destination rather than a path
+// relative to the screen's work directory, because that work directory is the
+// user's own checkout and the platform does not put files in it: one staged
+// there is an untracked file in a repository whose owner never added it, and
+// which `cheese uninstall` would walk past. The reply carries the resolved
+// absolute path, which is what the prompt @-mentions — this machine's $HOME is
+// the server's to ask for, never to guess.
+func (h *Host) putFile(m link.Msg) {
 	reply := func(value any, errStr string) {
 		_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
 	}
-	workDir, err := resolveScreenWorkDir(s.workDir)
-	if err == nil {
-		err = writeScreenFile(workDir, m.Path, m.Data)
-	}
+	landed, err := writeFootprintFile(m.Path, m.Data)
 	if err != nil {
 		reply(nil, fmt.Sprintf("file.put: %v", err))
 		return
 	}
-	reply(map[string]any{"ok": true, "path": m.Path}, "")
+	reply(map[string]any{"ok": true, "path": landed}, "")
 }
 
 func resolveScreenWorkDir(workDir string) (string, error) {
@@ -520,46 +564,56 @@ func resolveScreenWorkDir(workDir string) (string, error) {
 	return filepath.Clean(workDir), nil
 }
 
-func writeScreenFile(workDir, wirePath, encoded string) error {
+// writeFootprintFile writes one server-sent file under this machine's footprint
+// root and answers with where it landed.
+//
+// The wire path is $HOME-anchored and must name something inside
+// $HOME/<place.Root>/ — the one directory the platform owns here, and the
+// one `cheese uninstall` removes. Anything else is refused rather than written:
+// the destination the server builds is checked on its side too, and a writer
+// that trusts the sender is a writer that will one day put a file in a user's
+// repository because some caller built the path wrong.
+func writeFootprintFile(wirePath, encoded string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
 	clean := path.Clean(wirePath)
-	if path.IsAbs(clean) || clean == "." || clean == "uploads" ||
-		!strings.HasPrefix(clean, "uploads/") || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("path must be a file under uploads/")
+	prefix := "$HOME/" + place.Root + "/"
+	if !strings.HasPrefix(clean, prefix) || strings.Contains(clean, "/../") {
+		return "", fmt.Errorf("path must be under $HOME/%s/", place.Root)
 	}
 	if len(encoded) > base64.StdEncoding.EncodedLen(maxScreenFileBytes) {
-		return fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
+		return "", fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return fmt.Errorf("invalid base64: %w", err)
+		return "", fmt.Errorf("invalid base64: %w", err)
 	}
 	if len(raw) == 0 || len(raw) > maxScreenFileBytes {
-		return fmt.Errorf("invalid file size %d", len(raw))
+		return "", fmt.Errorf("invalid file size %d", len(raw))
 	}
-	root, err := filepath.Abs(workDir)
-	if err != nil {
-		return err
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return fmt.Errorf("resolve work directory: %w", err)
-	}
-	target := filepath.Join(root, filepath.FromSlash(clean))
+	root := filepath.Join(home, place.Root)
+	target := filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(clean, "$HOME/")))
 	parent := filepath.Dir(target)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return err
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve footprint root: %w", err)
 	}
 	realParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
-		return err
+		return "", err
 	}
-	rel, err := filepath.Rel(root, realParent)
+	rel, err := filepath.Rel(realRoot, realParent)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("upload path escapes screen workspace")
+		return "", fmt.Errorf("upload path escapes the platform footprint")
 	}
 	tmp, err := os.CreateTemp(realParent, ".cheese-upload-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -571,9 +625,10 @@ func writeScreenFile(workDir, wirePath, encoded string) error {
 		err = closeErr
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(tmpPath, filepath.Join(realParent, filepath.Base(target)))
+	landed := filepath.Join(realParent, filepath.Base(target))
+	return landed, os.Rename(tmpPath, landed)
 }
 
 // deliverPrompt hands one turn's prompt to the session over its rendezvous
@@ -597,7 +652,11 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 
 	c, delivered, err := h.rendezvousClient(s, text)
 	if err != nil {
-		reply(nil, err.Error())
+		var value any
+		if errors.Is(err, rendezvous.ErrUnavailable) {
+			value = map[string]any{"failure_code": "prompt_socket_unavailable"}
+		}
+		reply(value, err.Error())
 		return
 	}
 	if !delivered {
@@ -723,12 +782,9 @@ func readRvToken(path string) (string, error) {
 // execMaxOut caps each of stdout/stderr so a runaway command can't exhaust memory.
 const execMaxOut = 1 << 20 // 1 MiB per stream
 
-// runExec runs a one-shot command on this machine and returns stdout/stderr/exit
-// to the server. This is a generic device capability, independent of screens —
-// for setup, health checks, and other fire-and-forget device-side work. The
-// caller may bound it (Timeout), feed it input (Stdin) and cancel it mid-run
-// (an exec.cancel with the same ID); output beyond execMaxOut is dropped.
-func (h *Host) runExec(m link.Msg) {
+// startExec registers cancellation before returning to the wire reader, then
+// starts a one-shot command on this machine.
+func (h *Host) startExec(m link.Msg) {
 	if len(m.Command) == 0 {
 		_ = h.conn.Send(link.Msg{T: "exec.result", ID: m.ID, Stderr: "empty command", Exit: -1})
 		return
@@ -738,11 +794,20 @@ func (h *Host) runExec(m link.Msg) {
 		timeout = 120 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(h.ctx, timeout)
-	defer cancel()
-	if m.ID != "" { // register so an exec.cancel can stop us
+	if m.ID != "" {
+		// Register before the reader accepts the next frame, which may cancel it.
 		h.execMu.Lock()
 		h.execs[m.ID] = cancel
 		h.execMu.Unlock()
+	}
+	go h.runExec(ctx, cancel, m)
+}
+
+// runExec returns stdout, stderr and exit status to the server. Output beyond
+// execMaxOut is dropped.
+func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Msg) {
+	defer cancel()
+	if m.ID != "" {
 		defer func() {
 			h.execMu.Lock()
 			delete(h.execs, m.ID)

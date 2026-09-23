@@ -11,7 +11,7 @@
 <template>
   <div class="avatar-upload" :class="{ 'avatar-upload--empty': !avatarFile }">
     <v-img
-      :src="previewUrl || undefined"
+      :src="previewUrl || src || undefined"
       aspect-ratio="1"
       class="rounded-lg avatar"
       rounded="0"
@@ -22,20 +22,21 @@
       v-model="files"
       accept="image/*"
       :max="1"
+      :disabled="disabled"
       class="uploader"
       content-class="uploader-inner"
       @error="onError"
     >
       <div class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-white uploader-inner">
         <v-icon size="32">mdi-camera</v-icon>
-        <div class="text-body-1 text-white">{{ avatarFile ? '更换头像' : '上传头像' }}</div>
+        <div class="text-body-1 text-white">{{ avatarFile || src ? '更换头像' : '上传头像' }}</div>
       </div>
     </file-select>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, toRefs, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import FileSelect from './FileSelect.vue'
 
@@ -44,6 +45,7 @@ const emit = defineEmits<{
 }>()
 
 const files = ref<File[]>([])
+defineProps<{ src?: string; disabled?: boolean }>()
 const avatarFile = defineModel<File>()
 const previewUrl = ref<string | null>(null)
 

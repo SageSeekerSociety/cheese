@@ -63,13 +63,15 @@ const myRole = computed(() => members.value.find((m) => m.member_handle === prop
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
-// Project members not already in the room — the "add member" dropdown.
+// 还不在这间房里的项目成员——「添加」那个下拉。请一个 AI 队友进房间和请一个人
+// 是同一件事（往名册上加一行），所以它们本来就在同一张项目名册上，这里不再把两
+// 份拼起来。已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
   return props.projectMembers
-    .filter((m) => !inRoom.has(m.user_handle))
+    .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => ({
-      title: m.name || m.user_handle,
+      title: m.agent ? `${m.name || m.user_handle}（AI 队友）` : m.name || m.user_handle,
       subtitle: `@${m.user_handle}`,
       value: m.user_handle,
     }))
@@ -188,9 +190,11 @@ async function onSetRole(handle: string, role: string) {
           </span>
           <span v-if="m.agent" class="roster__badge">AI 队友</span>
 
-          <!-- Owner/admin: change role via a small menu; else a static chip. -->
-          <template v-if="canManage && !m.agent">
-            <v-menu location="bottom end">
+          <!-- Owner/admin: change role via a small menu; else a static chip.
+               队友没有角色菜单——它在房间里的身份是「AI 队友」那个标——但和人一样
+               能被移出。 -->
+          <template v-if="canManage">
+            <v-menu v-if="!m.agent" location="bottom end">
               <template #activator="{ props: rp }">
                 <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
                   {{ roleLabel(m.role) }}
@@ -221,8 +225,7 @@ async function onSetRole(handle: string, role: string) {
               <v-icon size="15">mdi-close</v-icon>
             </button>
           </template>
-          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义，
-               和左边的「换」并排更像是两个能点的东西。 -->
+          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
           <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
@@ -237,7 +240,7 @@ async function onSetRole(handle: string, role: string) {
           variant="outlined"
           hide-details
           placeholder="添加成员…"
-          no-data-text="项目成员都已在话题中"
+          no-data-text="项目成员和队友都已在话题中"
           class="roster__select"
         />
         <v-btn

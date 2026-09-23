@@ -7,7 +7,6 @@ import pytest
 from app.domain.machine import enrollment
 
 
-@pytest.mark.asyncio
 async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monkeypatch):
     tools = tmp_path / "bin"
     tools.mkdir()
@@ -48,9 +47,30 @@ cp "$src" "$TEST_GUEST_HOME/${dst#*:}"
 
     monkeypatch.setattr(enrollment.claude_dist, "ensure_cached", ensure_cached)
     script = f'"$HOME/.cheese/claude/versions/{pin}" --version'
-    first = await enrollment.run_bootstrap(
-        ip="guest", login_user="cheese", private_key="test", script=script
+    seen = []
+    released = home / "progress-observed"
+
+    async def progress(text):
+        seen.append(text)
+        if text == "正在检查并安装基础工具":
+            released.touch()
+
+    streaming_script = (
+        "echo CHEESE_STARTUP:tools\n"
+        "echo CHEESE_STARTUP:secret-token\n"
+        'test -e "$HOME/progress-observed" || sleep 0.2\n'
+        'test -e "$HOME/progress-observed" || exit 42\n' + script
     )
+    output = await enrollment.run_bootstrap(
+        ip="guest",
+        login_user="cheese",
+        private_key="test",
+        script=streaming_script,
+        progress=progress,
+    )
+    first = output.splitlines()[-1]
+    assert "正在检查并安装基础工具" in seen
+    assert all("secret-token" not in item for item in seen)
     assert first == f"{pin} (Claude Code)"
     # Retrying an interrupted enrollment must keep the installed pin, not fetch
     # or overwrite it again. The cache is unavailable on this second call.
@@ -61,7 +81,6 @@ cp "$src" "$TEST_GUEST_HOME/${dst#*:}"
     assert second == first
 
 
-@pytest.mark.asyncio
 async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
     ssh = tmp_path / "ssh"
     ssh.write_text("#!/bin/sh\nexit 255\n")

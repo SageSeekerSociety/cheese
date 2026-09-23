@@ -67,6 +67,25 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
+def create_approved_space(client, **kwargs):
+    """Provision an approved space for tests of tasks and space management."""
+    from app.core.config import settings
+
+    response = client.post("/spaces", **kwargs)
+    if response.status_code != 201:
+        return response
+    space_id = response.json()["data"]["space"]["id"]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "platform_admin_handles", ["space-fixture-reviewer"])
+        reviewed = client.post(
+            f"/admin/spaces/{space_id}/review",
+            json={"approved": True},
+            headers=session_auth_headers("space-fixture-reviewer"),
+        )
+        assert reviewed.status_code == 200, reviewed.text
+    return response
+
+
 def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-scoped session token — the ONLY sanctioned way for a test to
     mint one.
@@ -86,6 +105,16 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     rather than a sentence in a rules file.
     """
     return mint_session_token(handle=handle, user_id=None, ttl_s=ttl_s)
+
+
+def room_agent_seat(client, topic_id) -> str:
+    """The seat of the one agent seated in this room — the identity a per-turn
+    credential that pinned no teammate acts as, and the author of everything
+    the room's agent writes. The roster is asked, never the room's id."""
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
 
 
 def session_auth_headers(handle: str) -> dict[str, str]:
@@ -189,7 +218,10 @@ class UserCreator:
         nickname: str | None = None,
         avatar_id: int | None = None,
         intro: str | None = None,
+        hashed_password: str | None = None,
     ) -> CreatedUser:
+        """``hashed_password`` stores that credential as is (e.g. an
+        ``SRP:{salt}:{verifier}`` record) instead of hashing ``password``."""
         username = username or self._test_username()
         password = password or self._test_password()
         email = email or self._test_email()
@@ -199,7 +231,9 @@ class UserCreator:
 
         # rounds=4 in tests (vs default 12) saves ~300ms per user creation.
         # Tests don't need brute-force resistance.
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        hashed = hashed_password or (
+            bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
+        )
 
         async def _coro() -> int:
             return await self._do_insert(
@@ -373,6 +407,7 @@ def api_client(
     app: "FastAPI",
     db_session: AsyncSession,
     _portal: "BlockingPortal",
+    stub_project_forge,
 ) -> Generator["TestClient"]:
     """In-process FastAPI TestClient with ``get_db`` overridden to share the
     per-test transactional session. The TestClient is forced to use the
@@ -394,7 +429,7 @@ def api_client(
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
     # repeatedly — which would also start every periodic job the platform runs
-    # (scheduler/jobs.py), once per test.
+    # (app/core/background.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     try:
         yield client

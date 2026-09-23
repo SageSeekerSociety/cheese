@@ -44,7 +44,7 @@ function block(over: Partial<Block> = {}): Block {
     id: 'b1',
     topic_id: 'room-1',
     author: 'alice',
-    author_type: 'human',
+    author_type: 'participant',
     content: '这条先别动 routes',
     kind: 'message',
     created_at: '2026-09-06T01:00:00Z',
@@ -52,7 +52,7 @@ function block(over: Partial<Block> = {}): Block {
   } as Block
 }
 
-function card(over: Partial<RoomTask> = {}): RoomTask & { blocks: Block[] } {
+function card(over: Partial<RoomTask & { blocks: Block[] }> = {}): RoomTask & { blocks: Block[] } {
   return {
     id: 'task-1',
     project_id: 'p1',
@@ -137,7 +137,11 @@ describe('一张卡按卡渲染', () => {
     getRoomTask.mockResolvedValue({
       ...card({ brief: '**Goal**', conclusion: '[Read the report](https://example.com/report)' }),
       blocks: [
-        block({ id: 'ai', author_type: 'ai', content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>' }),
+        block({
+          id: 'ai',
+          author: 'cheese-room1',
+          content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>',
+        }),
         block({ id: 'human', content: '**keep this literal**' }),
       ],
     })
@@ -168,6 +172,64 @@ describe('一张卡按卡渲染', () => {
     await waitFor(() => getByText('接口分页'))
     await fireEvent.click(getByText('看板'))
     expect(emitted().back).toBeTruthy()
+  })
+})
+
+// 两句话之间它做过什么，也是这张卡的一部分：只有话的话，一条跑了半小时的活在这里
+// 就是「开始了」「做完了」两句。
+describe('卡下的过程', () => {
+  function step(id: string, tool: string, arg: string, over: Partial<Block> = {}): Block {
+    return block({
+      id,
+      author: 'cheese-a1',
+      kind: 'event',
+      content: '',
+      meta: { tool, arg },
+      ...over,
+    })
+  }
+
+  it('两句话之间连着的几步并成一行，点开是每一步', async () => {
+    getRoomTask.mockResolvedValue(
+      card({
+        blocks: [
+          block({ id: 'm1', content: '开始吧' }),
+          step('e1', 'Bash', 'pnpm test'),
+          step('e2', 'Edit', 'src/api.ts'),
+          block({ id: 'm2', content: '好了吗' }),
+          step('e3', 'Read', 'README.md'),
+        ],
+      })
+    )
+    const { getByText, queryByText } = mount()
+    await waitFor(() => getByText('2 步操作'))
+    expect(getByText('1 步操作')).toBeTruthy()
+    // 折着的时候看不到每一步。
+    expect(queryByText('pnpm test')).toBeNull()
+
+    await fireEvent.click(getByText('2 步操作'))
+    expect(getByText('执行命令')).toBeTruthy()
+    expect(getByText('pnpm test')).toBeTruthy()
+    expect(getByText('修改文件')).toBeTruthy()
+    expect(queryByText('README.md'), '另一段没点开').toBeNull()
+  })
+
+  it('有一步失败了，折着的那一行上就说', async () => {
+    getRoomTask.mockResolvedValue(
+      card({ blocks: [step('e1', 'Bash', 'pnpm test', { meta: { tool: 'Bash', arg: 'pnpm test', failed: true } })] })
+    )
+    const { getByText } = mount()
+    await waitFor(() => getByText('1 步操作'))
+    expect(getByText('有失败')).toBeTruthy()
+  })
+
+  it('芝士没显式发布的输出是话，不算一步操作', async () => {
+    getRoomTask.mockResolvedValue(
+      card({ blocks: [step('e1', '', '', { content: '我先看一下目录结构', meta: { progress: true } })] })
+    )
+    const { getByText, queryByText } = mount()
+    await waitFor(() => getByText('我先看一下目录结构'))
+    expect(queryByText(/步操作/)).toBeNull()
   })
 })
 
@@ -248,7 +310,15 @@ function acceptCard(over: Partial<AcceptCard> = {}): AcceptCard {
       checked_at: null,
       since: null,
     } as MergeStateInfo,
-    has_external_checks: false,
+    forge: {
+      kind: 'forgejo',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
+    },
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard

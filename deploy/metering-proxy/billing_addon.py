@@ -64,17 +64,25 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
+    BINDING,
     GATEWAY,
+    MODEL_REWRITE_LIMIT,
+    TELEMETRY_HOSTS,
     AdmissionGate,
     Meter,
+    ModelRewrite,
     StreamingUsageExtractor,
+    control_answer,
+    is_haiku_name,
     proxy_basic_password,
+    requested_model_of,
     verify_scoped_token,
 )
 
@@ -100,16 +108,14 @@ INJECT_TOKEN_FILE = Path(
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
 ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
 ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
+# How large a deferred subagent body may be and still be buffered whole for the
+# requested-model read (see the defer branch in `requestheaders`). Real subagent
+# turns sit orders of magnitude below this; past it the flow keeps the old
+# streamed behaviour, which is a floor, not a failure.
+DEFER_BODY_LIMIT = int(os.environ.get("CHEESE_DEFER_BODY_LIMIT", str(8 * 1024 * 1024)))
 # Same backend as admission; no second public listener or deployment secret.
 RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
-RC_EXTRA_HOSTS = frozenset(
-    {"claude.ai", "cdn.growthbook.io", "api.statsig.com", "statsig.anthropic.com"}
-)
-RC_FLAGS = {
-    "tengu_ccr_bridge": True,
-    "tengu_ccr_v2_bridge_create_cli": True,
-    "tengu_ccr_v2_session_crud_cli": True,
-}
+RC_EXTRA_HOSTS = frozenset({"claude.ai", "cdn.growthbook.io"}) | TELEMETRY_HOSTS
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
 # Route the upstream through the EXPLICIT ccproxy (m161): measured, the OAuth
@@ -303,6 +309,76 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     return True
 
 
+def _write_bound_model(
+    flow: http.HTTPFlow, model: str, *, keep_haiku: bool = False
+) -> None:
+    """Put the admitted model name into this request's body, on the way past.
+
+    The one control point ends here: the launch environment names no model, so
+    the binding resolved at admission has to reach the request body, which is
+    the only place either pool reads a model name from.
+
+    ``keep_haiku`` leaves alone what the CLI addressed to the small, fast family
+    — session titles, file-path suggestions, the work it does on its own account
+    rather than the turn's. See `ModelRewrite`/`_is_haiku`: on the subscription
+    those never carried the binding, and a project bound to opus should not
+    start writing its session titles with it.
+
+    Re-framed as chunked because the rewrite changes the body's length and the
+    headers have already been decided by the time the first chunk arrives —
+    there is no Content-Length that could still be right. The alternative is
+    buffering the whole body to recompute it, and a long turn re-POSTs its
+    entire grown conversation every time: that is the #654 OOM.
+    """
+    if not model:
+        return
+    rewrite = ModelRewrite(model, keep_haiku=keep_haiku)
+    flow.request.headers.pop("content-length", None)
+    flow.request.headers["transfer-encoding"] = "chunked"
+
+    def write(chunk: bytes) -> bytes:
+        out = rewrite.feed(chunk)
+        if rewrite.missed and not flow.metadata.get("cheese_model_missed"):
+            flow.metadata["cheese_model_missed"] = model
+            logger.error(
+                "no top-level model member in the first %d bytes of a "
+                "/v1/messages body; refusing the turn rather than running it on "
+                "the client's own choice instead of %s",
+                MODEL_REWRITE_LIMIT,
+                model,
+            )
+        return out
+
+    flow.request.stream = write
+
+
+def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
+    """`_write_bound_model` for a body that is already whole in RAM.
+
+    Only the deferred subagent path is buffered (it had to read the body to
+    learn the requested model), and for it this rewrite is almost always the
+    identity — the admission already bound the very model the body names. The
+    miss handling matches the streaming path: drop the body, mark the flow,
+    and let the response hook deliver the refusal that names why (I27).
+    """
+    if not model:
+        return
+    rewrite = ModelRewrite(model)
+    out = rewrite.feed(flow.request.content or b"")
+    # The second, empty feed is the end-of-stream signal: a body whose head
+    # never completed a `model` member only misses at this point.
+    out += rewrite.feed(b"")
+    if rewrite.missed and not flow.metadata.get("cheese_model_missed"):
+        flow.metadata["cheese_model_missed"] = model
+        logger.error(
+            "no top-level model member in a buffered /v1/messages body; "
+            "refusing the turn rather than running it on the client's own "
+            "choice instead of %s",
+            model,
+        )
+    flow.request.content = out
+
+
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
     """Answer this request here, and take back the streaming decision.
 
@@ -423,58 +499,75 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
         data.ignore_connection = True
 
 
-def _rc_route(flow: http.HTTPFlow) -> bool:
+def _scoped_claims(flow: http.HTTPFlow) -> tuple[str, dict | None]:
+    """The caller's scoped token and its verified claims, or ``("", None)``.
+
+    Pinned at CONNECT time where there is one (the proxy password carries the
+    token on that listener); otherwise read off this request's own bearer.
+    """
+    pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
+    if pinned:
+        return pinned
+    token = _caller_bearer(flow)
+    claims = verify_scoped_token(token, SCOPED_SECRET) if SCOPED_SECRET else None
+    return token, claims
+
+
+def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
+    """Answer a non-model endpoint from the table, or leave it to go upstream.
+
+    Unconditional, and before ANY upstream credential is attached — not behind
+    the RC check, not behind admission. Which pool the project runs on used to
+    decide who may answer these, and a session admission had positively placed
+    on the subscription was let through to Anthropic — a real account asking
+    about itself. That is the second half of 结论 46, and it is gone: a machine
+    has ONE launch shape now, and that shape has to boot on a deployment that
+    owns no subscription at all. Asking anything first would put the boot behind
+    a call that can fail open, on a path whose wrong answer hands a sandbox the
+    platform account's uuid and email.
+
+    The VERIFIED place is what the answer asserts — `_attribution` lets the
+    per-request header pick the topic inside an already-proven project, which is
+    right for billing and wrong for identity. A caller that proved no place gets
+    the same empty-identity answer rather than Anthropic's.
+    """
+    claims = claims or {}
+    answer = control_answer(
+        flow.request.host,
+        flow.request.path,
+        str(claims.get("p") or ""),
+        str(claims.get("t") or ""),
+        # The RC bridge flags describe a transport this session has only if its
+        # token says so. Answering them on is what makes Claude Code open
+        # `/v1/code/…`, and for a session with no RC claim `_rc_route` has
+        # nowhere to send those — they would go upstream on the platform's
+        # credential, carrying control-session identifiers. Off is the honest
+        # answer, and it is the same one an unflagged session gets today.
+        rc=bool(claims.get("rc") and claims.get("p") and claims.get("t")),
+    )
+    if answer is None:
+        return False
+    flow.server_conn.via = None
+    flow.request.stream = False
+    flow.response = http.Response.make(
+        answer.status, answer.body, {"Content-Type": "application/json"}
+    )
+    return True
+
+
+def _rc_route(flow: http.HTTPFlow, token: str, claims: dict | None) -> bool:
     """Route RC before any upstream credential is attached.
 
     RC ownership comes from the verified token's place, never the attribution
     header (which may select another topic for metering).
+
+    The non-model startup endpoints are NOT here: they are answered by
+    `_answer_here`, which runs whether or not this session has RC.
     """
-    pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
-    token, claims = pinned if pinned else ("", None)
-    if not claims:
-        token = _caller_bearer(flow)
-        claims = verify_scoped_token(token, SCOPED_SECRET) if SCOPED_SECRET else None
     rc = bool(claims and claims.get("rc") and claims.get("p") and claims.get("t"))
     path = flow.request.path.split("?", 1)[0]
     if not rc:
         return False
-    model = claims.get("m")
-    if isinstance(model, str) and model and not model.startswith("claude-"):
-        # API-backed Cheese control sessions use Cheese's project identity and
-        # policy. No Anthropic account or subscription entitlement is asserted.
-        local = None
-        if path == "/api/oauth/profile":
-            local = {
-                "account": {"uuid": claims["t"], "email": "cheese@agent.cheese.local"},
-                "organization": {"uuid": claims["p"]},
-            }
-        elif path == "/api/claude_code/settings":
-            local = {}
-        elif path == "/api/claude_code/policy_limits":
-            local = {"restrictions": {"allow_remote_control": {"allowed": True}}}
-        if local is not None:
-            flow.server_conn.via = None
-            flow.request.stream = False
-            flow.response = http.Response.make(
-                204 if path.endswith("/settings") else 200,
-                b"" if path.endswith("/settings") else json.dumps(local).encode(),
-                {"Content-Type": "application/json"},
-            )
-            return True
-    if path.startswith("/api/eval/"):
-        flow.metadata["cheese_rc_flags"] = True
-        return False
-    if path.startswith("/api/event_logging/") or flow.request.host in {
-        "api.statsig.com",
-        "statsig.anthropic.com",
-    }:
-        # RC telemetry contains control-session identifiers. Consume it here;
-        # neither its payload nor an upstream credential leaves this boundary.
-        flow.request.stream = False
-        flow.response = http.Response.make(
-            200, b"{}", {"Content-Type": "application/json"}
-        )
-        return True
     if flow.request.host in RC_EXTRA_HOSTS and not path.startswith("/v1/code/"):
         _refuse(
             flow,
@@ -509,6 +602,23 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     return True
 
 
+def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
+    """Send the backend's refusal back as the KIND of refusal it is.
+
+    Both exits used to read "cheese project budget: …" with a 429, from the days
+    when a spent budget was the only way a turn was ever refused. It is not any
+    more: a card bound to a model this project's catalogue cannot serve is
+    refused at admission too (I27 — answer or refuse, never swap the pool), and
+    dressing that as an exhausted quota sends the user to top up an account that
+    is fine while the card stays broken. A 429 also tells the client to back
+    off and try again, which for a binding is a retry that can only fail.
+    """
+    if verdict.reason_kind == BINDING:
+        _refuse(flow, 400, "invalid_request_error", verdict.reason)
+        return
+    _refuse(flow, 429, "rate_limit_error", f"cheese project budget: {verdict.reason}")
+
+
 async def requestheaders(flow: http.HTTPFlow) -> None:
     # Runs at HEADER time, before the body arrives — and everything below reads
     # only headers/metadata, never the request body — so the request body can be
@@ -534,7 +644,13 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         and flow.request.host in ANTHROPIC_HOSTS | RC_EXTRA_HOSTS
     ):
         flow.request.stream = True
-        if _rc_route(flow):
+        # Before RC, before admission, before any credential: Claude Code's
+        # identity / settings / policy / feature-flag / telemetry calls are
+        # answered from the table and never leave this process (结论 46).
+        token, claims = _scoped_claims(flow)
+        if _answer_here(flow, claims):
+            return
+        if _rc_route(flow, token, claims):
             return
         flow.request.headers["host"] = sni
 
@@ -571,52 +687,152 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     flow.metadata["cheese_attr"] = (project_id, topic_id)
 
     is_messages = "/v1/messages" in flow.request.path
+    is_subagent = bool(
+        flow.request.headers.get("x-claude-code-agent-id")
+    ) or flow.request.headers.get("x-claude-code-request-class") in {
+        "subagent",
+        "workflow",
+    }
 
-    # Asked for EVERY request, not only /v1/messages. The upstream connection is
-    # opened by whichever request comes first, and Claude Code's startup
-    # api/oauth/profile check beats the first turn to it — so the identity that
-    # connection authenticates as has to be settled by then, or the turn's own
-    # ticket goes out over the wrong one. Cheap: verdicts are cached per
-    # (project, topic) — the topic is part of the answer, not just of the
-    # question, because the identity it resolves belongs to that topic's machine.
+    # A subagent's /v1/messages defers everything from here to the `request`
+    # hook: admission honours the model the parent named for this subagent,
+    # and that name sits in the request body, which has not arrived at header
+    # time. Only this class pays for a buffered body — the main conversation's
+    # turns, the long ones whose size is the #654 OOM, keep streaming through.
+    #
+    # …and only up to a size: buffered means held whole in this process's RAM,
+    # so an unbounded defer would hand a caller-controlled OOM knob to the
+    # shared proxy (the #654 shape, wearing a new hat). Over the cap the flow
+    # simply takes the old road — streamed, admitted without a requested model,
+    # bound to the subagent default. The cap is a property of the discovery
+    # layer, never a refusal: nothing a real turn does is lost beyond running
+    # on the default instead of a named teammate, which is what every subagent
+    # did before this change.
+    if is_messages and is_subagent:
+        declared = flow.request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) <= DEFER_BODY_LIMIT:
+            flow.request.stream = False
+            flow.metadata["cheese_deferred"] = (
+                project_id,
+                topic_id,
+                bearer,
+                carries_own_credential,
+            )
+            return
+
     verdict = None
     if project_id and ADMISSION_URL:
-        # Off-loop: urllib blocks, and one slow admission call must not stall
-        # every other flow through the proxy.
-        admission_started = time.perf_counter()
-
-        def check_admission():
-            check_started = time.perf_counter()
-            verdict = ADMISSION.check(project_id, topic_id, bearer)
-            return verdict, check_started, time.perf_counter()
-
-        verdict, check_started, check_finished = await asyncio.to_thread(
-            check_admission
+        verdict = await _admit(
+            flow, project_id, topic_id, bearer, subagent=is_subagent
         )
-        admission_finished = time.perf_counter()
-        flow.metadata["cheese_admission_ms"] = (
-            admission_finished - admission_started
-        ) * 1000
-        flow.metadata["cheese_admission_phases_ms"] = {
-            "thread_queue": (check_started - admission_started) * 1000,
-            "check": (check_finished - check_started) * 1000,
-            "loop_resume": (admission_finished - check_finished) * 1000,
-        }
 
-    if (
-        verdict is not None
-        and verdict.pool == GATEWAY
-        and flow.metadata.get("cheese_rc_flags")
-    ):
-        # Cheese supplies its own RC flags; _rc_route handles the API session's
-        # project identity and control policy before provider authentication.
-        flow.server_conn.via = None
-        flow.request.stream = False
-        flow.response = http.Response.make(
-            200, b'{"features":{}}', {"Content-Type": "application/json"}
+    _route(
+        flow,
+        verdict,
+        is_messages=is_messages,
+        project_id=project_id,
+        bearer=bearer,
+        carries_own_credential=carries_own_credential,
+        keep_haiku=not is_subagent,
+    )
+
+
+async def _admit(
+    flow, project_id, topic_id, bearer, *, subagent, requested_model=""
+):
+    """One admission call, off the event loop and timed.
+
+    Asked for EVERY request, not only /v1/messages. The upstream connection is
+    opened by whichever request comes first, and Claude Code's startup
+    api/oauth/profile check beats the first turn to it — so the identity that
+    connection authenticates as has to be settled by then, or the turn's own
+    ticket goes out over the wrong one. Cheap: verdicts are cached per
+    (project, topic) — the topic is part of the answer, not just of the
+    question, because the identity it resolves belongs to that topic's machine.
+    """
+    # Off-loop: urllib blocks, and one slow admission call must not stall
+    # every other flow through the proxy.
+    admission_started = time.perf_counter()
+
+    def check_admission():
+        check_started = time.perf_counter()
+        verdict = (
+            ADMISSION.check(
+                project_id,
+                topic_id,
+                bearer,
+                subagent=True,
+                requested_model=requested_model,
+            )
+            if subagent
+            else ADMISSION.check(project_id, topic_id, bearer)
         )
+        return verdict, check_started, time.perf_counter()
+
+    verdict, check_started, check_finished = await asyncio.to_thread(check_admission)
+    admission_finished = time.perf_counter()
+    flow.metadata["cheese_admission_ms"] = (
+        admission_finished - admission_started
+    ) * 1000
+    flow.metadata["cheese_admission_phases_ms"] = {
+        "thread_queue": (check_started - admission_started) * 1000,
+        "check": (check_finished - check_started) * 1000,
+        "loop_resume": (admission_finished - check_finished) * 1000,
+    }
+    return verdict
+
+
+async def request(flow: http.HTTPFlow) -> None:
+    """The deferred half of admission, for a subagent's /v1/messages.
+
+    Runs once the request body is whole in RAM (these flows left
+    `requestheaders` with streaming off, for exactly this read): take the
+    model the parent named off the body, ask admission with it, then walk the
+    same routing as every other request.
+    """
+    deferred = flow.metadata.get("cheese_deferred")
+    if not deferred:
         return
+    project_id, topic_id, bearer, carries_own_credential = deferred
+    requested = requested_model_of(flow.request.content or b"")
+    if requested and is_haiku_name(requested):
+        # CLI 自己的后台请求类(会话标题、路径建议),不是主 agent 的指定:照
+        # 旧路走 —— 准入按未指定绑定,改写把它盖成分身默认,与今天逐字节一致。
+        requested = ""
+    verdict = None
+    if project_id and ADMISSION_URL:
+        verdict = await _admit(
+            flow,
+            project_id,
+            topic_id,
+            bearer,
+            subagent=True,
+            requested_model=requested,
+        )
+    _route(
+        flow,
+        verdict,
+        is_messages=True,
+        project_id=project_id,
+        bearer=bearer,
+        carries_own_credential=carries_own_credential,
+        keep_haiku=False,
+        buffered=True,
+    )
 
+
+def _route(
+    flow,
+    verdict,
+    *,
+    is_messages,
+    project_id,
+    bearer,
+    carries_own_credential,
+    keep_haiku,
+    buffered=False,
+):
+    """Refuse or forward after admission: the tail every request walks."""
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
             # #198: an exposed proxy must not spend the subscription for a
@@ -630,12 +846,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
             return
         if verdict is not None:
             if not verdict.allow:
-                _refuse(
-                    flow,
-                    429,
-                    "rate_limit_error",
-                    f"cheese project budget: {verdict.reason}",
-                )
+                _refuse_verdict(flow, verdict)
                 return
             # Supply decision (#243): the same answer says WHERE this project's
             # traffic goes. The subscription is the default and keeps every
@@ -651,6 +862,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
                         "pool, but the pool has no route or no project key on "
                         "this deployment; no model call was made",
                     )
+                    return
+                if buffered:
+                    _write_bound_model_buffered(flow, verdict.model)
+                else:
+                    _write_bound_model(flow, verdict.model)
                 return
         if METER.would_exceed(TOKEN_CAP):
             used = METER.used()
@@ -662,6 +878,13 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
                 f"in the last {CAP_WINDOW_S // 3600}h",
             )
             return
+        if verdict is not None:
+            # The subscription pool serves the haiku family itself, so the
+            # CLI's own background requests stay on it.
+            if buffered:
+                _write_bound_model_buffered(flow, verdict.model)
+            else:
+                _write_bound_model(flow, verdict.model, keep_haiku=keep_haiku)
 
     # A stale x-api-key would override whatever bearer goes upstream, on either
     # path below — so it is dropped before the branch, not inside one.
@@ -690,16 +913,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # here turns that into one line that names the missing piece.
     if carries_own_credential:
         if verdict is not None and not verdict.allow:
-            # An exhausted budget also produces no identity (admission only
-            # resolves one for a turn it is allowing), so it would otherwise be
-            # reported as the misconfiguration below — pointing whoever reads it
-            # at the box's env instead of at the project's balance.
-            _refuse(
-                flow,
-                429,
-                "rate_limit_error",
-                f"cheese project budget: {verdict.reason}",
-            )
+            # A refusal also produces no identity (admission only resolves one
+            # for a turn it is allowing), so it would otherwise be reported as
+            # the misconfiguration below — pointing whoever reads it at the
+            # box's env instead of at the project's balance or its card.
+            _refuse_verdict(flow, verdict)
             return
         # Which of the three it was, on the box, at the moment it happened. The
         # refusal body has to name all three because the caller cannot see the
@@ -737,9 +955,14 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # scoped cheese token that means nothing upstream, and the hop goes out on
     # the deployment-wide identity — whose ticket is the one this host holds.
     #
-    # On EVERY request, not just messages: Claude Code validates its login
-    # against api/oauth/profile at startup, so if only /v1/messages carried the
-    # real token that check would 401 and the turn would never start.
+    # On EVERY request that gets this far, not just messages. What gets this far
+    # is everything the table did not answer, and the table answers one host —
+    # so the login and refresh calls a human's `claude /login` makes against
+    # console.anthropic.com and platform.claude.com come through here too, as
+    # does any api.anthropic.com path Anthropic adds that no row names yet. One
+    # credential for all of them; the alternative is forwarding the sandbox's
+    # scoped bearer, which means nothing upstream and 401s as if the caller's
+    # own auth had failed.
     token = _real_token()
     # Fail closed BEFORE forwarding when the platform has no credential of its
     # own either. Return a clear local 503 so the caller learns the PLATFORM
@@ -760,6 +983,28 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     flow.request.headers["authorization"] = f"Bearer {token}"
 
 
+class GatewayStream(StreamingUsageExtractor):
+    """Reuse the bounded SSE line reader; retain only completion/error flags."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.complete = False
+        self.failed = False
+
+    def _consume(self, raw: bytes) -> None:
+        if not raw.startswith(b"data:"):
+            return
+        try:
+            event = json.loads(raw[5:])
+        except json.JSONDecodeError:
+            return
+        if isinstance(event, dict):
+            self.complete |= event.get("type") == "message_stop"
+            self.failed |= event.get("type") == "error" or isinstance(
+                event.get("error"), dict
+            )
+
+
 def responseheaders(flow: http.HTTPFlow) -> None:
     """Stream the response body through instead of buffering it whole. A turn's
     SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
@@ -774,11 +1019,29 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
-    if flow.metadata.get("cheese_pool") == GATEWAY:
-        resp.stream = True
+    if flow.metadata.get("cheese_model_missed"):
+        # Left buffered on purpose: response() replaces it wholesale with the
+        # refusal, and a streamed body would already be on its way to the client
+        # by then. It is a short upstream error — the body it answers was never
+        # sent — so nothing is held for the length of a turn.
         return
-    if flow.metadata.get("cheese_rc_flags"):
-        # Feature evaluation is small JSON. Inference SSE remains streamed.
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
+            "content-type", ""
+        ):
+            extractor = GatewayStream()
+            flow.metadata["cheese_gateway_stream"] = extractor
+
+            def observe(chunk: bytes) -> bytes:
+                if chunk:
+                    extractor.feed(chunk)
+                else:
+                    extractor.close()
+                return chunk
+
+            resp.stream = observe
+        else:
+            resp.stream = True
         return
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
@@ -805,6 +1068,7 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 def _log_gateway_timing(flow: http.HTTPFlow) -> None:
     project, topic = flow.metadata.get("cheese_attr") or ("", "")
     resp = flow.response
+    stream = flow.metadata.get("cheese_gateway_stream")
     logger.info(
         "gateway_request_timing %s",
         json.dumps(
@@ -833,10 +1097,133 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
                 "response_start": getattr(resp, "timestamp_start", None),
                 "response_end": getattr(resp, "timestamp_end", None),
                 "status": resp.status_code if resp else None,
-                "failed": bool(getattr(flow, "error", None)),
+                "failed": bool(getattr(flow, "error", None))
+                or bool(stream and (stream.failed or not stream.complete)),
+                "stream_complete": stream.complete if stream else None,
+                "error_type": type(flow.error).__name__
+                if getattr(flow, "error", None)
+                else None,
             }
         ),
     )
+
+
+_failure_reports: set[asyncio.Task] = set()
+
+
+def _report_gateway_failure(flow: http.HTTPFlow) -> None:
+    """Report model failures through the existing authenticated error intake.
+
+    A clean HTTP 200 can contain an SSE error or end before message_stop.
+    Client disconnects use error(), not response(), and are not model failures.
+    Reporting must not hold up the stream or retain request/response contents.
+    """
+    resp = flow.response
+    if resp is None or "/v1/messages" not in flow.request.path:
+        return
+    stream = flow.metadata.get("cheese_gateway_stream")
+    if resp.status_code >= 500 or resp.status_code in (401, 403):
+        kind, message = (
+            "GatewayHTTPError",
+            f"Model gateway returned HTTP {resp.status_code}",
+        )
+    elif stream and (stream.failed or not stream.complete):
+        kind, message = (
+            "GatewayStreamError",
+            "Model response stream failed before completion",
+        )
+    else:
+        return
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    request_id = resp.headers.get("x-litellm-call-id")
+    logger.error("%s: %s (request_id=%s)", kind, message, request_id)
+    if not ADMISSION_URL or not SCOPED_SECRET or not project or not topic:
+        return
+    if len(_failure_reports) >= 8:
+        logger.warning("model failure report capacity exceeded")
+        return
+    body = json.dumps(
+        {
+            "project_id": project,
+            "topic_id": topic,
+            "errors": [
+                {
+                    "message": message,
+                    "exc_type": kind,
+                    "where": "model gateway",
+                    "request_id": request_id,
+                }
+            ],
+        }
+    ).encode()
+    endpoint = ADMISSION_URL.removesuffix("/llm/admission") + "/backend-errors"
+
+    def post() -> None:
+        req = Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Cheese-Token": SCOPED_SECRET,
+            },
+        )
+        with urlopen(req, timeout=3) as response:
+            response.read(1024)
+
+    async def report() -> None:
+        try:
+            await asyncio.to_thread(post)
+        except Exception:
+            # Do not print an HTTP error body: it may echo credentials.
+            logger.warning("model failure report could not reach backend")
+
+    task = asyncio.create_task(report())
+    _failure_reports.add(task)
+    task.add_done_callback(_failure_reports.discard)
+
+
+def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
+    """Turn a dropped body into a refusal that names why (I27).
+
+    The binding could not be written into this request, so `_write_bound_model`
+    forwarded none of the body and the pool answered the empty request with an
+    error of its own — an error about JSON, which says nothing about the card.
+    Replacing it here is the only way the reason reaches the client: mitmproxy
+    decides streaming when `requestheaders` returns, and a flow already
+    streaming its request body cannot be given a response (see `_refuse`), so
+    the first moment a refusal can be DELIVERED is when the pool's own answer
+    comes back. Nothing was spent to get it: the pool was sent an empty body.
+    """
+    model = flow.metadata.get("cheese_model_missed")
+    if not model or flow.response is None:
+        return False
+    logger.error(
+        "refusing a turn whose body never named a model in its head: "
+        "binding=%s pool=%s upstream_status=%s",
+        model,
+        flow.metadata.get("cheese_pool") or "subscription",
+        flow.response.status_code,
+    )
+    flow.response = http.Response.make(
+        400,
+        json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": (
+                        "cheese: this request's body did not name a model in "
+                        f"its first {MODEL_REWRITE_LIMIT} bytes, so the model "
+                        f"bound on the card ({model}) could not be written into "
+                        "it; refusing rather than running the turn on another "
+                        "model"
+                    ),
+                },
+            }
+        ).encode(),
+        {"Content-Type": "application/json"},
+    )
+    return True
 
 
 def error(flow: http.HTTPFlow) -> None:
@@ -845,21 +1232,11 @@ def error(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    if _answer_a_missed_binding(flow):
+        return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
-        return
-    if (
-        flow.metadata.get("cheese_rc_flags")
-        and flow.response
-        and flow.response.status_code == 200
-    ):
-        try:
-            payload = json.loads(flow.response.content)
-            features = payload.setdefault("features", {})
-            features.update({k: {"defaultValue": v} for k, v in RC_FLAGS.items()})
-            flow.response.content = json.dumps(payload).encode()
-        except (ValueError, AttributeError, TypeError):
-            logger.error("RC feature evaluation returned an invalid response")
+        _report_gateway_failure(flow)
         return
     # SSE turns are metered incrementally in the responseheaders streaming tee;
     # the only body still buffered here is a non-streaming JSON message.

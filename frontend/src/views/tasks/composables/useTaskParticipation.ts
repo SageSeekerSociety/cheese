@@ -82,7 +82,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       events.emit('reload-joined-teams')
       await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
-      toast.error('小队领取赛题失败')
+      toast.error('小队领取题目失败')
       console.error('Failed to join task as team:', error)
     }
   }
@@ -110,7 +110,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       await loadTaskData()
       await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
-      toast.error('领取赛题失败')
+      toast.error('领取题目失败')
     }
   }
 
@@ -126,7 +126,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       } else if (joinedTeams.length === 1) {
         const teamId = joinedTeams[0].id
         const confirmed = await dialogs
-          .confirm(`确定要让小队"${joinedTeams[0].name}"退出该赛题吗？`, {
+          .confirm(`确定要让小队"${joinedTeams[0].name}"退出该题目吗？`, {
             title: '确认退出',
           })
           .wait()
@@ -135,11 +135,11 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
           await leaveTaskWithTeam(teamId)
         }
       } else {
-        toast.info('您没有代表小队参与此赛题')
+        toast.info('您没有代表小队参与此题目')
       }
     } else {
       const confirmed = await dialogs
-        .confirm('确定要退出该赛题吗？', {
+        .confirm('确定要退出该题目吗？', {
           title: '确认退出',
         })
         .wait()
@@ -159,10 +159,10 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
     try {
       await TasksApi.removeParticipantByMemberId(taskData.value.id, userId)
-      toast.success('退出赛题成功')
+      toast.success('退出题目成功')
       await loadTaskData()
     } catch (error) {
-      toast.error('退出赛题失败')
+      toast.error('退出题目失败')
     }
   }
 
@@ -172,10 +172,10 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
     try {
       await TasksApi.removeParticipantByMemberId(taskData.value.id, teamId)
-      toast.success('小队已退出赛题')
+      toast.success('小队已退出题目')
       await loadTaskData()
     } catch (error) {
-      toast.error('退出赛题失败')
+      toast.error('退出题目失败')
       console.error('Failed to leave task:', error)
     }
   }

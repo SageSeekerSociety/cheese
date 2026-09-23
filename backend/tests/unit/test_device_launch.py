@@ -82,13 +82,31 @@ def test_warm_adoption_waits_for_room_configuration(
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
     binary.chmod(0o700)
     tmux = tmp_path / "tmux"
     tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
     tmux.chmod(0o700)
     script = tmp_path / "launch.sh"
-    script.write_text(device_launch.build_launch_script())
+    launch = device_launch.build_launch_script()
+    staged = launch.index("cheese_launch_phase warm_staged")
+    configured = launch.index('mv "$HOME/.cheese/cheese-drain.env.tmp"')
+    adopted = launch.index('if [ -n "$WARM_ROOT" ]; then', configured)
+    assert staged < configured < adopted
+    # Exercise the generated staging and adoption programs around the generated
+    # configuration write. The intervening launcher work has independent tests
+    # and made this ordering contract depend on the elapsed time of the complete launch.
+    prefix_end = launch.index("# The platform's own directory", staged)
+    config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
+    config_end = launch.index("\n", configured) + 1
+    adoption_end = launch.index("\nfi\n", adopted) + len("\nfi\n")
+    script.write_text(
+        launch[:prefix_end]
+        + 'mkdir -p "$HOME/.cheese"\n'
+        + launch[config_start:config_end]
+        + 'cd "$CHEESE_WORK"\n'
+        + launch[adopted:adoption_end]
+    )
     with (tmp_path / "launcher.log").open("w") as output:
         process = subprocess.Popen(
             ["sh", str(script)],
@@ -139,7 +157,7 @@ def test_unavailable_spare_prepares_room_without_a_shared_checkout(
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
     binary.chmod(0o700)
     work = tmp_path / "work"
     script = tmp_path / "launch.sh"
@@ -304,15 +322,22 @@ def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
             )
 
 
-def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
+@pytest.mark.parametrize("has_input", [True, False])
+def test_liveness_probe_distinguishes_the_input_session_from_a_child(
+    tmp_path, has_input
+):
     executable = tmp_path / "claude"
     # A symlink keeps Python's libraries reachable under the process name.
     # Renamed Nix sleep and copied macOS system binaries can exit immediately.
     executable.symlink_to(sys.executable)
     topic = str(uuid.uuid4())
+    environment = {**os.environ, "CHEESE_TOPIC": topic}
+    environment.pop("CLAUDE_BG_RENDEZVOUS_SOCK", None)
+    if has_input:
+        environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
     process = subprocess.Popen(
         [str(executable), "-c", "import time; time.sleep(30)"],
-        env={**os.environ, "CHEESE_TOPIC": topic},
+        env=environment,
     )
 
     def probe():
@@ -323,7 +348,7 @@ def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_pat
         ).strip()
 
     try:
-        assert probe() == "alive"
+        assert probe() == ("alive" if has_input else "dead")
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -344,6 +369,7 @@ def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key,
     executable.symlink_to(sys.executable)
     topic = str(uuid.uuid4())
     environment = {**os.environ, key: value.format(topic=topic)}
+    environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
     if key != "CHEESE_TOPIC":
         environment.pop("CHEESE_TOPIC", None)
     process = subprocess.Popen(
@@ -382,7 +408,11 @@ def test_liveness_probe_matches_a_session_by_its_own_executable(tmp_path, relati
     topic = str(uuid.uuid4())
     process = subprocess.Popen(
         [str(executable), "-c", "import time; time.sleep(30)"],
-        env={**os.environ, "CHEESE_TOPIC": topic},
+        env={
+            **os.environ,
+            "CHEESE_TOPIC": topic,
+            "CLAUDE_BG_RENDEZVOUS_SOCK": str(tmp_path / "input.sock"),
+        },
     )
     try:
         assert _alive_probe(topic) == "alive"
@@ -442,11 +472,9 @@ def _screen_launch(
     hook_token="tok",
     home_dir="/dev/home",
     work_dir="/dev/work",
-    model=None,
     resume_session_id=None,
     extra_env=None,
     topic_id="",
-    git_remote=None,
     execution_target=None,
     remote_control=False,
     ca_pem="",
@@ -466,14 +494,11 @@ def _screen_launch(
         project_id="P",
         topic_id=topic_id,
         agent_handle="ops",
-        git_remote=git_remote,
         execution_target=execution_target,
         remote_control=remote_control,
         ca_pem=ca_pem,
     )
-    plan = ClaudeLaunch(
-        system_prompt="", model=model, resume_session_id=resume_session_id
-    )
+    plan = ClaudeLaunch(system_prompt="", resume_session_id=resume_session_id)
     command, env = machine_launcher.screen_launch(
         place, plan.on(place), hook_url=hook_url, token=hook_token
     )
@@ -487,7 +512,6 @@ def test_build_screen_launch_shapes_command_and_env():
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="glm-5.2",
         extra_env={"ANTHROPIC_BASE_URL": "http://gw"},
     )
     assert command[0] == "bash" and command[1] == "-lc"
@@ -504,11 +528,12 @@ def test_build_screen_launch_shapes_command_and_env():
     # picker as the local pane is — same deny, carried on the launch line.
     assert "--disallowedTools AskUserQuestion" in script
     assert "CHEESE_HOOK_SPOOL" in script
-    # Env carries the hook wiring, home/work, model, and the gateway var.
+    # Env carries the hook wiring and home/work — no model (结论 46: the binding
+    # is resolved at admission and written into the request body by the proxy).
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
-    assert env["CLAUDE_MODEL"] == "glm-5.2"
+    assert "CLAUDE_MODEL" not in env
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
     assert "CHEESE_CLAUDE_GATES" not in env
 
@@ -522,8 +547,6 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
         hook_token="test",
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
-        model="test",
-        git_remote="http://h/projects/P/git",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -551,11 +574,25 @@ def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
         home_dir="/dev/home",
         work_dir="/dev/work",
     )
-    # Work does not split further: a grandchild binds to no card and no person
-    # can address it.
+    # 深度的默认值。
     assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
-    # How many pieces of work a room runs at once, sharing one worktree.
+    # How many pieces of work a room runs at once, sharing one tree.
     assert env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "4"
+
+
+def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
+    """深度是部署设的，不是写死的设计约束（结论 33）。
+
+    活在房间里是平的、谁都能开活，所以这个数字挡的只是一台机器上的进程层数。部署
+    把它抬高，启动环境里就该是抬高后的那个值 —— 写死的时候，改它得改代码。
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "claude_code_max_subagent_spawn_depth", 3)
+
+    _, env = _screen_launch()
+
+    assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "3"
 
 
 def test_forwarder_posts_hook_json_with_token():
@@ -914,7 +951,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     claude = home / ".local/bin/claude"
     claude.parent.mkdir(parents=True)
     claude.write_text(
-        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
         'else printf "%s" "$BUN_OPTIONS" > "$HOME/bun-options"; fi\n'
     )
     claude.chmod(0o755)
@@ -984,12 +1021,25 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         CHEESE_API="https://fixture.invalid",
         CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
     )
+    # Keep this skills/Claude contract from starting the independent detached
+    # document-tool fetch after the assertions have finished.
+    chain = owner / ".cheese/toolchain"
+    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        target = chain / (
+            "fonts/" + machine_launcher.toolchain.fonts_pin()
+            if kind == "font"
+            else f"{tool}/{version}"
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_text("fixture")
+        (target / name).chmod(0o755)
+    curl_calls = tmp_path / "curl.calls"
     curl = tmp_path / "bin/curl"
     curl.write_text(
-        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        f'#!/bin/sh\necho call >> "{curl_calls}"\nwhile [ "$#" -gt 0 ]; do\n'
         'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
         "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        'if [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
         'else printf "%s\\n" "$@" "$CLAUDE_CONFIG_DIR" > "$HOME/agent.args"; '
         "fi\nAGENT\n"
     )
@@ -1000,6 +1050,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
     )
     assert result.returncode == 0, result.stderr
+    assert curl_calls.read_text().splitlines() == ["call"]
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
@@ -1212,7 +1263,6 @@ def _launch_with_tunnel(**overrides):
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="",
         extra_env=env,
     )
     return command[2]
@@ -1799,6 +1849,28 @@ def test_a_summarisation_stream_that_stalls_is_bounded():
     assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
 
 
+def test_the_stream_watchdog_cannot_cut_a_turn_before_the_platform_does():
+    """The watchdog's idle window must not be the shortest one on the path.
+
+    Left to itself the CLI uses 180 s whenever it believes it is on the
+    first-party API — which this deployment is, since `ANTHROPIC_BASE_URL` is
+    deliberately unset — and no hop writes a keepalive byte, so a thinking
+    window looks exactly like a dead connection and the turn is killed
+    mid-stream. Setting the variable is what leaves that 180 s branch; the value
+    has to sit above the platform's own silence gates so the CLI cannot cut
+    first, on less information, with a number nobody here chose.
+    """
+    from app.core.config import settings
+
+    env = device_launch.hooks_settings()["env"]
+    assert int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > 180_000, (
+        "still on the CLI's firstParty default"
+    )
+    assert (
+        int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > settings.agent_idle_suspect_s * 1000
+    )
+
+
 def _claude_json_from(script: str) -> dict:
     """The `.claude.json` the launch script writes, as the shell would leave it."""
     line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
@@ -1960,7 +2032,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     script = device_launch.build_launch_script(
         remote_execution=True,
         system_prompt="x",
-        model=None,
         resume_session_id=None,
         topic_id="t",
     )

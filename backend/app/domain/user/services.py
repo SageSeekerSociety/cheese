@@ -1,18 +1,25 @@
-import asyncio
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from datetime import date, datetime
 
-import bcrypt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
+from app.domain.user.passwords import check_password, hash_password
 from app.domain.user.repositories import (
     UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
+)
+
+USERNAME_MIN_LENGTH = 4
+USERNAME_MAX_LENGTH = 32
+_USERNAME_RE = re.compile(
+    rf"[a-zA-Z0-9_-]{{{USERNAME_MIN_LENGTH},{USERNAME_MAX_LENGTH}}}"
 )
 
 NICKNAME_MAX_LENGTH = 50
@@ -24,6 +31,103 @@ _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
+
+
+async def handles_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> tuple[str, ...]:
+    """用户 id -> handle，按传进来的顺序；查不到的那些不在里面。
+
+    收件人在投递那一侧是 handle（I11），而社交那几处调用点手里是自己算出来的一组
+    用户 id —— 申请的管理员名单、邀请人、被 @ 的那几个人。翻译只此一处：与
+    ``user_by_handle`` 一样，账号叫什么是 `User` 的事实，而调用点自己拼一遍
+    ``select(User.username)`` 就要各自再答一遍「删掉的账号算不算」。
+
+    一次查完，不按人 N+1：一条讨论可以 @ 一屋子人。
+    """
+    ids = list(dict.fromkeys(int(i) for i in user_ids if int(i) > 0))
+    users = await UserRepository(session).get_by_ids(ids)
+    return tuple(users[i].username for i in ids if i in users)
+
+
+async def search_accounts(
+    session: AsyncSession, q: str, limit: int
+) -> Sequence[tuple[str, str]]:
+    """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
+
+    Lives beside the other two rather than in the calling domain, for the reason
+    ``chosen_avatars_by_handle`` states: what an account is called is a fact about
+    `User`/`UserProfile`, and the two rules that are easy to get wrong — a missing
+    profile must not hide the account, and agents are not candidates — are written
+    once, in ``UserRepository.search_accounts``.
+    """
+    return await UserRepository(session).search_accounts(q, limit)
+
+
+async def chosen_avatars_by_handle(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, int]:
+    """handle -> 这个人**自己选过**的头像，没选过的不在里面。
+
+    Two queries for a whole page (handles -> users, users -> profiles), never one
+    per row: a list, its comments and its notes are all drawn at once, so a
+    per-row lookup would be twenty round-trips for twenty faces.
+
+    Lives beside ``user_by_handle`` rather than in the calling domain because
+    "which avatar did this person pick" is a fact about `UserProfile`. A caller
+    that copied this in would also have to copy the one rule that is easy to get
+    wrong — a person who never picked one is **absent from the mapping**, not
+    mapped to the global default, since every registration path hardcodes that
+    default and returning it would hand twenty people the same face. The
+    criterion itself is ``UserProfileRepository.chosen_avatar_ids``; it
+    recognises the default row by ``avatar_type``, which is seed data and so
+    differs per environment.
+    """
+    wanted = {h for h in handles if h}
+    if not wanted:
+        return {}
+    users = await UserRepository(session).get_by_handles(sorted(wanted))
+    chosen = await UserProfileRepository(session).chosen_avatar_ids(
+        [u.id for u in users.values()]
+    )
+    return {
+        handle: chosen[user.id] for handle, user in users.items() if user.id in chosen
+    }
+
+
+def is_valid_username(username: str) -> bool:
+    """The one username rule every registration entry point applies."""
+    return _USERNAME_RE.fullmatch(username) is not None
+
+
+async def faces_by_handle(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, tuple[str | None, int | None]]:
+    """handle -> (昵称, 自己挑过的头像 id)，平台上没有这个 handle 的不在里面。
+
+    和 ``chosen_avatars_by_handle`` 走同一条实现路径 —— 一次把 handle 翻成 user，
+    再一次把（昵称, 头像）一起取回来，**总共两条查询**，名单多长都是两条。分成
+    「查昵称」「查头像」两次会让同一个 join 写两遍，而「哪一行是默认头像」这条规则
+    也就多了一个漂开的机会（现状：`UserProfileRepository` 里只此一处）。
+
+    和 ``chosen_avatars_by_handle`` 的唯一差别是**缺省怎么写**：那边「没挑过」就
+    整条不见，调用方据此画彩色首字母；这边一行的名字和脸要一起画，所以**有账号的
+    人一定在映射里**（没昵称、没挑过就是 (None, None)），只有平台上根本没有这个
+    handle 时整条缺失 —— 部署配置里写错一个名字是允许的，那一行仍然是名单的一份。
+
+    放在这里而不是调用方：和旁边两个一样，「这个账号叫什么、有没有挑过头像」是
+    `User` / `UserProfile` 的事实，写一份才不会两边各答一次「删掉的账号算不算」。
+    """
+    wanted = {h for h in handles if h}
+    if not wanted:
+        return {}
+    users = await UserRepository(session).get_by_handles(sorted(wanted))
+    profiles = await UserProfileRepository(session).nickname_and_avatar_by_user_id(
+        [u.id for u in users.values()]
+    )
+    return {
+        handle: profiles.get(user.id, (None, None)) for handle, user in users.items()
+    }
 
 
 def normalize_nickname(raw: str) -> str:
@@ -54,6 +158,44 @@ class UserService:
 
     async def get_users_by_ids(self, ids: Sequence[int]) -> dict[int, UserProfile]:
         return await self._repo.get_profiles_by_user_ids(ids)
+
+
+class AccountService:
+    """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。
+
+    **Why this one takes a session and its three neighbours take a repository:**
+    它们三个的调用点只有用户自己的路由，而路由手里本来就已经握着那几个仓储（它们
+    还要用它做别的事），把仓储传进来省一次构造。这一个开给的是**别的领域**，而那些
+    领域不许 import `UserRepository` —— 建仓储这一步留在门里面，越界才不成立。所以
+    它拿 session，和 `FeedbackService` / `AdminService` 同一个形状。
+
+    它面对的是账号表而不是 profile：旁边三个类全是「资料」那一侧（昵称、头像、
+    关注、实名），而账号的存量与新增问的是 `User` 自己的行。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._repo = UserRepository(session)
+
+    async def count_accounts(self) -> int:
+        return await self._repo.count_accounts()
+
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """真人 / agent 的存量拆分。判据是 `agent_bindings`（与
+        `IdentityService.is_agent` 同一份），见
+        `UserRepository.count_accounts_by_kind`。"""
+        return await self._repo.count_accounts_by_kind()
+
+    async def accounts_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
+        return await self._repo.accounts_series(since=since, until=until)
+
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """同 `accounts_series`，但真人 / agent 各一条。"""
+        return await self._repo.accounts_series_by_kind(since=since, until=until)
 
 
 class UserProfileService:
@@ -114,11 +256,7 @@ class UserAuthService:
         if user.hashed_password.startswith("SRP:"):
             return None
 
-        if not await asyncio.to_thread(
-            bcrypt.checkpw,
-            password.encode("utf-8"),
-            user.hashed_password.encode("utf-8"),
-        ):
+        if not await check_password(password, user.hashed_password):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)
@@ -142,12 +280,13 @@ class UserAuthService:
         return await self._user_repo.get_by_email(email)
 
     async def update_password(self, user_id: int, new_password: str) -> None:
-        hashed = (
-            await asyncio.to_thread(
-                bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt()
-            )
-        ).decode("utf-8")
+        hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
+
+    async def set_srp_credentials(
+        self, user_id: int, srp_salt: str, srp_verifier: str
+    ) -> None:
+        await self._user_repo.update_password(user_id, f"SRP:{srp_salt}:{srp_verifier}")
 
     @staticmethod
     def _reject_reserved(username: str) -> None:
@@ -189,23 +328,14 @@ class UserAuthService:
         if await self._user_repo.is_email_taken(email):
             raise ValueError("EMAIL_TAKEN")
 
-        hashed = (
-            await asyncio.to_thread(
-                bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
-            )
-        ).decode("utf-8")
-        user = await self._user_repo.create_user(
+        hashed = await hash_password(password)
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=hashed,
-        )
-        profile = await self._profile_repo.create_profile(
-            user_id=user.id,
             nickname=nickname,
-            intro="",
             avatar_id=default_avatar_id,
         )
-        return user, profile
 
     async def register_with_srp(
         self,
@@ -229,18 +359,13 @@ class UserAuthService:
             raise ValueError("EMAIL_TAKEN")
 
         srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-        user = await self._user_repo.create_user(
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=srp_data,
-        )
-        profile = await self._profile_repo.create_profile(
-            user_id=user.id,
             nickname=nickname,
-            intro="",
             avatar_id=default_avatar_id,
         )
-        return user, profile
 
     async def register_oauth_decision(
         self,
@@ -257,16 +382,46 @@ class UserAuthService:
         without one the account authenticates solely through the provider."""
         self._reject_reserved(username)
         hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
-        user = await self._user_repo.create_user(
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=hashed,
+            nickname=nickname or username,
+            avatar_id=default_avatar_id,
         )
+
+    async def _create_account(
+        self,
+        *,
+        username: str,
+        email: str,
+        hashed_password: str | None,
+        nickname: str,
+        avatar_id: int,
+    ) -> tuple[User, UserProfile]:
+        """Insert the user and its profile; the unique indexes decide.
+
+        The callers' taken-checks only give an earlier answer: two requests can
+        both pass them. The loser's insert fails on ``uq_user_username_lower``
+        or ``uq_user_email_lower`` and gets the same errors the checks raise.
+        """
+        try:
+            user = await self._user_repo.create_user(
+                username=username,
+                email=email,
+                hashed_password=hashed_password,
+            )
+        except IntegrityError:
+            if await self._user_repo.is_username_taken(username):
+                raise ValueError("USERNAME_TAKEN") from None
+            if await self._user_repo.is_email_taken(email):
+                raise ValueError("EMAIL_TAKEN") from None
+            raise
         profile = await self._profile_repo.create_profile(
             user_id=user.id,
-            nickname=nickname or username,
+            nickname=nickname,
             intro="",
-            avatar_id=default_avatar_id,
+            avatar_id=avatar_id,
         )
         return user, profile
 

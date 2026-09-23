@@ -15,10 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.domain.alert.repositories import AlertRepository
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.authorship import is_participant, participant_blocks
+from app.domain.block.models import Block
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationType
+from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.topic.models import TopicStatus
@@ -31,7 +34,7 @@ class DashboardService:
         self._projects = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
-        self._notifs = AlertRepository(session)
+        self._notifs = NotificationRepository(session)
         self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
 
@@ -48,17 +51,20 @@ class DashboardService:
         last_activity = await self._s.scalar(
             select(func.max(Block.created_at)).where(Block.project_id == project_id)
         )
+        # 和 `contributions()` 同一个读法：「人写了多少、AI 写了多少」读署名。事件
+        # 行的档位只分得出参与者和平台，而这张活跃度问的正是参与者里的哪一种 ——
+        # 按档位分组的话，平台事件被滤掉之后剩下的全是同一个 participant 档，两个
+        # 数字都归零。
         mix = {"human": 0, "ai": 0}
         mix_rows = (
             await self._s.execute(
-                select(Block.author_type, func.count())
-                .where(Block.project_id == project_id)
-                .group_by(Block.author_type)
+                select(Block.author, func.count())
+                .where(Block.project_id == project_id, participant_blocks())
+                .group_by(Block.author)
             )
         ).all()
-        for author_type, count in mix_rows:
-            if author_type.value in mix:
-                mix[author_type.value] += count
+        for author, count in mix_rows:
+            mix["ai" if looks_like_agent_handle(author) else "human"] += count
         return {
             "project_id": str(project.id),
             "name": project.name,
@@ -90,31 +96,6 @@ class DashboardService:
             ),
         }
 
-    async def project_overview(self, project_id: uuid.UUID, *, viewer: str) -> dict:
-        """事维度总览 (eval G2): milestones, topics×status, 等你处理的事.
-
-        ``viewer`` is the verified caller: 等你处理的事 is their slice (their
-        items + broadcasts under 未分派), not a cross-member board — one
-        person's pending decisions are not another member's business.
-        """
-        card = await self._project_card(project_id)
-        if card is None:
-            raise NotFoundError("Project not found")
-        members = await self._projects.list_members(project_id)
-        # 等你处理的事: decision/accept requests still unread, grouped by person.
-        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
-        todo_by_person: dict[str, list[dict]] = {}
-        for n in inbox:
-            handle = n.target_handle or "未分派"
-            todo_by_person.setdefault(handle, []).append(
-                {"id": str(n.id), "title": n.title, "kind": n.kind.value}
-            )
-        return {
-            **card,
-            "members": [{"handle": m["handle"], "role": m["role"]} for m in members],
-            "waiting_on_you": todo_by_person,
-        }
-
     async def member_summary(
         self, project_id: uuid.UUID, user_handle: str, *, viewer: str
     ) -> dict:
@@ -122,9 +103,8 @@ class DashboardService:
         waiting on them, their role. Doubles as the portfolio source.
 
         The public half (topics, contributions, role) is the same for everyone;
-        ``waiting_on_you`` is the member's mailbox, so it is intersected with
-        what ``viewer`` may see: broadcasts for any verified viewer, the
-        member's own items only on their own page."""
+        ``waiting_on_you`` is one person's mailbox, so only that person gets it
+        — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
@@ -155,7 +135,8 @@ class DashboardService:
             for t in topics
             if t.status == TopicStatus.active and t.id in worked_topic_ids
         ]
-        # 本周贡献 (spec §7.2/§10.1): human-authored blocks in the last 7 days.
+        # 本周贡献 (spec §7.2/§10.1): 这个人自己写下的块，最近 7 天。
+        # `author` 已经把人挑出来了，这一条挡的是顶着他 handle 的平台事件。
         week_ago = datetime.now(UTC) - timedelta(days=7)
         weekly = (
             await self._s.scalar(
@@ -164,12 +145,19 @@ class DashboardService:
                 .where(
                     Block.project_id == project_id,
                     Block.author == user_handle,
-                    Block.author_type == AuthorType.human,
+                    participant_blocks(),
                     Block.created_at >= week_ago,
                 )
             )
         ) or 0
-        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
+        # 收件箱是**这个成员自己**的，所以只有他本人打得开；别人的页面上是空的。
+        # 以前广播是一行谁都看得见的记录，于是别人的页面上还剩「也在等他」的那一
+        # 档可以交集；广播现在在写入时就展开成一人一行，没有可交的东西了。
+        inbox = (
+            await self._notifs.list_inbox(project_id, recipient_handle=user_handle)
+            if viewer == user_handle
+            else []
+        )
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
@@ -177,11 +165,12 @@ class DashboardService:
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
             "waiting_on_you": [
-                {"id": str(n.id), "title": n.title, "kind": n.kind.value}
+                {
+                    "id": str(n.id),
+                    "title": n.title,
+                    "kind": NotificationType(n.type).value,
+                }
                 for n in inbox
-                # viewer's slice ∩ this member's: their own mail when they are
-                # looking at their own page, broadcasts for anybody else.
-                if n.target_handle in (None, user_handle)
             ],
         }
 
@@ -189,8 +178,12 @@ class DashboardService:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
         them (个人记忆, §8.4). This is the "项目过程即简历" view."""
-        from app.domain.memory.models import MemoryScope
-        from app.domain.memory.store import memory_store
+        from app.domain.memory.models import (
+            MemoryEntry,
+            MemoryScope,
+            user_scope_about,
+        )
+        from app.domain.memory.store import live_entries
         from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
         from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -224,7 +217,7 @@ class DashboardService:
                     )
                 )
             ) or 0
-            # Contributions = the member's own (human) blocks — not the system
+            # Contributions = the member's own blocks — not the platform's
             # lifecycle/event blocks that happen to carry their handle.
             blocks = (
                 await self._s.scalar(
@@ -233,7 +226,7 @@ class DashboardService:
                     .where(
                         Block.project_id == project.id,
                         Block.author == handle,
-                        Block.author_type == AuthorType.human,
+                        participant_blocks(),
                     )
                 )
             ) or 0
@@ -247,7 +240,27 @@ class DashboardService:
                 }
             )
 
-        understanding = await memory_store(self._s).recall(MemoryScope.user, handle)
+        # 关于他的记忆已经不是一个跨项目的池了：每个项目里的每位芝士各有一份自己
+        # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
+        # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
+        # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
+        understanding = [
+            row.content
+            for row in (
+                await self._s.scalars(
+                    select(MemoryEntry)
+                    .where(
+                        MemoryEntry.scope == MemoryScope.user,
+                        MemoryEntry.scope_id.endswith(
+                            user_scope_about(handle), autoescape=True
+                        ),
+                        live_entries(),
+                    )
+                    .order_by(MemoryEntry.created_at.desc())
+                    .limit(50)
+                )
+            ).all()
+        ][::-1]
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is
@@ -272,13 +285,17 @@ class DashboardService:
                 .group_by(Block.author_type, Block.author)
             )
         ).all()
+        # 「人写了多少、AI 写了多少」读署名，不读事件行的档位：档位只分得出参与者
+        # 和平台，而这张图问的正是参与者里的哪一种。
         by_type: dict[str, int] = {"human": 0, "ai": 0, "system": 0}
         by_author: dict[str, int] = {}
         for author_type, author, count in rows:
-            by_type[author_type.value] = by_type.get(author_type.value, 0) + count
-            # by_author = real contributors; system lifecycle blocks don't count.
-            if author_type != AuthorType.system:
-                by_author[author] = by_author.get(author, 0) + count
+            # by_author = real contributors; platform lifecycle blocks don't count.
+            if not is_participant(author_type):
+                by_type["system"] += count
+                continue
+            by_type["ai" if looks_like_agent_handle(author) else "human"] += count
+            by_author[author] = by_author.get(author, 0) + count
         return {"by_author_type": by_type, "by_author": by_author}
 
     async def space_board(self, space_id: int) -> dict:

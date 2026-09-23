@@ -3,11 +3,10 @@ import type { ProjectMemberRow, Topic } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
 
 import { computed, ref } from 'vue'
-import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
+import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -45,8 +44,6 @@ const emit = defineEmits<{
   (e: 'review'): void
 }>()
 
-const { mdAndUp } = useDisplay()
-// 算力是**房间**的选择，首轮就锁死；一条支线既改不了它，问它也 404。
 const chatRef = ref<{
   connected: boolean
   send: (content: string, summon: boolean) => boolean
@@ -92,24 +89,24 @@ defineExpose({
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
+        <!-- Agent 反馈卡。和采纳框同一个位置：都是「这一轮结束时，平台要人做的
+             一个决定」。
+             什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
+             （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
+             「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
+             换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
+        <AgentFeedbackCard :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
          摆在输入区上纯是占位置：队友进了成员名册（它本来就是这个房间的成员），
-         算力见下面那块浮标 / 桌面的话题头。 -->
+         算力在话题头的 ⋯ 里。 -->
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />已归档
         </span>
       </template>
     </ChatPanel>
-
-    <!-- 手机上算力浮在对话上方：它是"这个话题在哪跑"，要一直看得见（整机权限
-         尤其不能藏），但一行的高度在 390px 上太贵，所以它不占布局的高度。
-         桌面上这块地方够宽，它长在话题头那一行里（TopicHeader）。 -->
-    <div v-if="!mdAndUp" class="compute-float">
-      <TopicComputePicker :key="topic.id" :topic-id="topic.id" />
-    </div>
   </div>
 </template>
 
@@ -118,27 +115,12 @@ defineExpose({
   font-size: 12px;
 }
 .chat-col {
+  /* 对话栏那条错误提示（ChatPanel 的 .chat-error-toast）是 absolute，定位的就是
+     这一层——ChatPanel 自己的根不是定位元素。 */
   position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-}
-/* 浮标：不占布局高度，所以是 absolute。悬浮的东西才配有阴影（design-system
-   §卡片不用阴影，菜单/对话框/抽屉这类浮层才用）。 */
-.compute-float {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  max-width: calc(100% - 24px);
-  padding: 2px 8px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-1);
 }
 </style>

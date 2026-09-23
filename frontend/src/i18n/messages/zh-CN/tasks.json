@@ -1,10 +1,42 @@
 {
+  "preview": {
+    "unavailable": "应用预览暂不可用",
+    "appUnavailable": "预览连接正常，但应用没有响应。请让芝士检查应用是否正常运行。",
+    "connectionUnavailable": "预览连接尚未建立或已断开，不代表芝士已停止工作。请在现场查看运行状态；连接恢复后，此处会自动更新。"
+  },
+  "artifactComparison": {
+    "title": "版本比较",
+    "before": "基准版本",
+    "oversized": "文件超过 1 MB，请并排预览或下载比较",
+    "binary": "此格式不提供逐行差异，请并排预览或下载比较",
+    "document": "比较的是文档正文，版式和修订记录不在其中",
+    "unsupported": "此文件格式或大小不支持逐行比较",
+    "unavailable": "这两个版本的交付形式不同，或没有留存可比较的内容",
+    "source": "比较两次交付时项目源文件的完整状态",
+    "link": "这里只比较交付时记录的地址；未保存网页的历史内容",
+    "after": "对比版本",
+    "version": "第 {number} 版",
+    "chooseTwo": "请选择两个不同的版本",
+    "loading": "正在比较交付内容",
+    "loadError": "未能比较这两个版本",
+    "identical": "两个版本的内容相同",
+    "changed": "两个版本存在差异",
+    "sameLink": "两个版本记录的地址相同",
+    "changedLink": "两个版本记录的地址有变化",
+    "fileMode": "文件类型或权限：",
+    "showPreviews": "并排预览",
+    "hidePreviews": "收起预览",
+    "previewError": "未能预览这一版",
+    "loadingPreview": "正在读取交付文件",
+    "downloadOnly": "此格式或大小暂不支持预览，可在版本历史中下载",
+    "noPreview": "这一版没有可预览的文件"
+  },
   "form": {
-    "taskName": "赛题名称",
+    "taskName": "题目名称",
     "participantType": "参与者类型",
     "individual": "个人",
     "team": "小队",
-    "taskLevel": "赛题难度",
+    "taskLevel": "题目难度",
     "beginner": "初级",
     "intermediate": "中级",
     "advanced": "高级",
@@ -14,7 +46,7 @@
     "defaultDeadline": "默认完成期限",
     "allowMultipleSubmissions": "允许多次提交",
     "allowEditSubmissions": "允许编辑提交",
-    "taskDescription": "赛题描述",
+    "taskDescription": "题目描述",
     "participantLimitHint": "留空表示不限制参与人数",
     "teamLockingPolicy": "队伍成员锁定策略",
     "teamLockingPolicyNoLock": "允许自由调整",
@@ -25,23 +57,23 @@
     "accessControl": {
       "title": "权限设置",
       "enableAccessRestriction": "启用访问限制",
-      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此赛题",
+      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此题目",
       "domainGroups": "域名组",
       "domainGroupsHint": "选择允许访问的域名组，未选择任何域名组时所有用户均可访问",
       "noDomainGroups": "暂无可用域名组"
     }
   },
   "detail": {
-    "editTask": "编辑赛题",
+    "editTask": "编辑题目",
     "save": "保存",
-    "updateSuccess": "赛题更新成功",
-    "updateFailed": "更新赛题失败"
+    "updateSuccess": "题目更新成功",
+    "updateFailed": "更新题目失败"
   },
   "publish": {
-    "title": "发布赛题",
+    "title": "发布题目",
     "back": "返回",
     "submit": "提交",
-    "createFailed": "创建赛题失败"
+    "createFailed": "创建题目失败"
   },
   "status": {
     "pending": "审核中",

@@ -25,7 +25,7 @@ task dev
 cd backend && PYTHONPATH=. uv run python scripts/seed_demo.py
 ```
 
-模型走**智谱 GLM**（Anthropic 兼容网关），配置在 `backend/.env`（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `AGENT_MODEL`）。芝士 = `claude-agent-sdk` 拉起 `claude` CLI，路由到 GLM（spec §9，不绑模型）。
+模型走**智谱 GLM**（Anthropic 兼容网关），配置在 `backend/.env`（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `AGENT_MODEL`）。芝士 = 平台拉起的 `claude` CLI（Claude Code 骨架），模型请求经计量代理或网关路由（spec §9，不绑模型）。
 
 ---
 

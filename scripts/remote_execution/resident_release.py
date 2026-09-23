@@ -34,8 +34,13 @@ def main():
     assert len(str(rendezvous).encode()) < 104
     current = release.sources()
     previous = dict(current)
+    # 随便一处真的差别就够 —— 这条 fixture 要的只是「旧包和新包不是同一份」，
+    # 下面没有一条断言读这个名字。挑的是这条传输自报的名字，因为它谁也不影响：
+    # 工具表已经不住在 client.py 里了（它在 `backend/sandbox/cheese`），拿表上
+    # 某一样的名字当锚点，会在表搬家的那一天变成一次无声的空替换。
     previous["client.py"] = current["client.py"].replace(
-        '"name": "chat_send",', '"name": "chat_send_before_release",'
+        '"name": "cheese-native-execution"',
+        '"name": "cheese-native-execution-before-release"',
     )
     previous["proxy.js"] = current["proxy.js"].replace(
         "result.text.split(execution.central_workspace).join(execution.workspace)",
@@ -66,7 +71,7 @@ def main():
         connections = []
 
         class Control:
-            async def current(self, topic_id):
+            async def current(self, topic_id, agent_handle=None):
                 return {"id": fixture.sid, "status": "active"}
 
             async def enqueue(self, sid, frame, actor):
@@ -195,7 +200,11 @@ def main():
     try:
         acceptance.main()
         requests = sorted(output.glob("request-*.json"))
-        assert len(requests) == 17
+        # One model request per scripted tool call plus the opening turn —
+        # the count the acceptance sequence produces (`request_count` in its
+        # summary), so it moves when that sequence does.
+        summary = json.loads((output / "summary.json").read_text())
+        assert len(requests) == summary["request_count"], len(requests)
         assert "BEFORE_RELEASE" not in requests[0].read_text()
     finally:
         rendezvous.unlink(missing_ok=True)

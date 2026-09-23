@@ -18,7 +18,6 @@ from tests.support.harness_prompts import event_prompts, system_prompt
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(shutil.which("codex") is None, reason="Codex binary required")
 @pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-6-astra"])
 async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     tmp_path,
@@ -240,7 +239,8 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     assert len(messages) == len(inputs) - 1
     assert all(message.text == "fixture reply" for message in messages)
     assert len({message.eid for message in messages}) == len(messages)
-    assert len([event for event in room_events if isinstance(event, AgentResult)]) == 5
+    results = [event for event in room_events if isinstance(event, AgentResult)]
+    assert len(results) == len(inputs) - 1
     uses = [event for event in room_events if isinstance(event, AgentToolUse)]
     assert len(uses) == 1
     assert uses[0].input == {"value": "fixture input"}

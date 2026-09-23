@@ -15,7 +15,7 @@
 
     <v-card-text v-if="loading" class="text-center py-8">
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
-      <div class="mt-4 text-body-1">AI 正在分析赛题，请稍候...</div>
+      <div class="mt-4 text-body-1">AI 正在分析题目，请稍候...</div>
     </v-card-text>
 
     <v-card-text v-else-if="error" class="text-center py-8">

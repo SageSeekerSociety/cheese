@@ -90,6 +90,14 @@ def hooks_settings(
     cmd = {"type": "command", "command": "cheese-hook"}
     tool_matched = [{"matcher": "*", "hooks": [cmd]}]
     plain = [{"hooks": [cmd]}]
+    # 发现层：把项目的活跃 AI 队友写成本会话的 CC 分身定义文件（名字、一句话
+    # 描述、model=队友绑的模型），主 agent 于是在 Agent 工具的可用清单里直接
+    # 读到可指定谁。闸在准入（/llm/admission）——指定了队友范围外的模型会被
+    # 拒并列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不
+    # 着后端时这一轮一切照旧。
+    sync_agents = [
+        {"hooks": [{"type": "command", "command": "cheese sync-agents", "timeout": 15}]}
+    ]
     # A remote machine also has to hand its work back at turn end; the local
     # container edits the real worktree and has nothing to send.
     stop_hooks = [cmd] + [
@@ -100,6 +108,25 @@ def hooks_settings(
         # Stream liveness is separate from WebFetch's response-error handling.
         "env": {
             "CLAUDE_ENABLE_STREAM_WATCHDOG": "1",
+            # The watchdog aborts a stream that has produced no BYTES for its
+            # idle window, and left alone that window is SHORTER than this
+            # deployment's own silence handling: the CLI uses 180 s whenever it
+            # believes it is on the first-party API, which is exactly what an
+            # unset `ANTHROPIC_BASE_URL` means (provider_env.py leaves it unset
+            # so the metering proxy stays transparent). Nothing on the path
+            # writes a keepalive byte either — LiteLLM holds the first chunk
+            # until TTFT and mitmproxy stays silent while the provider thinks —
+            # so a long thinking window is indistinguishable from a dead
+            # connection, and the CLI kills the turn mid-stream before the
+            # platform's own gates ever look at it.
+            #
+            # Setting this variable at all is what leaves that 180 s branch (the
+            # CLI floors it at 300 s and never honours anything lower), so the
+            # number here is a ceiling for the CLI, not a second opinion on how
+            # long a turn may run. It is deliberately above every gate the
+            # platform applies to a hooks-driven turn, so the CLI can never cut
+            # first, on less information, with a number nobody here chose.
+            "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "900000",
         },
         # Previews belong in Cheese, not on claude.ai via the Artifact tool.
         "enableArtifact": False,
@@ -110,7 +137,7 @@ def hooks_settings(
         # already present in the conversation's model-visible history.
         **({"attribution": {"sessionUrl": False}} if remote_control else {}),
         "hooks": {
-            "SessionStart": plain,
+            "SessionStart": plain + sync_agents,
             # The consumption receipt. A prompt reaches the session over its
             # rendezvous socket, and that protocol has no positive ack: a frame
             # that was written and not refused has entered the queue, and nothing
@@ -119,7 +146,7 @@ def hooks_settings(
             # Not every build fires it for every consumption — see the note in
             # hooks_substrate's `send` about what 2.1.224 does with a text
             # delivered while a tool is running.
-            "UserPromptSubmit": plain,
+            "UserPromptSubmit": plain + sync_agents,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
             # The tool call that ended in an error. Claude Code fires this
@@ -276,7 +303,6 @@ class ClaudeLaunch:
         return on_machine(
             place,
             system_prompt=self.system_prompt,
-            model=self.model,
             # The third thing a plan carries, and the one the device channel
             # used to drop on the floor. A screen is retired and reopened for
             # reasons that say nothing about the conversation, and until this

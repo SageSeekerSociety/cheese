@@ -4,8 +4,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Select, and_, func, or_, select, update
+from sqlalchemy import Select, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import (
     ColumnElement,
     SQLColumnExpression,
@@ -14,10 +15,21 @@ from sqlalchemy.sql.elements import (
 
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.identity.handles import CHEESE_HANDLE, CHEESE_NAME, agent_dm_key
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_dm_key,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
+from app.domain.topic.models import (
+    Topic,
+    TopicKind,
+    TopicMembership,
+    TopicProgress,
+    TopicReadState,
+)
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
@@ -78,7 +90,6 @@ class TopicRepository:
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
-        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._session.get(Project, project_id)
         topic = Topic(
@@ -89,7 +100,6 @@ class TopicRepository:
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=upgraded_from_block_id,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()
@@ -209,106 +219,70 @@ class TopicRepository:
         return {topic_id: last for topic_id, last in rows}
 
     async def get_or_create_private(
-        self,
-        *,
-        project_id: uuid.UUID,
-        user_handle: str,
-        peer_handle: str | None = None,
-        agent_instance_id: uuid.UUID | None = None,
-        agent_display_name: str | None = None,
+        self, *, project_id: uuid.UUID, owner: str, peer: str, title: str
     ) -> Topic:
-        """A 1:1 private conversation in this project.
+        """The 1:1 private conversation between ``owner`` and ``peer`` in this
+        project, created with ``title`` if it does not exist yet.
 
-        With ``peer_handle`` it is a person-to-person DM between the two humans;
-        the unordered pair is canonicalized (owner = min, peer = max) so both
-        participants get and share the same row regardless of who opens it.
+        Who the two are — two people in canonical order, or a person and an AI
+        teammate's seat — is the service's decision; here a DM is two handles.
 
-        Without it, it is the member's 1:1 with ONE AI teammate, identified by
-        ``agent_instance_id`` — the same column a room uses to say which teammate
-        works in it, which is why nothing else has to change for that teammate's
-        role and model to be the ones answering here. One room per (member,
-        teammate) pair: a project with three teammates gives each member three,
-        and switching the project's default does not move any of them.
+        Found by its two seats, because that is where they live (结论 19): the
+        private room of this project that seats both handles. Two memberships,
+        each asked for on its own, so which of the two opens the conversation
+        does not decide whether it is found.
+
+        名册长到三席的房间也认，认的是同一间。多出一席这间房确实答不出对面是谁，
+        但那件事有它自己的出处（`TopicMemberService.private_seats` 答 None，调用方
+        退回项目默认那位），而这里只答「再打开的是不是同一间」。不认它就等于每次
+        打开都新开一间：私聊不进话题树（`TopicService.list_for_project` 把它们藏
+        起来），角标又被 `private_unread_counts` 的两席闸滤掉，旧那间房在界面上
+        一个入口都没有，里面的对话就此找不回来。
+
+        同时匹配上好几间时次序是定死的：还是两席的那间先，然后按建的时间。没有
+        `order_by` 的 `.first()` 返回哪一间没有定数，同一个人两次打开可能落进两间
+        不同的房。两席那一项不是把闸装回来，是在好几间都坐着这两位的时候挑出哪一
+        间才是这两位的 DM：第三个人被加进 A 和 B 的那间房之后，A 打开与他的私聊，
+        两间都匹配得上，而只有一间是 A 和他的。
         """
-        if peer_handle is not None:
-            owner, peer = sorted((user_handle, peer_handle))
-            stmt = select(Topic).where(
+
+        def seats(handle: str) -> Select[tuple[uuid.UUID]]:
+            return select(TopicMembership.topic_id).where(
+                TopicMembership.member_handle == handle
+            )
+
+        seat_count = (
+            select(func.count())
+            .select_from(TopicMembership)
+            .where(TopicMembership.topic_id == Topic.id)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(Topic)
+            .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(True),
-                Topic.private_owner == owner,
-                Topic.private_peer == peer,
+                Topic.id.in_(seats(owner)),
+                Topic.id.in_(seats(peer)),
             )
-        else:
-            owner, peer = user_handle, None
-            stmt = select(Topic).where(
-                Topic.project_id == project_id,
-                Topic.is_private.is_(True),
-                Topic.private_owner == user_handle,
-                Topic.private_peer.is_(None),
-                Topic.agent_instance_id == agent_instance_id,
-            )
+            .order_by(case((seat_count == 2, 0), else_=1), Topic.created_at)
+        )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:
             return existing
-        # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
-        # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
-        if peer:
-            title = f"私聊 · {owner} · {peer}"
-        else:
-            title = f"与{agent_display_name or CHEESE_NAME}私聊 · {owner}"
         project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
             environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
-            created_by=user_handle,
+            created_by=owner,
             is_private=True,
-            private_owner=owner,
-            private_peer=peer,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()
         await self._session.refresh(topic)
         return topic
-
-    async def pin_unpinned_agent_dms(
-        self,
-        project_id: uuid.UUID,
-        agent_instance_id: uuid.UUID,
-        *,
-        user_handle: str | None = None,
-    ) -> None:
-        """Give the teammate-less 芝士 DMs the teammate they have been talking
-        to all along.
-
-        A DM opened before there was one room per teammate names no teammate, so
-        it is answered by whatever the project's default is at the time. Callers
-        pass the agent that is the default *right now*, and call this at the two
-        moments that answer could change — somebody opens the DM, or the project
-        picks a different default. Writing it down at those two points is what
-        makes the conversation stay where it is: under the teammate that
-        actually held it, not under whoever holds the default later.
-
-        ``user_handle`` narrows it to one member's DM; without it, every
-        unpinned DM in the project (what the default moving is about).
-        """
-        await self._session.execute(
-            update(Topic)
-            .where(
-                Topic.project_id == project_id,
-                Topic.is_private.is_(True),
-                Topic.private_peer.is_(None),
-                Topic.agent_instance_id.is_(None),
-                *(
-                    [Topic.private_owner == user_handle]
-                    if user_handle is not None
-                    else []
-                ),
-            )
-            .values(agent_instance_id=agent_instance_id)
-        )
 
     async def list_children(self, parent_id: uuid.UUID) -> list[Topic]:
         stmt = (
@@ -379,8 +353,11 @@ class TopicRepository:
                 Topic.project_id == project_id,
                 or_(
                     Topic.is_private.is_(False),
-                    Topic.private_owner == user_handle,
-                    Topic.private_peer == user_handle,
+                    Topic.id.in_(
+                        select(TopicMembership.topic_id).where(
+                            TopicMembership.member_handle == user_handle
+                        )
+                    ),
                 ),
                 Block.kind == BlockKind.message,
                 Block.task_id.is_(None),
@@ -408,28 +385,55 @@ class TopicRepository:
         an AI teammate by ``agent_dm_key`` — see there for why a teammate does
         not get to use the bare handle.
 
-        A DM that names no teammate predates one-room-per-teammate and is still
-        answered by whatever the project's default is, so that is what it counts
-        against; opening it pins it (:meth:`pin_unpinned_agent_dm`) and this
-        stops being a question.
+        A teammate sits in a DM under its seat handle, the way a person sits
+        under theirs; the key the UI wants is the teammate's own handle, so the
+        seat is mapped back through the project's saved teammates. A seat that
+        is not a saved teammate's (a room-derived seat from before teammates had
+        seats of their own) is answered by the project's default and counts
+        against it.
+
+        「哪些私聊是我的」和「对面是谁」都从名册上取（结论 19）：我的那一席把房间
+        选出来，另一席就是对面。两席都在同一张表上，所以这是一次自连接，不是第二
+        张表。
+
+        「恰好两席」是这里的闸，和 `TopicMemberService.private_seats` 同一条：
+        「不是我」的席位不止一个，这间房就答不出对面是谁：没有这道闸，三席的房
+        间每一个「不是我」的席位各算一遍，同样的未读数翻一倍，还凭空多出一行归给
+        别人的角标。答不出就一条不报，与那个读点在同一间房上答案一致。
         """
-        stmt = (
-            select(
-                Topic.private_owner,
-                Topic.private_peer,
-                AgentInstance.handle,
-                func.count(),
+        seats = {
+            agent_instance_handle(row.id): row.handle
+            for row in (
+                await self._session.scalars(
+                    select(AgentInstance).where(AgentInstance.project_id == project_id)
+                )
+            ).all()
+        }
+        project = await self._session.get(Project, project_id)
+        default_handle = CHEESE_HANDLE
+        if project is not None and project.default_agent_instance_id is not None:
+            default = await self._session.get(
+                AgentInstance, project.default_agent_instance_id
             )
+            if default is not None:
+                default_handle = default.handle
+        mine = aliased(TopicMembership)
+        theirs = aliased(TopicMembership)
+        stmt = (
+            select(theirs.member_handle, func.count())
             .select_from(Topic)
-            .join(Block, Block.topic_id == Topic.id)
-            .join(Project, Project.id == Topic.project_id)
-            .outerjoin(
-                AgentInstance,
-                AgentInstance.id
-                == func.coalesce(
-                    Topic.agent_instance_id, Project.default_agent_instance_id
+            .join(
+                mine,
+                and_(mine.topic_id == Topic.id, mine.member_handle == user_handle),
+            )
+            .join(
+                theirs,
+                and_(
+                    theirs.topic_id == Topic.id,
+                    theirs.member_handle != user_handle,
                 ),
             )
+            .join(Block, Block.topic_id == Topic.id)
             .outerjoin(
                 TopicReadState,
                 and_(
@@ -440,10 +444,11 @@ class TopicRepository:
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(True),
-                or_(
-                    Topic.private_owner == user_handle,
-                    Topic.private_peer == user_handle,
-                ),
+                select(func.count())
+                .select_from(TopicMembership)
+                .where(TopicMembership.topic_id == Topic.id)
+                .scalar_subquery()
+                == 2,
                 Block.kind == BlockKind.message,
                 # A private room has threads too — resolving an upstream
                 # conflict opens one there — and the same rule applies: the
@@ -455,17 +460,15 @@ class TopicRepository:
                     Block.created_at > TopicReadState.last_read_at,
                 ),
             )
-            .group_by(
-                Topic.id, Topic.private_owner, Topic.private_peer, AgentInstance.handle
-            )
+            .group_by(theirs.member_handle)
         )
         rows = (await self._session.execute(stmt)).all()
         counts: dict[str, int] = {}
-        for owner, peer, agent_handle, count in rows:
-            if peer is None:
-                key = agent_dm_key(agent_handle or CHEESE_HANDLE)
+        for other, count in rows:
+            if looks_like_agent_handle(other):
+                key = agent_dm_key(seats.get(other, default_handle))
             else:
-                key = peer if owner == user_handle else owner
+                key = other
             counts[key] = counts.get(key, 0) + int(count)
         return counts
 

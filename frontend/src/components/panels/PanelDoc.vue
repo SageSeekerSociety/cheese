@@ -33,7 +33,7 @@ import {
   popStash,
   pushStash,
 } from '../../lib/docEditState'
-import { compareRoundTrip, docExtensions, serializeDoc } from '../../lib/docMarkdown'
+import { compareRoundTrip, docExtensions, docReplaceRange, serializeDoc } from '../../lib/docMarkdown'
 import { createSlashCommands } from '../../lib/docSlashMenu'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
@@ -186,17 +186,22 @@ function statusLabel(s: string): string {
 let liveRefIndex = new Map<number, string>()
 const liveRefKey = new PluginKey('cheeseLiveRefBadges')
 
-// Build the badge element a live-ref widget renders as. Title/status are looked
-// up from props.topicList at build time; a topicList change rebuilds the set.
-function liveRefWidget(topicId: string): HTMLElement {
+// 徽章上会变的那点东西。装饰的 key 和徽章的 DOM 都从这里取，两边必须是同一份：
+// key 决定装饰相不相等，而相等的装饰不会重建（见 liveRefDecorations 里的注释）。
+function liveRefFacts(topicId: string): { title: string | null; status: string } {
   const sub = props.topicList.find((t) => t.id === topicId)
-  const status = sub?.status ?? ''
+  return { title: sub?.title ?? null, status: sub?.status ?? '' }
+}
+
+// Build the badge element a live-ref widget renders as.
+function liveRefWidget(topicId: string): HTMLElement {
+  const { title: subTitle, status } = liveRefFacts(topicId)
   const el = document.createElement('span')
   el.className = 'doc-liveref'
   el.dataset.topic = topicId
   el.contentEditable = 'false'
   el.setAttribute('role', 'button')
-  el.title = `「${sub?.title ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
+  el.title = `「${subTitle ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
   // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
@@ -209,7 +214,7 @@ function liveRefWidget(topicId: string): HTMLElement {
   icon.setAttribute('aria-hidden', 'true')
   const label = document.createElement('span')
   label.className = 'doc-liveref__label'
-  label.textContent = sub?.title ?? '子话题'
+  label.textContent = subTitle ?? '子话题'
   const st = document.createElement('span')
   st.className = 'doc-liveref__status'
   st.textContent = statusLabel(status)
@@ -225,10 +230,16 @@ function liveRefDecorations(doc: PMNode): DecorationSet {
     // End of the block's content (just inside its closing token) — the badge
     // renders after the paragraph's last character, in flow.
     const pos = offset + Math.max(node.nodeSize - 1, 1)
+    // key 决定两次重建之间「这还是同一个装饰吗」：prosemirror-view 的
+    // `WidgetType.eq` 一看见 key 相等就短路返回 true，DOM 于是原样留着。所以
+    // key 里必须带上徽章会变的那点东西——只写 topicId 的话，支线改了标题、跑完
+    // 收了工，徽章上的字还停在第一次渲染的那一刻，而这段代码的全部意义就是让
+    // 它跟着变。反过来，没变的时候 key 一样，DOM 不重建，读的人也不会看见闪。
+    const { title: subTitle, status } = liveRefFacts(topicId)
     decos.push(
       Decoration.widget(pos, () => liveRefWidget(topicId), {
         side: 1,
-        key: `liveref-${topicId}`,
+        key: `liveref-${topicId}-${status}-${subTitle ?? ''}`,
       })
     )
   })
@@ -983,12 +994,49 @@ function addBlockBelow() {
     .run()
 }
 
+// 把服务端的这一版落进编辑器，只替换真正变了的那一段。
+//
+// 整份 `setContent` 会把所有位置都映射一遍（那一步在语义上先删光再插入），于是停在
+// 没变的段落里的光标会被甩到文末。而这篇文档是可以点进去的：点一下只是「我在看这
+// 儿」，不会让它变 dirty，所以芝士的下一次更新照常装进来，把人的插入点带走。只重写
+// 差异区间就没这回事——区间之前的每一个位置都没被碰过。
+//
+// 不是为了少重绘：prosemirror-view 本来就逐节点比对、复用没变的 DOM，整份替换也不
+// 会把每个段落重建一遍（这一点写过测试，见 lib/docReplaceRange.spec.ts）。
+//
+// 解析走的是 tiptap 自己那条路：`setContent(md, { contentType: 'markdown' })` 内部
+// 也是先 `editor.markdown.parse(md)` 再装 JSON，所以两边解析出来的文档一模一样。
 function setEditorMarkdown(md: string) {
   const ed = editor.value
   if (!ed) return
   loadingFromServer.value = true
-  ed.commands.setContent(md, { contentType: 'markdown' })
-  loadingFromServer.value = false
+  try {
+    if (!replaceChangedNodes(ed, md)) ed.commands.setContent(md, { contentType: 'markdown' })
+  } finally {
+    // 整份替换那条兜底路径会抛（解析失败、区间不合法），标志位必须还原，
+    // 否则之后每一次真的编辑都不再算 dirty，autosave 就永远不跑了。
+    loadingFromServer.value = false
+  }
+}
+
+/** 返回 false = 这条路走不通（没有 markdown 管理器、解析失败、区间装不进去），
+ *  调用方退回整份替换。 */
+function replaceChangedNodes(ed: CoreEditor, md: string): boolean {
+  const manager = ed.markdown
+  if (!manager) return false
+  try {
+    const next = ed.schema.nodeFromJSON(manager.parse(md))
+    const range = docReplaceRange(ed.state.doc, next)
+    // null = 两版一模一样。屏幕上已经是它了，一个字都不用动。
+    if (!range) return true
+    const tr = ed.state.tr.replace(range.from, range.to, next.slice(range.from, range.sliceTo))
+    // 服务端刷新不是人做的编辑，不该占一格撤销。
+    tr.setMeta('addToHistory', false)
+    ed.view.dispatch(tr)
+    return true
+  } catch {
+    return false
+  }
 }
 
 // The panel already renders the topic title as the page title (Feishu Docs).
@@ -1331,14 +1379,18 @@ watch(
 // A2: when the sidebar's topics change (a subtopic's status moved, or a new one
 // was spawned), refetch the doc nodes and rebuild the badge widgets so titles /
 // status stay live. (No resize listener needed anymore — widgets are in flow.)
-watch(
-  () => props.topicList,
-  () => {
-    const tid = props.topic?.id
-    if (tid) void loadComments(tid).catch(() => {})
-  },
-  { deep: true }
+//
+// 盯的是支线身上徽章真正用到的那几个字段，而不是数组本身。侧栏每 30 秒把整个话题
+// 数组换成一批新对象（stores/workspace.ts 的 refreshTopics），`deep: true` 因此每
+// 半分钟触发一次、白拉两条请求——而徽章上一个字都没变。新开一条支线仍然要重拉：
+// 那时候某个文档节点刚变成「已升级」，哪个段落该长徽章只有服务端知道。
+const liveRefFingerprint = computed(() =>
+  props.topicList.map((t) => `${t.id}\u0000${t.title}\u0000${t.status ?? ''}`).join('\n')
 )
+watch(liveRefFingerprint, () => {
+  const tid = props.topic?.id
+  if (tid) void loadComments(tid).catch(() => {})
+})
 
 onBeforeUnmount(() => {
   editor.value?.destroy()
@@ -1368,38 +1420,64 @@ onBeforeUnmount(() => {
           <v-icon size="13">mdi-pause-circle-outline</v-icon>
           已暂停 · 改动未保存
         </span>
-        <span
-          v-else-if="saveStatus === 'saved'"
-          class="d-inline-flex align-center ga-1 c-faint me-2"
-          style="font-size: 12px"
-        >
+        <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
           <span class="status-dot status-dot--ok" />已保存
         </span>
         <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
 
+        <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+             就回去。平常用不上，进去的入口在 ⋯ 里。 -->
         <v-btn
-          v-if="!editingBlocked"
+          v-if="!editable && !editingBlocked"
           size="small"
           variant="text"
-          class="me-1 c-muted"
-          :disabled="sourceMode"
+          color="medium-emphasis"
+          class="me-1"
+          title="回到编辑"
           @click="toggleEditable"
         >
-          {{ editable ? '只读' : '编辑' }}
+          只读
         </v-btn>
-        <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-             syntax the visual editor can't fully represent (军规 1)。手机上不提供，
-             见 editingBlocked。 -->
         <v-btn
-          v-if="mdAndUp"
+          v-if="sourceMode"
           size="small"
           variant="text"
-          :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
-          title="源码模式（直接编辑 markdown 原文）"
+          class="me-1 tool-btn--active"
+          title="退出源码模式"
           @click="toggleSourceMode"
         >
           源码
         </v-btn>
+        <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              icon="mdi-dots-horizontal"
+              size="small"
+              variant="text"
+              color="medium-emphasis"
+              title="更多"
+              aria-label="更多"
+            />
+          </template>
+          <v-list density="compact" aria-label="文档选项">
+            <v-list-item
+              v-if="!editingBlocked"
+              :title="editable ? '设为只读' : '回到编辑'"
+              :disabled="sourceMode"
+              @click="toggleEditable"
+            />
+            <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+                 syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+                 见 editingBlocked。 -->
+            <v-list-item
+              v-if="mdAndUp"
+              :title="sourceMode ? '退出源码模式' : '源码模式'"
+              subtitle="直接编辑 markdown 原文"
+              @click="toggleSourceMode"
+            />
+          </v-list>
+        </v-menu>
       </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
            source mode — the states they describe survive a mode switch. -->
@@ -1745,7 +1823,7 @@ onBeforeUnmount(() => {
   gap: 3px;
   padding: 3px 10px;
   border-radius: 8px;
-  font-size: 0.74rem;
+  font-size: 12px;
   color: rgb(var(--v-theme-on-primary));
   background: rgb(var(--v-theme-primary));
   box-shadow: var(--shadow-2);
@@ -2053,6 +2131,8 @@ onBeforeUnmount(() => {
   top: 5px;
   right: 10px;
   font-family: var(--font-mono);
+  /* 装饰性角标，不按可读下限走：它蹲在第一行代码的右上角，放大到 12px 就压住
+     长行的字（量过：标签到 19px，第一行从 16px 起）。 */
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--faint);
@@ -2161,8 +2241,8 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-lossy-banner__icon {
@@ -2180,7 +2260,7 @@ onBeforeUnmount(() => {
   color: var(--accent-ink);
   border-radius: 6px;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
@@ -2207,8 +2287,8 @@ onBeforeUnmount(() => {
   padding: 8px 14px;
   border-bottom: 1px solid var(--line-2);
   background: color-mix(in srgb, var(--warn) 8%, var(--surface));
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-notice--conflict {
@@ -2232,7 +2312,7 @@ onBeforeUnmount(() => {
   color: var(--text);
   border-radius: 6px;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
@@ -2270,7 +2350,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border-radius: 6px;
   padding: 2px 7px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   cursor: pointer;
 }
@@ -2297,7 +2377,7 @@ onBeforeUnmount(() => {
   border: none;
   background: none;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   font-family: ui-monospace, monospace;
   color: var(--ink);
   padding: 5px 9px;

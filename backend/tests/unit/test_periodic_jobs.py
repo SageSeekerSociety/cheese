@@ -121,23 +121,13 @@ async def test_stopping_ends_the_loop():
 
 
 def _jobs():
-    from app.domain.scheduler.jobs import periodic_jobs
+    from app.core.background import periodic_jobs
 
     async def _noop(*_args, **_kwargs):
         return None
 
-    scheduler = SimpleNamespace(
-        tick=_noop,
-        consolidate_idle_device_screens=_noop,
-        poll_open_prs=_noop,
-        open_draft_prs=_noop,
-        sync_upstreams=_noop,
-        sweep_orphan_turns=_noop,
-        remind_silent_turns=_noop,
-        sweep_abandoned_gates=_noop,
-    )
     return periodic_jobs(
-        scheduler=scheduler,
+        chat=SimpleNamespace(remind_silent_turns=_noop, session_factory=lambda: None),
         machines=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )
@@ -146,21 +136,19 @@ def _jobs():
 @pytest.mark.parametrize(
     ("name", "interval_setting"),
     [
-        ("notification finalize", "notification_finalize_interval_s"),
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
         ("chat progress reminder", "chat_progress_check_interval_s"),
     ],
 )
 def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
-    """These three had no runner in any deployed image, and each absence is
-    invisible: an aggregation window that never closes, an email queue with no
-    consumer, a deadline nobody checks.
+    """These had no runner in any deployed image, and each absence is
+    invisible: an email queue with no consumer, a deadline nobody checks.
 
     Being on the list is half of it. A default interval of 0 would put them
     right back where they were — registered, deployed, and run by nobody — so
     the SHIPPED default is asserted rather than whatever this test process has
-    (the harness turns these three off; see tests/conftest.py)."""
+    (the harness turns some of them off; see tests/conftest.py)."""
     from app.core.config import Settings
 
     assert any(j.name == name for j in _jobs()), (
@@ -173,6 +161,29 @@ def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
     )
 
 
+def test_the_timed_delivery_alarm_is_scheduled():
+    """一个参与者设下的闹钟，到点得有人递（结论 17）。
+
+    这一条的失败样子和这个文件开头那三个一模一样：`timed_deliveries` 写进去了、
+    部署了，而没有任何一个循环去扫它，于是那张表成了一份没人读的愿望清单 —— 没有
+    报错可看，只有缺席。它的间隔写死在列表里，不是一个设置，所以这里只问它在不在。
+    """
+    assert any(job.name == "timed deliveries" for job in _jobs())
+
+
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"
+
+
+async def test_existing_repository_subscriptions_are_reconciled(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    reconcile = AsyncMock(return_value={"configured": 0, "failed": 0})
+    monkeypatch.setattr(
+        "app.domain.project.forge.reconcile_repository_webhooks", reconcile
+    )
+    job = next(job for job in _jobs() if job.name == "forge event subscriptions")
+    assert job.interval_seconds > 0
+    await job._job()
+    reconcile.assert_awaited_once()

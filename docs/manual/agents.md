@@ -17,14 +17,12 @@ order: 21
 
 每个队友有自己的角色设定和自己的记忆。它在这个项目里学到的东西会一直跟着它，换个房间也还记得。
 
-## 换掉一个房间的队友 {#switch}
+## 把队友请进房间 {#invite}
 
-队友是建房间时选定的，之后能在房间顶部的名册里换——但换掉会丢掉这个房间已经积累的会话，它记得的这段对话就没了。所以这个问题问在开头，而不是留成一个事后再说的设置项。
+新房间自带项目的默认队友。要让别的队友也参与，在房间顶部的名册里添加它，和添加一个人是同一个动作；不再需要它时同样从名册里移出。一个房间里可以坐好几个队友，各自记各自的，谁被 @ 到谁回答。
 
-## 用什么模型、用什么运行方式 {#runtime}
+## 用什么模型 {#runtime}
 
-新建或修改队友时有两个下拉：**运行方式**和**模型**。运行方式决定这个队友是由哪个 agent 驱动的——Claude Code、Codex 还是 pi；模型是它背后调用的那个大模型。
+Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
 
-先选运行方式，模型列表会跟着筛：不是每个运行方式都能驱动每个模型，选定之后剩下的就是真能用的那些。换运行方式时已经挑好的模型会保留，除非新的运行方式确实驱动不了它。
-
-两个都只影响这一个队友，从**下一轮**开始生效，它已经攒下的记忆不受影响。
+Project creation includes naming its first AI teammate, with random-name suggestions; more teammates can be added later.

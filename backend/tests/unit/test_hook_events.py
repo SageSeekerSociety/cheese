@@ -6,6 +6,7 @@ import pytest
 
 from app.domain.agent.harness.claude_code.hook_events import (
     RECORDED_AT_KEY,
+    THREAD_LABEL_KEY,
     HookRouter,
     MessageAssembler,
     translate_hook,
@@ -112,9 +113,17 @@ def test_unknown_event_is_dropped():
 
 # --- subagents: one session, several workers -------------------------------
 #
-# Payload shapes below are the ones a real claude sends (2.1.224), field for
+# Payload shapes below are the ones a real claude sends (2.1.278), field for
 # field. A hook we mis-read is not a crash — it is a subagent's work quietly
 # filed under the wrong worker, or under nobody.
+#
+# `translate_hook` reads the label off the key the stream stamped: none of
+# these payloads carries one of its own, which is what `SubThreads` exists to
+# work around. The tests that drive that are further down, through
+# `MessageAssembler.translate`.
+
+#: A card's label, as the platform mints it.
+_LABEL = "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
 
 _SUBAGENT_START = {
     "hook_event_name": "SubagentStart",
@@ -144,21 +153,21 @@ _SUBAGENT_STOP = {
 
 
 def test_subagent_start_names_the_worker():
-    ev = translate_hook(_SUBAGENT_START)
+    ev = translate_hook({**_SUBAGENT_START, THREAD_LABEL_KEY: _LABEL})
     assert isinstance(ev, AgentSubagentStart)
     assert ev.agent_id == "a8a5aea3b68767861"
-    assert ev.agent_type == "general-purpose"
+    assert ev.thread_label == _LABEL
     assert ev.session_id == "s1"
 
 
 def test_subagent_stop_carries_the_answer_home():
     """一个分身的收尾话只到派它的那个线程，跟着容器的 transcript 一起没。
     平台唯一能拿到它的时刻就是这条钩子。"""
-    ev = translate_hook(_SUBAGENT_STOP)
+    ev = translate_hook({**_SUBAGENT_STOP, THREAD_LABEL_KEY: _LABEL})
     assert isinstance(ev, AgentSubagentStop)
     assert ev.agent_id == "a8a5aea3b68767861"
     assert ev.text == "查完了：三条结论都成立。"
-    assert ev.agent_type == "general-purpose"
+    assert ev.thread_label == _LABEL
     assert ev.transcript_path == "/home/u/.claude/projects/w/sub.jsonl"
     assert ev.session_id == "s1"
 
@@ -182,15 +191,14 @@ def test_a_subagent_with_no_id_is_dropped(event_name, bad_id):
     assert translate_hook(hook) is None
 
 
-def test_the_main_thread_is_the_absence_of_an_id():
-    """主线程的钩子根本没有 agent_id 这个 key（不是 null，是没有），所以
-    「没有 id」就是「会话自己」——不需要再去别处对账。"""
+def test_the_main_thread_is_the_absence_of_a_label():
+    """主线程的钩子根本没有这个 key（不是 null，是没有），所以「没有标识」
+    就是「会话自己」——不需要再去别处对账。"""
     ev = translate_hook(
         {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
     )
     assert isinstance(ev, AgentToolUse)
-    assert ev.agent_id is None
-    assert ev.agent_type is None
+    assert ev.thread_label is None
 
 
 def test_tool_use_from_a_subagent_says_whose_it_is():
@@ -200,15 +208,15 @@ def test_tool_use_from_a_subagent_says_whose_it_is():
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "agent_id": "a8a5aea3b68767861",
-            "agent_type": "Explore",
+            THREAD_LABEL_KEY: _LABEL,
         }
     )
     assert isinstance(ev, AgentToolUse)
-    assert (ev.agent_id, ev.agent_type) == ("a8a5aea3b68767861", "Explore")
+    assert ev.thread_label == _LABEL
 
 
 def test_tool_result_from_a_subagent_says_whose_it_is():
-    """分身自己也能再派分身；id 说的是「谁派的这一次」，也就是发出这条工具调用
+    """分身自己也能再派分身；标识说的是「谁派的这一次」，也就是发出这条工具调用
     的那个线程。"""
     ev = translate_hook(
         {
@@ -216,30 +224,157 @@ def test_tool_result_from_a_subagent_says_whose_it_is():
             "tool_name": "Task",
             "tool_response": "done",
             "agent_id": "outer-agent",
-            "agent_type": "general-purpose",
+            THREAD_LABEL_KEY: _LABEL,
         }
     )
     assert isinstance(ev, AgentToolResult)
-    assert (ev.agent_id, ev.agent_type) == ("outer-agent", "general-purpose")
+    assert ev.thread_label == _LABEL
 
 
 def test_message_and_stop_from_a_subagent_say_whose_they_are():
     message = translate_hook(
-        {"hook_event_name": "MessageDisplay", "delta": "干完了", "agent_id": "w1"}
+        {
+            "hook_event_name": "MessageDisplay",
+            "delta": "干完了",
+            "agent_id": "w1",
+            THREAD_LABEL_KEY: _LABEL,
+        }
     )
     assert isinstance(message, AgentMessage)
-    assert message.agent_id == "w1"
+    assert message.thread_label == _LABEL
 
     result = translate_hook(
         {
             "hook_event_name": "Stop",
             "last_assistant_message": "ok",
             "agent_id": "w1",
-            "agent_type": "general-purpose",
+            THREAD_LABEL_KEY: _LABEL,
         }
     )
     assert isinstance(result, AgentResult)
-    assert (result.agent_id, result.agent_type) == ("w1", "general-purpose")
+    assert result.thread_label == _LABEL
+
+
+# --- which card a sub-thread is on ------------------------------------------
+#
+# 起子 agent 的那次调用是唯一说得出「哪张卡」的地方——子线程自己的 payload 上
+# 没有一个字段装得下（`SubThreads` 的 docstring 记了实测到的每一条）。所以下面
+# 喂的是 2.1.278 真的那串顺序：Agent 的 `PreToolUse` 先带着 prompt 到，
+# `SubagentStart` 第一次说出 `agent_id`，同一次调用的 `PostToolUse` 用
+# `tool_response.agentId` 把两者对上。
+
+
+def _spawn(event: str, *, call: str = "c1", prompt: str = "", worker: str = "") -> dict:
+    """父线程起一个子 agent 的那次工具调用。"""
+    hook = {
+        "hook_event_name": event,
+        "tool_name": "Agent",
+        "tool_use_id": call,
+        "tool_input": {"description": "查一下分页", "prompt": prompt},
+    }
+    if event == "PostToolUse":
+        response = {"status": "running"}
+        if worker:
+            response["agentId"] = worker
+        hook["tool_response"] = response
+    return hook
+
+
+def _worker(event: str, worker: str, **extra) -> dict:
+    """子线程自己的一条 hook：只有 `agent_id` 和骨架自带的那个种类名。"""
+    return {
+        "hook_event_name": event,
+        "agent_id": worker,
+        "agent_type": "general-purpose",
+        **extra,
+    }
+
+
+def test_a_sub_threads_whole_run_carries_the_card_its_spawn_named():
+    """开工、干活、交回，三类事件都带着卡的标识——而标识只说过一次，在 prompt 里。"""
+    asm = MessageAssembler()
+    brief = f"简报：查一下分页。线程标识：{_LABEL}"
+    events = []
+    for hook in (
+        _spawn("PreToolUse", prompt=brief),
+        _worker("SubagentStart", "w1"),
+        _spawn("PostToolUse", prompt=brief, worker="w1"),
+        _worker(
+            "PreToolUse", "w1", tool_name="Bash", tool_input={"command": "pytest -q"}
+        ),
+        _worker("SubagentStop", "w1", last_assistant_message="查完了"),
+    ):
+        events += asm.translate(hook)
+    # 第一条是父线程自己那次调用，它属于房间。
+    assert [e.thread_label for e in events] == [None, _LABEL, _LABEL, _LABEL]
+
+
+def test_a_sub_thread_nobody_spawned_here_stays_on_the_rooms_line():
+    """骨架自己起的子 agent（`Explore` 这种）没有谁给过它标识，落回房间线上。"""
+    asm = MessageAssembler()
+    events = asm.translate(_worker("SubagentStart", "internal-1"))
+    assert [e.thread_label for e in events] == [""]
+
+
+def test_a_spawn_with_no_label_in_its_prompt_binds_nothing():
+    """prompt 里没写标识，就没有归属可言——不是猜一个最近的卡。"""
+    asm = MessageAssembler()
+    events = []
+    for hook in (
+        _spawn("PreToolUse", prompt="去把那个查了"),
+        _worker("SubagentStart", "w1"),
+        _spawn("PostToolUse", prompt="去把那个查了", worker="w1"),
+        _worker("PreToolUse", "w1", tool_name="Bash", tool_input={}),
+    ):
+        events += asm.translate(hook)
+    assert [e.thread_label for e in events] == [None, "", None]
+
+
+def test_two_spawns_in_flight_are_paired_by_the_tools_own_answer():
+    """两条一起在飞的时候，开工那条宁可认不出，也不能认错。
+
+    谁先开工不是这个骨架给的保证，所以排队认领只在队里只有一个的时候做；两个
+    的时候两条开工事件落回房间线上，随后那次调用的返回值把 `agentId` 和卡对上，
+    后面每一条又各归各的。认错的代价是一张卡的活记在另一张上，那是没人看得出来
+    的错。
+    """
+    asm = MessageAssembler()
+    other = f"work-{'a' * 32}"
+    events = []
+    for hook in (
+        _spawn("PreToolUse", call="c1", prompt=f"甲：{_LABEL}"),
+        _spawn("PreToolUse", call="c2", prompt=f"乙：{other}"),
+        _worker("SubagentStart", "w2"),
+        _worker("SubagentStart", "w1"),
+        _spawn("PostToolUse", call="c1", prompt=f"甲：{_LABEL}", worker="w1"),
+        _spawn("PostToolUse", call="c2", prompt=f"乙：{other}", worker="w2"),
+        _worker("PreToolUse", "w1", tool_name="Bash", tool_input={}),
+        _worker("PreToolUse", "w2", tool_name="Bash", tool_input={}),
+    ):
+        events += asm.translate(hook)
+    assert [e.thread_label for e in events] == [
+        None,
+        None,
+        "",
+        "",
+        _LABEL,
+        other,
+    ]
+
+
+def test_a_spawn_that_never_started_does_not_hand_its_card_to_the_next_worker():
+    """起失败的那次只留下一条 `PreToolUse`（用一个不存在的类型起子 agent 就是
+    这样，2.1.278 实测），它排下的标识在本轮结束时作废。留着，下一个开工的子
+    线程会把它认走，于是一张卡的活记在另一张卡上。"""
+    asm = MessageAssembler()
+    events = []
+    for hook in (
+        _spawn("PreToolUse", prompt=f"简报：{_LABEL}"),
+        {"hook_event_name": "Stop", "last_assistant_message": "起不来"},
+        _worker("SubagentStart", "internal-1"),
+    ):
+        events += asm.translate(hook)
+    assert events[-1].thread_label == ""
 
 
 def test_camelcase_event_name_alias():
@@ -283,7 +418,7 @@ async def test_router_delivers_between_platform_requests():
 #
 # Claude Code fires MessageDisplay once per batch of newly completed lines
 # while an assistant message streams (payload verified live against 2.1.224,
-# 2.1.233 and 2.1.261, the pinned device version): `message_id` is stable across the
+# 2.1.233 and 2.1.261, the device pin at the time): `message_id` is stable across the
 # message's flushes, `index` increments per flush, exactly one flush carries
 # `final: true`, and concatenating the deltas in index order reconstructs the
 # message verbatim.
@@ -318,14 +453,14 @@ def test_multi_flush_message_coalesces_into_one_event():
 def test_a_streamed_message_still_says_which_worker_said_it():
     """流式拼装是分身发言真正走的那条路——`translate_hook` 那条分支只在没有
     flush 字段的老 payload 上生效。标签必须穿过拼装层活下来，否则整条回复出来
-    的时候没有主语，按 agent_id 归卡就永远漏掉分身说的话。"""
+    的时候没有主语，归卡就永远漏掉分身说的话。"""
     asm = MessageAssembler()
-    sub = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    sub = {"agent_id": "worker-1", THREAD_LABEL_KEY: _LABEL}
     assert asm.add({**_flush("m1", 0, "查到三处\n", eid="e0"), **sub}) is None
     ev = asm.add({**_flush("m1", 1, "都在同一个文件里", final=True, eid="e1"), **sub})
     assert isinstance(ev, AgentMessage)
     assert ev.text == "查到三处\n都在同一个文件里"
-    assert (ev.agent_id, ev.agent_type) == ("worker-1", "general-purpose")
+    assert ev.thread_label == _LABEL
 
 
 def test_a_streamed_message_from_the_session_itself_has_no_worker():
@@ -333,19 +468,19 @@ def test_a_streamed_message_from_the_session_itself_has_no_worker():
     assert asm.add(_flush("m1", 0, "先看代码。\n", eid="e0")) is None
     ev = asm.add(_flush("m1", 1, "再跑测试。", final=True, eid="e1"))
     assert isinstance(ev, AgentMessage)
-    assert (ev.agent_id, ev.agent_type) == (None, None)
+    assert ev.thread_label is None
 
 
 def test_a_later_flush_cannot_unname_the_worker():
     """乱序到达是常态（补录的 spool 文件会落在后面的 flush 之后）。第一条报出
-    名字的 flush 说了算，后面缺这个 key 的 flush 不能把它抹掉——否则同一条消息
+    标识的 flush 说了算，后面缺这个 key 的 flush 不能把它抹掉——否则同一条消息
     归谁，取决于哪条 flush 碰巧先被处理。"""
     asm = MessageAssembler()
-    named = {"agent_id": "worker-1", "agent_type": "general-purpose"}
+    named = {"agent_id": "worker-1", THREAD_LABEL_KEY: _LABEL}
     assert asm.add({**_flush("m1", 0, "前半句 ", eid="e0"), **named}) is None
     ev = asm.add(_flush("m1", 1, "后半句", final=True, eid="e1"))
     assert isinstance(ev, AgentMessage)
-    assert ev.agent_id == "worker-1"
+    assert ev.thread_label == _LABEL
 
 
 def test_a_drained_partial_keeps_the_worker_it_belonged_to():
@@ -356,13 +491,11 @@ def test_a_drained_partial_keeps_the_worker_it_belonged_to():
         {
             **_flush("m1", 0, "只说了一半", eid="e0"),
             "agent_id": "worker-1",
-            "agent_type": "Explore",
+            THREAD_LABEL_KEY: _LABEL,
         }
     )
     drained = asm.drain()
-    assert [(m.text, m.agent_id, m.agent_type) for m in drained] == [
-        ("只说了一半", "worker-1", "Explore")
-    ]
+    assert [(m.text, m.thread_label) for m in drained] == [("只说了一半", _LABEL)]
 
 
 def test_single_flush_final_message_passes_through():

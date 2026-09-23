@@ -54,11 +54,18 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     arguments = {
         "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
-        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
+        "cheese_deliver_at": {"at": "2026-09-21T14:00:00+00:00", "content": "look"},
+        "cheese_machine": {"profile": "cloud", "device_id": None},
+        "cheese_note": {"thread": "other-thread", "content": "note"},
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
-        "cheese_gh_token": {},
+        "cheese_feedback_propose": {
+            "title": "listing came back short",
+            "kind": "bug",
+            "visibility": "team",
+            "user_said": "用户没有就这个问题说过话",
+        },
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -68,17 +75,51 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_tell": {"target": "task", "message": "update"},
         "cheese_title": {"text": "title", "task": None},
     }
-    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    # 平台 MCP 上那六样里的每一个 `cheese_*` 都要有计划：没有计划的那一个，
+    # 会话侧打不出去，而它恰恰是机器离线时唯一还能用的那一批（结论 21）。
+    platform = {t for t in cli.PLATFORM_TOOLS.names() if t.startswith("cheese_")}
+    assert platform <= set(arguments), platform - set(arguments)
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
     }
-    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert all(plan["method"] in {"GET", "POST", "PUT"} for plan in plans.values())
     assert plans["cheese_decision"] == {
         "method": "POST",
         "path": "/topics/room/decision",
         "body": {"decision": "chosen"},
     }
     assert plans["cheese_milestone"]["body"]["due_date"] == ("2026-09-14T00:00:00Z")
+
+
+def test_everyone_outranks_the_private_chats_personal_memory():
+    """私聊里的 `remember --everyone` 写的是文档，不是对这一位的个人记忆。
+
+    说了「所有人」，就不是只记给眼前这一位看的。两路的差别在发出去的那一刻就定
+    了：写错的那一条落进只有这条会话读得到的池子，没人会发现它本该在总览文档里。
+    """
+    cli = _load()
+    env = {
+        "CHEESE_TOPIC": "room",
+        "CHEESE_PROJECT": "project",
+        "CHEESE_MEMORY_SCOPE": "personal",
+        "CHEESE_OWNER": "alice",
+    }
+
+    everyone = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": True}, env
+    )
+    assert everyone["body"] == {"content": "x", "topic": "room", "scope": "everyone"}
+
+    # 对照：同一个私聊里不说「所有人」的那一条，照旧是对 alice 的个人记忆。
+    personal = cli.request_plan(
+        "cheese_remember", {"fact": "x", "core": False, "everyone": False}, env
+    )
+    assert personal["body"] == {
+        "content": "x",
+        "topic": "room",
+        "scope": "user",
+        "owner": "alice",
+    }
 
 
 def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
@@ -89,7 +130,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     monkeypatch.chdir(folder)
     monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "report.html"])
     calls = []
     monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
 
@@ -98,7 +139,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     assert calls == [
         (
             "POST",
-            "/topics/room/artifact",
+            "/topics/room/shown",
             {
                 "path": "site/report.html",
                 "as": "html",
@@ -120,7 +161,7 @@ def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     cli.main()
     assert calls == [["sh", "/preview-up", "5173"]]
     assert api_calls == [
-        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+        ("POST", "/topics/room/shown", {"path": "Vue dev server", "as": "app"})
     ]
 
 
@@ -343,6 +384,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
             "最懂",
             "--subject",
             "fix(accept): require a commit subject",
+            "--artifact",
+            "结题报告",
         ],
     )
 
@@ -352,6 +395,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     assert call["p"] == "/topics/t-1/tasks/task-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
     assert call["d"]["reviewer_handle"] == "alice"
+    # 交付说明本次更新的是哪一项产物 (#1085 结论三)。
+    assert call["d"]["artifact"] == "结题报告"
 
 
 def test_ready_never_syncs_creates_a_card_or_merges(monkeypatch):
@@ -394,7 +439,7 @@ def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
     monkeypatch.setattr(
         cli.sys,
         "argv",
-        ["cheese", "accept-request", "--subject", "fix(x): y"],
+        ["cheese", "accept-request", "--subject", "fix(x): y", "--artifact", "报告"],
     )
 
     cli.main()
@@ -470,78 +515,10 @@ class _FakeHTTPResponse:
         return False
 
 
-def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
-    monkeypatch.setattr(
-        cli.urllib.request,
-        "urlopen",
-        lambda _req, timeout=None: _FakeHTTPResponse(
-            {
-                "data": {
-                    "token": "ghs_x",
-                    "repo": "acme/widgets",
-                    "expires_at": "2026-08-12T10:00:00Z",
-                    "permissions": permissions,
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "gh-token"])
-    cli.main()
-
-
-def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsys):
-    """The whole point of widening the token: the agent has to LEARN it can
-    read an issue, or it goes on asking a human to paste the body in."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: read, issues: read, "
-        "metadata: read, pull_requests: read",
-    )
-
-    out, err = capsys.readouterr()
-    assert out.strip() == "ghs_x"  # stdout stays token-only for $(...)
-    assert "repos/acme/widgets/issues/<n>" in err
-    assert "repos/acme/widgets/pulls/<n>" in err
-    assert "repos/acme/widgets/contents/<path>" in err
-
-
-def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, capsys):
-    """Same lesson one step further along. Reading what it may do is only half
-    the job — an agent that can push and open its own PR but was never shown
-    the two commands hands the last step back to a human, which is exactly the
-    stall the read-only token used to cause."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: write, metadata: read, "
-        "pull_requests: write, workflows: write",
-    )
-
-    _out, err = capsys.readouterr()
-    assert "cheese sync" in err
-    assert "cheese push-fix" in err
-    assert "x-access-token:" not in err
-    assert "gh api repos/acme/widgets/pulls -f head=" not in err
-
-
-def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
-    """An advertised recipe that 403s is worse than no recipe — it burns a turn
-    and teaches the agent the wrong lesson about what it may do. A read-level
-    grant is one of those: `contents: read` must not produce a push recipe."""
-    cli = _load()
-    _run_gh_token(
-        cli, monkeypatch, "actions: read, checks: read, contents: read, metadata: read"
-    )
-
-    _out, err = capsys.readouterr()
-    assert "issues/<n>" not in err
-    assert "pulls/<n>" not in err
-    assert "git push" not in err
-    assert "check-runs" in err  # what it CAN do is still spelled out
-    assert "contents: read" in err
+def test_token_export_command_is_not_exposed():
+    with pytest.raises(SystemExit) as error:
+        _load().build_parser().parse_args(["gh-token"])
+    assert error.value.code == 2
 
 
 def _is_subparsers(action):
@@ -655,3 +632,181 @@ def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, caps
     cli.main()
 
     assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]
+
+
+def test_feedback_propose_refuses_locally_when_there_is_no_topic():
+    """`cheese feedback propose` posts to `/topics/{topic}/feedback-proposals`.
+
+    With nothing in `CHEESE_TOPIC` that path is `/topics//feedback-proposals`,
+    which the server answers 404 — and the CLI then reports *the command* as
+    having failed, exit code 1, with the server's 「话题不存在」 as the reason
+    (`_call` exits on any non-2xx). The refusal belongs where the missing thing
+    is known: here, before the request, naming the variable that is empty.
+
+    Both halves asserted: the refusal, and the path it guards. A guard that also
+    broke the working case would otherwise read as a passing test.
+    """
+    cli = _load()
+    args = {
+        "title": "沙箱里 make 装不上依赖",
+        "kind": "bug",
+        "visibility": "public",
+        "user_said": "用户没有就这个问题说过话",
+    }
+
+    with pytest.raises(ValueError, match="Missing CHEESE_TOPIC"):
+        cli.request_plan("cheese_feedback_propose", args, {"CHEESE_PROJECT": "p"})
+
+    plan = cli.request_plan(
+        "cheese_feedback_propose",
+        args,
+        {"CHEESE_TOPIC": "room", "CHEESE_PROJECT": "p"},
+    )
+    assert plan["method"] == "POST"
+    assert plan["path"] == "/topics/room/feedback-proposals"
+    assert plan["body"]["title"] == "沙箱里 make 装不上依赖"
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (True, "便条已递给那条线程。"),
+        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+    ],
+)
+def test_note_says_whether_anyone_caught_it(monkeypatch, capsys, delivered, expected):
+    """`delivered` 是这条工具的答案本身，不是一个可以丢掉的状态码。
+
+    便条直接进那条线程正在跑的那一轮，那边这一刻没在跑就没人接住。一律打「已递」
+    的话，用 Bash 调这条命令的那条线程会当作对面已经知道了往下走 —— 而那句话其实
+    掉在地上了，两边都不会有人再提起它。
+    """
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "note", "other-thread", "看一眼 CI"]
+    )
+    monkeypatch.setattr(
+        cli, "_call", lambda *args, **kwargs: {"data": {"delivered": delivered}}
+    )
+
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_the_feedback_tool_says_when_to_use_it():
+    """这个工具**唯一的说明就是那段文字**，所以触发时机必须出现在模型读到的工具说明里。
+
+    这里钉的是一次真事故：四条触发时机原来写在 `feedback` 那个**父** parser 的
+    `description` 上，而翻 argparse 树的那条路（`cli_worker._tools()`：
+    `leaf.description or leaf.format_usage()`）只产出**叶子** —— 于是那段字一个字都
+    没到过模型。工具建好了、流程接好了、限流也在，而模型从来不知道什么时候该用它。
+
+    两条发现路径各读一处，所以要两边都断言，断言的是**模型实际读到的那一份**：
+
+    * **会话侧那张常量表**（`PLATFORM_TOOLS`）—— claude_code 读的是它（结论 21：表在
+      会话层，机器离线时它也在）。
+    * **`_tools()` 从 argparse 树翻出来的工具说明** —— pi 在机器上生成 catalog、codex
+      从执行器的 `native` 服务器发现，两条都读这里。注意不是裸的 `leaf.description`：
+      `_tools()` 会把祖先 parser 的 description 拼上去，那才是工具 schema 里的字面。
+
+    只改一处的话，模型看到的是两种说法里的随机一种，而且**是哪个取决于它跑在哪个
+    harness 上** —— 那种 bug 只有对着某一个 harness 复现得出来。
+    """
+    from app.domain.agent import cli_worker
+
+    cli = _load()
+
+    from_table = next(
+        tool
+        for tool in cli.PLATFORM_TOOLS.schemas()
+        if tool["name"] == "cheese_feedback_propose"
+    )["description"]
+
+    from_tree = next(
+        tool["description"]
+        for tool in cli_worker._tools(cli.build_parser())
+        if tool["name"] == "cheese_feedback_propose"
+    )
+
+    assert from_table, "会话侧那张表里没有这一条"
+    assert from_tree, "argparse 树翻出来的工具说明里没有这一条"
+
+    for description in (from_table, from_tree):
+        # 什么时候该提（四条触发时机里至少要能读出这些）。
+        assert "反复失败" in description
+        # 什么时候不该提 —— 「平台坏了」和「用户不会用」之间那句话。
+        assert "用户的使用方式" in description
+        # 不要打断：这条卡是提案，不是发布。
+        assert "中途" in description
+
+
+def test_sync_agents_writes_and_prunes_teammate_definitions(monkeypatch, tmp_path):
+    """活跃队友各得一份 mate-<handle>.md（名字、一句话描述、model）；退休的
+    被清掉；不是它写的 agent 文件一个不动。"""
+    cli = _load()
+    monkeypatch.setattr(cli, "PROJECT", "proj")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def request(method, path, body=None, **kwargs):
+        assert (method, path) == ("GET", "/projects/proj/agents")
+        return {
+            "data": {
+                "data": [
+                    {
+                        "handle": "cheese",
+                        "display_name": "芝士",
+                        "is_active": True,
+                        "type_name": None,
+                        "configuration": {"body": "你是主芝士。", "model": None},
+                    },
+                    {
+                        "handle": "spark",
+                        "display_name": "Spark",
+                        "is_active": True,
+                        "type_name": "coder",
+                        "configuration": {"body": "", "model": "glm-4.6"},
+                    },
+                    {
+                        "handle": "old",
+                        "display_name": "Old",
+                        "is_active": False,
+                        "type_name": None,
+                        "configuration": {"model": "sonnet"},
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "mate-old.md").write_text("stale")
+    (agents / "keep.md").write_text("someone else's file")
+    cli.main()
+    spark = (agents / "mate-spark.md").read_text()
+    assert "name: spark" in spark
+    assert "model: glm-4.6" in spark
+    assert "Spark（模型 glm-4.6） · coder" in spark
+    main_def = (agents / "mate-cheese.md").read_text()
+    assert "model: inherit" in main_def
+    assert "你是主芝士。" in main_def
+    assert not (agents / "mate-old.md").exists()
+    assert (agents / "keep.md").read_text() == "someone else's file"
+
+
+def test_sync_agents_never_breaks_the_session(monkeypatch, tmp_path, capsys):
+    """它只是发现层（闸在准入）：后端够不着时打一行警告，恒退出 0。"""
+    cli = _load()
+    monkeypatch.setattr(cli, "PROJECT", "proj")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def boom(method, path, body=None, **kwargs):
+        raise RuntimeError("backend unreachable")
+
+    monkeypatch.setattr(cli, "_call", boom)
+    cli.main()
+    assert "sync-agents 跳过" in capsys.readouterr().err

@@ -6,8 +6,9 @@ from urllib.parse import quote
 
 import aiofiles
 import aiofiles.os
-from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, UploadFile
 
+from app.api.conditional import if_none_match_hits
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -62,12 +63,24 @@ async def _read_avatar_file(avatar_id: int) -> bytes | None:
 
 
 def _stored_avatar_response(
-    content: bytes, *, name: str, created_at: datetime | None
+    content: bytes,
+    *,
+    name: str,
+    created_at: datetime | None,
+    if_none_match: str | None = None,
 ) -> Response:
     """Build the cacheable response for an avatar we actually have on disk.
 
     The one-year ``max-age`` lives here and only here: a client that caches a
     placeholder or an error for a year cannot be fixed by fixing the server.
+
+    ``If-None-Match`` is answered with **304**, and that is the whole point of
+    sending an ``ETag`` at all. The header was computed and returned for a long
+    time while nothing ever read it back, so a client that did revalidate (hard
+    reload, empty cache eviction, a new device with a shared cache) was sent the
+    bytes again every time — the ETag was decoration. The file is read either
+    way, because the tag *is* the hash of the bytes: not reading it would mean
+    answering "unchanged" for a file we never looked at.
     """
     etag = hashlib.md5(content).hexdigest()
     last_modified = (
@@ -75,14 +88,19 @@ def _stored_avatar_response(
         if created_at
         else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
     )
+    cache_headers = {
+        "Cache-Control": "public, max-age=31536000",
+        "ETag": f'"{etag}"',
+        "Last-Modified": last_modified,
+    }
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
     return Response(
         content=content,
         media_type=_sniff_media_type(content),
         headers={
-            "Cache-Control": "public, max-age=31536000",
+            **cache_headers,
             "Content-Disposition": f"inline; filename*=UTF-8''{quote(name, safe='')}",
-            "ETag": f'"{etag}"',
-            "Last-Modified": last_modified,
         },
     )
 
@@ -142,6 +160,7 @@ async def get_available_avatars(
 )
 async def get_default_avatar(
     service: AvatarService = Depends(get_avatar_service),
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     avatar = await service.get_default_raw()
     if avatar is None:
@@ -155,7 +174,10 @@ async def get_default_avatar(
         )
 
     return _stored_avatar_response(
-        content, name=avatar.name, created_at=avatar.created_at
+        content,
+        name=avatar.name,
+        created_at=avatar.created_at,
+        if_none_match=if_none_match,
     )
 
 
@@ -190,6 +212,7 @@ async def get_predefined_avatar_ids(
 async def get_avatar_by_id(
     avatar_id: Annotated[int, Path(ge=0)],
     service: AvatarService = Depends(get_avatar_service),
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     avatar = await service.get_avatar_raw(avatar_id)
     if avatar is None:
@@ -202,5 +225,8 @@ async def get_avatar_by_id(
         )
 
     return _stored_avatar_response(
-        content, name=avatar.name, created_at=avatar.created_at
+        content,
+        name=avatar.name,
+        created_at=avatar.created_at,
+        if_none_match=if_none_match,
     )

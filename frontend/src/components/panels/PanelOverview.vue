@@ -50,33 +50,38 @@ defineExpose({
 
 <template>
   <div class="panel-overview">
-    <PanelCard
-      v-if="props.openCardId"
-      :room-id="props.topic?.id ?? null"
-      :card-id="props.openCardId"
-      :active="props.active"
-      :refresh-tick="props.refreshTick"
-      @back="emit('open-card', null)"
-      @review="emit('review')"
-    />
-    <template v-else>
-      <TaskProgress
-        :topic="props.topic"
+    <!-- 钻进一张卡 / 退回看板是同一处的一层往下、一层往上：进去的那一层从右边进，
+         退回来的从左边进，0.2s。走掉的那一层不演，直接让位。 -->
+    <Transition :name="props.openCardId ? 'drill-in' : 'drill-out'">
+      <PanelCard
+        v-if="props.openCardId"
+        key="card"
+        :room-id="props.topic?.id ?? null"
+        :card-id="props.openCardId"
         :active="props.active"
         :refresh-tick="props.refreshTick"
-        @open-card="emit('open-card', $event)"
+        @back="emit('open-card', null)"
+        @review="emit('review')"
       />
-      <PanelDoc
-        ref="docRef"
-        class="panel-overview__doc"
-        :topic="props.topic"
-        :activity-tick="props.activityTick"
-        :topic-list="props.topicList"
-        @open-topic="emit('open-topic', $event)"
-        @mention-click="emit('mention-click', $event)"
-        @open-file="emit('open-file', $event)"
-      />
-    </template>
+      <div v-else key="board" class="panel-overview__board">
+        <TaskProgress
+          :topic="props.topic"
+          :active="props.active"
+          :refresh-tick="props.refreshTick"
+          @open-card="emit('open-card', $event)"
+        />
+        <PanelDoc
+          ref="docRef"
+          class="panel-overview__doc"
+          :topic="props.topic"
+          :activity-tick="props.activityTick"
+          :topic-list="props.topicList"
+          @open-topic="emit('open-topic', $event)"
+          @mention-click="emit('mention-click', $event)"
+          @open-file="emit('open-file', $event)"
+        />
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -94,6 +99,29 @@ defineExpose({
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+/* 看板 + 文档那一层。它以前是一个 <template>，现在要当 Transition 的那一个子元素，
+   所以得是个盒子——盒子自己照原来的纵向排法摆它的两个孩子。 */
+.panel-overview__board {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.drill-in-enter-active,
+.drill-out-enter-active {
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+.drill-in-enter-from {
+  transform: translateX(16px);
+  opacity: 0;
+}
+.drill-out-enter-from {
+  transform: translateX(-16px);
+  opacity: 0;
 }
 .panel-overview__doc {
   flex: 1 1 auto;

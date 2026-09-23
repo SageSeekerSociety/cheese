@@ -48,19 +48,19 @@ export default createVuetify({
           // Accent (amber) — primary actions only.
           primary: '#F57F17',
           // Neutral surfaces / text mapped to the token ramp.
-          secondary: '#6A6E76', // --muted (neutral, NOT sky blue)
+          secondary: '#5A5E66', // --muted (neutral, NOT sky blue)
           background: '#F7F8FA', // --canvas
           surface: '#FFFFFF', // --surface
           'surface-light': '#F4F5F7', // --fill
           'surface-bright': '#FFFFFF',
           'surface-variant': '#EEEFF1', // --fill-2
-          'on-surface-variant': '#6A6E76',
+          'on-surface-variant': '#5A5E66',
           'page-background': '#F7F8FA',
           // Status — real status only.
           success: '#1F9D55', // --ok (also the green merge button)
           warning: '#E8901C', // --warn
           error: '#DC2626', // --danger
-          info: '#6A6E76',
+          info: '#5A5E66',
           // Neutral ink for text.
           'on-surface': '#36383C', // --text
           'on-background': '#36383C',
@@ -88,18 +88,18 @@ export default createVuetify({
         dark: true,
         colors: {
           primary: '#FFA733', // --accent (lightened: #F57F17 is 3.1:1 here)
-          secondary: '#9CA2AB', // --muted
+          secondary: '#AEB4BD', // --muted
           background: '#141517', // --canvas
           surface: '#1B1D20', // --surface
           'surface-light': '#212429', // --fill
           'surface-bright': '#282C31', // --fill-2 (brighter than surface, not white)
           'surface-variant': '#282C31', // --fill-2
-          'on-surface-variant': '#9CA2AB',
+          'on-surface-variant': '#AEB4BD',
           'page-background': '#141517',
           success: '#3FBF7F', // --ok
           warning: '#F0A94A', // --warn
           error: '#F0625C', // --danger
-          info: '#9CA2AB',
+          info: '#AEB4BD',
           'on-surface': '#D3D6DB', // --text
           'on-background': '#D3D6DB',
           'logo-primary': '#F9B233',
@@ -153,8 +153,8 @@ export default createVuetify({
     // one. `hideDetails: 'auto'` drops that row whenever a field happens to have
     // no hint, error or counter, which is most fields — so two plain fields stack
     // flush and the lower one's label lands on the upper one's bottom border.
-    // That shipped: 「运行方式」and「模型」in the AI-teammate dialog both sat on the
-    // border of the field above them.
+    // That shipped: stacked selects in the AI-teammate dialog sat on the border
+    // of the field above them.
     // Compact call sites (toolbar search, inline filters, chat composer) say
     // `hide-details` explicitly and are unaffected — 66 of the 149 fields in the
     // tree already do, which is why the default was never the thing holding them

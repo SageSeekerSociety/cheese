@@ -76,7 +76,7 @@
               variant="outlined"
               :rules="usernameRules"
               class="mb-4"
-              hint="3-20个字符，字母开头，可包含字母、数字、下划线、连字符"
+              hint="4-32个字符，可包含字母、数字、下划线、连字符"
               persistent-hint
             />
 
@@ -91,6 +91,18 @@
               class="mb-4"
               hint="1-50个字符，显示名称"
               persistent-hint
+            />
+
+            <v-text-field
+              v-if="requireInviteCode"
+              id="field-createInviteCode"
+              v-model="createInviteCode"
+              autocomplete="off"
+              name="createInviteCode"
+              :label="t('account.invitationCode')"
+              variant="outlined"
+              :rules="inviteCodeRules"
+              class="mb-4"
             />
 
             <!-- 密码选项 -->
@@ -142,6 +154,7 @@
             color="primary"
             size="large"
             :loading="creating"
+            :disabled="!registrationConfigReady"
             style="text-transform: none; font-weight: 500; height: 48px"
             class="mb-4"
           >
@@ -161,7 +174,7 @@
               name="bindUsername"
               label="用户名"
               variant="outlined"
-              :rules="usernameRules"
+              :rules="bindUsernameRules"
               class="mb-4"
               @input="debouncedCheckAuthMethods(bindUsername)"
             />
@@ -230,7 +243,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { debounce } from 'lodash-es'
 
+import { REGEX_USERNAME } from '@/utils/form'
+
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
 
@@ -247,6 +264,9 @@ const createNickname = ref('')
 const setPassword = ref(false)
 const createPassword = ref('')
 const confirmPassword = ref('')
+const createInviteCode = ref('')
+const requireInviteCode = ref(false)
+const registrationConfigReady = ref(false)
 
 // Bind form fields
 const bindUsername = ref('')
@@ -265,13 +285,18 @@ const bindFormRef = ref()
 // Validation rules
 const usernameRules = [
   (v: string) => !!v || '请输入用户名',
-  (v: string) => /^[a-zA-Z][a-zA-Z0-9_-]{2,19}$/.test(v) || '用户名格式不正确',
+  (v: string) => REGEX_USERNAME.test(v) || '用户名格式不正确',
 ]
+
+// Binding names an account that already exists, so only presence is checked.
+const bindUsernameRules = [(v: string) => !!v || '请输入用户名']
 
 const nicknameRules = [
   (v: string) => !!v || '请输入昵称',
   (v: string) => (v.length >= 1 && v.length <= 50) || '昵称长度应为1-50个字符',
 ]
+
+const inviteCodeRules = [(v: string) => !!v?.trim() || t('account.enterAnInvitationCode')]
 
 const passwordRules = [(v: string) => !!v || '请输入密码', (v: string) => v.length >= 8 || '密码长度应至少8个字符']
 
@@ -337,6 +362,9 @@ const handleCreateAccount = async () => {
       username: createUsername.value,
       nickname: createNickname.value,
       passwordMode: setPassword.value ? 'srp' : 'none',
+    }
+    if (requireInviteCode.value) {
+      requestData.inviteCode = createInviteCode.value.trim()
     }
 
     // 如果用户选择设置密码，生成 SRP 凭证
@@ -451,8 +479,19 @@ const loadOAuthState = async () => {
   }
 }
 
+const loadRegistrationConfig = async () => {
+  try {
+    const { data } = await UserApi.getRegistrationConfig()
+    requireInviteCode.value = data.requireInviteCode
+    registrationConfigReady.value = true
+  } catch (e) {
+    error.value = requestErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
+  }
+}
+
 onMounted(() => {
   loadOAuthState()
+  loadRegistrationConfig()
 })
 </script>
 

@@ -2,6 +2,7 @@
 
 import time
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -113,8 +114,9 @@ def test_a_machine_that_is_off_does_not_break_the_state_the_page_polls(
         client.portal.call(cleanup)
 
 
+@pytest.mark.parametrize("failure", ["timeout", "reset", "connect"])
 def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_polls(
-    client, place, monkeypatch
+    client, place, monkeypatch, failure
 ):
     """The machine answering slowly, or the connection owner being replaced
     under the call, is the same situation as the machine being off: only the
@@ -143,6 +145,12 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         return row["id"]
 
     async def never_answers(_target, _request):
+        if failure == "reset":
+            raise httpx.RemoteProtocolError(
+                "Server disconnected without sending a response."
+            )
+        if failure == "connect":
+            raise httpx.ConnectError("Connection refused")
         await asyncio.sleep(60)
 
     monkeypatch.setattr(remote_control, "TASK_LIST_BUDGET_S", 0.05)
@@ -159,6 +167,59 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         assert data["tasks"] == {}
         assert data["tasks_unread"] is True
         assert data["connected"] is True
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(key(sid), key(topic, "current"))
+
+        client.portal.call(cleanup)
+
+
+def test_a_machine_that_says_no_does_not_break_the_state_the_page_polls(
+    client, place, monkeypatch
+):
+    """The machine is there and answers the task-list read with a failure of
+    its own — the runner's socket not up yet, the home gone. Same standing as
+    a silence: only the tasks are unknown this poll, and the machine's words go
+    with the answer instead of a 500 painted over the room (the third of the
+    three, after offline and timeout; a dozen a day on 2026-09-18)."""
+    from app.api.routes.remote_control import store
+    from app.domain.agent.device_hub import DeviceCallError
+    from app.domain.agent.remote_control import key
+
+    project, topic = place
+
+    async def create_session():
+        row = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600},
+            {
+                "execution": {
+                    "resource_id": topic,
+                    "execution": {"device_id": "machine-7"},
+                }
+            },
+        )
+        await store().update(row["id"], {"status": "active", "last_seen": time.time()})
+        return row["id"]
+
+    async def the_machine_says_no(_target, _request):
+        raise DeviceCallError(
+            "lstat /home/x/.cheese/home/p/t/.cheese/executor: no such file or directory"
+        )
+
+    monkeypatch.setattr(
+        "app.api.routes.remote_control.private_chat.control", the_machine_says_no
+    )
+    sid = client.portal.call(create_session)
+    try:
+        response = client.get(
+            f"/topics/{topic}/agent/control", headers=session_auth_headers("alice")
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["tasks"] == {}
+        assert data["tasks_unread"] is True
+        assert data["device_error"].endswith("executor: no such file or directory")
     finally:
 
         async def cleanup():

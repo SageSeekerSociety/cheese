@@ -23,7 +23,7 @@ fail() {
 }
 
 cp "$ROOT/deploy/ci-runner/provision.sh" "$BUNDLE/"
-for name in job-started-hook.sh disk-guard.sh resident-services.sh; do
+for name in job-started-hook.sh disk-guard.sh resident-services.sh registry-mirror.sh; do
   printf '#!/bin/sh\nexit 0\n' > "$BUNDLE/$name"
   chmod +x "$BUNDLE/$name"
 done

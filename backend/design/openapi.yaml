@@ -263,6 +263,14 @@ paths:
   # Space Domain
   /spaces:
     $ref: './domains/space/paths.yaml#/~1spaces'
+  /space-applications:
+    $ref: './domains/space/paths.yaml#/~1space-applications'
+  /space-applications/{spaceId}/resubmit:
+    $ref: './domains/space/paths.yaml#/~1space-applications~1{spaceId}~1resubmit'
+  /admin/spaces:
+    $ref: './domains/space/paths.yaml#/~1admin~1spaces'
+  /admin/spaces/{spaceId}/review:
+    $ref: './domains/space/paths.yaml#/~1admin~1spaces~1{spaceId}~1review'
   /spaces/{spaceId}:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}'
   /spaces/{spaceId}/categories:
@@ -281,6 +289,16 @@ paths:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1publishers~1participation'
   /spaces/{spaceId}/participants/export:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1participants~1export'
+  /spaces/join:
+    $ref: './domains/space/paths.yaml#/~1spaces~1join'
+  /spaces/{spaceId}/members:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1members'
+  /spaces/{spaceId}/members/{userId}:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1members~1{userId}'
+  /spaces/{spaceId}/leave:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1leave'
+  /spaces/{spaceId}/invite-codes:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1invite-codes'
 
   # Task Domain
   /tasks:
@@ -465,6 +483,10 @@ components:
     # Space schemas
     Space:
       $ref: './domains/space/schemas.yaml#/Space'
+    SpaceMember:
+      $ref: './domains/space/schemas.yaml#/SpaceMember'
+    SpaceInviteCode:
+      $ref: './domains/space/schemas.yaml#/SpaceInviteCode'
 
     # Task schemas
     Task:

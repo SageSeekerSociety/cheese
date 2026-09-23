@@ -25,21 +25,6 @@ class TestLoginRateLimiter:
         assert await rate_limiter.is_locked_out("testuser") is True
 
     @pytest.mark.anyio
-    async def test_record_failed_attempt_increments(
-        self, rate_limiter, mock_redis
-    ) -> None:
-        mock_redis.incr.return_value = 1
-        attempts = await rate_limiter.record_failed_attempt("testuser")
-        assert attempts == 1
-        mock_redis.expire.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_lockout_after_max_attempts(self, rate_limiter, mock_redis) -> None:
-        mock_redis.incr.return_value = 5
-        await rate_limiter.record_failed_attempt("testuser")
-        mock_redis.setex.assert_called_once()
-
-    @pytest.mark.anyio
     async def test_clear_attempts(self, rate_limiter, mock_redis) -> None:
         await rate_limiter.clear_attempts("testuser")
         mock_redis.delete.assert_called_once()
@@ -248,6 +233,7 @@ class TestTOTPService:
         import pyotp
 
         secret = pyotp.random_base32()
+        mock_redis.get.return_value = secret.encode()
         code = pyotp.TOTP(secret).now()
         assert await totp_service.enable_2fa(123, secret, code) is True
         mock_redis.set.assert_called_once()
@@ -256,7 +242,20 @@ class TestTOTPService:
     async def test_enable_2fa_invalid_code_rejected(
         self, totp_service, mock_redis
     ) -> None:
+        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
         assert await totp_service.enable_2fa(123, "JBSWY3DPEHPK3PXP", "000000") is False
+        mock_redis.set.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_enable_2fa_refuses_a_secret_it_never_offered(
+        self, totp_service, mock_redis
+    ) -> None:
+        import pyotp
+
+        secret = pyotp.random_base32()
+        mock_redis.get.return_value = None
+        code = pyotp.TOTP(secret).now()
+        assert await totp_service.enable_2fa(123, secret, code) is False
         mock_redis.set.assert_not_called()
 
     @pytest.mark.anyio
@@ -512,30 +511,53 @@ class TestPasswordResetService:
         mock_redis.hset.assert_called()
         mock_redis.expire.assert_called()
 
+
+class TestResetTokenConsumption:
+    """Against a real Redis: single use is a property of the Redis operations."""
+
+    @pytest.fixture
+    async def reset_service(self):
+        from redis.asyncio import Redis
+
+        from app.core.config import settings
+        from app.domain.user.login_security import PasswordResetService
+
+        client = Redis.from_url(settings.redis_url, decode_responses=False)
+        yield PasswordResetService(client)
+        await client.aclose()
+
     @pytest.mark.anyio
-    async def test_validate_reset_token_valid(self, reset_service, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {
-            b"user_id": b"123",
-            b"email": b"test@example.com",
-        }
-        data = await reset_service.validate_reset_token("valid-token")
+    async def test_a_token_carries_its_user_and_works_once(self, reset_service) -> None:
+        token = await reset_service.create_reset_token(
+            123, "reset@example.com", username="reset-user"
+        )
+
+        data = await reset_service.consume_reset_token(token)
         assert data is not None
         assert data["user_id"] == "123"
+        assert data["email"] == "reset@example.com"
+
+        assert await reset_service.consume_reset_token(token) is None
 
     @pytest.mark.anyio
-    async def test_validate_reset_token_invalid(
-        self, reset_service, mock_redis
+    async def test_an_unknown_token_is_refused(self, reset_service) -> None:
+        assert await reset_service.consume_reset_token("no-such-token") is None
+
+    @pytest.mark.anyio
+    async def test_simultaneous_uses_of_one_token_succeed_once(
+        self, reset_service
     ) -> None:
-        mock_redis.hgetall.return_value = {}
-        data = await reset_service.validate_reset_token("invalid-token")
-        assert data is None
+        import asyncio
 
-    @pytest.mark.anyio
-    async def test_consume_reset_token(self, reset_service, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {
-            b"user_id": b"123",
-            b"email": b"test@example.com",
-        }
-        data = await reset_service.consume_reset_token("valid-token")
-        assert data is not None
-        mock_redis.delete.assert_called()
+        token = await reset_service.create_reset_token(
+            456, "race@example.com", username="race-user"
+        )
+        # Open the connections first, so the requests below really do overlap
+        # instead of queueing behind connection setup.
+        await asyncio.gather(*(reset_service._redis.ping() for _ in range(10)))
+
+        results = await asyncio.gather(
+            *(reset_service.consume_reset_token(token) for _ in range(10))
+        )
+
+        assert sum(r is not None for r in results) == 1

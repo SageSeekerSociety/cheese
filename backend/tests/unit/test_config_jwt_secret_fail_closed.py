@@ -73,7 +73,12 @@ def test_local_and_test_keep_the_default(environment: str, secret: str) -> None:
 
 def test_deployment_with_a_real_secret_boots() -> None:
     settings = _build(
-        environment="production", jwt_secret="a-genuinely-random-48-char-secret-value"
+        environment="production",
+        jwt_secret="a-genuinely-random-48-char-secret-value",
+        # A deployment also has to name its platform admins before it boots
+        # (test_config_platform_admins_fail_closed.py); this test is about the
+        # secret, so satisfy that other guard rather than trip it.
+        platform_admin_handles=["ops"],
     )
     assert settings.jwt_secret == "a-genuinely-random-48-char-secret-value"
 
@@ -106,6 +111,9 @@ def test_compose_deployment_with_a_real_secret_boots() -> None:
         environment="development",
         jwt_secret="a-genuinely-random-48-char-secret-value",
         deployed_via_compose=True,
+        # Same reason as above: naming the platform admins is now part of what
+        # "a deployment boots" means.
+        platform_admin_handles=["ops"],
     )
     assert settings.deployed_via_compose is True
 

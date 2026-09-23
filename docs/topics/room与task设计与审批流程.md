@@ -85,7 +85,12 @@
 
 ```
 芝士自己把检查跑绿（这是干活的一部分，平台不替你跑）
-  → cheese accept-request <人> --subject '...'   递验收卡，卡直接是 pending，平台随手开 PR
+  → cheese accept-request <人> --subject '...' --deliver <交出去的那一份>
+     递验收卡，卡直接是 pending，平台随手开 PR；`--deliver` 是这一版交出去的那份文件，
+     平台在这一刻落一份快照（交出去的是地址用 `--deliver-url`，两个都不给就是交出去
+     这次合并本身）。**交合并的不声明产物**——交出去的是项目那个仓库，平台自己认得出是
+     清单上哪一项；交文件、交地址的才接着说清动的是哪一项：`--artifact <产物 id>` 沿用
+     清单上那一项，清单上还没有的东西用 `--new-artifact <真名> --about <一句话>`
      → GitHub Actions 按 .github/workflows 跑真 CI
         → 轮询器每 60 秒把合并态镜像到卡上（CLEAN/UNSTABLE/BLOCKED/BEHIND/DIRTY），
           按「谁的活」表发事件（红了叫芝士、落后平台自己换基、绿了通知验收人）

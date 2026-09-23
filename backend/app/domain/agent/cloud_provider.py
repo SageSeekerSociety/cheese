@@ -4,12 +4,12 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -39,9 +39,10 @@ class CloudChannel(DeviceChannel):
     Everything overridden below answers one question — WHICH machine, and is it
     up yet. None of it touches the model environment: ``builds_model_env`` is
     inherited because ``_ensure_screen`` is, so a leased machine takes the same
-    supply route and the same --model alias an enrolled one takes. Code that
-    asks which of the two a turn is on in order to answer THAT is asking the
-    wrong question.
+    launch shape an enrolled one takes — and that shape names no model at all,
+    because which model a turn runs on is resolved at admission. Code that asks
+    which of the two a turn is on in order to answer THAT is asking the wrong
+    question.
 
     The machine is the ROOM's, and a room is the only thing that runs a turn:
     work inside a room is a 分身 in that room's own session, on that room's
@@ -49,7 +50,13 @@ class CloudChannel(DeviceChannel):
     """
 
     name = "cloud"
+    # 平台开的机器。同一台物理 VM 由人自己接进来时是 self_hosted：入口决定待遇，
+    # 机器长什么样不决定 (#282 决定 2)。基类的 `owns` 读的就是这一位。
+    supply = Supply.cloud
     provisions_machine = True
+    # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这
+    # 条通道改的只有供给和这一句话。
+    no_machine_message = "Cloud 机器尚未完成连接"
 
     def __init__(
         self,
@@ -72,20 +79,6 @@ class CloudChannel(DeviceChannel):
     def available(self) -> bool:
         return self._configured
 
-    def owns(self, supply: Supply) -> bool:
-        """The machines this channel listens to are the ones the platform
-        opened. Inverting the base channel's answer is the whole of it — see
-        ``DeviceChannel.discover`` for what a topic recovered by both costs."""
-        return supply is Supply.cloud
-
-    def _sessions(self) -> AsyncSession:
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        return factory()
-
     async def prepare_topic(
         self,
         *,
@@ -107,7 +100,7 @@ class CloudChannel(DeviceChannel):
         )
         if ready:
             return True, ""
-        return False, "Cloud 机器正在创建并接入"
+        return False, "Cloud 机器正在准备并接入"
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
@@ -115,7 +108,12 @@ class CloudChannel(DeviceChannel):
         lease = await self._read_topic_cloud(topic_id)
         if lease is None or lease.project_id != project_id:
             raise ScreenSetupError("本话题没有自己的 Cloud 机器")
-        if lease.device_id is None or not self._hub.is_online(lease.device_id):
+        if (
+            not lease.machine_ready
+            or not lease.ai_ready
+            or lease.device_id is None
+            or not self._hub.is_online(lease.device_id)
+        ):
             return None
         async with self._sessions() as session:
             devices = sql_device_service(session)
@@ -129,17 +127,11 @@ class CloudChannel(DeviceChannel):
                 )
             if binding is None:
                 await devices.bind_topic_device(
-                    topic_id, lease.device_id, visibility=Visibility.host
+                    topic_id,
+                    lease.device_id,
+                    visibility=await devices.binding_visibility(lease.device_id),
                 )
-            # 这个房间的 agent 身份：它的会话就是以这个身份记录和恢复的 (#660)。
-            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
+            # 答这间房的那个 agent 的身份：它的会话就是以这个身份记录和恢复的 (#660)。
+            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
             await session.commit()
             return lease.device_id, agent.id, agent.username
-
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
-        resolved = await self._resolve_device_agent(project_id, topic_id)
-        if resolved is None:
-            raise ScreenSetupError("Cloud 机器尚未完成连接")
-        return resolved

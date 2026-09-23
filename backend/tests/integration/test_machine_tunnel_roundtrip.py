@@ -13,7 +13,10 @@ both directions. The fake meter upper-cases what it receives, so a pipe that
 echoes locally, drops a fragment, or reorders directions cannot pass.
 """
 
+import selectors
 import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -22,7 +25,6 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import machine_tunnel
 
 _PROJECT = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 # What HTTPS_PROXY actually opens with. The helper reads this head in full so
@@ -38,6 +40,61 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+def _start_helper(
+    port: int, url: str, *, token: str | None = None, token_file: str | None = None
+) -> subprocess.Popen[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "app.domain.agent.machine_tunnel",
+        "--port",
+        str(port),
+        "--url",
+        url,
+    ]
+    command.extend(
+        ("--token-file", token_file) if token_file else ("--token", token or "")
+    )
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stderr is not None
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stderr, selectors.EVENT_READ)
+            if not selector.select(timeout=10):
+                pytest.fail("tunnel helper did not become ready")
+            ready = process.stderr.readline()
+        if "tunnel listening" not in ready:
+            pytest.fail(ready or f"helper exited {process.poll()}")
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=5)
+        process.stderr.close()
+        raise
+    return process
+
+
+def _stop_helper(process: subprocess.Popen[str], port: int) -> None:
+    process.terminate()
+    forced = False
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        forced = True
+        process.kill()
+        process.wait(timeout=5)
+    assert process.stderr is not None
+    process.stderr.close()
+    assert not forced, "tunnel helper did not stop after SIGTERM"
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), timeout=0.2)
+
+
 class _FakeMeter:
     """Stands in for the meter's CONNECT listener: echoes upper-cased, so a
     silent short-circuit cannot read as success."""
@@ -50,7 +107,11 @@ class _FakeMeter:
         self._sock.listen(4)
         self.port = self._sock.getsockname()[1]
         self._stop = threading.Event()
-        threading.Thread(target=self._serve, daemon=True).start()
+        self._connections: list[socket.socket] = []
+        self._sessions: list[threading.Thread] = []
+        self._helpers: list[tuple[subprocess.Popen[str], int]] = []
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
 
     def _serve(self) -> None:
         while not self._stop.is_set():
@@ -58,7 +119,10 @@ class _FakeMeter:
                 conn, _ = self._sock.accept()
             except OSError:
                 return
-            threading.Thread(target=self._session, args=(conn,), daemon=True).start()
+            self._connections.append(conn)
+            session = threading.Thread(target=self._session, args=(conn,), daemon=True)
+            self._sessions.append(session)
+            session.start()
 
     def _session(self, conn: socket.socket) -> None:
         with conn:
@@ -75,12 +139,40 @@ class _FakeMeter:
                 except OSError:
                     return
 
+    def start_helper(
+        self,
+        port: int,
+        url: str,
+        *,
+        token: str | None = None,
+        token_file: str | None = None,
+    ) -> None:
+        self._helpers.append(
+            (_start_helper(port, url, token=token, token_file=token_file), port)
+        )
+
     def close(self) -> None:
+        for helper, port in reversed(self._helpers):
+            _stop_helper(helper, port)
         self._stop.set()
         try:
-            self._sock.close()
+            self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+        self._sock.close()
+        self._thread.join(timeout=5)
+        assert not self._thread.is_alive()
+        connections = list(self._connections)
+        sessions = list(self._sessions)
+        for sock in connections:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
+        for session in sessions:
+            session.join(timeout=5)
+        assert not any(session.is_alive() for session in sessions)
 
 
 @pytest.fixture
@@ -96,32 +188,33 @@ def live_stack(monkeypatch):
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="error")
     )
-    threading.Thread(target=server.run, daemon=True).start()
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline and not server.started:
-        time.sleep(0.05)
-    assert server.started, "the backend never came up"
-
-    helper_port = _free_port()
-    token = mint_scoped_token(project_id=_PROJECT)
-    threading.Thread(
-        target=machine_tunnel.serve,
-        args=(helper_port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token),
-        daemon=True,
-    ).start()
-    # The helper binds before it can accept; poll rather than sleeping a guess.
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", helper_port), timeout=0.2):
-                break
-        except OSError:
-            time.sleep(0.05)
-
+    api_thread = threading.Thread(target=server.run, daemon=True)
+    api_thread.start()
     try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not server.started:
+            time.sleep(0.05)
+        assert server.started, "the backend never came up"
+
+        helper_port = _free_port()
+        token = mint_scoped_token(project_id=_PROJECT)
+        meter.start_helper(
+            helper_port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token=token
+        )
         yield helper_port, meter, api_port
     finally:
-        server.should_exit = True
-        meter.close()
+        # Joined, not just told to exit. The thread runs the WHOLE backend app —
+        # DB engine, httpx clients, background tasks — against this worker's
+        # database. Left running, its shutdown proceeds concurrently with the
+        # next test: an httpx client closing after that test's loop is gone is
+        # #665's ExceptionGroup landing on a random victim, and a connection it
+        # still holds is a lock the next test's TRUNCATE waits 300s on (#693).
+        try:
+            meter.close()
+        finally:
+            server.should_exit = True
+            api_thread.join(timeout=30)
+            assert not api_thread.is_alive(), "the backend never shut down"
 
 
 def test_a_turns_bytes_survive_the_whole_chain(live_stack):
@@ -161,7 +254,7 @@ def test_a_payload_larger_than_one_frame_arrives_whole(live_stack):
     assert bytes(seen) == payload.upper()
 
 
-def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeypatch):
+def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack):
     """`claude` waiting on a CONNECT that can never succeed looks exactly
     like a stalled model — the most expensive failure to diagnose. A REFUSED
     upgrade (the backend answered and said no: bad token) must reach it as a
@@ -169,17 +262,9 @@ def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeyp
     ABSENCE (see test_a_restarting_backend_is_ridden_out)."""
     _, meter, api_port = live_stack  # a REAL backend, refusing the bad token
     port = _free_port()
-    threading.Thread(
-        target=machine_tunnel.serve,
-        args=(port, f"ws://127.0.0.1:{api_port}/llm/tunnel", "not-a-real-token"),
-        daemon=True,
-    ).start()
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                break
-        except OSError:
-            time.sleep(0.05)
+    meter.start_helper(
+        port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token="not-a-real-token"
+    )
 
     with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
         client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
@@ -212,62 +297,47 @@ def test_the_standalone_tunnel_app_terminates_the_pipe_identically(monkeypatch):
     server = uvicorn.Server(
         uvicorn.Config(tunnel_app, host="127.0.0.1", port=api_port, log_level="error")
     )
-    threading.Thread(target=server.run, daemon=True).start()
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline and not server.started:
-        time.sleep(0.05)
-    assert server.started, "the standalone tunnel app never came up"
-
-    helper_port = _free_port()
-    token = mint_scoped_token(project_id=_PROJECT)
-    threading.Thread(
-        target=machine_tunnel.serve,
-        args=(helper_port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token),
-        daemon=True,
-    ).start()
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", helper_port), timeout=0.2):
-                break
-        except OSError:
-            time.sleep(0.05)
-
+    api_thread = threading.Thread(target=server.run, daemon=True)
+    api_thread.start()
     try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not server.started:
+            time.sleep(0.05)
+        assert server.started, "the standalone tunnel app never came up"
+
+        helper_port = _free_port()
+        token = mint_scoped_token(project_id=_PROJECT)
+        meter.start_helper(
+            helper_port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token=token
+        )
         with socket.create_connection(("127.0.0.1", helper_port), timeout=10) as client:
             client.sendall(_CONNECT_HEAD)
             assert b"CONNECT API.ANTHROPIC.COM:443" in client.recv(4096)
             client.sendall(b"standalone terminal state")
             assert client.recv(4096) == b"STANDALONE TERMINAL STATE"
     finally:
-        server.should_exit = True
-        meter.close()
+        # Same join as live_stack's: told-to-exit is not gone (#665/#693).
+        try:
+            meter.close()
+        finally:
+            server.should_exit = True
+            api_thread.join(timeout=30)
+            assert not api_thread.is_alive(), "the tunnel app never shut down"
 
 
-def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack, monkeypatch):
+def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack):
     """A deploy swaps the backend container for tens of seconds (#551). A
     CONNECT arriving in that window must be HELD and completed when the
     backend returns — not answered with a closed socket, which claude renders
     as 'Unable to connect to API' (measured across 7 deploys, 2026-08-17)."""
     helper_port_ignored, meter, api_port = live_stack
-    monkeypatch.setattr(machine_tunnel, "_OPEN_RETRY_START_S", 0.2)
-
     # The backend's stand-in starts DEAD: a port with nothing listening, that
     # a forwarder to the real backend claims only after the client is already
     # waiting — exactly a container swap seen from the machine.
     late_port = _free_port()
     port = _free_port()
     token = mint_scoped_token(project_id=_PROJECT)
-    threading.Thread(
-        target=machine_tunnel.serve,
-        args=(port, f"ws://127.0.0.1:{late_port}/llm/tunnel", token),
-        daemon=True,
-    ).start()
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                break
-        except OSError:
-            time.sleep(0.05)
+    meter.start_helper(port, f"ws://127.0.0.1:{late_port}/llm/tunnel", token=token)
 
     def _pipe(a: socket.socket, b: socket.socket) -> None:
         try:
@@ -278,78 +348,112 @@ def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack, monkeypatch
                 b.sendall(data)
         except OSError:
             pass
+        # shutdown, NOT close: the twin _pipe of this pair is blocked in recv()
+        # on one of these very sockets, and close() leaves that recv blocked
+        # forever (a zombie thread) while shutdown() wakes it. The teardown
+        # sweep below owns the close.
         for s in (a, b):
             try:
-                s.close()
+                s.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
 
+    # Everything the forwarder opens or spawns, held where teardown can reach
+    # it: a pipe thread that outlives this test closes its sockets during some
+    # OTHER test, and that other test reports the failure (#693's shape).
+    forwarder_sockets: list[socket.socket] = []
+    pipe_threads: list[threading.Thread] = []
+    stopping = threading.Event()
+
     def _forwarder_comes_up() -> None:
         time.sleep(1.0)  # the client is already inside the patience window
+        if stopping.is_set():  # the test already failed and is tearing down
+            return
         server = socket.socket()
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(("127.0.0.1", late_port))
         server.listen(8)
+        forwarder_sockets.append(server)
         while True:
             try:
                 conn, _ = server.accept()
             except OSError:
                 return
             upstream = socket.create_connection(("127.0.0.1", api_port))
-            threading.Thread(target=_pipe, args=(conn, upstream), daemon=True).start()
-            threading.Thread(target=_pipe, args=(upstream, conn), daemon=True).start()
+            forwarder_sockets.extend((conn, upstream))
+            for a, b in ((conn, upstream), (upstream, conn)):
+                thread = threading.Thread(target=_pipe, args=(a, b), daemon=True)
+                pipe_threads.append(thread)
+                thread.start()
 
-    threading.Thread(target=_forwarder_comes_up, daemon=True).start()
+    forwarder_thread = threading.Thread(target=_forwarder_comes_up, daemon=True)
+    forwarder_thread.start()
 
-    payload = b"held across the deploy window"
-    with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
-        client.settimeout(30)
-        client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
-        # This first read spans the whole patience window: the backend was not
-        # there when the CONNECT went in, and the echo can only arrive after
-        # the helper outwaited the outage.
-        head_echo = client.recv(4096)
-        assert head_echo, "the held CONNECT must complete, not be closed"
-        assert b"CONNECT API.ANTHROPIC.COM:443" in head_echo
-        client.sendall(payload)
-        seen = bytearray()
-        while len(seen) < len(payload):
-            chunk = client.recv(4096)
-            assert chunk, "the pipe must stay open after the ride-out"
-            seen.extend(chunk)
-    assert bytes(seen) == payload.upper()
+    try:
+        payload = b"held across the deploy window"
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+            client.settimeout(30)
+            client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
+            # This first read spans the whole patience window: the backend was
+            # not there when the CONNECT went in, and the echo can only arrive
+            # after the helper outwaited the outage.
+            head_echo = client.recv(4096)
+            assert head_echo, "the held CONNECT must complete, not be closed"
+            assert b"CONNECT API.ANTHROPIC.COM:443" in head_echo
+            client.sendall(payload)
+            seen = bytearray()
+            while len(seen) < len(payload):
+                chunk = client.recv(4096)
+                assert chunk, "the pipe must stay open after the ride-out"
+                seen.extend(chunk)
+        assert bytes(seen) == payload.upper()
+    finally:
+        # Closing the sockets is what unblocks the threads (accept and recv
+        # both raise OSError on a closed socket), so close first, join after.
+        # Two passes: a forwarder still inside its 1s sleep binds its listener
+        # AFTER the first close sweep, and only the second sweep reaches it.
+        def _sweep() -> None:
+            for leaked in list(forwarder_sockets):
+                # shutdown BEFORE close: close() alone does not wake a recv()
+                # blocked in another thread; shutdown() does.
+                try:
+                    leaked.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    leaked.close()
+                except OSError:
+                    pass
+
+        stopping.set()
+        _sweep()
+        forwarder_thread.join(timeout=5)
+        # The helper may retry its ws while the forwarder accepts a
+        # fresh pipe pair DURING the first sweep — sweep again once it is gone.
+        _sweep()
+        for thread in (forwarder_thread, *list(pipe_threads)):
+            thread.join(timeout=10)
+            if thread.is_alive():
+                _sweep()
+                thread.join(timeout=5)
+            assert not thread.is_alive(), "a forwarder thread outlived the test"
 
 
-def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack):
+def test_a_refreshed_token_takes_effect_without_restarting_the_helper(
+    live_stack, tmp_path
+):
     """A scoped token has a session lifetime and this helper outlives one. If it
     baked the token at startup the failure would be #385's shape: the process
     stays healthy while its credential dies under it, every turn is refused, and
     nothing on the machine looks wrong. So the token is read per connection."""
     _, meter, api_port = live_stack
-    import tempfile
-
-    from app.domain.agent.machine_tunnel import TokenSource, serve
-
-    with tempfile.NamedTemporaryFile("w", suffix=".tok", delete=False) as handle:
-        token_path = handle.name
-        handle.write("not-a-real-token")
+    token_path = tmp_path / "tunnel-token"
+    token_path.write_text("not-a-real-token")
 
     port = _free_port()
-    threading.Thread(
-        target=serve,
-        args=(
-            port,
-            f"ws://127.0.0.1:{api_port}/llm/tunnel",
-            TokenSource(path=token_path),
-        ),
-        daemon=True,
-    ).start()
-    for _ in range(100):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                break
-        except OSError:
-            time.sleep(0.05)
+    meter.start_helper(
+        port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token_file=str(token_path)
+    )
 
     # A bad token: refused, so nothing reaches the meter.
     before = len(meter.received)
@@ -363,8 +467,7 @@ def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack
     assert len(meter.received) == before
 
     # Drop a good one in place — no restart, no signal.
-    with open(token_path, "w") as handle:
-        handle.write(mint_scoped_token(project_id=_PROJECT))
+    token_path.write_text(mint_scoped_token(project_id=_PROJECT))
 
     with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
         client.sendall(_CONNECT_HEAD)

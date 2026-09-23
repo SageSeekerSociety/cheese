@@ -20,7 +20,14 @@ const listProjectTasks = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
+  // 这些用例问的是板，所以清单是空的：那一块自己就不出现（它的行为在
+  // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
+  return {
+    ...actual,
+    listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
+    listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+    getProjectSite: () => Promise.resolve({ site: null, source_revision: null, candidates: [], can_publish: false }),
+  }
 })
 
 const push = vi.fn()
@@ -202,7 +209,7 @@ describe('这一页原来的两个用处都还在', () => {
     })
     const { container } = mount()
     await waitFor(() => {
-      const head = container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')
+      const head = container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')
       expect(head).toBe('施工中1·待处理1·已完成1')
     })
   })
@@ -305,7 +312,7 @@ describe('一件活都没有', () => {
     const { container, getByText } = mount()
     // 顶上那行仍然说得出这个项目交付过多少：板面空不等于什么都没发生过。
     await waitFor(() =>
-      expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
+      expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
     )
     getByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
@@ -334,5 +341,20 @@ describe('板自己钉在视口高度上', () => {
     const rule = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '')
     expect(rule).toContain('overflow-y: auto')
     expect(rule).toContain('min-height: 0')
+  })
+
+  // 走掉的那张卡在淡出期间脱离文档流（不然下面几张要等它淡完才补位，那是一次跳），
+  // 而绝对定位找的是最近一个定位过的祖先 —— 清单自己不定位的话，它会一路找到页面
+  // 外层，那张正在淡出的卡于是飞到屏幕左上角去。这两条是一对，改一条就得改另一条。
+  it('淡出的卡脱离文档流，所以清单自己是它的定位祖先', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'RunningWorkView.vue'), 'utf8')
+    const leaving = src.indexOf('\n.board-card-leave-active {')
+    expect(leaving).toBeGreaterThan(-1)
+    const leavingRule = src.slice(src.indexOf('{', leaving) + 1, src.indexOf('}', leaving))
+    expect(leavingRule).toContain('position: absolute')
+
+    const list = src.indexOf('\n.board-col__list {')
+    const listRule = src.slice(src.indexOf('{', list) + 1, src.indexOf('}', list)).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(listRule).toContain('position: relative')
   })
 })

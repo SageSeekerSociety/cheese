@@ -7,6 +7,13 @@
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
+    <!-- 帮助与反馈。**它现在是一个菜单**（`HelpAndFeedbackMenu`），桌面和手机共用：
+         底下的「我的反馈」和「管理后台」今天只能二级跳，收进菜单之后三个目的地都是一次
+         可达；入口本身也从「反馈」变成「帮助与反馈」—— 需求方原话是那两个字太不显眼。
+         代价是直达反馈中心多一次点击，取舍写在那个组件的文件头里。
+         登录与否都显示：没登录的人遇到的问题同样值得记下来（未读点那时画不出来，
+         因为计数要登录）。 -->
+    <HelpAndFeedbackMenu />
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
       <LanguageToggle />
@@ -57,6 +64,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import NotificationPanel from '../Notification/NotificationPanel.vue'
 
+import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
@@ -153,9 +161,16 @@ onMounted(() => {
   color: rgb(var(--v-theme-on-surface-variant));
 }
 
+/* 高度**钉死，不靠内容撑**。这个 chip 原来只有 `min-height`，实际高度是行盒 +
+   上下内边距 + 上下描边算出来的（12px 的字在这条栏里落在 20px 的行盒上，20+2+2+1+1
+   = 26），而旁边那条 `:size="24"` 的反馈入口是实打实的 24 —— 同一簇里两个控件差 2px，
+   在真浏览器里量出来就是 24 对 26。行盒是被继承下来的，改一次字体就再差一次，所以
+   这里把两边都定成 24：`height` 是 border-box，行盒放得下就不再参与高度。
+   （端到端那条 `shell-default.spec.ts` 的「顶栏的反馈入口」钉的就是这个等式。） */
 .app-system-bar .language-toggle {
   min-height: 24px;
-  padding: 2px 8px;
+  height: 24px;
+  padding: 0 8px;
   font-size: 12px;
 }
 

@@ -60,9 +60,11 @@
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
-        <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
-        <v-card-text class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">来自赛题：{{ sourceTask.name }}</p>
+        <v-card-title class="text-h6 font-weight-bold pb-1">{{
+          newProjectStep === 1 ? '新建项目' : t('work.teammate.title')
+        }}</v-card-title>
+        <v-card-text v-show="newProjectStep === 1" class="pb-2">
+          <p v-if="sourceTask" class="t-body c-muted mb-3">来自题目：{{ sourceTask.name }}</p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
@@ -73,7 +75,7 @@
             autofocus
             hide-details
             :disabled="creatingProject"
-            @keyup.enter="confirmNewProject"
+            @keyup.enter="advanceNewProject"
           />
           <v-select
             v-model="newProjectTeamId"
@@ -90,25 +92,81 @@
             :disabled="creatingProject || loadingTeams"
           />
           <div class="t-meta mt-2">项目归所选团队，成员可以一起协作</div>
+          <v-select
+            v-model="newProjectForgeKind"
+            autocomplete="off"
+            :items="[
+              { title: '由芝士托管（默认）', value: 'forgejo' },
+              { title: '连接 GitHub', value: 'github_app' },
+            ]"
+            label="代码仓库"
+            variant="outlined"
+            color="primary"
+            class="mt-3"
+            hide-details
+            :disabled="creatingProject"
+          />
+          <div class="t-meta mt-2">
+            {{
+              newProjectForgeKind === 'forgejo'
+                ? '创建项目时自动准备代码仓库。'
+                : '创建后前往项目设置连接 GitHub，连接完成后即可开始代码任务。'
+            }}
+            项目创建后，暂不支持切换托管服务。
+          </div>
           <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ teamLoadError }}
             <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
           </v-alert>
-          <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
-            {{ newProjectError }}
-          </v-alert>
         </v-card-text>
+        <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
+          <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
+          <v-text-field
+            v-model="newProjectAgentName"
+            :label="t('work.teammate.name')"
+            variant="outlined"
+            autocomplete="off"
+            maxlength="64"
+            :disabled="creatingProject"
+            @keyup.enter="confirmNewProject"
+          >
+            <template #append-inner>
+              <v-btn
+                variant="text"
+                icon="mdi-dice-multiple-outline"
+                size="small"
+                :aria-label="t('work.teammate.random')"
+                :title="t('work.teammate.random')"
+                :disabled="creatingProject"
+                @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
+              />
+            </template>
+          </v-text-field>
+          <p class="t-meta c-muted">{{ t('work.teammate.more') }}</p>
+        </v-card-text>
+        <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
+          {{ newProjectError }}
+        </v-alert>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
           <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">取消</v-btn>
+          <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+            t('work.teammate.back')
+          }}</v-btn>
           <v-btn
             color="primary"
             variant="flat"
             :loading="creatingProject"
-            :disabled="!newProjectName.trim() || loadingTeams || newProjectTeamId === null || !!teamLoadError"
-            @click="confirmNewProject"
+            :disabled="
+              !newProjectName.trim() ||
+              loadingTeams ||
+              newProjectTeamId === null ||
+              !!teamLoadError ||
+              (newProjectStep === 2 && !newProjectAgentName.trim())
+            "
+            @click="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
           >
-            创建
+            {{ newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -149,6 +207,7 @@ import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
+import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
@@ -158,7 +217,9 @@ import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
+import { t } from '@/i18n'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
+import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
   applyProjectOrder,
@@ -207,7 +268,7 @@ router.isReady().then(async () => {
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
 // 面看到的是一屏永远不再刷新的旧数据。
-const keptAlivePages = ['OverviewView', 'ProjectDocsView', 'MemberView', 'CalendarView', 'ProjectAgentsView']
+const keptAlivePages = ['ProjectDocsView', 'MemberView', 'CalendarView']
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
@@ -302,7 +363,16 @@ const navSources = computed<NavSources>(() => ({
   createProject: createNewProject,
 }))
 
-const rail = computed(() => railItems(navSources.value))
+// 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
+// 设置、某个 赛题 页）时是 default——那里没有项目行可读，而 default 就是今天的
+// 样子，所以项目外的一点都没变。按地址取而不是按「上次开过的项目」取：壳是**你
+// 现在待的地方**的长相，走出项目还挂着上一个项目的样子会让人以为走岔了。
+const openProjectId = computed<string | null>(() =>
+  typeof currentRoute.params.projectId === 'string' ? currentRoute.params.projectId : null
+)
+const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
+
+const rail = computed(() => railItems(navSources.value, navShell.value))
 
 // rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
 //
@@ -321,13 +391,16 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   void router.push(to)
 })
-const tabs = computed(() => tabItems(navSources.value))
+const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
+const newProjectStep = ref(1)
+const newProjectAgentName = ref('')
+const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
 // 所属小队: which team the project belongs to decides who can see it. Without
@@ -366,20 +439,40 @@ async function loadProjectTeams() {
 watch(newProjectDialog, (opened) => {
   if (!opened) return
   newProjectName.value = sourceTask.value?.name ?? ''
+  newProjectStep.value = 1
+  newProjectAgentName.value = randomTeammateName()
+  newProjectForgeKind.value = 'forgejo'
   newProjectError.value = null
   void loadProjectTeams()
 })
 
+function advanceNewProject() {
+  if (newProjectName.value.trim() && !loadingTeams.value && !teamLoadError.value && newProjectTeamId.value !== null)
+    newProjectStep.value = 2
+}
+
 async function confirmNewProject() {
+  if (newProjectStep.value !== 2 || !newProjectAgentName.value.trim()) return
   const name = newProjectName.value.trim()
   if (!name || creatingProject.value || loadingTeams.value || teamLoadError.value || newProjectTeamId.value === null)
     return
   creatingProject.value = true
   newProjectError.value = null
   try {
-    const project = await createProject(name, myHandle(), newProjectTeamId.value, sourceTask.value?.id)
+    const project = await createProject(
+      name,
+      myHandle(),
+      newProjectTeamId.value,
+      sourceTask.value?.id,
+      newProjectForgeKind.value,
+      newProjectAgentName.value.trim()
+    )
     await loadCxProjects()
     newProjectDialog.value = false
+    if (newProjectForgeKind.value === 'github_app') {
+      router.push(`/projects/${project.id}/settings`)
+      return
+    }
     // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects
     // 的落点是看板——它此刻是四列空格子，答的是「什么在跑」，对一个还没开始的项目
     // 只有一个答案：没有。人第一眼该看到的是能说话的地方。这里知道它是新的，所以

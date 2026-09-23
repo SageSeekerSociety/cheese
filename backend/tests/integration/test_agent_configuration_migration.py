@@ -9,14 +9,12 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from app.core.config import settings
 from app.domain.project.services import ProjectService
 
 
 def test_existing_configuration_is_snapshotted_and_originals_are_archived(
     db_session, _portal, monkeypatch
 ):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     path = (
         Path(__file__).parents[2]
         / "alembic/versions/d7a91c4e2b60_agent_owned_configuration.py"
@@ -27,9 +25,9 @@ def test_existing_configuration_is_snapshotted_and_originals_are_archived(
 
     async def run():
         projects = ProjectService(db_session)
-        custom = await projects.create(name="Custom")
-        plain = await projects.create(name="Plain")
-        preset = await projects.create(name="Preset")
+        custom = await projects.create(name="Custom", forge_kind="github_app")
+        plain = await projects.create(name="Plain", forge_kind="github_app")
+        preset = await projects.create(name="Preset", forge_kind="github_app")
         custom_agent_id = custom.default_agent_instance_id
         preset_agent_id = preset.default_agent_instance_id
         await db_session.flush()

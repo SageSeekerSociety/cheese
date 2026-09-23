@@ -12,9 +12,12 @@
     @dragover="onRailDragOver"
     @drop="onRailDrop"
   >
-    <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
+    <template #prepend>
+      <RailItem v-if="homeItem" :item="homeItem" />
+      <RailItem v-if="homeDivider" :item="homeDivider" />
+    </template>
     <RailItem
-      v-for="item in items"
+      v-for="item in scrollingItems"
       :key="item.key"
       :item="item"
       :dragging="isDragging(item)"
@@ -24,169 +27,169 @@
       @drop="finishDrag"
       @drag-end="clearDrag"
     ></RailItem>
-    <v-spacer></v-spacer>
-    <v-menu
-      v-if="userMenu.loggedIn.value"
-      v-model="userMenu.menuOpen.value"
-      open-on-click
-      location="top start"
-      :offset="16"
-      transition="scale-transition"
-    >
-      <template #activator="{ props }">
-        <v-avatar
-          v-tooltip="userMenu.nickname.value"
-          class="cursor-pointer elevation-1 mb-4"
-          size="32"
-          :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
-          v-bind="props"
-        >
-          <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
-            <!-- avatar service (localhost:8081) may be down in the merged demo:
-                 fall back to a colored initial instead of a broken white tile -->
-            <template #error>
-              <span class="rail-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
-                userMenu.avatarInitial.value
-              }}</span>
-            </template>
-          </v-img>
-          <span v-else class="rail-avatar-char">{{ userMenu.avatarInitial.value }}</span>
-        </v-avatar>
-      </template>
-
-      <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
-        <v-card-item class="user-header pa-4 pb-3">
+    <template #append>
+      <v-menu
+        v-if="userMenu.loggedIn.value"
+        v-model="userMenu.menuOpen.value"
+        open-on-click
+        location="top start"
+        :offset="16"
+        transition="scale-transition"
+      >
+        <template #activator="{ props }">
           <v-avatar
-            size="56"
-            class="mb-2"
-            elevation="1"
+            v-tooltip="userMenu.nickname.value"
+            class="cursor-pointer elevation-1 mb-4"
+            size="32"
             :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+            v-bind="props"
           >
             <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+              <!-- avatar service (localhost:8081) may be down in the merged demo:
+                 fall back to a colored initial instead of a broken white tile -->
               <template #error>
-                <span
-                  class="rail-avatar-char rail-avatar-char--lg"
-                  :style="{ backgroundColor: userMenu.avatarColor.value }"
-                  >{{ userMenu.avatarInitial.value }}</span
-                >
+                <span class="rail-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
+                  userMenu.avatarInitial.value
+                }}</span>
               </template>
             </v-img>
-            <span v-else class="rail-avatar-char rail-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
+            <span v-else class="rail-avatar-char">{{ userMenu.avatarInitial.value }}</span>
           </v-avatar>
-          <div>
-            <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
-            <v-card-subtitle class="px-0 pt-1 pb-0 text-body-2 text-medium-emphasis text-truncate" max-width="220">
-              {{ userMenu.intro.value || '还没有个人简介' }}
-            </v-card-subtitle>
-          </div>
-          <div class="d-flex mt-2">
-            <v-chip prepend-icon="mdi-account" color="primary" variant="outlined" density="comfortable" size="small">
-              UID: {{ userMenu.currentUser.value?.id }}
-            </v-chip>
-          </div>
-        </v-card-item>
+        </template>
 
-        <v-divider></v-divider>
-
-        <v-card-text class="px-4 py-4">
-          <v-card variant="tonal" color="primary" class="ai-quota-card rounded-lg mb-3" elevation="0">
-            <v-card-text class="pa-3">
-              <div class="d-flex align-center mb-2">
-                <!-- surface-bright, not white: this disc sits inside a tonal
-                     card, so a hard #FFF would be a glaring hole in dark theme. -->
-                <v-avatar color="surface-bright" size="28" class="me-2">
-                  <v-icon icon="mdi-creation" color="primary" size="small"></v-icon>
-                </v-avatar>
-                <span class="text-subtitle-2 font-weight-medium">知启星 AI</span>
-              </div>
-
-              <div class="d-flex justify-space-between align-center text-body-2 mb-2">
-                <span>今日剩余额度</span>
-                <span class="font-weight-medium">
-                  {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.daily ?? '-' }}
-                </span>
-              </div>
-
-              <v-progress-linear
-                :model-value="
-                  userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.daily) * 100 : 0
-                "
-                color="primary"
-                bg-color="primary-lighten-5"
-                height="4"
-                rounded
-              ></v-progress-linear>
-
-              <div class="text-caption mt-1">
-                将在
-                {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.resetTime).fromNow() : '-' }} 重置
-              </div>
-            </v-card-text>
-          </v-card>
-
-          <v-list class="user-menu-list pa-0" rounded="lg" elevation="0">
-            <v-list-item
-              :to="{ name: 'UserDefault', params: { id: userMenu.currentUser.value?.id } }"
-              rounded="lg"
-              class="mb-1"
-              color="primary"
+        <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
+          <v-card-item class="user-header pa-4 pb-3">
+            <v-avatar
+              size="56"
+              class="mb-2"
+              elevation="1"
+              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             >
-              <template #prepend>
-                <v-icon icon="mdi-account" class="me-2"></v-icon>
-              </template>
-              <v-list-item-title>个人中心</v-list-item-title>
-            </v-list-item>
-            <v-list-item :to="{ name: 'my-devices' }" rounded="lg" class="mb-1" color="primary">
-              <template #prepend>
-                <v-icon icon="mdi-server-network" class="me-2"></v-icon>
-              </template>
-              <v-list-item-title>我的设备</v-list-item-title>
-            </v-list-item>
-            <ThemeToggle />
-            <v-list-item to="/about" rounded="lg" class="mb-1" color="primary">
-              <template #prepend>
-                <v-icon icon="mdi-information-outline" class="me-2"></v-icon>
-              </template>
-              <v-list-item-title>了解知是</v-list-item-title>
-            </v-list-item>
-            <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
-              <template #prepend>
-                <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
-              </template>
-              <v-list-item-title>退出登录</v-list-item-title>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-      </v-card>
-    </v-menu>
-    <v-btn
-      v-else
-      to="/account/signin"
-      variant="text"
-      color="on-surface-variant"
-      width="48"
-      height="48"
-      min-width="0"
-      stacked
-      class="pa-0"
-    >
-      <template #prepend>
-        <v-icon icon="mdi-login" size="20" />
-      </template>
-      登录
-    </v-btn>
+              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+                <template #error>
+                  <span
+                    class="rail-avatar-char rail-avatar-char--lg"
+                    :style="{ backgroundColor: userMenu.avatarColor.value }"
+                    >{{ userMenu.avatarInitial.value }}</span
+                  >
+                </template>
+              </v-img>
+              <span v-else class="rail-avatar-char rail-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
+            </v-avatar>
+            <div>
+              <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
+              <v-card-subtitle class="px-0 pt-1 pb-0 text-body-2 text-medium-emphasis text-truncate" max-width="220">
+                {{ userMenu.intro.value || '还没有个人简介' }}
+              </v-card-subtitle>
+            </div>
+            <div class="d-flex mt-2">
+              <v-chip prepend-icon="mdi-account" color="primary" variant="outlined" density="comfortable" size="small">
+                UID: {{ userMenu.currentUser.value?.id }}
+              </v-chip>
+            </div>
+          </v-card-item>
+
+          <v-divider></v-divider>
+
+          <v-card-text class="px-4 py-4">
+            <v-card variant="tonal" color="primary" class="ai-quota-card rounded-lg mb-3" elevation="0">
+              <v-card-text class="pa-3">
+                <div class="d-flex align-center mb-2">
+                  <!-- surface-bright, not white: this disc sits inside a tonal
+                     card, so a hard #FFF would be a glaring hole in dark theme. -->
+                  <v-avatar color="surface-bright" size="28" class="me-2">
+                    <v-icon icon="mdi-creation" color="primary" size="small"></v-icon>
+                  </v-avatar>
+                  <span class="text-subtitle-2 font-weight-medium">知启星 AI</span>
+                </div>
+
+                <div class="d-flex justify-space-between align-center text-body-2 mb-2">
+                  <span>今日剩余额度</span>
+                  <span class="font-weight-medium">
+                    {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.daily ?? '-' }}
+                  </span>
+                </div>
+
+                <v-progress-linear
+                  :model-value="
+                    userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.daily) * 100 : 0
+                  "
+                  color="primary"
+                  bg-color="primary-lighten-5"
+                  height="4"
+                  rounded
+                ></v-progress-linear>
+
+                <div class="text-caption mt-1">
+                  将在
+                  {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.resetTime).fromNow() : '-' }} 重置
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <v-list class="user-menu-list pa-0" rounded="lg" elevation="0">
+              <v-list-item
+                :to="{ name: 'UserDefault', params: { id: userMenu.currentUser.value?.id } }"
+                rounded="lg"
+                class="mb-1"
+                color="primary"
+              >
+                <template #prepend>
+                  <v-icon icon="mdi-account" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>个人中心</v-list-item-title>
+              </v-list-item>
+              <v-list-item :to="{ name: 'my-devices' }" rounded="lg" class="mb-1" color="primary">
+                <template #prepend>
+                  <v-icon icon="mdi-server-network" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>我的设备</v-list-item-title>
+              </v-list-item>
+              <ThemeToggle />
+              <v-list-item to="/about" rounded="lg" class="mb-1" color="primary">
+                <template #prepend>
+                  <v-icon icon="mdi-information-outline" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>了解知是</v-list-item-title>
+              </v-list-item>
+              <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
+                <template #prepend>
+                  <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>退出登录</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-card-text>
+        </v-card>
+      </v-menu>
+      <v-btn
+        v-else
+        to="/account/signin"
+        variant="text"
+        color="on-surface-variant"
+        width="48"
+        height="48"
+        min-width="0"
+        stacked
+        class="pa-0"
+      >
+        <template #prepend>
+          <v-icon icon="mdi-login" size="20" />
+        </template>
+        登录
+      </v-btn>
+    </template>
   </v-navigation-drawer>
 </template>
 
 <script setup lang="ts">
-import { ref, toRefs } from 'vue'
+import { computed, ref, toRefs } from 'vue'
 
 import { useUserMenu } from '@/composables/useUserMenu'
 
 import RailItem from './RailItem.vue'
 import { NavBarProps, NavGenericItem } from './types'
 
-import logo from '@/assets/logo.svg?url'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
@@ -195,6 +198,9 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 })
 
 const { items } = toRefs(navBarProps)
+const homeItem = computed(() => items.value.find((item) => item.key === 'Home'))
+const homeDivider = computed(() => items.value.find((item) => item.type === 'divider'))
+const scrollingItems = computed(() => items.value.filter((item) => item.key !== 'Home' && item.type !== 'divider'))
 
 const emit = defineEmits<{
   /** 把 `movedId` 放到 `targetId` 的这一边。顺序归 App.vue 保管，rail 只报告动作。 */
@@ -272,18 +278,27 @@ const userMenu = useUserMenu()
 
 <style lang="scss">
 .app-rail {
+  .v-navigation-drawer__prepend,
+  .v-navigation-drawer__append,
   .v-navigation-drawer__content {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
+    // Keep fixed controls aligned with projects when the list has a scrollbar.
+    scrollbar-gutter: stable;
   }
-}
 
-.logo {
-  width: 48px;
-  height: 48px;
+  .v-navigation-drawer__content {
+    flex: 1;
+    min-height: 0;
+    padding-block: 8px;
+  }
+
+  .app-rail-item {
+    flex-shrink: 0;
+  }
 }
 
 /* Colored-initial fallback for the default user avatar (no uploaded image). */

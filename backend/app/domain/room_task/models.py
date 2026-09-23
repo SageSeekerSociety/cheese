@@ -39,6 +39,19 @@ class TaskStatus(enum.StrEnum):
     closed = "closed"
 
 
+class TaskSnapshot(UuidPk, Timestamps, Base):
+    """An immutable backup of uncommitted work, separate from the review branch."""
+
+    __tablename__ = "task_snapshots"
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
+    head_sha: Mapped[str] = mapped_column(String(64))
+    snapshot_sha: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(1024))
+
+
 class LockKind(enum.StrEnum):
     heavy = "heavy"
 
@@ -78,13 +91,7 @@ class Task(UuidPk, Timestamps, Base):
     # (room_id, created_at) is the room's task list, and it is read on every
     # room open — the same shape as ix_blocks_topic_id_created_at, for the same
     # reason: this must not degrade into a scan as tasks accumulate.
-    __table_args__ = (
-        Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
-        # Every hook event a worker produces asks "whose work is this?", so this
-        # lookup runs on each tool call in the room — the one index whose
-        # absence would be paid per event rather than per page.
-        Index("ix_tasks_room_id_subagent_id", "room_id", "subagent_id"),
-    )
+    __table_args__ = (Index("ix_tasks_room_id_created_at", "room_id", "created_at"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -121,6 +128,9 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Recorded when an authenticated agent opens the task's worktree. Dispatch
+    # and room membership do not establish who performs the work.
+    author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Historical tasks have no branch of their own. Their original shared
     # delivery is retained as a task, with the original branch and PR.
     branch_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -144,20 +154,33 @@ class Task(UuidPk, Timestamps, Base):
     )
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # WHICH worker inside the room's session is doing this. A subagent is a
-    # second worker in one Claude session: its hooks come up the SAME pipe as
-    # the room's own, carrying `agent_id` and nothing else to say whose they
-    # are (the room's own events carry no such key at all). So this column is
-    # the whole of the attribution — without it every tool call a worker makes
-    # reads as the room's, and the room's timeline is one interleaved stream
-    # from nobody.
+    # WHICH worker inside the room's session is doing this.
     #
-    # A string, not a foreign key: the id is minted by Claude Code inside the
-    # container, and the platform only ever recognises it. NULL means nobody
-    # has claimed this work yet — a task row exists from the moment it is
-    # dispatched, and the worker is bound a moment later, once the room has
-    # actually spawned one.
+    # A string, not a foreign key: the id is minted by the harness inside the
+    # container, so the platform can only ever recognise it — it is written when
+    # that worker's start event arrives (`ChatService._note_worker`), never
+    # reported by the agent. NULL means nobody has started on this work yet, and
+    # nothing is looked up BY it: which card an event belongs to is the thread
+    # label's answer (`room_task/thread_label.py`), and this column says only
+    # who is on the card and whether that worker is still alive.
     subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——
+    # 见 `room_task/binding.py`，那里是唯一读这两列的地方。
+    #
+    # **今天只有卡片渲染读它，而且没有任何接口写它。** 写侧（一个人在卡上改绑）
+    # 与执行侧（派这条活的那一刻按绑定解析模型）都要等平台有「派活」这条路径，
+    # 那是 P33 的事：一条活是房间会话里的一个子 agent，今天由 agent 自己起，
+    # 平台插不进去。
+    #
+    # 两个标量列而不是一个 JSONB：今天要存的就是这两个已知的量，JSONB 换来的只是
+    # 没有 schema 校验、也写不出「这条活绑了什么」的守卫。
+    #
+    # 卡上**显示**哪个模型不在这里，也永远不会在这里：它从 `usage` 里这条活最后
+    # 一行的 `model` 算出来，算的地方是 `presentation.card_model`。一列存「显示
+    # 什么」就是第二份声明，它和真的花出去的那个迟早对不上。
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # 最后一次有人确认这条活还活着。Stamped when a worker is bound; the board
     # reads it together with the thread's last block, and takes the later of the
@@ -179,11 +202,11 @@ class Task(UuidPk, Timestamps, Base):
     # dispatch stayed frozen there forever while the real state moved on.
     brief: Mapped[str] = mapped_column(Text, default="", server_default="")
     # 分身交回来的最后一句话 —— `SubagentStop.last_assistant_message`, written
-    # by the platform every time a bound worker hands something back, each one
-    # overwriting the last. A worker reports finished more than once (parking a
-    # long command counts), so the newest is the only one worth keeping and no
-    # single one of them means the work is over. What ends it is the room
-    # closing the card, after reading this.
+    # by the platform every time a sub-thread whose label names this card hands
+    # something back, each one overwriting the last. A worker reports finished
+    # more than once (parking a long command counts), so the newest is the only
+    # one worth keeping and no single one of them means the work is over. What
+    # ends it is the room closing the card, after reading this.
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.
@@ -194,11 +217,6 @@ class Task(UuidPk, Timestamps, Base):
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # A thread has its own device home, so the same stamp as on a topic: when
-    # its raw Claude session files last reached the platform.
-    transcripts_archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # If this work was dispatched from a message in the room, the block it came

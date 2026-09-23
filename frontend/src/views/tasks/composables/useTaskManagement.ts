@@ -16,7 +16,7 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
 
     try {
       await TasksApi.update(taskData.value.id, updatedTaskData)
-      toast.success('赛题更新成功')
+      toast.success('题目更新成功')
       await loadTaskData()
     } catch (error) {
       toast.error('更新失败')
@@ -28,7 +28,7 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
     if (!taskData.value) return
 
     const confirmed = await dialogs
-      .confirm('确定要删除该赛题吗？该操作不可撤销。', {
+      .confirm('确定要删除该题目吗？该操作不可撤销。', {
         title: '确认删除',
       })
       .wait()
@@ -36,7 +36,7 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
     if (confirmed) {
       try {
         await TasksApi.del(taskData.value.id)
-        toast.success('赛题已删除')
+        toast.success('题目已删除')
         router.replace({ name: 'HomeDefault' })
       } catch (error) {
         toast.error('删除失败')

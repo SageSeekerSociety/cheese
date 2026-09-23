@@ -60,11 +60,53 @@ class Histogram:
     def observe(self, value: float) -> None:
         self._sum += value
         self._count += 1
+        # 累加式（Prometheus 的形状）：`_counts[i]` 是「≤ buckets[i] 的样本数」，
+        # 所以只要撞到第一个够大的桶就停 —— 后面的桶天然包含它。`_counts[-1]` 是
+        # +Inf 那一格。
         for i, bucket in enumerate(self.buckets):
             if value <= bucket:
                 self._counts[i] += 1
                 return
         self._counts[-1] += 1
+
+    @property
+    def count(self) -> int:
+        """观测到的样本数。和 `sum` 一样是读侧要的公开读法 —— 别的域不该去碰
+        `_count`（那是这个类的实现细节，而跨模块读下划线属性是下次改这个类时的地雷）。"""
+        return self._count
+
+    def quantile(self, q: float) -> float | None:
+        """q 分位（0..1），桶内线性插值。没有样本时返回 None，不返回 0。
+
+        **不返回 0** 是有意的：0 秒是一个读数（「真的很快」），None 是「这一格没有
+        数据」。看板上把两者画成同一个数，就等于用一条平线宣布平台健康，而那可能
+        只是这一刻还没有人访问过。
+
+        **`_counts` 是逐桶的，不是累加的。** `observe` 每个样本只往「它落进去的那
+        一个桶」加一就返回（看它的循环），所以这里必须自己把前面的桶累起来。第一版
+        直接拿逐桶的计数去跟 `q * count` 比，落进两个以上桶的分布永远比不过 ——
+        于是循环走完、返回最后一个桶的上界：**每条忙一点的接口 p95 都报 10 秒**，
+        而且它长得像一个读数，不像一个故障。
+
+        插值是桶级的近似 —— 桶宽在 5ms..10s 之间，所以分位落在最后一个有限桶里时
+        报的是那个桶的上界，不去追 +Inf。
+        """
+        if self._count == 0:
+            return None
+        target = q * self._count
+        seen = 0
+        prev_bound = 0.0
+        for bound, count in zip(self.buckets, self._counts, strict=False):
+            if seen + count >= target:
+                # 这个桶里没有样本（前一个桶刚好够）：分位就落在它的上界上。
+                if count == 0:
+                    return bound
+                frac = (target - seen) / count
+                return prev_bound + (bound - prev_bound) * frac
+            seen += count
+            prev_bound = bound
+        # 全落在 +Inf 那一格：报最后一个**有限**上界。
+        return self.buckets[-1] if self.buckets else None
 
 
 class MetricsRegistry:
@@ -103,6 +145,11 @@ class MetricsRegistry:
                     kwargs["buckets"] = buckets
                 self._histograms[key] = Histogram(**kwargs)
             return self._histograms[key]
+
+    def histograms_named(self, name: str) -> list[Histogram]:
+        """这个名下**所有**标签组合的直方图（一个标签组合一条）。"""
+        with self._lock:
+            return [h for h in self._histograms.values() if h.name == name]
 
     def _key(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:

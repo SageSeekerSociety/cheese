@@ -8,7 +8,7 @@
 //
 // 合成之后只有一棵树：树上标着每个文件改了多少，点开看的是这个文件自己的 diff，
 // 要微调就切到编辑（保存冲突的两条出路原样保留）。分段开关没了。
-import type { GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
+import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -59,34 +59,52 @@ const sourceMenu = ref(false)
 const overviewDiffs = ref<Record<string, FileDiff[]>>({})
 const overviewErrors = ref<Record<string, string>>({})
 const requestedPath = ref<string | null>(null)
+// 房间改动这一页上，哪些任务的文件清单铺开了。装的是「铺开的」，所以默认空集合
+// 就是默认全收起——三十个任务各铺一屏文件，验收的人要找的那个任务反而找不着。
+const expandedTasks = ref(new Set<string>())
+function toggleTaskFiles(taskId: string) {
+  const next = new Set(expandedTasks.value)
+  if (next.has(taskId)) next.delete(taskId)
+  else next.add(taskId)
+  expandedTasks.value = next
+}
 let sourceEpoch = 0
 let fileRequest = 0
 let taskRequest = 0
 const currentTask = computed(() => taskOptions.value.find((task) => task.id === selectedTask.value))
 const sourceTitle = computed(() => (selectedTask.value ? currentTask.value?.title ?? '任务不可用' : '项目当前代码'))
-const sourceStatus = computed(() =>
-  selectedTask.value ? currentTask.value?.presentation.display_status ?? '' : '只读'
-)
+// 任务结束了，它的文件就只读——这件事以前是横条下面单独一行字，现在跟在状态后面。
+const sourceStatus = computed(() => {
+  if (!selectedTask.value) return '只读'
+  const status = currentTask.value?.presentation.display_status ?? ''
+  return currentTask.value && currentTask.value.status !== 'open' ? `${status} · 只读` : status
+})
 const sourceUnavailable = computed(() => tasksLoaded.value && !!selectedTask.value && !currentTask.value)
+const requestedSource = ref<FileSource>('live')
+const fileSource = computed<FileSource>(() =>
+  selectedTask.value && currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
+)
 
-async function loadOverview() {
+async function loadOverview(openOnly = false) {
   const room = props.topicId
   const project = props.projectId
   const epoch = sourceEpoch
   if (!room || !project || !overview.value) return
   await Promise.all(
-    taskOptions.value.map(async (task) => {
-      try {
-        const result = await getGitDiff(project, room, task.id)
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
-        delete overviewErrors.value[task.id]
-      } catch (error) {
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
-        delete overviewDiffs.value[task.id]
-      }
-    })
+    taskOptions.value
+      .filter((task) => !openOnly || task.status === 'open')
+      .map(async (task) => {
+        try {
+          const result = await getGitDiff(project, room, task.id)
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
+          delete overviewErrors.value[task.id]
+        } catch (error) {
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
+          delete overviewDiffs.value[task.id]
+        }
+      })
   )
 }
 
@@ -161,7 +179,7 @@ async function loadGit(opts: { silent?: boolean } = {}) {
     // everyone's).
     const [log, diff] = await Promise.all([
       getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
-      getGitDiff(pid, tid, task),
+      getGitDiff(pid, tid, task, fileSource.value),
     ])
     // Guard against a topic switch mid-flight.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
@@ -191,6 +209,8 @@ const fileDraft = ref<string>('')
 const fileSaved = ref<string>('') // last loaded/saved content, for the dirty flag
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
+// 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
+const fileToolReady = computed(() => !sourceUnavailable.value && !loading.value && !errorMsg.value)
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 // Version of the open file as it was read; echoed back on save so a write that
 // lost a race to 芝士 is rejected instead of silently erasing their edits.
@@ -200,9 +220,12 @@ const fileVersion = ref<string | null>(null)
 const fileBinary = ref(false)
 const fileTooLarge = ref(false)
 const fileBytes = ref(0)
+const fileEditable = ref(false)
 const fileReadOnly = computed(
   () =>
     props.readOnly ||
+    fileSource.value === 'committed' ||
+    !fileEditable.value ||
     currentTask.value?.status !== 'open' ||
     fileBinary.value ||
     fileTooLarge.value ||
@@ -212,7 +235,7 @@ const fileReadOnly = computed(
 const drafts = reactive(new Map<string, { content: string; saved: string; version: string | null }>())
 const lastFiles = new Map<string, string>()
 function sourceKey() {
-  return selectedTask.value ?? `project:${props.projectId}`
+  return `${selectedTask.value ?? `project:${props.projectId}`}:${fileSource.value}`
 }
 function draftKey(path: string) {
   return `${sourceKey()}:${path}`
@@ -376,6 +399,7 @@ const {
   path: () => openPath.value,
   version: () => fileVersion.value,
   task: () => selectedTask.value,
+  source: () => fileSource.value,
   nonce: () => docNonce.value,
   enabled: () => openIsDocument.value,
 })
@@ -392,7 +416,13 @@ async function onRevisionDecided() {
 // download button hands over for anything else that can't be shown as text.
 const openRawUrl = computed(() =>
   openPath.value && props.projectId
-    ? workspaceFileRawUrl(props.projectId, openPath.value, props.topicId ?? undefined, selectedTask.value)
+    ? workspaceFileRawUrl(
+        props.projectId,
+        openPath.value,
+        props.topicId ?? undefined,
+        selectedTask.value,
+        fileSource.value
+      )
     : ''
 )
 
@@ -414,6 +444,7 @@ function resetFilePanel() {
   fileBinary.value = false
   fileTooLarge.value = false
   fileBytes.value = 0
+  fileEditable.value = false
   fileConflict.value = false
   expandedDirs.value = new Set()
 }
@@ -446,7 +477,7 @@ async function doLoadFiles() {
   loading.value = true
   errorMsg.value = null
   try {
-    const listed = (await listFiles(pid, tid, task)).data
+    const listed = (await listFiles(pid, tid, task, fileSource.value)).data
     // Guard against a topic switch mid-flight — without it the previous topic's
     // listing repopulates the new panel.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
@@ -511,7 +542,7 @@ async function selectFile(path: string) {
     return
   }
   try {
-    const f = await readFile(pid, path, tid ?? undefined, task)
+    const f = await readFile(pid, path, tid ?? undefined, task, fileSource.value)
     // A topic switch mid-flight must not land the previous topic's file — and
     // its draft — in the new topic's panel.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
@@ -524,6 +555,7 @@ async function selectFile(path: string) {
     fileBinary.value = f.binary
     fileTooLarge.value = f.too_large
     fileBytes.value = f.bytes ?? listed
+    fileEditable.value = f.editable !== false && f.source !== 'committed'
     const draft = drafts.get(draftKey(path))
     if (draft && !f.binary && !f.too_large) {
       fileDraft.value = draft.content
@@ -539,8 +571,7 @@ async function selectFile(path: string) {
   }
 }
 
-// One write path. `expected` is the version this save is based on; null means
-// the human explicitly chose to overwrite after being shown the conflict.
+// Every save carries the version on which the user's decision was based.
 async function writeOpenFile(expected: string | null) {
   const pid = props.projectId
   const tid = props.topicId
@@ -580,8 +611,20 @@ function saveFile() {
 }
 
 // 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
-function overwriteFile() {
-  void writeOpenFile(null)
+async function overwriteFile() {
+  const pid = props.projectId
+  const tid = props.topicId
+  const task = selectedTask.value
+  const path = openPath.value
+  const epoch = sourceEpoch
+  if (!pid || !path || fileReadOnly.value) return
+  try {
+    const current = await readFile(pid, path, tid, task, 'live')
+    if (epoch !== sourceEpoch || openPath.value !== path) return
+    await writeOpenFile(current.version)
+  } catch (error) {
+    if (epoch === sourceEpoch) errorMsg.value = error instanceof Error ? error.message : '读取文件失败'
+  }
 }
 
 function reloadOpenFile() {
@@ -641,7 +684,9 @@ watch(
       // Commits and the diff only. The listing changes when a turn writes
       // files, which the turn-boundary tick already covers — putting it on the
       // timer would be a third request every 20 seconds buying nothing.
-      if (overview.value) void loadOverview()
+      // Closed tasks remain visible from the full load; polling their PR diffs
+      // every 20 seconds spends the forge quota on completed work.
+      if (overview.value) void loadOverview(true)
       else void loadGit({ silent: true })
     }, REFRESH_MS)
   },
@@ -675,6 +720,17 @@ async function navigateSource(task: string | null, path?: string) {
   await Promise.all([loadGit(), loadFiles()])
 }
 
+async function selectVersion(source: FileSource) {
+  if (fileSource.value === source) return
+  const path = openPath.value
+  keepDraft()
+  clearSource()
+  requestedSource.value = source
+  showAll.value = true
+  pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
+  await Promise.all([loadGit(), loadFiles()])
+}
+
 function openOverview() {
   keepDraft()
   clearSource()
@@ -693,6 +749,7 @@ watch(
     tasksLoaded.value = false
     overviewDiffs.value = {}
     overviewErrors.value = {}
+    expandedTasks.value = new Set()
     requestedPath.value = null
     selectedTask.value = props.taskId ?? null
     overview.value = !props.taskId
@@ -749,35 +806,154 @@ defineExpose({ openFile })
 
 <template>
   <div class="panel-changes">
-    <div class="source-bar">
+    <!-- 看某一个来源时，这一条就是这一格全部的横条：左边是你在看什么（来源 → 文件），
+         右边是对这份文件做的事。偶尔才换的（范围、版本、下载、刷新）在 ⋯ 里。
+         总览不要这一条：页签已经写着「改动」，再写一遍「房间改动」只是重复。 -->
+    <div v-if="!overview" class="changes-bar">
       <div class="source-heading">
-        <v-btn v-if="!overview" variant="text" size="small" prepend-icon="mdi-arrow-left" @click="openOverview">
-          房间改动
-        </v-btn>
-        <h3 class="t-title">{{ overview ? '房间改动' : sourceTitle }}</h3>
-        <span v-if="!overview" class="source-status">{{ sourceStatus }}</span>
+        <v-btn
+          icon="mdi-arrow-left"
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          title="房间改动"
+          aria-label="房间改动"
+          @click="openOverview"
+        />
+        <v-menu v-model="sourceMenu">
+          <template #activator="{ props: menuProps }">
+            <button
+              v-bind="menuProps"
+              type="button"
+              class="source-pick"
+              title="切换来源"
+              :aria-label="`切换来源：${sourceTitle}`"
+            >
+              <span class="source-pick__name">{{ sourceTitle }}</span>
+              <v-icon size="16">mdi-chevron-down</v-icon>
+            </button>
+          </template>
+          <v-list density="compact" aria-label="文件来源">
+            <v-list-item
+              v-for="task in taskOptions"
+              :key="task.id"
+              :active="selectedTask === task.id"
+              :title="task.title"
+              :subtitle="task.presentation.display_status"
+              @click="navigateSource(task.id)"
+            />
+            <v-divider />
+            <v-list-item
+              title="项目当前代码"
+              subtitle="只读"
+              :active="selectedTask === null"
+              @click="navigateSource(null)"
+            />
+          </v-list>
+        </v-menu>
+        <span class="source-status">{{ sourceStatus }}</span>
       </div>
-      <v-btn v-if="overview" variant="outlined" size="small" @click="navigateSource(null)">项目当前代码</v-btn>
-      <v-menu v-else v-model="sourceMenu">
+      <template v-if="fileToolReady">
+        <span class="changes-bar__sep" aria-hidden="true" />
+        <v-btn
+          icon
+          size="x-small"
+          variant="text"
+          class="file-icon-btn"
+          :class="{ 'file-icon-btn--on': fileListOpen }"
+          title="文件列表"
+          @click="fileListOpen = !fileListOpen"
+        >
+          <v-icon size="18">mdi-format-list-bulleted</v-icon>
+        </v-btn>
+        <span class="changes-bar__path" :title="openPath || ''">
+          {{ openPath || '未打开文件' }}
+        </span>
+        <span v-if="fileDirty" class="changes-bar__dot" title="未保存" />
+      </template>
+      <v-spacer />
+      <template v-if="fileToolReady">
+        <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
+             这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
+        <div v-if="openDiff && !openIsDocument" class="seg seg--sm">
+          <button
+            type="button"
+            class="seg__btn"
+            :class="{ 'seg__btn--on': effectiveView === 'diff' }"
+            @click="fileView = 'diff'"
+          >
+            差异
+          </button>
+          <button
+            type="button"
+            class="seg__btn"
+            :class="{ 'seg__btn--on': effectiveView === 'edit' }"
+            @click="fileView = 'edit'"
+          >
+            {{ fileReadOnly ? '全文' : '编辑' }}
+          </button>
+        </div>
+        <!-- Read-only files (binary / oversized / images) get no 保存 button at
+           all: saving one is what corrupted them. -->
+        <span v-if="fileReadOnly && openPath" class="changes-bar__ro">只读</span>
+        <v-btn
+          v-else-if="effectiveView === 'edit'"
+          size="x-small"
+          variant="flat"
+          color="primary"
+          :loading="fileSaving"
+          :disabled="!fileDirty"
+          @click="saveFile"
+        >
+          保存
+        </v-btn>
+      </template>
+      <v-menu location="bottom end">
         <template #activator="{ props: menuProps }">
-          <v-btn v-bind="menuProps" variant="outlined" size="small" append-icon="mdi-chevron-down">切换来源</v-btn>
+          <v-btn
+            v-bind="menuProps"
+            icon="mdi-dots-horizontal"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="更多"
+            aria-label="更多"
+            :loading="refreshing"
+          />
         </template>
-        <v-list density="compact" aria-label="文件来源">
+        <v-list density="compact" aria-label="改动选项">
+          <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
+               是为了顺手看一眼旁边那个没动过的文件。 -->
+          <v-list-subheader>范围</v-list-subheader>
+          <v-list-item title="改动" :active="!showAll" @click="showAll = false">
+            <template v-if="fileDiffs.length" #append>
+              <span class="menu-count">{{ fileDiffs.length }}</span>
+            </template>
+          </v-list-item>
+          <v-list-item title="全部文件" :active="showAll" @click="showAll = true" />
+          <template v-if="selectedTask && currentTask?.status === 'open'">
+            <v-list-subheader>版本</v-list-subheader>
+            <v-list-item
+              title="机器实时文件"
+              subtitle="包含尚未提交的修改"
+              :active="fileSource === 'live'"
+              @click="selectVersion('live')"
+            />
+            <v-list-item
+              title="已提交版本"
+              subtitle="只读，不包含尚未提交的修改"
+              :active="fileSource === 'committed'"
+              @click="selectVersion('committed')"
+            />
+          </template>
+          <v-divider class="my-1" />
           <v-list-item
-            v-for="task in taskOptions"
-            :key="task.id"
-            :active="selectedTask === task.id"
-            :title="task.title"
-            :subtitle="task.presentation.display_status"
-            @click="navigateSource(task.id)"
+            v-if="fileToolReady && openPath"
+            title="下载"
+            prepend-icon="mdi-download-outline"
+            @click="downloadOpenFile"
           />
-          <v-divider />
-          <v-list-item
-            title="项目当前代码"
-            subtitle="只读"
-            :active="selectedTask === null"
-            @click="navigateSource(null)"
-          />
+          <v-list-item title="刷新" prepend-icon="mdi-refresh" @click="loadAll({ silent: true })" />
         </v-list>
       </v-menu>
     </div>
@@ -787,70 +963,74 @@ defineExpose({ openFile })
       <p v-if="!tasksLoaded && !taskLoadError" class="source-note">正在加载任务</p>
       <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">暂无任务改动</p>
       <article v-for="task in taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
-        <button type="button" class="task-change-heading" @click="navigateSource(task.id, requestedPath ?? undefined)">
-          <span class="t-title">{{ task.title }}</span>
-          <span class="source-status">{{ task.presentation.display_status }}</span>
-          <span v-if="overviewDiffs[task.id]" class="task-file-count">{{ overviewDiffs[task.id].length }} 个文件</span>
-          <v-icon size="18">mdi-chevron-right</v-icon>
-        </button>
+        <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
+             那个箭头才在当前页展开它自己的改动清单。 -->
+        <div class="task-change-head">
+          <button
+            type="button"
+            class="task-change-heading"
+            @click="navigateSource(task.id, requestedPath ?? undefined)"
+          >
+            <span class="t-title">{{ task.title }}</span>
+            <span class="source-status">{{ task.presentation.display_status }}</span>
+            <span v-if="overviewDiffs[task.id]" class="task-file-count"
+              >{{ overviewDiffs[task.id].length }} 个文件</span
+            >
+          </button>
+          <button
+            type="button"
+            class="task-change-toggle"
+            :aria-expanded="expandedTasks.has(task.id)"
+            :aria-controls="`task-files-${task.id}`"
+            :title="expandedTasks.has(task.id) ? '收起改动文件' : '展开改动文件'"
+            :aria-label="`${expandedTasks.has(task.id) ? '收起' : '展开'}「${task.title}」的改动文件`"
+            @click="toggleTaskFiles(task.id)"
+          >
+            <v-icon size="18">{{ expandedTasks.has(task.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+          </button>
+        </div>
+        <!-- 改动没加载出来是这一行自己的错，折叠着也得看得见——否则这一行静默地少了
+             一句话，读者只会以为它没有改动。 -->
         <p v-if="overviewErrors[task.id]" class="source-note" role="alert">{{ overviewErrors[task.id] }}</p>
-        <p v-else-if="!overviewDiffs[task.id]" class="source-note">正在加载改动</p>
-        <p v-else-if="!overviewDiffs[task.id].length" class="source-note">暂无改动</p>
-        <button
-          v-for="file in overviewDiffs[task.id] ?? []"
-          :key="file.path"
-          type="button"
-          class="task-change-file"
-          @click="openFile(file.path, task.id)"
-        >
-          <v-icon size="18">mdi-file-document-outline</v-icon>
-          <span class="task-file-path">{{ file.path }}</span>
-          <span v-if="file.added" class="file-mark file-mark--add">+{{ file.added }}</span>
-          <span v-if="file.removed" class="file-mark file-mark--del">−{{ file.removed }}</span>
-          <v-icon size="18">mdi-chevron-right</v-icon>
-        </button>
+        <div v-if="expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
+          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">正在加载改动</p>
+          <p v-else-if="overviewDiffs[task.id]?.length === 0" class="source-note">暂无改动</p>
+          <button
+            v-for="file in overviewDiffs[task.id] ?? []"
+            :key="file.path"
+            type="button"
+            class="task-change-file"
+            @click="openFile(file.path, task.id)"
+          >
+            <v-icon size="18">mdi-file-document-outline</v-icon>
+            <span class="task-file-path">{{ file.path }}</span>
+            <span v-if="file.added" class="file-mark file-mark--add">+{{ file.added }}</span>
+            <span v-if="file.removed" class="file-mark file-mark--del">−{{ file.removed }}</span>
+            <v-icon size="18">mdi-chevron-right</v-icon>
+          </button>
+        </div>
       </article>
+      <button type="button" class="task-change-heading project-code" @click="navigateSource(null)">
+        <span class="t-title">项目当前代码</span>
+        <span class="source-status">只读</span>
+        <v-icon size="18" class="ms-auto">mdi-chevron-right</v-icon>
+      </button>
     </div>
     <v-alert v-else-if="sourceUnavailable" type="warning" density="compact" class="ma-4"
       >任务不可用，请选择其他来源</v-alert
     >
     <template v-else>
-      <p class="source-note source-current">
-        当前查看：{{ sourceTitle
-        }}<span v-if="selectedTask && currentTask?.status !== 'open'"> · 任务已结束，只读</span>
-      </p>
-      <div class="changes-bar">
-        <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
-           是为了顺手看一眼旁边那个没动过的文件。 -->
-        <div class="seg">
-          <button type="button" class="seg__btn" :class="{ 'seg__btn--on': !showAll }" @click="showAll = false">
-            改动
-            <span v-if="fileDiffs.length" class="seg__count">{{ fileDiffs.length }}</span>
-          </button>
-          <button type="button" class="seg__btn" :class="{ 'seg__btn--on': showAll }" @click="showAll = true">
-            全部文件
-          </button>
-        </div>
-        <v-spacer />
-        <v-btn
-          icon="mdi-refresh"
-          size="small"
-          variant="text"
-          class="c-muted"
-          title="刷新"
-          :loading="refreshing"
-          @click="loadAll({ silent: true })"
-        />
-      </div>
-
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
          而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
          等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
       <div v-if="loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
-      <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
+      <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4 file-load-error">
         {{ errorMsg }}
+        <v-btn v-if="fileSource === 'live'" variant="text" size="small" @click="selectVersion('committed')"
+          >切换到已提交版本</v-btn
+        >
       </v-alert>
 
       <div v-else class="file-tool">
@@ -859,67 +1039,6 @@ defineExpose({ openFile })
         <v-alert v-if="missing" type="info" variant="tonal" density="compact" class="ma-2" data-testid="missing-file">
           {{ missing }} 不在{{ selectedTask ? '这个任务' : '项目当前代码' }}里
         </v-alert>
-        <div class="file-bar">
-          <v-btn
-            icon
-            size="x-small"
-            variant="text"
-            class="file-icon-btn"
-            :class="{ 'file-icon-btn--on': fileListOpen }"
-            title="文件列表"
-            @click="fileListOpen = !fileListOpen"
-          >
-            <v-icon size="18">mdi-format-list-bulleted</v-icon>
-          </v-btn>
-          <span class="file-bar__path" :title="openPath || ''">
-            {{ openPath || '未打开文件' }}
-          </span>
-          <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
-          <v-spacer />
-          <v-btn
-            v-if="openPath"
-            size="x-small"
-            variant="text"
-            prepend-icon="mdi-download-outline"
-            @click="downloadOpenFile"
-          >
-            下载
-          </v-btn>
-          <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
-               这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
-          <div v-if="openDiff && !openIsDocument" class="seg seg--sm">
-            <button
-              type="button"
-              class="seg__btn"
-              :class="{ 'seg__btn--on': effectiveView === 'diff' }"
-              @click="fileView = 'diff'"
-            >
-              差异
-            </button>
-            <button
-              type="button"
-              class="seg__btn"
-              :class="{ 'seg__btn--on': effectiveView === 'edit' }"
-              @click="fileView = 'edit'"
-            >
-              编辑
-            </button>
-          </div>
-          <!-- Read-only files (binary / oversized / images) get no 保存 button at
-             all: saving one is what corrupted them. -->
-          <span v-if="fileReadOnly && openPath" class="file-bar__ro">只读</span>
-          <v-btn
-            v-else-if="effectiveView === 'edit'"
-            size="x-small"
-            variant="flat"
-            color="primary"
-            :loading="fileSaving"
-            :disabled="!fileDirty"
-            @click="saveFile"
-          >
-            保存
-          </v-btn>
-        </div>
         <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
            human choose — a silent winner is how edits vanished. -->
         <div v-if="fileConflict" class="file-conflict">
@@ -1009,6 +1128,8 @@ defineExpose({ openFile })
                   :path="suffixOf(openPath) === 'docx' ? openPath : null"
                   :version="fileVersion"
                   :task="selectedTask"
+                  :source="fileSource"
+                  :read-only="props.readOnly || currentTask?.status !== 'open' || fileSource === 'committed'"
                   @decided="onRevisionDecided"
                 />
               </div>
@@ -1081,7 +1202,6 @@ defineExpose({ openFile })
 </template>
 
 <style scoped>
-.source-bar,
 .source-heading,
 .task-change-heading,
 .task-change-file {
@@ -1090,16 +1210,39 @@ defineExpose({ openFile })
   gap: 8px;
   min-width: 0;
 }
-.source-bar {
-  justify-content: space-between;
-  flex-wrap: wrap;
-  padding: 16px;
-  border-bottom: 1px solid var(--line);
-}
 .source-heading {
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  gap: 4px;
+}
+/* 来源名本身就是切换来源的按钮：名字长的任务在窄栏里截断，不把右边的保存挤走。 */
+.source-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.source-pick:hover {
+  background: var(--fill);
+}
+.source-pick__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .source-status {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 13px;
   color: var(--muted);
   background: var(--fill);
@@ -1112,9 +1255,6 @@ defineExpose({ openFile })
   font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
-}
-.source-current {
-  border-bottom: 1px solid var(--line);
 }
 .source-drafts {
   border-top: 1px solid var(--line);
@@ -1137,11 +1277,40 @@ defineExpose({ openFile })
   color: var(--text);
   font-size: 13px;
 }
+.task-change-head {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
 .task-change-heading {
+  flex: 1 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
+}
+/* 箭头是这一行上唯一「就地展开」的控件，所以它得看得出是自己的一个按钮：和标题
+   之间一条竖线，悬停也只罩住自己那一格。 */
+.task-change-toggle {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.task-change-toggle:hover {
+  background: var(--fill);
+  color: var(--ink);
 }
 .task-change-file {
   border-top: 1px solid var(--line);
+}
+/* 项目当前代码：和任务并排的另一个来源，排在最后。 */
+.project-code {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 .task-change-heading:hover,
 .task-change-file:hover {
@@ -1165,13 +1334,54 @@ defineExpose({ openFile })
   min-height: 0;
   background: var(--surface);
 }
+.file-load-error {
+  flex: 0 0 auto;
+}
 .changes-bar {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 4px 8px;
   border-bottom: 1px solid var(--line);
+}
+.changes-bar__sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+.changes-bar__path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-bar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.changes-bar__ro {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  flex: 0 0 auto;
+}
+/* ⋯ 里「改动」那一项后面的计数：改过的文件有几个。 */
+.menu-count {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 /* 分段开关 —— 下一张卡合并 Git 与 文件 时整块删掉。
    选中态靠「浮起来的一面」（surface 底 + 1px 描边 + ink 字重）而不是靠两档灰的
@@ -1199,17 +1409,6 @@ defineExpose({ openFile })
   border-color: var(--line-2);
   color: var(--ink);
   font-weight: 600;
-}
-/* 范围切换上的计数：改动的文件有几个。 */
-.seg__count {
-  margin-left: 5px;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--faint);
-}
-.seg__btn--on .seg__count {
-  color: var(--muted);
 }
 /* 没打开文件时右半边装的提交列表，也是这个 tab 唯一的另一个滚动层。 */
 .changes-scroll {
@@ -1281,38 +1480,6 @@ defineExpose({ openFile })
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-}
-.file-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.5);
-  flex: 0 0 auto;
-}
-.file-bar__path {
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 52%;
-}
-.file-bar__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex: 0 0 auto;
-}
-.file-bar__ro {
-  font-size: 0.72rem;
-  color: var(--muted);
-  border: 1px solid rgba(var(--v-border-color), 0.6);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
-  flex: 0 0 auto;
 }
 .file-conflict {
   display: flex;

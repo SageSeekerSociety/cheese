@@ -1,8 +1,15 @@
-"""架构守卫：领域包不许直接 import 别的领域的 repository 模块。
+"""架构守卫：领域包和 HTTP 路由都不许直接 import 别的领域的 repository 模块。
 
 正路是 service → 对方的 service。直接摸对方的 repository 会把「数据访问」这层的
 约束（谁能读、读完要不要补别的字段、要不要发通知）绕过去。本领域内部随便 import，
 不受限。
+
+## 管辖范围
+
+两棵树：``app/domain`` 与 ``app/api/routes``。路由不属于任何一个领域，所以它 import
+的每一条 repository 都是跨域的，98 条全在下面的白名单里。守卫只看 ``app/domain`` 的
+时候这 98 条 CI 一条也看不见，而它们恰恰是这层约束最容易被绕过去的地方——HTTP 处理
+函数手上就有 session，拿对方的 repository 直接查一行比找对方的 service 省事。
 
 **这道守卫治的是分层纪律，不是依赖环——别指望它把环拆没。** 按正路改完，包和包之间
 那条边还在，只是从 repository 层挪到了 services 层；包级依赖图一条边都不会少。真要解
@@ -31,7 +38,14 @@ from pathlib import Path
 
 import pytest
 
-DOMAIN_ROOT = Path(__file__).resolve().parents[2] / "app" / "domain"
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+#: 扫哪几棵树，相对 backend 根。见上面「管辖范围」。
+_SCANNED = ("app/domain", "app/api/routes")
+
+#: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
+#: import 都算跨域——它不等于任何一个领域包的名字。
+_ROUTES = "<api.routes>"
 
 # ---------------------------------------------------------------------------
 # 存量豁免。格式：(发起方模块, 被 import 的 repository 模块)
@@ -62,11 +76,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.comments.services", "app.domain.user.repositories"),
         ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
-        # --- alert ---
-        ("app.domain.alert.services", "app.domain.block.repositories"),
-        ("app.domain.alert.services", "app.domain.project.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
-        ("app.domain.dashboard.services", "app.domain.alert.repositories"),
+        ("app.domain.dashboard.services", "app.domain.notification.repositories"),
+        # --- platform_stats（看板的读模型聚合，和 dashboard 同构，单独还）。
+        #     block 领域**没有** service 层（只有 repositories / models），
+        #     pipeline 那一块问的是「哪几条活/房间停在未回答的提问上」——
+        #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
+        #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
+        ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
         ("app.domain.dashboard.services", "app.domain.membership.repositories"),
         ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
@@ -80,15 +97,24 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
         ("app.domain.milestone.services", "app.domain.project.repositories"),
+        # --- notification（项目收件箱：写入前核项目在不在，拍板时把决定发回房间。
+        #     这两条是 alert/ 并进来时原样带过来的） ---
+        ("app.domain.notification.services", "app.domain.block.repositories"),
+        ("app.domain.notification.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
         # --- project ---
+        # environment_recovery 走的一直是 block 领域的 service，而那个 service
+        # （`record_system_event`）的全部内容就是替调用点挑一个 `topic_id`——
+        # 正是结论 14 要收掉的那个自由。它退场之后这里就是直接写块，和上面
+        # announce / review 那几行同一个理由入账。
+        ("app.domain.project.environment_recovery", "app.domain.block.repositories"),
         ("app.domain.project.services", "app.domain.topic.repositories"),
         ("app.domain.project.services", "app.domain.usage.repositories"),
         ("app.domain.project.services", "app.domain.user.repositories"),
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),
-        # --- review / scheduler ---
+        # --- review ---
         # review.archive / review.gate_sweep 是本分支挂起期间从 main 进来的
         # （#286 闸门孤儿清扫等），不是本轮新欠的债，按存量入账。
         ("app.domain.review.archive", "app.domain.block.repositories"),
@@ -98,11 +124,16 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
         ("app.domain.review.services", "app.domain.topic.repositories"),
-        ("app.domain.scheduler.service", "app.domain.project.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),
         ("app.domain.space.analytics_view_service", "app.domain.user.repositories"),
+        # 学习那一格是读模型：课程 → 它名下的赛题 → 从赛题开的项目。这一跳走的是
+        # project 领域 `list_ids_for_space_tasks`（它自己的注释：「One query rather
+        # than a walk」），而 project 领域没有 service 暴露它 —— `ProjectService` 只
+        # 按 id /（课, 小队）取项目。搬不出来，和 dashboard 那条「横跨多领域聚合的读
+        # 模型」同形，按存量入账。
+        ("app.domain.space.learning_service", "app.domain.project.repositories"),
         (
             "app.domain.space.member_participating_service",
             "app.domain.user.repositories",
@@ -121,13 +152,116 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.identity.repositories"),
         ("app.domain.topic_membership.services", "app.domain.membership.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
+        # --- app/api/routes ---
+        # 路由一个领域都不属于，所以它碰的每一个 repository 都是别人家的。下面
+        # 98 条是守卫扩到这棵树那一刻就在的存量，和上面的领域内债一样入账：还法
+        # 是路由改调对方的 service，然后把这里对应的行删掉。
+        ("app.api.routes.agent_credential", "app.domain.membership.repositories"),
+        ("app.api.routes.agent_credential", "app.domain.project.repositories"),
+        ("app.api.routes.ai", "app.domain.llm.repositories"),
+        ("app.api.routes.answers", "app.domain.answers.repositories"),
+        ("app.api.routes.answers", "app.domain.discussion.repositories"),
+        ("app.api.routes.answers", "app.domain.questions.repositories"),
+        ("app.api.routes.answers", "app.domain.user.repositories"),
+        ("app.api.routes.attachments", "app.domain.attachment.repositories"),
+        ("app.api.routes.avatars", "app.domain.avatars.repositories"),
+        ("app.api.routes.awaiting", "app.domain.agent.repositories"),
+        ("app.api.routes.awaiting", "app.domain.block.repositories"),
+        ("app.api.routes.awaiting", "app.domain.project.repositories"),
+        ("app.api.routes.awaiting", "app.domain.review.repositories"),
+        ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
+        ("app.api.routes.awaiting", "app.domain.topic.repositories"),
+        ("app.api.routes.blocks", "app.domain.block.repositories"),
+        ("app.api.routes.comments", "app.domain.comments.repositories"),
+        ("app.api.routes.comments", "app.domain.questions.repositories"),
+        ("app.api.routes.comments", "app.domain.user.repositories"),
+        ("app.api.routes.connector", "app.domain.device.repository"),
+        ("app.api.routes.connector", "app.domain.device.sql_repository"),
+        ("app.api.routes.connector", "app.domain.team.repositories"),
+        ("app.api.routes.dashboard", "app.domain.project.repositories"),
+        ("app.api.routes.dashboard", "app.domain.usage.repositories"),
+        ("app.api.routes.discussions", "app.domain.discussion.repositories"),
+        ("app.api.routes.discussions", "app.domain.user.repositories"),
+        ("app.api.routes.feedback_proposals", "app.domain.block.repositories"),
+        ("app.api.routes.frontend_log", "app.domain.block.repositories"),
+        ("app.api.routes.frontend_log", "app.domain.project.repositories"),
+        ("app.api.routes.frontend_log", "app.domain.topic.repositories"),
+        ("app.api.routes.github_account_link", "app.domain.oauth.repositories"),
+        ("app.api.routes.github_install", "app.domain.oauth.repositories"),
+        ("app.api.routes.github_install", "app.domain.project.repositories"),
+        ("app.api.routes.github_install", "app.domain.user.repositories"),
+        ("app.api.routes.groups", "app.domain.groups.repositories"),
+        ("app.api.routes.groups", "app.domain.user.repositories"),
+        ("app.api.routes.knowledge", "app.domain.knowledge.repositories"),
+        ("app.api.routes.knowledge", "app.domain.team.repositories"),
+        ("app.api.routes.knowledge", "app.domain.user.repositories"),
+        ("app.api.routes.llm_proxy", "app.domain.machine.repositories"),
+        ("app.api.routes.llm_proxy", "app.domain.project.repositories"),
+        ("app.api.routes.llm_proxy", "app.domain.usage.repositories"),
+        ("app.api.routes.machines", "app.domain.membership.repositories"),
+        ("app.api.routes.machines", "app.domain.project.repositories"),
+        ("app.api.routes.machines", "app.domain.team.repositories"),
+        ("app.api.routes.materialbundles", "app.domain.materials.repositories"),
+        ("app.api.routes.materials", "app.domain.materials.repositories"),
+        ("app.api.routes.notifications_flat", "app.domain.notification.repositories"),
+        ("app.api.routes.notifications_flat", "app.domain.team.repositories"),
+        ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
+        ("app.api.routes.project_environment", "app.domain.machine.repositories"),
+        ("app.api.routes.project_environment", "app.domain.membership.repositories"),
+        ("app.api.routes.project_environment", "app.domain.user.repositories"),
+        ("app.api.routes.projects", "app.domain.block.repositories"),
+        ("app.api.routes.projects", "app.domain.membership.repositories"),
+        ("app.api.routes.projects", "app.domain.project.repositories"),
+        ("app.api.routes.projects", "app.domain.review.repositories"),
+        ("app.api.routes.projects", "app.domain.room_task.repositories"),
+        ("app.api.routes.questions", "app.domain.answers.repositories"),
+        ("app.api.routes.questions", "app.domain.discussion.repositories"),
+        ("app.api.routes.questions", "app.domain.questions.repositories"),
+        ("app.api.routes.questions", "app.domain.user.repositories"),
+        ("app.api.routes.recruitment", "app.domain.team.recruitment_repositories"),
+        ("app.api.routes.recruitment", "app.domain.team.repositories"),
+        ("app.api.routes.recruitment", "app.domain.user.repositories"),
+        ("app.api.routes.spaces", "app.domain.space.repositories"),
+        ("app.api.routes.spaces", "app.domain.task.repositories"),
+        # 教学单元的读写在 teaching 领域，路由按本文件通篇的写法自己组 service
+        # （route → 自己的 service，教学那半边在 teaching.services 里）。
+        ("app.api.routes.spaces", "app.domain.teaching.repositories"),
+        # 小测的读写在 teaching 领域，路由同样只按本文件通篇的写法组 service
+        # （route → 自己的 service；判分与可见性在 teaching.quiz_services 里）。
+        ("app.api.routes.spaces", "app.domain.teaching.quiz_repositories"),
+        ("app.api.routes.spaces", "app.domain.user.repositories"),
+        ("app.api.routes.tags", "app.domain.tag.repositories"),
+        ("app.api.routes.tasks", "app.domain.llm.repositories"),
+        ("app.api.routes.tasks", "app.domain.space.repositories"),
+        ("app.api.routes.tasks", "app.domain.tag.repositories"),
+        ("app.api.routes.tasks", "app.domain.task.repositories"),
+        ("app.api.routes.tasks", "app.domain.team.repositories"),
+        ("app.api.routes.tasks", "app.domain.user.repositories"),
+        ("app.api.routes.teams", "app.domain.team.repositories"),
+        ("app.api.routes.teams", "app.domain.usage.repositories"),
+        ("app.api.routes.teams", "app.domain.user.repositories"),
+        ("app.api.routes.topic_members", "app.domain.identity.repositories"),
+        ("app.api.routes.topic_members", "app.domain.user.repositories"),
+        ("app.api.routes.topics", "app.domain.agent.repositories"),
+        ("app.api.routes.topics", "app.domain.block.repositories"),
+        ("app.api.routes.topics", "app.domain.machine.repositories"),
+        ("app.api.routes.topics", "app.domain.project.repositories"),
+        ("app.api.routes.topics", "app.domain.review.repositories"),
+        ("app.api.routes.topics", "app.domain.room_task.repositories"),
+        ("app.api.routes.topics", "app.domain.topic.repositories"),
+        ("app.api.routes.topics", "app.domain.usage.repositories"),
+        ("app.api.routes.users", "app.domain.answers.repositories"),
+        ("app.api.routes.users", "app.domain.oauth.repositories"),
+        ("app.api.routes.users", "app.domain.passkey.repositories"),
+        ("app.api.routes.users", "app.domain.questions.repositories"),
+        ("app.api.routes.users", "app.domain.team.repositories"),
+        ("app.api.routes.users", "app.domain.user.repositories"),
+        ("app.api.routes.webhooks", "app.domain.topic.repositories"),
     }
 )
 
@@ -145,16 +279,17 @@ def _is_repository_module(name: str) -> bool:
 
 
 def _domain_of(module: str) -> str | None:
-    """``app.domain.<pkg>.<...>`` → ``<pkg>``；不在领域包下则 None。"""
+    """``app.domain.<pkg>.<...>`` → ``<pkg>``；路由 → ``_ROUTES``；其余 None。"""
     parts = module.split(".")
+    if len(parts) >= 4 and parts[:3] == ["app", "api", "routes"]:
+        return _ROUTES
     if len(parts) < 4 or parts[0] != "app" or parts[1] != "domain":
         return None
     return parts[2]
 
 
-def _module_name(path: Path, root: Path) -> str:
-    rel = path.relative_to(root.parents[1])  # <root>/app/domain 的上两级
-    return ".".join(rel.with_suffix("").parts)
+def _module_name(path: Path, tree: Path) -> str:
+    return ".".join(path.relative_to(tree).with_suffix("").parts)
 
 
 def _resolve(node: ast.ImportFrom, current: str) -> str | None:
@@ -165,55 +300,60 @@ def _resolve(node: ast.ImportFrom, current: str) -> str | None:
     return ".".join(base + (node.module.split(".") if node.module else []))
 
 
-def _scan(root: Path = DOMAIN_ROOT) -> list[tuple[str, str, int]]:
+def _scan(tree: Path = BACKEND_ROOT) -> list[tuple[str, str, int]]:
     """返回全部跨领域 repository import：(发起方模块, 目标模块, 行号)。
 
-    ``root`` 指向 ``<某处>/app/domain``。默认扫真树；自检用它扫 tmp 里的假树。
+    ``tree`` 指向 ``backend/``，也就是 ``app/`` 的上一级。默认扫真树；自检用它扫
+    tmp 里的假树。
     """
     found: list[tuple[str, str, int]] = []
-    for py in sorted(root.rglob("*.py")):
-        src_mod = _module_name(py, root)
-        src_dom = _domain_of(src_mod)
-        if src_dom is None:
-            continue  # domain/common.py 这类顶层文件，不属于任何领域包
-        tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        for node in ast.walk(tree):
-            targets: list[str] = []
-            if isinstance(node, ast.Import):
-                targets = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                mod = _resolve(node, src_mod)
-                if not mod:
-                    continue
-                # 两种写法都要抓：
-                #   from app.domain.x.repositories import Foo
-                #   from app.domain.x import repositories
-                targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
-            for t in targets:
-                if not _is_repository_module(t):
-                    continue
-                dst_dom = _domain_of(t)
-                if dst_dom is None or dst_dom == src_dom:
-                    continue
-                found.append((src_mod, t, node.lineno))
+    for scanned in _SCANNED:
+        root = tree / scanned
+        if not root.is_dir():
+            continue  # 假树只搭用得上的那半棵
+        for py in sorted(root.rglob("*.py")):
+            src_mod = _module_name(py, tree)
+            src_dom = _domain_of(src_mod)
+            if src_dom is None:
+                continue  # domain/common.py 这类顶层文件，不属于任何领域包
+            parsed = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+            for node in ast.walk(parsed):
+                targets: list[str] = []
+                if isinstance(node, ast.Import):
+                    targets = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    mod = _resolve(node, src_mod)
+                    if not mod:
+                        continue
+                    # 两种写法都要抓：
+                    #   from app.domain.x.repositories import Foo
+                    #   from app.domain.x import repositories
+                    targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
+                for t in targets:
+                    if not _is_repository_module(t):
+                        continue
+                    dst_dom = _domain_of(t)
+                    if dst_dom is None or dst_dom == src_dom:
+                        continue
+                    found.append((src_mod, t, node.lineno))
     return found
 
 
 def _violations(
-    root: Path = DOMAIN_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
+    tree: Path = BACKEND_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
 ) -> list[tuple[str, str]]:
     """白名单之外的违规。"""
-    return sorted({(src, dst) for src, dst, _ in _scan(root)} - exempt)
+    return sorted({(src, dst) for src, dst, _ in _scan(tree)} - exempt)
 
 
-def _module_exists(root: Path, module: str) -> bool:
+def _module_exists(tree: Path, module: str) -> bool:
     """``app.domain.x.y`` 在这棵树里有没有对应的文件（模块或包）。"""
-    base = root.joinpath(*module.split(".")[2:])
+    base = tree.joinpath(*module.split("."))
     return base.with_suffix(".py").exists() or (base / "__init__.py").exists()
 
 
 def _stale_exemptions(
-    root: Path = DOMAIN_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
+    tree: Path = BACKEND_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
 ) -> list[tuple[str, str]]:
     """白名单里已经没有对应违规的行。
 
@@ -227,9 +367,9 @@ def _stale_exemptions(
     换来的是不会把落后的 checkout 误判成还清了债——后者会诱导人删掉仍然有效的
     豁免，那是会让守卫漏判的方向，比多留几行严重。
     """
-    actual = {(src, dst) for src, dst, _ in _scan(root)}
+    actual = {(src, dst) for src, dst, _ in _scan(tree)}
     return sorted(
-        (src, dst) for src, dst in exempt - actual if _module_exists(root, src)
+        (src, dst) for src, dst in exempt - actual if _module_exists(tree, src)
     )
 
 
@@ -270,17 +410,17 @@ def test_exemptions_are_all_still_needed() -> None:
 
 
 def _fake_tree(tmp_path: Path, files: dict[str, str]) -> Path:
-    """在 tmp 里搭一棵 ``<tmp>/app/domain/...`` 的假领域树，返回 domain 根。
+    """在 tmp 里搭一棵 ``<tmp>/app/...`` 的假树，返回 backend 根（``<tmp>``）。
 
-    路径形状必须和真树一致：``_module_name`` 是按 ``app/domain`` 上两级取相对
-    路径算模块名的，假树跟着这个形状走，自检才测的是真代码路径。
+    key 是 ``app/`` 下的相对路径：``domain/alpha/services.py``、
+    ``api/routes/tasks.py``。路径形状必须和真树一致——模块名是按 backend 根取相对
+    路径算出来的，假树跟着这个形状走，自检才测的是真代码路径。
     """
-    domain = tmp_path / "app" / "domain"
     for rel, src in files.items():
-        path = domain / rel
+        path = tmp_path / "app" / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(src, encoding="utf-8")
-    return domain
+    return tmp_path
 
 
 #: 每一条都必须被抓到。key 是 pytest 的用例名，value 是 alpha/services.py 的内容。
@@ -306,7 +446,7 @@ _MUST_FAIL = {
 @pytest.mark.parametrize("source", _MUST_FAIL.values(), ids=list(_MUST_FAIL))
 def test_self_test_guard_goes_red_on(tmp_path: Path, source: str) -> None:
     """每种 import 写法都得抓到——改个名或者塞进函数体就绕过去的守卫不算守卫。"""
-    root = _fake_tree(tmp_path, {"alpha/services.py": source})
+    root = _fake_tree(tmp_path, {"domain/alpha/services.py": source})
     found = _violations(root, frozenset())
     assert found, f"没抓到：{source!r}"
     src, dst = found[0]
@@ -317,11 +457,32 @@ def test_self_test_guard_goes_red_on(tmp_path: Path, source: str) -> None:
 def test_self_test_whitelist_actually_suppresses(tmp_path: Path) -> None:
     """白名单能压住违规——不然存量违规会把守卫直接淹掉。"""
     root = _fake_tree(
-        tmp_path, {"alpha/services.py": "from app.domain.beta.repositories import R\n"}
+        tmp_path,
+        {"domain/alpha/services.py": "from app.domain.beta.repositories import R\n"},
     )
     pair = ("app.domain.alpha.services", "app.domain.beta.repositories")
     assert _violations(root, frozenset()) == [pair]
     assert _violations(root, frozenset({pair})) == []
+
+
+def test_self_test_a_route_touching_a_repository_is_caught(tmp_path: Path) -> None:
+    """路由那棵树也在管辖内——它没有自己的领域，摸谁的 repository 都算跨域。"""
+    root = _fake_tree(
+        tmp_path,
+        {"api/routes/tasks.py": "from app.domain.beta.repositories import BetaRepo\n"},
+    )
+    assert _violations(root, frozenset()) == [
+        ("app.api.routes.tasks", "app.domain.beta.repositories")
+    ]
+
+
+def test_self_test_a_route_calling_a_service_stays_green(tmp_path: Path) -> None:
+    """路由调对方的 service 就是正路，不许误判成违规。"""
+    root = _fake_tree(
+        tmp_path,
+        {"api/routes/tasks.py": "from app.domain.beta.services import BetaService\n"},
+    )
+    assert _violations(root, frozenset()) == []
 
 
 def test_self_test_ratchet_ignores_exemptions_for_absent_modules(
@@ -332,7 +493,8 @@ def test_self_test_ratchet_ignores_exemptions_for_absent_modules(
     两条一起测才有意义：只测前者会掩盖「这层判断把棘轮整个关掉了」。
     """
     root = _fake_tree(
-        tmp_path, {"alpha/services.py": "from app.domain.beta.services import S\n"}
+        tmp_path,
+        {"domain/alpha/services.py": "from app.domain.beta.services import S\n"},
     )
     absent = ("app.domain.nosuch.services", "app.domain.beta.repositories")
     present = ("app.domain.alpha.services", "app.domain.beta.repositories")
@@ -345,7 +507,7 @@ def test_self_test_ratchet_ignores_exemptions_for_absent_modules(
 def test_self_test_ratchet_catches_a_stale_exemption(tmp_path: Path) -> None:
     """棘轮的另一半：债还完了白名单没删，也得红。"""
     root = _fake_tree(
-        tmp_path, {"alpha/services.py": "from app.domain.beta import x\n"}
+        tmp_path, {"domain/alpha/services.py": "from app.domain.beta import x\n"}
     )
     pair = ("app.domain.alpha.services", "app.domain.beta.repositories")
     assert _stale_exemptions(root, frozenset({pair})) == [pair]
@@ -365,7 +527,7 @@ _MUST_PASS = {
 
 @pytest.mark.parametrize("source", _MUST_PASS.values(), ids=list(_MUST_PASS))
 def test_self_test_guard_stays_green_on(tmp_path: Path, source: str) -> None:
-    root = _fake_tree(tmp_path, {"alpha/services.py": source})
+    root = _fake_tree(tmp_path, {"domain/alpha/services.py": source})
     assert _violations(root, frozenset()) == [], f"误判：{source!r}"
 
 
@@ -375,7 +537,8 @@ def test_self_test_top_level_files_are_out_of_scope(tmp_path: Path) -> None:
     这是设计取舍，不是漏网：它没有"自己的领域"，跨域的概念套不上去。
     """
     root = _fake_tree(
-        tmp_path, {"common.py": "from app.domain.beta.repositories import BetaRepo\n"}
+        tmp_path,
+        {"domain/common.py": "from app.domain.beta.repositories import BetaRepo\n"},
     )
     assert _violations(root, frozenset()) == []
 
@@ -385,10 +548,12 @@ def test_self_test_clean_tree_passes(tmp_path: Path) -> None:
     root = _fake_tree(
         tmp_path,
         {
-            "alpha/services.py": "from app.domain.beta.services import BetaService\n",
-            "alpha/repositories.py": "class AlphaRepo: ...\n",
-            "beta/services.py": "from .repositories import BetaRepo\n",
-            "beta/repositories.py": "class BetaRepo: ...\n",
+            "domain/alpha/services.py": (
+                "from app.domain.beta.services import BetaService\n"
+            ),
+            "domain/alpha/repositories.py": "class AlphaRepo: ...\n",
+            "domain/beta/services.py": "from .repositories import BetaRepo\n",
+            "domain/beta/repositories.py": "class BetaRepo: ...\n",
         },
     )
     assert _violations(root, frozenset()) == []

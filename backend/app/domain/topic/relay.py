@@ -17,11 +17,12 @@ there, and so does whoever opens the card next week.
 
 The reverse leg (活 → 它所在的房间) is gone with the sessions: it existed because
 a piece of work held a per-turn token of its own and had no other way home. A
-card has no turn and no token. A bound worker's result is recorded on its task;
-acceptance closes delivered work, while `cheese close-task` abandons a task.
+card has no turn and no token. A sub-thread's result is recorded on the card its
+label names; acceptance closes delivered work, while `cheese close-task` abandons
+a task.
 
 Why this is not `POST /topics/{id}/comments`: that route summons only when the
-commenter is a HUMAN (`if not actor.is_agent`), and it is not in
+commenter holds no agent seat in that room, and it is not in
 `app.main._CHEESE_WRITE_PATHS`, so an agent calling it never passes the per-turn
 token gate — the symptom of a missing entry is silent admission, not 401. Both
 halves were invisible from the calling side: the write succeeded.

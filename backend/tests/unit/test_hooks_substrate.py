@@ -26,6 +26,96 @@ from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 pytestmark = pytest.mark.anyio
 
 
+async def test_replay_finishes_without_waiting_for_new_live_work(tmp_path, monkeypatch):
+    from app.domain.agent import event_spool
+    from app.domain.agent.harness.claude_code import hooks_substrate
+
+    project, topic = _uuid.uuid4(), _uuid.uuid4()
+    spool = tmp_path / "spool"
+    monkeypatch.setattr(hooks_substrate.ws, "spool_dir", lambda _p, _t: spool)
+    event_spool.append(
+        spool,
+        "historical",
+        {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {}},
+    )
+    router = HookRouter()
+    runtime = ClaudeCodeRuntime(Channel(), router=router)
+    history_started, release_history = asyncio.Event(), asyncio.Event()
+    live_started, release_live = asyncio.Event(), asyncio.Event()
+    landed = []
+
+    async def consume(_p, _t, _work, _event, eid, _seen, _unsolicited):
+        if eid == "historical":
+            history_started.set()
+            await release_history.wait()
+        else:
+            live_started.set()
+            await release_live.wait()
+        landed.append(eid)
+
+    runtime.bind_events(consume)
+    await runtime.ensure_subscription(project, topic, paused=True)
+    replay = asyncio.create_task(
+        runtime.replay(
+            SessionRef(project, topic, harness="claude-code"), known_texts=set()
+        )
+    )
+    try:
+        await asyncio.wait_for(history_started.wait(), timeout=1)
+        assert not replay.done(), "Recovery returned before its historical event landed"
+        router.push(
+            str(topic),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {},
+                "_eid": "live",
+            },
+        )
+        release_history.set()
+        await asyncio.wait_for(live_started.wait(), timeout=1)
+        await asyncio.wait_for(asyncio.shield(replay), timeout=1)
+        assert landed == ["historical"]
+        assert (
+            event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+        )
+        release_live.set()
+        await runtime._subscriptions[topic].sink.queue.join()
+        assert landed == ["historical", "live"]
+    finally:
+        release_history.set()
+        release_live.set()
+        replay.cancel()
+        await asyncio.gather(replay, return_exceptions=True)
+        await runtime._close_topic(topic)
+
+
+async def test_recovery_keeps_other_rooms_when_one_subscription_fails(monkeypatch):
+    from app.domain.agent.device_hub import DeviceCallError
+
+    project, broken, healthy = _uuid.uuid4(), _uuid.uuid4(), _uuid.uuid4()
+    surviving_screen = object()
+
+    class RecoveringChannel(Channel):
+        async def discover(self, device_id=None):
+            return [
+                (project, broken, surviving_screen, None),
+                (project, healthy, None, None),
+            ]
+
+    runtime = ClaudeCodeRuntime(RecoveringChannel(), router=HookRouter())
+
+    async def subscribe(project_id, topic_id, **kwargs):
+        if topic_id == broken:
+            raise DeviceCallError("dial unix: no such file")
+
+    monkeypatch.setattr(runtime, "ensure_subscription", subscribe)
+    assert await runtime.recover() == [
+        SessionRef(project, healthy, harness="claude-code")
+    ]
+    assert runtime.holds(broken)
+
+
 def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
     assert "X-Cheese-Token: $CHEESE_TOKEN" in CHEESE_HOOK_SCRIPT
     assert "X-Cheese-Event-Id: $eid" in CHEESE_HOOK_SCRIPT
@@ -239,6 +329,8 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -265,7 +357,7 @@ async def test_failed_precheck_never_touches_the_router():
     class _NoRun(Channel):
         name = "no-run"
 
-        async def precheck(self, project_id, topic_id):
+        async def precheck(self, session, *, needs_place=True):
             raise ScreenSetupError("挡在门外")
 
     router = HookRouter()
@@ -278,6 +370,8 @@ async def test_failed_precheck_never_touches_the_router():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=_uuid.uuid4(),
             topic_id=topic_id,
             prompt="x",
@@ -529,6 +623,8 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -587,6 +683,8 @@ async def test_deliver_reports_false_when_the_screen_refuses():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -641,6 +739,8 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -686,6 +786,8 @@ async def test_run_refuses_to_clobber_existing_attribution():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="inspect",
@@ -751,6 +853,8 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -799,6 +903,8 @@ async def test_run_turn_stop_drains_a_partial_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -1003,6 +1109,8 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -1095,9 +1203,9 @@ async def test_an_accepted_prompt_survives_a_late_first_receipt():
     provider.bind_events(consume)
     try:
         await provider.send(
-            SessionRef(project_id=project_id, topic_id=topic_id),
+            SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
             "Finish the current command, then answer this message.",
-            Opening(system_prompt=""),
+            Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
             work_id=_uuid.uuid4(),
             on_mark=lambda _work: None,
         )
@@ -1129,7 +1237,7 @@ async def test_session_credential_names_the_selected_agent_and_explicit_scope():
     runtime = ClaudeCodeRuntime(Capture(), router=HookRouter())
     try:
         await runtime.ensure(
-            SessionRef(project_id, topic_id),
+            SessionRef(project_id, topic_id, harness="claude-code"),
             Opening(system_prompt="", agent_handle="selected-agent"),
         )
         claims = scoped_token_claims(issued[0])
@@ -1216,9 +1324,9 @@ async def _let_the_close_reach_its_decision() -> None:
 async def _one_topic_mid_hook(provider, router, project_id, topic_id):
     """Start a turn and hand its Stop to the consumer."""
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1346,9 +1454,9 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     provider.bind_events(consume_and_fail)
 
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1379,9 +1487,9 @@ async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
     import uuid as _uuid
 
     await provider.send(
-        SessionRef(project_id=project_id, topic_id=topic_id),
+        SessionRef(project_id=project_id, topic_id=topic_id, harness="claude-code"),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )

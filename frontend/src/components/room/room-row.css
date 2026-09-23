@@ -1,0 +1,99 @@
+/*
+ * 房间里一行的几何。三种东西共用它，所以它只有一份：
+ * 一条消息（RoomMessage）、一条还没落库的消息（同一个组件的 pending 档）、
+ * 以及「芝士正在做」那一行（ChatPanel 自己画的）。
+ *
+ * 各自 `<style scoped src>` 引进去，于是每个组件把它 scope 到自己身上——一份定义，
+ * 三处生效。复制三份的话，改了其中一处的留白，另外两行就会错位。
+ */
+
+.im-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 16px;
+  /* 换一个人说话时空开一档。气泡没了之后，分界全靠这段留白和下面那行名字 ——
+     同一个人连着说的那几条仍然贴在一起（.im-row--cont），两档差出来的就是
+     「这是另一个人开口了」。 */
+  margin-top: 16px;
+}
+/* continuation rows of the same author sit tight under the first */
+.im-row--cont {
+  margin-top: 0;
+}
+/* 悬停只改颜色不改位置（设计系统 §9.1）。刷的是整行 —— 气泡在的时候刷不了，
+   气泡自己就是 --fill，整行一刷它就跟背景融了，只好退而求其次去刷气泡内部那
+   一档。现在这一档腾出来了。 */
+.im-row:hover {
+  background: var(--fill);
+}
+.im-gutter {
+  width: 28px;
+  flex: 0 0 28px;
+}
+/* Human avatar: colored initial on a per-user deterministic background
+   (hash → hue), matching the Space avatars' visual language. */
+.im-avatar {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fill);
+  /* Literal on purpose: the real ground is avatarColor() (a fixed hsl bound
+     inline in the template), identical in both themes — so is the initial. */
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+/* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
+.im-avatar--photo {
+  object-fit: cover;
+  background: var(--fill);
+}
+.im-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.im-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.im-name {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 自己说的那几条安静一档。气泡在的时候「是不是我」由左右两侧说，那件事没了之后
+   不必再找一个同样响的说法替它 —— 在一个房间里你要找的是别人说了什么、芝士做了
+   什么，自己说过的话是上下文。所以这里是往下压，不是往上提。 */
+.im-row--self .im-name {
+  font-weight: 500;
+  color: var(--muted);
+}
+.im-time {
+  font-family: var(--font-mono);
+  font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
+  color: var(--faint);
+}
+/* ---- 正文平铺，不套气泡 ----
+   气泡是给短句用的。这一栏里最长的一半内容是芝士的产出 —— markdown、代码块、
+   diff、几十行 —— 给一篇文档套个框，框没帮上任何忙：它吃掉宽度，它让一屏出现
+   几十个带描边的灰块（「杂乱」最直接的来源），而代码块自己有底色，外面再压一层
+   灰底就是两层灰贴在一起。
+   判据是内容长度，不是人数：微信群、Telegram 群、飞书以短句为主，气泡成立；
+   Slack、Discord、GitHub 要装代码块和长帖，全是平铺。这一栏属于后者。
+   分界改由留白、头像和名字那一行承担，够用 —— 同一个人连着说的还是合并，
+   只在第一条上出名字（.im-row--cont）。 */
+.im-text {
+  max-width: 100%;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+  word-break: break-word;
+}

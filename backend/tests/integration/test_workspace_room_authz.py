@@ -1,14 +1,49 @@
 """A project member must not read or overwrite another person's private work."""
 
+import asyncio
 import uuid
 
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace import service as ws
+from app.domain.textfile import content_version
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_file_panel_safety import _put, _worktree
+from tests.integration.test_file_panel_safety import task_machine as task_machine
 from tests.machine_work import machine_commits
+from tests.support import git_store
+
+
+def _connect_workspace(client, project, room):
+    task_id = delivery_task_id(client, room)
+
+    async def place():
+        from app.domain.room_task.models import Task
+        from app.domain.topic.models import Topic
+
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room))
+            from app.domain.agent.harness import deployment_harness
+            from app.domain.agent_session.services import AgentSessionService
+
+            await AgentSessionService(session).remember_place(
+                topic_id=topic.id,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(topic.resource_id or topic.id),
+                },
+                harness=deployment_harness(),
+            )
+            task = await session.get(Task, task_id)
+            task.pr_number = int(task.id.hex[:6], 16)
+            await session.commit()
+
+    asyncio.run(place())
+    _put(client, uuid.UUID(project), uuid.UUID(room), "private.txt", b"private draft\n")
 
 
 @pytest.fixture
@@ -34,6 +69,7 @@ def private_workspace(client):
         delivery_task_id(client, tid),
         {"private.txt": "private draft\n"},
     )
+    _connect_workspace(client, pid, tid)
     return project, tid
 
 
@@ -53,7 +89,11 @@ def request_workspace(client, project_id, topic_id, operation, headers):
         return client.put(
             f"/projects/{project_id}/file",
             params=params,
-            json={"path": "private.txt", "content": "updated draft\n"},
+            json={
+                "path": "private.txt",
+                "content": "updated draft\n",
+                "version": content_version(b"private draft\n"),
+            },
             headers=headers,
         )
     if operation == "work-summary":
@@ -78,12 +118,7 @@ def test_project_members_cannot_access_private_room_work(
     )
     assert denied.status_code == 403, denied.text
     assert "private draft" not in denied.text
-    assert (
-        ws.read_file(
-            uuid.UUID(project["id"]), "private.txt", delivery_task_id(client, tid)
-        )
-        == "private draft\n"
-    )
+    assert (_worktree(client, tid) / "private.txt").read_text() == "private draft\n"
     allowed = request_workspace(
         client, project["id"], tid, operation, session_auth_headers("alice")
     )
@@ -155,6 +190,7 @@ def test_matching_room_agent_can_read_its_own_work(client):
         delivery_task_id(client, tid),
         {"private.txt": "private draft\n"},
     )
+    _connect_workspace(client, pid, tid)
     token = mint_scoped_token(project_id=pid, topic_id=tid)
     response = request_workspace(client, pid, tid, "file", {"X-Cheese-Token": token})
     assert response.status_code == 200, response.text
@@ -163,7 +199,7 @@ def test_matching_room_agent_can_read_its_own_work(client):
 
 def test_project_diff_cannot_name_a_private_branch(client, private_workspace):
     project, tid = private_workspace
-    branch = ws.branch_for_task(delivery_task_id(client, tid))
+    branch = git_store.branch_for_task(delivery_task_id(client, tid))
     response = client.get(
         f"/projects/{project['id']}/git/diff",
         params={"ref": branch},
@@ -192,12 +228,12 @@ def test_project_diff_still_reads_accepted_history(client, private_workspace):
     machine_commits(
         pid, delivery_task_id(client, tid), {"public.txt": "accepted content\n"}
     )
-    assert ws.merge_topic(
+    assert git_store.merge_task(
         pid,
         delivery_task_id(client, tid),
         message="feat: accept public work\n\nRequested-by: alice",
-    )["merged"]
-    accepted = ws.accepted_revision(pid)
+    )
+    accepted = git_store.head(pid)
     for ref in ("main", accepted):
         response = client.get(
             f"/projects/{pid}/git/diff",
@@ -224,7 +260,6 @@ def test_malformed_work_summary_room_is_rejected(client, private_workspace):
 @pytest.mark.parametrize(
     "endpoint, body",
     [
-        ("bind", {"agent_id": "outsider"}),
         ("title", {"title": "unauthorized edit"}),
         ("close", {"conclusion": "unauthorized close"}),
     ],

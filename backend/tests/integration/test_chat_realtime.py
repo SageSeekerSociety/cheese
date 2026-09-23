@@ -9,14 +9,22 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
+from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
@@ -98,7 +106,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 topic_id,
                 author="u",
                 content=content,
-                summon=True,
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
@@ -107,7 +114,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 topic_id,
                 author="u",
                 content=content,
-                summon=True,
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
@@ -124,7 +130,7 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
         rows = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.human
+            if not looks_like_agent_handle(block.author)
         ]
     assert len(rows) == expected_blocks
     anchor = next(block for block in rows if block.id == first)
@@ -173,7 +179,6 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         topic_id,
         author="u",
         content="saved by the old backend",
-        summon=True,
         attachments=[{"path": "room/a.png", "mime": "image/png"}],
         client_id="pre-upgrade-delivery",
     )
@@ -184,15 +189,19 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         rows = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.human
+            if not looks_like_agent_handle(block.author)
         ]
     assert [block.id for block in rows] == original_ids
 
 
 @pytest.mark.anyio
-async def test_receiving_message_does_not_create_default_agent(client, tmp_path):
+async def test_receiving_a_message_mints_no_second_agent(client, tmp_path):
+    """收下一条消息，收件人是项目建出来时就有的那个芝士，不多长一个队友。
+
+    「读一条消息」不该建参与者。以前这条守的是反面——项目可以一个 agent 都没有，
+    读消息也不许给它补一个；现在项目建出来就带着它的芝士，所以要守的是数目不变。
+    """
     from app.domain.agent_instance.repositories import AgentInstanceRepository
-    from app.domain.project.repositories import ProjectRepository
 
     factory = client.test_factory
     svc = ChatService(
@@ -206,22 +215,27 @@ async def test_receiving_message_does_not_create_default_agent(client, tmp_path)
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
-        agents = AgentInstanceRepository(session)
-        project.default_agent_instance_id = None
-        topic.agent_instance_id = None
-        await session.flush()
-        for agent in await agents.list_for_project(project.id):
-            await agents.delete(agent)
         project_id, topic_id = project.id, topic.id
+        before = [
+            agent.id
+            for agent in await AgentInstanceRepository(session).list_for_project(
+                project_id
+            )
+        ]
         await session.commit()
+    assert before, "建项目就该播下芝士那一行"
     payloads, _, _, _ = await svc.post_user_message(
         topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
     async with factory() as session:
-        assert await AgentInstanceRepository(session).list_for_project(project_id) == []
-        project = await ProjectRepository(session).get(project_id)
-        assert project.default_agent_instance_id is None
+        after = [
+            agent.id
+            for agent in await AgentInstanceRepository(session).list_for_project(
+                project_id
+            )
+        ]
+    assert after == before
 
 
 class ProcessNotesScreen(StubChannel):
@@ -271,22 +285,20 @@ async def test_queued_message_retains_selected_teammate(client, tmp_path):
             type_name=None,
             display_name="Second",
         )
-        topic.agent_instance_id = first.id
-        topic_id, second_id = topic.id, second.id
+        members = TopicMemberService(session)
+        for made in (first, second):
+            await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
+        topic_id = topic.id
         await session.commit()
     _, original, _, _ = await svc.post_user_message(
-        topic_id, author="u", content="For first", turn_id=None, reply_to=None
+        topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
     )
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     await svc.post_user_message(
-        topic_id, author="u", content="For second", turn_id=None, reply_to=None
+        topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
     prepared = await svc._assemble_turn(
         topic_id=topic_id,
-        content="For first",
+        content="@First For first",
         turn_id=original,
         user_block_id=original,
         provision_actor=None,
@@ -323,6 +335,48 @@ async def test_backend_resolves_room_agent_mention(client, tmp_path, text, menti
 
 
 @pytest.mark.anyio
+async def test_backend_resolves_a_legacy_shared_seat_mention(client, tmp_path):
+    """一间还挂着共用 ``cheese`` 席位的老房间，「@芝士」照样召得动坐在里面的那一位。
+
+    共用席位是惰性迁走的（``migrate_shared_agent_seat``，等这间房的 agent 下次动手
+    才迁），所以没动过的房间今天还挂着它——而它不是这个项目的实例：项目名册上叫
+    「芝士」的是项目的默认实例，「@芝士」要是展开成它，就等于 @ 了一个没坐在这间房
+    里的队友，这一轮起不来，通知反而发给了它。上面那条参数化用例覆盖的是新房间
+    （席位就是实例的 handle），老席位这一支在这里。
+    """
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        # 把这间房退回共用席位的样子：实例的席位撤掉，坐着的是 `cheese`。库里的存量
+        # 行就长这样，迁移只在这间房的 agent 下次动手时才会碰它。
+        seats = TopicMembershipRepository(session)
+        seeded = await seats.get(
+            topic_id=topic_id,
+            member_handle=agent_instance_handle(project.default_agent_instance_id),
+        )
+        assert seeded is not None
+        await seats.delete(seeded)
+        await IdentityService(session).ensure_agent_user(handle=CHEESE_HANDLE)
+        await TopicMemberService(session).ensure_agent_seat(topic_id, CHEESE_HANDLE)
+        await session.commit()
+    payloads, _, _, _ = await svc.post_user_message(
+        topic_id, author="u", content="@芝士 hello", turn_id=None, reply_to=None
+    )
+    assert payloads[0]["content"] == f"<@{CHEESE_HANDLE}> hello"
+    assert payloads[0]["meta"]["agent_recipient"]["mentioned"] is True
+
+
+@pytest.mark.anyio
 async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_path):
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
@@ -344,9 +398,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_pa
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
-    await broker.receive_message(
-        svc, topic_id, author="u", content="@芝士 check this", summon=False
-    )
+    await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
     await settle_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
@@ -378,17 +430,16 @@ async def test_other_teammate_message_waits_for_live_turn(
             type_name=None,
             display_name="Second",
         )
-        topic_id, second_id = topic.id, second.id
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(second.id)
+        )
+        topic_id = topic.id
         await session.commit()
     async for _ in svc.converse(
         topic_id=topic_id, author="u", content="First task", summon=True
     ):
         pass
     await screen.started.wait()
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     waiting = asyncio.Event()
     wait = svc.wait_for_recipient
 
@@ -400,8 +451,10 @@ async def test_other_teammate_message_waits_for_live_turn(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
+    # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
+    # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
     await broker.receive_message(
-        svc, topic_id, author="u", content="@Second Second task", summon=False
+        svc, topic_id, author="u", content="@Second Second task"
     )
     await asyncio.wait_for(waiting.wait(), 2)
     assert screen.delivered == []
@@ -439,7 +492,7 @@ async def test_execution_notes_are_retained_outside_public_replies(client, tmp_p
     replies = [
         b.content
         for b in rows
-        if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+        if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
     ]
     assert replies == []
     notes = [b for b in rows if (b.meta or {}).get("progress")]
@@ -480,7 +533,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         assert topic is not None
         assert topic.compute_profile == InstantScreen.name
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE
+            topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     assert resumes_by == "s-affinity"
 
@@ -539,7 +592,7 @@ async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
     await settle_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if b.author_type == AuthorType.ai] == ["done"]
+    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
 
 
 class FailingScreen(StubChannel):
@@ -600,7 +653,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     # 机器的报错不是芝士说的话。
-    assert not [b for b in rows if b.author_type == AuthorType.ai]
+    assert not [b for b in rows if looks_like_agent_handle(b.author)]
     block = next(b for b in rows if b.kind == BlockKind.event)
     assert block.author == "system"
     # 一行，是服务的原话开头，而且整段原话不在正文里。

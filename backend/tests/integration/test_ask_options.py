@@ -1,10 +1,7 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
-import uuid
-
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
 def _topic(client) -> str:
@@ -29,12 +26,32 @@ def test_ask_creates_option_message(client):
     tid = _topic(client)
     blk = _ask(client, tid)
     # Authored by THIS topic's 分身, not the shared platform ``cheese`` account.
-    assert blk["author"] == topic_agent_handle(uuid.UUID(tid))
+    assert blk["author"] == room_agent_seat(client, tid)
     assert blk["kind"] == "message"
     assert blk["meta"]["options"] == ["cursor", "pageStart"]
     # It shows in the timeline like any message.
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert any(b["id"] == blk["id"] for b in blocks)
+
+
+def test_the_question_it_asked_is_not_an_input_it_has_to_read(client):
+    """芝士问出口的那道题落进房间，却不是一条交给它去读的输入。
+
+    署名是房间里芝士那条 handle，轮次号这边填不出来：`cheese ask` 只在
+    CHEESE_TURN 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量（这
+    份用例的 `_ask` 也一样不带）。按「署名是 agent 且落在某一轮里」去算，这道题
+    就成了待读输入：「忘了 @」的补救按钮于是不再答「没有待读的东西」，白开一轮，
+    而那一轮的 prompt 里躺着芝士刚问出口的这道题，它对着自己的问题再答一遍。
+    """
+    tid = _topic(client)
+    _ask(client, tid)
+
+    summoned = client.post(f"/topics/{tid}/summon", json={"author": "user-1"})
+    assert summoned.status_code == 200, summoned.text
+    assert summoned.json()["data"] == {
+        "started": False,
+        "reason": "nothing_pending",
+    }, "它自己问出口的那道题不该把它自己叫起来"
 
 
 def test_ask_rejects_bad_option_counts(client):
@@ -99,9 +116,12 @@ def test_answer_records_choice_and_posts_reply(client):
                 break
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     debug = [(b["author"], b["kind"], b["content"][:30]) for b in blocks]
-    assert any(b["author"] == "user-1" and b["content"] == "cursor" for b in blocks), (
-        f"choice message never landed: {debug}"
-    )
+    # 选项落成回答者自己的一条消息，并且在正文里点了问问题的那个席位的名 —— 召唤
+    # 写在正文里，时间线上这条消息因此自己说明了它叫的是谁。
+    seat = room_agent_seat(client, tid)
+    assert any(
+        b["author"] == "user-1" and b["content"] == f"<@{seat}> cursor" for b in blocks
+    ), f"choice message never landed: {debug}"
 
 
 def test_answer_validates_option_and_single_shot(client):

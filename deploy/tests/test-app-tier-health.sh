@@ -4,22 +4,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CASE="${1:-all}"
 FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
+export APP_TIER_REAL_PYTHON="$(command -v python3)"
+mkdir -p "$ROOT/.tmp"
+forge_test_env="$(mktemp "$ROOT/.tmp/forge-env.XXXXXX")"
+printf 'FRONTEND_URL=https://cheese.example\n' > "$forge_test_env"
+export BACKEND_ENV_FILE="$forge_test_env"
+export FORGE_EVENTS_ENV_FILE="$forge_test_env.events"
+export FORGEJO_URL=https://cheese.example/forge/
 
-# deploy-docker.sh CREATES the openviking memory dir (it must exist before the
+# deploy-docker.sh CREATES the claude binary cache (it must exist before the
 # bind mount, or docker makes it root-owned and the backend cannot write it).
 # Its default is a real path on the dev box, which a CI runner has neither
 # reason nor permission to create — so every deploy in this file gets one
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
-export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
-# The claude binary cache is the same shape: created by the deploy so the
-# backend can write it, defaulting to a dev-box path CI cannot create.
 export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
 # And the pi build cache beside it.
 export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
 # And the transcript archives, once more the same shape.
 export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
-trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$"' EXIT
+export APPHOME_HOST_PATH="$ROOT/.tmp/apphome-$$"
+trap 'rm -rf "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -302,7 +307,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/session-base.XXXXXX")"
   envf="$run_dir/backend.env"
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -322,7 +327,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   esac
   # And it must stay quiet for an address the deploy leaves alone — a warning
   # on every deploy is a warning nobody reads.
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -713,32 +718,70 @@ new_rollout_run_dir() {
 nth_log_line() { grep -n -- "$2" "$1" 2>/dev/null | sed -n "${3}p" | cut -d: -f1 || true; }
 last_log_line() { grep -n -- "$2" "$1" 2>/dev/null | tail -n 1 | cut -d: -f1 || true; }
 
+test_rollout_recovers_after_forge_stops_backend() {
+  local run_dir mode
+  for mode in first retry; do
+    run_dir="$(new_rollout_run_dir)"
+    mkdir -p "$run_dir/apphome/forge-migration"
+    if [ "$mode" = retry ]; then
+      touch "$run_dir/apphome/forge-migration/cutover-pending"
+    fi
+    rollout_run "$run_dir" env APPHOME_HOST_PATH="$run_dir/apphome" \
+      APP_TIER_FORGE_CHECK="$([ "$mode" = first ] && echo 2 || echo 0)" \
+      APP_TIER_ROUTER_NEEDS_BACKEND=1 >"$run_dir/release.log" 2>&1 \
+      || { cat "$run_dir/release.log"; fail "forge $mode could not recover the stopped backend"; }
+    grep -F ':18085/healthz' "$run_dir/docker.log" >/dev/null \
+      || fail "recovered release never checked the routed backend"
+    [ ! -f "$run_dir/apphome/forge-migration/cutover-pending" ] \
+      || fail "recovered release retained the cutover guard"
+    rm -rf "$run_dir"
+    echo "PASS: routed backend recovers after forge $mode"
+  done
+}
+
 test_rollout_keeps_a_backend_serving() {
-  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up
+  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up first_drain second_drain
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
   next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
-  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 1)"
+  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
-  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 2)"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
   next_gone="$(last_log_line "$docker_log" 'rm -f cheese-backend-next')"
   frontend_up="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  first_drain="$(nth_log_line "$docker_log" 'sleep 31' 1)"
+  second_drain="$(nth_log_line "$docker_log" 'sleep 31' 2)"
   [ -n "$next_up" ] || fail "rollout never started cheese-backend-next"
   [ -n "$flip_to_next" ] && [ -n "$flip_back" ] || fail "rollout did not reload api-front twice"
   [ -n "$blue_up" ] || fail "rollout never recreated the compose backend"
   [ -n "$frontend_up" ] || fail "rollout never brought the frontend up"
   [ "$next_up" -lt "$flip_to_next" ] || fail "api-front was reloaded before the next backend existed"
   [ "$flip_to_next" -lt "$blue_up" ] || fail "the compose backend was recreated before traffic had moved off it"
+  [ "$flip_to_next" -lt "$first_drain" ] && [ "$first_drain" -lt "$blue_up" ] || fail "old backend removed before worker drain"
   [ "$blue_up" -lt "$flip_back" ] || fail "api-front was pointed back before the compose backend was recreated"
   [ "$flip_back" -lt "$next_gone" ] || fail "cheese-backend-next was removed while api-front still pointed at it"
+  [ "$flip_back" -lt "$second_drain" ] && [ "$second_drain" -lt "$next_gone" ] || fail "successor removed before worker drain"
   [ "$next_gone" -lt "$frontend_up" ] || fail "the frontend came up before the backend rollout finished"
   grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
     || fail "api-front was left pointing away from the compose backend: $(cat "$run_dir/active/backend.conf")"
-  [ "$(ls "$run_dir/active" | wc -l | tr -d ' ')" = 1 ] \
-    || fail "the switch directory holds leftovers: $(ls "$run_dir/active")"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "business rollout retired the persistent ingress workers"
   rm -rf "$run_dir"
   echo "PASS: rollout keeps a healthy backend behind api-front throughout"
+}
+
+test_rollout_preserves_a_successor_still_serving_after_failure() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  printf 'upstream backend_active { server 127.0.0.1:18082; }\n' > "$run_dir/active/backend.conf"
+  if rollout_run "$run_dir" env >/dev/null 2>&1; then
+    fail "retry accepted an upstream still serving from the previous successor"
+  fi
+  ! grep -q 'rm -f cheese-backend-next' "$run_dir/docker.log" \
+    || fail "retry deleted the serving backend successor"
+  rm -rf "$run_dir"
+  echo "PASS: retry keeps the previous serving backend successor alive"
 }
 
 test_frontend_rollout_keeps_serving() {
@@ -752,13 +795,17 @@ test_frontend_rollout_keeps_serving() {
     || fail "stable frontend ingress still sends public execution through the rolling frontend"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
   next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next')"
-  flip="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 3)"
+  flip="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 3)"
   recreate="$(log_line "$docker_log" 'up -d --no-deps frontend')"
-  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 4)"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 4)"
   gone="$(last_log_line "$docker_log" 'rm -f cheese-frontend-next')"
   [ -n "$next_up" ] && [ -n "$flip" ] && [ -n "$flip_back" ] || fail "missing frontend switches"
   [ "$next_up" -lt "$flip" ] && [ "$flip" -lt "$recreate" ] && [ "$recreate" -lt "$flip_back" ] && [ "$flip_back" -lt "$gone" ] || fail "frontend replaced before traffic moved"
-  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy did not return to compose"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not return to compose"
+  : > "$docker_log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second rollout failed"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "ordinary frontend/backend release reloaded the persistent ingress"
   rm -rf "$run_dir"
   echo "PASS: frontend stays behind a healthy proxy target across recreate"
 }
@@ -771,7 +818,7 @@ test_frontend_rollout_rejects_unhealthy_next() {
     fail "unhealthy frontend was accepted"
   fi
   ! grep -q 'up -d --no-deps frontend' "$run_dir/docker.log" || fail "old frontend was replaced without a healthy successor"
-  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy moved to unhealthy successor"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy moved to unhealthy successor"
   rm -rf "$run_dir"
   echo "PASS: failed frontend startup leaves the old frontend serving"
 }
@@ -818,7 +865,6 @@ ownership_run() {
     WORKSPACES_HOST_PATH="$run_dir/workspaces" \
     UPLOADS_HOST_PATH="$run_dir/uploads" \
     APPHOME_HOST_PATH="$run_dir/apphome" \
-    VIKING_HOST_PATH="$run_dir/viking" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
     PI_CACHE_HOST_PATH="$run_dir/pi-cache" \
     TRANSCRIPTS_HOST_PATH="$run_dir/transcripts" \
@@ -836,8 +882,8 @@ new_ownership_run_dir() {
   mkdir -p "$ROOT/.tmp"
   local dir
   dir="$(mktemp -d "$ROOT/.tmp/ownership-order.XXXXXX")"
-  # viking is deliberately NOT created: the deploy script makes it, and these
-  # tests are the only place that would notice if it stopped.
+  # claude-cache is deliberately NOT created: the deploy script makes it, and
+  # these tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
   : > "$dir/docker.log"
   printf '%s' "$dir"
@@ -893,7 +939,6 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   for dir in workspaces uploads apphome; do : > "$run_dir/$dir/.cheese-uid-1000"; done
   # Made by the deploy script, so it has to be marked after the fact — an
   # unmarked path would make this "nothing moved" scenario move something.
-  mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/pi-cache"; : > "$run_dir/pi-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/transcripts"; : > "$run_dir/transcripts/.cheese-uid-1000"
@@ -993,7 +1038,116 @@ test_healthy_current_pair_passes() {
   echo "PASS: one healthy current backend/frontend pair passes"
 }
 
+test_missing_forge_fails_health_check() {
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=forgejo_absent \
+    APP_TIER_MAIN_SHA=abc1234 docker ps -a --format \
+      '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+    | "$ROOT/deploy/check-app-tier.sh" abc1234; then
+    fail "healthy app containers hid the missing repository service"
+  fi
+  echo "PASS: a missing repository service fails deployment health"
+}
+
+test_forge_migration_release() {
+  local run_dir mode expected check apply result scenario native_stop writer_check migration
+  mkdir -p "$ROOT/.tmp"
+  for mode in first completed check_failed writers_remain preserved_children apply_failed health_failed retry_health_failed retry_completed; do
+    run_dir="$(mktemp -d "$ROOT/.tmp/forge-release.XXXXXX")"
+    check=2 apply=0 expected=0 scenario=healthy
+    case "$mode" in
+      completed) check=0 ;;
+      check_failed) check=1; expected=1 ;;
+      writers_remain|preserved_children) expected=1 ;;
+      apply_failed) apply=1; expected=1 ;;
+      health_failed) scenario=rollback; expected=1 ;;
+      retry_health_failed)
+        scenario=rollback; check=0; expected=1
+        mkdir -p "$run_dir/apphome/forge-migration"
+        touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
+        ;;
+      retry_completed)
+        check=0
+        mkdir -p "$run_dir/apphome/forge-migration"
+        touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
+        ;;
+    esac
+    result=0
+    PATH="$FAKE_BIN:$PATH" \
+      APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+      APP_TIER_SCENARIO="$scenario" \
+      APPHOME_HOST_PATH="$run_dir/apphome" \
+      APP_TIER_FORGE_CHECK="$check" APP_TIER_FORGE_APPLY="$apply" \
+      APP_TIER_HOST_EXECUTOR=active \
+      APP_TIER_HOST_KILL_MODE="$([ "$mode" = preserved_children ] && echo process || echo control-group)" \
+      APP_TIER_WORKSPACE_WRITERS="$([ "$mode" = writers_remain ] && echo 1 || echo 0)" \
+      COMPOSE_OVERLAYS=docker-compose.subscription.yml \
+      FORGEJO_URL=https://forge.example/forge/ FORGEJO_WEBHOOK_HOSTS=relay.example \
+      DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+      "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/release.log" 2>&1 \
+      || result=1
+    if [ "$result" != "$expected" ]; then
+      cat "$run_dir/release.log" >&2
+      fail "forge $mode returned $result: $run_dir/release.log"
+    fi
+    grep -F 'docker-compose.forgejo.yml' "$run_dir/docker.log" >/dev/null || fail "default forge service was not included"
+    grep -F 'up -d --no-deps forge-events' "$run_dir/docker.log" >/dev/null || fail "event relay was not started"
+    grep -Fx bootstrap "$run_dir/docker.log" >/dev/null || fail "admin provisioning did not run"
+    case "$mode" in
+      preserved_children)
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran while stopping the connector would preserve its children"
+        fi
+        ;;
+      writers_remain)
+        grep -F 'systemctl stop cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor stayed running"
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran with remaining workspace users"
+        fi
+        ;;
+      first|apply_failed|health_failed)
+        grep -F 'stop backend' "$run_dir/docker.log" >/dev/null || fail "writers stayed running"
+        grep -F 'stop legacy-git-container' "$run_dir/docker.log" >/dev/null || fail "Git receiver stayed running"
+        grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null || fail "migration did not run"
+        native_stop="$(log_line "$run_dir/docker.log" 'systemctl stop cheese.service')"
+        writer_check="$(log_line "$run_dir/docker.log" workspace-writers-checked)"
+        migration="$(log_line "$run_dir/docker.log" '--apply --writers-stopped')"
+        [ "$native_stop" -lt "$writer_check" ] && [ "$writer_check" -lt "$migration" ] \
+          || fail "migration started before native writers were quiesced"
+        ;;
+      completed|check_failed|retry_health_failed|retry_completed)
+        if grep -F 'stop backend' "$run_dir/docker.log" >/dev/null; then
+          fail "$mode stopped the running backend"
+        fi
+        ;;
+    esac
+    if [ "$mode" = health_failed ] || [ "$mode" = retry_health_failed ]; then
+      grep -F 'refusing to restart the legacy repository writer' "$run_dir/release.log" >/dev/null || fail "migration allowed a legacy rollback"
+      if grep -F 'compose-up-env BACKEND_IMAGE=repo/backend:oldsha' "$run_dir/docker.log" >/dev/null; then
+        fail "legacy backend resumed writing after migration"
+      fi
+    elif [ "$expected" = 1 ] && grep -F 'up -d backend frontend' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode started the app despite a failed migration"
+    fi
+    if [ "$expected" = 0 ] && [ -f "$run_dir/apphome/forge-migration/cutover-pending" ]; then
+      fail "successful release retained its cutover guard"
+    fi
+    if [ "$mode" = first ] || [ "$mode" = retry_completed ]; then
+      grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor was not restored"
+      [ ! -f "$run_dir/apphome/forge-migration/restart-host-executor" ] || fail "restart receipt was not consumed"
+    elif grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode resumed native writers prematurely"
+    fi
+    rm -rf "$run_dir"
+    echo "PASS: forge release $mode"
+  done
+}
+
 case "$CASE" in
+  forge-health) test_missing_forge_fails_health_check ;;
+  forge-migration) test_forge_migration_release ;;
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
@@ -1019,10 +1173,14 @@ case "$CASE" in
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
+  forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
+  rollout-retry) test_rollout_preserves_a_successor_still_serving_after_failure ;;
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
+    test_missing_forge_fails_health_check
+    test_forge_migration_release
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
@@ -1049,6 +1207,8 @@ case "$CASE" in
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
     test_rollout_keeps_a_backend_serving
+    test_rollout_recovers_after_forge_stops_backend
+    test_rollout_preserves_a_successor_still_serving_after_failure
     test_frontend_rollout_keeps_serving
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up

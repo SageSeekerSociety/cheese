@@ -5,16 +5,20 @@
 不报错，谁也看不出丢了什么。
 """
 
+import asyncio
 import io
 import uuid
 import zipfile
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.library import service as library
 from tests.delivery import delivery_task
-
-pytest.importorskip("lxml", reason="修订解析要用 lxml")
+from tests.integration.test_file_panel_safety import (
+    _put,
+    _worktree,
+    task_machine,  # noqa: F401
+)
 
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -72,7 +76,7 @@ def contract(client) -> tuple[uuid.UUID, uuid.UUID]:
     pid = uuid.UUID(project.json()["data"]["id"])
     topic = client.post("/topics", json={"project_id": str(pid), "title": "合同"})
     tid = uuid.UUID(topic.json()["data"]["id"])
-    ws.write_room_file(pid, tid, PATH, _docx(DOCUMENT))
+    library.write_room_file(pid, tid, PATH, _docx(DOCUMENT))
     return pid, tid
 
 
@@ -97,12 +101,12 @@ def test_a_decision_that_lost_the_race_answers_409_and_changes_nothing(
     assert [row["number"] for row in read["revisions"]] == [1]
 
     # 芝士 delivers the file again while the reader is looking at the list.
-    ws.write_room_file(pid, tid, PATH, _docx(LATER))
+    library.write_room_file(pid, tid, PATH, _docx(LATER))
 
     response = _decide(client, tid, version=read["version"], accept=[1])
 
     assert response.status_code == 409
-    assert "履约期限为" in _document_xml(ws.read_room_file(pid, tid, PATH))
+    assert "履约期限为" in _document_xml(library.read_room_file(pid, tid, PATH))
 
 
 def test_a_decision_carrying_the_current_version_goes_through(client, contract):
@@ -114,7 +118,7 @@ def test_a_decision_carrying_the_current_version_goes_through(client, contract):
     assert response.status_code == 200, response.text
     done = response.json()["data"]
     assert done["revisions"] == []
-    written = _document_xml(ws.read_room_file(pid, tid, PATH))
+    written = _document_xml(library.read_room_file(pid, tid, PATH))
     assert "<w:ins" not in written and "<w:del" not in written
     assert ">60<" in written and ">30<" not in written
     # 处理完文件变了，版本也跟着变——面板拿这一个接着处理下一条。
@@ -128,6 +132,7 @@ def test_a_decision_with_no_version_is_refused(client, contract):
     assert _decide(client, tid, accept=[1]).status_code == 422
 
 
+@pytest.mark.usefixtures("task_machine")
 def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract):
     """改动那一格看的是任务工作树上的那一份，不是房间交付的那一份。
 
@@ -136,9 +141,30 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     """
     pid, tid = contract
     task = delivery_task(client, tid)
-    target = ws.topic_worktree(pid, task.id) / PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(_docx(LATER))
+
+    async def place():
+        from app.domain.agent.harness import deployment_harness
+        from app.domain.agent_session.services import AgentSessionService
+        from app.domain.topic.models import Topic
+
+        async with client.test_factory() as session:
+            room = await session.get(Topic, tid)
+            await AgentSessionService(session).remember_place(
+                topic_id=tid,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(room.resource_id or room.id),
+                },
+                harness=deployment_harness(),
+            )
+            await session.commit()
+
+    asyncio.run(place())
+    _put(client, pid, tid, PATH, _docx(LATER))
+    target = _worktree(client, tid) / PATH
 
     read = _listing(client, tid, str(task.id))
     assert [row["number"] for row in read["revisions"]] == [1]
@@ -151,7 +177,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     # 分支上那一份处理过了……
     assert "<w:ins" not in _document_xml(target.read_bytes())
     # ……而房间交付的那一份一个字没动。
-    assert "<w:ins" in _document_xml(ws.read_room_file(pid, tid, PATH))
+    assert "<w:ins" in _document_xml(library.read_room_file(pid, tid, PATH))
 
 
 def test_another_room_s_card_is_not_a_source(client, contract):

@@ -109,8 +109,17 @@ function buttons(container: Element): HTMLButtonElement[] {
 function buttonByText(container: Element, text: string): HTMLButtonElement | undefined {
   return buttons(container).find((b) => b.textContent?.trim() === text)
 }
+/** 改动那一条横条上的 ⋯：范围、版本、下载、刷新都在里面。 */
+async function fromMenu(container: Element, name: string) {
+  const more = container.querySelector('.panel-changes [aria-label="更多"]')
+  expect(more, '找不到改动横条上的 ⋯').toBeTruthy()
+  await fireEvent.click(more!)
+  await flush()
+  await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
+  await flush()
+}
 async function chooseSource(container: Element, name: string) {
-  await fireEvent.click(buttonByText(container, '切换来源')!)
+  await fireEvent.click(container.querySelector('.panel-changes [title="切换来源"]')!)
   await flush()
   await fireEvent.click(screen.getByText(name, { selector: '.v-list-item-title' }))
   await flush()
@@ -132,10 +141,7 @@ async function openFilesTool(container: Element) {
     await fireEvent.click(group)
     await flush()
   }
-  const seg = buttonByText(container, '全部文件')
-  expect(seg, '找不到 全部文件 范围').toBeTruthy()
-  await fireEvent.click(seg!)
-  await flush()
+  await fromMenu(container, '全部文件')
 }
 
 beforeAll(() => {
@@ -167,6 +173,32 @@ describe('文件面板', () => {
     listFiles.mockResolvedValue({ data: [{ path: 'a.py', bytes: 10 }], total: 1 })
     readFile.mockResolvedValue(textFile('a.py', 'A 话题的内容\n'))
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
+  })
+
+  it('loads closed task diffs on opening but only polls open tasks', async () => {
+    const tasks = await listRoomTasks('topic-A')
+    tasks.data[1]!.status = 'closed'
+    const originalList = vi.mocked(listRoomTasks).getMockImplementation()!
+    vi.mocked(listRoomTasks).mockResolvedValue(tasks)
+    const intervals = vi.spyOn(window, 'setInterval')
+    const panel = mountPanel('topic-A')
+    try {
+      await flush()
+      const tab = buttons(panel.container).find((button) => button.getAttribute('title')?.startsWith('改动'))
+      await fireEvent.click(tab!)
+      await flush()
+      expect(getGitDiff).toHaveBeenCalledWith('p1', 'topic-A', 'task-topic-A-two')
+      const tick = intervals.mock.calls.find((call) => call[1] === 20_000)?.[0]
+      expect(typeof tick).toBe('function')
+      getGitDiff.mockClear()
+      ;(tick as () => void)()
+      await flush()
+      expect(getGitDiff.mock.calls).toEqual([['p1', 'topic-A', 'task-topic-A']])
+    } finally {
+      panel.unmount()
+      intervals.mockRestore()
+      vi.mocked(listRoomTasks).mockImplementation(originalList)
+    }
   })
 
   // Two topics are two worktrees of the SAME repo, so the same path usually
@@ -235,7 +267,7 @@ describe('文件面板', () => {
     await flush()
     await openFilesTool(container)
     await chooseSource(container, '项目当前代码')
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     expect(editor(container)!.readOnly).toBe(true)
@@ -265,8 +297,9 @@ describe('文件面板', () => {
       ],
       total: 1,
     })
-    await fireEvent.click(container.querySelector('button[title="刷新"]')!)
+    await fromMenu(container, '刷新')
     await flush()
+    expect(container.querySelector('.source-status')?.textContent).toBe('已完成 · 只读')
     expect(editor(container)!.readOnly).toBe(true)
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     await fireEvent.update(editor(container)!, 'late edit')
@@ -302,7 +335,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
     expect(finishOldRead).toBeTypeOf('function')
     await chooseSource(container, 'two')
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
     finishOldRead(textFile('a.py', '迟到的第一条任务\n', 'v-old'))
     await flush()
@@ -375,11 +408,56 @@ describe('文件面板', () => {
     const overwrite = buttons(container).find((b) => b.textContent?.includes('仍然覆盖保存'))
     expect(overwrite).toBeTruthy()
 
-    // 覆盖 is the human's explicit choice — it goes out with no version.
+    // The explicit overwrite still detects another write after the refresh.
+    readFile.mockResolvedValue(textFile('a.py', 'Agent changed this', 'v2'))
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v3' })
     await fireEvent.click(overwrite!)
     await flush()
-    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null, 'task-topic-A')
+    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v2', 'task-topic-A')
+  })
+
+  it('committed files are read-only and switching back retains the live draft', async () => {
+    readFile.mockImplementation((_p, _path, _room, _task, source) =>
+      Promise.resolve({
+        ...textFile('a.py', source === 'committed' ? 'Committed content' : 'Live content'),
+        source,
+        editable: source === 'live',
+      })
+    )
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, 'Unsaved human draft')
+    await fromMenu(container, '已提交版本')
+    await flush()
+    expect(editor(container)?.value).toBe('Committed content')
+    expect(editor(container)?.readOnly).toBe(true)
+    expect(buttonByText(container, '保存')).toBeUndefined()
+    expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', 'task-topic-A', 'committed')
+    await fromMenu(container, '机器实时文件')
+    await flush()
+    expect(editor(container)?.value).toBe('Unsaved human draft')
+    await fireEvent.click(buttonByText(container, '保存')!)
+    await flush()
+    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', 'Unsaved human draft', 'topic-A', 'v1', 'task-topic-A')
+  })
+
+  it('an offline machine leaves committed files available through the version selector', async () => {
+    listFiles.mockImplementation((_p, _room, _task, source) =>
+      source === 'live'
+        ? Promise.reject(new Error('任务机器尚未连接'))
+        : Promise.resolve({ data: [{ path: 'a.py', bytes: 10 }], total: 1, source })
+    )
+    readFile.mockResolvedValue({ ...textFile('a.py', 'Committed content'), source: 'committed', editable: false })
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    expect(container.textContent).toContain('任务机器尚未连接')
+    await fireEvent.click(buttonByText(container, '切换到已提交版本')!)
+    await flush()
+    expect(editor(container)?.value).toBe('Committed content')
+    expect(editor(container)?.readOnly).toBe(true)
+    expect(writeFile).not.toHaveBeenCalled()
   })
 })
 
@@ -483,7 +561,7 @@ new file mode 100644
   it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {
     const { container } = mountPanel('topic-A')
     await openChanges(container)
-    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await fromMenu(container, '全部文件')
     await flush()
 
     readFile.mockResolvedValue(textFile('untouched.txt', 'x\n'))
@@ -499,6 +577,25 @@ new file mode 100644
 })
 
 describe('task file navigation', () => {
+  it('总览不重复页签的名字；项目当前代码是列表末尾的一个来源', async () => {
+    const { container } = mountPanel('topic-A')
+    await flush()
+    const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
+    await fireEvent.click(tab!)
+    await flush()
+    const panel = container.querySelector('.panel-changes')!
+    expect(panel.textContent).not.toContain('房间改动')
+
+    const projectCode = buttons(panel).find((b) => b.textContent?.includes('项目当前代码'))
+    expect(projectCode, '总览里找不到项目当前代码').toBeTruthy()
+    await fireEvent.click(projectCode!)
+    await flush()
+
+    expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', null, 'committed')
+    expect(panel.querySelector('.source-heading')?.textContent).toContain('项目当前代码')
+    expect(panel.querySelector('.source-status')?.textContent).toBe('只读')
+  })
+
   const diff = `diff --git a/a.py b/a.py
 --- a/a.py
 +++ b/a.py
@@ -522,18 +619,52 @@ describe('task file navigation', () => {
     await flush()
   }
 
+  /** 铺开一条任务自己的改动清单。清单默认是收起的，要看得先点它那个箭头。 */
+  async function expandTask(group: Element) {
+    await fireEvent.click(group.querySelector('.task-change-toggle')!)
+    await flush()
+  }
+
+  it('每个任务默认收起，点箭头就地铺开这一条，且只铺开这一条', async () => {
+    const { container } = mountPanel('topic-A')
+    await openRoom(container)
+    const groups = Array.from(container.querySelectorAll('.task-change-group'))
+    expect(groups).toHaveLength(2)
+    const toggles = groups.map((g) => g.querySelector('.task-change-toggle')!)
+    // 收起态：两条都只剩标题那一行，文件一个也不在页面上。
+    for (const group of groups) {
+      expect(group.querySelector('.task-change-file')).toBeNull()
+      expect(group.textContent).toContain('个文件')
+    }
+    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+
+    await expandTask(groups[0])
+    expect(groups[0].querySelector('.task-change-file')?.textContent).toContain('a.py')
+    expect(groups[1].querySelector('.task-change-file')).toBeNull()
+    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
+    // 铺开是就地展开，不是进任务：这一页还在，也还没读任何文件。
+    expect(container.querySelector('.room-changes')).not.toBeNull()
+    expect(readFile).not.toHaveBeenCalled()
+
+    await expandTask(groups[0])
+    expect(groups[0].querySelector('.task-change-file')).toBeNull()
+    expect(toggles[0].getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('groups the same path under each task and opens the selected version', async () => {
     const { container } = mountPanel('topic-A')
     await openRoom(container)
     const groups = container.querySelectorAll('.task-change-group')
     expect(groups).toHaveLength(2)
+    await expandTask(groups[0])
+    await expandTask(groups[1])
     expect(groups[0].textContent).toContain('a.py')
     expect(groups[1].textContent).toContain('a.py')
     expect(readFile).not.toHaveBeenCalled()
     await fireEvent.click(groups[1].querySelector('.task-change-file')!)
     await flush()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two')
-    expect(container.querySelector('.source-current')?.textContent).toContain('two')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two', 'live')
+    expect(container.querySelector('.source-heading')?.textContent).toContain('two')
     expect(container.querySelector('.task-select')).toBeNull()
   })
 
@@ -554,13 +685,14 @@ describe('task file navigation', () => {
     )
     const { container } = mountPanel('topic-A')
     await openRoom(container)
+    await expandTask(container.querySelectorAll('.task-change-group')[0])
     await fireEvent.click(container.querySelector('.task-change-file')!)
     await flush()
     expect(readFile).toHaveBeenCalledTimes(1)
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A', 'live')
     finishRead(textFile('a.py', 'directed content'))
     await flush()
-    expect(container.querySelector('.file-bar__path')?.textContent).toBe('a.py')
+    expect(container.querySelector('.changes-bar__path')?.textContent).toBe('a.py')
   })
 
   it('does not resurrect a draft after the user undoes all changes', async () => {
@@ -604,7 +736,7 @@ describe('task file navigation', () => {
     await openRoom(container)
     vi.mocked(listRoomTasks).mockImplementation(original)
     expect(container.querySelector('.room-changes')).toBeNull()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'single-room', 'single')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'single-room', 'single', 'live')
   })
 
   it('preserves an unsaved draft and its original version while switching tasks', async () => {
@@ -639,7 +771,7 @@ describe('task file navigation', () => {
     await fireEvent.click(container.querySelector('.task-change-heading')!)
     await flush()
     expect(container.textContent).toContain('任务版本不可用')
-    expect(container.querySelector('.source-current')?.textContent).toContain('one')
+    expect(container.querySelector('.source-heading')?.textContent).toContain('one')
     expect(listFiles.mock.calls.every((call) => call[2] === 'task-topic-A')).toBe(true)
   })
 })

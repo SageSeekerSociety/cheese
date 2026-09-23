@@ -34,6 +34,7 @@ from pathlib import Path
 from app.core.background import hold
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     CLAUDE_CODE,
     ActivityConsumer,
@@ -45,7 +46,12 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
-from app.domain.agent.harness.channel import Channel, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    Channel,
+    Placement,
+    PromptSocketUnavailable,
+    ScreenSetupError,
+)
 from app.domain.agent.harness.claude_code.hook_events import (
     RECORDED_AT_KEY,
     HookRouter,
@@ -68,7 +74,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     proves_output,
 )
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +263,8 @@ class TopicSubscription:
     replay_queue: list[tuple[str, str]] = field(default_factory=list)
     replay_done: set[str] = field(default_factory=set)
     replay_seen_messages: set[str] = field(default_factory=set)
+    # Reconnects can enqueue the same event ID twice; acknowledge the exact copy.
+    replay_waiters: dict[int, asyncio.Event] = field(default_factory=dict)
     # Reassembles the screen's MessageDisplay flushes into whole messages.
     # Subscription-scoped on purpose: its dedup memory (message ids already
     # assembled) has to survive across works, or a flush redelivered after
@@ -305,7 +313,12 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
         subscription.replay_done.clear()
     if reached is not None and subscription.replaying:
         acknowledge_log(
-            SessionRef(subscription.project_id, subscription.topic_id), through=reached
+            SessionRef(
+                subscription.project_id,
+                subscription.topic_id,
+                harness=CLAUDE_CODE,
+            ),
+            through=reached,
         )
 
 
@@ -590,6 +603,12 @@ def _prompt_with_native_images(
     been re-verified on that path. Either way the mention is the delivery, and it
     only works for a file that is actually on the machine the screen runs on.
 
+    The paths are absolute now, and outside the checkout: the platform stages an
+    attachment in the session's home rather than in the repository the agent is
+    working in (结论 49，不变量 I21b), and only the machine can spell that
+    directory, so `place.write` hands back what the machine answered and this
+    mentions it verbatim.
+
     ``missing`` is for the ones that are not. They get a sentence instead of a
     mention, because the alternative shapes are both worse: @-mentioning a path
     that is not there produces nothing at all, and saying nothing leaves 芝士
@@ -658,6 +677,13 @@ class SpoolBacklog:
 
     def forget(self, *, older_than_s: float) -> None:
         expire_log(self._session, older_than_s=older_than_s)
+
+
+def _resolved_agent(precheck: object) -> str | None:
+    """Which agent the machine resolver already resolved for this room, if it
+    resolved one. The base channel places nothing and answers nothing, and then
+    the caller's own ``agent_handle`` is the only answer there is."""
+    return precheck.agent_handle if isinstance(precheck, Placement) else None
 
 
 class ClaudeCodeRuntime:
@@ -974,10 +1000,15 @@ class ClaudeCodeRuntime:
                 # would mean translating another harness's output with this
                 # one's assembler and reporting it as ours.
                 continue
-            await self.ensure_subscription(project_id, topic_id, paused=True)
             if screen is not None:
                 self._live[topic_id] = screen
-            recovered.append(SessionRef(project_id, topic_id))
+            try:
+                await self.ensure_subscription(project_id, topic_id, paused=True)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                # A failed subscription does not prove a surviving screen died.
+                logger.warning("Hook recovery failed for topic %s: %s", topic_id, exc)
+                continue
+            recovered.append(SessionRef(project_id, topic_id, harness=self.harness))
         return recovered
 
     async def drop_device_subscriptions(self, device_id: str) -> None:
@@ -1005,6 +1036,8 @@ class ClaudeCodeRuntime:
         subscription = self._subscriptions.get(session.topic_id)
         if subscription is None:
             return
+        last_queued: dict | None = None
+        completed = asyncio.Event()
         try:
             events = read_log(session, since=log_cursor(session))
             if not events:
@@ -1028,9 +1061,17 @@ class ClaudeCodeRuntime:
                 queued = dict(payload)
                 queued["_eid"] = eid
                 subscription.sink.queue.put_nowait(queued)
+                last_queued = queued
+            if last_queued is not None:
+                subscription.replay_waiters[id(last_queued)] = completed
         finally:
             subscription.ready.set()
-        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
+        if last_queued is not None:
+            try:
+                # Live hooks keep arriving; only this replay's tail must finish.
+                await asyncio.wait_for(completed.wait(), timeout=30)
+            finally:
+                subscription.replay_waiters.pop(id(last_queued), None)
 
     async def close(self, session: SessionRef) -> None:
         """Let this session go: stop listening, forget the channel.
@@ -1271,6 +1312,9 @@ class ClaudeCodeRuntime:
                 if holding:
                     subscription.consuming.release()
                 subscription.sink.queue.task_done()
+                completed = subscription.replay_waiters.pop(id(hook), None)
+                if completed is not None:
+                    completed.set()
 
     async def _begin_session_activity(
         self,
@@ -1447,7 +1491,9 @@ class ClaudeCodeRuntime:
         be a cold start, and no caller can know in advance which one that is.
         """
         started = time.monotonic()
-        precheck = await self._channel.precheck(session.project_id, session.topic_id)
+        precheck = await self._channel.precheck(
+            session, needs_place=opening.needs_place
+        )
         logger.info(
             "session setup phase=precheck topic=%s elapsed_ms=%d",
             session.topic_id,
@@ -1458,11 +1504,15 @@ class ClaudeCodeRuntime:
             topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=opening.agent_handle,
+            # WHO acts with it. The caller pins a teammate when a message named
+            # one; unnamed, it is the agent the machine resolver already
+            # resolved for this room — the same answer the codex and pi channels
+            # mint with. The room itself never answers: it may seat several
+            # agents, and a name signed into a token cannot be taken back.
+            agent_handle=opening.agent_handle or _resolved_agent(precheck),
         )
         screen = await self._channel.ensure_ready(
-            project_id=session.project_id,
-            topic_id=session.topic_id,
+            session=session,
             token=token,
             env=opening.env,
             memory_scope=opening.memory_scope,
@@ -1548,7 +1598,36 @@ class ClaudeCodeRuntime:
                 (delivery_started - dispatch_started) * 1000,
                 time.time() * 1000,
             )
-            ready = await self._channel.send_prompt(screen, prompt)
+            try:
+                ready = await self._channel.send_prompt(screen, prompt)
+            except PromptSocketUnavailable:
+                # A late hook or an existing activity means this session may
+                # still be working. Only a dead session with no submitted
+                # prompt can be replaced without duplicating work.
+                if (
+                    not starts_activity
+                    or not activity.queue.empty()
+                    or not await self._channel.retire_unreachable(screen)
+                ):
+                    raise
+                await self._end_session_activity(
+                    subscription, activity, clear_work=True
+                )
+                screen, subscription = await self.ensure(
+                    session, opening, work_id=work_id
+                )
+                subscription.current_work = attribution
+                activity = await self._begin_session_activity(
+                    subscription,
+                    attribution,
+                    screen,
+                    ready=None,
+                    start_task=False,
+                )
+                staged, lost = await self._stage(screen, images)
+                ready = await self._channel.send_prompt(
+                    screen, _prompt_with_native_images(message, staged, lost)
+                )
             logger.info(
                 "session setup phase=prompt topic=%s duration_ms=%d ready=%s",
                 topic_id,
@@ -1584,6 +1663,7 @@ class ClaudeCodeRuntime:
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
         agent_handle: str | None = None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -1592,11 +1672,16 @@ class ClaudeCodeRuntime:
                 is_error=True,
             )
             return
+        session = SessionRef(project_id, topic_id, session_agent, harness=self.harness)
 
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
-            precheck = await self._channel.precheck(project_id, topic_id)
+            # 平台自己起的那几轮（活动消化、定期巡检、一页纸总结）今天照旧租手：
+            # 它们跑在项目那台工作机的根话题沙箱里，不租手会把它们搬到会话机的草
+            # 稿区去，那是另一件事，不在 P21 里。写出来是为了让它看得见——这里没
+            # 有默认值可继承。
+            precheck = await self._channel.precheck(session, needs_place=True)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),
@@ -1611,38 +1696,53 @@ class ClaudeCodeRuntime:
             topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=agent_handle,
+            # Same rule as `ensure` above: the caller's teammate, else the one
+            # the precheck resolved for this room.
+            agent_handle=agent_handle or _resolved_agent(precheck),
         )
         attribution: WorkAttribution | None = None
         try:
             try:
-                screen = await self._channel.ensure_ready(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    memory_scope=memory_scope,
-                    owner=owner,
-                    turn_id=turn_id,
-                    launch=ClaudeLaunch(
-                        system_prompt=system_prompt,
-                        model=model,
-                        resume_session_id=resume_session_id,
-                    ),
-                    precheck=precheck,
-                )
-                subscription = await self.ensure_subscription(project_id, topic_id)
-                self._live[topic_id] = screen
-                if subscription.current_work is not None:
-                    raise ScreenSetupError("这个话题上已有工作正在运行，本次请求已跳过")
-                attribution = WorkAttribution(
-                    work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
-                )
-                subscription.current_work = attribution
-                staged, lost = await self._stage(screen, images)
-                ready = await self._channel.send_prompt(
-                    screen, _prompt_with_native_images(prompt, staged, lost)
-                )
+                for attempt in range(2):
+                    screen = await self._channel.ensure_ready(
+                        session=session,
+                        token=token,
+                        env=env,
+                        memory_scope=memory_scope,
+                        owner=owner,
+                        turn_id=turn_id,
+                        launch=ClaudeLaunch(
+                            system_prompt=system_prompt,
+                            model=model,
+                            resume_session_id=resume_session_id,
+                        ),
+                        precheck=precheck,
+                    )
+                    subscription = await self.ensure_subscription(project_id, topic_id)
+                    self._live[topic_id] = screen
+                    if subscription.current_work is not None:
+                        raise ScreenSetupError(
+                            "这个话题上已有工作正在运行，本次请求已跳过"
+                        )
+                    attribution = WorkAttribution(
+                        work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
+                    )
+                    subscription.current_work = attribution
+                    staged, lost = await self._stage(screen, images)
+                    try:
+                        ready = await self._channel.send_prompt(
+                            screen, _prompt_with_native_images(prompt, staged, lost)
+                        )
+                    except PromptSocketUnavailable:
+                        if (
+                            attempt
+                            or not attribution.queue.empty()
+                            or not await self._channel.retire_unreachable(screen)
+                        ):
+                            raise
+                        subscription.current_work = None
+                        continue
+                    break
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc),
@@ -1662,6 +1762,7 @@ class ClaudeCodeRuntime:
                         "输入框一出现就会自动发送。"
                     )
                 )
+            assert attribution is not None
             tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
             monitor_task = await self._channel.start_activity_monitor(screen, tracker)
             try:

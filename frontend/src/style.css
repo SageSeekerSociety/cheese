@@ -29,14 +29,22 @@
 :root {
   color-scheme: light;
 
-  /* ---- Neutral ramp (warm-cool gray) ---- */
+  /* ---- Neutral ramp (warm-cool gray) ----
+     Measure each rung against the DEEPEST ground it is actually painted on, not
+     against --surface. `--line-2` counts: it is not only a divider, it is the
+     selected sidebar row's background, and it is the worst case for dark-on-
+     light text. The old values were only ever measured on --surface, so on that
+     row `--faint` sat at 2.05:1 and `--muted` at 3.99:1 — neither meta text (3)
+     nor secondary text (4.5) cleared its floor, and `--muted` also missed AA on
+     `--fill-2` (4.45). Both rungs moved on 2026-09-20: secondary 5.07 here
+     (6.51 on --surface), meta 3.37 here (4.33 on --surface). */
   --ink: #191a1c; /* titles */
   --text: #36383c; /* body */
-  --muted: #6a6e76; /* secondary */
-  --faint: #9aa0a8; /* meta */
+  --muted: #5a5e66; /* secondary */
+  --faint: #747a82; /* meta */
 
   --line: #ecedef; /* hairlines */
-  --line-2: #e2e3e6;
+  --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
   --fill: #f4f5f7; /* hover / inset */
   --fill-2: #eeeff1;
 
@@ -94,11 +102,20 @@
   /* ---- Plumbing: chrome that is not part of the semantic ramp ----
      These exist so the rules at the bottom of this file stop hardcoding
      rgba(25, 26, 28, …), which is --ink at low alpha and therefore invisible
-     on a dark canvas. Light values are byte-identical to what they replaced. */
+     on a dark canvas. Light values are byte-identical to what they replaced,
+     except --focus-ring, which was measured and moved — see its own note. */
   --scrollbar-thumb: rgba(25, 26, 28, 0.14);
   --scrollbar-thumb-hover: rgba(25, 26, 28, 0.28);
   --scrollbar-track: rgba(25, 26, 28, 0.16); /* Firefox `scrollbar-color` */
-  --focus-ring: rgba(245, 127, 23, 0.55);
+  /* Solid, not translucent. The old light value — rgba(245, 127, 23, 0.55) —
+     measured 1.71:1 on --surface and 1.53:1 on --line-2, and WCAG 2.4.11 asks
+     for 3:1 on the focus indicator: a keyboard user could not see where they
+     were. The hue stays amber (focus belongs to the same family as the primary
+     action) but is darkened until it clears the worst ground it is drawn on.
+     Measured: 4.50 on --surface, 4.24 on --canvas, 4.13 on --fill, 3.92 on
+     --fill-2, 3.51 on --line-2. --accent-press (#d96e0a) was the tempting
+     reuse and is NOT enough here: 2.95 on --fill-2, 2.65 on --line-2. */
+  --focus-ring: #c2570a;
   --selection-bg: rgba(245, 127, 23, 0.18);
   --overlay: rgba(25, 26, 28, 0.44); /* dialog scrim */
   --shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
@@ -120,6 +137,10 @@
   /* ---- Page width ---- */
   --page-w: 920px; /* reading and forms — the default */
   --page-w-wide: 1100px; /* multi-column dashboards */
+  /* 连续正文的第三档。920 是给表单和卡片列表的，正文铺满它一行会排到 60 个汉字
+     以上，回行时眼睛要横穿一整行去找下一行的开头，很容易跳行；660 下 15px 汉字
+     一行约 44 字。前两档的值不动，宽度是这一栏的属性，不是这一次的偏好。 */
+  --page-w-read: 660px; /* long-form reading column */
 
   /* ---- Type ---- */
   --font-sans:
@@ -128,6 +149,41 @@
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Line-height ladder ----
+     One line box per font size, so the vertical rhythm is a property of the SIZE
+     and nobody re-decides it at the call site. Until 2026-09-20 there was no
+     line-height anywhere in this system: sizes, spacing and radii had ladders,
+     leading did not, so every file invented its own (the tree holds 21 distinct
+     values). What a reader feels as "comfortable" is roughly half leading —
+     leaving it unstated threw that half away.
+
+     The ratio is 1.43, rounded to whole pixels, with ONE exception: 12px takes
+     18px (1.50) rather than 17px. Both 14/20 and 12/18 are the pairings the
+     ladder was copied from, kept verbatim; everything else is just 1.43 × size.
+
+     Whole pixels, not a ratio: each token is paired with exactly one font size,
+     so the BOX is the thing to pin. A unitless 1.43 re-multiplies inside a
+     nested element — a 13px <code> in .t-body would take an 18.6px box — and
+     steps off the pixel grid.
+
+     Theme-independent (leading does not change in the dark), so like the radius
+     ladder these live only here and are NOT repeated in the dark block below.
+     Full table and the reasoning: docs/design-system.md §3.2. */
+  --lh-12: 18px; /* 1.50 — meta: timestamps, ids, counts */
+  --lh-13: 19px; /* 1.46 — dense body; 13px is the readability floor */
+  --lh-14: 20px; /* 1.43 — body */
+  --lh-15: 21px; /* 1.40 — section / card title */
+  --lh-18: 26px; /* 1.44 — sheet title */
+  --lh-23: 33px; /* 1.43 — page title */
+
+  /* 两个为长文单开的档，系数 1.57 / 1.60。它们不是阶梯上的新一级：1.43 是给短行的
+     （一两行的说明、表格、标题），而 14px 汉字连排三行以上、20px 行盒会让上一行的
+     下缘贴住下一行的上缘。各自只配一个类（.t-body-readable / .t-reading），阶梯
+     仍然是 1.43。
+     和圆角同一个道理，这两行只在 :root 写一次，不在深色块里重复。 */
+  --lh-14-loose: 22px; /* 1.57 — .t-body-readable */
+  --lh-15-reading: 24px; /* 1.60 — .t-reading */
 }
 
 /* ---------------------------------------------------------------------------
@@ -139,23 +195,33 @@
    above it, so a card still reads as lifted rather than punched out).
 
    Amber is lightened to #FFA733: the light-theme #F57F17 measures 3.1:1 on
-   --surface here, which is unreadable for a button label. Every value below
-   was checked — body text 11.6:1, secondary 6.6:1, accent 8.7:1 against
-   --surface (WCAG AA needs 4.5:1). --canvas is #141517, not #000: pure black
-   maximises halation against light text and leaves no room for a surface ramp.
+   --surface here, which is unreadable for a button label. Body text 11.6:1,
+   accent 8.7:1 against --surface (WCAG AA needs 4.5:1). --canvas is #141517,
+   not #000: pure black maximises halation against light text and leaves no room
+   for a surface ramp.
+
+   Secondary and meta were re-measured on 2026-09-20 against the LIGHTEST ground
+   they sit on, which is the dark theme's mirror of the light theme's problem:
+   `--line-2` (#3a3e45) is a selected row's fill, not just a divider, and light-
+   on-dark text is worst there. On it the old `--faint` was 2.70:1 — below the
+   3:1 floor for meta text, which the --surface figure of 4.25 had hidden — and
+   `--muted` was 4.18:1. Now secondary 5.15 there (8.09 on --surface), meta 3.29
+   (5.17 on --surface).
    --------------------------------------------------------------------------- */
 
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* ---- Neutral ramp (inverted) ---- */
+  /* ---- Neutral ramp (inverted) ----
+     Same grounds as the light block, measured the same way; see the note above
+     for why `--line-2` and not `--surface` is the ground that decides these. */
   --ink: #f3f4f6;
   --text: #d3d6db;
-  --muted: #9ca2ab;
-  --faint: #7a808a;
+  --muted: #aeb4bd;
+  --faint: #888ea0;
 
   --line: #2b2e33;
-  --line-2: #3a3e45;
+  --line-2: #3a3e45; /* dividers AND the selected row's fill */
   --fill: #212429;
   --fill-2: #282c31;
 
@@ -196,6 +262,10 @@
   --scrollbar-thumb: rgba(243, 244, 246, 0.16);
   --scrollbar-thumb-hover: rgba(243, 244, 246, 0.3);
   --scrollbar-track: rgba(243, 244, 246, 0.18);
+  /* Left as it was: measured, this already clears 3:1 on every ground the ring
+     is drawn on (4.62 on --canvas, 4.42 on --surface, 4.19 on --fill). The
+     translucent form is affordable here because the dark ramp has room above
+     it; in the light theme it did not. See the light block for the numbers. */
   --focus-ring: rgba(255, 167, 51, 0.65);
   --selection-bg: rgba(255, 167, 51, 0.26);
   --overlay: rgba(0, 0, 0, 0.6);
@@ -251,43 +321,49 @@
 /* ---------------------------------------------------------------------------
    Type hierarchy — utility classes referenced across views. Enforces the spec:
    tight headings in --ink, lighter body in --text, metadata always --faint mono.
+   Every size/leading pair below comes from the --lh-* ladder in :root; do not
+   write a bare number here.
    --------------------------------------------------------------------------- */
 
-/* Page title: 23 / 650 / -0.02em / --ink */
+/* Page title: 23 / 33 / 650 / -0.02em / --ink */
 .t-page-title {
   font-family: var(--font-display);
   font-size: 23px;
   font-weight: 650;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
-  line-height: 1.25;
   color: var(--ink);
 }
 
-/* Section / card title: 15 / 600 / --ink */
+/* Section / card title: 15 / 21 / 600 / --ink */
 .t-title {
   font-size: 15px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: var(--lh-15);
   color: var(--ink);
 }
 
-/* Eyebrow label: 12 / 600 / --faint / .04em (not all-caps for Chinese) */
+/* Eyebrow label: 12 / 18 / 600 / --faint / .04em (not all-caps for Chinese) */
 .t-eyebrow {
   font-size: 12px;
   font-weight: 600;
+  line-height: var(--lh-12);
   letter-spacing: 0.04em;
   color: var(--faint);
 }
 
-/* Body: 14 / 430 / 1.62 / --text */
+/* Body: 14 / 20 / 430 / --text */
 .t-body {
   font-size: 14px;
   font-weight: 430;
-  line-height: 1.62;
+  line-height: var(--lh-14);
   color: var(--text);
 }
 
-/* Meta (timestamps, #ids, counts, branch): 12.5 / mono / --faint / tnum */
+/* Meta (timestamps, #ids, counts, branch): 12.5 / mono / --faint / tnum.
+   12.5px is the documented legacy value — 12px is the spec (§3.2) and the fold
+   is a later batch — so it borrows the 12px row of the ladder. When the size
+   folds, this line stays as it is. */
 /* 附件块左边那个方格：图片缩略图、PDF 首页、类型图标和上传中的转圈都落在它
    里面。四种状态必须是同一个尺寸，否则上传结束的那一刻整条会跳；而它跨四个
    组件，所以定义在这里，不在其中任何一个里面。 */
@@ -307,7 +383,104 @@
 .t-meta {
   font-family: var(--font-mono);
   font-size: 12.5px;
+  line-height: var(--lh-12);
   color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Console title: 23 / 33 / 650 / 0 / --ink.
+   .t-page-title 的孪生体，只差分字距：23px 下的 -0.02em 是 -0.46px，而汉字字面本身
+   只留 0.7–1.4px 的侧边，再收就贴住了。.t-page-title 已经在所有既有页面上，改它会
+   全站回流，所以那一档的诉求（正字距）用这一个新类接住。 */
+.t-console-title {
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 650;
+  line-height: var(--lh-23);
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
+/* Body, readable: 14 / 22 / 400 / --text.
+   比 .t-body 松一档，给会连排三行以上的 CJK（卡片摘要、详情正文、看板说明）。
+   字重从 430 落到 400：430 在 PingFang SC 上没有对应字重，会被吸到 500，汉字
+   混排的拉丁部分凭空重半档——只有这一批新面用得上 400，既有 .t-body 不动。 */
+.t-body-readable {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: var(--lh-14-loose);
+  color: var(--text);
+}
+
+/* Reading: 15 / 24 / 400 / --text（1.60）。
+   660px 阅读栏里的连续正文。字号比上面大一档，是因为栏更窄、每行字数更少，
+   行距不够就更难跟行。 */
+.t-reading {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: var(--lh-15-reading);
+  color: var(--text);
+}
+
+/* Meta, readable: 12.5 / 18 / 400 / --muted.
+   与 .t-meta 同档、同尺寸，只换了颜色。判据是**文字那条线**（AA 4.5:1），不是图形
+   那条（3:1）：这一档装的是 12.5px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
+   四种底色上连 3:1 都到不了（`--surface` 2.64 / `--canvas` 2.48 / `--fill` 2.42 /
+   `--line-2` 2.05）—— 所以它不是「差一点」，而写这条规则的人要是照图形那条线算，
+   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12.5px 的字是错的。
+   深色那一侧不成立同样的量级（4.25 / 4.60 / 3.92 / 2.70），吃紧的一直是浅色。
+   .t-meta 是既有类，它的 `--faint` 留给存量页面，不在这里改。 */
+.t-meta-read {
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+/* Eyebrow, readable: 12 / 18 / 600 / .04em / --muted. 同 .t-eyebrow 的理由。 */
+.t-eyebrow-read {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* 等宽数字。此前是每处手抄这两个声明，于是有的地方抄了、有的没抄，同一张表里
+   两列的右边缘对不齐；而表格里一列数字的宽度只要随数值变化，每次取数整列都会
+   横向抖一下。定义只此一处，凡是要纵向比较的数字都加它。 */
+.t-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* 密集读数：13 / 19 / 600。**此前它被 5 个模板引用、却在 style.css 里没有任何
+   定义** —— 于是每个引用它的组件都拿到了继承来的字重和字号，两块本该同规格的
+   读数在屏幕上并不一样。这一档取自设计系统 §3.2 的字号阶梯里「密集正文」那一档
+   （字号只允许 12/13/14/15/18/23，13 就是那一档），行高用成对的 `--lh-13`。
+   用途：KPI 卡的短读数、导轨上的短值、表格里的计数 —— 比 `.t-meta` 重一档，
+   比 `.t-body` 紧一档。 */
+.t-dense {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 数字显示契约（设计系统 §3.2 的补充）：
+   1. 数字叶子 nowrap + tabular-nums（`.t-num` 已经给了 tnum，这里补 nowrap）。
+   2. 数字叶子**和它的 flex/grid 父层**都要 `min-width: 0` —— 否则一个 nowrap 的
+      数字会把格子顶宽，把邻居挤没，而不是自己被裁。
+   3. 值的轨道用 `auto` / `minmax(Nch, max-content)`，不用裸 `NNpx`。
+   4. **数字叶子上绝不写 `text-overflow: ellipsis`** —— 省略号是给标签/标题的，
+      数字被省略掉尾巴就不再是那个数了。要省就先把数简写（`fmtSI` / `fmtCompact`），
+      并把完整值放进 `title`。
+   5. 任何简写形式都必须带 `title` 指向完整的分组数字。
+   这两条是 `e2e/tests/number-display.spec.ts` 在屏幕上量的那两条。 */
+.num-leaf {
+  min-width: 0;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
@@ -433,6 +606,20 @@ button:not(.v-btn) {
   color: inherit;
 }
 
+/* Disabled solid buttons. Vuetify swaps a disabled elevated/flat button's fill
+   for the neutral surface (`.v-btn--disabled.v-btn--variant-elevated/--flat`),
+   but `color="primary"` also puts `.bg-primary` on the element, and that colour
+   utility is `!important` — it wins, so the button keeps its full amber fill
+   and white label and looks exactly like one you can press, while
+   `pointer-events: none` quietly swallows the click. The rule below restores
+   what Vuetify meant: only buttons that actually carry a `bg-*` utility are
+   affected (tonal/outlined/text buttons already dim through the plain
+   `.v-btn--disabled` opacity). */
+.v-btn--disabled[class*='bg-'] {
+  color: rgba(var(--v-theme-on-surface), 0.26) !important;
+  background-color: rgb(var(--v-theme-surface)) !important;
+}
+
 /* Page content width. Two values, both named — 项目内的页面（总览/日历/设置/
    成员/项目文档）以前每个自己写一个数字（1100/820/900/920/920），因为它们各
    自是一个整页、没有共同的框架可依。现在它们都住在项目框架里，宽度就该是框架
@@ -546,6 +733,27 @@ button:not(.v-btn) {
   overflow: hidden;
   opacity: 0;
   border: 0;
+}
+
+/* 管理后台的队列行与总表行共用 .fb-row —— 两处都是「一整行 = 一个可聚焦的链接」，
+   所以 hover 和焦点环只在这里写一次，行内那个链接叫 .fbrow__link。
+   hover 只改底色：这一列有几十行，任何位移都会让整列跟着跳，而底色已经说清了指针
+   在哪一行。包在 (hover: hover) 里是因为触屏上 :hover 点过之后会一直粘着，那一行
+   看着像被选中了 —— 而总表里的「选中」是另一件事（左侧 2px 琥珀竖条）。 */
+.fb-row {
+  transition: background-color 0.12s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fb-row:hover {
+    background-color: var(--fill);
+  }
+}
+/* 焦点环画在行上、不画在链接上：链接只是行内一小段文字，2px 的环跟着它走会缩成
+   一个小方块，看不出光标现在停在哪一行。offset 取负值是为了不被相邻行裁掉 ——
+   行与行之间只隔一条 1px 发丝线，环画在外面会压进上/下一行里。 */
+.fb-row:has(.fbrow__link:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */

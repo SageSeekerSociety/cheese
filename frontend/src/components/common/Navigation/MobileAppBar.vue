@@ -27,6 +27,13 @@
       <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
            (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
+      <!-- 帮助与反馈：**和桌面同一个组件**（`HelpAndFeedbackMenu`），这里只是换一种
+           呈现（`compact` = 只留图标，手机上顶栏放不下那五个字）。和桌面同样只挂在一级
+           目的地上 —— 页面栈里那几层右边是这一页自己的操作。
+           它自己带高度与内边距：这一颗**过去没有任何样式规则**（桌上那颗有），所以
+           它一直是 Vuetify 的默认尺寸，比旁边那颗语言开关高一档。 -->
+      <HelpAndFeedbackMenu v-if="!backTo" compact />
+
       <!-- 用户头像菜单：只在一级目的地上。页面栈里的那几层（有 ← 的）右边留给
            这一页自己的操作——个人项在那儿既不相关，也挤掉了标题的宽度 (§3.4)。 -->
       <v-menu
@@ -171,6 +178,7 @@ import { storeToRefs } from 'pinia'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
 
+import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'

@@ -3,7 +3,7 @@
 ## 为什么有这个模块
 
 平台自己在房间里说话曾经有两条路。一条是 `ChatService.post_system_event()`，落
-`kind=event, author_type=system`，前端渲染成居中灰字一行。另一条是
+`kind=event, author_type=platform`，前端渲染成居中灰字一行。另一条是
 `runner.submit(author="system")`，它落下的其实是
 `kind=message, author_type=human, author="system"` —— 一条**伪装成人**的聊天
 消息，前端按真人发言渲染：完整气泡、头像、名字显示成 "system"。最长的一条（CI
@@ -62,14 +62,27 @@ EVENT_MERGE_REFUSED: Final = "merge_refused"
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 #: 验收卡递上来了 —— 从这一刻起验收人手上多了一件事。
 EVENT_CARD_FILED: Final = "card_filed"
+#: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
+EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
+#: 房间里的一份东西被留进了资料库 —— 从这一刻起别的房间也引用得到它。
+EVENT_LIBRARY_SAVED: Final = "library_saved"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
 EVENT_CARD_VOIDED: Final = "card_voided"
 #: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
-#: 同步上游时合并冲突。
+#: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
+
+#: 一条消息被升级成了一条活（或一个房间），下一步在它的负责人手上。
+EVENT_BLOCK_UPGRADED: Final = "block_upgraded"
+#: 一个房间的环境倒了，这件事交到总览芝士手上了。
+EVENT_ENVIRONMENT_RECOVERY_REQUEST: Final = "environment_recovery_request"
+#: 房间的环境修好了，此前没送达的消息接着处理。
+EVENT_ENVIRONMENT_REPAIRED: Final = "environment_repaired"
+#: 这个房间的记忆在整理 —— 芝士自己的事，没有人在等它。
+EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -78,6 +91,9 @@ EVENT_TURN_FAILED: Final = "turn_failed"
 EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 #: 部署中断了轮次（孤儿轮次扫底）。
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
+#: 有工具调用发出去了而结果永远不会回来了 —— 平台不替它猜做没做过，也不自动重发
+#: （结论 57）。要人看一眼那件事到底落地没有。
+EVENT_DISPATCH_UNKNOWN: Final = "dispatch_unknown"
 #: 项目并发已满，这轮在排队。
 EVENT_TURN_QUEUED: Final = "turn_queued"
 #: 房间的平台工具通道断了，回复没能发进来 —— 平台接回来并重发了那条消息。
@@ -121,6 +137,15 @@ EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
 EVENT_PR_REVIEW: Final = "pr_review"
 #: PR 和它的 base 分支冲突了，GitHub 合不了。
 EVENT_PR_CONFLICT: Final = "pr_conflict"
+# A parent task closed; its dependants need the executor to inspect their base.
+EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
+EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
+#: 一次调用撞上项目的档位策略，变成了给人的一条提议（`domain/policy/gate.py`）。
+EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
+#: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
+EVENT_TIMED_DELIVERY: Final = "timed_delivery"
+#: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
+#: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -132,14 +157,21 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_FILED,
+        EVENT_ARTIFACT_DECLARED,
+        EVENT_LIBRARY_SAVED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
+        EVENT_BLOCK_UPGRADED,
+        EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+        EVENT_ENVIRONMENT_REPAIRED,
+        EVENT_MEMORY_ORGANIZING,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
         EVENT_DEPLOY_INTERRUPTED,
+        EVENT_DISPATCH_UNKNOWN,
         EVENT_ARCHIVE_DEFERRED,
         EVENT_TURN_QUEUED,
         EVENT_SANDBOX_REBUILT,
@@ -160,6 +192,10 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PROMPT_REPLAYED,
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
+        EVENT_DEPENDENCY_CLOSED,
+        EVENT_DEPENDENCY_REJECTED,
+        EVENT_POLICY_PROPOSAL,
+        EVENT_TIMED_DELIVERY,
     }
 )
 

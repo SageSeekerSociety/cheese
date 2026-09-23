@@ -45,12 +45,16 @@ export const TOOL_LABELS: Record<string, string> = {
   // backend/tests/unit/test_tool_labels.py 直接对着 CLI 的命令树说出来。
   cheese_chat_send: '发布消息',
   chat_send: '发布消息', // 系统提示里用的名字，两个都注册了
+  cheese_chat_list: '读取聊天记录',
+  cheese_chat_search: '搜索聊天记录',
+  cheese_chat_get: '读取一条消息',
+  cheese_chat_replies: '读取消息回复',
   cheese_doc_set: '更新实况文档',
   cheese_doc_get: '读取实况文档',
   cheese_split: '创建任务',
   cheese_worktree: '准备工作目录',
   cheese_sync: '同步任务代码',
-  cheese_bind: '认领任务',
+  cheese_recover: '恢复任务备份',
   cheese_close_task: '关闭任务',
   cheese_push_fix: '更新任务 PR',
   cheese_fetch: '读取网页',
@@ -70,10 +74,17 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_members: '列出话题成员',
   cheese_gh_token: '获取 GitHub 令牌',
   cheese_status: '查看平台状态',
+  cheese_sync_agents: '刷新队友分身定义',
   cheese_serve: '设置预览',
-  cheese_artifact: '设置交付物',
+  cheese_library_ls: '查看项目资料',
+  cheese_library_get: '取用项目资料',
+  cheese_show: '摆出一份东西',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
+  cheese_feedback_propose: '提交反馈提案',
+  cheese_machine: '要一台机器',
+  cheese_note: '留一张便条',
+  cheese_deliver_at: '设定时投递',
   cheese_api: '调用平台接口',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: '启动后台任务',
@@ -83,8 +94,15 @@ export const TOOL_LABELS: Record<string, string> = {
   bash_list: '列出后台任务',
 }
 
+/** `mcp__<服务器>__<工具>` → `<工具>`。**认任意服务器名**，不认某一个写死的：写死
+ *  `mcp__cheese__` 的那天，claude_code 的服务器（注册名是 `native`）就已经不是它了，
+ *  于是前缀剥不掉、下面那张表查不到，时间线上原样显示
+ *  `mcp__native__cheese_feedback_propose` —— 而「前缀没剥掉」和「这个工具本来就没有
+ *  中文标签」在屏幕上是同一件事。 */
+const MCP_PREFIX = /^mcp__[a-z0-9_]+__/
+
 export function toolLabel(name: string): string {
-  const short = name.replace(/^mcp__cheese__/, '')
+  const short = name.replace(MCP_PREFIX, '')
   return TOOL_LABELS[short] ?? short
 }
 

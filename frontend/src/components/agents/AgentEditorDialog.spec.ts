@@ -1,6 +1,4 @@
-// 新建 / 修改队友的表单。两件事值得被盯着：
-//   1. 名字空着、标识写错，不能一路发到后端再收一个 422 —— 人得当场看见
-//   2. 只是改了个名字，不能顺手把一个被别的项目共用的类型也重写一遍
+// Teammate validation and optional project-scoped model overrides.
 import type { AgentType, ProjectAgent } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -11,7 +9,6 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const createProjectAgent = vi.fn()
 const updateProjectAgent = vi.fn()
-const getProjectAgentOptions = vi.fn()
 const updateAgentType = vi.fn()
 const createAgentType = vi.fn()
 const setProjectDefaultAgent = vi.fn()
@@ -20,7 +17,7 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
-    getProjectAgentOptions: () => getProjectAgentOptions(),
+    getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'deepseek-flash', label: 'DeepSeek' }] }),
     createProjectAgent: (...a: unknown[]) => createProjectAgent(...a),
     updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
     updateAgentType: (...a: unknown[]) => updateAgentType(...a),
@@ -28,6 +25,8 @@ vi.mock('../../api', async (importOriginal) => {
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
   }
 })
+
+import { setLocale } from '../../i18n'
 
 import AgentEditorDialog from './AgentEditorDialog.vue'
 
@@ -40,9 +39,6 @@ const CUSTOM_TYPE: AgentType = {
   body: '你负责代码评审',
   skills: [],
   mcp_servers: [],
-  model: null,
-  effort: null,
-  harness: null,
   builtin: false,
 }
 
@@ -92,31 +88,14 @@ beforeAll(() => {
 })
 
 const CONFIG = {
+  model: null,
   body: 'Review code',
-  model: 'sonnet',
-  harness: 'claude-code',
   skills: [],
   mcp_servers: [],
-  effort: null,
 }
 
 beforeEach(() => {
-  getProjectAgentOptions.mockReset().mockResolvedValue({
-    harness: {
-      state: 'choosable',
-      choices: [
-        { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet', 'opus'] },
-        { id: 'pi', label: 'pi', default: false, models: ['sonnet', 'opus'] },
-      ],
-    },
-    model: {
-      state: 'choosable',
-      choices: [
-        { id: 'sonnet', label: 'Sonnet', default: true },
-        { id: 'opus', label: 'Opus', default: false },
-      ],
-    },
-  })
+  setLocale('zh-CN')
   createProjectAgent.mockReset().mockResolvedValue({})
   updateProjectAgent.mockReset().mockResolvedValue({})
   updateAgentType.mockReset().mockResolvedValue(CUSTOM_TYPE)
@@ -127,68 +106,6 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('新建时的校验', () => {
-  // 人挑运行方式，模型列表跟着它筛。反过来（选模型、倒推 harness）是这里之前
-  // 的做法：选中一个只有 Codex 能跑的模型，队友就"变成"了 Codex 队友 —— 没人
-  // 挑过，界面上也从没显示过。
-  it('filters the model list by the chosen harness and preserves the role', async () => {
-    getProjectAgentOptions.mockResolvedValue({
-      harness: {
-        state: 'choosable',
-        choices: [
-          { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet'] },
-          { id: 'codex', label: 'Codex', default: false, models: ['codex-fixture'] },
-        ],
-      },
-      model: {
-        state: 'choosable',
-        choices: [
-          { id: 'sonnet', label: 'Sonnet', default: true },
-          { id: 'codex-fixture', label: 'Codex fixture', default: false },
-        ],
-      },
-    })
-    mountDialog(null)
-    await fireEvent.update(field('名字'), '代码评审')
-    await fireEvent.update(field('角色设定'), 'Review code')
-    await waitFor(() => expect(field('运行方式').disabled).toBe(false))
-    await fireEvent.mouseDown(field('运行方式'))
-    await fireEvent.click(await screen.findByText('Codex', { selector: '.v-list-item-title' }))
-    // Codex 驱动不了 Sonnet，所以它根本不出现在可选项里 —— 人当场看见约束，
-    // 而不是存下去之后收一条拒绝。
-    await fireEvent.mouseDown(field('模型'))
-    expect(await screen.findByText('Codex fixture', { selector: '.v-list-item-title' })).toBeTruthy()
-    expect(screen.queryByText('Sonnet', { selector: '.v-list-item-title' })).toBeNull()
-    await clickSave()
-    await waitFor(() =>
-      expect(createProjectAgent).toHaveBeenCalledWith(
-        PROJECT,
-        expect.objectContaining({
-          configuration: { ...CONFIG, model: 'codex-fixture', harness: 'codex' },
-        })
-      )
-    )
-  })
-
-  // 换运行方式不该顺手把人挑好的模型也换掉 —— 除非新的运行方式确实驱动不了它。
-  it('keeps the chosen model when the new harness can still drive it', async () => {
-    mountDialog(null)
-    await fireEvent.update(field('名字'), '代码评审')
-    await waitFor(() => expect(field('模型').disabled).toBe(false))
-    await fireEvent.mouseDown(field('模型'))
-    await fireEvent.click(await screen.findByText('Opus', { selector: '.v-list-item-title' }))
-    await fireEvent.mouseDown(field('运行方式'))
-    await fireEvent.click(await screen.findByText('pi', { selector: '.v-list-item-title' }))
-    await clickSave()
-    await waitFor(() =>
-      expect(createProjectAgent).toHaveBeenCalledWith(
-        PROJECT,
-        expect.objectContaining({
-          configuration: { ...CONFIG, body: '', model: 'opus', harness: 'pi' },
-        })
-      )
-    )
-  })
-
   it('一进来不先骂人', async () => {
     mountDialog(null)
     expect(screen.queryByText('请填写名字')).toBeNull()
@@ -238,6 +155,37 @@ describe('新建时的校验', () => {
       })
     })
   })
+
+  it('inherits the main model until the user opts into an override', async () => {
+    mountDialog(null)
+    expect(screen.queryByLabelText('模型')).toBeNull()
+    expect(screen.queryByLabelText('运行方式')).toBeNull()
+    await fireEvent.update(field('名字'), '代码评审')
+    await clickSave()
+    await waitFor(() => expect(createProjectAgent).toHaveBeenCalled())
+    const [, payload] = createProjectAgent.mock.calls[0] as [string, { configuration: object }]
+    expect(payload.configuration).toMatchObject({ model: null })
+  })
+
+  it('saves an available model after opting in', async () => {
+    mountDialog(null)
+    await fireEvent.update(field('名字'), 'Spark')
+    await fireEvent.input(await screen.findByRole('checkbox', { name: '为这个队友指定模型' }), {
+      target: { checked: true },
+    })
+    await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2))
+    await fireEvent.mouseDown((await screen.findAllByRole('combobox'))[1]!)
+    await fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    await clickSave()
+    await waitFor(() =>
+      expect(createProjectAgent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({
+          configuration: expect.objectContaining({ model: 'deepseek-flash' }),
+        })
+      )
+    )
+  })
 })
 
 describe('修改时', () => {
@@ -248,8 +196,8 @@ describe('修改时', () => {
     handle: 'reviewer',
     type_name: 'reviewer',
     display_name: '代码评审',
+    seat_handle: 'cheese-a2',
     is_default: false,
-    configured: true,
     is_active: true,
   }
 
@@ -278,54 +226,6 @@ describe('修改时', () => {
     )
     expect(updateAgentType).not.toHaveBeenCalled()
     expect(existing.configuration.body).toBe('Review code')
-  })
-
-  it.each(['claude-code', 'codex'])('preserves an API model using %s when only renaming', async (harness) => {
-    getProjectAgentOptions.mockResolvedValue({
-      harness: {
-        state: 'choosable',
-        choices: [
-          { id: 'claude-code', label: 'Claude Code', default: true, models: ['api-model'] },
-          { id: 'codex', label: 'Codex', default: false, models: ['api-model'] },
-        ],
-      },
-      model: {
-        state: 'choosable',
-        choices: [{ id: 'api-model', label: 'API model', default: true }],
-      },
-    })
-    const configuration = { ...CONFIG, model: 'api-model', harness }
-    mountDialog({ ...existing, configuration })
-    await fireEvent.update(field('名字'), 'New name')
-    await clickSave()
-    await waitFor(() =>
-      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, existing.id, {
-        display_name: 'New name',
-        configuration,
-      })
-    )
-  })
-
-  it('saves the selected model without changing the original draft source', async () => {
-    mountDialog(existing)
-    await waitFor(() => expect(field('模型').disabled).toBe(false))
-    await fireEvent.mouseDown(field('模型'))
-    await fireEvent.click(await screen.findByText('Opus', { selector: '.v-list-item-title' }))
-    await clickSave()
-    await waitFor(() =>
-      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, existing.id, {
-        display_name: existing.display_name,
-        configuration: { ...CONFIG, model: 'opus' },
-      })
-    )
-    expect(existing.configuration.model).toBe('sonnet')
-  })
-
-  it('keeps an unavailable saved model visible and refuses a silent replacement', async () => {
-    mountDialog({ ...existing, configuration: { ...CONFIG, model: 'unavailable-model' } })
-    await clickSave()
-    expect(await screen.findByText('请选择当前项目可用的模型')).toBeTruthy()
-    expect(updateProjectAgent).not.toHaveBeenCalled()
   })
 
   it('edits agents created from a built-in preset without editing the preset', async () => {

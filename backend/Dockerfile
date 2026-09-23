@@ -5,8 +5,8 @@
 # `production` starts from this stage, so anything added here ships to prod.
 FROM python:3.11-slim AS runtime-base
 
-# Keep the existing Debian mirror and use HTTPS for package downloads.
-RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+# Use Debian's CDN over HTTPS on the hosted build runners.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources
 
 # ② 用 BuildKit 缓存挂载存 apt 的下载与索引。base image 自带的 docker-clean
 # 会在每次 install 后删掉刚下载的 .deb，正好抵消 /var/cache/apt 这个挂载，所以
@@ -32,20 +32,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # copies up every file it touches into a fresh layer — measured at 101s and
 # roughly a duplicate of .venv + connector-dist on 2026-08-17.
 #
-# The uid/gid are NOT free to pick: this process and the agent sandbox share one
-# git store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
-# `.git` into every sandbox container, read-write) and BOTH commit into it — the
-# agent's own commit is how a topic branch moves. git creates object directories
-# 0755 and loose objects 0444, owned by whoever wrote them, so a second uid can
-# read every one of them and add nothing: its commit fails on a directory it
-# does not own. Backend-side that surfaced as a project-wide 422 on the file
-# panel; sandbox-side as an agent whose work could not leave the container.
-#
-# 1000 rather than some other number because the sandbox side is the one we do
-# not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
-# starts it with `--user node`, and a project may point `sandbox_image` at any
-# other node-based image. See backend/sandbox/Dockerfile and
-# app.domain.workspace.service.AGENT_UID (which tests pin against this line).
+# Keep uid/gid 1000 so this image can access existing persistent volumes.
 RUN addgroup --system --gid 1000 python \
     && adduser --system --uid 1000 --gid 1000 cheese \
     && test "$(id -u cheese)" = 1000 \
@@ -78,12 +65,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 FROM build-base AS deps
 WORKDIR /app
 
-# Copy dependency files and srp_rs source (needed for build). `.python-version`
-# is REQUIRED here: pyproject requires-python is ">=3.13", so without the pin uv
-# fetches the newest satisfying interpreter — now Python 3.14, which pyo3 0.24
-# (srp_rs) refuses to build against. The pin keeps uv on 3.13.
-COPY pyproject.toml uv.lock README.md .python-version ./
-COPY srp_rs/ ./srp_rs/
+# Install Python before dependency inputs so a lockfile edit does not download it again.
+COPY .python-version ./
 
 # Belt-and-braces: even if .python-version is ever dropped, hold uv on 3.13 so
 # the srp_rs / pyo3 native build can't silently break on a newer interpreter.
@@ -96,6 +79,12 @@ ENV UV_PYTHON=3.13
 # path so production can COPY it too. (UV_LINK_MODE=copy does NOT fix this — it
 # only affects package files, not the interpreter symlink.)
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
+
+RUN uv python install
+
+# README is not a dependency input for this non-packaged project.
+COPY pyproject.toml uv.lock ./
+COPY srp_rs/ ./srp_rs/
 
 # Install dependencies using uv (includes building srp_rs from source).
 # The cache mounts keep uv's wheel downloads and Cargo's registry/build output
@@ -203,11 +192,12 @@ COPY --chown=cheese:python alembic.ini ./
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
 COPY --chown=cheese:python sandbox ./sandbox
-# One-shot data migration an operator has to be able to run ON the box (memory
-# rows to openviking, #187). Named file by file rather than `COPY scripts`: the
-# rest of that directory is dev probes and demo seeders that have no business in
-# a production image.
-COPY --chown=cheese:python scripts/migrate_memory_to_openviking.py ./scripts/
+# One-shot data migrations an operator has to be able to run ON the box. Named
+# file by file rather than `COPY scripts`: the rest of that directory is dev
+# probes and demo seeders that have no business in a production image.
+COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
+# Export only the App's public key to the separate event relay.
+COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

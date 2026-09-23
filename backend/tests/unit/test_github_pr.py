@@ -31,11 +31,33 @@ class _FakeTokens:
 
 
 def _client(handler) -> GitHubPRClient:
+    def route(request):
+        if (
+            request.url.path == "/graphql"
+            and "isMergeQueueEnabled" in request.content.decode()
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "id": "PR_7",
+                                "headRefOid": "abc",
+                                "isMergeQueueEnabled": False,
+                                "mergeQueueEntry": None,
+                            }
+                        }
+                    }
+                },
+            )
+        return handler(request)
+
     return GitHubPRClient(
         "acme",
         "widgets",
         cast(GitHubAppTokens, _FakeTokens()),
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(route),
     )
 
 
@@ -71,11 +93,11 @@ async def test_open_pr_creates_with_the_write_token():
         seen.append(request)
         return httpx.Response(201, json={"number": 7, "html_url": "https://pr/7"})
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/abcd1234", base="main", title="做一个东西", body="正文"
     )
 
-    assert pr["number"] == 7
+    assert opened.pr["number"] == 7
     [request] = seen
     assert request.url.path == "/repos/acme/widgets/pulls"
     assert request.headers["authorization"] == "Bearer ghs_write"
@@ -97,10 +119,10 @@ async def test_open_pr_finds_the_already_open_pr():
         assert request.url.params["head"] == "acme:topic/abcd1234"
         return httpx.Response(200, json=[{"number": 5, "html_url": "https://pr/5"}])
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/abcd1234", base="main", title="t", body=""
     )
-    assert pr["number"] == 5
+    assert opened.pr["number"] == 5
 
 
 @pytest.mark.anyio
@@ -203,7 +225,7 @@ async def test_check_runs_use_the_installation_token_and_simplify():
 # it is. An App cannot impersonate a user; their own token is the only way.
 
 
-def _pull_recorder(*, user_status: int = 201, app_status: int = 201):
+def _pull_recorder(*, app_status: int = 201):
     seen: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -211,64 +233,35 @@ def _pull_recorder(*, user_status: int = 201, app_status: int = 201):
         seen.append((request.method, token))
         if request.method != "POST":
             return httpx.Response(200, json=[{"number": 9}])
-        status = user_status if token == "ghu_alice" else app_status
-        if status == 201:
+        if app_status == 201:
             return httpx.Response(201, json={"number": 42})
-        return httpx.Response(status, json={"message": "already exist"})
+        return httpx.Response(app_status, json={"message": "already exist"})
 
     return handler, seen
 
 
 @pytest.mark.anyio
-async def test_open_pr_uses_the_requester_s_own_token():
-    handler, seen = _pull_recorder()
-
-    pr = await _client(handler).open_pr(
-        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
-    )
-
-    assert pr["number"] == 42
-    assert seen == [("POST", "ghu_alice")]  # the App token never gets a turn
-
-
-@pytest.mark.anyio
-async def test_open_pr_falls_back_to_the_app_when_the_user_cannot():
-    """Their authorization may be revoked, or they may have left the org. A PR
-    under the wrong name beats no PR at all — the accept depends on it."""
-    handler, seen = _pull_recorder(user_status=403)
-
-    pr = await _client(handler).open_pr(
-        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
-    )
-
-    assert pr["number"] == 42
-    assert seen == [("POST", "ghu_alice"), ("POST", "ghs_write")]
-
-
-@pytest.mark.anyio
 async def test_open_pr_adopts_an_existing_pr_without_a_second_create():
-    """Re-filing a card for the same topic hits "a pull request already exists"
-    — the existing PR IS this topic's PR. Retrying the create with the App
-    token would just earn the same 422."""
-    handler, seen = _pull_recorder(user_status=422)
+    """Re-filing adopts the existing PR for the task branch."""
+    handler, seen = _pull_recorder(app_status=422)
 
-    pr = await _client(handler).open_pr(
-        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    opened = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body=""
     )
 
-    assert pr["number"] == 9
+    assert opened.pr["number"] == 9
     assert [method for method, _ in seen] == ["POST", "GET"]
 
 
 @pytest.mark.anyio
-async def test_open_pr_still_works_with_no_user_token_at_all():
+async def test_open_pr_uses_the_app_identity():
     handler, seen = _pull_recorder()
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/1", base="main", title="fix: x", body=""
     )
 
-    assert pr["number"] == 42
+    assert opened.pr["number"] == 42
     assert seen == [("POST", "ghs_write")]
 
 

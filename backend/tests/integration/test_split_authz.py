@@ -156,7 +156,7 @@ def test_project_member_can_split_even_if_not_on_topic_roster(client):
                 user_handle="bob",
                 role=ProjectRole.member,
                 # Roster writes are authorized — seed as the project owner.
-                actor=Actor(handle="alice", user_id=None, is_agent=False, via="token"),
+                actor=Actor(handle="alice", user_id=None, via="token"),
             )
             await s.commit()
 

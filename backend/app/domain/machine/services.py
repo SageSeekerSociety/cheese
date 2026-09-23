@@ -8,6 +8,7 @@ read, which also means a machine that finished (or failed) while nobody was
 looking is correct the next time anyone asks.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -38,11 +39,13 @@ from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
+    MAX_ENROLL_ATTEMPTS,
     TRANSITIONAL,
     AiStatus,
     MachineStatus,
     ProjectMachine,
 )
+from app.domain.machine.progress import startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
@@ -76,6 +79,10 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 # within one coffee. It trades the per-machine ccproxy identity — a fallback the
 # meter already handles — for never leaving a healthy machine unenrolled.
 ENROLL_SETTLE_GRACE = timedelta(minutes=10)
+# One provider create per room per process: a second admission of the room
+# waits here, holding no database lock, until the first has recorded the
+# machine. One lock per room ever provisioned, so this stays small.
+_create_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,7 +229,10 @@ class MachineService:
             raise NotFoundError("project not found")
 
         team_id = await self.quota_team_id(project_id)
-        await self._repo.lock_team_quota(team_id)
+        # The provider reads and the account setup happen before the quota lock:
+        # only counting the team's machines and creating one need to be atomic,
+        # and every provider call made under the lock keeps every other
+        # admission of the team waiting with a pool connection each.
         offering = await self._pick_offering()
 
         def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
@@ -249,6 +259,10 @@ class MachineService:
             ),
         }
 
+        customer_id, account_id = await self._ensure_account(project_id)
+        user = login_user or settings.microcloud_login_user
+
+        await self._repo.lock_team_quota(team_id)
         existing = await self.quota_machines(team_id)
         limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
@@ -258,9 +272,6 @@ class MachineService:
             )
         project_used = sum(m.project_id == project_id for m in existing)
         hostname = derive_hostname(project.name, project_id, project_used + 1)
-
-        customer_id, account_id = await self._ensure_account(project_id)
-        user = login_user or settings.microcloud_login_user
 
         body = {
             "customerId": customer_id,
@@ -292,6 +303,7 @@ class MachineService:
                 owner_user_id=owner_user_id,
             )
             if warm is not None:
+                await startup_progress(topic_id, "已选中预热机器，正在分配给本话题")
                 return warm
         # The platform needs its own way in to enroll the machine later, and the
         # human must not lose theirs by us taking the single key slot: both are
@@ -305,16 +317,16 @@ class MachineService:
         if authorized:
             body["sshPubkey"] = authorized
 
-        # No separate switch call here. MicroCloud answers 400 to a switch on a
-        # machine that is still provisioning, so asking right after create only
-        # cost the turn path a 22s refusal (measured 2026-09-02, machine 478).
-        # The mode rides in the create body above; `reconcile_ai_mode` still
-        # switches a machine that came up on the wrong channel.
-        created = await self._client.create_machine(body)
-        return await self._repo.add(
+        # The row is the reservation: it counts against the team's quota from
+        # this commit on, so the quota lock (and whatever locks the caller holds)
+        # can be let go before the provider is asked. A lock held across that
+        # call kept every other admission of the team waiting with a pool
+        # connection each (dev outage of 2026-09-18). A reservation whose create
+        # never came back is settled by `settle_reservations`.
+        machine = await self._repo.add(
             project_id=project_id,
             topic_id=topic_id,
-            machine_id=int(created["id"]),
+            machine_id=None,
             customer_id=customer_id,
             account_id=account_id,
             offering_id=int(offering["id"]),
@@ -323,14 +335,93 @@ class MachineService:
             cores=spec["cores"],
             memory_mb=spec["memoryMb"],
             disk_gb=spec["diskGb"],
-            status=_as_status(created.get("status")),
-            ip=created.get("ip"),
+            status=MachineStatus.provisioning,
+            ip=None,
             requested_by=requested_by,
-            ai_mode=str(created.get("aiMode") or "none"),
-            ai_status=_as_ai_status(created.get("aiStatus")),
+            ai_mode=desired_ai_mode or "none",
+            ai_status=AiStatus.unknown,
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
+        creating = (
+            _create_locks.setdefault(topic_id, asyncio.Lock())
+            if topic_id is not None
+            else asyncio.Lock()
+        )
+        async with creating:
+            await self._session.commit()
+            await startup_progress(topic_id, "正在请求创建机器")
+            # No separate switch call here. MicroCloud answers 400 to a switch on
+            # a machine that is still provisioning, so asking right after create
+            # only cost the turn path a 22s refusal (measured 2026-09-02, machine
+            # 478). The mode rides in the create body above; `reconcile_ai_mode`
+            # still switches a machine that came up on the wrong channel.
+            try:
+                created = await self._client.create_machine(body)
+            except BaseException:
+                # Nothing was created, so nothing is owed: give the slot back.
+                await startup_progress(
+                    topic_id, "创建请求未完成，无法确认机器状态", failed=True
+                )
+                await self._repo.delete(machine)
+                await self._session.commit()
+                raise
+            machine = await self._repo.set_state(
+                machine,
+                status=_as_status(created.get("status")),
+                ip=created.get("ip"),
+                ai_mode=str(created.get("aiMode") or "none"),
+                ai_status=_as_ai_status(created.get("aiStatus")),
+                machine_id=int(created["id"]),
+            )
+            await self._session.commit()
+            await startup_progress(topic_id, "创建请求已受理，等待机器启动")
+        return machine
+
+    async def settle_reservations(self) -> int:
+        """Finish or drop reservations whose create call never came back.
+
+        A backend that dies between reserving the row and hearing from the
+        provider leaves a row with no machine id. Past the time a create can
+        take, the provider either has the machine — adopted here by hostname,
+        so a billed machine is not orphaned — or it does not, and the slot is
+        given back.
+        """
+        cutoff = datetime.now(UTC) - timedelta(
+            seconds=max(300.0, settings.microcloud_timeout_s * 2)
+        )
+        settled = 0
+        for machine in await self._repo.list_reservations_older_than(cutoff):
+            try:
+                remote = await self._client.find_machine(
+                    machine.customer_id, machine.hostname
+                )
+            except MicroCloudError:
+                logger.warning(
+                    "settling reservation %s failed; provider unreachable",
+                    machine.hostname,
+                )
+                continue
+            if remote is None:
+                logger.warning(
+                    "reservation %s never became a machine; slot released",
+                    machine.hostname,
+                )
+                await self._repo.delete(machine)
+            else:
+                await self._repo.set_state(
+                    machine,
+                    status=_as_status(remote.get("status")),
+                    ip=remote.get("ip"),
+                    ai_mode=str(remote.get("aiMode") or machine.ai_mode),
+                    ai_status=_as_ai_status(remote.get("aiStatus")),
+                    machine_id=int(remote["id"]),
+                )
+                logger.info(
+                    "reservation %s adopted machine %s", machine.hostname, remote["id"]
+                )
+            settled += 1
+        return settled
 
     async def ensure_topic_machine(
         self, topic_id: uuid.UUID, *, actor: Actor | None = None
@@ -348,9 +439,28 @@ class MachineService:
 
         existing = await self._repo.get_active_for_topic(topic_id)
         if existing is not None:
-            await self._warm_pool.finish_claim(existing)
+            if existing.warm_claim_pending:
+                await self._warm_pool.finish_claim(existing)
+                # finish_claim commits around the provider call, which lets go
+                # of the locks above; take them again before deciding.
+                topic = await TopicService(self._session).lock_for_execution(topic_id)
+                await self._repo.lock_topic(topic_id)
+                await self._session.refresh(existing)
+            elif existing.machine_id is None:
+                # Another admission of this room is at the provider. Let go of
+                # the locks so it can record its answer, wait for it, then look
+                # again under the locks. In another process the reservation is
+                # simply what there is: the room is being prepared.
+                await self._session.commit()
+                async with _create_locks.setdefault(topic_id, asyncio.Lock()):
+                    pass
+                topic = await TopicService(self._session).lock_for_execution(topic_id)
+                await self._repo.lock_topic(topic_id)
+                await self._session.refresh(existing)
             if _still_moving(existing) or _stale(existing):
                 await self.refresh(existing)
+            if existing.status == MachineStatus.suspended:
+                await self.resume(existing)
             if existing.status not in GONE:
                 return existing
             await self.forget(existing)
@@ -369,7 +479,7 @@ class MachineService:
             raise ValidationError("当前房间未选择云端配置")
         topic.compute_config = choice.model_dump()
         topic.compute_profile = "cloud"
-        agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+        agent = await IdentityService(self._session).ensure_room_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
             topic_id=topic_id,
@@ -403,22 +513,39 @@ class MachineService:
             return
         if machine.topic_id is None:
             raise ValidationError("Cleanup resource is not a room allocation")
-        await self._repo.lock_topic(machine.topic_id)
+        topic_id = machine.topic_id
+        await self._repo.lock_topic(topic_id)
         if machine.device_id is not None:
             pins = await self._devices.list_topic_bindings(machine.device_id)
-            if any(pin.topic_id != machine.topic_id for pin in pins):
+            if any(pin.topic_id != topic_id for pin in pins):
                 raise ConflictError("Cloud machine is shared by another room")
-        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            if machine.device_id is not None:
+        deleting = machine.status not in {MachineStatus.deleting, MachineStatus.deleted}
+        device_id, provider_id = machine.device_id, machine.machine_id
+        # The device listing and the provider delete run with no transaction
+        # open; the room lock is taken again to record the outcome.
+        await self._session.commit()
+        if deleting:
+            if device_id is not None:
                 from app.domain.agent.device_provider import list_device_storage
 
-                if await list_device_storage(machine.device_id):
+                if await list_device_storage(device_id):
                     raise ConflictError("Cloud machine still contains room directories")
-            await self.destroy(machine)
-        binding = await self._devices.topic_binding(machine.topic_id)
+            if provider_id is not None:
+                await self._client.delete_machine(provider_id)
+        await self._repo.lock_topic(topic_id)
+        await self._session.refresh(machine)
+        if deleting:
+            await self._repo.set_state(
+                machine,
+                status=MachineStatus.deleting
+                if provider_id is not None
+                else MachineStatus.deleted,
+                ip=None,
+            )
+        binding = await self._devices.topic_binding(topic_id)
         if binding is not None and binding.device_id == machine.device_id:
             await self._devices.release_topic_device(
-                machine.topic_id, reason="archived room cleanup completed"
+                topic_id, reason="archived room cleanup completed"
             )
         await self._repo.mark_released(machine, when=datetime.now(UTC))
 
@@ -462,6 +589,7 @@ class MachineService:
         machines = await self._repo.list_ai_mode_mismatch(desired, limit)
         switched = 0
         for machine in machines:
+            assert machine.machine_id is not None  # the query excludes reservations
             try:
                 result = await self._client.switch_ai(machine.machine_id, desired)
             except MicroCloudError:
@@ -484,8 +612,9 @@ class MachineService:
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider
         problem: a machine we can't reach is reported `unknown`, not lost."""
-        if machine.warm_claim_pending:
-            # Provider RUNNING says nothing about whether room assignment completed.
+        if machine.warm_claim_pending or machine.machine_id is None:
+            # Provider RUNNING says nothing about whether room assignment
+            # completed, and a reservation has no machine to ask about yet.
             return machine
         settled_before = not _still_moving(machine)
         try:
@@ -515,6 +644,21 @@ class MachineService:
                 ip=None,
                 seen_at=datetime.now(UTC),
             )
+        if machine.topic_id is not None and machine.device_id is None:
+            status = _as_status(remote.get("status"))
+            ai_status = _as_ai_status(remote.get("aiStatus"))
+            if status != machine.status:
+                text = {
+                    MachineStatus.starting: "机器正在启动",
+                    MachineStatus.running: "机器已启动，等待接入任务",
+                    MachineStatus.error: "机器供应方报告创建失败",
+                }.get(status)
+                if text:
+                    await startup_progress(
+                        machine.topic_id, text, failed=status == MachineStatus.error
+                    )
+            if ai_status != machine.ai_status and ai_status == AiStatus.provisioning:
+                await startup_progress(machine.topic_id, "正在为机器配置模型访问")
         return await self._repo.set_state(
             machine,
             status=_as_status(remote.get("status")),
@@ -566,9 +710,38 @@ class MachineService:
         return machine
 
     async def destroy(self, machine: ProjectMachine) -> ProjectMachine:
+        if machine.machine_id is None:
+            # Never created at the provider; there is nothing to delete there.
+            return await self._repo.set_state(
+                machine, status=MachineStatus.deleted, ip=None
+            )
         await self._client.delete_machine(machine.machine_id)
         return await self._repo.set_state(
             machine, status=MachineStatus.deleting, ip=None
+        )
+
+    async def suspend(self, machine: ProjectMachine) -> ProjectMachine:
+        if machine.machine_id is None or machine.released_at is not None:
+            raise ValidationError("machine is not available to suspend")
+        if await self._repo.has_active_turn(machine):
+            raise ConflictError("机器上仍有 agent 任务运行，请等待任务结束后休眠")
+        remote = await self._client.suspend_machine(machine.machine_id)
+        return await self._repo.set_state(
+            machine,
+            status=_as_status(remote.get("status")),
+            ip=remote.get("ip"),
+            seen_at=datetime.now(UTC),
+        )
+
+    async def resume(self, machine: ProjectMachine) -> ProjectMachine:
+        if machine.machine_id is None or machine.released_at is not None:
+            raise ValidationError("machine is not available to resume")
+        remote = await self._client.resume_machine(machine.machine_id)
+        return await self._repo.set_state(
+            machine,
+            status=_as_status(remote.get("status")),
+            ip=remote.get("ip"),
+            seen_at=datetime.now(UTC),
         )
 
     # --- enrollment: making the machine an agent host -------------------
@@ -652,22 +825,49 @@ class MachineService:
         script = enrollment.bootstrap_script(
             origin=origin, token=device.token, device_id=device.device_id
         )
+
+        async def progress(text: str) -> None:
+            await startup_progress(machine.topic_id, text)
+
+        await progress(
+            f"机器已启动，开始接入（第 {(machine.enroll_attempts or 0) + 1} 次尝试）"
+        )
         try:
             output = await enrollment.run_bootstrap(
                 ip=machine.ip,
                 login_user=machine.login_user,
                 private_key=machine.bootstrap_key,
                 script=script,
+                progress=progress,
             )
         except enrollment.EnrollmentError as exc:
             # Never let the token reach a log line or an API error body.
             reason = enrollment.redact(str(exc), device.token)
             logger.warning("enrolling machine %s failed: %s", machine.hostname, reason)
+            failure = (
+                "连接或安装超时"
+                if "timed out" in reason
+                else "连接或传输失败"
+                if "transfer" in reason
+                else "启动脚本执行失败"
+            )
+            await startup_progress(
+                machine.topic_id,
+                failure
+                + "；"
+                + (
+                    "已达到重试上限"
+                    if (machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS
+                    else "等待自动重试"
+                ),
+                failed=(machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS,
+            )
             return await self._repo.mark_enroll_failed(machine, error=reason)
 
         # Read here or never: `mark_enrolled` erases the bootstrap key, so this
         # is the last moment the platform can look at the machine over ssh.
         upstream = enrollment.parse_ccproxy_upstream(output)
+        await progress("连接器安装完成，等待平台确认连接")
         logger.info(
             "enrolled machine %s as device %s (ccproxy identity %s): %s",
             machine.hostname,
@@ -699,7 +899,16 @@ class MachineService:
         machines = await self._repo.list_unsettled(limit)
         for machine in machines:
             try:
-                await self.refresh(machine)
+                if machine.status != MachineStatus.suspended:
+                    await self.refresh(machine)
+                if (
+                    machine.status == MachineStatus.suspended
+                    and machine.topic_id is not None
+                ):
+                    from app.domain.agent.chat import cloud_waiting_topics
+
+                    if await cloud_waiting_topics(self._session, [machine.topic_id]):
+                        await self.resume(machine)
             except MicroCloudError:
                 # An unreachable provider is not this sweep's problem to solve;
                 # the next tick tries again, and `refresh` records the attempt.
@@ -709,7 +918,7 @@ class MachineService:
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
         """Enroll every machine that is up and wired but not yet a device.
 
-        Runs on the scheduler rather than in a request: it SSHes into a machine,
+        Runs on a clock rather than in a request: it SSHes into a machine,
         which is far too slow to hang a read on, and it must keep happening for a
         machine that became ready while nobody was looking.
         """

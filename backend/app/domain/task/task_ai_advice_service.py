@@ -138,7 +138,9 @@ class TaskAIAdviceService:
             user_id=user_id, tokens=llm_response.total_tokens
         )
 
-        payload = await self.get_conversation(conversation_id=conversation_id)
+        payload = await self.get_conversation(
+            task_id=task_id, conversation_id=conversation_id
+        )
         return payload, quota
 
     async def stream_conversation(
@@ -261,9 +263,17 @@ class TaskAIAdviceService:
             )
         return groups
 
-    async def get_conversation(self, *, conversation_id: str) -> dict:
+    async def get_conversation(self, *, task_id: int, conversation_id: str) -> dict:
+        """一对（任务, 对话 id）才是一个地址。
+
+        A conversation id alone was the whole credential here, exactly as it was
+        on the route above: a caller who could see *some* task could read *any*
+        task's conversation by putting its id in the path. The id is a secret,
+        but a secret is not a permission. The ask/stream paths below have always
+        demanded ``convo.context_id == task_id``; reading is the same address.
+        """
         convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-        if convo is None:
+        if convo is None or convo.context_id != task_id:
             raise ValueError("Conversation not found")
         messages = await self._message_repo.list_for_conversation(convo.id)
         return {
@@ -284,9 +294,10 @@ class TaskAIAdviceService:
             }
         }
 
-    async def delete_conversation(self, *, conversation_id: str) -> None:
+    async def delete_conversation(self, *, task_id: int, conversation_id: str) -> None:
+        """删的也是某一道题的对话 —— 同样按（任务, id）寻址，不是按 id。"""
         convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-        if convo is None:
+        if convo is None or convo.context_id != task_id:
             return
         await self._conversation_repo.soft_delete(convo)
 

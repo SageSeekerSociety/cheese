@@ -6,6 +6,7 @@ description: >
   安全性、常见陷阱(如 JWT 时区 bug)。同时对照 reference/ 目录的原始实现检查业务逻辑。
   TRIGGER when: 用户要求审查代码、检查改动、review PR、提交前检查；用户在 cheese-backend-py
   项目下说"帮我看下这段代码""有什么问题""审查一下""review"等。
+  Delegate test design and test-entry selection to cheese-testing; retain the rest of the review.
   SKIP: 纯前端代码审查、非 Python 项目、非 cheese 项目。
 ---
 
@@ -25,9 +26,10 @@ Review changed code against cheese-backend-py project standards.
    - Use the Agent tool with `subagent_type: "general-purpose"`, `run_in_background: true`, and the prompt:
 
      ```
-     Run the project check script:
-       bash .claude/scripts/check.sh
-     Set Bash timeout to 20 minutes (1200000ms). Full tests take ~10-12 min.
+     Follow CLAUDE.local.md for the execution host, then run the existing
+     project check entry from Taskfile.yml:
+       task check
+     Read cheese-testing for test setup and selection. Report observed timings.
      When done, report only:
      - PASS or FAIL per step (ruff / pyright / pytest)
      - If FAIL: which tests failed (last ~30 lines of pytest output)
@@ -41,13 +43,13 @@ Review changed code against cheese-backend-py project standards.
 
 ### 串行模式（无后台能力的 AI:Copilot / Cursor / Windsurf 等）
 
-没有后台 agent 时,直接跑脚本(输出只有 ~10 行,不浪费 token),边等边读 diff:
+Without background agents, run the existing check entry and read the diff while it runs:
 
 ```bash
-bash .claude/scripts/check.sh   # 或 task check —— 输出 3 行 PASS/FAIL 结果
+task check
 ```
 
-1. 先跑 `task check`(~30 秒起),等结果的同时读 `git diff` 看改动范围。
+1. Follow `CLAUDE.local.md` for the execution host, run `task check`, and read the diff while it runs.
 2. 收到结果后只 review 改动文件 + 对照规范。
 
 **关键原则(两种模式通用):**
@@ -65,10 +67,10 @@ restate them; CLAUDE.md is the single source of truth.
 
 ### 2. Testing
 
-- New code needs tests: `tests/unit/` for unit, `tests/integration/` for DB-backed. New API endpoints and services MUST have corresponding tests — untested code is not acceptable.
-- `pytest.mark.anyio` for async tests. `SimpleNamespace` + `AsyncMock` for fakes.
-- Test behavior, not source inspection.
-- Auth helpers / fake-sync / shared-DB rules: `.claude/rules/backend-tests.md`.
+- Use `.agents/skills/cheese-testing/SKILL.md` for test design, shared fixtures,
+  actual layer assignment, and current test entry points. Follow its contract
+  map for the changed boundary and include the negative-control evidence in
+  the review. Do not infer a layer from the `unit/` directory alone.
 
 ### 3. Common Pitfalls
 

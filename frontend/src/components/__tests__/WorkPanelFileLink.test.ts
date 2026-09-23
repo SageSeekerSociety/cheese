@@ -56,6 +56,7 @@ vi.mock('../../api', async () => {
     getTerminal: vi.fn().mockResolvedValue({ available: false }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTrees: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
@@ -78,6 +79,18 @@ function mountPanel() {
 
 async function flush() {
   for (let i = 0; i < 12; i += 1) await new Promise((r) => setTimeout(r, 0))
+}
+
+/** 选中的那一格叫什么。 */
+function selectedTab(container: Element): string | undefined {
+  return container.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()
+}
+
+/** 自由区里开着哪几份，按页签顺序；临时的那一格带个 `~`。 */
+function freeTabs(container: Element): string[] {
+  return Array.from(container.querySelectorAll('.tabbar__file')).map(
+    (el) => (el.classList.contains('tabbar__file--temp') ? '~' : '') + el.querySelector('.tabbar__name')?.textContent
+  )
 }
 
 function visible(container: Element, selector: string): boolean {
@@ -121,7 +134,7 @@ beforeEach(() => {
 })
 
 describe('点一个文件，落在它真的在的那一格', () => {
-  it('芝士交付的那份文档 → 开在预览上，改动那一格没被切过去', async () => {
+  it('芝士交付的那份文档 → 开成它自己的页签，改动那一格没被切过去', async () => {
     getDoc.mockResolvedValue({ content: '初稿见 <&报告.docx>\n' })
     readPreviewFile.mockResolvedValue({
       path: '报告.docx',
@@ -137,10 +150,9 @@ describe('点一个文件，落在它真的在的那一格', () => {
     await clickChip(container, '报告.docx')
 
     expect(readPreviewFile).toHaveBeenCalledWith('topic-A', '报告.docx')
+    expect(selectedTab(container)).toBe('报告.docx')
     expect(visible(container, '.panel-preview')).toBe(true)
     expect(visible(container, '.panel-changes')).toBe(false)
-    // 说清现在看的是哪一份：这一格平时显示的是芝士点名的当前预览。
-    expect(container.querySelector('[data-testid="asked"]')?.textContent).toContain('报告.docx')
     // 房间文件不在任何一棵树上，所以这条路上一次树的读取都不该发生。
     expect(readFile).not.toHaveBeenCalled()
   })
@@ -153,7 +165,7 @@ describe('点一个文件，落在它真的在的那一格', () => {
     await clickChip(container, 'src/b.ts')
 
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null)
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null, 'committed')
     // 不是文档也不是图片，预览显示不了它，所以连问都不问。
     expect(readPreviewFile).not.toHaveBeenCalled()
   })
@@ -170,5 +182,144 @@ describe('点一个文件，落在它真的在的那一格', () => {
     // 面板还在用：文件树照常显示，读者可以换来源或者挑别的文件。
     expect(container.querySelector('.file-list')).toBeTruthy()
     expect(readFile).not.toHaveBeenCalled()
+  })
+
+  it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
+    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+
+    const { container } = mountPanel()
+    await flush()
+    await clickChip(container, 'site/index.html')
+
+    // 房间里没有它（读取失败），所以它落在树上——.html 在那边是 diff，不是网页。
+    expect(visible(container, '.panel-changes')).toBe(true)
+    expect(selectedTab(container)).toContain('改动')
+  })
+})
+
+// 自由区：读者自己开的那几份。固定区的几格永远在；这几格是他开的，也由他关。
+describe('自由区', () => {
+  function doc(path: string) {
+    return { path, content: null, version: 'v1', bytes: 1024, binary: true, too_large: false }
+  }
+
+  beforeEach(() => {
+    readPreviewFile.mockImplementation(async (_t: string, path: string) => doc(path))
+  })
+
+  it('单击开的是临时位：下一份换掉它，而不是再开一格', async () => {
+    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    const { container } = mountPanel()
+    await flush()
+
+    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    await fireEvent.click(chips[0])
+    await flush()
+    expect(freeTabs(container)).toEqual(['~一.docx'])
+
+    await fireEvent.click(chips[1])
+    await flush()
+    expect(freeTabs(container)).toEqual(['~二.docx'])
+    expect(selectedTab(container)).toBe('二.docx')
+  })
+
+  it('双击固定之后，再开一份就排在它后面', async () => {
+    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    const { container } = mountPanel()
+    await flush()
+    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    await fireEvent.click(chips[0])
+    await flush()
+
+    await fireEvent.dblClick(container.querySelector('.tabbar__file [role="tab"]')!)
+    await fireEvent.click(chips[1])
+    await flush()
+
+    expect(freeTabs(container)).toEqual(['一.docx', '~二.docx'])
+  })
+
+  it('关掉正看着的那一格，落到它旁边那一格；都关了回总览', async () => {
+    getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
+    const { container } = mountPanel()
+    await flush()
+    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    await fireEvent.click(chips[0])
+    await flush()
+    await fireEvent.dblClick(container.querySelector('.tabbar__file [role="tab"]')!)
+    await fireEvent.click(chips[1])
+    await flush()
+
+    await fireEvent.click(container.querySelector('[aria-label="关闭 二.docx"]')!)
+    await flush()
+    expect(freeTabs(container)).toEqual(['一.docx'])
+    expect(selectedTab(container)).toBe('一.docx')
+
+    await fireEvent.click(container.querySelector('[aria-label="关闭 一.docx"]')!)
+    await flush()
+    expect(freeTabs(container)).toEqual([])
+    expect(selectedTab(container)).toContain('总览')
+  })
+
+  it('地址点名了一份文件，打开房间就开着它', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const { container } = render(WorkPanel, {
+      props: { topic: topic('topic-A'), activityTick: 0, tab: 'file:报告.docx' },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    expect(freeTabs(container)).toEqual(['~报告.docx'])
+    expect(selectedTab(container)).toBe('报告.docx')
+    expect(readPreviewFile).toHaveBeenCalledWith('topic-A', '报告.docx')
+  })
+
+  it('房间里的网页开成它自己的页签：内容域按路径画得了它', async () => {
+    getDoc.mockResolvedValue({ content: '成品见 <&site/index.html>\n' })
+    readPreviewFile.mockResolvedValue({
+      path: 'site/index.html',
+      content: '<h1>成品</h1>',
+      version: 'v1',
+      bytes: 15,
+      binary: false,
+      too_large: false,
+    })
+    const { container } = mountPanel()
+    await flush()
+
+    await clickChip(container, 'site/index.html')
+
+    expect(freeTabs(container)).toEqual(['~index.html'])
+    expect(selectedTab(container)).toBe('index.html')
+  })
+
+  it('仓库树里的 .html 仍然去「改动」那格：那是源码，不是房间里的那一份', async () => {
+    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+    const { container } = mountPanel()
+    await flush()
+
+    await clickChip(container, 'site/index.html')
+
+    expect(freeTabs(container)).toEqual(['~index.html'])
+    expect(selectedTab(container)).toBe('index.html')
+  })
+
+  it('能画出来的文件就算是当前预览，也开成自己的页签', async () => {
+    const { getPreview } = await import('../../api')
+    vi.mocked(getPreview).mockResolvedValue({
+      kind: 'file',
+      path: '报告.docx',
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      url: 'https://p.example/',
+      artifact_id: 'a1',
+      version: 'v1',
+    } as Awaited<ReturnType<typeof getPreview>>)
+    getDoc.mockResolvedValue({ content: '初稿见 <&报告.docx>\n' })
+    const { container } = mountPanel()
+    await flush()
+
+    await clickChip(container, '报告.docx')
+
+    expect(freeTabs(container)).toEqual(['~报告.docx'])
+    vi.mocked(getPreview).mockResolvedValue(null)
   })
 })

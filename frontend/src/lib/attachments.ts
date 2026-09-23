@@ -1,9 +1,9 @@
-// Files upload into the topic's worktree; sending a message references {path, mime}.
+// 上传的文件进项目的资料库，消息里引用的是它自己的地址 {path, mime}，不是拷贝。
 import type { ChatAttachment } from '../cx_types'
 
 import { ref } from 'vue'
 
-import { uploadAttachment } from '../api'
+import { attachLibraryFile, uploadAttachment } from '../api'
 
 const MAX_PENDING = 9
 
@@ -40,7 +40,7 @@ export function usePendingAttachments(
   const pending = ref<PendingAttachment[]>([])
   const uploading = ref(false)
 
-  async function addFiles(files: Iterable<File>) {
+  async function addFiles(files: Iterable<File>, origin: 'file' | 'clipboard' = 'file') {
     const topicId = getTopicId()
     if (!topicId) return
     const all = [...files]
@@ -71,7 +71,7 @@ export function usePendingAttachments(
         }
         let attachment
         try {
-          attachment = await uploadAttachment(topicId, f)
+          attachment = await uploadAttachment(topicId, f, origin)
         } catch (e) {
           // A slot left behind would spin for ever.
           drop()
@@ -93,8 +93,46 @@ export function usePendingAttachments(
     }
   }
 
+  /** 资料库里已经有的一份文件：不重新上传，取这个项目里那一份。 */
+  async function addLibraryFile(libraryPath: string) {
+    const topicId = getTopicId()
+    if (!topicId) return
+    if (pending.value.length >= MAX_PENDING) {
+      onError?.('每条消息最多添加 9 个附件')
+      return
+    }
+    const name = libraryPath.split('/').pop() || libraryPath
+    // 同一个占位逻辑：这一步要等后端确认那份资料还在、有多大，所以它也有等待时间。
+    const slot: PendingAttachment = {
+      path: `uploading:${++placeholderSeq}:${name}`,
+      mime: 'application/octet-stream',
+      uploading: true,
+      name,
+    }
+    pending.value.push(slot)
+    const drop = () => {
+      const at = pending.value.indexOf(slot)
+      if (at >= 0) pending.value.splice(at, 1)
+    }
+    let attachment
+    try {
+      attachment = await attachLibraryFile(topicId, libraryPath)
+    } catch (e) {
+      drop()
+      onError?.(e instanceof Error ? e.message : '添加文件失败')
+      return
+    }
+    if (getTopicId() !== topicId) {
+      drop()
+      return
+    }
+    const at = pending.value.indexOf(slot)
+    if (at >= 0) pending.value.splice(at, 1, attachment)
+  }
+
   // Composer paste handler: pasted image data (e.g. a screenshot) uploads
-  // instead of landing as garbled text; plain-text pastes pass through.
+  // instead of landing as garbled text; plain-text pastes pass through. 贴进来
+  // 的那一份不进资料库——见 uploadAttachment。
   function onPaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items
     if (!items) return
@@ -107,7 +145,7 @@ export function usePendingAttachments(
     }
     if (files.length) {
       e.preventDefault()
-      void addFiles(files)
+      void addFiles(files, 'clipboard')
     }
   }
 
@@ -127,5 +165,5 @@ export function usePendingAttachments(
     pending.value = []
   }
 
-  return { pending, uploading, addFiles, onPaste, onDrop, removeAt, clear }
+  return { pending, uploading, addFiles, addLibraryFile, onPaste, onDrop, removeAt, clear }
 }

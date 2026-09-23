@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +13,6 @@ import pytest
 from app.domain.agent.harness.claude_code import warm_session
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node runs the HTTP fixtures")
 def test_webfetch_transport_http_behaviour():
     result = subprocess.run(
         [

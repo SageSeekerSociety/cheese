@@ -5,22 +5,26 @@ Alembic autogenerate, the test schema creator, and anywhere that needs the full
 metadata. Keep this list complete when adding a new model.
 """
 
+from app.domain.admin import models as admin  # noqa: F401
+from app.domain.agent import dispatch_log as agent_dispatch_log  # noqa: F401
 from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
 from app.domain.agent_session import models as agent_session  # noqa: F401
-from app.domain.alert import models as alert  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
 from app.domain.comments import models as comments  # noqa: F401
+from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
+from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
+from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
 from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
@@ -38,6 +42,8 @@ from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
+from app.domain.teaching import models as teaching  # noqa: F401
+from app.domain.teaching import quiz_models as teaching_quiz  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
 from app.domain.team_project import models as team_project  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401

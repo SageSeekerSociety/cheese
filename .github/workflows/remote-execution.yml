@@ -7,6 +7,7 @@ on:
       - 'backend/**'
       - 'cli/**'
       - 'scripts/remote_execution/**'
+      - '.github/scripts/ci-test-evidence.py'
       - '.github/workflows/remote-execution.yml'
   pull_request:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - 'backend/**'
       - 'cli/**'
       - 'scripts/remote_execution/**'
+      - '.github/scripts/ci-test-evidence.py'
       - '.github/workflows/remote-execution.yml'
   workflow_dispatch:
 
@@ -27,7 +29,12 @@ concurrency:
 jobs:
   private-chat:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
@@ -48,9 +55,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      # setup-uv otherwise puts the cache in runner temp, which is cleared after each job.
+      - name: Use the persistent uv cache
+        run: |
+          echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+          echo "PRIVATE_BUILDER=cheese-private-slot-${CHEESE_CI_SLOT:-0}" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          enable-cache: false
+      - name: Load the runner Rust toolchain
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/cargo" --version
       - run: uv sync --project backend --locked
       - name: Install native terminal test dependencies
         run: |
@@ -58,6 +76,11 @@ jobs:
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
+          # Preserve this slot's builder state; other slots use different builder names.
+          name: ${{ env.PRIVATE_BUILDER }}
+          keep-state: true
+          # Runner slots share Docker's current-builder setting; select explicitly below.
+          use: false
           driver-opts: |
             image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
           buildkitd-config-inline: |
@@ -67,14 +90,29 @@ jobs:
               options = ["use-vc"]
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
+            [worker.oci]
+              gc = true
+              reservedSpace = "1GB"
+              maxUsedSpace = "3GB"
+              minFreeSpace = "10GB"
       - name: Build private execution image
-        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .
+        run: docker buildx build --builder "$PRIVATE_BUILDER" --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
+      - name: Keep the private image available during tests
+        id: private-image
+        # Cached images retain their creation date. A running container keeps
+        # the disk guard from pruning this job's input between test steps.
+        # The sleep expires at the job's timeout if cleanup cannot run.
+        run: >-
+          docker run --detach --network none --entrypoint sleep
+          --name cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          cheese-private-executor:2.1.277 2700
       - name: Verify real scratch execution
         id: scratch
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
           --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Verify private chat routing and authorization
+        id: private_tests
         working-directory: backend
         env:
           CHEESE_TEST_CLAUDE: ${{ github.workspace }}/scripts/remote_execution/node_modules/.bin/claude
@@ -89,56 +127,193 @@ jobs:
           tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
           tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
           tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
+          --junitxml "$RUNNER_TEMP/private-chat.xml"
+      # This job installs tmux and the pinned claude itself, so a skip here is
+      # the install having gone wrong rather than a case that cannot run. The
+      # floor catches the other half: a selection that collapsed to a handful
+      # of cases and reported green anyway.
+      - name: Assert the private-chat selection actually ran
+        id: private_selection
+        working-directory: backend
+        run: >-
+          .venv/bin/python scripts/assert_suite_ran.py
+          "$RUNNER_TEMP/private-chat.xml" --at-least 220
       - name: Verify two private turns through native RC
+        id: private_terminal
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Release the private image
+        if: ${{ always() && steps.private-image.outcome == 'success' }}
+        run: docker rm --force cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Produce private-chat CLEAN evidence
+        id: private_evidence
+        if: ${{ !cancelled() }}
+        env:
+          CI_STEPS_JSON: ${{ toJSON(steps) }}
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 .github/scripts/ci-test-evidence.py
+          --suite private-chat
+          --source "$RUNNER_TEMP/private-chat.xml"
+          --output "$RUNNER_TEMP/ci-test-evidence/private-chat/evidence.json"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --head-sha "$EVIDENCE_HEAD_SHA"
+          --tested-sha "$GITHUB_SHA"
+          --steps-json "$CI_STEPS_JSON"
+          --require-step scratch
+          --require-step private_tests
+          --require-step private_selection
+          --require-step private_terminal
+          --at-least 220
+      - name: Upload private-chat CLEAN evidence
+        if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-private-chat
+          path: ${{ runner.temp }}/ci-test-evidence/private-chat/evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         # Tolerated: this is debug output, and the account's artifact storage
         # filling up is not this change being broken. On 2026-09-16 it reported
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         if: always()
         with:
           name: private-chat-${{ github.sha }}
           path: |
             tmp/remote-execution/private-ci-*/
             tmp/remote-execution/ordinary-ci-*/
+          retention-days: 3
   acceptance:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      # setup-uv otherwise puts the cache in runner temp, which is cleared after each job.
+      - name: Use the persistent uv cache
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: '0.12.1'
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          enable-cache: false
       - name: Install terminal test dependencies
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          cargo --version
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
-          mkdir -p tmp/remote-execution/deps
-          (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
-          for package in tmp/remote-execution/deps/*.deb; do
+          redis_key="$(apt-cache show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
+          redis_cache="$HOME/.cache/cheese-ci/redis-debs/$redis_key"
+          mkdir -p "$redis_cache" tmp/remote-execution/deps
+          (cd "$redis_cache" && flock .download.lock apt-get download redis-server redis-tools)
+          for package in "$redis_cache"/*.deb; do
             dpkg-deb -x "$package" tmp/remote-execution/deps
           done
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
           uv sync --project backend --locked
       - name: Run acceptance
+        id: run_acceptance
         run: >-
           backend/.venv/bin/python scripts/remote_execution/suite.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
           --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check out the released connection owner
+        id: checkout_owner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Released by release-device-connection run 35770200245.
+          ref: fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          path: tmp/owner-compat-baseline
+      - name: Current backend collects a call from the released owner
+        id: owner_compat
+        timeout-minutes: 3
+        env:
+          ACCEPTANCE_COMMIT: ${{ github.sha }}
+          OPENAI_API_KEY: test-openai-key
+          ANTHROPIC_AUTH_TOKEN: test-anthropic-token
+        run: >-
+          backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py
+          --owner-source tmp/owner-compat-baseline
+          --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          --claude scripts/remote_execution/node_modules/.bin/claude
+          --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
       - name: Verify ordinary room turns through the connector
+        id: ordinary_terminal
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/ordinary-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # The receipts go to the job log as well as to an artifact: when the
+      # account's artifact storage is full (2026-09-16, again 2026-09-18) the
+      # upload below is the only copy and it silently produces nothing, which
+      # leaves a red case with no log to read anywhere.
+      - name: Print the failing case's receipts
+        if: failure()
+        run: |
+          for log in tmp/remote-execution/ci-*/*.attempt-*.log; do
+            [ -f "$log" ] || continue
+            echo "::group::$log"
+            tail -n 200 "$log"
+            echo "::endgroup::"
+          done
+          for terminal in tmp/remote-execution/ci-*/*/terminal.txt; do
+            [ -f "$terminal" ] || continue
+            echo "::group::$terminal"
+            tail -n 120 "$terminal"
+            echo "::endgroup::"
+          done
+      - name: Produce remote-acceptance CLEAN evidence
+        id: acceptance_evidence
+        if: ${{ !cancelled() }}
+        env:
+          CI_STEPS_JSON: ${{ toJSON(steps) }}
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 .github/scripts/ci-test-evidence.py
+          --suite remote-acceptance
+          --source "tmp/remote-execution/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/results.json"
+          --output "$RUNNER_TEMP/ci-test-evidence/remote-acceptance/evidence.json"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --head-sha "$EVIDENCE_HEAD_SHA"
+          --tested-sha "$GITHUB_SHA"
+          --steps-json "$CI_STEPS_JSON"
+          --require-step run_acceptance
+          --require-step checkout_owner
+          --require-step owner_compat
+          --require-step ordinary_terminal
+      - name: Upload remote-acceptance CLEAN evidence
+        if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-remote-acceptance
+          path: ${{ runner.temp }}/ci-test-evidence/remote-acceptance/evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload acceptance receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -147,12 +322,18 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         with:
           name: remote-execution-${{ github.sha }}
           path: |
             tmp/remote-execution/ordinary-ci-*/
             tmp/remote-execution/ci-*/inputs.json
+            tmp/remote-execution/ci-*/invocation.json
             tmp/remote-execution/ci-*/results.json
+            tmp/remote-execution/ci-*/backend-regressions.xml
             tmp/remote-execution/ci-*/progress.jsonl
             tmp/remote-execution/ci-*/*.log
             tmp/remote-execution/ci-*/*/summary.json
@@ -163,4 +344,5 @@ jobs:
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
-          retention-days: 14
+            logs/device-connection-acceptance-*.jsonl
+          retention-days: 3

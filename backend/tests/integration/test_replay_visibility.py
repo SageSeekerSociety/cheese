@@ -76,16 +76,19 @@ def _project_and_topic(client) -> str:
 
 
 def _say(client, topic_id: str, text: str) -> None:
-    """Send one message and let its turn finish (however it finishes)."""
+    """Send one addressed message and let its turn finish (however it finishes).
+
+    @ 放在句末，和人打字的顺序一样。放句首的话，下面那条状态行引用最早一条消息
+    时，截断的那几十个字全被席位 token 占掉，读的人认不出是哪一批。"""
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": f"{text} @芝士"})
         while ws.receive_json()["type"] != "done":
             pass
 
 
 def _system_lines(client, topic_id: str) -> list[str]:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    return [b["content"] for b in blocks if b["author_type"] == "system"]
+    return [b["content"] for b in blocks if b["author_type"] == "platform"]
 
 
 def _replay_notices(client, topic_id: str) -> list[str]:

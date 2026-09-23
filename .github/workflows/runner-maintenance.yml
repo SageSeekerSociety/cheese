@@ -10,16 +10,67 @@
 # this maintenance exists to eliminate — and a maintenance job that dies of
 # the disease it treats cannot cure anyone.
 #
-# The matrix runs one job per fleet slot with a hold step, so distinct runners
-# each pick one up — one job per SLOT, and a machine carries two of them. If a runner was busy, rerun until the summary has
-# shown every runner's name once — the change is idempotent.
+# Populate both slots on each machine without restarting their services.
 name: Runner maintenance
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'deploy/ci-runner/cache-action-archives.py'
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Maintenance operation
+        type: choice
+        default: action-archive-cache
+        options:
+          - action-archive-cache
+          - disk-guard
 
 jobs:
   action-archive-cache:
+    if: inputs.operation != 'disk-guard'
+    permissions:
+      contents: read
+    concurrency:
+      group: action-archive-cache-${{ matrix.box }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        box: [1, 2, 3]
+    runs-on: [self-hosted, cheese-ci, "cheese-ci-box-${{ matrix.box }}"]
+    timeout-minutes: 20
+    steps:
+      - name: Populate the action archives for both runner slots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/cache-action-archives-$GITHUB_RUN_ID.py"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github.raw+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/deploy/ci-runner/cache-action-archives.py?ref=$GITHUB_SHA" \
+            -o "$candidate"
+          directories=()
+          for config in "$HOME"/actions-runner*/.env; do
+            [ -f "$config" ] || continue
+            directory="$(sed -n 's/^ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=//p' "$config")"
+            [ -n "$directory" ] || continue
+            directories+=(--cache-dir "$directory")
+          done
+          [ "${#directories[@]}" -gt 0 ]
+          python3 "$candidate" --repository "$GITHUB_REPOSITORY" \
+            --revision "$GITHUB_SHA" "${directories[@]}"
+          echo "runner=$RUNNER_NAME revision=$GITHUB_SHA populated=${#directories[@]} arguments" >> "$GITHUB_STEP_SUMMARY"
+
+  disk-guard:
+    if: inputs.operation == 'disk-guard'
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -27,35 +78,29 @@ jobs:
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 5
     steps:
-      - name: Apply ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
+      - name: Update the disk guard without restarting runners
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo "runner: $RUNNER_NAME (slot ${{ matrix.slot }})"
-          cd "$HOME/actions-runner"
-          mkdir -p action-archive-cache
-          if grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null; then
-            echo "already configured:"
-          else
-            echo "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=$HOME/actions-runner/action-archive-cache" >> .env
-            echo "configured:"
-          fi
-          grep ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env
-          echo "runner=$RUNNER_NAME configured" >> "$GITHUB_STEP_SUMMARY"
+          candidate="$RUNNER_TEMP/disk-guard-$GITHUB_RUN_ID.sh"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github.raw+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/deploy/ci-runner/disk-guard.sh?ref=$GITHUB_SHA" \
+            -o "$candidate"
+          bash -n "$candidate"
+          updated=0
+          for guard in "$HOME"/actions-runner*/disk-guard.sh; do
+            [ -f "$guard" ] || continue
+            cp -p "$guard" "$guard.before-$GITHUB_RUN_ID-$RUNNER_NAME"
+            install -m 0755 "$candidate" "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME"
+            mv "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME" "$guard"
+            cmp "$candidate" "$guard"
+            echo "runner=$RUNNER_NAME guard=$guard revision=$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            updated=$((updated + 1))
+          done
+          [ "$updated" -gt 0 ]
 
       - name: Hold so the other slots land on other runners
         run: sleep 45
-
-      - name: Restart the runner service (delayed, so this job finishes first)
-        run: |
-          set -euo pipefail
-          UNIT="$(systemctl list-units --all 'actions.runner.*.service' --no-legend | awk '{print $1}' | head -1)"
-          if [ -z "$UNIT" ]; then
-            echo "no runner unit found — restart manually" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if sudo -n true 2>/dev/null; then
-            sudo systemd-run --on-active=15s systemctl restart "$UNIT"
-            echo "runner=$RUNNER_NAME restart scheduled in 15s ($UNIT)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "runner=$RUNNER_NAME: no passwordless sudo — .env staged, takes effect on next service restart/reboot" >> "$GITHUB_STEP_SUMMARY"
-          fi

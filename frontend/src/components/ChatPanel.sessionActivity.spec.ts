@@ -12,6 +12,10 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
+    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/chat',
@@ -58,7 +62,7 @@ const assistantBlock: Block = {
   id: 'assistant-1',
   topic_id: topic.id,
   kind: 'message',
-  author_type: 'ai',
+  author_type: 'participant',
   author: 'cheese-session',
   content: 'Still working.',
   created_at: '2026-08-17T00:00:01Z',

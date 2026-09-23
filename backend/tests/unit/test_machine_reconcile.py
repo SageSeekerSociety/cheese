@@ -225,7 +225,10 @@ async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
 
     class _Repo:
         async def list_unsettled(self, limit):
-            return [SimpleNamespace(hostname="a"), SimpleNamespace(hostname="b")]
+            return [
+                SimpleNamespace(hostname=name, status=MachineStatus.starting)
+                for name in ("a", "b")
+            ]
 
     service = MachineService.__new__(MachineService)
     service._repo = _Repo()  # type: ignore[attr-defined]

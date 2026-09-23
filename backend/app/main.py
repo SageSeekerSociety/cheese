@@ -9,6 +9,7 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
+import asyncio
 import importlib
 import logging
 import pkgutil
@@ -25,9 +26,11 @@ from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.api.auth import ActorResolver
+from app.core import background, net_io, route_metrics
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import BaseError, register_exception_handlers
+from app.core.metrics import active_requests, registry
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -53,8 +56,7 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Schema is managed by Alembic migrations. Start the deterministic scheduler
-    # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
+    # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process died with (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
     # A screen outlives this process, which is exactly why the hook credential
@@ -79,8 +81,6 @@ async def lifespan(_: FastAPI):
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
         configure_subscription_cleanup(hub_runtime)
-    from app.domain.scheduler.service import SchedulerService
-
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
@@ -96,18 +96,25 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
-    # The backend and the in-container agent share one git store and must run as
-    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
-    # panel just 422s for every topic in the project. Say it out loud at boot.
+    # Every project agent is a collaborator with an identity of its own — a user
+    # row under `agent_instance_handle(id)`, which is what its roster seats name.
+    # `ensure_identity` runs on create, so this only reaches agents created before
+    # it existed; and the migration that seated each room's former agent wrote
+    # the seat's handle without the user row behind it, which this supplies.
+    # Idempotent, and never blocks boot for the same reason as the seed above.
     try:
-        from app.domain.workspace import service as _ws
+        from app.domain.agent_instance.repositories import AgentInstanceRepository
+        from app.domain.agent_instance.services import AgentInstanceService
 
-        for problem in _ws.audit_workspace_ownership():
-            get_logger("cheesex.runtime").error(
-                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
-            )
-    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
-        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
+        async with async_session_factory() as session:
+            service = AgentInstanceService(session)
+            for instance in await AgentInstanceRepository(session).list_all():
+                await service.ensure_identity(instance)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "agent identity backfill skipped", reason=str(exc)[:120]
+        )
 
     # The `cheese` CLI is now staged into each topic's session dir from THIS
     # build (ws.session_dir) instead of an operator-maintained host checkout. A
@@ -164,8 +171,6 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("orphan sweep failed")
 
-    scheduler = SchedulerService(chat_service=get_chat_service())
-
     # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
     # so a redeploy kills every check in flight and nobody ever calls
     # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
@@ -174,7 +179,7 @@ async def lifespan(_: FastAPI):
     # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
     # is provably abandoned by the process that died, not by this one.
     try:
-        swept = await scheduler.sweep_abandoned_gates()
+        swept = await background.sweep_abandoned_gates(get_chat_service())
         if swept["condemned"] or swept["errors"]:
             get_logger("cheesex.runtime").info(
                 "gate_sweep_startup",
@@ -187,10 +192,9 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_cloud_wakeup
     from app.core.db import async_session_factory
     from app.domain.machine.runner import MachineEnrollmentSweeper
-    from app.domain.scheduler.jobs import periodic_jobs
 
-    jobs = periodic_jobs(
-        scheduler=scheduler,
+    jobs = background.periodic_jobs(
+        chat=get_chat_service(),
         machines=MachineEnrollmentSweeper(
             async_session_factory,
             on_ready=get_cloud_wakeup().wake,
@@ -200,21 +204,37 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
-    from app.core.background import spawn
+    from app.core.loop_lag import watch_loop_lag
+    from app.core.net_io import watch_api_io, watch_net_io
     from app.domain.topic.retire import sweep_retired_storage
 
-    spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
+    background.spawn(
+        sweep_retired_storage(async_session_factory), name="cleanup startup recovery"
+    )
+    background.spawn(watch_loop_lag(), name="event loop lag")
+    # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
+    # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
+    # 不只是「我们用户的流量」），重启即清零。
+    background.spawn(watch_net_io(), name="net io")
+    background.spawn(watch_api_io(), name="api io")
+    forge_events = None
+    if settings.forge_event_relay_url:
+        from app.domain.review.events import listen
 
-    # The openviking backend's whole failure mode is silence: a rejected key
-    # leaves extraction writing nothing, recall answering empty, and no other
-    # symptom anywhere — indistinguishable from the db backend, which also
-    # never learns on its own. So somebody has to actually call the endpoints,
-    # and boot is when: whoever just flipped MEMORY_BACKEND is reading this log
-    # right now. No-op on the db backend, and it never raises — a model vendor
-    # outage must not keep the rest of the platform from starting.
-    from app.domain.memory import endpoint_probe as memory_endpoint_probe
+        forge_events = asyncio.create_task(
+            listen(get_chat_service(), async_session_factory), name="forge events"
+        )
 
-    await memory_endpoint_probe.check_on_startup()
+    # What the platform pool offers is the gateway's answer, kept warm here so
+    # that asking for it never becomes a network call on the path that starts a
+    # turn. Until the first pass lands the catalogue serves its floor.
+    from app.api.deps import get_llm_gateway
+    from app.domain.agent import gateway_catalog
+
+    background.spawn(
+        gateway_catalog.keep_fresh(get_llm_gateway()),
+        name="gateway model catalogue",
+    )
 
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
@@ -223,24 +243,13 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            if forge_events is not None:
+                forge_events.cancel()
+                await asyncio.gather(forge_events, return_exceptions=True)
             for job in reversed(jobs):
                 await job.stop()
             if hasattr(hub_runtime, "close"):
                 await hub_runtime.close()
-            # The openviking backend keeps the whole memory tree in one embedded
-            # instance (AGFS + vector index) under openviking_data_dir. Nothing
-            # else owns its lifecycle, so a redeploy would tear the process down
-            # mid-write; closing it here is what makes the data on that volume a
-            # consistent thing to come back to. No-op on the db backend.
-            if settings.memory_backend == "openviking":
-                try:
-                    from app.domain.memory.openviking_store import get_runtime
-
-                    await get_runtime().close()
-                except Exception:  # noqa: BLE001 — shutdown must still finish
-                    get_logger("cheesex.runtime").exception(
-                        "openviking shutdown failed"
-                    )
 
 
 # Route modules that failed to import this boot. Read by /healthz so a partially
@@ -377,6 +386,10 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # dispatched — this gate can only prove "some agent of this project", because
     # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
+    # 同 handle 便条与定时投递：两条都只有 agent 会调，收件人都由平台算出来（便条
+    # 比席位，投递就是请求者自己），所以正文里没有一个「发给谁」可以被冒名。
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/note$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/deliveries$")),
     # Task bind/title/close/readiness/delivery routes are shared by human and
     # agent executors. They authorize the room and task in the route itself;
     # adding them here would incorrectly restrict them to agent credentials.
@@ -384,9 +397,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
-    # 记忆整理: the topic is the turn that is SPEAKING; which pools it may
-    # reorganize is derived from it server-side (memory/dream.py::dream_pools).
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/memory/dream$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
@@ -395,6 +405,32 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
 
 
 _http_log = get_logger("http")
+
+#: 没进路由表的那一类请求（404、扫描器、拼错的地址）共用的标签。
+_UNMATCHED_ROUTE = "(unmatched)"
+
+
+def _route_label(request: Request) -> str:
+    """这一条请求算在**哪一条路由**上 —— 路径的模板，不是原始路径。
+
+    这是这套指标里唯一容易做错的地方，而且错起来很安静：原始路径里带 UUID，拿它当
+    标签，等于给每一条反馈、每一个项目各建一条时间序列 —— 基数随数据长，而直方图是
+    **永久**留在进程内存里的。`/metrics` 会变成一份读不完、也画不出来的东西。
+
+    Starlette 把匹配到的路由挂在 `scope["route"]` 上，中间件在 `call_next` 之后能读到
+    （路由匹配发生在它里面）。路由模板来自路由表，所以这一支**天然有界**。
+
+    读不到时**不许退回原始路径**：404 那一支看着也能折，其实折不住 —— 只有 UUID 和
+    纯数字的段会被折成 `{id}`，`/random-word/inspect.php` 这种原样留着。而 404 的路
+    径**是请求方随手写的**（扫描器、爬虫、别人拼错的链接），于是标签空间由外部输入
+    决定，还是那条老路：内存里的时间序列随外面的请求长。退回一个常量，这一支就只剩
+    一条序列，它出现在「最慢的路由」里也照样说明问题（404 慢是真慢）。
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return _UNMATCHED_ROUTE
 
 
 @app.middleware("http")
@@ -408,16 +444,77 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
     t0 = time.perf_counter()
+    # **探针不算**。`/health` 与 `/metrics` 是基础设施在按固定间隔敲的门，不是用户
+    # 流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正的路由挤下去，而
+    # 「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面）。这一条和上面
+    # 那条日志里的 `/health` 例外是同一个判断。
+    path_now = request.url.path
+    probe = (
+        path_now == "/metrics"
+        or path_now == "/health"
+        or path_now.startswith("/health/")
+    )
+    if not probe:
+        # 正在处理的请求数。**必须在 `call_next` 外面一进一出**，而且走 `finally`
+        # —— 异常路径上不 `dec` 的话，这个数会随每一次失败往上爬，最后变成一个只增
+        # 不减的假数（而它正是「现在平台忙不忙」那一格）。
+        active_requests.inc()
     try:
         response = await call_next(request)
     except Exception:
         _http_log.exception(
             "request failed", method=request.method, path=request.url.path
         )
+        # 异常路径也要入账：一个抛出去的处理器就是一次 5xx。不记的话，恰好是
+        # 最该被看见的那一类请求在看板上留不下痕迹。**不吞异常** ——
+        # `report_unhandled_to_room` 依赖原始异常。
+        if not probe:
+            route_metrics.record(
+                request.method,
+                _route_label(request),
+                None,
+                round((time.perf_counter() - t0) * 1000, 1),
+                minute=int(time.time() // 60),
+            )
         raise
     finally:
+        if not probe:
+            active_requests.dec()
         clear_context("req")
-    ms = round((time.perf_counter() - t0) * 1000, 1)
+    elapsed = time.perf_counter() - t0
+    ms = round(elapsed * 1000, 1)
+    # 按路由记一笔。**标签只取 method / 路由模板 / 状态码**，理由见 `_route_label`。
+    # 这两个指标在 `core/metrics.py` 里定义了很久、却一处调用都没有 —— `/metrics`
+    # 一直返回一份恒为 0 的表。接上它们就是这一行。
+    if not probe:
+        route_label = _route_label(request)
+        labels = {
+            "method": request.method,
+            "route": route_label,
+            "status": str(response.status_code),
+        }
+        registry.counter("http_requests_total", labels).inc()
+        registry.histogram(
+            "http_request_duration_seconds",
+            labels,
+            buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+        ).observe(elapsed)
+        # 看板的路由表读的是这一份（按 (method, 路由模板) 一行，状态码是属性
+        # 不是身份）；上面那个直方图按状态码裂成三行，看板没法把它当端点读。
+        route_metrics.record(
+            request.method,
+            route_label,
+            response.status_code,
+            ms,
+            minute=int(time.time() // 60),
+        )
+        # 本进程的 HTTP 载荷字节数（上/下行的「api」那一面）。
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit():
+            net_io.note_http_bytes(request_body=int(cl))
+        cl_out = response.headers.get("content-length")
+        if cl_out and cl_out.isdigit():
+            net_io.note_http_bytes(response_body=int(cl_out))
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
         # Who and from where, when known. `auth_user_id` is set by

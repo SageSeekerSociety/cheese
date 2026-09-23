@@ -1,12 +1,21 @@
-"""Real merge commits attribute only the task whose branch was delivered."""
+"""Forge merge requests attribute only the task whose branch is delivered."""
 
+import asyncio
 import itertools
 import subprocess
 import uuid
 
-from tests.delivery import delivery_headers
-from tests.integration.conftest import session_auth_headers
-from tests.machine_work import machine_commits
+import pytest
+
+from tests.delivery import delivery_artifact, delivery_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
+from tests.integration.test_accept_pr import _rendered_head, app_world  # noqa: F401
+from tests.machine_work import declare_task, machine_commits
+
+
+@pytest.fixture(autouse=True)
+def remote_delivery(client, request):
+    client.trace_forge = request.getfixturevalue("app_world")["fake"]
 
 
 def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str:
@@ -41,19 +50,43 @@ def _dispatch(client, room_id: str, title: str) -> str:
         json=dict(reviewer_handle="alice", **{"title": title}),
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
+    task_id = r.json()["data"]["id"]
+    room = client.get(f"/topics/{room_id}").json()["data"]
+    from app.core.sandbox_auth import mint_scoped_token
 
-
-def _bind(client, room_id: str, task_id: str, agent_id: str) -> None:
-    """认领: the room reports which worker in its session took the work — the id
-    Claude Code minted inside the container, which is the whole of what says
-    WHICH machine did this."""
-    r = client.post(
-        f"/topics/{room_id}/tasks/{task_id}/bind",
-        json={"agent_id": agent_id},
-        headers=session_auth_headers("alice"),
+    opened = client.post(
+        f"/projects/{room['project_id']}/git/tasks/{task_id}",
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=room["project_id"],
+                topic_id=room_id,
+                agent_handle=room_agent_seat(client, room_id),
+            )
+        },
     )
-    assert r.status_code == 200, r.text
+    assert opened.status_code == 200, opened.text
+    declare_task(uuid.UUID(room["project_id"]), uuid.UUID(task_id))
+    return task_id
+
+
+def _worker_starts(client, task_id: str, agent_id: str) -> None:
+    """平台看见一个分身在这条活上开工，把它的 id 记在卡上。
+
+    它就是 `Cheese-Task:` 那一行里说出「哪台机器干的」的那个字串。真实路径上写它的是
+    分身的开工事件（`ChatService._note_worker`）；这里的测试不跑轮次，所以直接踩同一
+    个缝。
+    """
+    from app.domain.room_task.services import TaskService
+
+    async def _write() -> None:
+        async with client.test_factory() as session:
+            tasks = TaskService(session)
+            task = await tasks.get(uuid.UUID(task_id))
+            assert task is not None
+            await tasks.note_worker(task, agent_id)
+            await session.commit()
+
+    asyncio.run(_write())
 
 
 def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = None):
@@ -62,6 +95,7 @@ def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = Non
         f"/topics/{room_id}/tasks/{tasks[0]}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
+            **delivery_artifact(client, room_id),
             "change_subject": subject,
             "change_body": "Who wrote this, on the record.",
             "reviewer_handle": "alice",
@@ -75,28 +109,40 @@ def _deliver(
 ) -> dict:
     r = _file_card(client, room_id, subject, tasks)
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    result = r.json()["data"]
+
+    async def attach_pr():
+        from app.domain.review.repositories import AcceptCardRepository
+        from tests.support.git_store import branch_for_task
+
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(result["id"]))
+            number = 100 + len(client.trace_forge.prs)
+            head = client.trace_forge.seed_pr(
+                number, head=branch_for_task(uuid.UUID(tasks[0]))
+            )
+            client.trace_forge.check_state_by_sha[head] = ("success", "")
+            card.pr_number = number
+            card.pr_url = f"https://github.com/acme/widgets/pull/{number}"
+            card.pr_head_sha = head
+            await session.commit()
+
+    asyncio.run(attach_pr())
+    return result
 
 
 def _accept(client, card_id: str) -> None:
     r = client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
 
-def _landed_body(project_id: str, ref: str = "main") -> str:
-    from app.domain.workspace import service as ws
-
-    return subprocess.run(
-        ["git", "log", "-1", "--format=%B", ref],
-        cwd=ws.ensure_repo(uuid.UUID(project_id)),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+def _landed_body(client) -> str:
+    merge = client.trace_forge.merge_calls[-1]
+    return f"{merge['commit_title']}\n\n{merge['commit_message']}"
 
 
 _written = itertools.count()
@@ -113,11 +159,11 @@ def _batch(client, pid: str, room: str, subject: str, tasks: list[str]) -> str:
     machine_commits(uuid.UUID(pid), uuid.UUID(tasks[0]), {name: subject})
     card = _deliver(client, room, subject, tasks)
     _accept(client, card["id"])
-    landed = _landed_body(pid)
+    landed = _landed_body(client)
     # The commit THIS delivery produced, not whatever was on main already: a
     # second batch that quietly merged nothing would otherwise be checked
     # against the first one's trailers and pass for the wrong reason.
-    assert landed.splitlines()[0] == subject, landed
+    assert landed.splitlines()[0].startswith(subject + " (#"), landed
     return landed
 
 
@@ -126,15 +172,15 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
     room = _room(client, pid)
     mine = _dispatch(client, room, "补 trailer")
     theirs = _dispatch(client, room, "顺手修 flaky 测试")
-    _bind(client, room, mine, "ac2c038d44616a2f2")
-    _bind(client, room, theirs, "9f1b7c22e0d341a80")
+    _worker_starts(client, mine, "ac2c038d44616a2f2")
+    _worker_starts(client, theirs, "9f1b7c22e0d341a80")
     machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
 
     card = _deliver(client, room, "feat: deliver one task", [mine])
     _accept(client, card["id"])
 
-    body = _landed_body(pid)
-    assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
+    body = _landed_body(client)
+    assert f"Cheese-Agent: {room_agent_seat(client, room)}" in body
     assert _task_line(pid, room, mine, "ac2c038d44616a2f2", "补 trailer") in body
     assert (
         _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试")
@@ -163,8 +209,8 @@ def _two_batches(client) -> tuple[str, str, str, str]:
     room = _room(client, pid)
     earlier = _dispatch(client, room, "上一批写完的活")
     later = _dispatch(client, room, "代码走下一批的活")
-    _bind(client, room, earlier, "aaaa0000aaaa0000a")
-    _bind(client, room, later, "bbbb1111bbbb1111b")
+    _worker_starts(client, earlier, "aaaa0000aaaa0000a")
+    _worker_starts(client, later, "bbbb1111bbbb1111b")
     return pid, room, earlier, later
 
 
@@ -205,7 +251,7 @@ def test_a_placeholder_task_that_wrote_no_code_is_never_signed_on(client):
     room = _room(client, pid)
     placeholder = _dispatch(client, room, "只是个占位")
     real = _dispatch(client, room, "真的写了代码")
-    _bind(client, room, real, "cccc2222cccc2222c")
+    _worker_starts(client, real, "cccc2222cccc2222c")
 
     body = _batch(client, pid, room, "feat: deliver only what was written", [real])
 
@@ -222,8 +268,8 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
     room = _room(client, pid)
     done = _dispatch(client, room, "这批做完的活")
     running = _dispatch(client, room, "还在跑的活")
-    _bind(client, room, done, "dddd3333dddd3333d")
-    _bind(client, room, running, "eeee4444eeee4444e")
+    _worker_starts(client, done, "dddd3333dddd3333d")
+    _worker_starts(client, running, "eeee4444eeee4444e")
 
     now = _batch(client, pid, room, "feat: land only the finished half", [done])
     assert _task_line(pid, room, done, "dddd3333dddd3333d", "这批做完的活") in now
@@ -234,7 +280,7 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
 
 
 def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
-    """`subagent_id` is NULL until a worker is bound, and a room can write a
+    """`subagent_id` is NULL until a worker starts, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
     than the batch the room said it delivered."""
     pid = _project(client)
@@ -263,8 +309,8 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
     monkeypatch.setattr(TaskService, "list_by_ids", _blow_up)
     _accept(client, card["id"])
 
-    body = _landed_body(pid)
-    assert body.splitlines()[0] == "feat: land when the batch is unreadable"
+    body = _landed_body(client)
+    assert body.splitlines()[0].startswith("feat: land when the batch is unreadable (#")
     assert "Cheese-Task" not in body
     assert f"Cheese-Card: {card['id']}" in body
 
@@ -300,7 +346,7 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
     pid = _project(client)
     room = _room(client, pid)
     mine = _dispatch(client, room, "写了这一批")
-    _bind(client, room, mine, "ac2c038d44616a2f2")
+    _worker_starts(client, mine, "ac2c038d44616a2f2")
 
     landed = _batch(client, pid, room, "feat: parse me with real git", [mine])
 
@@ -319,4 +365,5 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
         "Cheese-Card",
         "Cheese-Agent",
         "Cheese-Task",
+        "Co-authored-by",
     }

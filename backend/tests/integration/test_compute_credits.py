@@ -82,7 +82,7 @@ def _run_turn(client, topic_id: str) -> list[dict]:
     """One summoned turn over the WS; returns all frames up to done/error."""
     frames: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "u1")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while True:
             frame = ws.receive_json()
             frames.append(frame)

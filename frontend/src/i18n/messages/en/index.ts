@@ -1,7 +1,9 @@
 import account from './account.json'
 import comments from './comments.json'
 import editor from './editor.json'
+import feedback from './feedback.json'
 import global from './global.json'
+import models from './models.json'
 import navigation from './navigation.json'
 import notifications from './notifications.json'
 import publicSite from './publicSite.json'
@@ -9,6 +11,7 @@ import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import users from './users.json'
+import work from './work.json'
 
 // Namespaces absent here have no English translation yet. They are listed, key by
 // key, in `frontend/src/i18n/untranslated.json` and asserted by
@@ -16,14 +19,17 @@ import users from './users.json'
 // that check; write the translation and delete the keys from that list instead.
 export default {
   global,
+  models,
   navigation,
   publicSite,
   account,
   editor,
+  feedback,
   questions,
   users,
   comments,
   tasks,
   spaces,
   notifications,
+  work,
 }

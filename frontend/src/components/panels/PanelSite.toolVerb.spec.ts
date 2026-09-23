@@ -48,7 +48,7 @@ function toolEvent(content: string, meta?: Record<string, unknown>): Block {
     project_id: 'p1',
     topic_id: 't1',
     kind: 'event',
-    author_type: 'ai',
+    author_type: 'participant',
     author: 'cheese-t1',
     content,
     reply_to: null,

@@ -34,7 +34,10 @@ describe('toolLabel', () => {
     expect(toolLabel('bash_kill')).toBe('终止后台任务')
   })
 
-  it('strips the mcp__cheese__ prefix and falls back to the raw name', () => {
+  it('strips the MCP prefix of whichever server published the tool', () => {
+    // 服务器注册名是 `native`，所以真实行长的就是这个样子。
+    expect(toolLabel('mcp__native__update_doc')).toBe('更新文档')
+    // 旧拼法仍然认 —— 历史行还躺在库里。
     expect(toolLabel('mcp__cheese__update_doc')).toBe('更新文档')
     expect(toolLabel('FutureTool')).toBe('FutureTool')
   })

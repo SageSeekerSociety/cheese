@@ -12,7 +12,7 @@ import type { FileContent, Topic } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../CodeEditor.vue', () => ({
@@ -106,6 +106,17 @@ async function openChanges(container: Element) {
 }
 
 beforeAll(() => {
+  // 改动横条上的 ⋯ 是一个菜单，打开时 Vuetify 要读这两样来摆位置，happy-dom 没有。
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -140,6 +151,25 @@ beforeEach(() => {
 })
 
 describe('改动 tab: 一份文档', () => {
+  it('committed document bytes and revisions use the selected source and cannot be changed', async () => {
+    const { container } = mountPanel()
+    await flush()
+    await openChanges(container)
+    await fireEvent.click(container.querySelector('.panel-changes [aria-label="更多"]')!)
+    await flush()
+    await fireEvent.click(screen.getByText('已提交版本', { selector: '.v-list-item-title' }))
+    await flush()
+    expect(previewDocumentPdf).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
+    expect(documentRevisions).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
+    expect(container.textContent).toContain('这个版本只读，不能处理修订。')
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        ['接受', '拒绝', '全部接受', '全部拒绝'].includes(button.textContent?.trim() ?? '')
+      )
+    ).toBe(false)
+    expect(decideDocumentRevisions).not.toHaveBeenCalled()
+  })
+
   it('画出这一版，而不是说它是二进制文件', async () => {
     const { container } = mountPanel()
     await flush()
@@ -148,7 +178,7 @@ describe('改动 tab: 一份文档', () => {
     expect(container.querySelector('.stub-pages')?.getAttribute('data-bytes')).toBe('4096')
     expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
     // 来源跟着请求走：这一份在任务的工作树上，不是房间交付的那一份。
-    expect(previewDocumentPdf).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1')
+    expect(previewDocumentPdf).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1', 'live')
   })
 
   it('修订在这里也能逐条处理，处理的是这个任务工作树上的那一份', async () => {
@@ -156,7 +186,7 @@ describe('改动 tab: 一份文档', () => {
     await flush()
     await openChanges(container)
 
-    expect(documentRevisions).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1')
+    expect(documentRevisions).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1', 'live')
     expect(container.textContent).toContain('把「30 天」改成「60 天」')
 
     const accept = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '接受')

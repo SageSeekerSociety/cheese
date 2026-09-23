@@ -4,7 +4,7 @@
       <v-card-title class="pa-4 pb-3">
         <div class="d-flex align-center">
           <v-icon color="error" class="mr-3" size="28">mdi-exit-run</v-icon>
-          <span class="text-h5 font-weight-medium">退出赛题</span>
+          <span class="text-h5 font-weight-medium">退出题目</span>
         </div>
       </v-card-title>
       <v-divider></v-divider>
@@ -12,7 +12,7 @@
         <div class="px-4 pt-4 pb-3">
           <div class="text-body-1">请选择要退出的小队：</div>
           <div class="text-caption text-medium-emphasis mt-1">
-            退出后，该小队将不再参与此赛题。如需重新参与，可重新领取赛题。
+            退出后，该小队将不再参与此题目。如需重新参与，可重新领取题目。
           </div>
         </div>
 
@@ -22,11 +22,11 @@
 
         <div v-else-if="joinedTeams.length === 0" class="text-center py-8 px-4">
           <v-avatar color="info" class="mb-4" size="64">
-            <!-- info 底上的反白图标：深色下 info 是 #9CA2AB，白色只有 2.3:1 -->
+            <!-- info 底上的反白图标：深色下 info 是 #AEB4BD，白色只有 2.1:1 -->
             <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
           </v-avatar>
           <div class="text-h6 font-weight-medium mb-2">没有已参与的小队</div>
-          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何小队参与此赛题</div>
+          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何小队参与此题目</div>
         </div>
 
         <div v-else class="px-4 pt-2 pb-4">
@@ -71,7 +71,7 @@
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
         <v-btn variant="text" @click="$emit('close')">取消</v-btn>
-        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')"> 退出赛题 </v-btn>
+        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')"> 退出题目 </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

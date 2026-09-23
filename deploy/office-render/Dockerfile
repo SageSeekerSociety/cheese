@@ -20,12 +20,9 @@ FROM debian:12-slim
 # `fonts-noto-cjk` is the same failure one layer down: with no CJK face every
 # Chinese character renders as an empty box, and the exit code is still 0.
 #
-# Debian's CDN is unreachable from here, and this base ships no CA bundle — so
-# the mirror is reached over http for the single transaction that installs
-# ca-certificates along with everything else.
-RUN sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' \
-      /etc/apt/sources.list.d/debian.sources \
- && apt-get update && apt-get install -y --no-install-recommends \
+# Keep the base image's Debian sources for the transaction that installs
+# ca-certificates along with the document tools.
+RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-math \
       fonts-noto-cjk fonts-dejavu-core \
       python3 python3-pip ca-certificates \

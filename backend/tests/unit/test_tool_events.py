@@ -67,6 +67,32 @@ def test_cheese_mcp_tool_is_platform():
     assert _is_platform_tool("mcp__cheese__remember", {})
 
 
+def test_the_mcp_prefix_is_read_off_the_server_that_is_actually_there():
+    """服务器叫 `native`，而探测以前只认 `mcp__cheese__`。
+
+    claude_code 的 MCP 服务器注册名是 `native`（`remote_execution/client.py` 写
+    mcp.json 时 `servers = {"native": ...}`），所以每个平台工具的真实名字是
+    `mcp__native__…`。只认旧拼法时这一格既不算平台动作、前端的标签表也剥不掉前缀 ——
+    时间线上原样渲染 `mcp__native__cheese_feedback_propose` 配一颗中性点，而这和
+    「这个工具本来就没有标签」在屏幕上是同一件事，谁也不会报。
+    """
+    assert _is_platform_tool("mcp__native__cheese_feedback_propose", {"title": "x"})
+    assert _is_platform_tool("mcp__native__chat_send", {"content": "x"})
+    assert _is_platform_tool(
+        "mcp__native__platform_request", {"method": "GET", "path": "/x"}
+    )
+
+
+def test_the_transport_under_native_is_not_a_platform_action():
+    """`mcp__native__` 底下**不都是**平台动作。
+
+    `invoke` 是这个 harness 搬运读写与命令的通道（Read / Edit / Bash 都从它过），
+    把它一起算成平台动作，时间线上会在「只是读了一个文件」旁边点一颗琥珀色的点。
+    """
+    assert not _is_platform_tool("mcp__native__invoke", {"tool": "Read"})
+    assert not _is_platform_tool("Read", {"file_path": "x"})
+
+
 def test_a_platform_command_called_as_a_tool_is_platform():
     """The same action, under the name the harness publishes it as.
 
@@ -150,7 +176,7 @@ def test_format_tool_event_translates_pis_tools_too():
 def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
     # pi 没有平台工具，它的平台动作全部是 shell 里的 cheese CLI —— 认不出这个
     # 房间的 shell 工具，整轮现场就没有一个琥珀点。
-    assert _is_platform_tool("bash", {"command": "cheese artifact output/x.docx"})
+    assert _is_platform_tool("bash", {"command": "cheese show output/x.docx"})
     assert not _is_platform_tool("bash", {"command": "echo cheese"})
 
 

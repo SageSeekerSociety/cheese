@@ -6,6 +6,10 @@ So the flood assertion below is the acceptance criterion in executable form.
 """
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from app.domain.backend_log import (
     DEDUP_WINDOW_S,
@@ -19,6 +23,37 @@ from app.domain.backend_log import (
     room_from_path,
     summary_content,
 )
+
+
+@pytest.mark.parametrize("kind", ["GatewayHTTPError", "GatewayStreamError"])
+async def test_gateway_failure_lands_in_room_and_alerts_once(monkeypatch, kind):
+    from app.core import alerting
+    from app.domain import backend_log
+
+    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    monkeypatch.setattr(backend_log, "_target_topic", AsyncMock(return_value=topic))
+    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    added = AsyncMock()
+    monkeypatch.setattr(
+        backend_log, "BlockRepository", lambda _: SimpleNamespace(add=added)
+    )
+    alerts = []
+    monkeypatch.setattr(alerting, "send", lambda *args, **kw: alerts.append((args, kw)))
+    error = BackendErrorIn(
+        message="Model response stream failed before completion",
+        exc_type=kind,
+        where="model gateway",
+        request_id="call-1",
+    )
+    for _ in range(2):
+        await backend_log.record(
+            None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+        )
+    assert added.await_count == 1
+    assert len(alerts) == 1
+    assert alerts[0][1]["key"] == f"model-gateway:{kind}"
+    assert any("call-1" in line for line in alerts[0][0][1])
+
 
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
 

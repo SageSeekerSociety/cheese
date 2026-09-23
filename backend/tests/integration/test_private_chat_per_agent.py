@@ -15,7 +15,6 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.topic.repositories import TopicRepository
 from tests.integration.conftest import session_auth_headers
 
 
@@ -58,10 +57,13 @@ def _dm_id(client, project_id: str, user: str, agent: str | None = None) -> str:
     return r.json()["data"]["id"]
 
 
-def _who_answers(client, topic_id: str) -> dict:
-    r = client.get(f"/topics/{topic_id}/agent")
+def _who_answers(client, topic_id: str) -> str:
+    """The teammate this DM is with, as the roster names it."""
+    r = client.get(f"/topics/{topic_id}/members")
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    names = [m["name"] for m in r.json()["data"]["data"] if m["agent"]]
+    assert len(names) == 1, names
+    return names[0]
 
 
 def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
@@ -71,7 +73,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="msg",
                 kind=BlockKind.message,
             )
@@ -104,9 +106,8 @@ def test_each_teammate_gets_its_own_room_and_keeps_it(client):
     assert _dm_id(client, project_id, "user-1", default["handle"]) == with_default
 
     # And each room is answered by the teammate it belongs to — the payoff.
-    assert _who_answers(client, with_reviewer)["handle"] == "reviewer"
-    assert _who_answers(client, with_reviewer)["display_name"] == "评审"
-    assert _who_answers(client, with_default)["handle"] == default["handle"]
+    assert _who_answers(client, with_reviewer) == "评审"
+    assert _who_answers(client, with_default) == default["display_name"]
 
     # Different people do not share a room with the same teammate.
     assert _dm_id(client, project_id, "user-2", "reviewer") != with_reviewer
@@ -131,63 +132,25 @@ def test_a_room_stays_with_its_teammate_when_the_default_moves(client):
     _make_default(client, project_id, reviewer["id"])
 
     # The old conversation is still the old teammate's...
-    assert _who_answers(client, room)["handle"] == first["handle"]
+    assert _who_answers(client, room) == first["display_name"]
     assert _dm_id(client, project_id, "user-1", first["handle"]) == room
     # ...and the new default is a new room, not a takeover of that one.
     assert _dm_id(client, project_id, "user-1") != room
 
 
-def test_a_dm_from_before_teammates_were_named_keeps_its_history(client):
-    """A room opened before this feature names no teammate and is answered by
-    whatever the default is. Opening it must adopt it, not leave the history
-    behind in an orphan room nobody can reach."""
+def test_a_dm_is_two_members_the_person_and_the_teammates_seat(client):
+    """A 1:1 with a teammate has the same shape as a 1:1 with a person: the
+    owner and the peer on the roster, nothing else — the teammate under its
+    own seat, so the messages it writes there are its own."""
     project_id = _project(client)
-    default = next(a for a in _agents(client, project_id) if a["is_default"])
-
-    async def _legacy_room() -> str:
-        async with client.test_factory() as session:
-            topic = await TopicRepository(session).get_or_create_private(
-                project_id=uuid.UUID(project_id), user_handle="user-1"
-            )
-            await session.commit()
-            return str(topic.id)
-
-    legacy = asyncio.run(_legacy_room())
-    _seed_message(client, project_id, legacy, "cheese")
-
-    assert _dm_id(client, project_id, "user-1", default["handle"]) == legacy
-    # Adopted, so it no longer moves with the project's default.
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    _make_default(client, project_id, reviewer["id"])
-    assert _who_answers(client, legacy)["handle"] == default["handle"]
+    dm = _dm_id(client, project_id, "user-1", "reviewer")
 
-
-def test_an_unopened_old_dm_is_settled_before_the_default_moves(client):
-    """The window the pin-on-open path cannot cover: a DM from before this
-    feature that nobody has opened yet. It is answered by the default, so the
-    moment the default changes is the last moment its history can still be
-    attributed to the teammate that actually held it."""
-    project_id = _project(client)
-    first = next(a for a in _agents(client, project_id) if a["is_default"])
-
-    async def _legacy_room() -> str:
-        async with client.test_factory() as session:
-            topic = await TopicRepository(session).get_or_create_private(
-                project_id=uuid.UUID(project_id), user_handle="user-1"
-            )
-            await session.commit()
-            return str(topic.id)
-
-    legacy = asyncio.run(_legacy_room())
-    _seed_message(client, project_id, legacy, "cheese")
-
-    # Nobody opened it; the default moves anyway.
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    _make_default(client, project_id, reviewer["id"])
-
-    assert _who_answers(client, legacy)["handle"] == first["handle"]
-    assert _dm_id(client, project_id, "user-1", first["handle"]) == legacy
-    assert _dm_id(client, project_id, "user-1", "reviewer") != legacy
+    rows = client.get(f"/topics/{dm}/members").json()["data"]["data"]
+    assert {(m["member_handle"], m["agent"]) for m in rows} == {
+        ("user-1", False),
+        (reviewer["seat_handle"], True),
+    }
 
 
 def test_unread_is_counted_per_teammate(client):

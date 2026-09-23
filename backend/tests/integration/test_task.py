@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestTaskIntegration:
@@ -168,8 +168,8 @@ class TestTaskIntegration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -702,8 +702,8 @@ class TestTaskEnumeration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -936,8 +936,8 @@ class TestTaskApprovalWorkflow:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -1125,8 +1125,8 @@ class TestParticipantManagement:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -1434,8 +1434,8 @@ class TestTaskSubmission:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -1544,8 +1544,8 @@ class TestTaskReview:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -1688,8 +1688,8 @@ class TestTeamTask:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Test Space ({suffix})",
                 "intro": "A space for testing",
@@ -1866,8 +1866,8 @@ class TestCategoryIntegration:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Category Test Space ({suffix})",
                 "intro": "A space for testing categories",
@@ -1939,8 +1939,8 @@ class TestTaskPermissions:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Permission Test Space ({suffix})",
                 "intro": "A space for testing permissions",
@@ -2239,8 +2239,8 @@ class TestTaskJoinedFilter:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Joined Filter Space ({suffix})",
                 "intro": "A space for testing joined filter",
@@ -2348,8 +2348,8 @@ class TestParticipantEdgeCases:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Edge Case Space ({suffix})",
                 "intro": "A space for edge case testing",
@@ -2463,8 +2463,8 @@ class TestTaskFullUpdate:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Full Update Space ({suffix})",
                 "intro": "A space for full update testing",
@@ -2548,8 +2548,8 @@ class TestParticipantPermissions:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Perm Test Space ({suffix})",
                 "intro": "A space for permission testing",
@@ -2624,8 +2624,8 @@ class TestTeamParticipant:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Team Part Space ({suffix})",
                 "intro": "A space for team participant testing",
@@ -2790,8 +2790,8 @@ class TestParticipantWorkflow:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Workflow Space ({suffix})",
                 "intro": "A space for workflow testing",
@@ -2940,8 +2940,8 @@ class TestCategoryDeletion:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Cat Delete Space ({suffix})",
                 "intro": "A space for category deletion testing",
@@ -2964,9 +2964,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        custom_category_id = None
-        if custom_cat_resp.status_code in (200, 201):
-            custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
+        assert custom_cat_resp.status_code in (200, 201), (
+            f"Custom category was not created: {custom_cat_resp.text}"
+        )
+        custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
 
         empty_cat_resp = api_client.post(
             f"/spaces/{space_id}/categories",
@@ -2976,9 +2977,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        empty_category_id = None
-        if empty_cat_resp.status_code in (200, 201):
-            empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
+        assert empty_cat_resp.status_code in (200, 201), (
+            f"Empty category was not created: {empty_cat_resp.text}"
+        )
+        empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
 
         api_client.post(
             "/tasks",
@@ -2987,7 +2989,7 @@ class TestCategoryDeletion:
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
-                "categoryId": custom_category_id or default_category_id,
+                "categoryId": custom_category_id,
                 "submitterType": "USER",
                 "resubmittable": True,
                 "editable": True,
@@ -3028,9 +3030,6 @@ class TestCategoryDeletion:
         space_id = data["space_id"]
         custom_category_id = data["custom_category_id"]
 
-        if custom_category_id is None:
-            pytest.skip("Custom category was not created")
-
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{custom_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
@@ -3046,9 +3045,6 @@ class TestCategoryDeletion:
         creator = data["creator"]
         space_id = data["space_id"]
         empty_category_id = data["empty_category_id"]
-
-        if empty_category_id is None:
-            pytest.skip("Empty category was not created")
 
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{empty_category_id}",
@@ -3082,8 +3078,8 @@ class TestArchivedCategoryAndRejectReason:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Archived Cat Space ({suffix})",
                 "intro": "Space for archived category tests",
@@ -3107,14 +3103,15 @@ class TestArchivedCategoryAndRejectReason:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        archived_category_id = None
-        if archived_cat_resp.status_code in (200, 201):
-            archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
-            api_client.patch(
-                f"/spaces/{space_id}/categories/{archived_category_id}",
-                json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
-                headers={"Authorization": f"Bearer {creator.token}"},
-            )
+        assert archived_cat_resp.status_code in (200, 201), (
+            f"Could not create archived category: {archived_cat_resp.text}"
+        )
+        archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
+        api_client.patch(
+            f"/spaces/{space_id}/categories/{archived_category_id}",
+            json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
         task_resp = api_client.post(
             "/tasks",
@@ -3149,9 +3146,6 @@ class TestArchivedCategoryAndRejectReason:
         data = archived_category_setup
         creator = data["creator"]
         archived_category_id = data["archived_category_id"]
-
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
 
         resp = api_client.post(
             "/tasks",
@@ -3230,9 +3224,6 @@ class TestArchivedCategoryAndRejectReason:
         task_id = data["task_id"]
         archived_category_id = data["archived_category_id"]
 
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
-
         resp = api_client.patch(
             f"/tasks/{task_id}",
             json={"categoryId": archived_category_id},
@@ -3260,8 +3251,8 @@ class TestRegistrationStartTime:
 
         suffix = unique_int(10000000, 99999999)
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Registration Start Space ({suffix})",
                 "intro": "Space for registration start time tests",
@@ -3391,8 +3382,8 @@ class TestTaskAccessDomainGroupIntegration:
         )
 
         suffix = unique_int(10000000, 99999999)
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Domain Task Space ({suffix})",
                 "intro": "Domain task test space",

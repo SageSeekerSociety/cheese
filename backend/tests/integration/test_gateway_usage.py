@@ -5,10 +5,12 @@ usage table."""
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
@@ -25,6 +27,15 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
+
+
+def _replace_chat_sleep(monkeypatch, sleep):
+    from app.domain.agent import chat
+
+    # Replacing the shared module's sleep also stalls the TestClient's loop monitor.
+    monkeypatch.setattr(
+        chat, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": sleep})
+    )
 
 
 def _on_a_machine() -> ClaudeCodeRuntime:
@@ -71,7 +82,9 @@ class FakeGateway:
     def __init__(self) -> None:
         self.minted: list[uuid.UUID] = []
         self.budgets: list[tuple[str, float]] = []
-        self.days: dict[str, tuple[int, int, float]] = {}
+        # date → {model: (prompt, completion, usd)}. Model-keyed on purpose: a
+        # flat total is what swallowed mimo into the default model's row.
+        self.days: dict[str, dict[str, tuple[int, int, float]]] = {}
 
     async def mint_project_key(self, project_id):
         self.minted.append(project_id)
@@ -81,17 +94,24 @@ class FakeGateway:
         self.budgets.append((key, max_budget_usd))
         return True
 
-    lag_calls = 0  # >0 → the first N daily_spend calls return nothing (log lag)
+    lag_calls = 0  # >0 → the first N spend reads see no rows yet (log lag)
 
-    async def daily_spend(self, key, date):
+    async def daily_spend_by_model(self, key, date):
         if self.lag_calls > 0:
             self.lag_calls -= 1
-            return gw.DailySpend(
-                date=date, prompt_tokens=0, completion_tokens=0, spend_usd=0.0
-            )
-        p, c, usd = self.days.get(date, (0, 0, 0.0))
+            return {}
+        return {
+            name: gw.ModelSpend(name, p, c, usd)
+            for name, (p, c, usd) in self.days.get(date, {}).items()
+        }
+
+    async def daily_spend(self, key, date):
+        by = await self.daily_spend_by_model(key, date)
         return gw.DailySpend(
-            date=date, prompt_tokens=p, completion_tokens=c, spend_usd=usd
+            date=date,
+            prompt_tokens=sum(m.prompt_tokens for m in by.values()),
+            completion_tokens=sum(m.completion_tokens for m in by.values()),
+            spend_usd=sum(m.spend_usd for m in by.values()),
         )
 
 
@@ -158,7 +178,10 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
 
 
 @pytest.mark.anyio
@@ -214,9 +237,9 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     # Simulate LiteLLM's async log lag: the first drain sees nothing — the
     # settle-retry must pick the rows up so per-turn attribution still lands.
     fake.lag_calls = 1
@@ -228,17 +251,33 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
         pass
     await settle_turn(svc, tid)
 
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
     from app.domain.usage.repositories import UsageRepository
 
     async with factory() as session:
         agg = await UsageRepository(session).for_project(pid)
         project = await ProjectRepository(session).get(pid)
+        rows = (
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            )
+            .scalars()
+            .all()
+        )
     assert (agg["input_tokens"], agg["output_tokens"]) == (120, 30)
     assert agg["cost_usd"] == pytest.approx(0.02)
-    # Checkpoint persisted → a second drain would consume nothing new.
+    # Landed under the model that actually spent it — not the default.
+    assert {r.model for r in rows} == {"claude-sonnet-5"}
+    # Checkpoint persisted (v2, per-model) → a second drain consumes nothing.
     assert project is not None
     ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
-    assert ckpt and ckpt["prompt"] == 120 and ckpt["completion"] == 30
+    assert ckpt and set(ckpt["models"]) == {"claude-sonnet-5"}
+    seen = ckpt["models"]["claude-sonnet-5"]
+    assert (seen["prompt"], seen["completion"]) == (120, 30)
 
 
 @pytest.mark.anyio
@@ -246,7 +285,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
     client, tmp_path, monkeypatch
 ):
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     fake.lag_calls = 1
@@ -257,7 +296,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         settling.set()
         await resume.wait()
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", wait_for_rows)
+    _replace_chat_sleep(monkeypatch, wait_for_rows)
     pending = asyncio.create_task(svc._drain_gateway_usage(pid))
     try:
         await asyncio.wait_for(settling.wait(), timeout=2)
@@ -265,12 +304,82 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
         other = await asyncio.wait_for(svc._drain_gateway_usage(pid), timeout=1)
         assert other is not None
-        assert (other.input_tokens, other.output_tokens) == (120, 30)
+        assert [(u.model, u.input_tokens, u.output_tokens) for u in other] == [
+            ("claude-sonnet-5", 120, 30)
+        ]
     finally:
         resume.set()
         retried = await pending
     # The paused drain must read the checkpoint advanced by the other drain.
     assert retried is None
+
+
+@pytest.mark.anyio
+async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_path):
+    """A project whose key is already minted and in step is answered WITHOUT
+    taking `_gateway_lock`.
+
+    That lock is process-wide (`get_chat_service` is `@lru_cache`d, so there is
+    one ChatService per process) and the metering proxy asks for a key per
+    request. A lookup that takes it queues every admission on the box behind
+    whichever holder is slow, and that wait is what `/llm/admission`'s p95 is
+    made of — measured on dev 2026-09-23 at 8.9 s, and reproduced with 20
+    concurrent admissions for a single project fanning out into a 5.8 s tail.
+    """
+    fake = FakeGateway()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    # Some other caller is inside the lock: a mint, a re-price, or a drain.
+    await svc._gateway_lock.acquire()
+    try:
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        svc._gateway_lock.release()
+
+    # And answering from the persisted row wrote nothing back.
+    assert fake.minted == [pid]
+    assert fake.budgets == []
+
+
+@pytest.mark.anyio
+async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
+    """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
+    `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
+    for as long as the gateway takes to answer."""
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_daily_spend_by_model(api_key, date):
+        reading.set()
+        await release.wait()
+        return await FakeGateway.daily_spend_by_model(fake, api_key, date)
+
+    fake.daily_spend_by_model = slow_daily_spend_by_model  # type: ignore[method-assign]
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    try:
+        await asyncio.wait_for(reading.wait(), timeout=2)
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        release.set()
+
+    # The drain itself still lands its usage and advances the checkpoint.
+    drained = await pending
+    assert drained is not None
+    assert [(u.model, u.input_tokens, u.output_tokens) for u in drained] == [
+        ("claude-sonnet-5", 120, 30)
+    ]
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+    assert project is not None
+    ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
+    assert ckpt and ckpt["models"]["claude-sonnet-5"]["prompt"] == 120
+    assert ckpt["models"]["claude-sonnet-5"]["completion"] == 30
 
 
 @pytest.mark.anyio
@@ -282,7 +391,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
 
     monkeypatch.setattr(app_settings, "llm_gateway_credit_usd", 0.08)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     from app.domain.usage.repositories import ComputeGrantRepository
@@ -313,9 +422,9 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (80, 20, 0.01)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (80, 20, 0.01)}
     fake.lag_calls = 2  # first drain AND its settle retry both miss
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
@@ -328,7 +437,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     import asyncio as _asyncio
 
     for _ in range(10):
-        pending = [t for t in svc._memory_tasks if not t.done()]
+        pending = [t for t in svc._background_tasks if not t.done()]
         if not pending:
             break
         await _asyncio.gather(*pending, return_exceptions=True)
@@ -341,10 +450,14 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_enabled(
+async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrives(
     client, tmp_path
 ):
-    """Adding subscription supply preserves the saved API model and gateway route.
+    """Deploying the subscription must not move a project that chose the gateway.
+
+    What holds it there is the project's own supply setting, not a model saved
+    on one of its agents: an agent is a participant, and which pool a project
+    runs on is not a property of a participant (结论 44).
 
     Provider URLs and keys remain on the backend, away from the machine.
     """
@@ -360,48 +473,48 @@ async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_en
         "default",
     )
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(
+    svc, factory, pid, _tid = await _mk_service(
         client.test_factory, tmp_path, fake, profiles=profiles
     )
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "gateway"}
+        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
     assert route == "gateway"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
-    assert app_settings.subscription_enabled is False  # and with the flag on:
-
-    import unittest.mock
-
-    with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        subscription_kwargs, subscription_route = await svc._model_kwargs(
-            pid, _on_a_machine()
-        )
-
-    assert subscription_route == route == "gateway"
-    assert subscription_kwargs == kwargs
-    assert fake.minted == []
 
 
 @pytest.mark.anyio
 async def test_subscription_route_follows_the_capability_not_the_backend_name(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability a backend has to IMPLEMENT — it
-    builds the metering-proxy env itself, so nothing travels from here. A
-    backend without that transport used to fall through under the same flag with
-    no env at all and run on the backend process's own inherited credentials; it
-    must keep its profile/gateway routing instead."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    """A machine builds the metering-proxy env itself, so nothing about the
+    transport travels from here — a channel that does NOT build one must keep
+    its profile/gateway routing rather than fall through with no env at all and
+    run on the backend process's own inherited credentials."""
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == "claude-sonnet-5"
 
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
@@ -423,22 +536,12 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     subscription that does not serve it, and its usage row named the gateway's
     meter while its traffic went through the proxy — counted once in each.
     """
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
     svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
-        from app.domain.agent_instance.configuration import AgentConfiguration
-        from app.domain.agent_instance.services import AgentInstanceService
-
-        agents = AgentInstanceService(session)
-        agent = await agents.materialize_default(project)
-        await agents.configure(
-            agent, AgentConfiguration(**{**agent.configuration, "model": "opus"})
-        )
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
         await session.commit()
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
@@ -446,21 +549,21 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 
     assert cloud_route == device_route == "subscription"
     assert cloud_kwargs == device_kwargs
-    assert cloud_kwargs["model"] == "claude-opus-5"
-    assert set(cloud_kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert cloud_kwargs["model"] == "claude-sonnet-5"
+    assert set(cloud_kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert fake.minted == []  # no gateway key is minted for either
 
 
 @pytest.mark.anyio
-async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
+async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     client, tmp_path, monkeypatch
 ):
-    from app.core.config import settings
     from app.domain.agent_instance.configuration import AgentConfiguration
     from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.topic.repositories import TopicRepository
 
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     svc, factory, pid, tid = await _mk_service(
         client.test_factory, tmp_path, FakeGateway()
     )
@@ -471,29 +574,35 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
             handle="reviewer",
             type_name=None,
             display_name="Reviewer",
-            configuration=AgentConfiguration(model="opus", body="Original role"),
+            configuration=AgentConfiguration(body="Original role"),
         )
-        topic = await TopicRepository(session).get(tid)
-        topic.agent_instance_id = agent.id
         snapshot = agents.resolved(agent)
-        await agents.configure(
-            agent, AgentConfiguration(model="fable", body="Edited role")
-        )
+        await agents.configure(agent, AgentConfiguration(body="Edited role"))
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
+        # A later turn addressed to the same teammate resolves it afresh.
+        edited = agents.resolved(agent)
 
+    # A room does not have an agent: which one a turn runs as comes with the
+    # turn. An ongoing turn keeps the snapshot it started with; the next one
+    # sees the edit; a turn nobody addressed runs as the project's default.
     current, _ = await svc._model_kwargs(
         pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
     )
-    following, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    following, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
     default, _ = await svc._model_kwargs(pid, _on_a_machine())
-    assert current["model"] == "claude-opus-5"
-    assert following["model"] == "claude-fable-5"
-    assert default["model"] == "claude-sonnet-5"
+    # 换的是角色，不是模型：一个房间的主线永远走项目默认，谁来答都一样（结论 3）。
+    # 这三行在这个测试里的用处正是说明「agent 变了，模型不变」。
+    assert current["model"] == following["model"] == default["model"]
+    assert default["model"] == settings.agent_model
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
     )
-    repeated, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    repeated, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
     assert (
         repeated["env"]["CHEESE_AGENT_CONFIG"]
         == following["env"]["CHEESE_AGENT_CONFIG"]
@@ -504,7 +613,9 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     )
     assert same_turn == current
     assert same_turn["agent_handle"] == "reviewer"
-    different_author, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    different_author, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited
+    )
     assert different_author["agent_handle"] == "ops"
     assert different_author["model"] == following["model"]
     assert (
@@ -518,9 +629,9 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
-    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     async for _ in svc.converse(
@@ -542,6 +653,62 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
             ).scalars()
         )
     assert rows and all(r.route == "gateway" for r in rows)
+
+
+@pytest.mark.anyio
+async def test_one_drain_covers_several_models_without_absorbing_them(
+    client, tmp_path, monkeypatch
+):
+    """The regression this whole split exists for: one project's day mixes
+    mimo and claude on the SAME key, and both must keep their own row in
+    `by_model`. Collapsing them under `settings.agent_model` is exactly how
+    mimo went uncounted on the dashboard."""
+
+    async def _no_sleep(_s):
+        return None
+
+    _replace_chat_sleep(monkeypatch, _no_sleep)
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {
+        "mimo-v2.6-pro": (400, 100, 0.004),
+        "claude-sonnet-5": (120, 30, 0.02),
+    }
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    async with factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by = {r.model: r for r in rows}
+    assert set(by) == {"mimo-v2.6-pro", "claude-sonnet-5"}
+    assert (by["mimo-v2.6-pro"].input_tokens, by["mimo-v2.6-pro"].output_tokens) == (
+        400,
+        100,
+    )
+    assert by["mimo-v2.6-pro"].cost_usd == pytest.approx(0.004)
+    assert (
+        by["claude-sonnet-5"].input_tokens,
+        by["claude-sonnet-5"].output_tokens,
+    ) == (
+        120,
+        30,
+    )
 
 
 @pytest.mark.anyio

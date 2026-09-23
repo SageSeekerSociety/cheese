@@ -45,7 +45,7 @@ def _seed_block(
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
-                author="cheese" if author_type != AuthorType.human else "u",
+                author="cheese",
                 author_type=author_type,
                 content=content,
                 kind=kind,
@@ -65,7 +65,7 @@ def _tool_block(client, pid: str, tid: str, *, age: timedelta) -> None:
         pid,
         tid,
         kind=BlockKind.event,
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content="运行 `pytest -q`",
         meta={"tool": "Bash", "platform": False},
         age=age,
@@ -93,6 +93,25 @@ def test_a_turn_that_died_mid_tool_is_reported_stalled(client):
     assert stall["last_block"]["kind"] == "event"
 
 
+def test_a_turn_that_died_right_after_showing_something_is_reported_stalled(client):
+    # A shown file is in the timeline, so it can be the last block — and a turn
+    # that ends properly always says something after showing it.
+    pid, tid = _project_and_topic(client)
+    _seed_block(
+        client,
+        pid,
+        tid,
+        kind=BlockKind.artifact,
+        author_type=AuthorType.participant,
+        content="report.html",
+        age=timedelta(minutes=45),
+    )
+
+    stall = _stall(client, tid)
+    assert stall["stalled"] is True
+    assert stall["reason"] == "no_live_turn"
+
+
 def test_a_topic_that_just_acted_is_not_stalled(client):
     """Same shape, seconds old — a turn between two tool calls is the normal
     state of a working topic, and calling that dead would make the signal
@@ -115,7 +134,7 @@ def test_a_turn_that_finished_hours_ago_is_not_stalled(client):
         pid,
         tid,
         kind=BlockKind.message,
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content="跑完了，全绿。",
         age=timedelta(hours=5),
     )
@@ -137,7 +156,7 @@ def test_the_signal_goes_quiet_once_the_platform_has_announced_the_death(client)
         pid,
         tid,
         kind=BlockKind.event,
-        author_type=AuthorType.system,
+        author_type=AuthorType.platform,
         content="⚠️ 芝士上一轮卡死了，已强制结束。",
         age=timedelta(hours=5),
     )

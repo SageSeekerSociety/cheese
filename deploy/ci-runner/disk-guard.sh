@@ -17,9 +17,9 @@
 # `cheese-private-executor` and runs it a few steps later; on 2026-09-15 a guard
 # firing in this machine's other slot deleted it in between, and the job died on
 # `docker run … exit status 125` with nothing to re-pull, because the image was
-# never fetched from anywhere. So only images older than the grace period go: a
-# job's own build is minutes old, and what actually fills a pool machine is older
-# than that.
+# never fetched from anywhere. The grace period protects newly created images;
+# a cached build retains its original creation date. Jobs that need a local
+# image across steps hold a running container until their tests finish.
 #
 # Docker alone is not enough, and the logs say so: on runner-2 at 9G free the
 # guard fired before every job and reported `9G -> 9G`, because /var/lib/docker
@@ -90,11 +90,11 @@ reclaim_diag() {
     -mtime +"$KEEP_DIAG_DAYS" -delete
 }
 
-# apt-get clean is safe with no packages queued; the lists are rebuilt by the
-# next `apt-get update`, which only provisioning runs.
+# Another runner slot can be installing packages. Use ensure-apt.sh's host
+# lock and skip this tier while it is held, preserving that install's indexes.
 reclaim_apt() {
-  sudo -n apt-get clean
-  sudo -n rm -rf /var/lib/apt/lists/*
+  flock -n "${CHEESE_APT_LOCK:-/tmp/cheese-ci-apt.lock}" \
+    sudo -n sh -c 'apt-get clean && rm -rf /var/lib/apt/lists/*'
 }
 
 # npm's content-addressed cache, ~1.5 GB per box and growing: `npm install -g

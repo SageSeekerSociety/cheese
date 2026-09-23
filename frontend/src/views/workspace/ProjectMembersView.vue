@@ -8,6 +8,15 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和管理他（角色、
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
+//
+// 还有一件不属于「管理他」的事：**自己和这个项目的关系怎么结束**。不是名册上某
+// 一行的动作，而是这一页右上角那两颗按钮：普通成员「退出项目」（后端
+// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人，确认之后做什么在
+// `LeaveProjectDialog`），所有者「转让项目」（他退不掉，得先把手交出去 ——
+// `PUT /projects/{id}/owner`，`TransferProjectDialog`）。放在这里是因为这个页面
+// 就是「我和这个项目的关系」唯一说得清的地方；项目头上另有一份看得见的入口，
+// 名册本身也回到了侧栏（#6：这一页曾被壳收进 ⋯ 菜单，按钮跟着藏了两层深，
+// 没注意到那个 ⋯ 的人连怎么退出都找不到）。
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -24,6 +33,10 @@ import {
   updateProjectMemberRole,
 } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
+import ProjectJoinLinkDialog from '@/components/ProjectJoinLinkDialog.vue'
+import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
+import { t } from '@/i18n'
 import { label, PROJECT_ROLE } from '@/labels'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
@@ -54,9 +67,13 @@ function countLabel(n: number): string {
   return n > 99 ? '99+' : String(n)
 }
 
-// AI 队友这一段读的是**队友列表**，不是项目名册：名册上只有平台那个共用身份
-// （一行），而项目里可以有好几个队友，各有各的角色设定、模型和记忆。每个队友一
-// 间私聊，所以每一行都有自己的私聊按钮和自己的未读。
+// AI 队友这一段读的是**队友列表**，不是名册上那几行——它要的东西名册上没有，而
+// 不是名册上没有队友（名册上每个队友都有自己的一行）：
+//   - 私聊地址和未读键用的是实例自己的 `handle`（`agentDmKey`／`DmView`），名册
+//     行给的是席位 handle（`cheese-<实例 id 前 12 位>`），拿它去开私聊开的是别人；
+//   - 「默认」那颗标和右边的「设置」入口问的是这个队友本身怎么配的。
+// 所以这一段不是第二份名册，是队友的管理数据；「这个项目里有谁」仍然只有名册一
+// 个出处（人那一段就读它）。
 // 停用的队友不列：它在已经用着它的话题里照常工作，只是不再拿出来选。
 const teammates = ref<ProjectAgent[]>([])
 watch(
@@ -139,8 +156,9 @@ const groups = computed(() =>
 const myRole = computed(() => store.members.find((m) => m.user_handle === me.value)?.role ?? null)
 const canManage = computed(() => me.value === ownerHandle.value || myRole.value === 'lead')
 
-// 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而把
-// 自己踢出去是一个点一下就回不来的操作，两者都不该藏在一个 ⋯ 菜单里。
+// 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而自己是
+// 不是要走由本人决定 —— 那颗按钮在右上角，带着一次确认（后端也会拒掉所有者：他
+// 得先把项目转让出去，否则这个项目就没人管得了）。
 // 带 source 的行（小队带进来的人、所有者）背后没有成员表那一行，改角色和移出都
 // 无从下手——它们进名册的方式就不是被加进来的。
 function manageable(m: ProjectMemberRow): boolean {
@@ -193,6 +211,35 @@ function confirmRemove() {
   void run(m.user_handle, () => removeProjectMember(props.projectId, m.user_handle))
 }
 
+// ---- 退出项目 / 转让项目（自己这条关系的两个出口） ----
+// 所有者不显示「退出」：后端会拒绝他（他一走项目就没人管得了），给一个必定失败的
+// 按钮是骗人。他换一颗「转让项目」—— `PUT /projects/{id}/owner` 是他离得开的那条
+// 路的第一步（把手交出去，变成普通成员，再退出）。lead 也能转（后端
+// `require_project_steward` 认 owner 和 lead）。
+//
+// 「来自小队」的人照样显示「退出」：他在这条路上得到的是一句「请在小队里退出」，
+// 那句话正是他需要的下一步。把入口藏掉，他就只剩下一个点不动的页面。
+//
+// 项目行还没到货时**不能**当成「他不是所有者」（那正是把退出递给所有者、点下去吃
+// 403 的那条缝）：没行 = 不知道 = 不给。行到了再按 owner 说；owner 空（无主项目）
+// 谁都退得掉，后端也是这么判的。
+//
+// 确认之后做什么在 LeaveProjectDialog / TransferProjectDialog：这里只决定「给哪颗
+// 按钮」和把它打开。
+const leaveOpen = ref(false)
+const transferOpen = ref(false)
+const isOwner = computed(() => {
+  const owner = project.value?.owner_handle
+  return !!me.value && !!owner && me.value === owner
+})
+const canLeave = computed(() => {
+  const p = project.value
+  if (!me.value || !p) return false
+  const owner = p.owner_handle
+  return !owner || me.value !== owner
+})
+const canTransfer = computed(() => project.value !== null && (isOwner.value || myRole.value === 'lead'))
+
 // ---- 邀请 ----
 // 按 uid 邀请，而不是按 handle：uid 是个人主页地址里那个数字，找得到、抄得准；
 // handle 得对方自己告诉你，而且打错一个字母的后果是「查无此人」还是「加错了人」
@@ -201,6 +248,7 @@ function confirmRemove() {
 // 所以填完先去查这个人存不存在，把查到的名字摆出来给人确认——邀请是个加人进项目
 // 的动作，「我以为我加的是他」这种错必须在按下按钮之前就露出来。
 const inviteOpen = ref(false)
+const joinLinkOpen = ref(false)
 const inviteUid = ref('')
 const inviteRole = ref<Role>('member')
 const inviting = ref(false)
@@ -275,22 +323,40 @@ async function submitInvite() {
 <template>
   <div class="members-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-4 d-flex align-center">
+      <div class="mb-4 d-flex align-center flex-wrap ga-2">
         <div>
           <div class="t-eyebrow mb-1">项目</div>
           <h1 class="t-page-title">成员</h1>
         </div>
         <v-spacer />
+        <v-btn v-if="canLeave" variant="text" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
+          退出项目
+        </v-btn>
+        <v-btn
+          v-if="canTransfer"
+          variant="text"
+          prepend-icon="mdi-account-arrow-right-outline"
+          class="ms-2"
+          @click="transferOpen = true"
+        >
+          转让项目
+        </v-btn>
+        <v-btn v-if="canManage" variant="text" prepend-icon="mdi-link-variant" @click="joinLinkOpen = true">
+          {{ t('work.joinLink.title') }}
+        </v-btn>
         <v-btn
           v-if="canManage"
           color="primary"
           variant="flat"
           prepend-icon="mdi-account-plus-outline"
+          class="ms-2"
           @click="inviteOpen = true"
         >
           邀请成员
         </v-btn>
       </div>
+
+      <ProjectJoinLinkDialog v-if="canManage" v-model="joinLinkOpen" :project-id="projectId" />
 
       <p class="t-body c-muted mb-5" style="max-width: 640px">
         {{ people.length }} 个人<span v-if="agents.length"> + {{ agents.length }} 个 AI 队友</span
@@ -426,7 +492,7 @@ async function submitInvite() {
             <v-btn
               variant="text"
               size="small"
-              @click="router.push({ name: 'project-agents', params: { projectId: props.projectId } })"
+              @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
             >
               设置
             </v-btn>
@@ -501,6 +567,9 @@ async function submitInvite() {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
+    <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
 
     <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
       <v-card>

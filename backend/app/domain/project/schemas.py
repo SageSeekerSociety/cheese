@@ -2,10 +2,12 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.project.models import AiMode
+from app.domain.shell.schemas import ShellOut
 
 
 class ProjectCreate(BaseModel):
@@ -16,11 +18,13 @@ class ProjectCreate(BaseModel):
     # on the project: the persona is one of the type's properties, and the
     # project only says which agent is the default.
     agent_type: str | None = None
+    agent_name: str | None = Field(default=None, min_length=1, max_length=64)
     # 项目归团队 (v4): the shared team this project belongs to. Omitted → the
     # owner's personal team is resolved server-side.
     team_id: int | None = None
     # The 赛题 this project comes from, when it was created from one.
     external_task_id: int | None = None
+    forge_kind: Literal["forgejo", "github_app"] = "forgejo"
 
 
 class ProjectOut(BaseModel):
@@ -35,6 +39,23 @@ class ProjectOut(BaseModel):
     summary: str
     root_topic_id: uuid.UUID | None
     created_at: datetime
+    #: The 壳 in force for this project, already resolved (项目-level setting →
+    #: 赛题 override → 项目集 → default). The frontend renders what it is told and
+    #: keeps no copy of the catalog, so a 壳 added server-side reaches the
+    #: browser without a frontend release. None only on a payload built without
+    #: a session; every route fills it.
+    shell: ShellOut | None = None
+
+
+class ForgeAttributionUpdate(BaseModel):
+    requester_coauthor: bool | None
+
+
+class ProjectDefaultModelUpdate(BaseModel):
+    """Omitted fields remain unchanged; null clears the corresponding override."""
+
+    model: str | None = None
+    subagent_model: str | None = None
 
 
 class TaskLinkCreate(BaseModel):

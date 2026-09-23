@@ -16,6 +16,8 @@ from sqlalchemy import delete, select
 
 import app.models  # noqa: F401 — every table, so any FK on the ones below resolves
 from app.core.db import async_session_factory
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.project.forge import provision_repository
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -89,6 +91,11 @@ async def seed() -> None:
             s.add(root)
             await s.flush()
             project.root_topic_id = root.id
+            # 这个项目的芝士：实例行、它的身份、以及它在总览里的席位。走的是
+            # `ProjectService.create` 用的同一个播种函数——这个脚本绕开了
+            # ProjectService，不在这里播的话 demo 项目建出来就是「没有实例行、
+            # 指针为 NULL、总览上一个 agent 席位都没有」，正是这条路要消灭的状态。
+            await AgentInstanceService(s).materialize_default(project)
 
             work = Topic(
                 project_id=project.id,
@@ -113,13 +120,14 @@ async def seed() -> None:
             await s.flush()
 
             # Seed topic rosters (这些 Topic 是直接建的，绕过了 TopicService，
-            # 所以名册要在这里补种). 总览 = 项目本体 → 全体项目成员 + 芝士；
+            # 所以名册要在这里补种). 总览 = 项目本体 → 全体项目成员；
             # 工作话题 → 创建者(owner) + 芝士. Idempotent via _ensure_member.
             members = TopicMemberService(s)
             await members.seed_root(
                 root.id, owner_handle=OWNER, member_handles=[OWNER, CHEESE]
             )
             await members.seed(work.id, owner_handle=OWNER)
+            await provision_repository(project.id, s)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
 

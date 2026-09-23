@@ -38,6 +38,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
 from app.core.config import settings
@@ -51,22 +52,19 @@ from app.core.errors import (
 )
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceOffline,
     HubScreen,
     ViewerTransport,
     device_hub,
 )
+from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic import transcripts
-from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
@@ -84,7 +82,26 @@ def get_device_service(db: DbSession) -> DeviceService:
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 
 
+# How many machines are recovered at once. Recovery is per device and every
+# device does it on connect, so a backend restart starts one per machine at the
+# same instant — 71 on dev. Each walks that machine's sessions, and each session
+# takes a database connection and then talks to the machine; unbounded, the
+# burst wants far more connections than the pool has (20 + 15), and what it
+# starves is every OTHER request, which is how a restart came out as minutes of
+# 「QueuePool limit … connection timed out」 on page loads and background jobs
+# (2026-09-19, and the same shape in the 09-18 flood). Nothing is dropped by
+# waiting: a machine queued here is recovered a moment later, and its device
+# link is already up.
+_RECOVERY_AT_ONCE = 4
+_recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
+
+
 async def recover_business_state(device_id: str) -> None:
+    async with _recovering:
+        await _recover_business_state(device_id)
+
+
+async def _recover_business_state(device_id: str) -> None:
     try:
         from app.api.deps import get_chat_service
 
@@ -94,6 +111,15 @@ async def recover_business_state(device_id: str) -> None:
         # connection runs this, so there is nothing here to fix.
         logger.warning(
             "hook subscriptions not recovered: device %s went offline", device_id
+        )
+    except DeviceCallError as exc:
+        # The machine answered with a failure of its own — a runner whose socket
+        # is not up yet, a home that is gone. Its next connection runs this
+        # again, so this is a state to wait out, not a fault to report: at ERROR
+        # it was one alert per reconnect of a machine in that state (「dial unix
+        # /tmp/cheese-execution-…sock: no such file」, 2026-09-19).
+        logger.warning(
+            "hook subscriptions not recovered: device %s said %s", device_id, exc
         )
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
@@ -189,6 +215,9 @@ async def device_connect(
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Approving a device requires a logged-in user")
 
+    if body.project_id is not None:
+        await resolver.authorize_project(actor, project_id=body.project_id)
+
     # Approve binds the device to its owner + mints the durable token. The device is
     # PURE COMPUTE (execution-architecture v3: a ComputePool node) — enrolling a machine
     # does NOT mint an agent. The agent a screen runs as is resolved per project/topic
@@ -239,7 +268,6 @@ class _WebSocketDeviceTransport:
 @router.websocket("/agent")
 async def agent_socket(
     websocket: WebSocket,
-    service: DeviceServiceDep,
     db: DbSession,
     x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
     token: str | None = Query(default=None),
@@ -247,17 +275,16 @@ async def agent_socket(
     """The device's dial-out control channel. Authenticates with the durable device
     token (header, or ``?token=`` for browsers), then dispatches every inbound
     ``link.Msg`` to the shared ``DeviceHub`` (which drives outbound messages)."""
-    device = await service.verify_token(x_cheese_session or token or "")
+    device = await owner_reads.device_for_token(db, x_cheese_session or token or "")
     # End the auth read-transaction NOW, before the (device-lifetime) receive loop.
     # A ``Depends(get_db)`` session injected into a WebSocket route is only finalized
-    # when the socket CLOSES — so without this commit, ``verify_token``'s transaction
+    # when the socket CLOSES — so without this commit, the authentication transaction
     # sits `idle in transaction` for the machine's entire uptime (observed: 2.8h),
     # holding an AccessShareLock on ``device_team`` that made an ALTER TABLE (ACCESS
     # EXCLUSIVE) on the device tables queue behind it until it timed out → site-wide
     # brownout (#356). Committing returns the connection to the pool (lock released)
-    # for the life of the connection; ``db`` is the same session ``service`` used
-    # (FastAPI caches ``get_db`` across both), and the resolved ``device`` is a plain
-    # dataclass, so nothing lazy-loads after the commit.
+    # for the life of the connection. The resolved identity is a plain dataclass,
+    # so nothing lazy-loads after the commit.
     await db.commit()
     if device is None:
         # A token is necessary here (never sufficient; screen-scoped calls are
@@ -279,6 +306,9 @@ async def agent_socket(
     close_code: int | None = None
     try:
         while True:
+            # A failed outbound send can disconnect an already accepted socket.
+            if websocket.application_state is WebSocketState.DISCONNECTED:
+                raise WebSocketDisconnect(code=1006)
             message = await websocket.receive_json()
             await device_hub.on_device_message(device.device_id, message)
     except WebSocketDisconnect as disconnect:
@@ -313,33 +343,11 @@ async def agent_socket(
 # home is deleted (topic/retire.py, docs/where-a-turn-runs.md §8) --------------
 
 
-async def _device_ran_place(
-    service: DeviceService,
-    device: Device,
-    project_id: uuid.UUID,
-    place_id: uuid.UUID,
-) -> bool:
-    """Whether this machine is the one whose home holds the place's transcripts.
-
-    The pin says so directly while it stands. Once it is gone — the compute
-    picker replaced it, or the place is not in the database any more — the
-    machine has to at least be one the project may run on, directly or through
-    its team, which is the same set `DeviceChannel` picks from."""
-    binding = await service.topic_binding(place_id)
-    if binding is not None:
-        return binding.device_id == device.device_id
-    return any(
-        d.device_id == device.device_id
-        for d in await service.list_devices_for_project(project_id)
-    )
-
-
 @router.put("/transcripts/{project_id}/{place_id}")
 async def store_transcripts(
     project_id: uuid.UUID,
     place_id: uuid.UUID,
     request: Request,
-    service: DeviceServiceDep,
     db: DbSession,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -351,23 +359,22 @@ async def store_transcripts(
     replacing an earlier one; 413 past `transcripts_max_bytes`, 400 for a body
     that is not a whole archive, and neither keeps anything on disk."""
     scheme, _, token = (authorization or "").partition(" ")
-    device = await service.verify_token(
-        token.strip() if scheme.lower() == "bearer" else ""
+    device = await owner_reads.device_for_token(
+        db, token.strip() if scheme.lower() == "bearer" else ""
     )
     if device is None:
         raise UnauthorizedError("unknown or missing device token")
-    if await ProjectRepository(db).get(project_id) is None:
+    if not await owner_reads.project_exists(db, project_id):
         raise NotFoundError("no such project")
     # The place may be a room or a thread, or already deleted; what it must not
     # be is a place of some other project wearing this project's path.
-    place = await TopicRepository(db).get(place_id) or await TaskService(db).get(
-        place_id
-    )
+    place = await owner_reads.place(db, place_id)
     if place is not None and place.project_id != project_id:
         raise NotFoundError("no such place in this project")
-    allowed = await _device_ran_place(service, device, project_id, place_id)
-    placement = getattr(place, "session_placement", None)
-    if placement and placement["device_id"] == device.device_id:
+    allowed = await owner_reads.device_ran_place(
+        db, device.device_id, project_id, place_id
+    )
+    if place is not None and device.device_id in place.session_machines:
         allowed = True
     # Every read is done. Release the transaction before the body streams in:
     # an upload can take minutes, and a session held open across it would sit
@@ -426,17 +433,12 @@ async def _may_view_screen(
     # legacy cheesex handle-in-sub tokens working.
     handle = claims["handle"] or claims["sub"]
     if screen.project_id is not None:
-        if await MemberRepository(session).get(
-            project_id=screen.project_id, user_handle=handle
-        ):
+        if await owner_reads.project_member(session, screen.project_id, handle):
             return True
-        project = await ProjectRepository(session).get(screen.project_id)
-        if project is not None and project.owner_handle == handle:
+        if await owner_reads.project_owner(session, screen.project_id) == handle:
             return True
     if screen.topic_id is not None:
-        if await TopicMembershipRepository(session).get(
-            topic_id=screen.topic_id, member_handle=handle
-        ):
+        if await owner_reads.topic_member(session, screen.topic_id, handle):
             return True
     return False
 

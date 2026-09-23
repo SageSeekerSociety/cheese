@@ -110,7 +110,7 @@
                 v-model.number="template.defaultDeadline"
                 :label="t('tasks.form.defaultDeadline')"
                 type="number"
-                prefix="领取赛题后"
+                prefix="领取题目后"
                 suffix="天"
                 min="1"
                 clearable
@@ -156,7 +156,7 @@
               <div>
                 <div class="text-subtitle-2 font-weight-medium mb-1">已选择要求实名信息</div>
                 <p class="text-body-2 mb-0">
-                  • 参与者需完成实名认证方可参与此赛题<br />
+                  • 参与者需完成实名认证方可参与此题目<br />
                   • 所有信息经过加密存储，访问受到严格控制
                 </p>
               </div>

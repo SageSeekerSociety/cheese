@@ -101,13 +101,19 @@ lost connection into a second interrupt or stop command.
 ## Provider visibility
 
 This is a Cheese implementation of the native RC transport, not a session
-registered on claude.ai. It does not patch the binary or forge the account's
-profile or organization. The proxy enables the three RC feature flags in the
-provider's feature response and preserves its other flags.
+registered on claude.ai. It does not patch the binary.
 
-For RC-enabled connections, the proxy consumes `/api/event_logging/…` and the
-configured Statsig hosts locally. It strips provider authentication and cookies
-before forwarding RC bootstrap to Cheese. Launch settings set
+The proxy answers Claude Code's non-model startup requests itself, from a table
+it owns (`deploy/metering-proxy/control_answers.json`): identity, settings,
+policy, feature flags and telemetry. None of them reaches the provider, on any
+connection, RC or not. The profile a session reads is therefore synthetic — it
+names the Cheese project and agent, not an Anthropic account — and the feature
+response carries Cheese's own flags rather than a merge into the provider's.
+The three RC flags are answered on only for a session whose scoped token grants
+the RC transport; a session without that claim is told they are off.
+
+The proxy strips provider authentication and cookies before forwarding RC
+bootstrap to Cheese. Launch settings set
 `attribution.sessionUrl` to `false` before the first turn. This prevents new RC
 URL attribution; it does not erase URLs already present in resumed history.
 
@@ -138,5 +144,5 @@ no configured backend, the addon refuses the request locally.
 The unit tests cover Redis recovery, duplicate controls, stale epochs and proxy
 routing. HTTP tests use the real identity and room policy. Frontend tests cover
 native errors, rejected backgrounding, pending answers and delayed results.
-Native acceptance covers Claude Code 2.1.261 and 2.1.265 with isolated inference/account
+Native acceptance covers the pinned Claude Code build (2.1.277) with isolated inference/account
 fixtures; production account behavior remains a separate deployment check.

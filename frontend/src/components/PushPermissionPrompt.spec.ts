@@ -134,3 +134,22 @@ describe('问推送权限的时机', () => {
     expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
   })
 })
+
+// 它插在话题头和面板之间：出现的那一下，下面整个房间让出一条。一跳的话看起来是整
+// 页往下窜了一截，所以要折出来。过渡类名只挂到下一帧，所以时钟正好推到它出现的
+// 那一刻就看，不多推一毫秒。
+describe('出现的样子', () => {
+  it('折出来，而不是把房间一下顶下去', async () => {
+    const screen = render(Prompt, {
+      props: { working: true },
+      // Vue Test Utils 默认把 <Transition> 换成桩，这里要看的正是它挂的类名。
+      global: { plugins: [vuetify], stubs: { transition: false } },
+    })
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    for (let i = 0; i < 12; i += 1) await Promise.resolve()
+
+    expect(screen.queryByText(ASK_TEXT, { exact: false })).not.toBeNull()
+    expect(screen.container.querySelector('.push-fold')?.className).toContain('push-fold-enter-active')
+  })
+})

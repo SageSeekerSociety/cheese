@@ -11,7 +11,7 @@
 
 CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓库，里面用**话题**组织工作，
 **芝士**（AI 队友，本体协调 + 分身干活）**在隔离沙箱容器里**（一个房间一个容器，房间里每个话题一个 tmux 会话）用原生工具干活、用 `cheese` CLI 改平台状态，**文档是状态、对话是过程**，
-**采纳＝当场 merge（不归档，归档是人的另一个动作）**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 `claude-agent-sdk`
+**采纳＝当场 merge（不归档，归档是人的另一个动作）**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 Claude Code（作为骨架之一，经 hooks 与平台对话）
 路由到智谱 GLM。
 
 ---
@@ -41,7 +41,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
 | `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
 | `kind` | 块类型 | `message`/`doc`/`decision`/`event`/`attachment` |
-| `author_type` | 作者 | `human`/`ai`/`system` |
+| `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
 这些字段经 `BlockOut`（Batch A）全部暴露给前端。
 
@@ -52,7 +52,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 1.4 项目 = git 仓库
 
-每个项目在 `workspace_root/<project_id>/` 有一个独立 git 仓库（`backend/app/domain/workspace/service.py`），
+每个项目在 `workspace_root/<project_id>/` 有一个独立 git 仓库（`backend/app/domain/repository/service.py`），
 默认分支 `main`。每话题 = 一个 git worktree = 一个 git 分支（工作区就检出在那条分支上）；
 产出（代码/报告/数据）= 文件，由干活的分身自己 commit 成提交。详见 §3.10。
 
@@ -69,7 +69,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
 | 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 成员(私聊从名册进)；右缘可拖拽调宽 |
-| 项目总览 | `views/OverviewView.vue` | 一页纸总结 + 等你处理的事 + 里程碑 + 话题分布 + 人/AI 贡献 + 成员 |
+| 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
+| 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Office 文档比的是正文（`domain/documents/text.py`），其余按字节 |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
 | 个人主页 | `views/MemberView.vue` | 封面+头像+技能+芝士眼中的TA+参与项目；本项目中：发起/在忙/本周贡献 |
@@ -103,9 +104,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
-- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写主人个人记忆。
-- **记忆注入**：每轮把项目记忆（私聊则个人记忆）+ 实况文档拼进 system prompt。🟡 会话收尾**自动提取**记忆未做；项目话题里加载**成员个人记忆**未做。
-- **巡检（本体心跳）**：`POST /api/projects/{id}/heartbeat` / 定时 `scheduler`（§3.8）。走根话题串行锁、注入今天日期 + 里程碑剩余天数（Batch E）。🟡 巡检暂未注入各话题文档/项目记忆、逾期里程碑未入视野（剩余 backlog）。
+- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写这位芝士**对主人的看法**（池键 `<项目>:<agent handle>:<人>`，属于这个项目里的这个实例，不跨项目）。
+- **记忆注入**：每轮把这位芝士在这个项目里的池 + 它对在场每个人的池 + 实况文档拼进 system prompt（池清单见 `memory/pools.py::pools_for_turn`）。读哪几个池只看这一轮谁在场，不看房间是什么类型——私聊不是特例。🟡 会话收尾**自动提取**记忆未做。
+- **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
 
@@ -118,7 +119,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 实现：`TopicService.upgrade_block_to_place / dispatch_task / return_conclusion`、
 `app/domain/topic/relay.py`（留话；为什么不能用 `/comments` 见该模块 docstring）。
-升级出一条活时叫醒的是**房间**（起分身、`cheese bind`、给活起名字），不是那条活——
+升级出一条活时叫醒的是**房间**（起分身、把这条活的线程标识写进它的 prompt、给活起名字），不是那条活——
 活没有自己的会话，朝它开一轮就是给它起一整个容器。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
@@ -130,35 +131,34 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.5 验收 / 采纳（状态机）  ✅
 
-- **行为**：成果做完 → 把**验收卡递给一个具体的人**（非广播）→ 对方在"成果待采纳"框点**采纳并归档**（话题归档=PR Merged）或**退回**；可**改验收人**；采纳后可**撤回**（话题回 active）。
+- **行为**：成果做完 → 把**验收卡递给一个具体的人**（非广播）→ 对方在"成果待采纳"框点**采纳并归档**（话题归档=PR Merged）或**退回**；可**改验收人**；采纳后可**撤回**（话题回 active）。卡面在按钮上方写明这次交付定的是什么：哪一项产物的第几版（版号由后端按卡的状态算，还没采纳的那一张算的是它采纳之后的号），以及交出去的那一份——文件当场下载得到（快照在递卡那一刻就落好，所以不必等采纳），地址当场打开，交出去的是一次合并时没有可拿的东西。
 - **铁律**：协作模式下 AI 不能验收自己的活（必须人来）；同话题**只允许一张待处理卡**；归档话题不能重复采纳；撤销需身份（原采纳人/owner/组长）；空 `required_topic` 协议条件不再误判全员须导师验收。
 - **采纳 = git merge**：采纳时把话题分支合并回 base（best-effort，冲突不阻断归档）。
 - **实现**：`AcceptService`（`backend/app/domain/review/services.py`）；接口 `POST /api/topics/{id}/accept-card`、`/api/accept-cards/{id}/{accept|reject|reassign|revoke}`；前端 `WorkspaceView` 合并框。
 - 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`。（「采纳直接合 main 未走父分支」那条已经不成立：一件活的结论被采信时，提交折进它所在房间的分支，见 `conclusion/services.py::fold_into_room`。）
 
-### 3.6 记忆（项目 / 个人）  ✅ 基础 / 🟡
+### 3.6 记忆（项目 / 关于某个人）  ✅
 
-- **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 个人记忆（跨项目，记录"芝士眼中的 TA"）。私聊里 `remember` 写个人记忆。
-- **实现**：`MemoryEntry`（scope=project/user）、`DbMemoryStore`（`backend/app/domain/memory/`）。当前是 DB 全量加载（spec 的 OpenViking 分层加载为后续）。
-- 🟡 剩余：会话收尾自动提取、项目话题里给个人记忆、L0/L1/L2 分层。
+- **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 关于某个人的记忆（"这位芝士眼中的 TA"，属于某个项目里的某位芝士，不跨项目）。私聊里 `remember` 写的就是这一份；在场的人各读一份，任何房间都读得到。
+- **实现**：`MemoryEntry`（scope=project/user/agent_project）、`DbMemoryStore`（`backend/app/domain/memory/`）；`user` 池的 scope_id 由 `memory/models.py::user_scope_id` 拼，跨项目读不到靠的就是别的项目的键在这里拼不出来。
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
-- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）对所有人可见。
-- **决策请求拍板**：`decision_request` 带选项，铃铛里渲染成**一键选项按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。
+- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行 —— 说了房间就是房间的名册，没说房间就是项目名册加项目主人，agent 不在里面；展开成零行（名册上只剩 agent）直接报错，不静默丢掉。
+- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
-- **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
-- **实现**：`NotificationService`（`backend/app/domain/notification/`）；接口 `GET /api/projects/{id}/notifications`、`/inbox`、`POST /api/notifications/{id}/{read|feedback|resolve}`。前端 `App.vue` 铃铛。
+- **分级限流**：今天没有分级限流在起作用，没有通知因为超额被丢掉。反馈提案卡有自己的配额（`settings.feedback_proposals_per_topic_per_day`）。
+- **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。
 
-### 3.8 里程碑 / 日历 / 调度  ✅ / 🟡
+### 3.8 里程碑 / 日历  ✅ / 🟡
 
 - **行为**：芝士 `cheese milestone` 钉关键节点 → 排进日历、冒泡到机构看板；**逾期里程碑自动转 `missed`**（读时惰性，`MilestoneRepository.mark_overdue`），日历/下个里程碑只显未来项。
-- **调度**：`scheduler`（`backend/app/domain/scheduler/`）定时 `tick` → 各项目 `run_heartbeat`。`projects.last_heartbeat_at` 列已加（迁移批，用于"每项目每天一次"，🟡 tick 逻辑待接）。
-- **实现**：`MilestoneRepository`、接口 `GET /api/projects/{id}/milestones`、`/calendar`、`POST /api/scheduler/tick`、`/api/projects/{id}/heartbeat`。
+- **调度**：没有调度部件（结论 16）。总览房间里的芝士自己决定什么时候看；平台这边留下的只有定时任务那张清单（`backend/app/core/background.py`）。
+- **实现**：`MilestoneRepository`、接口 `GET /api/projects/{id}/milestones`、`/calendar`。
 
 ### 3.9 仪表盘（总览 / 看板 / 个人主页）  ✅ / 🟡
 
-- **项目总览**（`DashboardService.project_overview`）：一页纸总结（`POST /api/projects/{id}/summary` 由芝士生成）、等你处理的事、里程碑、话题×状态、人/AI 贡献、成员。🟡「风险」板块未做。
+- **项目首页**（`views/workspace/RunningWorkView.vue`）：等你决定（项目收件箱，摆成一叠，一次一条）+ 四列看板——施工中 / 交付中 / 待处理按「该谁动」分列，最右边一列是做出了什么（产物清单，已发布的 Site 钉在它最上面）。🟡 人/AI 贡献统计没有落点。
 - **机构看板**（`/spaces/{id}/dashboard`）：每个团队一行 + **最近活动时间**、人/AI 比例；**停滞按时间判定**（>7 天无活动）。
 - **个人主页**（`/users/{handle}/profile`）：跨项目简历。**贡献只算本人 human 块**（排除 system 生命周期块）、发起话题数排除私聊（Batch D）。
 - **成员页**（`/projects/{id}/members/{handle}/summary`）：发起的话题 + **在忙的话题** + **本周贡献**（Batch D）。
@@ -166,7 +166,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.10 Git 工作区 + 沙箱执行  ✅
 
 - **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行）。改动由**芝士自己** `git commit` + `git push` 成版本历史——平台不写任何人的工作树，没提交的东西不在分支上、也进不了 PR。**话题=分支=git worktree=tmux 会话**（容器按**房间**分配，母话题和它派出的 task 共用一个），并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
-- **VCS = git**：每个项目一个主仓，每话题一个 `git worktree`，检出在这棵树自己的分支上。分身在容器里那次 `git commit` 直接就把分支往前挪了——没有导出、没有代推、也没有一步会失败的中转；平台只读分支（采纳/diff/PR）。`backend/app/domain/workspace/service.py`。
+- **VCS = git**：每个项目一个主仓，每话题一个 `git worktree`，检出在这棵树自己的分支上。分身在容器里那次 `git commit` 直接就把分支往前挪了——没有导出、没有代推、也没有一步会失败的中转；平台只读分支（采纳/diff/PR）。`backend/app/domain/repository/service.py`。
 - **沙箱执行**：每**房间**一个常驻 Docker 容器（§3.2），`--memory/--cpus/--pids-limit` 是一份**房间**预算（`SANDBOX_MEMORY_GB`/`SANDBOX_CPUS`/`SANDBOX_PIDS_LIMIT`）；房间里每个话题占一个 tmux 会话，各自的话题 id、回调令牌、`CLAUDE_CONFIG_DIR`、工作目录、预览端口都写在会话环境里（`tmux new-session -e`），互不串。agent 的原生 Bash 在容器里跑，碰不到宿主机。`exec_in_sandbox` 另提供 `--network none` 的一次性执行（强隔离场景）。
 - **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，可就地小改。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
 - **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
@@ -177,6 +177,18 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **实现**：`backend/app/domain/{space,task,project}/`；接口 `POST/DELETE /api/projects/{id}/tasks/{task_id?}`、`/api/spaces/{id}/templates`、`/api/templates/{id}/tasks`。协议强制在 `AcceptService._enforce_protocol`。
 - 🟡 资源包（`resource_pack`）只存不发放；多 reviewer 协议、必做话题自动创建未做。
 
+### 3.12 反馈（Feedback）  ✅ 主干 / 🟡 附件
+
+- **行为**：平台自带反馈系统，人和芝士都走同一条链路。
+  - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 我的 / 待处理…），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
+  - **芝士主动提**：芝士在话题里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese feedback propose`）。卡上最显眼的是**「你当时说的」**（引用用户原话，或明说「用户没有就这个问题说过话」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每话题每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
+  - **可见性**：`public` / `private`。私密条目只有提交者本人、平台管理员、以及「提出它时在那个房间里、且今天还读得到那个房间」的人看得到（结论 47 的三档；房间来源只有发送提案卡那条路留得下，`topic_id` 不是请求体字段），列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
+  - **互动**：评论（可删自己的）、支持（一人一次，可取消）。
+  - **管理端**（`/admin/feedback`）：改状态 / 优先级、指派负责人、标安全（`security` 是 `private` 之下的**读时收窄**——公开条目一旦标上，读路径也按私密鉴权）、加备注（只增不改）。管理端**没有**「转为公开」按钮：可见性由提交者定，管理员不能替他把私密的东西亮出来。
+  - **默认筛选**：已解决的 **bug** 沉底不展示，其他类型的已解决项照常显示。
+- **实现**：`backend/app/domain/feedback/`（`models.py` / `repositories.py` / `services.py` / `schemas.py` / `proposals.py`）；路由 `api/routes/feedback.py`（`/api/feedback`）、`admin_feedback.py`（`/api/admin/feedback`）、`admin_members.py`（`/api/admin/admins`，成员管理）、`feedback_proposals.py`（`/api/topics/{id}/feedback-proposals`）；平台管理员那一域在 `backend/app/domain/admin/`。**提案卡就是一条 `kind=message` 的 `Block`**（`meta.feedback_proposal`），不另开表；「采纳」在该块上落锁并建反馈，作者从卡上取、提交者取调用者。前端 `views/feedback/`（中心 / 详情 / 管理端 / 设计图）、`components/feedback/`、`stores/feedback.ts`、`api.ts`；对话流里那张卡是 `components/feedback/AgentFeedbackCard.vue`（`TopicChatColumn` 挂载）。
+- 🟡 附件上传未接：表单里按钮是灰的并写明原因（等后端字段）。🟡 管理端指派是自由输入 handle（平台级页面拿不到项目成员名册）。
+
 ---
 
 ## 4. 技术架构
@@ -184,7 +196,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **分层**：Route → Service → Repository → Model（`backend/app/api/routes/` → `domain/**/services.py` → `repositories.py` → `models.py`）。路由自动发现。
 - **后端**：Python 3.13、FastAPI、SQLAlchemy 2.0 async（asyncpg）、PostgreSQL、Alembic 迁移、Pydantic v2。响应封套 `{code,message,data}`，错误用 `app.core.errors`。
 - **前端**：Vue 3 + TS + Vite + Vuetify 4 + vue-router + TipTap（实况文档）+ marked/DOMPurify。
-- **AI**：`claude-agent-sdk` → `claude` CLI（经 `cli_path` shim 进**每话题 Docker 沙箱**）→ GLM（`ANTHROPIC_BASE_URL`/`AUTH_TOKEN`/`AGENT_MODEL` 在 `backend/.env`，`AGENT_SANDBOX_ENABLED`/`SANDBOX_*` 控沙箱）。平台动作走容器里的 `cheese` CLI（Claude Code Skill）+ token 鉴权；无 MCP。
+- **AI**：芝士是跑在中心会话机上的 Claude Code 进程（`harness/claude_code/`），文件与命令通过执行器落在房间的机器上；模型请求经平台的计量代理（订阅）或网关（API-key 供应商）出去；平台动作走 `cheese` CLI + token 鉴权。
 - **VCS**：git。每个项目一个主仓，话题用 git worktree 检出在自己的分支上；提交由分身自己做，平台只读分支（采纳/diff 走 git）。
 - **测试**：`backend/tests/`（unit/integration/contract），内存 SQLite + StubAgent，行为测试。当前 **121 passed**，ruff/pyright/vue-tsc 全绿。真模型 smoke 脚本 `backend/scripts/smoke_*.py`，真实全流程 `scripts/sim_real.py`。
 
@@ -192,9 +204,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ## 5. 实现现状总览
 
-- ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)。
+- ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)、反馈（中心/详情/我的反馈/管理端 + 芝士提案卡 + 指纹去重与每日配额）。
 - ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
-- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取/个人记忆入项目话题、总览风险板块、改文档对话事件、资源包发放。
+- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
 
 > 剩余项的精确清单见 spec-align 复审 backlog（`tmp_review/backlog2.md`，工作区临时文件）。开发/测试/UI 迭代流程见 `docs/workflows.md`。
@@ -206,18 +218,20 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ```
 项目   POST /api/projects · GET /api/projects[/{id}] · GET /{id}/{overview,decisions,private-chat,contributions,summary,usage}
 话题   POST /api/topics · GET /api/topics?project_id= · GET /{id}[/blocks|transcript|children|doc|docs|usage]
-       PUT /{id}/doc · POST /{id}/split · POST /{id}/tasks/{task}/{bind,conclude,title} · POST /api/blocks/{id}/upgrade
+       PUT /{id}/doc · POST /{id}/split · POST /{id}/tasks/{task}/{conclude,title} · POST /api/blocks/{id}/upgrade
 对话   WS  /api/topics/{id}/chat?token=<会话 token>（必带；连接即认人，消息里的 author 不作数）
 验收   POST /api/topics/{id}/accept-card · GET 同路径 · POST /api/accept-cards/{id}/{accept,reject,reassign,revoke}
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
        POST /api/notifications/{id}/{read,feedback,resolve}
 里程碑 GET/POST /api/projects/{id}/milestones · GET /{id}/calendar · PUT/DELETE /api/milestones/{id}
-成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · GET .../{handle}/summary
+成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · DELETE .../membership（自己退出） · GET .../{handle}/summary
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]
 工作区 GET /api/projects/{id}/{files,file,git/log,git/diff} · POST /{id}/{activities,heartbeat,summary}
 个人   GET /api/users/{handle}/profile · GET/PUT /api/users/{handle}
-调度   POST /api/scheduler/tick
+反馈   GET/POST /api/feedback · GET /api/feedback/{meta,counts,mine,{id},{id}/comments} · POST /api/feedback/{read,{id}/comments,{id}/supports}
+       管理端 GET/PATCH /api/admin/feedback[/{id}] · POST /api/admin/feedback/{id}/{status,notes}
+       提案 GET/POST /api/topics/{id}/feedback-proposals · POST .../{block_id}/{accept,dismiss}
 ```
 
 （路径前缀以各 router 为准；部分 router 用空前缀并写全路径，见 `backend/app/api/routes/`。）

@@ -57,9 +57,16 @@ def main():
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         source = (HERE / "nginx.conf").read_text()
+        # Distribution builds may default to a root-owned absolute access log.
+        temporary_paths = "\n".join(
+            f"  {kind}_temp_path {root}/{kind};"
+            for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
+        )
+        source = source.replace("http {", f"http {{\n  access_log off;\n{temporary_paths}")
         source = source.replace("/etc/nginx/active", str(active))
         source = source.replace("listen 8081;", f"listen 127.0.0.1:{port};")
         source = source.replace("127.0.0.1:8091", f"127.0.0.1:{terminator.server_port}")
+        source = source.replace("127.0.0.1:18085", f"127.0.0.1:{backend.server_port}")
         config = root / "nginx.conf"
         config.write_text(f"pid {root}/nginx.pid;\nerror_log stderr;\n" + source)
         (root / "logs").mkdir()
@@ -73,7 +80,7 @@ def main():
                     generated.write_text(generated.read_text().replace(
                         "listen 8081;", f"listen 127.0.0.1:{port};"
                     ))
-                command = [nginx, "-p", str(root) + "/", "-c", str(config)]
+                command = [nginx, "-e", "stderr", "-p", str(root) + "/", "-c", str(config)]
                 subprocess.run([*command, "-t"], check=True)
                 process = subprocess.Popen([*command, "-g", "daemon off;"])
                 try:

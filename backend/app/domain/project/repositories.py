@@ -10,6 +10,7 @@ from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
     AiMode,
     Project,
+    ProjectForge,
     ProjectGitInstallation,
     ProjectMember,
 )
@@ -113,22 +114,18 @@ class ProjectRepository:
         project.settings = settings
         await self._session.flush()
 
-    async def list_members(self, project_id: uuid.UUID) -> list[dict]:
-        """Project roster: each member's handle, display name, avatar and role —
-        used to inject 芝士's teammate context, to resolve @mentions to a handle,
-        and to render a member's real avatar in the chat panel.
+    async def people(self, project_id: uuid.UUID) -> list[dict]:
+        """名册上**人**的那一半：每个人的 handle、昵称、头像和角色。
 
-        Everyone the project contains, from all three of the places membership
-        is recorded — the member rows, the owning team, and ``owner_handle`` —
-        because every reader above asks "who is in this project", and the person
-        who created it is the surest answer to that question. The owner is NOT a
-        member row on purpose (``ProjectService._seed_roster`` explains why), so
-        without the row this function synthesizes, the owner of a project whose
-        member table is empty appears in no roster at all: their own messages
-        render as a bare handle with no avatar, an @ aimed at them resolves to
-        nobody and notifies nobody, and 芝士 is handed a teammate list that
-        omits the one person it is talking to. This is a read-side projection —
-        it puts nothing new in the table.
+        「这个项目里有谁」不在这里回答，在 ``membership/roster.py`` 的 ``roster()``
+        ——这里只是它的两个来源之一，另一个是这个项目的队友。名字从 ``list_members``
+        改成 ``people``，正是为了让「拿它当整张名册」在调用点就读得出不对。
+
+        人这一半自己也有三个记录处 —— 成员行、所属小队、``owner_handle`` —— 三个都
+        要读：所有者**故意**不写成员行（``ProjectService._seed_roster`` 说明了原因），
+        所以少了这里补出来的那一行，一个成员表为空的项目里，它的所有者谁也看不见：
+        他自己说的话渲染成一串裸 handle、没有头像，@ 他解析不到人、也通知不到谁。
+        这是读出来的投影，不往表里放任何东西。
         """
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
@@ -269,6 +266,50 @@ class ProjectRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_space(self, space_id: int) -> list[Project]:
+        """Every project anchored on a 赛题 published under this Space.
+
+        ``list_ids_for_space_tasks`` next door is the id-only twin (机构看板).
+        A course needs the rows themselves — who each one belongs to and which
+        team it is — so this is the same join returning the projects.
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                )
+            )
+            .order_by(Project.created_at.asc(), Project.id.asc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_space_and_owner(
+        self, *, space_id: int, owner_handle: str
+    ) -> list[Project]:
+        """One person's projects created from 赛题 published under this Space.
+
+        This is the course link's own question — 「他在这门课里已经有项目了吗」.
+        Asking it by anchor 赛题 would answer it wrong: the anchor is whichever 题
+        the course hangs its projects on, and that can move as the course grows.
+        Asking by Space keeps 一学期一个项目 true across that move.
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                ),
+                Project.owner_handle == owner_handle,
+            )
+            .order_by(Project.created_at.asc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_external_task(self, task_id: int) -> list[Project]:
         """Every project created from this 赛题 — the way back the link exists for."""
         result = await self._session.execute(
@@ -361,6 +402,19 @@ class ProjectGitInstallationRepository:
             )
 
         existing = await self.get_by_project(project_id)
+        forge = await self._session.scalar(
+            select(ProjectForge).where(ProjectForge.project_id == project_id)
+        )
+        if forge is None:
+            forge = ProjectForge(project_id=project_id)
+            self._session.add(forge)
+        elif forge.kind == "forgejo":
+            raise ConflictError("这个项目已有代码仓库；跨托管服务迁移尚未开放")
+        forge.kind = "github_app"
+        forge.repo = repo
+        forge.url = f"https://github.com/{repo}.git"
+        forge.api_url = "https://api.github.com"
+        forge.default_branch = ""  # Resolved from the provider, never assumed main.
         if existing is not None:
             existing.installation_id = installation_id
             existing.repo = repo

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -24,6 +25,20 @@ class _S3Connections:
 
 
 _s3_connections: _S3Connections | None = None
+
+
+def _retry_incomplete_s3_upload(response, attempts: int, **_) -> float | None:
+    # S3 can reject a truncated upload with HTTP 400, outside SDK default retries.
+    if (
+        response is not None
+        and response[1].get("Error", {}).get("Code") == "IncompleteBody"
+        and attempts < 3
+    ):
+        logging.getLogger(__name__).warning(
+            "Retrying incomplete S3 upload after attempt %s", attempts
+        )
+        return float(attempts)
+    return None
 
 
 @asynccontextmanager
@@ -154,17 +169,30 @@ class S3StorageBackend(StorageBackend):
     @asynccontextmanager
     async def _get_client(self):  # type: ignore[override]
         import aioboto3
+        from aiobotocore.config import AioConfig
 
         kwargs = dict(
             endpoint_url=self._endpoint_url,
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
             region_name=self._region,
+            # Leave time to retry a stalled socket within the 60s transcript deadline.
+            config=AioConfig(
+                connect_timeout=5,
+                read_timeout=15,
+                retries={"mode": "standard", "total_max_attempts": 3},
+            ),
         )
 
         def new_client() -> Any:
             # aioboto3 inherits boto3's synchronous client typing.
             session: Any = aioboto3.Session()
+            session.events.register(
+                "needs-retry.s3.UploadPart", _retry_incomplete_s3_upload
+            )
+            session.events.register(
+                "needs-retry.s3.PutObject", _retry_incomplete_s3_upload
+            )
             return session.client("s3", **kwargs)
 
         pool = _s3_connections

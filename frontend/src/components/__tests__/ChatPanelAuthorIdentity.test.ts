@@ -22,6 +22,10 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
+    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/ws',
@@ -57,7 +61,7 @@ function message(roomId: string, author: string) {
     id: 'b1',
     topic_id: roomId,
     kind: 'message',
-    author_type: 'human' as const,
+    author_type: 'participant' as const,
     author,
     content: '这条谁发的？',
     created_at: '2026-08-15T09:00:00Z',

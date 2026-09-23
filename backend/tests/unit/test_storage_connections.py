@@ -2,10 +2,13 @@
 
 import asyncio
 import io
+import time
+from collections import Counter
 from contextlib import asynccontextmanager
 
 import pytest
 from aiohttp import web
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.core.storage import S3StorageBackend, reuse_s3_connections
@@ -123,3 +126,147 @@ async def test_concurrent_uploads_and_failure_leave_client_usable(monkeypatch):
             assert not await client.exists("absent")
             assert await client.download("3") == b"3"
             assert len(peers) <= 4
+
+
+@pytest.mark.parametrize(
+    ("error", "failures", "expected_attempts"),
+    [("IncompleteBody", 1, 2), ("IncompleteBody", 99, 3), ("AccessDenied", 99, 1)],
+)
+async def test_small_upload_retries_incomplete_body_without_changing_bytes(
+    error, failures, expected_attempts
+):
+    content = b"transcript chunk\x00" * 100
+    bodies = []
+
+    async def handle(request):
+        bodies.append(await request.read())
+        if len(bodies) <= failures:
+            return web.Response(
+                status=400,
+                text=f"<Error><Code>{error}</Code></Error>",
+                content_type="application/xml",
+            )
+        return web.Response(headers={"ETag": '"stored"'})
+
+    app = web.Application()
+    app.router.add_put("/{path:.*}", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"
+    try:
+        if failures == 1:
+            await backend(endpoint).upload(io.BytesIO(content), "chunk", "text/plain")
+        else:
+            with pytest.raises(ClientError) as failure:
+                await backend(endpoint).upload(
+                    io.BytesIO(content), "chunk", "text/plain"
+                )
+            assert failure.value.response["Error"]["Code"] == error
+        assert bodies == [content] * expected_attempts
+    finally:
+        await runner.cleanup()
+
+
+async def test_stalled_upload_retries_before_transcript_deadline():
+    content = b"transcript chunk"
+    bodies = []
+
+    async def handle(request):
+        bodies.append(await request.read())
+        if len(bodies) == 1:
+            await asyncio.sleep(17)
+        return web.Response(headers={"ETag": '"stored"'})
+
+    app = web.Application()
+    app.router.add_put("/{path:.*}", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(60):
+            await backend(endpoint).upload(io.BytesIO(content), "chunk", "text/plain")
+        assert bodies == [content, content]
+        assert time.monotonic() - started < 60
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("error", "failures", "expected_attempts"),
+    [("IncompleteBody", 1, 2), ("IncompleteBody", 99, 3), ("AccessDenied", 99, 1)],
+)
+async def test_multipart_upload_retries_incomplete_parts_only(
+    error, failures, expected_attempts
+):
+    content = b"task recovery bytes\x00" * 500_000
+    attempts = Counter()
+    parts = {}
+    completed = None
+    aborted = False
+
+    async def handle(request):
+        nonlocal completed, aborted
+        if request.method == "POST" and "uploads" in request.query:
+            return web.Response(
+                text="<InitiateMultipartUploadResult><UploadId>test-upload</UploadId>"
+                "</InitiateMultipartUploadResult>",
+                content_type="application/xml",
+            )
+        if request.method == "PUT":
+            number = int(request.query["partNumber"])
+            body = await request.read()
+            attempts[number] += 1
+            if number == 1 and attempts[number] <= failures:
+                return web.Response(
+                    status=400,
+                    text=(
+                        f"<Error><Code>{error}</Code>"
+                        "<Message>Upload failed</Message></Error>"
+                    ),
+                    content_type="application/xml",
+                )
+            parts[number] = body
+            return web.Response(headers={"ETag": f'"part-{number}"'})
+        if request.method == "POST":
+            completed = b"".join(parts[number] for number in sorted(parts))
+            return web.Response(
+                text='<CompleteMultipartUploadResult><ETag>"complete"</ETag>'
+                "</CompleteMultipartUploadResult>",
+                content_type="application/xml",
+            )
+        if request.method == "DELETE":
+            aborted = True
+            return web.Response(status=204)
+        raise AssertionError(request.method)
+
+    app = web.Application(client_max_size=16 * 1024 * 1024)
+    app.router.add_route("*", "/{path:.*}", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"
+    try:
+        if failures == 1:
+            await backend(endpoint).upload(
+                io.BytesIO(content), "bundle", "application/x-git-bundle"
+            )
+            assert completed == content
+            assert not aborted
+            assert attempts[2] == 1
+        else:
+            with pytest.raises(ClientError) as failure:
+                await backend(endpoint).upload(
+                    io.BytesIO(content), "bundle", "application/x-git-bundle"
+                )
+            assert failure.value.response["Error"]["Code"] == error
+            assert completed is None
+            assert aborted
+        assert attempts[1] == expected_attempts
+    finally:
+        await runner.cleanup()

@@ -12,7 +12,9 @@ harness. What a harness puts IN the holes is that harness's own test.
 import json
 import os
 import re
+import signal
 import subprocess
+import sys
 import time
 
 import pytest
@@ -60,28 +62,46 @@ def _harness(tmp_path, script: str) -> str:
     return f'AGENT="{agent}"\n'
 
 
-def _run(tmp_path, env, **holes):
+def _run(tmp_path, env, *, timeout=30, **holes):
     """Write the launcher to a file and run it, the way a device does."""
     launcher = tmp_path / "launch.sh"
     launcher.write_text(machine_launcher.launch_script(**holes))
     return subprocess.run(
-        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
+        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=timeout
     )
 
 
 def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path):
     home, work, env = _machine(tmp_path)
     proof = tmp_path / "agent.ran"
+    store_env = tmp_path / "store.env"
+    store = tmp_path / "project-store"
+    env["CHEESE_STORE"] = str(store)
     result = _run(
         tmp_path,
         env,
-        prepare=_harness(tmp_path, f'pwd > "{proof}"\n'),
+        prepare=_harness(
+            tmp_path,
+            f'pwd > "{proof}"\n'
+            + "".join(
+                f'printf "%s=%s\\n" {name} "${name}" >> "{store_env}"\n'
+                for name in _STORE_VARS
+            ),
+        ),
         command="$AGENT",
     )
 
     assert result.returncode == 0, result.stderr
     # The agent ran, in the session's workdir.
     assert proof.read_text().strip() == str(work.resolve())
+    seen_store = dict(line.split("=", 1) for line in store_env.read_text().splitlines())
+    assert seen_store == {
+        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
+        "npm_config_store_dir": str(store / "pnpm-store"),
+        "npm_config_cache": str(store / "npm-cache"),
+        "PIP_CACHE_DIR": str(store / "pip-cache"),
+    }
     # And the platform put its own half on the machine around it.
     for name in ("cheese", "cheese-hook", "cheese-drain", "cheese-environment.py"):
         assert (home / ".cheese" / name).is_file(), name
@@ -121,6 +141,53 @@ def test_the_agents_exit_status_is_the_launchers(tmp_path):
         command="$AGENT",
     )
     assert result.returncode == 17, result.stderr
+
+
+def test_a_slow_drainer_cannot_delay_the_agents_exit(tmp_path):
+    _home, _work, env = _machine(tmp_path)
+    drain = tmp_path / "drain.pid"
+    prepare = (
+        _harness(
+            tmp_path,
+            f'i=0\nwhile [ ! -s "{drain}" ] && [ "$i" -lt 100 ]; do '
+            "sleep 0.01; i=$((i + 1)); done\n"
+            f'[ -s "{drain}" ] || exit 99\nexit 17\n',
+        )
+        + f"""cat > "$HOME/.cheese/cheese-drain" <<'SH'
+trap '' TERM
+printf '%s' "$$" > "{drain}"
+while kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null; do sleep 0.05; done
+SH
+"""
+    )
+
+    drain_pid = None
+    drain_gone = False
+    try:
+        result = _run(tmp_path, env, prepare=prepare, command="$AGENT", timeout=2)
+
+        assert result.returncode == 17, result.stderr
+        drain_pid = int(drain.read_text())
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(drain_pid, 0)
+            except ProcessLookupError:
+                drain_gone = True
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("the tethered drainer outlived its launcher")
+    finally:
+        if drain_pid is None and drain.exists():
+            drain_pid = int(drain.read_text())
+        if drain_pid is not None and not drain_gone:
+            try:
+                os.kill(drain_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                os.kill(drain_pid, signal.SIGKILL)
 
 
 def test_the_environment_runner_wraps_whichever_harness_was_asked_for(tmp_path):
@@ -242,7 +309,6 @@ def _place(**overrides) -> MachinePlace:
             "project_id": "P",
             "topic_id": "T",
             "agent_handle": "ops",
-            "git_remote": "https://cheese.example/api/projects/P/git",
             **overrides,
         }
     )
@@ -593,16 +659,22 @@ _STORE_VARS = (
 )
 
 
-def _installer_env(tmp_path, env, dump):
-    """Run one launch whose "agent" reports the environment an install sees."""
-    result = _run(
-        tmp_path,
-        env,
-        prepare=_harness(
-            tmp_path,
-            "".join(f'printf "%s=%s\\n" {v} "${v}" >> "{dump}"\n' for v in _STORE_VARS),
-        ),
-        command="$AGENT",
+def _installer_env(env, dump):
+    """Run the generated synchronous project-store setup and report its environment."""
+    launcher = machine_launcher.launch_script(command=":")
+    start = launcher.index('CS="${CHEESE_STORE:-}"')
+    end = launcher.index("\nfi\n", start) + len("\nfi\n")
+    probe = "".join(
+        f'printf "%s=%s\\n" {name} "${name}" >> "{dump}"\n' for name in _STORE_VARS
+    )
+    # Exercise the synchronous store contract without starting unrelated
+    # drainer and detached maintenance processes.
+    result = subprocess.run(
+        ["sh", "-c", f'REAL_HOME="$HOME"\n{launcher[start:end]}{probe}'],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stderr
     seen = dict(
@@ -628,8 +700,8 @@ def test_two_rooms_of_one_project_install_into_one_store(tmp_path):
     _machine_home, home_a, env_a = _room(tmp_path, "proj", "room-a")
     _machine_home, home_b, env_b = _room(tmp_path, "proj", "room-b")
 
-    seen_a = _installer_env(tmp_path, env_a, tmp_path / "a.env")
-    seen_b = _installer_env(tmp_path, env_b, tmp_path / "b.env")
+    seen_a = _installer_env(env_a, tmp_path / "a.env")
+    seen_b = _installer_env(env_b, tmp_path / "b.env")
 
     assert set(seen_a) == set(_STORE_VARS)
     assert seen_a == seen_b
@@ -645,8 +717,8 @@ def test_another_project_on_the_same_machine_gets_its_own_store(tmp_path):
     _m, _home, env_ours = _room(tmp_path, "ours", "room")
     _m, _home, env_theirs = _room(tmp_path, "theirs", "room")
 
-    seen_ours = _installer_env(tmp_path, env_ours, tmp_path / "ours.env")
-    seen_theirs = _installer_env(tmp_path, env_theirs, tmp_path / "theirs.env")
+    seen_ours = _installer_env(env_ours, tmp_path / "ours.env")
+    seen_theirs = _installer_env(env_theirs, tmp_path / "theirs.env")
 
     assert set(seen_ours) == set(seen_theirs) == set(_STORE_VARS)
     for name in _STORE_VARS:
@@ -661,7 +733,7 @@ def test_the_store_lands_on_the_machine_home_the_placeholder_names(tmp_path):
     machine_home, room_home, env = _room(tmp_path, "proj", "room")
     assert env["CHEESE_STORE"].startswith("$HOME/")
 
-    seen = _installer_env(tmp_path, env, tmp_path / "s.env")
+    seen = _installer_env(env, tmp_path / "s.env")
 
     assert seen["UV_CACHE_DIR"] == f"{machine_home}/.cheese/store/proj/uv-cache"
     assert not seen["UV_CACHE_DIR"].startswith(str(room_home))
@@ -674,7 +746,7 @@ def test_a_screen_with_no_store_leaves_every_tool_on_its_own_default(tmp_path):
     would be worse than not pointing it anywhere."""
     _m, _home, env = _room(tmp_path, "proj", "room", store=None)
 
-    seen = _installer_env(tmp_path, env, tmp_path / "n.env")
+    seen = _installer_env(env, tmp_path / "n.env")
 
     assert seen == {}
 
@@ -700,7 +772,11 @@ def test_a_store_that_cannot_be_created_does_not_fail_the_launch(tmp_path):
 
 
 # The room-local copies the tools used to keep, and the one that must survive.
-_DEAD_CACHES = (".cache/uv/w", ".cache/pip/w", ".npm/_cacache/w")
+_DEAD_CACHES = (
+    ("Library/Caches/uv/w", "Library/Caches/pip/w", ".npm/_cacache/w")
+    if sys.platform == "darwin"
+    else (".cache/uv/w", ".cache/pip/w", ".npm/_cacache/w")
+)
 _LIVE_INTERPRETER = ".local/share/uv/python/cpython-3.13/bin/python"
 
 

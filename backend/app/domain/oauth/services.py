@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,11 +7,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 logger = logging.getLogger(__name__)
@@ -132,20 +132,28 @@ class GitHubProvider(OAuthProvider):
             resp.raise_for_status()
             data = resp.json()
 
-            email = data.get("email")
-            if not email:
-                email_resp = await client.get(
-                    "https://api.github.com/user/emails",
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/vnd.github+json",
-                    },
+            # `/user`'s `email` is the public profile email, which GitHub does
+            # not require to be verified. Only a verified primary address from
+            # `/user/emails` is adopted; anything else counts as no email.
+            email = None
+            email_resp = await client.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            if email_resp.status_code == 200:
+                primary = next(
+                    (
+                        e
+                        for e in email_resp.json()
+                        if e.get("primary") and e.get("verified") is True
+                    ),
+                    None,
                 )
-                if email_resp.status_code == 200:
-                    emails = email_resp.json()
-                    primary = next((e for e in emails if e.get("primary")), None)
-                    if primary:
-                        email = primary.get("email")
+                if primary:
+                    email = primary.get("email")
 
             return OAuthUserInfo(
                 id=str(data["id"]),
@@ -194,13 +202,13 @@ class GoogleProvider(OAuthProvider):
             resp.raise_for_status()
             data = resp.json()
 
+            # An address Google has not verified counts as no email.
+            email = data.get("email") if data.get("verified_email") is True else None
             return OAuthUserInfo(
                 id=data["id"],
-                email=data.get("email"),
+                email=email,
                 name=data.get("name"),
-                username=data.get("email", "").split("@")[0]
-                if data.get("email")
-                else None,
+                username=email.split("@")[0] if email else None,
             )
 
 
@@ -246,6 +254,9 @@ class RUCProvider(OAuthProvider):
             primary = next((p for p in profiles if p.get("isprimary") is True), {})
             student_no = primary.get("stno") or profile.get("name")
 
+            # No verification flag to check: the account and its profile are
+            # issued by the university's identity system rather than entered
+            # by the user at sign-up, so the email is the institution's record.
             return OAuthUserInfo(
                 id=str(uid),
                 email=profile.get("email") or None,
@@ -272,11 +283,8 @@ LINK_ONLY_PROVIDERS = frozenset({"github_app"})
 
 
 class OAuthService:
-    def __init__(
-        self, repo: OAuthConnectionRepository, redis: Any | None = None
-    ) -> None:
+    def __init__(self, repo: OAuthConnectionRepository) -> None:
         self._repo = repo
-        self._redis = redis
         self._providers: dict[str, OAuthProvider] = {}
         self._initialized = False
 
@@ -382,16 +390,11 @@ class OAuthService:
             raise NotFoundError(f"OAuth provider '{provider_id}' not found")
         return provider
 
-    def generate_authorization_url(
-        self, provider_id: str, state: str | None = None
-    ) -> str:
-        provider = self.get_provider(provider_id)
-        if not state:
-            state = secrets.token_urlsafe(32)
-        return provider.get_authorization_url(state)
+    def generate_authorization_url(self, provider_id: str, state: str) -> str:
+        return self.get_provider(provider_id).get_authorization_url(state)
 
     async def handle_callback(
-        self, provider_id: str, code: str, state: str | None = None
+        self, provider_id: str, code: str
     ) -> tuple[str, OAuthUserInfo]:
         provider = self.get_provider(provider_id)
 
@@ -422,15 +425,25 @@ class OAuthService:
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> dict:
-        conn = await self._repo.create(
-            user_id=user_id,
-            provider_id=provider_id,
-            provider_user_id=provider_user_id,
-            raw_profile=raw_profile,
-            access_token=encrypt_text(access_token) if access_token else None,
-            refresh_token=encrypt_text(refresh_token) if refresh_token else None,
-            token_expires=token_expires,
-        )
+        """Raises ``ConflictError`` when this provider identity is already
+        linked, whatever a preceding lookup said."""
+        try:
+            conn = await self._repo.create(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_user_id=provider_user_id,
+                raw_profile=raw_profile,
+                access_token=encrypt_text(access_token) if access_token else None,
+                refresh_token=encrypt_text(refresh_token) if refresh_token else None,
+                token_expires=token_expires,
+            )
+        except IntegrityError:
+            if await self._repo.get_by_provider(provider_id, provider_user_id) is None:
+                raise
+            raise ConflictError(
+                "This OAuth account is already linked",
+                data={"providerId": provider_id},
+            ) from None
         return self._connection_to_dict(conn)
 
     async def update_connection_tokens(
@@ -669,6 +682,38 @@ class OAuthService:
         ]
 
     async def delete_connection(self, connection_id: int, user_id: int) -> bool:
+        """Remove a connection unless it is the user's last way to sign in.
+
+        Password, passkey and every other sign-in connection each count as a
+        way in; link-only connections never produce a session, so they neither
+        count nor are ever protected. Raises ``ConflictError`` when refused.
+        """
+        from sqlalchemy import select
+
+        from app.domain.passkey.services import PasskeyService
+        from app.domain.user.models import User
+
+        conn = await self._repo.get(connection_id)
+        if conn is None or conn.user_id != user_id:
+            return False
+        if conn.provider_id not in LINK_ONLY_PROVIDERS:
+            session = self._repo.session
+            # Row lock: two concurrent unbinds must not each see the other's
+            # connection as the one that remains.
+            user = (
+                await session.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+            ).scalar_one()
+            other_sign_in = any(
+                c.id != connection_id and c.provider_id not in LINK_ONLY_PROVIDERS
+                for c in await self._repo.list_by_user(user_id)
+            )
+            has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
+            if not (user.hashed_password or has_passkey or other_sign_in):
+                raise ConflictError(
+                    "这是你唯一的登录方式，请先设置密码或添加通行密钥后再解绑"
+                )
         return await self._repo.delete_by_id(connection_id, user_id)
 
     def _connection_to_dict(self, conn) -> dict:
@@ -679,26 +724,6 @@ class OAuthService:
             "providerUserId": conn.provider_user_id,
             "createdAt": conn.created_at.isoformat() if conn.created_at else None,
         }
-
-    async def store_oauth_state(self, state_token: str, data: dict) -> None:
-        import json
-
-        if self._redis is None:
-            return
-        key = f"oauth_state:{state_token}"
-        await self._redis.set(key, json.dumps(data), ex=600)
-
-    async def get_oauth_state(self, state_token: str) -> dict | None:
-        import json
-
-        if self._redis is None:
-            return None
-        key = f"oauth_state:{state_token}"
-        raw = await self._redis.get(key)
-        if raw is None:
-            return None
-        await self._redis.delete(key)
-        return json.loads(raw)
 
 
 async def get_github_user_token_for_handle(

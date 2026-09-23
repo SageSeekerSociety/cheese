@@ -1,6 +1,7 @@
 """Room executor transport shared by agent harnesses."""
 
 import json
+import logging
 import os
 import re
 import select
@@ -20,6 +21,68 @@ from urllib.parse import unquote, urlsplit
 # happened twice, and the deploy that caused it ends by itself.
 CONNECT_RETRY_WINDOW_S = 180
 CONNECT_RETRY_MAX_DELAY_S = 5
+
+logger = logging.getLogger(__name__)
+
+# 手够不着时 agent 读到的那一句（结论 23）。它的家就在这里：这个文件既是后端
+# import 的那一份（`private_chat.py`、`codex/tools.py` 走的都是它），又是原样发到机
+# 器上、在那边没有任何我们的东西可 import 地跑起来的那一份
+# (`remote_execution/release.py`)。所以这句话只有一处声明，没有第二份要同步。
+#
+# 一句能力话，没有平台内部术语，也没有裸 HTTP 状态码：状态码告诉 agent 的是「有东
+# 西坏了」，而它这一轮需要知道的是还剩哪些通路。它替掉的是
+# `f"Executor HTTP request failed: {status}"`——一个裸数字会把它送回自己的工具调用
+# 里找 bug，而后端本来写好的中文 body 和 `X-Device-Id` 头在这条路上早就全丢了。
+MACHINE_OUT_OF_REACH = (
+    "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
+)
+
+# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。光看状态码判得出来的只
+# 有这三个：502/504 是中间那一跳转不过去，503 是执行器没在听。还有一个得连形状一起看
+# 的 409（`_device_is_offline`）：链路断了那一种同样够不着，代际冲突那一种机器好好的。
+# 其余的 —— 500 是机器上某个工具处理函数抛了异常，401 是执行令牌过期，别的 4xx 是那
+# 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
+# agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
+OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+
+# 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
+# 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
+EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
+
+
+def _device_is_offline(response) -> bool:
+    """Whether this answer says the hands are gone rather than one call went wrong.
+
+    The canonical rule is ``device_hub_rpc.py:245-247``'s: on 409, and only
+    there, ``X-Device-Id`` is the signal. The one producer of an offline answer
+    this call path can receive is ``core/errors._handle_device_offline``
+    (``DeviceOffline`` / ``DeviceUnreachable``, which serialize under that one
+    name). ``device_connection_app.call``'s header-only 409 is not one this
+    classifier reads: its sole client is ``DeviceHubRPC._call_owner``, which
+    already classifies it before any answer is re-emitted. A ``ConflictError``
+    ("Execution generation is no longer current") is also 409 and is NOT out of
+    reach: the machine is fine, only the lease is stale. Lumping both into
+    ``EXECUTOR_CALL_FAILED`` ("机器还在") is what made a dead websocket look like
+    a retryable one-call failure while chat and platform tools kept working.
+    """
+    return response.status == 409 and response.getheader("X-Device-Id") is not None
+
+
+class MachineOutOfReach(RuntimeError):
+    """够不着这件事，判得出来的那一种。
+
+    以前调用方只能比字符串（`str(exc) == MACHINE_OUT_OF_REACH`），于是它只认得
+    「执行器**答了** 502/503/504」这一档 —— 而机器真的够不着时执行器什么也不答：
+    这条连接的读超时是 660 秒，到点抛的是 `TimeoutError`；连接被拒、重试窗口耗尽
+    抛的是 `ConnectionRefusedError`。两者的 `str()` 都不是那句话，所以最该被认出
+    来的那一档反而认不出来，而那一轮余下的每一次文件与命令调用还要各等一次 660 秒。
+
+    说的还是同一句话（`str(exc)` 不变），agent 读到的东西一个字没动；多出来的只是
+    一个调用方判得动的类型。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(MACHINE_OUT_OF_REACH)
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
@@ -320,18 +383,41 @@ class RemoteClient:
                     response = connection.getresponse()
                     data = response.read()
                     if response.status != 200:
-                        raise RuntimeError(
-                            f"Executor HTTP request failed: {response.status}"
+                        # agent 读到的那句话里没有状态码，平台这边一个都不少：
+                        # 少了这一行，后端事后连「当时是哪个码」都查不出来。
+                        logger.warning(
+                            "executor %s -> %s: %s", method, response.status, data[:200]
                         )
+                        if (
+                            response.status in OUT_OF_REACH_STATUSES
+                            or _device_is_offline(response)
+                        ):
+                            raise MachineOutOfReach
+                        raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
-                except ConnectionRefusedError:
+                except ConnectionRefusedError as exc:
                     # Nothing was sent, so this is the one failure worth waiting
-                    # out: the platform endpoint is being replaced.
+                    # out: the platform endpoint is being replaced. Once the
+                    # window is spent, nobody is listening — that IS out of
+                    # reach, and saying so is what stops the rest of the turn
+                    # from queueing up behind the same wait.
                     connection.close()
                     self.transport.connection = None
                     if not _retry_connect(attempt, deadline):
-                        raise
+                        raise MachineOutOfReach from exc
                     attempt += 1
+                except TimeoutError as exc:
+                    # 读超时那一档（连接的 660 秒）：执行器一个字也没答。这不是
+                    # 「某次调用失败了」，是这台机器这一刻够不着 —— 而认出它来，正是
+                    # 为了让这一轮余下的文件与命令调用不必各自再等一次 660 秒。
+                    #
+                    # 只有这一种。**连接被重置不在内**：那次请求已经发出去了，执行
+                    # 器很可能已经把那次改动做完了，丢的只是应答 —— 一台答得出话的
+                    # 机器不叫够不着，把它也说成够不着，接下来一整段时间里每一次工
+                    # 具调用都会被一次丢包当掉。
+                    connection.close()
+                    self.transport.connection = None
+                    raise MachineOutOfReach from exc
                 except Exception:
                     # A lost response can follow a committed mutation. Reconnect
                     # only for the next call; never replay this one.

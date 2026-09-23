@@ -8,8 +8,8 @@ import pytest
 from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
 from app.core.config import settings
 from app.core.tokens import verify_session_token
+from app.domain.library import service as library
 from app.domain.site.hosting import content_origin, mint_site_token
-from app.domain.workspace import service as ws
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.integration.test_app_preview_proxy import (
     _open_preview,
@@ -26,7 +26,7 @@ def static_preview(client, preview_config):
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
     html = '<script type="module" src="/main.js"></script><img src="/image.svg">'
     response = client.post(
-        f"/topics/{topic_id}/artifact",
+        f"/topics/{topic_id}/shown",
         json={"path": "web/report.html", "as": "html", "content": html},
         headers=session_auth_headers("alice"),
     )
@@ -39,7 +39,7 @@ def static_preview(client, preview_config):
         "nested/asset.txt": "nested asset",
     }
     for path, content in assets.items():
-        ws.write_room_file(project_id, topic_id, "web/" + path, content.encode())
+        library.write_room_file(project_id, topic_id, "web/" + path, content.encode())
     return project_id, topic_id, html, assets
 
 
@@ -240,7 +240,7 @@ def test_static_preview_tracks_selected_artifact_directory(client, static_previe
     project_id, topic_id, _, _ = static_preview
     _open_preview(client, topic_id)
     response = client.post(
-        f"/topics/{topic_id}/artifact",
+        f"/topics/{topic_id}/shown",
         json={
             "path": "other/page.html",
             "as": "html",
@@ -249,7 +249,7 @@ def test_static_preview_tracks_selected_artifact_directory(client, static_previe
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
-    ws.write_room_file(project_id, topic_id, "other/main.js", b"second module")
+    library.write_room_file(project_id, topic_id, "other/main.js", b"second module")
     origin = preview_origin(topic_id)
     assert client.get(origin + "/").text == "selected second page"
     assert client.get(origin + "/main.js").text == "second module"
@@ -262,7 +262,7 @@ def test_static_preview_rejects_hidden_traversal_and_symlink_escape(
 ):
     project_id, topic_id, _, _ = static_preview
     _open_preview(client, topic_id)
-    tree = ws.room_files_root(project_id, topic_id)
+    tree = library.room_files_root(project_id, topic_id)
     (tree / "secret.txt").write_text("outside selected directory")
     (tree / "web/.env").write_text("private value")
     (tree / "web/.hidden").mkdir()
@@ -282,12 +282,119 @@ def test_static_preview_rejects_hidden_traversal_and_symlink_escape(
         response = client.get(preview_origin(topic_id) + path)
         assert response.status_code == 404, (path, response.status_code, response.text)
     selected = client.post(
-        f"/topics/{topic_id}/artifact",
+        f"/topics/{topic_id}/shown",
         json={"path": "web/escape.txt", "as": "html"},
         headers=session_auth_headers("alice"),
     )
     assert selected.status_code == 200, selected.text
     assert client.get(preview_origin(topic_id) + "/").status_code == 404
+
+
+@pytest.fixture
+def room_file_preview(client, preview_config):
+    """一个房间，有文件、但还没有 artifact。
+
+    人传上来的页面和芝士写下还没摆出来的东西都是这个形状——预览面板要把它们画出来，
+    不能先要求房间摆过东西。
+    """
+    project, topic = _project_topic(client)
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    library.write_room_file(
+        project_id, topic_id, "pages/site.html", b"<h1>room page</h1>"
+    )
+    library.write_room_file(
+        project_id, topic_id, "pages/style.css", b"h1 { color: red }"
+    )
+    library.write_room_file(
+        project_id,
+        topic_id,
+        "pages/logo.svg",
+        b'<svg xmlns="http://www.w3.org/2000/svg"/>',
+    )
+    return project_id, topic_id
+
+
+def test_a_room_file_renders_without_any_artifact(client, room_file_preview):
+    _, topic_id = room_file_preview
+    origin = preview_origin(topic_id)
+    # 带 cookie 之前：一次裸访问回到平台换授权，地址原样带过去——预览域的地址里
+    # 从来不放凭据，这一步是它成立的原因。
+    bare = client.get(
+        origin + "/_cheese/room/pages/site.html",
+        headers={"Sec-Fetch-Mode": "navigate"},
+        follow_redirects=False,
+    )
+    assert bare.status_code == 303
+    location = urlsplit(bare.headers["location"])
+    assert location.scheme + "://" + location.netloc == settings.frontend_url
+    assert location.path == f"/previews/{topic_id}"
+    assert parse_qs(location.query)["path"][0] == "/_cheese/room/pages/site.html"
+
+    _, exchange = _open_preview(client, topic_id, path="/_cheese/room/pages/site.html")
+    assert exchange.headers["location"] == "/_cheese/room/pages/site.html"
+    page = client.get(origin + "/_cheese/room/pages/site.html")
+    assert page.status_code == 200, page.text
+    assert page.text == "<h1>room page</h1>"
+    assert page.headers["content-type"].startswith("text/html")
+    # 页面里的相对资源落在同一份文件旁边，而且和页面同源——iframe 里的相对引用
+    # 才不用改写。
+    style = client.get(origin + "/_cheese/room/pages/style.css")
+    assert style.status_code == 200 and style.text == "h1 { color: red }"
+    assert style.headers["content-type"].startswith("text/css")
+    logo = client.get(origin + "/_cheese/room/pages/logo.svg")
+    assert logo.status_code == 200
+    assert logo.headers["content-type"].startswith("image/svg+xml")
+    head = client.head(origin + "/_cheese/room/pages/site.html")
+    assert head.status_code == 200 and head.content == b""
+    assert int(head.headers["content-length"]) == len(b"<h1>room page</h1>")
+    assert client.post(origin + "/_cheese/room/pages/site.html").status_code == 405
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/_cheese/room/",
+        "/_cheese/room/pages/missing.html",
+        "/_cheese/room/pages",
+        "/_cheese/room/.env",
+        "/_cheese/room/pages/.hidden/secret.txt",
+        "/_cheese/room/%2e%2e/secret.txt",
+        "/_cheese/room/pages/escape.txt",
+        "/_cheese/room/pages/escape-dir/other-room.txt",
+    ],
+)
+def test_the_room_file_address_stays_inside_the_room(client, room_file_preview, path):
+    project_id, topic_id = room_file_preview
+    tree = library.room_files_root(project_id, topic_id)
+    (tree / ".env").write_text("private value")
+    (tree / "pages/.hidden").mkdir()
+    (tree / "pages/.hidden/secret.txt").write_text("hidden value")
+    # 隔壁房间那一份：能指到它才算真逃出来了。同一个房间树里面的符号链接不算
+    # 逃逸——读者本来就能按名字读到那份文件。
+    (tree.parent / "other-room.txt").write_text("another room")
+    (tree / "pages/escape.txt").symlink_to(tree.parent / "other-room.txt")
+    (tree / "pages/escape-dir").symlink_to(tree.parent, target_is_directory=True)
+    # 这个房间没有 artifact，所以换授权也只能冲着这份房间文件去。
+    _open_preview(client, topic_id, path="/_cheese/room/pages/site.html")
+    response = client.get(preview_origin(topic_id) + path)
+    assert response.status_code == 404, (path, response.status_code, response.text)
+
+
+def test_a_room_file_is_addressed_by_its_own_path_not_the_artifacts(
+    client, static_preview
+):
+    project_id, topic_id, _, _ = static_preview
+    library.write_room_file(
+        project_id, topic_id, "other/page.html", b"<p>elsewhere</p>"
+    )
+    _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    # artifact 所在目录之外：老地址取不到（这是它一贯的边界）。
+    assert client.get(origin + "/other/page.html").status_code == 404
+    # 房间文件按房间相对路径寻址，和 artifact 是谁无关。
+    assert (
+        client.get(origin + "/_cheese/room/other/page.html").text == "<p>elsewhere</p>"
+    )
 
 
 def test_revocation_blocks_an_already_issued_grant_and_cookie(client, static_preview):
@@ -344,7 +451,7 @@ def test_private_room_roster_is_required_even_for_project_members(
     assert response.status_code == 200, response.text
     room_id = response.json()["data"]["id"]
     artifact = client.post(
-        f"/topics/{room_id}/artifact",
+        f"/topics/{room_id}/shown",
         json={"path": "web/private.html", "as": "html", "content": "private preview"},
         headers=owner,
     )

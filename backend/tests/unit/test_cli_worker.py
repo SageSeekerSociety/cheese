@@ -97,9 +97,12 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
     assert set(tools) == {
         "cheese_accept_request",
         "cheese_api",
-        "cheese_artifact",
+        "cheese_show",
         "cheese_ask",
-        "cheese_bind",
+        "cheese_chat_get",
+        "cheese_chat_list",
+        "cheese_chat_replies",
+        "cheese_chat_search",
         "cheese_chat_send",
         "cheese_close_task",
         "cheese_convert",
@@ -107,21 +110,28 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_describe",
         "cheese_doc_get",
         "cheese_doc_set",
+        "cheese_feedback_propose",
         "cheese_fetch",
-        "cheese_gh_token",
+        "cheese_library_get",
+        "cheese_library_ls",
         "cheese_lock",
         "cheese_members",
+        "cheese_deliver_at",
+        "cheese_machine",
         "cheese_milestone",
+        "cheese_note",
         "cheese_notify",
         "cheese_push_fix",
         "cheese_ready",
         "cheese_recalc",
         "cheese_recall",
+        "cheese_recover",
         "cheese_remember",
         "cheese_serve",
         "cheese_split",
         "cheese_status",
         "cheese_sync",
+        "cheese_sync_agents",
         "cheese_tell",
         "cheese_title",
         "cheese_unlock",
@@ -137,6 +147,84 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
     assert tools["cheese_serve"]["inputSchema"]["properties"]["port"]["type"] == (
         "integer"
     )
+
+
+def test_worker_feedback_description_includes_parent_triggers(worker, tmp_path):
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    description = tools["cheese_feedback_propose"]["description"]
+    for trigger in (
+        "某个工具或命令反复失败",
+        "你做不到用户要求的事",
+        "用户指出你的错,或者你自己发现犯了错",
+        "用户让你提",
+    ):
+        assert trigger in description
+    assert "什么时候不该提" in description
+    assert "芝士 平台 CLI" not in description
+    assert description.index("什么时候该提") < description.index(
+        "把你发现的问题提成一张提案卡"
+    )
+
+
+def test_worker_tool_description_joins_ancestor_guidance_without_the_root(
+    worker, tmp_path
+):
+    worker[0].write_text(
+        "import argparse\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(description='root when')\n"
+        " s=p.add_subparsers(dest='cmd', required=True)\n"
+        " m=s.add_parser('mid', description='mid when')\n"
+        " ms=m.add_subparsers(dest='midcmd', required=True)\n"
+        " q=ms.add_parser('leafy', description='leaf how')\n"
+        " q.add_argument('--x'); return p\n"
+        "if __name__ == '__main__':\n"
+        " build_parser().parse_args()\n"
+    )
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    description = tools["cheese_mid_leafy"]["description"]
+    assert description == "mid when\n\nleaf how"
+    assert "root when" not in description
+
+
+def test_worker_tool_description_joins_ancestors_when_leaf_is_silent(worker, tmp_path):
+    worker[0].write_text(
+        "import argparse\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser(description='root when')\n"
+        " s=p.add_subparsers(dest='cmd', required=True)\n"
+        " m=s.add_parser('mid', description='mid when')\n"
+        " ms=m.add_subparsers(dest='midcmd', required=True)\n"
+        " q=ms.add_parser('leafy')\n"
+        " q.add_argument('--x'); return p\n"
+        "if __name__ == '__main__':\n"
+        " build_parser().parse_args()\n"
+    )
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    description = tools["cheese_mid_leafy"]["description"]
+    assert description.startswith("mid when\n\nusage:")
+    assert "root when" not in description
+
+
+def test_worker_tool_description_keeps_leaf_when_ancestors_add_nothing(
+    worker, tmp_path
+):
+    worker[0].write_text(
+        "import argparse\n"
+        "def build_parser():\n"
+        " p=argparse.ArgumentParser()\n"
+        " s=p.add_subparsers(dest='cmd', required=True)\n"
+        " q=s.add_parser('leafy', description='leaf how')\n"
+        " q.add_argument('--x'); return p\n"
+        "if __name__ == '__main__':\n"
+        " build_parser().parse_args()\n"
+    )
+    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
+    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
+    assert tools["cheese_leafy"]["description"] == "leaf how"
 
 
 def test_worker_translates_values_to_argv_without_shell_interpretation(

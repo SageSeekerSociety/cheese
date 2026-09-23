@@ -28,6 +28,28 @@ spec.loader.exec_module(core)
 SECRET = "test-sandbox-token"
 
 
+def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
+    calls = []
+
+    def admit(url, bearer, timeout, *, subagent=False, requested_model=""):
+        calls.append(subagent)
+        return core.Verdict(
+            True,
+            "",
+            pool="gateway" if subagent else "subscription",
+            model="child" if subagent else "main",
+        )
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    assert gate.check("p", "t", "token").model == "main"
+    child = gate.check("p", "t", "token", subagent=True)
+    assert child.model == "child"
+    assert child.pool == "gateway"
+    assert gate.check("p", "t", "token").model == "main"
+    assert gate.check("p", "t", "token", subagent=True).model == "child"
+    assert calls == [False, True]
+
+
 def _mint(claims: dict, secret: str = SECRET) -> str:
     """The backend's exact minting algorithm (sandbox_auth.mint_scoped_token):
     urlsafe-b64 JSON body, HMAC-SHA256 sig, both unpadded."""
@@ -319,3 +341,79 @@ def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
     gate.check("p1", "t-last", "tok")
 
     assert len(gate._cache) == 1, "expired verdicts were kept"
+
+
+def test_a_requested_subagent_model_rides_the_admission_call():
+    """主 agent 开分身指定的模型随 admission 带上去 —— 准入拿它决定绑它还是
+    拒绝并列出可选。主对话不带：它的模型从来由绑定决定，请求体不是输入。"""
+    seen = {}
+
+    class _Resp:
+        def __enter__(self):
+            return io.BytesIO(b'{"data": {"allow": true, "reason": "r"}}')
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        seen.update({k.lower(): v for k, v in req.headers.items()})
+        return _Resp()
+
+    with mock.patch.object(core.urllib.request, "urlopen", side_effect=fake_urlopen):
+        core._post_admission(
+            "http://backend/llm/admission",
+            "tok",
+            3.0,
+            subagent=True,
+            requested_model="glm-4.6",
+        )
+    assert seen.get("x-cheese-subagent") == "1"
+    assert seen.get("x-cheese-requested-model") == "glm-4.6"
+
+    seen.clear()
+    with mock.patch.object(core.urllib.request, "urlopen", side_effect=fake_urlopen):
+        core._post_admission("http://backend/llm/admission", "tok", 3.0)
+    assert "x-cheese-requested-model" not in seen
+
+
+def test_two_requested_models_do_not_share_a_cached_verdict():
+    """缓存键里有 requested model：一个房间里先后起 glm 分身和 kimi 分身，
+    谁也不许拿到上一个的绑定。"""
+    calls = []
+
+    def admit(url, bearer, timeout, *, subagent=False, requested_model=""):
+        calls.append(requested_model)
+        return core.Verdict(True, "", model=requested_model)
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    first = gate.check("p", "t", "token", subagent=True, requested_model="glm-4.6")
+    second = gate.check("p", "t", "token", subagent=True, requested_model="kimi-k3")
+    again = gate.check("p", "t", "token", subagent=True, requested_model="glm-4.6")
+    assert first.model == "glm-4.6"
+    assert second.model == "kimi-k3"
+    assert again.model == "glm-4.6"
+    assert calls == ["glm-4.6", "kimi-k3"]
+
+
+def test_requested_model_of_reads_the_top_level_member():
+    """读的是 CC 写进请求体的指定，不是改写后要绑的那个；正文里出现的
+    "model" 字样、缺失成员、非字符串成员都不算。"""
+    body = (
+        b'{"model":"glm-4.6","messages":[{"role":"user",'
+        b'"content":"call it \\"model\\" if you like"}]}'
+    )
+    assert core.requested_model_of(body) == "glm-4.6"
+    assert core.requested_model_of(b'{"messages":[]}') == ""
+    assert core.requested_model_of(b"") == ""
+    assert core.requested_model_of(b'{"model":123}') == ""
+
+
+def test_requested_model_of_refuses_names_that_would_break_the_admission_header():
+    """体里的原文要进准入门:控制字符/非 Latin-1 会让 putheader 抛错,被当成
+    传输故障 fail-open。不合格的按未指定处理 —— 准入照常绑定,改写盖回去。"""
+    nasty = b'{"model":"glm-4.6\x0aevil: 1","messages":[]}'
+    assert core.requested_model_of(nasty) == ""
+    assert core.requested_model_of('{"model":"模型","messages":[]}'.encode()) == ""
+    assert core.requested_model_of(b'{"model":"openai/gpt-5","messages":[]}') == (
+        "openai/gpt-5"
+    )
