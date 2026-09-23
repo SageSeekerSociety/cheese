@@ -25,6 +25,7 @@ author_type=platform`，前端一行灰字）。另一条更糟：`runner.submit
 
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from tests.conftest import wait_work_idle
+from tests.delivery import delivery_task_id
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
 # （房间里落下什么块），没有理由再造一套。
@@ -48,7 +49,12 @@ def _pr_card(client, app_world):
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    task_id = str(delivery_task_id(client, topic_id))
+    response = client.get(f"/topics/{topic_id}/tasks/{task_id}")
+    assert response.status_code == 200, response.text
+    blocks = response.json()["data"]["blocks"]
+    assert all(block["task_id"] == task_id for block in blocks)
+    return blocks
 
 
 def _by_a_person(b: dict) -> bool:
@@ -143,11 +149,13 @@ def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(client, app
     assert all("AssertionError" not in (b.get("content") or "") for b in fresh)
 
 
-def test_ci_failure_still_hands_the_agent_the_whole_instruction(
+def test_ci_failure_records_the_whole_instruction_for_its_observed_parent(
     client, app_world, stub_hooks
 ):
-    """改的是**房间里显示什么**，不是**芝士收到什么**：整段指令（日志 + 怎么读
-    全文 + 该干什么）照旧作为 prompt 送到芝士手上。"""
+    """Keep the full instruction durable until the task's parent is known.
+
+    This producer test checks committed intent, not a native input receipt.
+    """
     fake, tid, _cid, number = _pr_card(client, app_world)
     fake.check_state_by_sha[fake.prs[number]["head_sha"]] = (
         "failure",
@@ -155,9 +163,49 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
     )
     _poll(client)
     _wait_for_event(client, tid, "ci_failed")
+    # The same failing PR is polled again; both event and intent stay singular.
+    _poll(client)
+    assert (
+        sum(
+            (b.get("meta") or {}).get("event_type") == "ci_failed"
+            for b in _blocks(client, tid)
+        )
+        == 1
+    )
     wait_work_idle()
 
-    prompt = stub_hooks.last_prompt or ""
+    # The producer commits the full instruction for the observed parent; it
+    # must not start a room-default turn before that parent is known.
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+
+    task_id = str(delivery_task_id(client, tid))
+
+    async def recorded_instruction():
+        async with client.test_factory() as db:
+            rows = list(
+                await db.scalars(
+                    select(Delivery).where(
+                        Delivery.topic_id == uuid.UUID(tid),
+                        Delivery.task_id.is_not(None),
+                    )
+                )
+            )
+            matching = [
+                row for row in rows if "pytest: 3 failed" in row.payload["content"]
+            ]
+            assert len(matching) == 1
+            row = matching[0]
+            assert str(row.task_id) == task_id
+            assert row.state == "pending"
+            assert row.agent_instance_id is None
+            return row.payload["content"]
+
+    prompt = client.portal.call(recorded_instruction)
+    assert not stub_hooks.last_prompt
     assert "pytest: 3 failed" in prompt
     # Recovery names the task workspace and updates its existing PR. It must
     # retain human approval instead of promising an unconditional merge.

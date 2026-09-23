@@ -129,12 +129,11 @@ launch credentials do not request RC, so the addon preserves their existing
 routing while the application update is pending. The updated launcher starts RC
 only after the backend has the worker routes.
 
-Schedule the proxy update in an approved maintenance window: restarting it
-resets active subscription connections. Replacing its mounted script while it
-is running also reloads the module and loses connection authentication caches.
-Back up the deployed addon, stop the proxy, replace the addon, and start the
-proxy again. Verify the unauthenticated CONNECT gate still returns 407 before
-rolling out the application. Retain the backup for rollback.
+Release the proxy through the [Release metering proxy workflow](../deploy/metering-proxy/README.md#release-on-the-dev-box)
+during a planned interruption window. It requires a merged SHA with successful
+image and Required CI builds, preserves the previous image and configuration
+for rollback, and checks both listeners and the unauthenticated CONNECT gate.
+Recreating the proxy resets active model connections.
 
 Keep `CHEESE_ADMISSION_URL` pointed at the backend's `/llm/admission`
 and `connector_public_base` reachable from devices. The existing proxy CA,

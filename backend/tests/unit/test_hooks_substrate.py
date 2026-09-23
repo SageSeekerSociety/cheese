@@ -648,10 +648,64 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     events = await asyncio.wait_for(turn, 1)
     assert isinstance(events[-1], AgentResult)
     assert injected == ["第一条", "[人]: 等一下"]
-
     # The screen and subscription outlive the run, but its attribution is closed.
     assert await provider.deliver(topic_id, "晚") is False
     await provider._close_topic(topic_id)
+
+
+async def test_private_notice_rejects_a_different_active_agent():
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import ChatService
+    from tests.conftest import stub_compute
+
+    room, work = _uuid.uuid4(), _uuid.uuid4()
+    channel = _StagingChannel(refuse=False)
+    runtime = ClaudeCodeRuntime(channel, router=HookRouter())
+    subscription = await runtime.ensure_subscription(_uuid.uuid4(), room)
+    subscription.current_work = WorkAttribution(work, asyncio.Queue())
+    runtime._live[room] = "screen"
+    pool = stub_compute()
+    pool._owners[room] = runtime
+    chat = ChatService(
+        session_factory=None,
+        base_system_prompt="",
+        workspace_root="",
+        compute=pool,
+    )
+    chat._active_turn_ids[room] = work
+    chat._hook_work[(room, work)] = SimpleNamespace(acting_agent="cheese-bbbbbbbbbbbb")
+
+    assert not await chat.notify_running_turn(
+        room, "private A", recipient_seat="cheese-aaaaaaaaaaaa"
+    )
+    assert channel.prompts == []
+    assert await chat.notify_running_turn(
+        room, "private B", recipient_seat="cheese-bbbbbbbbbbbb"
+    )
+    assert len(channel.prompts) == 1
+    assert "private B" in channel.prompts[0]
+
+
+@pytest.mark.parametrize("replace_during_staging", [False, True])
+async def test_addressed_delivery_rejects_a_replaced_turn(replace_during_staging):
+    room, expected, replacement = _uuid.uuid4(), _uuid.uuid4(), _uuid.uuid4()
+    channel = _StagingChannel(refuse=False)
+    runtime = ClaudeCodeRuntime(channel, router=HookRouter())
+    subscription = await runtime.ensure_subscription(_uuid.uuid4(), room)
+    subscription.current_work = WorkAttribution(
+        expected if replace_during_staging else replacement, asyncio.Queue()
+    )
+    runtime._live[room] = "screen"
+
+    async def stage(screen, images):
+        subscription.current_work = WorkAttribution(replacement, asyncio.Queue())
+        return [], []
+
+    if replace_during_staging:
+        runtime._stage = stage
+    assert not await runtime.deliver(room, "private", expected_work_id=expected)
+    assert channel.prompts == []
 
 
 async def test_deliver_reports_false_when_the_screen_refuses():

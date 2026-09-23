@@ -16,7 +16,18 @@ Redis 一重启就没了，Redis 连不上时直接放行。所以「已经算�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, Uuid, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,7 +56,25 @@ class Delivery(UuidPk, Base):
     recipient_handle: Mapped[str] = mapped_column(String(64))
     #: 他的站内信收件箱。**在事件发生的时刻解析好存下来**：补发是在事后发生的，那时
     #: 再按 handle 查一遍，查到的是那时候的名册，而这条事件点的是当时那个人。
-    receiver_id: Mapped[int] = mapped_column(BigInteger)
+    receiver_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    external_channels: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="false"
+    )
+    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    topic_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Agent delivery attempts are leased independently of model-work completion.
+    state: Mapped[str] = mapped_column(
+        String(24), default="pending", server_default="pending"
+    )
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: 去重键，全表唯一。跟着**事件**走（事件 id + 收件人），不跟着这一次发送尝试
     #: 走 —— 重试、补发、同一条事件被算两遍，算出来都是同一个键。
     dedup_key: Mapped[str] = mapped_column(String(160), unique=True)
@@ -96,7 +125,42 @@ class TimedDelivery(UuidPk, Base):
     content: Mapped[str] = mapped_column(Text)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    materialized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    receiver_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: 递出去的时刻。NULL = 还没到点，或者到点了还没递成。
     delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ChannelDelivery(UuidPk, Base):
+    """One independently retried email or push, committed with its source event."""
+
+    __tablename__ = "delivery_channels"
+    __table_args__ = (
+        UniqueConstraint("delivery_key", "channel", name="uq_delivery_channel"),
+    )
+    delivery_key: Mapped[str] = mapped_column(String(160))
+    channel: Mapped[str] = mapped_column(String(16))
+    receiver_id: Mapped[int] = mapped_column(BigInteger)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    claim_token: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

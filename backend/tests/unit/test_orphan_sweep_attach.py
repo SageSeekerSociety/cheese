@@ -323,3 +323,49 @@ async def test_a_wedged_turn_is_cancelled_and_never_re_run(db_factory, monkeypat
     _, notice_text = chat.notices[0]
     assert "@ 芝士" in notice_text
     assert "不会自动重跑" in notice_text or "不会自动重试" in notice_text
+
+
+@pytest.mark.parametrize(
+    "state", ["pending", "claimed", "sending", "uncertain", "received"]
+)
+async def test_delivery_attempt_is_never_replayed_by_generic_orphan_recovery(
+    db_factory, monkeypatch, state
+):
+    from unittest.mock import Mock
+
+    from app.domain.delivery.models import Delivery
+
+    topic_id = await a_topic(db_factory)
+    turn_id = await open_turn(db_factory, topic_id, resendable=True)
+    now = datetime.now(UTC)
+    async with db_factory() as session:
+        session.add(
+            Delivery(
+                event_id=uuid.uuid4(),
+                recipient_handle="agent-recipient",
+                receiver_id=None,
+                topic_id=topic_id,
+                attempt_id=turn_id,
+                state=state,
+                dedup_key=str(uuid.uuid4()),
+                type="agent",
+                payload={},
+                event_at=now,
+                recorded_at=now,
+            )
+        )
+        await session.commit()
+    runner = AgentWorkRunner(InProcessBroker())
+    schedule = Mock()
+    monkeypatch.setattr(runner, "_schedule_resend", schedule)
+    chat = _Chat(db_factory)
+    assert await runner.resume_orphans(chat) == 0
+    schedule.assert_not_called()
+    assert chat.events == []
+    async with db_factory() as session:
+        from sqlalchemy import select
+
+        row = await session.scalar(
+            select(Delivery).where(Delivery.attempt_id == turn_id)
+        )
+        assert row.state == state

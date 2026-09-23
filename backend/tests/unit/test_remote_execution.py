@@ -68,6 +68,44 @@ def _run_proxy(program: str) -> None:
     )
 
 
+def test_unavailable_search_tools_do_not_search_the_session_host():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        for (const tool of ['Glob', 'Grep']) {
+          const result = await handlers['tool.call']({}, {
+            tool, tool_use_id: 'search', path: '/center', pattern: 'private',
+          }, () => {throw new Error('searched session host')});
+          assert.match(result.deny, /use Bash/);
+        }
+    """)
+
+
+def test_offline_work_does_not_prevent_session_bootstrap(tmp_path):
+    from app.domain.agent.executor_transport import MachineOutOfReach, RemoteClient
+    from app.domain.agent.harness.claude_code.remote_execution.client import (
+        prepare,
+        sync_context,
+    )
+
+    launch = prepare(
+        tmp_path,
+        {"kind": "unavailable", "workspace": "/unavailable-project"},
+        claude=claude_binary(),
+    )
+    target = json.loads(Path(launch["execution"]).read_text())
+    assert Path(launch["cwd"]).is_dir()
+    assert "平台工具可用" in sync_context(launch["execution"])["instructions"]
+    with pytest.raises(MachineOutOfReach):
+        RemoteClient(target).call(
+            "invoke", {"tool": "Bash", "args": {"command": "touch forbidden"}}
+        )
+    assert not (Path(launch["cwd"]) / "forbidden").exists()
+
+
 def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
     _run_proxy("""
         import assert from 'node:assert/strict';
@@ -1372,6 +1410,13 @@ class RemoteExecutionTests(unittest.TestCase):
         )
         self.assertNotIn("error", response, response)
         return response["value"]
+
+    def test_bash_search_reads_only_the_executor_workspace(self):
+        (self.workspace / "needle.txt").write_text("executor-only-needle\n")
+        (self.root / "needle.txt").write_text("session-host-decoy\n")
+        result = self.invoke("Bash", {"command": "grep -n needle needle.txt"})
+        self.assertIn("executor-only-needle", result["stdout"])
+        self.assertNotIn("session-host-decoy", result["stdout"])
 
     def test_native_files_and_rc_agree(self):
         target = self.workspace / "sample.txt"

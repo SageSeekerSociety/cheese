@@ -16,9 +16,6 @@ import httpx
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_CHEESE, notice
-from app.domain.agent.runtime import addressed_to_agent
-from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.review.pr_poll")
 
@@ -36,10 +33,6 @@ TRANSIENT_MISSES_BEFORE_ERROR = 3
 #: outage do not read the same. Module level because the clock that drives this
 #: is process-wide: one backend, one count per card.
 _transient_misses: dict[uuid.UUID, int] = {}
-
-#: Rooms with a dependency wake already in flight, so a retry does not stack a
-#: second turn on top of the one that is about to stamp the receipts.
-_dependency_wakes: set[uuid.UUID] = set()
 
 
 async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) -> dict:
@@ -145,71 +138,11 @@ async def open_draft_prs(chat: ChatService) -> dict:
 
 
 async def deliver_dependency_notices(chat: ChatService) -> None:
-    """Retry durable notices until the executor acknowledges their blocks."""
+    """Dispatch committed task-parent intent through the delivery ledger."""
     from app.api.deps import get_work_runner
-    from app.domain.agent.platform_notices import (
-        EVENT_DEPENDENCY_CLOSED,
-        EVENT_DEPENDENCY_REJECTED,
-    )
-    from app.domain.block.models import (
-        AGENT_NOTICE_META_KEY,
-        CONSUMED_TURN_META_KEY,
-        Block,
-    )
-    from app.domain.topic.models import Topic, TopicStatus
+    from app.domain.delivery.agent import dispatch_pending
 
-    sessions = chat.session_factory
-    async with sessions() as session:
-        blocks = list(
-            await session.scalars(
-                select(Block)
-                .join(Topic, Block.topic_id == Topic.id)
-                .where(
-                    Topic.status != TopicStatus.archived,
-                    Block.meta["event_type"]
-                    .as_string()
-                    .in_((EVENT_DEPENDENCY_CLOSED, EVENT_DEPENDENCY_REJECTED)),
-                    Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
-                    Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
-                )
-                .order_by(Block.created_at, Block.id)
-            )
-        )
-    rooms: dict[uuid.UUID, list] = {}
-    for block in blocks:
-        rooms.setdefault(block.topic_id, []).append(block)
-    runner = get_work_runner()
-    for room_id, pending in rooms.items():
-        if room_id in _dependency_wakes:
-            continue
-        if chat.has_running_turn(room_id):
-            await chat.notify_running_turn(
-                room_id,
-                "\n".join(b.meta[AGENT_NOTICE_META_KEY] for b in pending),
-                blocks=[b.id for b in pending],
-            )
-            continue
-        _dependency_wakes.add(room_id)
-        seat = await addressable_seat(sessions, room_id)
-        try:
-            # The prompt reads the durable blocks and stamps their receipts.
-            runner.submit(
-                chat,
-                room_id,
-                author="system",
-                content="",
-                addressed=addressed_to_agent(seat),
-                nudge_event="正在检查任务依赖",
-                nudge_meta=notice(
-                    EVENT_DEPENDENCY_CLOSED,
-                    severity=SEVERITY_INFO,
-                    who=WHO_CHEESE,
-                ),
-                on_done=lambda room=room_id: _dependency_wakes.discard(room),
-            )
-        except Exception:
-            _dependency_wakes.discard(room_id)
-            raise
+    await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
 
 
 async def forge_repository_changed(

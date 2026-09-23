@@ -461,6 +461,7 @@ async def retarget_completed_dependencies(
                 block = await announce(
                     session,
                     place_id=task.room_id,
+                    task_id=task.id,
                     content=headline,
                     meta={
                         **notice(
@@ -486,6 +487,21 @@ async def retarget_completed_dependencies(
                 )
                 if block is None:
                     raise ValueError("Task room is missing")
+                from app.domain.delivery.agent import record_task_instruction
+                from app.domain.delivery.ledger import DeliveryEvent
+                from app.domain.notification.models import NotificationType
+
+                await record_task_instruction(
+                    session,
+                    DeliveryEvent(
+                        id=block.id,
+                        type=NotificationType.ROOM_NOTICE,
+                        payload={"content": instruction},
+                        occurred_at=block.created_at,
+                    ),
+                    task=task,
+                    content=instruction,
+                )
                 await idem.record_result(session, key, {"block_id": str(block.id)})
                 await session.commit()
         except Exception:

@@ -111,6 +111,11 @@ class AgentSession(UuidPk, Timestamps, Base):
     work_lease: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True), nullable=True
     )
+    # A requested choice and its authenticated authorization source. Recording
+    # intent does not reserve a machine; the first execution tool consumes it.
+    execution_request: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
     # 这条会话的进程在哪台会话机上，连同开它的通道与骨架的运行状态。
     runtime_location: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True), nullable=True

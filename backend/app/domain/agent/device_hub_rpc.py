@@ -277,6 +277,11 @@ class RemoteDeviceHub:
         """
         deadline = time.monotonic() + OWNER_CONNECT_RETRY_WINDOW_S
         declared = payload.get("timeout")
+        operation_deadline = (
+            time.monotonic() + float(declared)
+            if name == "call_executor" and isinstance(declared, int | float)
+            else None
+        )
         answer_timeout = httpx.Timeout(
             (
                 float(declared)
@@ -288,6 +293,15 @@ class RemoteDeviceHub:
         )
         attempt = 0
         while True:
+            if operation_deadline is not None:
+                remaining_budget = operation_deadline - time.monotonic()
+                if remaining_budget <= 0:
+                    raise TimeoutError("Device call deadline expired before dispatch")
+                payload = {**payload, "timeout": remaining_budget}
+                answer_timeout = httpx.Timeout(
+                    remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
+                    connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
+                )
             try:
                 return await self._request(
                     "POST",

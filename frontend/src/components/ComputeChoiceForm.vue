@@ -102,7 +102,7 @@ function submit() {
       hide-details
     />
     <v-btn class="mt-3" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
-      named ? '保存到项目常用' : '用于当前房间'
+      named ? '保存到项目常用' : '使用此配置'
     }}</v-btn>
   </div>
 </template>

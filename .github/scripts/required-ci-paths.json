@@ -37,6 +37,7 @@
     ".github/workflows/deploy-drift.yml",
     ".github/workflows/deploy-scripts-test.yml",
     ".github/workflows/deploy-dev.yml",
+    ".github/workflows/release-metering-proxy.yml",
     ".github/workflows/deploy.yml",
     ".github/workflows/deploy-prod.yml",
     ".github/workflows/build.yml",

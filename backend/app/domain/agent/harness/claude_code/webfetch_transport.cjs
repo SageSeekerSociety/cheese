@@ -40,3 +40,19 @@ for (const protocol of [http, https]) {
   };
 }
 syncBuiltinESMExports();
+
+// The pinned harness resolves an explicit Agent model before its native child
+// default. Carry that resolved choice to admission without buffering the growing
+// request body in the metering proxy. Admission still validates supply/policy.
+const originalFetch = globalThis.fetch;
+globalThis.fetch = function(input, init) {
+  const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+  const requestClass = headers.get('x-claude-code-request-class');
+  if (headers.get('x-claude-code-agent-id') || requestClass === 'subagent' || requestClass === 'workflow') {
+    if (typeof init?.body === 'string') {
+      const body = JSON.parse(init.body);
+      if (typeof body.model === 'string') headers.set('x-cheese-child-model', body.model);
+    }
+  }
+  return originalFetch.call(this, input, {...init, headers});
+};

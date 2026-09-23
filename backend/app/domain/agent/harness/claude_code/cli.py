@@ -12,7 +12,24 @@ sensing side (settings.json's deny list) and the starting side (the argv's
 # until the wedged-turn safety net kills it. `cheese ask` is the platform's
 # equivalent (real buttons in the conversation, the answer arrives on the next
 # turn), so the native tool is denied outright rather than left as a trap.
-DISALLOWED_TOOLS = ["AskUserQuestion"]
+PLATFORM_MANAGED_TOOLS = [
+    "TodoWrite",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "ScheduleWakeup",
+]
+DISALLOWED_TOOLS = ["AskUserQuestion", *PLATFORM_MANAGED_TOOLS]
+
+
+def disallowed_tools(*, remote_control: bool = False) -> list[str]:
+    """RC owns its question UI; tasks and timers always belong to Cheese."""
+    return list(PLATFORM_MANAGED_TOOLS if remote_control else DISALLOWED_TOOLS)
+
 
 # The interactive `claude` every screen launches. The deny travels WITH the
 # command, not only in settings.json: --dangerously-skip-permissions waves

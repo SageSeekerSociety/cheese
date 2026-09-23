@@ -1,5 +1,6 @@
 """Dependency outcomes survive restarts and ask the executor to restack."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -15,15 +16,6 @@ from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
-
-
-@pytest.fixture(autouse=True)
-def _forget_wakes_between_tests():
-    """「这个房间的叫醒还在飞」是进程状态，不是某个对象的字段——所以它也得在
-    每条用例之间归零，否则上一条留下的房间会让下一条静悄悄地少提交一轮。"""
-    pr_poll._dependency_wakes.clear()
-    yield
-    pr_poll._dependency_wakes.clear()
 
 
 async def seed(factory, *, delivered):
@@ -320,129 +312,111 @@ async def test_concurrent_scans_persist_one_notice(db_factory):
         assert len(list(await session.scalars(select(Block)))) == 1
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize("rejected", [True, False])
-async def test_pending_notice_wakes_again_after_restart_until_receipted(
-    db_factory, monkeypatch, rejected
-):
-    parent, child = await seed(db_factory, delivered=False)
-    if rejected:
-        async with db_factory() as session:
-            saved_parent = await session.get(Task, parent.id)
-            saved_parent.status = TaskStatus.open
-            saved_parent.closed_at = None
-            session.add(
-                AcceptCard(
-                    topic_id=parent.room_id,
-                    task_id=parent.id,
-                    reviewer_handle="reviewer",
-                    status=AcceptStatus.rejected,
-                )
+async def assign_parent(factory, task_id):
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.identity.handles import agent_instance_handle
+    from app.domain.topic.models import TopicMembership, TopicRole
+
+    async with factory() as session:
+        task = await session.get(Task, task_id)
+        agent = AgentInstance(
+            project_id=task.project_id, handle="executor", configuration={}
+        )
+        session.add(agent)
+        await session.flush()
+        await AgentInstanceService(session).ensure_identity(agent)
+        session.add(
+            TopicMembership(
+                topic_id=task.room_id,
+                member_handle=agent_instance_handle(agent.id),
+                role=TopicRole.member,
             )
-            await session.commit()
+        )
+        task.execution_agent_instance_id = agent.id
+        task.execution_parent_session_id = "native-parent"
+        task.execution_turn_id = uuid.uuid4()
+        task.subagent_id = "child-worker"
+        await session.commit()
+
+
+@pytest.mark.anyio
+async def test_dependency_notice_waits_for_parent_and_recovers_only_unsent_claim(
+    db_factory, monkeypatch
+):
+    from app.domain.delivery.models import Delivery
+
+    parent, child = await seed(db_factory, delivered=False)
     await retarget_completed_dependencies(db_factory)
-    chat = SimpleNamespace(
+    chat = SimpleNamespace(session_factory=db_factory)
+    runner = Mock()
+    monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
+    await pr_poll.deliver_dependency_notices(chat)
+    runner.submit.assert_not_called()
+    await assign_parent(db_factory, child.id)
+    async with db_factory() as session:
+        row = await session.scalar(select(Delivery))
+        row.retry_at = None
+        await session.commit()
+    await pr_poll.deliver_dependency_notices(chat)
+    assert runner.submit.call_count == 1
+    first_attempt = runner.submit.call_args.kwargs["turn_id"]
+    await pr_poll.deliver_dependency_notices(chat)
+    assert runner.submit.call_count == 1
+    async with db_factory() as session:
+        row = await session.scalar(select(Delivery))
+        row.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    await pr_poll.deliver_dependency_notices(
+        SimpleNamespace(session_factory=db_factory)
+    )
+    assert runner.submit.call_count == 2
+    assert runner.submit.call_args.kwargs["turn_id"] != first_attempt
+    assert "native child=child-worker" in runner.submit.call_args.kwargs["content"]
+
+
+@pytest.mark.anyio
+async def test_dependency_delivery_needs_the_matching_native_receipt(
+    db_factory, monkeypatch
+):
+    from app.domain.agent.chat import ChatService
+    from app.domain.delivery.agent import begin_send
+    from app.domain.delivery.models import Delivery
+    from tests.conftest import stub_compute
+
+    parent, child = await seed(db_factory, delivered=False)
+    await assign_parent(db_factory, child.id)
+    await retarget_completed_dependencies(db_factory)
+    chat = ChatService(
         session_factory=db_factory,
-        has_running_turn=Mock(return_value=False),
-        notify_running_turn=AsyncMock(),
+        base_system_prompt="Synthetic agent",
+        workspace_root="/unused-dependency-receipt-test",
+        compute=stub_compute(),
     )
     runner = Mock()
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
     await pr_poll.deliver_dependency_notices(chat)
+    attempt = runner.submit.call_args.kwargs
+    async with db_factory() as session:
+        task = await session.get(Task, child.id)
+        # Same native parent and child, observed again on a later turn.
+        task.execution_turn_id = uuid.uuid4()
+        await session.commit()
+    await begin_send(
+        db_factory,
+        attempt["delivery_id"],
+        attempt["turn_id"],
+        parent_session_id="native-parent",
+    )
+    chat._pending_receipts[child.room_id] = [
+        (attempt["content"], [], attempt["turn_id"], datetime.now(UTC))
+    ]
+    await chat.confirm_prompt_receipt(child.room_id, "unrelated")
+    async with db_factory() as session:
+        assert (await session.get(Delivery, attempt["delivery_id"])).state == "sending"
+    await chat.confirm_prompt_receipt(child.room_id, attempt["content"])
+    async with db_factory() as session:
+        row = await session.get(Delivery, attempt["delivery_id"])
+        assert row.state == "received" and row.sent_at is not None
     await pr_poll.deliver_dependency_notices(chat)
     assert runner.submit.call_count == 1
-    assert runner.submit.call_args.args[1] == child.room_id
-    assert runner.submit.call_args.kwargs["nudge_event"]
-    # 重启：叫醒还在飞的那张表随进程没了，而块还在库里没人签收。
-    pr_poll._dependency_wakes.clear()
-    await pr_poll.deliver_dependency_notices(chat)
-    assert runner.submit.call_count == 2
-    runner.submit.call_args.kwargs["on_done"]()
-    chat.has_running_turn.return_value = True
-    await pr_poll.deliver_dependency_notices(chat)
-    chat.notify_running_turn.assert_awaited_once()
-    async with db_factory() as session:
-        block = await session.scalar(select(Block))
-        block.meta = {**block.meta, "consumed_turn": "acknowledged"}
-        await session.commit()
-    await pr_poll.deliver_dependency_notices(chat)
-    assert chat.notify_running_turn.await_count == 1
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("rejected", [False, True])
-async def test_dependency_notice_waits_for_matching_prompt_receipt(
-    db_factory, rejected
-):
-    import uuid
-
-    from app.domain.agent.chat import ChatService, _pending_platform_notices
-    from app.domain.block.repositories import BlockRepository
-    from tests.conftest import stub_compute
-
-    parent, child = await seed(db_factory, delivered=False)
-    if rejected:
-        async with db_factory() as session:
-            saved = await session.get(Task, parent.id)
-            saved.status = TaskStatus.open
-            saved.closed_at = None
-            session.add(
-                AcceptCard(
-                    topic_id=parent.room_id,
-                    task_id=parent.id,
-                    status=AcceptStatus.rejected,
-                    reviewer_handle="reviewer",
-                    note="Keep the original API",
-                )
-            )
-            await session.commit()
-    await retarget_completed_dependencies(db_factory)
-    received = []
-
-    async def deliver(topic_id, text, images=None):
-        assert topic_id == child.room_id
-        received.append(text)
-        return len(received) > 1
-
-    def service():
-        compute = stub_compute()
-        compute.deliver = deliver
-        chat = ChatService(
-            session_factory=db_factory,
-            base_system_prompt="Synthetic agent",
-            workspace_root="/unused-dependency-receipt-test",
-            compute=compute,
-        )
-        chat._active_turn_ids[child.room_id] = uuid.uuid4()
-        return chat
-
-    async def waiting():
-        async with db_factory() as session:
-            history = await BlockRepository(session).turn_history(child.room_id)
-            return _pending_platform_notices(history)
-
-    chat = service()
-    await pr_poll.deliver_dependency_notices(chat)
-    assert len(received) == 1
-    assert len(await waiting()) == 1
-    # 重启：新进程、新的 ChatService，库里那条块还在等签收。
-    pr_poll._dependency_wakes.clear()
-    chat = service()
-    await pr_poll.deliver_dependency_notices(chat)
-    assert len(received) == 2
-    assert received[0] == received[1]
-    assert str(child.id) in received[1]
-    if rejected:
-        assert "Keep the original API" in received[1]
-    assert len(await waiting()) == 1
-    await chat.confirm_prompt_receipt(child.room_id, "unrelated input")
-    assert len(await waiting()) == 1
-    await chat.confirm_prompt_receipt(child.room_id, received[1])
-    assert await waiting() == []
-    async with db_factory() as session:
-        block = await session.scalar(
-            select(Block).where(Block.topic_id == child.room_id)
-        )
-        assert block.meta["consumed_turn"] == str(chat._active_turn_ids[child.room_id])
-    await pr_poll.deliver_dependency_notices(chat)
-    assert len(received) == 2

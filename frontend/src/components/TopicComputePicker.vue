@@ -4,9 +4,11 @@ import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { getTopicComputeProfile, setTopicComputeChoice } from '../api'
+import { t } from '../i18n'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
+import SessionWorkPicker from './SessionWorkPicker.vue'
 
 const props = defineProps<{ topicId: string }>()
 const emit = defineEmits<{
@@ -89,10 +91,11 @@ watch(
 <template>
   <div class="compute-picker">
     <template v-if="state">
+      <SessionWorkPicker :topic-id="topicId" :profile="state" />
       <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
         <span class="status-dot status-dot--warn" /> 整台机器
       </span>
-      <span v-if="state.locked" class="cp-chip" title="运行环境已固定，新建房间可另选配置">
+      <span v-if="state.locked" class="cp-chip" :title="t('work.sessionMachine.initial')">
         <v-icon size="13">mdi-lock-outline</v-icon> {{ state.choice.name }}
       </span>
       <v-menu v-else v-model="menuOpen" location="top start" :close-on-content-click="false">

@@ -90,36 +90,34 @@ Set one without the other and every launch logs an error naming the missing one.
   can take the platform down is worse than the overspend it prevents; the token
   cap stays as the deployment-wide backstop.
 
-## Cutover from the hand-managed ~/cheese-proxy (dev box)
+## Release on the dev box
 
-1. Stop nothing yet. Copy the box-local values into `deploy/metering-proxy/.env`:
-   upstream auth + via, `CHEESE_SCOPED_SECRET` = backend's `SANDBOX_TOKEN`,
-   `CHEESE_ADMISSION_URL` pointing at the backend on the bridge, and
-   `USAGE_LOG_DIR` = the directory the backend's `SUBSCRIPTION_USAGE_LOG` is in.
+Use the **Release metering proxy** GitHub Actions workflow from `main`, with the
+full merged commit SHA. Its image build and Required CI must both have succeeded
+for that exact SHA. Acknowledge the interruption only when ready to recreate the
+proxy: active model streams can disconnect.
 
-   Both of those last two fail silently when wrong, which is why they are named
-   here rather than left to the compose defaults. An unset `CHEESE_ADMISSION_URL`
-   disables per-project budgets *and* leaves every enrolled machine unplaceable
-   on its own ccproxy identity. A `USAGE_LOG_DIR` that is not the backend's
-   ingest directory meters into a file nobody reads: rows are written, the
-   ledger never grows, and neither side reports anything. Both were wrong on
-   dev after the cutover below, and neither was noticed until a turn was traced
-   end to end (2026-08-15).
-2. Point `INJECT_SECRETS_DIR` at the host directory that CONTAINS `inject.token`
-   (mounted read-only at `/etc/cheese/secrets`, a directory — not a single-file
-   bind mount — so an atomic token swap is seen without a restart; see below),
-   and `CERTS_DIR` at the CA dir — the CA is baked into sandbox images'
-   `NODE_EXTRA_CA_CERTS` by absolute path, so the cert must not change identity.
-3. `docker compose -f deploy/metering-proxy/compose.yml up -d` after
-   `docker rm -f cheese-metering-proxy` (same name, same published address —
-   in-flight turns see one connection reset, Claude Code retries).
-4. Verify: a sandbox turn answers; `logs/usage.jsonl` gains rows whose
-   project/topic match the turn; with a zero-grant test project,
-   `/v1/messages` is refused 429 with the budget reason.
-5. Retire the old `~/cheese-proxy/addons` copy. The injector holds a durable,
-   non-refreshing credential (see "The injected credential" below), so there is
-   no creds daemon or token-refresh loop to keep running — retire those too, and
-   mask any leftover unit so it cannot start by accident.
+The build pins mitmproxy 12.1.2 and packages the addon, billing core and control
+answers into the image. The release pulls the full-SHA tag, resolves its registry
+digest and starts that digest. No host source directory is mounted over `/addons`.
+
+The existing box-local `.env` remains at
+`~/cheese-proxy-new/deploy/metering-proxy/.env`. The release preserves its project
+directory, published ports, ledger, credential directory and CA mounts.
+`CHEESE_ADMISSION_URL` must point at the backend's `/llm/admission`;
+`USAGE_LOG_DIR` must match the backend's `SUBSCRIPTION_USAGE_LOG` directory.
+`INJECT_SECRETS_DIR` holds `inject.token`, and `CERTS_DIR` holds the existing CA.
+Do not print the environment or replace the CA during a release.
+
+Before recreating the service, the release saves its image ID and raw compose
+files in a private `releases/<sha>-<run>-<attempt>/` directory. It leaves legacy
+source files in place for the first release's rollback. Failed health checks
+restore the previous image and mounts. Health checks require both listeners and
+an unauthenticated CONNECT response of 407; they do not call a model provider.
+
+After release, verify a sandbox turn, a usage row attributed to that turn, and a
+budget refusal for a test project whose compute grant is exhausted. Listener health alone does not
+verify credential injection, backend admission or ledger ingestion.
 
 ## The injected credential
 
@@ -144,7 +142,6 @@ any of those retired mechanisms reappear under `deploy/`.
   read-only at `/etc/cheese/secrets`. Because a directory (not the single file)
   is bind-mounted, a rotation done as write-new-then-rename is resolved on the
   addon's next per-request read with no container restart and no inode trap.
-  **Changing this mount requires a one-time metering-proxy rebuild** on the box
-  (via the normal deploy flow — `docker rm -f cheese-metering-proxy` then bring
-  it back up); pre-existing single-file `inject.token` mounts keep working until
-  that rebuild.
+  Changes to this mount take effect when the Release metering proxy workflow
+  recreates the container; existing single-file mounts keep their previous
+  behavior until that release.

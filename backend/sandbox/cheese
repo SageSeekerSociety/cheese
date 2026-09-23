@@ -263,8 +263,8 @@ PLATFORM_TOOLS = ToolTable(
         {
             "name": "cheese_machine",
             "description": (
-                "要一台机器：把这个房间的算力换成某一档。撞上项目的档位策略时，"
-                "这次调用不报错也不挂着等，它变成一条给机主（或项目主人）的提议。"
+                "更换你自己的工作机器，后续文件和命令操作使用新机器。"
+                "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -1871,10 +1871,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     pmach = sub.add_parser(
         "machine",
-        help="要一台机器：把这个房间的算力换成某一档",
+        help="更换自己的工作机器",
         description=(
-            "把这个房间的算力换成某一档。撞上项目的档位策略时这次调用不报错、"
-            "也不挂着等，它变成一条给机主（自托管）或项目主人（Cloud）的提议。"
+            "更换你自己的工作机器，后续文件和命令操作使用新机器。"
+            "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。"
         ),
     )
     pmach.add_argument("profile", help="算力档位名")
@@ -2467,7 +2467,12 @@ def main() -> None:
             print("已发送通知。")
     elif a.cmd == "machine":
         r = _planned_call("cheese_machine", a).get("data") or {}
-        if r.get("proposal"):
+        if r.get("session"):
+            choice = r["session"]["choice"]
+            print(
+                f"工作机器已设为 {choice['name']}，下次执行操作时使用。旧机器保留，文件不会自动迁移。"
+            )
+        elif r.get("proposal"):
             print(f"已提请 {r['proposal']['approver']} 点头，等他拍板。")
         else:
             print(f"这个房间的算力现在是 {r.get('current')}。")

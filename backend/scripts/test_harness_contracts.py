@@ -13,7 +13,7 @@ from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
 
 # Every case in the list below is expected to run: this job installs the pinned
 # claude and codex binaries itself, so nothing here has an environment excuse.
-EXPECTED_CASES = 36
+EXPECTED_CASES = 43
 
 
 def main() -> int:
@@ -98,6 +98,9 @@ def main() -> int:
         "tests/unit/test_codex_tools.py",
         "tests/unit/test_codex_provider_requests.py",
         "tests/unit/test_claude_provider_requests.py",
+        "tests/unit/test_claude_child_models.py",
+        "tests/unit/test_claude_child_control.py",
+        "tests/unit/test_claude_builtin_tools.py",
     ]
     with (run / "pytest.log").open("w") as log:
         result = subprocess.run(

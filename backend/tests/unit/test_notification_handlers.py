@@ -1,10 +1,7 @@
 """Unit tests for app.domain.notification.handlers.
 
-Covers InAppNotificationHandler and RedisEmailQueueNotificationHandler.
+Covers transactional inbox delivery.
 """
-
-import json
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -12,7 +9,6 @@ from sqlalchemy import select
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
-    RedisEmailQueueNotificationHandler,
 )
 from app.domain.notification.models import Notification, NotificationType
 
@@ -75,97 +71,3 @@ class TestInAppNotificationHandler:
             await handler.send_batch([delivery])
 
             assert len(await _inbox(session, 10)) == 1
-
-
-# ---------------------------------------------------------------------------
-# RedisEmailQueueNotificationHandler
-# ---------------------------------------------------------------------------
-
-
-class TestRedisEmailQueueNotificationHandler:
-    @pytest.mark.anyio
-    async def test_send_batch_empty(self):
-        redis = AsyncMock()
-        handler = RedisEmailQueueNotificationHandler(redis, queue_key="q")
-        await handler.send_batch([])
-        redis.rpush.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_send_batch_no_redis(self):
-        handler = RedisEmailQueueNotificationHandler(None, queue_key="q")
-        await handler.send_batch(
-            [
-                NotificationDelivery(
-                    recipient_id=10,
-                    type=NotificationType.MENTION,
-                    payload={},
-                    delivery_key="mention-2:bob",
-                )
-            ]
-        )
-        # No error raised, just returns
-
-    @pytest.mark.anyio
-    async def test_send_batch_enqueues_messages(self):
-        redis = AsyncMock()
-        handler = RedisEmailQueueNotificationHandler(
-            redis, queue_key="notifications:email"
-        )
-
-        deliveries = [
-            NotificationDelivery(
-                recipient_id=10,
-                type=NotificationType.MENTION,
-                payload={"text": "hello"},
-                delivery_key="mention-3:bob",
-            ),
-        ]
-        await handler.send_batch(deliveries)
-        redis.rpush.assert_awaited_once()
-        call_args = redis.rpush.call_args
-        assert call_args[0][0] == "notifications:email"
-        payload = json.loads(call_args[0][1])
-        assert payload["recipientId"] == 10
-        assert payload["type"] == "MENTION"
-
-    @pytest.mark.anyio
-    async def test_send_batch_batches_messages(self):
-        redis = AsyncMock()
-        handler = RedisEmailQueueNotificationHandler(redis, queue_key="q", batch_size=2)
-
-        deliveries = [
-            NotificationDelivery(
-                recipient_id=i,
-                type=NotificationType.MENTION,
-                payload={},
-                delivery_key=f"burst-{i}:bob",
-            )
-            for i in range(5)
-        ]
-        await handler.send_batch(deliveries)
-        # 5 items with batch_size=2: 2 + 2 + 1 = 3 rpush calls
-        assert redis.rpush.await_count == 3
-
-    @pytest.mark.anyio
-    async def test_send_batch_handles_redis_error(self):
-        redis = AsyncMock()
-        redis.rpush.side_effect = ConnectionError("Redis down")
-        handler = RedisEmailQueueNotificationHandler(redis, queue_key="q")
-
-        # Should not raise
-        await handler.send_batch(
-            [
-                NotificationDelivery(
-                    recipient_id=10,
-                    type=NotificationType.MENTION,
-                    payload={},
-                    delivery_key="mention-4:bob",
-                )
-            ]
-        )
-
-    @pytest.mark.anyio
-    async def test_flush_no_redis(self):
-        handler = RedisEmailQueueNotificationHandler(None, queue_key="q")
-        await handler._flush(["item1"])
-        # No error
