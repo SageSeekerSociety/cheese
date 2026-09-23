@@ -23,8 +23,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: remote-execution-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep every main result: a shared group can replace a pending run even when
+  # cancel-in-progress is false. PRs and the experiment branch still supersede
+  # stale runs.
+  group: remote-execution-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   private-chat:
