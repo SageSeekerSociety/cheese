@@ -24,11 +24,11 @@ test.describe('Login', () => {
     const noSuchUser = `no-such-user-e2e-${process.env.GITHUB_RUN_ID ?? 'local'}-${process.env.GITHUB_RUN_ATTEMPT ?? '1'}`;
     await page.goto('/account/signin');
     await page.getByLabel('用户名').fill(noSuchUser);
-    // exact: true — see helpers.ts::login for why (Vuetify's password-visibility
-    // toggle button's auto aria-label contains "密码" as a substring).
+    // exact: true — see helpers.ts::login for why (other labels on the page
+    // contain 「密码」 and 「登录」 as substrings).
     await page.getByLabel('密码', { exact: true }).fill('wrong-password');
     await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: '立即登录' }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
 
     await expect(page.getByText(/invalid username or password/i)).toBeVisible();
     await expect(page).toHaveURL(/\/account\/signin/);

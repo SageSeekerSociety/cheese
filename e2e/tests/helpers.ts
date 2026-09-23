@@ -13,13 +13,13 @@ export const DEMO_PASSWORD = 'demo12345';
 export async function login(page: Page, username = DEMO_USERNAME, password = DEMO_PASSWORD) {
   await page.goto('/account/signin');
   await page.getByLabel('用户名').fill(username);
-  // exact: true — Vuetify's show/hide-password toggle button gets an
-  // auto-generated aria-label of "密码 appended action" (see InputIcon.js),
-  // which is a substring match for the bare label and trips Playwright's
-  // strict mode (two elements match `getByLabel('密码')`).
+  // exact: true — the show-password toggle is labelled 「显示密码」, which is a
+  // substring match for the bare label and trips Playwright's strict mode (two
+  // elements match `getByLabel('密码')`). The same goes for the submit button:
+  // 「使用通行密钥登录」 also contains 「登录」.
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('checkbox').check();
-  await page.getByRole('button', { name: '立即登录' }).click();
+  await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.locator('.app-rail-item:not(.app-rail-item--add)').first().waitFor();
 }
 

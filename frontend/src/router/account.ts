@@ -14,7 +14,7 @@ export default {
       component: () => import('@/views/account/SignIn.vue'),
       meta: {
         title: '登录',
-        titleKey: 'account.signIn',
+        titleKey: 'account.signIn.title',
       },
     },
     {
@@ -49,8 +49,8 @@ export default {
       name: 'RecoverPasswordVerify',
       component: () => import('@/views/account/recover/password/Verify.vue'),
       meta: {
-        title: '找回密码',
-        titleKey: 'account.forgotPassword',
+        title: '设置新密码',
+        titleKey: 'account.resetPassword.title',
       },
       beforeEnter: (to: any, from: any, next: any) => {
         if (!to.query.token) {
@@ -97,7 +97,8 @@ export default {
       name: 'OAuthSuccess',
       component: () => import('@/views/account/OAuthSuccess.vue'),
       meta: {
-        title: 'OAuth 登录成功',
+        title: '登录',
+        titleKey: 'account.signIn.title',
       },
     },
     {

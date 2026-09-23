@@ -1,99 +1,65 @@
 <template>
   <div>
-    <!-- 标题区域 - 美观大气 -->
-    <div class="mb-12">
-      <div class="d-flex align-center mb-3">
-        <v-icon color="primary" size="28" class="mr-3">mdi-key-change</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
-          {{ t('account.setANewPassword') }}
-        </h1>
-      </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-        {{ t('account.chooseASecurePasswordForYourAccount') }}
-      </p>
-    </div>
+    <AccountHeading :title="t('account.resetPassword.title')" />
 
-    <!-- 错误/成功提示区域 -->
-    <div v-if="myAlert.message" class="mb-8">
-      <v-alert :type="myAlert.type" variant="tonal" density="comfortable">
-        {{ myAlert.message }}
-      </v-alert>
-    </div>
+    <v-alert v-if="myAlert.message" :type="myAlert.type" variant="tonal" density="comfortable" class="mb-6">
+      {{ myAlert.message }}
+    </v-alert>
 
-    <v-fade-transition mode="out-in">
-      <div :key="String(isSubmitting)">
-        <!-- 密码重置表单区域 -->
-        <div class="mb-8">
-          <v-form @submit.prevent="submit">
-            <v-row dense>
-              <v-col cols="12" md="6">
-                <v-text-field
-                  id="field-password"
-                  v-model="password"
-                  autocomplete="new-password"
-                  name="password"
-                  :label="t('account.newPassword')"
-                  type="password"
-                  variant="outlined"
-                  :loading="isSubmitting"
-                  v-bind="passwordProps"
-                  class="mb-4"
-                />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-text-field
-                  id="field-confirmPassword"
-                  v-model="confirmPassword"
-                  autocomplete="new-password"
-                  name="confirmPassword"
-                  :label="t('account.confirmPassword')"
-                  type="password"
-                  variant="outlined"
-                  :loading="isSubmitting"
-                  v-bind="confirmPasswordProps"
-                  class="mb-4"
-                />
-              </v-col>
-            </v-row>
+    <v-form @submit.prevent="submit">
+      <PasswordField
+        id="field-password"
+        v-model="password"
+        autocomplete="new-password"
+        name="password"
+        :label="t('account.field.newPassword')"
+        :hint="t('account.rule.passwordHint')"
+        persistent-hint
+        v-bind="passwordProps"
+        class="mb-2"
+      />
 
-            <v-btn
-              block
-              color="primary"
-              size="large"
-              type="submit"
-              :loading="isSubmitting"
-              style="text-transform: none; font-weight: 500; height: 48px"
-              class="mb-4"
-            >
-              {{ t('account.resetPassword') }}
-            </v-btn>
+      <PasswordField
+        id="field-confirmPassword"
+        v-model="confirmPassword"
+        autocomplete="new-password"
+        name="confirmPassword"
+        :label="t('account.field.confirmPassword')"
+        v-bind="confirmPasswordProps"
+        class="mb-2"
+      />
 
-            <p class="text-body-2" style="color: var(--muted)">
-              {{ t('account.wantToGoBack') }}
-              <v-btn
-                variant="text"
-                color="primary"
-                to="/account/signin"
-                size="small"
-                style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
-                class="text-decoration-none"
-              >
-                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('account.backToSignIn') }}
-              </v-btn>
-            </p>
-          </v-form>
-        </div>
-      </div>
-    </v-fade-transition>
+      <v-btn
+        block
+        color="primary"
+        size="large"
+        type="submit"
+        :loading="isSubmitting"
+        style="text-transform: none; font-weight: 500; height: 48px"
+        class="mb-4"
+      >
+        {{ t('account.resetPassword.submit') }}
+      </v-btn>
+
+      <v-btn
+        variant="text"
+        color="primary"
+        to="/account/signin"
+        style="text-transform: none; padding: 0; min-width: auto"
+        class="text-decoration-none"
+      >
+        {{ t('account.backToSignIn') }}
+      </v-btn>
+    </v-form>
   </div>
 </template>
 
 <script lang="ts" setup>
 import type { TokenPayload } from '@/network/api/users/types'
+import type { SignInNoticeKey } from '../../signInNotice'
 
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { jwtDecode } from 'jwt-decode'
 import { useForm } from 'vee-validate'
@@ -101,6 +67,8 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 
+import AccountHeading from '@/components/account/AccountHeading.vue'
+import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -112,10 +80,8 @@ const token = computed(() => route.query.token as string)
 const username = computed(() => {
   try {
     const { payload } = jwtDecode<TokenPayload>(token.value)
-    console.log(payload, token.value)
     return payload.authorization.username
-  } catch (e) {
-    console.error('无效的 token:', e)
+  } catch {
     return undefined
   }
 })
@@ -133,21 +99,15 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
     toTypedSchema(
       z
         .object({
-          password: z
-            .string()
-            .min(8)
-            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
-          confirmPassword: z
-            .string()
-            .min(8)
-            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
+          password: z.string().regex(REGEX_PASSWORD, { message: t('account.rule.passwordInvalid') }),
+          confirmPassword: z.string().min(1),
         })
         .superRefine(({ password, confirmPassword }, ctx) => {
           if (password !== confirmPassword) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['confirmPassword'],
-              message: t('account.passwordsDoNotMatch'),
+              message: t('account.rule.passwordsDoNotMatch'),
             })
           }
         })
@@ -161,27 +121,21 @@ const [confirmPassword, confirmPasswordProps] = defineField('confirmPassword', v
 const router = useRouter()
 
 const submit = handleSubmit(async (value) => {
+  if (!username.value) {
+    myAlert.value = { message: t('account.resetPassword.invalidLink'), type: 'error' }
+    return
+  }
   try {
-    if (!username.value) {
-      throw new Error(t('account.invalidPasswordResetLink'))
-    }
-
     await UserApi.recoverPasswordVerify({
       token: token.value,
       password: value.password,
     })
 
-    toast.success(t('account.passwordResetPleaseSignInAgain'))
-    router.replace({
-      name: 'SignIn',
-      query: {
-        username: username.value,
-        message: t('account.yourPasswordHasBeenResetSignIn'),
-      },
-    })
+    const message: SignInNoticeKey = 'passwordReset'
+    router.replace({ name: 'SignIn', query: { username: username.value, message } })
   } catch (e) {
     myAlert.value = {
-      message: requestErrorMessage(e, t('account.couldNotResetYourPasswordPleaseTry')),
+      message: requestErrorMessage(e, t('account.resetPassword.failed')),
       type: 'error',
     }
   }
