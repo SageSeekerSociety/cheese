@@ -58,7 +58,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
-import { COURSE_TEACHER_CELLS } from '@/lib/courseNav'
+import { COURSE_TEACHER_CELLS, visibleCourseCells } from '@/lib/courseNav'
 import { SpacesApi } from '@/network/api/spaces'
 import { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/network/api/spaces/types'
 import { useSpaceStore } from '@/stores/space'
@@ -68,7 +68,8 @@ const route = useRoute()
 const { currentSpace: space } = storeToRefs(useSpaceStore())
 
 const spaceId = String(route.params.spaceId)
-const teacherCells = COURSE_TEACHER_CELLS
+// 这几个入口跟侧栏同一份声明、同一个筛选：关掉的模块在这里也不出现。
+const teacherCells = computed(() => visibleCourseCells(COURSE_TEACHER_CELLS, space.value?.courseModules))
 const loading = ref(true)
 
 // 三个数字各来自一个接口，一块坏掉不连坐另外两块。
