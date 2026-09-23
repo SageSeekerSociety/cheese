@@ -356,7 +356,9 @@ onMounted(load)
           <!-- 状态列「异常才说话」：正常行画 `—`，不把整列刷成一片「正常」的噪音。 -->
           <td class="am__cell">
             <span v-if="row.hasAccount" class="am__dim">—</span>
-            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{ t('members.row.noAccount') }}</span>
+            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
+              t('members.row.noAccount')
+            }}</span>
           </td>
           <td v-if="row.registeredAt" class="am__cell" :title="relTime(row.registeredAt)">
             <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
@@ -400,7 +402,9 @@ onMounted(load)
           </td>
           <td class="am__cell">
             <span v-if="row.hasAccount" class="am__dim">—</span>
-            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{ t('members.row.noAccount') }}</span>
+            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
+              t('members.row.noAccount')
+            }}</span>
           </td>
           <td v-if="row.registeredAt" class="am__cell" :title="relTime(row.registeredAt)">
             <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
@@ -410,7 +414,9 @@ onMounted(load)
             <span class="am__dim">{{ t('members.row.sourceAdded') }}</span>
           </td>
           <td class="am__cell" :title="t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })">
-            <span class="am__dim">{{ t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) }) }}</span>
+            <span class="am__dim">{{
+              t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })
+            }}</span>
           </td>
           <td class="am__cell am__cell--actions">
             <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密
@@ -476,7 +482,9 @@ onMounted(load)
                 <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
                 <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
                 <template #append>
-                  <span v-if="item.raw.already_admin" class="chip-neutral">{{ t('members.addDialog.alreadyAdmin') }}</span>
+                  <span v-if="item.raw.already_admin" class="chip-neutral">{{
+                    t('members.addDialog.alreadyAdmin')
+                  }}</span>
                 </template>
               </v-list-item>
             </template>

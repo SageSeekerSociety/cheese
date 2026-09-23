@@ -37,8 +37,8 @@
  * 里不展开（点是 `focus`/`click` 驱动的，试过都不行）。`addWithin` 那条路（含被拒时
  * 显示服务端原话、框不关）在**预览和 e2e 的真浏览器**里点，不在这一份里。
  */
-import type { PlatformAdminsPayload } from '@/api'
 import type { Component } from 'vue'
+import type { PlatformAdminsPayload } from '@/api'
 
 import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
@@ -81,9 +81,30 @@ const BOT_REGISTERED = '2026-03-01T00:00:00Z'
 // （只会从根配置混进来 —— 页面加人服务端拒 agent）、其余行正常。
 const ROSTER: PlatformAdminsPayload = {
   root: [
-    { handle: 'andy', nickname: '安迪', avatar_id: 7, has_account: true, registered_at: ANDY_REGISTERED, is_agent: false },
-    { handle: 'wangchangxin', nickname: null, avatar_id: null, has_account: false, registered_at: null, is_agent: false },
-    { handle: 'cheese-bot', nickname: null, avatar_id: null, has_account: true, registered_at: BOT_REGISTERED, is_agent: true },
+    {
+      handle: 'andy',
+      nickname: '安迪',
+      avatar_id: 7,
+      has_account: true,
+      registered_at: ANDY_REGISTERED,
+      is_agent: false,
+    },
+    {
+      handle: 'wangchangxin',
+      nickname: null,
+      avatar_id: null,
+      has_account: false,
+      registered_at: null,
+      is_agent: false,
+    },
+    {
+      handle: 'cheese-bot',
+      nickname: null,
+      avatar_id: null,
+      has_account: true,
+      registered_at: BOT_REGISTERED,
+      is_agent: true,
+    },
   ],
   added: [
     {
@@ -283,9 +304,7 @@ describe('成员管理', () => {
 
     // 让下一次取数挂起：busy 本来只有半秒，拉长到断言跑完。
     let release: (value: PlatformAdminsPayload) => void = () => {}
-    listPlatformAdmins.mockImplementation(
-      () => new Promise<PlatformAdminsPayload>((resolve) => (release = resolve))
-    )
+    listPlatformAdmins.mockImplementation(() => new Promise<PlatformAdminsPayload>((resolve) => (release = resolve)))
     await fireEvent.click(getByRole('button', { name: '刷新' }))
 
     // 取数中：旧名单压暗、**内容还在**、没有换成骨架 —— 换骨架的话「安迪」会消失、

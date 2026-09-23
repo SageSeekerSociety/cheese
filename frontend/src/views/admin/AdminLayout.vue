@@ -51,16 +51,46 @@ const { t } = useI18n()
  *  那一刻取当前语言，写成常量只会在 setup 时求值一次，切了语言侧栏不跟。键**逐字写全、
  *  不拼** —— i18n 闸门（`src/i18n/catalog.spec.ts`）照源码字面量认「这个键有人用」。 */
 const SECTIONS: { to: string; name: string; icon: string; label: () => string; badge: boolean }[] = [
-  { to: '/admin/queue', name: 'AdminQueue', icon: 'mdi-tray-full', label: () => t('navigation.admin.queue'), badge: true },
-  { to: '/admin/dashboard', name: 'AdminDashboard', icon: 'mdi-chart-line', label: () => t('navigation.admin.dashboard'), badge: false },
+  {
+    to: '/admin/queue',
+    name: 'AdminQueue',
+    icon: 'mdi-tray-full',
+    label: () => t('navigation.admin.queue'),
+    badge: true,
+  },
+  {
+    to: '/admin/dashboard',
+    name: 'AdminDashboard',
+    icon: 'mdi-chart-line',
+    label: () => t('navigation.admin.dashboard'),
+    badge: false,
+  },
   // 「模型」放在看板后面：它和看板看的是同一条链（网关上的模型与它们花掉的钱），
   // 只是看板报量、这一块管钱和上架。入口名说的是里面装的是什么。
-  { to: '/admin/models', name: 'AdminModels', icon: 'mdi-cube-outline', label: () => t('navigation.admin.models'), badge: false },
+  {
+    to: '/admin/models',
+    name: 'AdminModels',
+    icon: 'mdi-cube-outline',
+    label: () => t('navigation.admin.models'),
+    badge: false,
+  },
   // 「开板申请」而不是「题目板审核」：需求方在这一页上问过「题目板审核是什么」——
   // 名字说的是**你对它做什么**（审核），而他要找的是**这里面装的是什么**（有人申请开
   // 一个新题目板）。入口的名字该回答后者，动作（批准 / 驳回）是页面里的事。
-  { to: '/admin/spaces', name: 'AdminSpaces', icon: 'mdi-check-decagram-outline', label: () => t('navigation.admin.spaces'), badge: false },
-  { to: '/admin/members', name: 'AdminMembers', icon: 'mdi-account-multiple-outline', label: () => t('navigation.admin.members'), badge: false },
+  {
+    to: '/admin/spaces',
+    name: 'AdminSpaces',
+    icon: 'mdi-check-decagram-outline',
+    label: () => t('navigation.admin.spaces'),
+    badge: false,
+  },
+  {
+    to: '/admin/members',
+    name: 'AdminMembers',
+    icon: 'mdi-account-multiple-outline',
+    label: () => t('navigation.admin.members'),
+    badge: false,
+  },
 ]
 
 /** 折叠成 56px（§10.2）。**不落盘**：壳在同一个会话里不重新挂载，切分区不会把它弹回来，
