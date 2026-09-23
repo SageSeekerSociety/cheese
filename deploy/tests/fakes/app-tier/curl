@@ -45,4 +45,20 @@ if [ -n "${APP_TIER_SNAPSHOT_ONLINE_SEQUENCE:-}" ] && [[ "$config" == *"/snapsho
   exit 0
 fi
 if [[ "$config" == *"write-out = %{http_code}"* ]]; then printf '200'; fi
+# The turn drain reads /health's active_turns before the backend is recreated.
+# Unset means /health answers nothing, which is the "cannot judge, do not wait"
+# path a real deploy takes when the side channel is down.
+if [ -n "${APP_TIER_ACTIVE_TURNS_SEQUENCE:-}" ] && [[ "$*" == *"/health" ]]; then
+  count_file="${APP_TIER_TURNS_COUNT_FILE:?}"
+  count=0
+  [ ! -f "$count_file" ] || count="$(cat "$count_file")"
+  count=$((count + 1))
+  printf '%s' "$count" > "$count_file"
+  turns=(${APP_TIER_ACTIVE_TURNS_SEQUENCE//,/ })
+  index=$((count - 1))
+  [ "$index" -lt "${#turns[@]}" ] || index=$((${#turns[@]} - 1))
+  printf '{"code":200,"message":"ok","data":{"status":"healthy","active_turns":%s,"version":"test"}}' \
+    "${turns[$index]}"
+  exit 0
+fi
 exit 0

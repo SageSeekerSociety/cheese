@@ -745,6 +745,65 @@ wait_for_healthz() {
   return 1
 }
 
+# How long to let a turn finish before the recreate, and how often to look.
+# Bounded on purpose: a wedged turn must not be able to hold a release hostage.
+TURN_DRAIN_TIMEOUT="${DEPLOY_TURN_DRAIN_TIMEOUT:-180}"
+TURN_DRAIN_INTERVAL="${DEPLOY_TURN_DRAIN_INTERVAL:-3}"
+
+# $1 = host port. Prints the number of turns in flight there, or nothing.
+active_turns_on() {
+  local port="$1" body
+  body="$(curl -fsS -m 3 "http://127.0.0.1:${port}/health" 2>/dev/null)" || return 1
+  printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    print(int(json.load(sys.stdin)["data"]["active_turns"]))
+except Exception:
+    sys.exit(1)
+' 2>/dev/null
+}
+
+# Wait for the backend on $1 to have no agent turn in flight.
+#
+# A turn is a coroutine inside that container, so recreating the container kills
+# every turn in flight — 芝士 stops mid-work and the room is left with a dead
+# turn. `/health` has reported `active_turns` for exactly this, in as many words
+# ("wait until no agent turn is in flight before restarting, so a deploy never
+# kills 芝士 mid-work", backend/app/main.py), and this script never read it: the
+# only wait was DRAIN_SECONDS, which covers nginx's 30 s worker retirement and
+# has nothing to do with turns. Measured on dev 2026-09-23: a merge-triggered
+# redeploy recreated the backend at 01:59:51Z with 18 turn intervals open.
+#
+# Best-effort by design. An unreadable /health means the drain cannot judge, and
+# a release that refuses to proceed because a side channel is down is worse than
+# the turns it was trying to save — so that ends the wait immediately rather
+# than burning the timeout. Past the timeout the deploy proceeds and the wedge
+# sweep picks up whatever is left.
+drain_active_turns() {
+  local port="$1" waited=0 turns
+  if [ "${TURN_DRAIN_TIMEOUT:-0}" -le 0 ] 2>/dev/null; then
+    log "turn drain disabled (DEPLOY_TURN_DRAIN_TIMEOUT=${TURN_DRAIN_TIMEOUT})"
+    return 0
+  fi
+  while :; do
+    if ! turns="$(active_turns_on "$port")"; then
+      log "cannot read active_turns from :$port/health; not waiting for turns"
+      return 0
+    fi
+    if [ "$turns" = "0" ]; then
+      log "no agent turn in flight on :$port; recreating the backend"
+      return 0
+    fi
+    if [ "$waited" -ge "$TURN_DRAIN_TIMEOUT" ]; then
+      log "still $turns turn(s) in flight after ${TURN_DRAIN_TIMEOUT}s; releasing anyway"
+      return 0
+    fi
+    [ "$waited" = "0" ] && log "waiting for $turns agent turn(s) in flight on :$port…"
+    sleep "$TURN_DRAIN_INTERVAL"
+    waited=$((waited + TURN_DRAIN_INTERVAL))
+  done
+}
+
 rollout_backend() {
   if grep -Fq "server 127.0.0.1:$BACKEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/backend.conf"; then
     fail "backend router is still on :$BACKEND_PORT_NEXT from a previous rollout; recover it before redeploying"
@@ -764,6 +823,10 @@ rollout_backend() {
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
   sleep "$DRAIN_SECONDS"
+  # Public traffic is on $NEXT_BACKEND by now, so nothing new can start a turn
+  # here; what is left are the turns this container is still running, and only
+  # they would die with it.
+  drain_active_turns "$BACKEND_PORT"
   log "recreating backend on the new image behind ${NEXT_BACKEND}…"
   dc up -d --no-deps backend \
     || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
