@@ -182,10 +182,11 @@ export namespace UserApi {
     })
 
   // Passkey 注册相关
-  export const getPasskeyRegistrationOptions = (userId: number) =>
+  export const getPasskeyRegistrationOptions = (userId: number, sudoTicket: string) =>
     ApiInstance.request<{ options: any }>({
       url: `/users/${userId}/passkeys/options`,
       method: 'POST',
+      data: { sudoTicket },
       withCredentials: true,
     })
 
@@ -221,10 +222,11 @@ export namespace UserApi {
       method: 'GET',
     })
 
-  export const deletePasskey = (userId: number, credentialId: string) =>
+  export const deletePasskey = (userId: number, credentialId: string, sudoTicket: string) =>
     ApiInstance.request({
       url: `/users/${userId}/passkeys/${credentialId}`,
       method: 'DELETE',
+      data: { sudoTicket },
     })
 
   /**
@@ -238,7 +240,13 @@ export namespace UserApi {
   }
 
   /** The privileged operations the server gates on a sudo ticket. */
-  export type SudoPurpose = '2fa:disable'
+  export type SudoPurpose =
+    | '2fa:enable'
+    | '2fa:disable'
+    | '2fa:backup-codes'
+    | '2fa:settings'
+    | 'passkey:add'
+    | 'passkey:delete'
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
@@ -296,10 +304,11 @@ export namespace UserApi {
     })
 
   // TOTP 管理相关
-  export const initializeTOTP = (userId: number) =>
+  export const initializeTOTP = (userId: number, sudoTicket: string) =>
     ApiInstance.request<Enable2FAResponseDataType>({
       url: `/users/${userId}/2fa/enable`,
       method: 'POST',
+      data: { sudoTicket },
     })
 
   export const enableTOTP = (userId: number, data: { code: string; secret: string }) =>
@@ -316,10 +325,11 @@ export namespace UserApi {
       data: { sudoTicket },
     })
 
-  export const generateBackupCodes = (userId: number) =>
+  export const generateBackupCodes = (userId: number, sudoTicket: string) =>
     ApiInstance.request<GenerateBackupCodesResponseDataType>({
       url: `/users/${userId}/2fa/backup-codes`,
       method: 'POST',
+      data: { sudoTicket },
     })
 
   export interface Get2FAStatusResponseDataType {
@@ -341,11 +351,11 @@ export namespace UserApi {
     })
 
   // 添加更新 2FA 设置的方法
-  export const update2FASettings = (userId: number, alwaysRequired: boolean) =>
+  export const update2FASettings = (userId: number, alwaysRequired: boolean, sudoTicket: string) =>
     ApiInstance.request<Update2FASettingsResponseDataType>({
       url: `/users/${userId}/2fa/settings`,
       method: 'PUT',
-      data: { always_required: alwaysRequired },
+      data: { always_required: alwaysRequired, sudoTicket },
     })
 
   export const verifySudoTOTP = (code: string, purpose?: SudoPurpose) =>

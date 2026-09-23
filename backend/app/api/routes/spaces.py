@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -60,6 +60,14 @@ from app.domain.task.services import (
     TaskSubmissionService,
 )
 from app.domain.teaching.models import TeachingUnit
+from app.domain.teaching.quiz_models import Quiz, QuizAnswer, QuizAttempt, QuizQuestion
+from app.domain.teaching.quiz_repositories import (
+    QuizAnswerRepository,
+    QuizAttemptRepository,
+    QuizQuestionRepository,
+    QuizRepository,
+)
+from app.domain.teaching.quiz_services import QuizService
 from app.domain.teaching.repositories import TeachingUnitRepository
 from app.domain.teaching.services import TeachingUnitService
 from app.domain.team.services import team_service
@@ -2434,6 +2442,67 @@ class PatchTeachingUnitRequest(BaseModel):
     published: bool | None = None
 
 
+class CreateQuizRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str = Field(..., min_length=1, max_length=255)
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+
+
+class PatchQuizRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = None
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+    clear_due_at: bool = Field(default=False, alias="clearDueAt")
+
+
+class CreateQuizQuestionRequest(BaseModel):
+    """一道题。
+
+    ``answer`` 的形状由 ``kind`` 决定（下标 / 下标表 / 字符串 / 参考文本），**这里
+    不收窄**：形状检查一处做完才看得出来错（见 ``quiz_services._check_question``）。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    prompt: str = Field(..., min_length=1)
+    options: list[str] = Field(default_factory=list)
+    answer: Any = None
+    points: int = 0
+
+
+class PatchQuizQuestionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str | None = None
+    prompt: str | None = None
+    options: list[str] | None = None
+    answer: Any = None
+    points: int | None = None
+
+
+class QuizAnswerIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    question_id: int = Field(..., alias="questionId")
+    response: Any = None
+
+
+class SubmitQuizAttemptRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    answers: list[QuizAnswerIn] = Field(default_factory=list)
+
+
+class GradeQuizAnswerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    points: int
+    comment: str = ""
+
+
 async def get_teaching_unit_service(
     db=Depends(get_db),
 ) -> TeachingUnitService:
@@ -2442,10 +2511,107 @@ async def get_teaching_unit_service(
     )
 
 
-def _teaching_unit_to_api_model(unit: TeachingUnit) -> dict:
-    def _ts(value: datetime | None) -> int | None:
-        return int(value.timestamp() * 1000) if value else None
+async def get_quiz_service(
+    db=Depends(get_db),
+) -> QuizService:
+    return QuizService(
+        quizzes=QuizRepository(db),
+        questions=QuizQuestionRepository(db),
+        attempts=QuizAttemptRepository(db),
+        answers=QuizAnswerRepository(db),
+        units=TeachingUnitRepository(db),
+    )
 
+
+def _quiz_to_api_model(quiz: Quiz) -> dict:
+    return {
+        "id": quiz.id,
+        "spaceId": quiz.space_id,
+        "unitId": quiz.unit_id,
+        "title": quiz.title,
+        "dueAt": _ts(quiz.due_at),
+    }
+
+
+def _quiz_question_to_api_model(
+    question: QuizQuestion, *, include_answer: bool
+) -> dict:
+    """``include_answer`` 只对教师为真 —— **答案键从不发给学生**（见模块说明）。"""
+    out = {
+        "id": question.id,
+        "position": question.position,
+        "kind": question.kind,
+        "prompt": question.prompt,
+        "options": list(question.options or []),
+        "points": question.points,
+    }
+    if include_answer:
+        out["answer"] = question.answer
+    return out
+
+
+def _quiz_attempt_to_api_model(attempt: QuizAttempt) -> dict:
+    return {
+        "id": attempt.id,
+        "userId": attempt.user_id,
+        "submittedAt": _ts(attempt.submitted_at),
+        "gradedAt": _ts(attempt.graded_at),
+    }
+
+
+def _quiz_answer_to_api_model(answer: QuizAnswer) -> dict:
+    return {
+        "questionId": answer.question_id,
+        "response": answer.response,
+        "awardedPoints": answer.awarded_points,
+        "comment": answer.comment,
+        "needsReview": answer.awarded_points is None,
+    }
+
+
+def _quiz_payload_to_api_model(payload: dict) -> dict:
+    """一条小测页要的全部东西，按看的人分两种形状。
+
+    学生那份**没有答案键**，只有自己那一次作答与每题得分；教师那份有答案键，并多
+    一个「判完了没有」。分叉放在这里一次做完，别让每条路由各判一次。
+    """
+    quiz = payload.get("quiz")
+    if quiz is None:
+        return {"quiz": None, "unitId": payload["unitId"]}
+    can_teach = bool(payload.get("canTeach"))
+    questions = [
+        _quiz_question_to_api_model(question, include_answer=can_teach)
+        for question in payload["questions"]
+    ]
+    my_answers = payload.get("myAnswers", [])
+    score = sum(answer["awardedPoints"] or 0 for answer in my_answers)
+    attempt = payload.get("myAttempt")
+    my_attempt = _quiz_attempt_to_api_model(attempt) if attempt is not None else None
+    if my_attempt is not None and attempt is not None:
+        my_attempt["pendingReview"] = attempt.graded_at is None
+        my_attempt["score"] = score
+    out = {
+        "quiz": _quiz_to_api_model(quiz),
+        "canTeach": can_teach,
+        "questions": questions,
+        "maxScore": payload["maxScore"],
+        "myAttempt": my_attempt,
+        "myAnswers": my_answers,
+    }
+    if can_teach:
+        out["submissions"] = payload.get("submissions", [])
+        out["reviewQueue"] = payload.get("reviewQueue", [])
+    return out
+
+
+def _ts(value: datetime | None) -> int | None:
+    """毫秒时间戳，或者 None —— 前端拿到的一律是这个（别在每处各写一遍）。"""
+    return int(value.timestamp() * 1000) if value else None
+
+
+def _teaching_unit_to_api_model(
+    unit: TeachingUnit, *, quiz_id: int | None = None
+) -> dict:
     return {
         "id": unit.id,
         "spaceId": unit.space_id,
@@ -2457,6 +2623,9 @@ def _teaching_unit_to_api_model(unit: TeachingUnit) -> dict:
         "assignmentTaskId": unit.assignment_task_id,
         "publishedAt": _ts(unit.published_at),
         "dueAt": _ts(unit.due_at),
+        # 这一周有没有小测（NULL = 没有）。学生首页靠它决定要不要给「本周有小测」
+        # 那个入口，所以它跟着单元列表一起下来，而不是让前端逐周去问一次。
+        "quizId": quiz_id,
     }
 
 
@@ -2468,6 +2637,7 @@ async def list_space_units(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeachingUnitService = Depends(get_teaching_unit_service),
+    quiz_service: QuizService = Depends(get_quiz_service),
     db=Depends(get_db),
 ) -> dict:
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
@@ -2475,11 +2645,15 @@ async def list_space_units(
         session=db, space_id=space_id, user_id=auth_user.user_id
     )
     units = await service.list_units(space_id=space_id, published_only=not can_teach)
+    quiz_ids = await quiz_service.quiz_ids_by_unit(unit_ids=[unit.id for unit in units])
     return {
         "code": 200,
         "message": "OK",
         "data": {
-            "units": [_teaching_unit_to_api_model(unit) for unit in units],
+            "units": [
+                _teaching_unit_to_api_model(unit, quiz_id=quiz_ids.get(unit.id))
+                for unit in units
+            ],
             "canTeach": can_teach,
         },
     }
@@ -2527,6 +2701,7 @@ async def patch_space_unit(
     payload: PatchTeachingUnitRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeachingUnitService = Depends(get_teaching_unit_service),
+    quiz_service: QuizService = Depends(get_quiz_service),
     db=Depends(get_db),
 ) -> dict:
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
@@ -2544,10 +2719,13 @@ async def patch_space_unit(
         due_at=payload.due_at,
         clear_due_at=payload.clear_due_at,
     )
+    quiz_ids = await quiz_service.quiz_ids_by_unit(unit_ids=[unit.id])
     return {
         "code": 200,
         "message": "OK",
-        "data": {"unit": _teaching_unit_to_api_model(unit)},
+        "data": {
+            "unit": _teaching_unit_to_api_model(unit, quiz_id=quiz_ids.get(unit.id))
+        },
     }
 
 
@@ -2566,3 +2744,303 @@ async def delete_space_unit(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     await service.delete_unit(space_id=space_id, unit_id=unit_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# 小测（一门课里的一周）
+#
+# 可见性只有一条：**单元发布了，这一周的小测才存在**（服务里那一处
+# ``_require_published``），所以这里没有第二个发布开关。写的一次只走
+# ``_ensure_space_admin``（本版管理员 = 这门课的老师），读的一次先过可见性。
+# ---------------------------------------------------------------------------
+
+
+async def _attach_people_to(rows: list[dict], *, db) -> None:
+    """给「谁交的」那一列补上显示名 —— 一次问两个查询，别按人循环。"""
+    user_ids = sorted({row["userId"] for row in rows})
+    if not user_ids:
+        return
+    people = await _hydrate_people(
+        user_ids,
+        user_repo=UserRepository(db),
+        profile_repo=UserProfileRepository(db),
+    )
+    for row in rows:
+        row["user"] = people.get(row["userId"])
+
+
+@router.get(
+    "/{spaceId}/units/{unitId}/quiz",
+    summary="Get the quiz of a week",
+)
+async def get_unit_quiz(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    can_teach = await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    payload = await service.quiz_for_unit(
+        space_id=space_id,
+        unit_id=unit_id,
+        viewer_id=auth_user.user_id,
+        can_teach=can_teach,
+    )
+    if can_teach:
+        await _attach_people_to(
+            payload.get("submissions", []) + payload.get("reviewQueue", []), db=db
+        )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": _quiz_payload_to_api_model(payload),
+    }
+
+
+@router.get(
+    "/{spaceId}/quizzes/{quizId}",
+    summary="Get A Quiz",
+)
+async def get_space_quiz(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    can_teach = await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    payload = await service.quiz_by_id(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        viewer_id=auth_user.user_id,
+        can_teach=can_teach,
+    )
+    if can_teach:
+        await _attach_people_to(
+            payload.get("submissions", []) + payload.get("reviewQueue", []), db=db
+        )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": _quiz_payload_to_api_model(payload),
+    }
+
+
+@router.post(
+    "/{spaceId}/units/{unitId}/quiz",
+    summary="Create The Week's Quiz",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_unit_quiz(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    payload: CreateQuizRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    quiz = await service.create_quiz(
+        space_id=space_id,
+        unit_id=unit_id,
+        actor_id=auth_user.user_id,
+        title=payload.title,
+        due_at=payload.due_at,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"quiz": _quiz_to_api_model(quiz)},
+    }
+
+
+@router.patch(
+    "/{spaceId}/quizzes/{quizId}",
+    summary="Update A Quiz",
+)
+async def patch_space_quiz(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    payload: PatchQuizRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    quiz = await service.update_quiz(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        title=payload.title,
+        due_at=payload.due_at,
+        clear_due_at=payload.clear_due_at,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"quiz": _quiz_to_api_model(quiz)},
+    }
+
+
+@router.delete(
+    "/{spaceId}/quizzes/{quizId}",
+    summary="Delete A Quiz",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_space_quiz(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> Response:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await service.delete_quiz(space_id=space_id, quiz_id=quiz_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{spaceId}/quizzes/{quizId}/questions",
+    summary="Add A Quiz Question",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_quiz_question(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    payload: CreateQuizQuestionRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    question = await service.add_question(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        kind=payload.kind,
+        prompt=payload.prompt,
+        options=payload.options,
+        answer=payload.answer,
+        points=payload.points,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {
+            "question": _quiz_question_to_api_model(question, include_answer=True)
+        },
+    }
+
+
+@router.patch(
+    "/{spaceId}/quizzes/{quizId}/questions/{questionId}",
+    summary="Update A Quiz Question",
+)
+async def patch_quiz_question(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    question_id: Annotated[int, Path(ge=1, alias="questionId")],
+    payload: PatchQuizQuestionRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    question = await service.update_question(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        question_id=question_id,
+        kind=payload.kind,
+        prompt=payload.prompt,
+        options=payload.options,
+        answer=payload.answer,
+        points=payload.points,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "question": _quiz_question_to_api_model(question, include_answer=True)
+        },
+    }
+
+
+@router.delete(
+    "/{spaceId}/quizzes/{quizId}/questions/{questionId}",
+    summary="Delete A Quiz Question",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_quiz_question(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    question_id: Annotated[int, Path(ge=1, alias="questionId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> Response:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await service.delete_question(
+        space_id=space_id, quiz_id=quiz_id, question_id=question_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/{spaceId}/quizzes/{quizId}/my-attempt",
+    summary="Answer A Quiz",
+)
+async def submit_quiz_attempt(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    payload: SubmitQuizAttemptRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    answers = {item.question_id: item.response for item in payload.answers}
+    result = await service.submit(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        user_id=auth_user.user_id,
+        answers=answers,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": _quiz_payload_to_api_model(result),
+    }
+
+
+@router.patch(
+    "/{spaceId}/quizzes/{quizId}/answers/{answerId}",
+    summary="Grade A Quiz Answer",
+)
+async def grade_quiz_answer(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
+    answer_id: Annotated[int, Path(ge=1, alias="answerId")],
+    payload: GradeQuizAnswerRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: QuizService = Depends(get_quiz_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    answer = await service.grade_answer(
+        space_id=space_id,
+        quiz_id=quiz_id,
+        answer_id=answer_id,
+        actor_id=auth_user.user_id,
+        points=payload.points,
+        comment=payload.comment,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"answer": _quiz_answer_to_api_model(answer)},
+    }

@@ -289,6 +289,71 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
 
 
 @pytest.mark.anyio
+async def test_key_lookup_does_not_queue_behind_the_gateway_lock(client, tmp_path):
+    """A project whose key is already minted and in step is answered WITHOUT
+    taking `_gateway_lock`.
+
+    That lock is process-wide (`get_chat_service` is `@lru_cache`d, so there is
+    one ChatService per process) and the metering proxy asks for a key per
+    request. A lookup that takes it queues every admission on the box behind
+    whichever holder is slow, and that wait is what `/llm/admission`'s p95 is
+    made of — measured on dev 2026-09-23 at 8.9 s, and reproduced with 20
+    concurrent admissions for a single project fanning out into a 5.8 s tail.
+    """
+    fake = FakeGateway()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    # Some other caller is inside the lock: a mint, a re-price, or a drain.
+    await svc._gateway_lock.acquire()
+    try:
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        svc._gateway_lock.release()
+
+    # And answering from the persisted row wrote nothing back.
+    assert fake.minted == [pid]
+    assert fake.budgets == []
+
+
+@pytest.mark.anyio
+async def test_a_slow_spend_read_does_not_stall_key_lookup(client, tmp_path):
+    """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
+    `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
+    for as long as the gateway takes to answer."""
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_daily_spend(api_key, date):
+        reading.set()
+        await release.wait()
+        return await FakeGateway.daily_spend(fake, api_key, date)
+
+    fake.daily_spend = slow_daily_spend  # type: ignore[method-assign]
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    try:
+        await asyncio.wait_for(reading.wait(), timeout=2)
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+    finally:
+        release.set()
+
+    # The drain itself still lands its usage and advances the checkpoint.
+    drained = await pending
+    assert drained is not None
+    assert (drained.input_tokens, drained.output_tokens) == (120, 30)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+    assert project is not None
+    ckpt = (project.settings or {}).get("llm_gateway_usage_ckpt")
+    assert ckpt and ckpt["prompt"] == 120 and ckpt["completion"] == 30
+
+
+@pytest.mark.anyio
 async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monkeypatch):
     """Gateway-routed turns consume credits from the REAL spend (cache discounts
     included), not the flat token rate — so 120+30 tokens at ¥0.02 with a

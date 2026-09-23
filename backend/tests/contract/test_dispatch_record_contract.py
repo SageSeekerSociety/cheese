@@ -38,7 +38,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.core.db import get_db
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import deployment_harness
@@ -399,6 +399,21 @@ class _NeverAnswers:
 async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
     """一个房间、一条坐在里面的会话、它租到的那台机器，和这个房间的凭据。"""
     async with factory() as session:
+        from app.domain.device.models import (
+            DeviceProjectRow,
+            DeviceRow,
+            HostedDeviceRow,
+        )
+        from app.domain.user.models import User
+
+        owner = User(
+            username="machine-owner",
+            email="owner@example.test",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(owner)
+        await session.flush()
         project = await ProjectService(session).create(
             name="P", owner_handle="u", forge_kind="github_app"
         )
@@ -406,7 +421,21 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
             project_id=project.id, title="T", created_by="u"
         )
         session.add(
+            DeviceRow(
+                device_id=_MACHINE,
+                name="Machine",
+                token=uuid.uuid4().hex,
+                owner_user_id=owner.id,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.flush()
+        session.add(HostedDeviceRow(device_id=_MACHINE, owner_user_id=owner.id))
+        session.add(DeviceProjectRow(device_id=_MACHINE, project_id=project.id))
+        session_id, generation = uuid.uuid4(), uuid.uuid4()
+        session.add(
             AgentSession(
+                id=session_id,
                 topic_id=topic.id,
                 agent_handle="cheese",
                 harness=deployment_harness(),
@@ -416,6 +445,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
                     "resource_id": str(topic.id),
                 },
                 work_lease={
+                    "generation": str(generation),
                     "kind": "device",
                     "device_id": _MACHINE,
                     "home": "/home/cheese",
@@ -428,6 +458,12 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
             project_id=str(project.id),
             topic_id=str(topic.id),
             resource_id=str(topic.id),
+        )
+        token = bind_resource_token(
+            token,
+            str(topic.id),
+            session_id=str(session_id),
+            lease_generation=str(generation),
         )
         return project.id, topic.id, token
 
@@ -642,3 +678,46 @@ async def test_a_call_without_an_id_records_nothing(
 
     assert response.status_code == 504
     assert await _outcomes(db_factory, topic) == []
+
+
+@pytest.mark.anyio
+async def test_old_room_token_only_addresses_unique_unupgraded_lease(
+    db_factory, owner_client, monkeypatch
+):
+    project, topic, _ = await _a_room_with_hands(db_factory)
+    await _an_attached_machine(monkeypatch, _answers_with_a_result)
+    legacy_token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(topic)
+    )
+    # A single new session is still not an old room capability.
+    assert (await _invoke(owner_client, topic, legacy_token)).status_code == 409
+    async with db_factory() as db:
+        row = await db.scalar(
+            select(AgentSession).where(AgentSession.topic_id == topic)
+        )
+        lease = dict(row.work_lease)
+        lease.pop("generation")
+        row.work_lease = lease
+        await db.commit()
+    assert (
+        await _invoke(owner_client, topic, legacy_token, key="legacy")
+    ).status_code == 200
+    async with db_factory() as db:
+        row = await db.scalar(
+            select(AgentSession).where(AgentSession.topic_id == topic)
+        )
+        db.add(
+            AgentSession(
+                topic_id=topic,
+                agent_handle="other",
+                harness=deployment_harness(),
+                runtime_location=dict(row.runtime_location),
+                work_lease=dict(row.work_lease),
+            )
+        )
+        await db.commit()
+    # Never choose the first of two legacy owners.
+    assert (
+        await _invoke(owner_client, topic, legacy_token, key="ambiguous")
+    ).status_code == 409
+    assert await _outcomes(db_factory, topic) == [("legacy", "done")]

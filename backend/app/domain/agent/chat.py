@@ -4366,12 +4366,55 @@ class ChatService:
         env = await self._gateway_project_env(project_id)
         return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
+    async def _gateway_budget_target(
+        self, session: AsyncSession, project_id: uuid.UUID
+    ) -> float | None:
+        """The L2 max_budget this project's key should carry, or None when the
+        gateway must not be told one at all (no price knob, or the project is
+        unmetered). Reading it belongs to the READ path: a caller that finds the
+        key's budget already in step has nothing to write and nothing to lock."""
+        if not settings.llm_gateway_credit_usd:
+            return None
+        summary = await ComputeGrantRepository(session).summary(project_id)
+        if summary["unlimited"]:
+            return None
+        return round(summary["credits_total"] * settings.llm_gateway_credit_usd, 6)
+
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
         project's grants. Returns None on any gateway/admin failure; the caller
-        must refuse the turn rather than expose default pool credentials."""
+        must refuse the turn rather than expose default pool credentials.
+
+        **Answering a project that needs nothing written takes no lock at all.**
+        `_gateway_lock` serialises the settings read-modify-write, but this
+        method used to hold it across the whole body — including the two gateway
+        HTTP calls — so one project minting a key, or one drain asking the
+        gateway for spend, stalled every admission on the box behind it. These
+        calls are on the hot path of every model request (routes/llm_proxy.py
+        asks once per turn, and the metering proxy asks per request), and the
+        queued wait is what the /llm/admission p95 is made of. Measured on dev,
+        2026-09-23: 20 concurrent admissions for ONE project — key long since
+        minted, no budget drift to apply — still fanned out into a 5.8 s tail.
+        Nothing about answering that request is exclusive, so it is answered
+        before the lock is reached.
+        """
         try:
+            # Read path: the key exists and is in step → nothing to write.
+            async with self._sessions() as session:
+                project = await ProjectRepository(session).get(project_id)
+                if project is None or self._gateway is None:
+                    return None
+                s = dict(project.settings or {})
+                key = s.get(self._GW_KEY)
+                if isinstance(key, str) and key:
+                    target = await self._gateway_budget_target(session, project_id)
+                    if target is None or s.get(self._GW_BUDGET) == target:
+                        return {"ANTHROPIC_AUTH_TOKEN": key}
+
+            # Write path: something must be minted or re-priced. Serialised, and
+            # the settings row is re-read here so a mint that landed while this
+            # call waited on the lock is the one that gets used.
             async with self._gateway_lock:
                 async with self._sessions() as session:
                     project = await ProjectRepository(session).get(project_id)
@@ -4384,22 +4427,10 @@ class ChatService:
                         if not key:
                             return None
                         s[self._GW_KEY] = key
-                    # L2: budget = total granted credits, in USD. Only when the
-                    # price knob is set AND the project is metered at all.
-                    if settings.llm_gateway_credit_usd:
-                        summary = await ComputeGrantRepository(session).summary(
-                            project_id
-                        )
-                        if not summary["unlimited"]:
-                            budget = round(
-                                summary["credits_total"]
-                                * settings.llm_gateway_credit_usd,
-                                6,
-                            )
-                            if s.get(self._GW_BUDGET) != budget and (
-                                await self._gateway.set_key_budget(key, budget)
-                            ):
-                                s[self._GW_BUDGET] = budget
+                    target = await self._gateway_budget_target(session, project_id)
+                    if target is not None and s.get(self._GW_BUDGET) != target:
+                        if await self._gateway.set_key_budget(key, target):
+                            s[self._GW_BUDGET] = target
                     if s != (project.settings or {}):
                         project.settings = s
                         await session.commit()
@@ -4464,25 +4495,43 @@ class ChatService:
                     # Spend rows can arrive late. Wait without holding the lock
                     # needed by new model requests, then read the current checkpoint.
                     await asyncio.sleep(3.0)
+                # Read the checkpoint and ASK THE GATEWAY outside the lock. The
+                # ask is an HTTP round trip to LiteLLM (`/spend/logs`), and
+                # `_gateway_lock` is the box-wide lock that `/llm/admission`
+                # takes per request — holding it across a slow spend read queued
+                # every admission on the platform behind it (measured on dev,
+                # 2026-09-23: 25 admissions in one second, 1.1–6.1 s each, with a
+                # drain in flight). Only the checkpoint read-modify-write below
+                # needs to be exclusive.
+                async with self._sessions() as session:
+                    project = await ProjectRepository(session).get(project_id)
+                    if project is None:
+                        return None
+                    s = dict(project.settings or {})
+                    key = s.get(self._GW_KEY)
+                    if not isinstance(key, str) or not key:
+                        return None  # nothing ever routed → nothing to meter
+                    ckpt = s.get(self._GW_CKPT)
+                    ckpt = ckpt if isinstance(ckpt, dict) else None
+                drained = await drain_new_usage(self._gateway, key, ckpt)
+                if not attempt and (drained is None or drained[0] + drained[1] <= 0):
+                    continue
+                if drained is None:
+                    return None
+                prompt, completion, usd, next_ckpt = drained
+                # Exactly-once, and two drains can now be in flight at once: the
+                # checkpoint must still be the one we read before this drain is
+                # allowed to bill its delta. A drain that finds it already
+                # advanced has had its window taken by the other one and must
+                # land nothing — otherwise the same spend rows are billed twice.
                 async with self._gateway_lock:
                     async with self._sessions() as session:
                         project = await ProjectRepository(session).get(project_id)
                         if project is None:
                             return None
                         s = dict(project.settings or {})
-                        key = s.get(self._GW_KEY)
-                        if not isinstance(key, str) or not key:
-                            return None  # nothing ever routed → nothing to meter
-                        ckpt = s.get(self._GW_CKPT)
-                        ckpt = ckpt if isinstance(ckpt, dict) else None
-                        drained = await drain_new_usage(self._gateway, key, ckpt)
-                        if not attempt and (
-                            drained is None or drained[0] + drained[1] <= 0
-                        ):
-                            continue
-                        if drained is None:
+                        if s.get(self._GW_CKPT) != ckpt:
                             return None
-                        prompt, completion, usd, next_ckpt = drained
                         s[self._GW_CKPT] = next_ckpt
                         project.settings = s
                         await session.commit()
