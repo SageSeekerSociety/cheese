@@ -632,7 +632,9 @@ def app_world(client, monkeypatch):
     # 房间通知（fire-and-forget 的 _notify_merge_result）写库走模块级
     # async_session_factory —— 测试 harness 把它绑在另一个库上，这里指回
     # 本测试的库，房间文本才断言得到。
-    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(
+        review_services, "async_session_factory", client.test_request_factory
+    )
 
     github_pr.set_default_client(fake)
     try:
@@ -2460,7 +2462,7 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -2587,7 +2589,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
         trees = await original(self)
 
         async def _merge_it() -> None:
-            async with client.test_factory() as s:
+            async with client.test_request_factory() as s:
                 svc = TaskService(s)
                 landed = await svc.get(task_id)
                 assert landed is not None
@@ -2599,7 +2601,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []

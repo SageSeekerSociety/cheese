@@ -112,7 +112,7 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
     """Drive one turn to completion (or to its failure) on the client DB."""
     screen = _Screen(mode=mode)
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -148,7 +148,7 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
         async for _ in agen:
             pass
 
-    asyncio.run(_go())
+    client.portal.call(_go)
 
 
 @pytest.mark.parametrize(
@@ -161,7 +161,9 @@ def test_session_pointer_committed_on_every_in_process_exit(
 ):
     topic_id = _seed_topic(client)
     _run_turn(client, tmp_path, topic_id, mode)
-    stored = asyncio.run(_stored_session_id(client.test_factory, topic_id))
+    stored = client.portal.call(
+        _stored_session_id, client.test_request_factory, topic_id
+    )
     assert stored == SESSION_ID, f"退出路径「{mode}」没有把会话指针落库"
 
 
@@ -286,7 +288,9 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
             os.kill(child.pid, signal.SIGKILL)
             child.wait(timeout=30)
 
-    stored = asyncio.run(_stored_session_id(client.test_factory, topic_id))
+    stored = client.portal.call(
+        _stored_session_id, client.test_request_factory, topic_id
+    )
     assert stored == SESSION_ID, (
         "被 SIGKILL 的轮次没留下会话指针——重发/重新 @ 会开一个全新会话，"
         "芝士将不记得自己已经做过什么"
@@ -313,7 +317,7 @@ def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
     transcript that was never written."""
     topic_id = _seed_topic(client)
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(_SilentScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -328,5 +332,8 @@ def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
         except RuntimeError:
             pass
 
-    asyncio.run(_go())
-    assert asyncio.run(_stored_session_id(client.test_factory, topic_id)) is None
+    client.portal.call(_go)
+    assert (
+        client.portal.call(_stored_session_id, client.test_request_factory, topic_id)
+        is None
+    )
