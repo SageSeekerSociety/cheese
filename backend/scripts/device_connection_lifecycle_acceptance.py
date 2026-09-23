@@ -3,8 +3,11 @@
 This uses the production uvicorn owner, connector WebSocket protocol, and remote
 executor runtime. Device token lookup is replaced to avoid a Postgres dependency,
 and a Python connector harness relays frames in place of the packaged Go binary.
+An independent owner checkout exercises wire compatibility with a released
+version; dependencies and container entrypoints are outside this check.
 """
 
+import argparse
 import asyncio
 import json
 import multiprocessing
@@ -33,17 +36,20 @@ SECRET = "lifecycle-acceptance-secret"
 TRACE_ID = "execution-lifecycle-acceptance"
 
 
-def owner() -> None:
+def owner(source: str) -> None:
+    sys.path.insert(0, str(Path(source) / "backend"))
     os.environ["DEVICE_CONNECTION_URL"] = ""
     os.environ["DEVICE_CONNECTION_SECRET"] = SECRET
     os.environ["DEVICE_CONNECTION_OWNER"] = "1"
-    from app.api.routes.connector import get_device_service
+    from app import device_connection_app
     from app.core.db import get_db
-    from app.device_connection_app import app
+    from app.domain.device import owner_reads
 
-    class Service:
-        async def verify_token(self, _: str):
-            return SimpleNamespace(device_id="acceptance-machine", name="acceptance")
+    assert Path(device_connection_app.__file__).resolve().is_relative_to(Path(source))
+    app = device_connection_app.app
+
+    async def device_for_token(_session, _token):
+        return SimpleNamespace(device_id="acceptance-machine", name="acceptance")
 
     class Session:
         async def commit(self) -> None:
@@ -52,18 +58,23 @@ def owner() -> None:
     async def session():
         yield Session()
 
-    app.dependency_overrides[get_device_service] = Service
+    owner_reads.device_for_token = device_for_token
     app.dependency_overrides[get_db] = session
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
 
 
-async def connector(events: multiprocessing.Queue, task_root: str) -> None:
+async def connector(events: multiprocessing.Queue, task_root: str, claude: str) -> None:
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     workspace = Path(task_root)
     state = workspace / "executor"
     state.mkdir(parents=True)
-    configuration = {"workspace": str(workspace), "env": {}, "private": True}
+    configuration = {
+        "workspace": str(workspace),
+        "env": {},
+        "private": True,
+        "claude": claude,
+    }
     subprocess.run(
         [sys.executable, str(Path(runtime.__file__)), "start", "--state", str(state)],
         input=json.dumps(configuration),
@@ -101,38 +112,59 @@ async def connector(events: multiprocessing.Queue, task_root: str) -> None:
     events.put({"event": "executor_runtime_stopped"})
 
 
-def connector_process(events: multiprocessing.Queue, task_root: str) -> None:
-    asyncio.run(connector(events, task_root))
+def connector_process(
+    events: multiprocessing.Queue, task_root: str, claude: str
+) -> None:
+    asyncio.run(connector(events, task_root, claude))
 
 
 def backend_waiter(results: multiprocessing.Queue, generation: int) -> None:
-    response = httpx.post(
-        f"http://127.0.0.1:{PORT}/internal/device-connection/call/call_executor",
-        headers={"X-Device-Connection-Secret": SECRET},
-        json={
-            "device_id": "acceptance-machine",
-            "state": "/acceptance/.claude/executor",
-            "method": "invoke",
-            "params": {
-                "id": "same-executor-request",
-                "tool": "Bash",
-                "args": {
-                    "command": (
-                        "sleep 4; printf 'run\\n' >> execution-count; "
-                        "printf owner-retained-result"
-                    ),
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+
+    async def collect():
+        backend = RemoteDeviceHub(f"http://127.0.0.1:{PORT}", SECRET)
+        try:
+            await backend.start()
+            assert backend.is_online("acceptance-machine")
+            if generation == 1:
+                await backend.adopt_screen(
+                    "acceptance-machine",
+                    "surviving-screen",
+                    token="screen-token",
+                    agent_user_id=42,
+                    agent_handle="acceptance-agent",
+                    execution_target={"home": "/acceptance"},
+                )
+            else:
+                screen = backend.screen("surviving-screen")
+                assert screen is not None
+                assert screen.agent_handle == "acceptance-agent"
+                assert screen.execution_target == {"home": "/acceptance"}
+            return await backend.call_executor(
+                "acceptance-machine",
+                "/acceptance/.claude/executor",
+                "invoke",
+                {
+                    "id": "same-executor-request",
+                    "tool": "Bash",
+                    "args": {
+                        "command": (
+                            "sleep 4; printf 'run\\n' >> execution-count; "
+                            "printf owner-retained-result"
+                        ),
+                    },
                 },
-            },
-            "timeout": 30,
-            "trace_id": TRACE_ID,
-        },
-        timeout=35,
-    )
+                timeout=30,
+                trace_id=TRACE_ID,
+            )
+        finally:
+            await backend.close()
+
+    result = asyncio.run(collect())
     results.put(
         {
             "generation": generation,
-            "status": response.status_code,
-            "body": response.json(),
+            "body": {"result": result},
         }
     )
 
@@ -165,6 +197,19 @@ def record(log, event: str, **values) -> None:
 def main() -> int:
     multiprocessing.set_start_method("spawn")
     root = Path(__file__).resolve().parents[2]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--owner-source", type=Path, default=root)
+    parser.add_argument("--owner-revision")
+    parser.add_argument("--claude", type=Path, required=True)
+    options = parser.parse_args()
+    owner_source = options.owner_source.resolve()
+    owner_revision = subprocess.check_output(
+        ["git", "-C", str(owner_source), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if options.owner_revision and owner_revision != options.owner_revision:
+        raise RuntimeError(
+            f"owner revision is {owner_revision}, expected {options.owner_revision}"
+        )
     log_dir = root / "logs"
     log_dir.mkdir(exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -173,10 +218,12 @@ def main() -> int:
     results: multiprocessing.Queue = multiprocessing.Queue()
     task_root = root / "tmp" / f"device-connection-acceptance-{stamp}"
     task_root.mkdir(parents=True)
-    owner_process = multiprocessing.Process(target=owner, name="connection-owner")
+    owner_process = multiprocessing.Process(
+        target=owner, args=(str(owner_source),), name="connection-owner"
+    )
     connector_worker = multiprocessing.Process(
         target=connector_process,
-        args=(events, str(task_root)),
+        args=(events, str(task_root), str(options.claude.resolve())),
         name="device-connector",
     )
     first_backend = multiprocessing.Process(
@@ -187,8 +234,27 @@ def main() -> int:
     )
     with log_path.open("x", encoding="utf-8") as log:
         try:
+            record(
+                log,
+                "inputs",
+                owner_revision=owner_revision,
+                owner_source=str(owner_source),
+            )
             owner_process.start()
             wait_for_owner()
+            refused = httpx.get(
+                f"http://127.0.0.1:{PORT}/internal/device-connection/snapshot",
+                headers={"X-Device-Connection-Secret": "wrong-secret"},
+                timeout=5,
+            )
+            assert refused.status_code == 403
+            unknown = httpx.post(
+                f"http://127.0.0.1:{PORT}/internal/device-connection/call/unrecognised-method",
+                headers={"X-Device-Connection-Secret": SECRET},
+                json={},
+                timeout=5,
+            )
+            assert unknown.status_code == 404
             owner_pid = owner_process.pid
             record(log, "owner_ready", owner_pid=owner_pid, port=PORT)
 
@@ -226,18 +292,12 @@ def main() -> int:
                 owner_unchanged=owner_process.pid == owner_pid,
                 **result,
             )
-            expected = {
-                "result": {
-                    "value": {
-                        "stdout": "owner-retained-result",
-                        "stderr": "",
-                        "interrupted": False,
-                        "noOutputExpected": False,
-                        "returnCodeInterpretation": "Exit code 0",
-                    }
-                }
-            }
-            if result["body"] != expected:
+            value = (result["body"]["result"] or {}).get("value", {})
+            if (
+                value.get("stdout") != "owner-retained-result"
+                or value.get("stderr") != ""
+                or value.get("interrupted") is not False
+            ):
                 raise RuntimeError(f"replacement received wrong result: {result}")
             executions = (task_root / "execution-count").read_text().splitlines()
             if executions != ["run"]:
@@ -253,9 +313,11 @@ def main() -> int:
                 "acceptance_passed",
                 owner_pid=owner_pid,
                 executor_stdout="owner-retained-result",
-                executor_exit_code=0,
                 execution_count=len(executions),
             )
+        except BaseException as exc:
+            record(log, "acceptance_failed", error=repr(exc))
+            raise
         finally:
             for process in (
                 first_backend,
@@ -268,6 +330,19 @@ def main() -> int:
                 if process.is_alive():
                     process.terminate()
                 process.join(timeout=5)
+            from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    runtime.__file__,
+                    "stop",
+                    "--state",
+                    str(task_root / "executor"),
+                ],
+                check=True,
+                timeout=15,
+            )
     print(log_path)
     return 0
 
