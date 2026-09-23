@@ -146,7 +146,8 @@ test('同名文件按任务打开，切换来源后草稿仍在', async ({ page 
     await expect(panel.locator('.monaco-editor')).toContainText('my unsaved draft');
     await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.screenshot({ path: testInfo.outputPath('task-files-draft-dark.png'), fullPage: true });
+    // The evidence is this editor panel; a full-page capture can stall in Chromium.
+    await panel.screenshot({ path: testInfo.outputPath('task-files-draft-dark.png') });
     await panel.getByRole('button', { name: '保存', exact: true }).click();
     await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
     const saved = await api(page, 'get', `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${first.id}`);
