@@ -36,6 +36,11 @@ services:
       # only ever mounted it into sandboxes by host path.
       SUBSCRIPTION_CA_BACKEND_PATH: /etc/cheese/metering-proxy-ca.pem
     volumes:
+      # Host NIC counters for the board's uplink plane (read-only, no privileges).
+      # Missing mount (Docker Desktop, CI) degrades to the container's own
+      # /sys/class/net and the board says `perf.netContainer` — see
+      # `app/core/net_io.py`.
+      - /sys/class/net:/host-sys-class/net:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
       # The proxy's log dir, read-only: the one place subscription spend exists.

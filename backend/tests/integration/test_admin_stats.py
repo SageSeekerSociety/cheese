@@ -527,7 +527,7 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     data = r.json()["data"]
 
     # 这一类的口径必须写在响应里，否则会被当成「整个平台的、有历史的」数。
-    assert data["routes_total"] >= data["routes_shown"] >= 1
+    assert data["routes_registered"] >= data["routes_with_samples"] >= 1
     assert data["routes"], data
     assert isinstance(data["uptime_seconds"], (int, float))
     assert data["active_requests"] >= 0
@@ -536,7 +536,26 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     row = data["routes"][0]
     assert row["method"] and row["route"]
     assert row["count"] >= 1
-    assert set(row) >= {"method", "route", "status", "count", "p50", "p95", "p99"}
+    assert set(row) >= {
+        "method",
+        "route",
+        "status",
+        "count",
+        "error_count",
+        "p50",
+        "p95",
+        "p99",
+        "spark",
+    }
+    # 状态码是**属性**不是身份：一行里就是一个端点的 2xx/3xx/4xx/5xx 各多少。
+    assert set(row["status"]) == {"2xx", "3xx", "4xx", "5xx"}
+
+    # **每一条注册过的端点都占一行**，没被访问过的也在（`count: 0`、分位数 None）——
+    # 这正是「很多 api 都没显示」的那件事：老实现只列有样本的前 12 条。
+    assert data["routes_registered"] >= 50, data["routes_registered"]
+    never_hit = [r for r in data["routes"] if r["count"] == 0]
+    assert never_hit, "至少应有一条从未被访问的路由占着一行"
+    assert all(r["p95"] is None for r in never_hit), never_hit[:3]
 
     # **数值**也要看一眼，不能只看「有这个键」。这一条是补的：`quantile` 曾经把
     # 逐桶的计数当成累加的，于是样本落在两个以上桶里的路由 p95 永远返回最后一个桶的

@@ -93,6 +93,11 @@ services:
       - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
       - QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
     volumes:
+      # Host NIC counters for the board's uplink plane (read-only, no privileges).
+      # Missing mount (Docker Desktop, CI) degrades to the container's own
+      # /sys/class/net and the board says `perf.netContainer` — see
+      # `app/core/net_io.py`.
+      - /sys/class/net:/host-sys-class/net:ro
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
       # Session files, attachments, and migration source repositories survive
       # container replacement. Active code repositories live on the forge.

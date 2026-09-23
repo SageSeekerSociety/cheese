@@ -138,11 +138,23 @@ class AccountService:
     async def count_accounts(self) -> int:
         return await self._repo.count_accounts()
 
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """真人 / agent 的存量拆分。判据是 `agent_bindings`（与
+        `IdentityService.is_agent` 同一份），见
+        `UserRepository.count_accounts_by_kind`。"""
+        return await self._repo.count_accounts_by_kind()
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:
         """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
         return await self._repo.accounts_series(since=since, until=until)
+
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """同 `accounts_series`，但真人 / agent 各一条。"""
+        return await self._repo.accounts_series_by_kind(since=since, until=until)
 
 
 class UserProfileService:
