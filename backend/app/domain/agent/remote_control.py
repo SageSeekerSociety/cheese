@@ -336,6 +336,11 @@ class RemoteControl:
             if not isinstance(event_id, str) or not event_id:
                 raise ValueError("Worker events require a uuid")
             kind = payload.get("type")
+            if kind == "system" and payload.get("subtype") == "thinking_tokens":
+                # A running token count, re-sent many times a second while the
+                # model thinks, which nothing reads back. Journalled, it filled
+                # the capped `out` stream and pushed the real messages out.
+                continue
             if kind == "control_response":
                 response = payload.get("response", {})
                 if not isinstance(response, dict):
@@ -380,7 +385,7 @@ class RemoteControl:
         committed = await self.redis.eval(
             _CHECK_EPOCH
             + """
-local prefix, ttl = ARGV[2], ARGV[3]
+local prefix, ttl, seen_ttl = ARGV[2], ARGV[3], ARGV[6]
 local function pending(id, encoded)
     local answer = redis.call('GET', prefix..'command:answer-'..id)
     if answer and cjson.decode(answer).status == 'processed' then return end
@@ -389,7 +394,7 @@ local function pending(id, encoded)
 end
 for _, event in ipairs(cjson.decode(ARGV[4])) do
     local p = event.payload
-    if redis.call('SET', prefix..'seen:'..event.id, '1', 'NX', 'EX', ttl) then
+    if redis.call('SET', prefix..'seen:'..event.id, '1', 'NX', 'EX', seen_ttl) then
         local encoded = event.encoded
         redis.call('XADD', prefix..'out', 'MAXLEN', '~', 4096, '*', 'event', encoded)
         redis.call('EXPIRE', prefix..'out', ttl)
@@ -446,6 +451,10 @@ return 1
             RETENTION,
             json.dumps(prepared),
             time.time(),
+            # A duplicate is a worker retrying a batch, which it can only do
+            # while its credential lives. Kept for RETENTION instead, one
+            # marker per event added up to millions of keys.
+            WORKER_TTL,
         )
         if not committed:
             raise AuthenticationRequiredError("RC worker is no longer current")
