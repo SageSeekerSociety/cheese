@@ -87,6 +87,10 @@ def should_skip(candidate: str) -> bool:
 
 
 def main() -> None:
+    if sys.argv[1] == "--require-ci":
+        if not ci_ready(sys.argv[2]):
+            raise SystemExit("The release commit no longer has successful validation.")
+        return
     if sys.argv[1] == "--ci-only":
         key, value = "ready", ci_ready(sys.argv[2])
     else:

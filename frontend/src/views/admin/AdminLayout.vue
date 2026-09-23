@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { useMediaQuery } from '@vueuse/core'
 
 import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -48,6 +49,9 @@ const { t } = useI18n()
 const SECTIONS = [
   { to: '/admin/queue', name: 'AdminQueue', icon: 'mdi-tray-full', label: '队列', badge: true },
   { to: '/admin/dashboard', name: 'AdminDashboard', icon: 'mdi-chart-line', label: '看板', badge: false },
+  // 「模型」放在看板后面：它和看板看的是同一条链（网关上的模型与它们花掉的钱），
+  // 只是看板报量、这一块管钱和上架。入口名说的是里面装的是什么。
+  { to: '/admin/models', name: 'AdminModels', icon: 'mdi-cube-outline', label: '模型', badge: false },
   // 「开板申请」而不是「题目板审核」：需求方在这一页上问过「题目板审核是什么」——
   // 名字说的是**你对它做什么**（审核），而他要找的是**这里面装的是什么**（有人申请开
   // 一个新题目板）。入口的名字该回答后者，动作（批准 / 驳回）是页面里的事。
@@ -58,6 +62,14 @@ const SECTIONS = [
 /** 折叠成 56px（§10.2）。**不落盘**：壳在同一个会话里不重新挂载，切分区不会把它弹回来，
  *  而下次进来回到展开态是更常见的那种期望（这一条没有实测依据，是取舍）。 */
 const collapsed = ref(false)
+
+/** 窄屏（手机）默认收起。200px 的侧栏在 390px 的屏上吃掉一半宽度，页面里那句页头会
+ *  被挤成一个字一行、表格只剩一条缝 —— 实测 /admin/members 与 /admin/models 都是
+ *  这样。**不是「用户偏好」而是「这一栏放不下」**，所以它跟着视口走：进窄屏自动收起
+ *  （只剩图标，§10.2 那个形态），回到宽屏自动展开。手动那颗开关照旧，用户在这之后
+ *  的选择不会被下一次 resize 之前的任何东西覆盖。 */
+const narrow = useMediaQuery('(max-width: 700px)')
+watch(narrow, (isNarrow) => (collapsed.value = isNarrow), { immediate: true })
 
 /** `?` 那一层（§8）。480px，`Esc` 关闭由 Vuetify 的对话框自己管。 */
 const shortcutOpen = ref(false)

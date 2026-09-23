@@ -74,6 +74,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_members: '列出话题成员',
   cheese_gh_token: '获取 GitHub 令牌',
   cheese_status: '查看平台状态',
+  cheese_sync_agents: '刷新队友分身定义',
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
@@ -93,8 +94,15 @@ export const TOOL_LABELS: Record<string, string> = {
   bash_list: '列出后台任务',
 }
 
+/** `mcp__<服务器>__<工具>` → `<工具>`。**认任意服务器名**，不认某一个写死的：写死
+ *  `mcp__cheese__` 的那天，claude_code 的服务器（注册名是 `native`）就已经不是它了，
+ *  于是前缀剥不掉、下面那张表查不到，时间线上原样显示
+ *  `mcp__native__cheese_feedback_propose` —— 而「前缀没剥掉」和「这个工具本来就没有
+ *  中文标签」在屏幕上是同一件事。 */
+const MCP_PREFIX = /^mcp__[a-z0-9_]+__/
+
 export function toolLabel(name: string): string {
-  const short = name.replace(/^mcp__cheese__/, '')
+  const short = name.replace(MCP_PREFIX, '')
   return TOOL_LABELS[short] ?? short
 }
 

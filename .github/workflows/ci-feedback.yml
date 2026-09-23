@@ -51,6 +51,7 @@ jobs:
           --repo "${{ github.repository }}"
           --workflow required-ci.yml
           --workflow remote-execution.yml
+          --workflow e2e.yml
           --event pull_request --event merge_group --event push --event workflow_dispatch
           --since "${{ steps.window.outputs.since }}"
           --until "${{ steps.window.outputs.until }}"

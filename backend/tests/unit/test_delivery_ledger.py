@@ -44,7 +44,8 @@ async def _user(session, handle: str) -> int:
     now = datetime.now(UTC)
     user = User(
         username=handle,
-        email=f"{handle}@example.invalid",
+        # Unique per row: a test may hand a handle to a second person.
+        email=f"{handle}-{uuid.uuid4().hex[:8]}@example.invalid",
         hashed_password="x",
         created_at=now,
         updated_at=now,

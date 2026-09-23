@@ -53,6 +53,7 @@ frontend=false
 office_render=false
 browser_render=false
 gateway=false
+metering_proxy=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
 # no earlier successful build also needs a complete bootstrap.
@@ -78,9 +79,13 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   browser_render=true
   office_render=true
   gateway=true
+  metering_proxy=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
+      deploy/metering-proxy/*)
+        metering_proxy=true
+        ;;
       deploy/gateway/*)
         gateway=true
         ;;
@@ -113,6 +118,10 @@ else
         ;;
     esac
   done < <(git diff --name-only -z "$base_sha" "$current_sha" --)
+  # A baseline predating this image cannot provide a manifest to promote.
+  if ! git cat-file -e "$base_sha:deploy/metering-proxy/Dockerfile" 2>/dev/null; then
+    metering_proxy=true
+  fi
 fi
 
 # The decision, where a person can read it. It has only ever gone to
@@ -121,7 +130,7 @@ fi
 # to explain itself.
 echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   "office_render=$office_render browser_render=$browser_render" \
-  "gateway=$gateway" \
+  "gateway=$gateway metering_proxy=$metering_proxy" \
   "base=${base_sha:-none}" >&2
 
 {
@@ -131,6 +140,7 @@ echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   echo "office_render=$office_render"
   echo "browser_render=$browser_render"
   echo "gateway=$gateway"
+  echo "metering_proxy=$metering_proxy"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
   echo "current_tag=$(git rev-parse --short=7 "$current_sha")"

@@ -284,6 +284,25 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
+  test('管理后台 · 模型页的「新增模型」对话框', async ({ page }) => {
+    await login(page);
+    await page.goto('/admin/models');
+
+    // 模型表本身是张表（一个 `.v-field` 都没有），字段只在对话框里。所以范围取对话
+    // 框，不取 `body` —— 空范围会让 `fieldDefects` 当场炸「这个范围里一个字段都没
+    // 有」，而那正是它该做的。
+    //
+    // 页头那颗「新增模型」在网关读不到时照常可点：错误态只换掉那份列表，不换掉主
+    // 操作。这一档因此不需要网关真的有数据 —— 它量的本来也只是几何。
+    await page.getByRole('button', { name: '新增模型' }).first().click();
+    // 按标题筛，不能取 `.v-overlay__content` 的第一个：那一个是导航条的 tooltip 浮
+    // 层，不是对话框（「添加管理员」那一档就是在这里踩到的）。
+    const dialog = page.locator('.v-overlay__content').filter({ hasText: '新增模型' });
+    await dialog.waitFor();
+    await expect(dialog.getByLabel('模型名')).toBeVisible();
+    expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
     await login(page);
 

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.users import _issue_oauth_state_token
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
+from tests.support.consent import OAUTH_CONSENT_FORM
 
 StateToken = Callable[..., str]
 
@@ -184,6 +185,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": token,
                 "username": "oauth_created_1",
                 "nickname": "created",
@@ -211,6 +213,7 @@ class TestOAuthCreate:
         replay = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": token,
                 "username": "oauth_created_replay",
                 "nickname": "again",
@@ -220,27 +223,59 @@ class TestOAuthCreate:
         )
         assert _q(_loc(replay))["error_code"] == "TOKEN_EXPIRED"
 
-    def test_create_with_srp_password(
+    def test_create_with_plaintext_password(
         self, api_client: TestClient, state_token: StateToken
     ):
-        token = state_token(id="uid-create-srp")
         resp = api_client.post(
             "/users/oauth/create",
             data={
-                "stateToken": token,
-                "username": "oauth_created_srp",
-                "nickname": "srp_user",
-                "passwordMode": "srp",
-                "srpSalt": "aa" * 8,
-                "srpVerifier": "bb" * 8,
+                **OAUTH_CONSENT_FORM,
+                "stateToken": state_token(id="uid-create-plain"),
+                "username": "oauth_created_plain",
+                "nickname": "plain_user",
+                "passwordMode": "password",
+                "password": "oauth-pass~1",
             },
             follow_redirects=False,
         )
-        assert _q(_loc(resp))["authMode"] == "srp"
+        assert _q(_loc(resp))["created"] == "true"
 
-        methods = api_client.get("/users/auth/methods/oauth_created_srp")
-        assert methods.status_code == 200
-        assert methods.json()["data"]["supports_srp"] is True
+        login = api_client.post(
+            "/users/auth/login",
+            json={"username": "oauth_created_plain", "password": "oauth-pass~1"},
+        )
+        assert login.status_code == 200, login.text
+        assert login.json()["data"]["accessToken"]
+
+    @pytest.mark.parametrize(
+        "password",
+        ["", "lettersonly", "x!" * 40],
+        ids=["missing", "no-symbol", "over-72-bytes"],
+    )
+    def test_create_refuses_a_password_before_spending_the_state_token(
+        self, api_client: TestClient, state_token: StateToken, password: str
+    ):
+        token = state_token(id="uid-create-weak")
+        form = {
+            "stateToken": token,
+            "username": "oauth_created_weak",
+            "nickname": "weak_user",
+            "passwordMode": "password",
+            "password": password,
+            **OAUTH_CONSENT_FORM,
+        }
+        refused = api_client.post(
+            "/users/oauth/create", data=form, follow_redirects=False
+        )
+        assert _q(_loc(refused))["error_code"] == "WEAK_PASSWORD"
+
+        # Neither the token nor the username was spent on the refusal.
+        retried = api_client.post(
+            "/users/oauth/create",
+            data={**form, "password": "a-valid-password"},
+            follow_redirects=False,
+        )
+        assert _q(_loc(retried))["created"] == "true"
 
     def test_create_rejects_taken_username(
         self,
@@ -251,6 +286,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": state_token(id="uid-create-2"),
                 "username": authenticated_user.username,
                 "nickname": "x",
@@ -265,6 +301,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": state_token(id="uid-create-3"),
                 "username": "ab",  # too short
                 "nickname": "x",
@@ -556,82 +593,6 @@ class TestOAuthVerifyPending:
         resp = api_client.post(
             "/users/auth/oauth/verify",
             json={"sessionId": "nope", "password": "x"},
-            follow_redirects=False,
-        )
-        assert _q(_loc(resp))["error_code"] == "SESSION_EXPIRED"
-
-
-class TestOAuthSrpBind:
-    def _srp_user(self, client: TestClient, state_token: StateToken) -> str:
-        username = "oauth_srp_binder"
-        resp = client.post(
-            "/users/oauth/create",
-            data={
-                "stateToken": state_token(id="uid-srp-owner"),
-                "username": username,
-                "nickname": "srp",
-                "passwordMode": "srp",
-                "srpSalt": "aa" * 8,
-                "srpVerifier": "bb" * 8,
-            },
-            follow_redirects=False,
-        )
-        assert _q(_loc(resp))["created"] == "true"
-        return username
-
-    def test_init_spends_the_state_token(
-        self, api_client: TestClient, state_token: StateToken
-    ):
-        username = self._srp_user(api_client, state_token)
-        token = state_token(id="uid-srpinit-once")
-        body = {"stateToken": token, "username": username}
-
-        first = api_client.post("/users/oauth/bind/srp/init", json=body)
-        assert first.status_code == 200, first.text
-        assert first.json()["data"]["sessionId"]
-
-        assert (
-            api_client.post("/users/oauth/bind/srp/init", json=body).status_code == 401
-        )
-
-    def test_init_answers_unknown_and_non_srp_users_alike(
-        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
-    ):
-        legacy = user_client.create_user()  # bcrypt legacy user
-        not_srp = api_client.post(
-            "/users/oauth/bind/srp/init",
-            json={
-                "stateToken": state_token(id="uid-srpinit-1"),
-                "username": legacy.username,
-            },
-        )
-        unknown = api_client.post(
-            "/users/oauth/bind/srp/init",
-            json={
-                "stateToken": state_token(id="uid-srpinit-2"),
-                "username": "no_such_user_xyz",
-            },
-        )
-        assert not_srp.status_code == unknown.status_code == 401
-        assert not_srp.json()["message"] == unknown.json()["message"]
-
-    def test_init_rejects_bad_token(self, api_client: TestClient):
-        resp = api_client.post(
-            "/users/oauth/bind/srp/init",
-            json={"stateToken": "garbage", "username": "whoever"},
-        )
-        assert resp.status_code == 401
-
-    def test_verify_with_unknown_session_redirects_expired(
-        self, api_client: TestClient
-    ):
-        resp = api_client.post(
-            "/users/oauth/bind/srp/verify",
-            data={
-                "sessionId": "nope",
-                "clientPublicEphemeral": "aa",
-                "clientProof": "bb",
-            },
             follow_redirects=False,
         )
         assert _q(_loc(resp))["error_code"] == "SESSION_EXPIRED"

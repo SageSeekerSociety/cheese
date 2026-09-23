@@ -232,9 +232,9 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   down" at once — none of which name memory. Swap does not make a box bigger; it
   makes the same overload arrive as slowness, which is why `test` and `e2e` carry
   timeouts at roughly twice their median runtime rather than just above it.
-- Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential +
-  rustup — `uv sync` compiles the local srp_rs crate; weekly docker prune —
-  nothing else reclaims layers here) then `deploy/ci-runner/provision.sh
+- Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential —
+  `go test -race` needs gcc; weekly docker prune — nothing else reclaims
+  layers here) then `deploy/ci-runner/provision.sh
   <name> <registration-token>` (runner + systemd service with Restart=always +
   OOMPolicy=continue — the dev-box runner once died silently for 25h after an
   OOM kill). Registration tokens: `gh api -X POST
@@ -261,7 +261,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   the same pace either way.
 - Two runner slots per machine, six in the pool. Slot 0 is `~/actions-runner`
   and slot 1 `~/actions-runner-1`, which is also what gives each its own
-  `RUNNER_TEMP` and therefore its own uv venv and Cargo target rather than a
+  `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
   slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs

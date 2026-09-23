@@ -17,6 +17,7 @@ const SUDO_PURPOSES: Record<string, UserApi.SudoPurpose> = {
   addPasskey: 'passkey:add',
   deletePasskey: 'passkey:delete',
   changePassword: 'password:change',
+  unbindOAuthConnection: 'oauth:unbind',
 }
 
 export function sudoPurposeFor(opKey: string | undefined | null): UserApi.SudoPurpose | undefined {

@@ -32,6 +32,27 @@ def test_every_main_push_runs_the_backend_suite():
         assert "scope" not in job.get("if", ""), name
 
 
+def test_every_main_push_runs_the_e2e_suite():
+    workflow = load_workflow("e2e.yml")
+    e2e = workflow["jobs"]["e2e"]
+
+    # A pull-request result belongs to the PR head and may have excluded E2E.
+    # It is not evidence that the merged main commit ran this workflow.
+    assert "scope" not in workflow["jobs"]
+    assert "needs" not in e2e
+
+
+def test_remote_execution_keeps_every_main_push():
+    concurrency = load_workflow("remote-execution.yml")["concurrency"]
+
+    # A shared main group can cancel either a running job or an older pending
+    # job. Each main push therefore needs its own group; PR and experiment runs
+    # continue to cancel superseded work.
+    assert "github.run_id" in concurrency["group"]
+    assert "refs/heads/main" in concurrency["group"]
+    assert "refs/heads/main" in concurrency["cancel-in-progress"]
+
+
 def test_backend_lint_is_a_separate_hosted_job():
     """Lint is its own job, kept out of `test` (which must not re-run
     ruff/pyright), and it runs on a GitHub-hosted runner: the repository is
@@ -181,8 +202,8 @@ def test_a_backend_commit_does_not_rewrite_the_whole_image():
     2026-08-17 that single instruction ran for 101s and left a near-duplicate of
     .venv + connector-dist to export (51s) and push (70s), on every commit,
     because it sits below `COPY app`. Setting ownership as each COPY writes
-    costs nothing. And the compilers that build srp_rs have no runtime caller,
-    so a production stage that inherits them ships ~1.5GB nothing runs.
+    costs nothing. And build toolchains have no runtime caller, so a production
+    stage that inherits one ships what nothing runs.
     """
     lineage = _production_stage_lineage()
 

@@ -1,14 +1,6 @@
 name: Harness request contracts
 
 on:
-  # Seed caches on main so later PRs and merge groups can restore them.
-  push:
-    branches: [main]
-    paths:
-      - 'backend/uv.lock'
-      - 'backend/app/domain/agent/harness/claude_code/device_launch.py'
-      - 'backend/app/domain/agent/harness/codex/host.py'
-      - '.github/workflows/harness-contract.yml'
   workflow_call:
   workflow_dispatch:
 
@@ -16,8 +8,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: harness-contract-${{ github.ref }}
-  cancel-in-progress: true
+  group: harness-contract-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   provider-requests:

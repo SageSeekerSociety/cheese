@@ -76,6 +76,8 @@ def _identity(**overrides):
 def _mock_session():
     session = AsyncMock()
     session.add = MagicMock()
+    # An async context manager, as a real session's savepoint is.
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     return session
 
 

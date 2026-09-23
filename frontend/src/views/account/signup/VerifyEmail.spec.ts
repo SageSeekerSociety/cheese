@@ -34,8 +34,7 @@ describe('registration completion', () => {
       username: 'login-handle',
       nickname: 'DisplayName',
       email: 'user@example.com',
-      srpSalt: 'salt',
-      srpVerifier: 'verifier',
+      password: 'Secret#123',
     })
     vi.mocked(UserApi.register).mockResolvedValue({ data: { user: {} } } as never)
     const router = createRouter({
@@ -57,10 +56,15 @@ describe('registration completion', () => {
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('SignIn'))
     expect(UserApi.register).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'login-handle', nickname: 'DisplayName', emailCode: '123456' })
+      expect.objectContaining({
+        username: 'login-handle',
+        nickname: 'DisplayName',
+        emailCode: '123456',
+        password: 'Secret#123',
+      })
     )
     expect(store.username).toBe('')
-    expect(store.srpVerifier).toBe('')
+    expect(store.password).toBe('')
     expect(router.currentRoute.value.query.username).toBe('login-handle')
   })
 })

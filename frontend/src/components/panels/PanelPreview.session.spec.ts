@@ -45,6 +45,14 @@ function mount() {
   })
 }
 
+/** 自由区的一个页签：这一格只看房间里的这一份文件。 */
+function mountFile(path: string) {
+  return render(PanelPreview, {
+    props: { topicId: 'topic-a', projectId: 'project-a', active: true, path },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   submissions = []
@@ -88,6 +96,63 @@ it('shows failed authorization without mounting an old platform URL', async () =
   expect(await findByText(/预览授权失败/)).toBeTruthy()
   expect(container.querySelector('iframe')).toBeNull()
   expect(submissions).toHaveLength(0)
+})
+
+it.each(['site/index.html', '图.svg'])('draws the room file %s in the sandboxed frame, not as source', async (path) => {
+  readPreviewFile.mockResolvedValue({
+    path,
+    content: '<h1>源码不该被画出来</h1>',
+    version: 'v1',
+    bytes: 20,
+    binary: false,
+    too_large: false,
+  })
+  const { container } = mountFile(path)
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const frame = container.querySelector('iframe')!
+  // 房间文件不挂在 artifact 下面，所以它带着自己的地址过去——内容域按那个地址取字节，
+  // 页面里的相对资源也就落在同一份文件旁边。
+  expect(submissions[0].action).toBe(`${url}_cheese/session`)
+  expect(submissions[0].target).toBe(frame.name)
+  expect(new URLSearchParams(submissions[0].body).get('path')).toBe(
+    '/_cheese/room/' + path.split('/').map(encodeURIComponent).join('/')
+  )
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-same-origin')
+  // 源码交给 iframe，不是渲染进面板 DOM 里。
+  expect(container.textContent).not.toContain('源码不该被画出来')
+})
+
+it('escapes a room path with a space and CJK before it becomes an address', async () => {
+  mountFile('成品 终稿.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  expect(new URLSearchParams(submissions[0].body).get('path')).toBe(
+    '/_cheese/room/%E6%88%90%E5%93%81%20%E7%BB%88%E7%A8%BF.html'
+  )
+})
+
+it('gives a room file the browser cannot draw a real new-window address', async () => {
+  readPreviewFile.mockResolvedValue({
+    path: '权重.bin',
+    content: null,
+    version: 'v1',
+    bytes: 2048,
+    binary: true,
+    too_large: false,
+  })
+  const open = vi.fn()
+  vi.stubGlobal('open', open)
+  const { container, findByText, getByText } = mountFile('权重.bin')
+
+  expect(await findByText('这个文件不是文本')).toBeTruthy()
+  expect(container.querySelector('iframe')).toBeNull()
+  // 那句话承诺了一个动作，所以这一格必须有那个动作——带着它自己的地址。
+  await fireEvent.click(getByText('在新窗口打开'))
+  const [target, target_, features] = open.mock.calls[0]
+  const location = new URL(String(target), 'https://app.example')
+  expect(location.pathname).toBe('/previews/topic-a')
+  // 查询串里再编一层是 URL 自己的要求；解开之后正好是内容域上这一份的地址。
+  expect(location.searchParams.get('path')).toBe('/_cheese/room/%E6%9D%83%E9%87%8D.bin')
+  expect([target_, features]).toEqual(['_blank', 'noopener'])
 })
 
 it('rejects a misconfigured same-origin authorization destination', async () => {

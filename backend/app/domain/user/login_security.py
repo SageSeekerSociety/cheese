@@ -36,8 +36,8 @@ BACKUP_CODE_LOCKOUT_PREFIX = "cheese:2fa_backup_lockout:"
 # at the login screen shrink the step-up allowance.
 STEP_UP_2FA_ATTEMPTS_PREFIX = "cheese:2fa_stepup_attempts:"
 STEP_UP_2FA_LOCKOUT_PREFIX = "cheese:2fa_stepup_lockout:"
-# Re-proving the *password* inside a live session (``/auth/sudo`` methods
-# password and srp) is a third budget again. It cannot share the login one,
+# Re-proving the *password* inside a live session (``/auth/sudo`` method
+# password) is a third budget again. It cannot share the login one,
 # which is keyed by username and cleared by every successful sign-in, and it
 # must not share the step-up 2FA one: a password typo would then spend the
 # allowance for the other factor, and each factor is supposed to survive the
@@ -99,23 +99,6 @@ class LoginRateLimiter:
         key = f"{self._lockout_prefix}{subject}"
         ttl = await self._redis.ttl(key)
         return max(0, ttl)
-
-    async def record_failed_attempt(self, subject: str) -> int:
-        attempts_key = f"{self._attempts_prefix}{subject}"
-        attempts = await self._redis.incr(attempts_key)
-        await self._redis.expire(attempts_key, LOCKOUT_DURATION_SECONDS)
-
-        if attempts >= self._max_attempts:
-            lockout_key = f"{self._lockout_prefix}{subject}"
-            await self._redis.setex(lockout_key, LOCKOUT_DURATION_SECONDS, "1")
-            logger.warning(
-                "%s locked out for %s after %d failed attempts",
-                subject,
-                self._what,
-                attempts,
-            )
-
-        return attempts
 
     async def consume_attempt(self, subject: str) -> int | None:
         """Take one attempt from the budget *before* the credential is checked.
@@ -207,19 +190,7 @@ class StepUpTwoFactorRateLimiter(LoginRateLimiter):
 
 
 class StepUpPasswordRateLimiter(LoginRateLimiter):
-    """Budget for re-proving the password inside an existing session (#389).
-
-    Covers both shapes ``/auth/sudo`` accepts the password in — the bcrypt
-    comparison and the SRP proof. They are one credential reached two ways,
-    so one budget: counting them apart would hand whoever stole a session a
-    second full allowance for switching protocol, and the client picks the
-    protocol on the account's behalf anyway.
-
-    SRP initialisation is not charged. It reveals the salt and a server
-    ephemeral to someone who already holds the session, and proves nothing —
-    charging it would let a client that starts a handshake and abandons it
-    lock the owner out of the one they mean to finish.
-    """
+    """Budget for re-proving the password inside an existing session (#389)."""
 
     _attempts_prefix = STEP_UP_PASSWORD_ATTEMPTS_PREFIX
     _lockout_prefix = STEP_UP_PASSWORD_LOCKOUT_PREFIX
@@ -468,20 +439,18 @@ class PasswordResetService:
         logger.info("Created password reset token for user %d", user_id)
         return token
 
-    async def validate_reset_token(self, token: str) -> dict | None:
+    async def consume_reset_token(self, token: str) -> dict | None:
+        """Read and delete in one MULTI/EXEC, so of two requests presenting the
+        same token only the first finds anything."""
         key = f"{PASSWORD_RESET_PREFIX}{token}"
-        data = await self._redis.hgetall(key)  # type: ignore[misc]
+        pipe = self._redis.pipeline(transaction=True)
+        pipe.hgetall(key)
+        pipe.delete(key)
+        data, _deleted = await pipe.execute()
 
         if not data:
             return None
 
         # redis client is decode_responses=False → values are bytes at runtime,
         # but the redis-py stubs don't model that and type them as str.
-        return {k.decode(): v.decode() for k, v in data.items()}  # type: ignore[attr-defined]
-
-    async def consume_reset_token(self, token: str) -> dict | None:
-        data = await self.validate_reset_token(token)
-        if data:
-            key = f"{PASSWORD_RESET_PREFIX}{token}"
-            await self._redis.delete(key)
-        return data
+        return {k.decode(): v.decode() for k, v in data.items()}

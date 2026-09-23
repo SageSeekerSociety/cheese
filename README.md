@@ -142,7 +142,7 @@ Release-based deployment with approval gate. See [`deploy/`](deploy/) for produc
 | Backend | Python 3.11+, FastAPI, SQLAlchemy 2.x (async), Pydantic v2 |
 | Frontend | Vue 3, TypeScript, Vuetify, Vite |
 | Database | PostgreSQL 16 (ParadeDB), Valkey (Redis); search via Meilisearch (optional, PG FTS fallback) |
-| Auth | JWT + SRP-6a + WebAuthn (Passkey) + TOTP 2FA |
+| Auth | JWT + bcrypt passwords + WebAuthn (Passkey) + TOTP 2FA |
 | Package mgmt | uv (Python), pnpm (JS) |
 | Task runner | [Taskfile](https://taskfile.dev/) |
 | CI/CD | GitHub Actions, ghcr.io, Tailscale |

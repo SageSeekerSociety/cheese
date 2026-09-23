@@ -298,14 +298,10 @@ if [ -n "${{CHEESE_API:-}}" ]; then
 {fetcher}TOOLCHAIN
   chmod +x "$HOME/.cheese/cheese-toolchain"
   # `( cmd & )` — a double fork, and the parentheses are the whole point.
-  # `cleanup` below ends with a bare `wait`, which waits for every remaining
-  # CHILD of this shell. A plain `&` would make the fetch one of them, so
-  # tearing a screen down would block on a 100MB download nothing was waiting
-  # for; measured, it spent the pi launcher's entire 20s shutdown budget every
-  # time. The inner `&` inside a subshell that exits at once leaves the fetch
-  # parented to init instead, where this shell's `wait` cannot see it, and
-  # `nohup` keeps it off the terminal's hangup. It then either finishes or dies
-  # with the machine, and neither outcome reaches a room.
+  # The fetch belongs to the machine rather than the session that first needed it.
+  # The inner `&` runs it beyond the short-lived subshell, and `nohup` keeps it
+  # independent of the terminal. It can finish or stop with the machine without
+  # sending either outcome to a room.
   ( nohup "$HOME/.cheese/cheese-toolchain" </dev/null >/dev/null 2>&1 & )
 fi
 """
@@ -547,9 +543,8 @@ export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
 # ones. `$HOME != $REAL_HOME` says we are in a room at all, and not standing in
 # the machine owner's own home, which is whose `~/.cache` this would be.
 #
-# Detached, in the shape and for the reason the toolchain fetch below is:
-# `cleanup` ends in a bare `wait`, so a plain `&` would make tearing a screen
-# down wait on an `rm -rf` of 70k files that nothing needs.
+# Detach this cleanup for the same reason as the toolchain fetch below: it
+# belongs to the machine rather than the session that triggered it.
 if [ -n "${{CSLIVE:-}}" ] && [ "$HOME" != "$REAL_HOME" ]; then
   if [ "$(uname -s)" = Darwin ]; then
     ( nohup rm -rf "$HOME/Library/Caches/uv" "$HOME/Library/Caches/pip" \\
@@ -665,7 +660,9 @@ cleanup() {{
   trap '' HUP INT TERM
   [ -z "$AGENT_PID" ] || kill "$AGENT_PID" 2>/dev/null || true
   [ -z "$DRAIN_PID" ] || kill "$DRAIN_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
+  # The drainer is tethered to this shell and cannot keep the session alive.
+  # A delayed TERM handler must not delay the foreground agent's result.
+  [ -z "$AGENT_PID" ] || wait "$AGENT_PID" 2>/dev/null || true
 }}
 trap 'exit 129' HUP
 trap 'exit 130' INT

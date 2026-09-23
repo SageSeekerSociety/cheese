@@ -61,7 +61,7 @@
 # the bridge address (the backend logs an error per launch, device_provider.py).
 services:
   metering-proxy:
-    image: mitmproxy/mitmproxy:12.1.2
+    image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
     container_name: cheese-metering-proxy
     restart: unless-stopped
     # Backstop, not the fix: the addon now streams both request and response
@@ -100,7 +100,6 @@ services:
       # directory no one read: turns were billed, rows were written, and the
       # ledger simply stopped growing. No error, on either side.
       - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
-      - .:/addons:ro
       # Mount the secrets DIRECTORY read-only, not the single token file. A
       # single-file bind mount pins the container to the host inode it saw at
       # start, so an atomic rotation (write a new file, then rename it over the

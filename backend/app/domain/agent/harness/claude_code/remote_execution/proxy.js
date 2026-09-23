@@ -93,7 +93,17 @@ export function register(on) {
         if (response.isError) return { deny: JSON.stringify(response.content) };
         const outcome = JSON.parse(response.content[0].text);
         if (outcome.deny) return outcome;
-        return { result: [{ type: "text", text: outcome.result.stdout }, { type: "text", text: outcome.result.stderr }] };
+        // Only a non-empty half becomes a block. A `text` block holding the
+        // empty string is not harmless padding: a provider that validates text
+        // content rejects the WHOLE request over it (Moonshot's Anthropic
+        // endpoint answers 400 "Invalid request: text content is empty"), and
+        // the block then stays in the conversation — so one platform_request,
+        // whose receipt is always `{"stdout": body, "stderr": ""}`, would wedge
+        // every later turn in that room.
+        const result = [outcome.result.stdout, outcome.result.stderr]
+          .filter((text) => typeof text === "string" && text !== "")
+          .map((text) => ({ type: "text", text }));
+        return { result };
       } catch (error) {
         return { deny: "Cheese tool failed: " + String(error) };
       }

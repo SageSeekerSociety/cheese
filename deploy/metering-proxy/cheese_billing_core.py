@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -285,6 +286,7 @@ def _post_admission(
     timeout_s: float,
     *,
     subagent: bool = False,
+    requested_model: str = "",
     child_model: str = "",
 ) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
@@ -293,6 +295,11 @@ def _post_admission(
         headers["X-Cheese-Subagent"] = "1"
         if child_model:
             headers["X-Cheese-Child-Model"] = child_model
+        if requested_model:
+            # 主 agent 开这个分身时指定的模型（从请求体顶层 model 成员读出的原
+            # 样）。准入拿它决定「绑它」还是「拒绝并列出可选」——不带就是沿用
+            # 项目的分身默认。
+            headers["X-Cheese-Requested-Model"] = requested_model
     req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
@@ -367,16 +374,19 @@ class AdmissionGate:
         bearer: str,
         *,
         subagent: bool = False,
+        requested_model: str = "",
         child_model: str = "",
     ) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
-        # A relaunched agent can select a different model supply in the same room.
+        # A relaunched agent can select a different model supply in the same room;
+        # two subagents of one room can name two different requested models.
         key = (
             project_id,
             topic_id,
             hashlib.sha256(bearer.encode()).hexdigest(),
             subagent,
+            requested_model if subagent else "",
             child_model if subagent else "",
         )
         now = time.time()
@@ -394,7 +404,13 @@ class AdmissionGate:
                     child_model=child_model,
                 )
                 if subagent and child_model
-                else self._post(self._url, bearer, self._timeout, subagent=True)
+                else self._post(
+                    self._url,
+                    bearer,
+                    self._timeout,
+                    subagent=True,
+                    requested_model=requested_model,
+                )
                 if subagent
                 else self._post(self._url, bearer, self._timeout)
             )
@@ -713,3 +729,43 @@ def _string_end(data: bytes, start: int) -> int | None:
             return i + 1
         i += 1
     return None
+
+
+def requested_model_of(body: bytes) -> str:
+    """请求体顶层 ``model`` 成员的原样值 —— 主 agent 给这个分身指定的那一个。
+
+    与 ``ModelRewrite`` 共用同一个解析器：读到的是 CC 写进请求体的指定，不是
+    改写后要绑的那个。成员缺席或不是字符串时为空串，调用方按「未指定」处理
+    （沿用项目的分身默认）。
+    """
+    span = top_level_model_span(body)
+    if span is None:
+        return ""
+    try:
+        value = json.loads(body[span[0] : span[1]])
+    except ValueError:
+        return ""
+    if not isinstance(value, str):
+        return ""
+    # 这个名字要进准入门（X-Cheese-Requested-Model 请求头）。原文照塞会让一
+    # 个带控制字符或非 Latin-1 的名字在 putheader 抛 ValueError，被 check()
+    # 当成传输故障 fail-open —— 准入拿不到名字,缓冲改写退成 no-op,请求体原
+    # 样上行。那是把客户端字符串放进准入门才新增的触发面,所以不合格的按未
+    # 指定处理:准入照常绑定,改写照样盖掉体里那个值。
+    if not _MODEL_NAME_RE.fullmatch(value):
+        return ""
+    return value
+
+
+# 目录里的模型名都落在这组字符里（claude-sonnet-5、glm-4.6、openai/gpt-5）。
+_MODEL_NAME_RE = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+
+
+def is_haiku_name(value: str) -> bool:
+    """是否属于小快家族 —— CLI 自己的后台请求类(会话标题、路径建议)。
+
+    与 ``_is_haiku`` 同一个判定,给请求体里读出来的名字用。这类请求从来不算
+    「指定模型」:主对话路径上它们留在 haiku(keep_haiku),分身路径上它们照旧
+    绑分身默认 —— 两条路都不进白名单校验。
+    """
+    return _is_haiku(value.encode())

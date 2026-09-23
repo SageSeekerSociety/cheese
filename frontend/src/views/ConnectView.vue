@@ -17,12 +17,9 @@ const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))
 // Approving binds the machine to a real account, so a token is required. If the
 // human landed here from the cli link without a live session, send them to log
-// in and come straight back (SignIn honours ?redirect).
+// in; the router brings them straight back here afterwards.
 const loggedIn = computed(() => !!authToken())
-const loginLink = computed(() => ({
-  name: 'SignIn',
-  query: { redirect: route.fullPath },
-}))
+const loginLink = { name: 'SignIn' }
 
 const loading = ref(false)
 const error = ref<string | null>(null)

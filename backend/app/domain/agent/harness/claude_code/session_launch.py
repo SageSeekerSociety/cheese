@@ -90,6 +90,14 @@ def hooks_settings(
     cmd = {"type": "command", "command": "cheese-hook"}
     tool_matched = [{"matcher": "*", "hooks": [cmd]}]
     plain = [{"hooks": [cmd]}]
+    # 发现层：把项目的活跃 AI 队友写成本会话的 CC 分身定义文件（名字、一句话
+    # 描述、model=队友绑的模型），主 agent 于是在 Agent 工具的可用清单里直接
+    # 读到可指定谁。闸在准入（/llm/admission）——指定了队友范围外的模型会被
+    # 拒并列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不
+    # 着后端时这一轮一切照旧。
+    sync_agents = [
+        {"hooks": [{"type": "command", "command": "cheese sync-agents", "timeout": 15}]}
+    ]
     # A remote machine also has to hand its work back at turn end; the local
     # container edits the real worktree and has nothing to send.
     stop_hooks = [cmd] + [
@@ -129,7 +137,7 @@ def hooks_settings(
         # already present in the conversation's model-visible history.
         **({"attribution": {"sessionUrl": False}} if remote_control else {}),
         "hooks": {
-            "SessionStart": plain,
+            "SessionStart": plain + sync_agents,
             # The consumption receipt. A prompt reaches the session over its
             # rendezvous socket, and that protocol has no positive ack: a frame
             # that was written and not refused has entered the queue, and nothing
@@ -138,7 +146,7 @@ def hooks_settings(
             # Not every build fires it for every consumption — see the note in
             # hooks_substrate's `send` about what 2.1.224 does with a text
             # delivered while a tool is running.
-            "UserPromptSubmit": plain,
+            "UserPromptSubmit": plain + sync_agents,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
             # The tool call that ended in an error. Claude Code fires this

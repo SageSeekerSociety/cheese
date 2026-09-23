@@ -187,8 +187,10 @@ class CandidateCI(unittest.TestCase):
         self.assertFalse(self.ready(pending, done))
         self.assertTrue(self.ready(done, done))
 
-    def test_missing_failed_cancelled_and_skipped_ci_never_deploy(self):
+    def test_missing_ci_never_deploys(self):
         self.assertFalse(self.ready([self.run_record()], []))
+
+    def test_failed_cancelled_and_skipped_ci_never_deploy(self):
         for conclusion in ("failure", "cancelled", "skipped", "timed_out", "neutral"):
             with self.subTest(conclusion=conclusion):
                 self.assertFalse(self.ready([self.run_record()], [self.run_record(conclusion=conclusion)]))
@@ -238,6 +240,72 @@ class CandidateCI(unittest.TestCase):
                 GUARD.main()
             self.assertEqual(output.read_text(), "skip=true\n")
             deploy.assert_not_called()
+
+    def test_release_entry_rejects_unready_ci(self):
+        for filename, job in (("deploy.yml", "wait-for-ci"), ("deploy-prod.yml", "gate")):
+            workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+            gate = next(step for step in workflow["jobs"][job]["steps"]
+                        if step.get("name") == "Require completed validation")
+            for ready, expected in (("true", 0), ("false", 1), ("", 1)):
+                with self.subTest(filename=filename, ready=ready):
+                    result = subprocess.run(["bash", "-eu", "-c", gate["run"]],
+                                            env={**os.environ, "READY": ready},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout)
+
+    def test_release_pins_the_validated_commit_after_approval(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+        jobs = workflow["jobs"]
+        checkout = next(step for step in jobs["deploy"]["steps"]
+                        if step.get("name") == "Check out the validated release")
+        self.assertEqual(checkout["with"]["ref"],
+                         "${{ needs.wait-for-ci.outputs.sha || inputs.ref }}")
+        self.assertEqual(jobs["wait-for-ci"]["outputs"]["sha"],
+                         "${{ steps.candidate.outputs.sha }}")
+        ruc = yaml.safe_load((ROOT / ".github/workflows/deploy-prod.yml").read_text())
+        resolve = next(step for step in ruc["jobs"]["deploy"]["steps"]
+                       if step.get("id") == "img")
+        self.assertEqual(resolve["env"]["REF"], "${{ needs.gate.outputs.sha || inputs.ref }}")
+        self.assertEqual(ruc["jobs"]["gate"]["outputs"]["sha"],
+                         "${{ steps.candidate.outputs.sha }}")
+
+    def test_main_runs_selected_suites_only_through_required_ci(self):
+        workflows = ROOT / ".github/workflows"
+        parent = yaml.safe_load((workflows / "required-ci.yml").read_text())
+        self.assertEqual(parent.get("on", parent.get(True))["push"]["branches"], ["main"])
+        for job in parent["jobs"].values():
+            if "uses" not in job:
+                continue
+            child = yaml.safe_load((ROOT / job["uses"]).read_text())
+            triggers = child.get("on", child.get(True))
+            with self.subTest(workflow=job["uses"]):
+                self.assertIn("workflow_call", triggers)
+                self.assertNotIn("push", triggers)
+        for filename in ("harness-contract.yml", "mcp-contract.yml"):
+            child = yaml.safe_load((workflows / filename).read_text())
+            self.assertIn("workflow_dispatch", child.get("on", child.get(True)))
+            self.assertIn("github.run_id", child["concurrency"]["group"])
+            self.assertEqual(child["concurrency"]["cancel-in-progress"],
+                             "${{ github.event_name == 'pull_request' }}")
+        mcp = yaml.safe_load((workflows / "mcp-contract.yml").read_text())
+        self.assertIn("schedule", mcp.get("on", mcp.get(True)))
+
+    def test_failed_rerun_during_approval_blocks_release(self):
+        for ready in (False, True):
+            with self.subTest(ready=ready), patch.object(
+                GUARD.sys, "argv", ["check-auto-deploy.py", "--require-ci", self.candidate]
+            ), patch.object(GUARD, "ci_ready", return_value=ready):
+                if ready:
+                    GUARD.main()
+                else:
+                    with self.assertRaises(SystemExit):
+                        GUARD.main()
+        for filename in ("deploy.yml", "deploy-prod.yml"):
+            workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+            steps = workflow["jobs"]["deploy"]["steps"]
+            gate = next(step for step in steps if step.get("name") == "Recheck validation after approval")
+            self.assertEqual(gate["if"], "github.event_name == 'release'")
+            self.assertIn("--require-ci", gate["run"])
 
 
 if __name__ == "__main__":

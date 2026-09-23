@@ -91,9 +91,9 @@ export function fmtSI(n: number | null | undefined, unit = ''): string {
  * Compact form for a KPI tile: SI from 1e6 up (`2.53M`), the grouped full form
  * below. Same caveat as `fmtSI` — put the full number in `title`.
  *
- * Both locales use the Latin `M`/`B`/`T` suffixes rather than 亿/万: an
+ * Both locales use the Latin SI suffixes (`k`/`M`/`G`/`T`) rather than 亿/万: an
  * abbreviated number sits in a fixed-width KPI track, and a locale that swaps
- * between `2.53B` and `25.3亿` reflows the tile mid-session. The full digits
+ * between `2.53G` and `25.3亿` reflows the tile mid-session. The full digits
  * live in the tooltip in every case, which is where exactness belongs.
  */
 export function fmtCompact(n: number | null | undefined): string {

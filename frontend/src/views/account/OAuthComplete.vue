@@ -76,7 +76,7 @@
               variant="outlined"
               :rules="usernameRules"
               class="mb-4"
-              hint="3-20个字符，字母开头，可包含字母、数字、下划线、连字符"
+              hint="4-32个字符，可包含字母、数字、下划线、连字符"
               persistent-hint
             />
 
@@ -91,6 +91,18 @@
               class="mb-4"
               hint="1-50个字符，显示名称"
               persistent-hint
+            />
+
+            <v-text-field
+              v-if="requireInviteCode"
+              id="field-createInviteCode"
+              v-model="createInviteCode"
+              autocomplete="off"
+              name="createInviteCode"
+              :label="t('account.invitationCode')"
+              variant="outlined"
+              :rules="inviteCodeRules"
+              class="mb-4"
             />
 
             <!-- 密码选项 -->
@@ -115,7 +127,7 @@
                 label="密码"
                 type="password"
                 variant="outlined"
-                :rules="passwordRules"
+                :rules="newPasswordRules"
                 class="mb-4"
                 hint="至少8个字符"
                 persistent-hint
@@ -136,12 +148,15 @@
             </div>
           </div>
 
+          <LegalConsent ref="consentRef" action-label="同意并创建账号" class="mb-4" />
+
           <v-btn
             type="submit"
             block
             color="primary"
             size="large"
             :loading="creating"
+            :disabled="!registrationConfigReady"
             style="text-transform: none; font-weight: 500; height: 48px"
             class="mb-4"
           >
@@ -161,9 +176,8 @@
               name="bindUsername"
               label="用户名"
               variant="outlined"
-              :rules="usernameRules"
+              :rules="bindUsernameRules"
               class="mb-4"
-              @input="debouncedCheckAuthMethods(bindUsername)"
             />
 
             <v-text-field
@@ -224,13 +238,17 @@
 </template>
 
 <script setup lang="ts">
-import type { OAuthState } from '@/network/api/users/types'
+import type { OAuthCreateUserRequest, OAuthState } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { debounce } from 'lodash-es'
 
+import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
+
+import LegalConsent from '@/components/account/LegalConsent.vue'
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
 
@@ -247,33 +265,41 @@ const createNickname = ref('')
 const setPassword = ref(false)
 const createPassword = ref('')
 const confirmPassword = ref('')
+const createInviteCode = ref('')
+const requireInviteCode = ref(false)
+const registrationConfigReady = ref(false)
 
 // Bind form fields
 const bindUsername = ref('')
 const bindPassword = ref('')
-const bindAuthMethods = ref<{
-  supports_srp: boolean
-  supports_passkey: boolean
-  supports_2fa: boolean
-  requires_2fa: boolean
-} | null>(null)
 
 // Form refs
 const createFormRef = ref()
+const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 const bindFormRef = ref()
 
 // Validation rules
 const usernameRules = [
   (v: string) => !!v || '请输入用户名',
-  (v: string) => /^[a-zA-Z][a-zA-Z0-9_-]{2,19}$/.test(v) || '用户名格式不正确',
+  (v: string) => REGEX_USERNAME.test(v) || '用户名格式不正确',
 ]
+
+// Binding names an account that already exists, so only presence is checked.
+const bindUsernameRules = [(v: string) => !!v || '请输入用户名']
 
 const nicknameRules = [
   (v: string) => !!v || '请输入昵称',
   (v: string) => (v.length >= 1 && v.length <= 50) || '昵称长度应为1-50个字符',
 ]
 
+const inviteCodeRules = [(v: string) => !!v?.trim() || t('account.enterAnInvitationCode')]
+
 const passwordRules = [(v: string) => !!v || '请输入密码', (v: string) => v.length >= 8 || '密码长度应至少8个字符']
+
+const newPasswordRules = [
+  ...passwordRules,
+  (v: string) => REGEX_PASSWORD.test(v) || t('account.yourPasswordMustContainALetterA'),
+]
 
 const confirmPasswordRules = [
   (v: string) => !!v || '请确认密码',
@@ -302,52 +328,33 @@ const getInitials = (name: string) => {
     .slice(0, 2)
 }
 
-// Check authentication methods for bind username (internal use only)
-const checkBindAuthMethods = async (username: string) => {
-  if (!username) {
-    bindAuthMethods.value = null
-    return
-  }
-
-  try {
-    const response = await UserApi.getAuthMethods(username)
-    bindAuthMethods.value = response.data
-  } catch (err: any) {
-    console.error('获取认证方式失败:', err)
-    bindAuthMethods.value = null
-    // 静默处理，不显示错误
-  }
-}
-
-// 使用 debounce 包装检查函数
-const debouncedCheckAuthMethods = debounce(checkBindAuthMethods, 500)
-
 const handleCreateAccount = async () => {
   if (!createFormRef.value) return
   const { valid } = await createFormRef.value.validate()
   if (!valid || !oauthState.value) return
+  const consent = await consentRef.value?.confirm()
+  if (!consent) return
 
   creating.value = true
   error.value = ''
 
   try {
     const stateToken = route.query.stateToken as string
-    let requestData: any = {
+    const requestData: OAuthCreateUserRequest = {
       stateToken,
       username: createUsername.value,
       nickname: createNickname.value,
-      passwordMode: setPassword.value ? 'srp' : 'none',
+      passwordMode: setPassword.value ? 'password' : 'none',
+      consentTerms: consent.documents.terms,
+      consentPrivacy: consent.documents.privacy,
+      consentMethod: consent.method,
+    }
+    if (requireInviteCode.value) {
+      requestData.inviteCode = createInviteCode.value.trim()
     }
 
-    // 如果用户选择设置密码，生成 SRP 凭证
-    if (setPassword.value && createPassword.value) {
-      const srp = await import('secure-remote-password/client')
-      const salt = srp.generateSalt()
-      const privateKey = srp.derivePrivateKey(salt, createUsername.value, createPassword.value)
-      const verifier = srp.deriveVerifier(privateKey)
-
-      requestData.srpSalt = salt
-      requestData.srpVerifier = verifier
+    if (setPassword.value) {
+      requestData.password = createPassword.value
     }
 
     // 直接提交表单，后端会重定向到成功或错误页面
@@ -370,60 +377,15 @@ const handleBindAccount = async () => {
   try {
     const stateToken = route.query.stateToken as string
 
-    if (bindAuthMethods.value?.supports_srp) {
-      // 使用 SRP 流程
-      await handleSrpBind(stateToken)
-    } else {
-      // 使用传统密码验证
-      UserApi.bindOAuthToUser({
-        stateToken,
-        username: bindUsername.value,
-        password: bindPassword.value,
-      })
-    }
+    UserApi.bindOAuthToUser({
+      stateToken,
+      username: bindUsername.value,
+      password: bindPassword.value,
+    })
   } catch (err: any) {
     console.error('绑定账户失败:', err)
     error.value = '绑定账户失败，请检查用户名和密码'
     binding.value = false
-  }
-}
-
-const handleSrpBind = async (stateToken: string) => {
-  try {
-    const srp = await import('secure-remote-password/client')
-
-    // 生成客户端临时值对
-    const clientEphemeral = srp.generateEphemeral()
-
-    // 初始化 SRP 绑定
-    const initResponse = await UserApi.initOAuthSrpBinding({
-      stateToken,
-      username: bindUsername.value,
-      clientPublicEphemeral: clientEphemeral.public,
-    })
-
-    console.log(initResponse)
-
-    // 派生私钥和会话密钥
-    const privateKey = srp.derivePrivateKey(initResponse.data.salt, bindUsername.value, bindPassword.value)
-    const session = srp.deriveSession(
-      clientEphemeral.secret,
-      initResponse.data.serverPublicEphemeral,
-      initResponse.data.salt,
-      bindUsername.value,
-      privateKey
-    )
-
-    // 验证 SRP 绑定（通过表单提交）
-    UserApi.verifyOAuthSrpBinding({
-      sessionId: initResponse.data.sessionId,
-      clientPublicEphemeral: clientEphemeral.public,
-      clientProof: session.proof,
-    })
-    // 后端会重定向，不需要处理响应
-  } catch (err: any) {
-    console.error('SRP 绑定失败:', err)
-    throw err
   }
 }
 
@@ -451,8 +413,19 @@ const loadOAuthState = async () => {
   }
 }
 
+const loadRegistrationConfig = async () => {
+  try {
+    const { data } = await UserApi.getRegistrationConfig()
+    requireInviteCode.value = data.requireInviteCode
+    registrationConfigReady.value = true
+  } catch (e) {
+    error.value = requestErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
+  }
+}
+
 onMounted(() => {
   loadOAuthState()
+  loadRegistrationConfig()
 })
 </script>
 

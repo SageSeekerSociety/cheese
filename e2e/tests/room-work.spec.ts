@@ -123,6 +123,10 @@ test('同名文件按任务打开，切换来源后草稿仍在', async ({ page 
     const panel = page.locator('.panel-changes');
     const firstGroup = panel.getByRole('article', { name: '调整登录样式' });
     const secondGroup = panel.getByRole('article', { name: '修复登录校验' });
+    // 每个任务自带的改动清单默认收起：这一行先只有标题、状态和文件数。
+    await expect(firstGroup.getByRole('button', { name: /src\/login.txt/ })).toHaveCount(0);
+    await firstGroup.getByRole('button', { name: /展开/ }).click();
+    await secondGroup.getByRole('button', { name: /展开/ }).click();
     await expect(firstGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
     await expect(secondGroup.getByRole('button', { name: /src\/login.txt/ })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('task-files-overview.png'), fullPage: true });
@@ -142,7 +146,8 @@ test('同名文件按任务打开，切换来源后草稿仍在', async ({ page 
     await expect(panel.locator('.monaco-editor')).toContainText('my unsaved draft');
     await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.screenshot({ path: testInfo.outputPath('task-files-draft-dark.png'), fullPage: true });
+    // The evidence is this editor panel; a full-page capture can stall in Chromium.
+    await panel.screenshot({ path: testInfo.outputPath('task-files-draft-dark.png') });
     await panel.getByRole('button', { name: '保存', exact: true }).click();
     await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
     const saved = await api(page, 'get', `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${first.id}`);

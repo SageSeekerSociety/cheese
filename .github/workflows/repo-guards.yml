@@ -24,16 +24,6 @@ name: Repo Guards
 # on a component — is by definition a frontend-only diff, which without this
 # line would sail past without the guard ever starting.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - 'deploy/**'
-      - '.claude/scripts/**'
-      - '.pre-commit-config.yaml'
-      - '.github/workflows/**'
-      - '.github/scripts/**'
   workflow_call:
 permissions:
   contents: read
