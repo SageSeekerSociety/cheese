@@ -1,22 +1,14 @@
 {
-  "accountEmail": "Account email",
   "and": "and",
   "backToSignIn": "Back to sign in",
-  "checkYourInboxForAPasswordReset": "Check your inbox for a password reset email",
-  "couldNotSendTheEmailPleaseTry": "Could not send the email. Please try again.",
   "enterAnInvitationCode": "Enter an invitation code",
-  "forgotPassword": "Forgot password?",
   "iAgreeToThe": "I agree to the",
   "invitationCode": "Invitation code",
   "pleaseAcceptTheTermsOfServiceAnd": "Please accept the Terms of Service and Privacy Policy",
   "privacyPolicy": "Privacy Policy",
   "registrationSettingsCouldNotBeLoadedRefresh": "Registration settings could not be loaded. Refresh the page to try again.",
-  "rememberYourPassword": "Remember your password?",
-  "resetYourPassword": "Reset your password",
-  "sendResetEmail": "Send reset email",
   "termsOfService": "Terms of Service",
   "thirdpartySigninFailed": "Third-party sign-in failed",
-  "verifyYourIdentityWithYourAccountEmail": "Verify your identity with your account email",
   "yourPasswordMustContainALetterA": "Your password must contain a letter, a number, and a special character",
   "layout": {
     "home": "Cheese home"
@@ -79,10 +71,39 @@
     "accountCreated": "Account created",
     "failed": "Couldn't verify. Please try again."
   },
+  "recover": {
+    "title": "Reset password",
+    "lede": "Enter your account email and we will send you a link to reset your password",
+    "email": "Account email",
+    "submit": "Send reset email",
+    "sent": "Reset email sent. Check your inbox.",
+    "failed": "Couldn't send the email. Please try again.",
+    "rememberPassword": "Remember your password?"
+  },
   "resetPassword": {
     "title": "Set a new password",
     "submit": "Reset password",
     "invalidLink": "This reset link is invalid or has expired",
     "failed": "Couldn't reset the password. Please try again."
+  },
+  "twoFactor": {
+    "title": "Two-step verification",
+    "totpLede": "Enter the 6-digit code from your authenticator app",
+    "backupLede": "Enter one of your 8-character backup codes",
+    "lockout": "Five wrong codes in a row lock verification for 15 minutes",
+    "totpSubmit": "Verify",
+    "backupSubmit": "Verify backup code",
+    "totpRequired": "Enter the 6-digit code",
+    "backupRequired": "Enter an 8-character backup code of letters or numbers",
+    "useBackup": "Use a backup code",
+    "useTotp": "Use an authenticator code",
+    "wrongCode": "Wrong code. Please try again.",
+    "wrongCodeRemaining": "Wrong code. Attempts left: {count}",
+    "tooManyAttempts": "Too many attempts. Try again in {minutes} min.",
+    "sessionExpired": "Verification expired. Please sign in again.",
+    "backupUsedTitle": "Backup code used",
+    "backupUsedBody": "Each backup code works only once. Consider generating a new set now.",
+    "later": "Later",
+    "regenerate": "Generate new codes"
   }
 }

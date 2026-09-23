@@ -1,22 +1,14 @@
 {
-  "accountEmail": "注册邮箱",
   "and": "和",
   "backToSignIn": "返回登录",
-  "checkYourInboxForAPasswordReset": "重置密码邮件已发送，请注意查收",
-  "couldNotSendTheEmailPleaseTry": "发送失败，请重试",
   "enterAnInvitationCode": "请输入邀请码",
-  "forgotPassword": "找回密码",
   "iAgreeToThe": "同意",
   "invitationCode": "邀请码",
   "pleaseAcceptTheTermsOfServiceAnd": "请同意用户协议和隐私政策",
   "privacyPolicy": "隐私政策",
   "registrationSettingsCouldNotBeLoadedRefresh": "暂时无法获取注册配置，请刷新页面重试",
-  "rememberYourPassword": "想起密码了？",
-  "resetYourPassword": "重置账户密码",
-  "sendResetEmail": "发送重置邮件",
   "termsOfService": "用户协议",
   "thirdpartySigninFailed": "OAuth 登录失败",
-  "verifyYourIdentityWithYourAccountEmail": "通过注册邮箱验证身份",
   "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
   "layout": {
     "home": "知是首页"
@@ -79,10 +71,39 @@
     "accountCreated": "注册成功",
     "failed": "验证失败，请重试"
   },
+  "recover": {
+    "title": "找回密码",
+    "lede": "输入注册邮箱，我们会向该邮箱发送重置密码的链接",
+    "email": "注册邮箱",
+    "submit": "发送重置邮件",
+    "sent": "重置密码邮件已发送，请查收",
+    "failed": "发送失败，请重试",
+    "rememberPassword": "想起密码了？"
+  },
   "resetPassword": {
     "title": "设置新密码",
     "submit": "重置密码",
     "invalidLink": "重置链接无效或已过期",
     "failed": "重置失败，请重试"
+  },
+  "twoFactor": {
+    "title": "两步验证",
+    "totpLede": "输入身份验证器应用中的 6 位验证码",
+    "backupLede": "输入一个 8 位备用码",
+    "lockout": "连续输错 5 次将锁定 15 分钟",
+    "totpSubmit": "验证",
+    "backupSubmit": "验证备用码",
+    "totpRequired": "请输入 6 位数字验证码",
+    "backupRequired": "请输入 8 位字母或数字组成的备用码",
+    "useBackup": "改用备用码",
+    "useTotp": "改用验证器验证码",
+    "wrongCode": "验证码不正确，请重试",
+    "wrongCodeRemaining": "验证码不正确，还可以尝试 {count} 次",
+    "tooManyAttempts": "尝试次数过多，请 {minutes} 分钟后再试",
+    "sessionExpired": "验证已失效，请重新登录",
+    "backupUsedTitle": "已使用备用码",
+    "backupUsedBody": "每个备用码只能使用一次。建议现在生成一组新的备用码。",
+    "later": "稍后",
+    "regenerate": "生成新备用码"
   }
 }

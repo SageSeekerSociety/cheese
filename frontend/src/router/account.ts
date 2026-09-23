@@ -41,7 +41,7 @@ export default {
       component: () => import('@/views/account/recover/password/Start.vue'),
       meta: {
         title: '找回密码',
-        titleKey: 'account.forgotPassword',
+        titleKey: 'account.recover.title',
       },
     },
     {
@@ -74,6 +74,7 @@ export default {
       component: () => import('@/views/account/Verify2FA.vue'),
       meta: {
         title: '两步验证',
+        titleKey: 'account.twoFactor.title',
       },
     },
     {
