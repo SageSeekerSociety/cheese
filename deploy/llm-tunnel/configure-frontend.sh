@@ -105,13 +105,15 @@ EOF
 # a PROXY protocol header, so it never holds the plaintext and the client's
 # address still arrives. Emitted only once a certificate is in place (see
 # tls-renew.sh), so a box without one keeps serving the plain listener alone.
+#
+# "listen ... http2" rather than "http2 on;": the latter is unknown before
+# nginx 1.25.1, and CI's distro nginx is older than the box's image.
 TLS_DIR="$ACTIVE_DIR/tls"
 if [[ -f "$TLS_DIR/fullchain.pem" && -f "$TLS_DIR/privkey.pem" ]]; then
   cat >> "$CONFIG_TMP" <<EOF
 
 server {
-  listen 127.0.0.1:18443 ssl proxy_protocol;
-  http2 on;
+  listen 127.0.0.1:18443 ssl http2 proxy_protocol;
   ssl_certificate /etc/nginx/active/tls/fullchain.pem;
   ssl_certificate_key /etc/nginx/active/tls/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
