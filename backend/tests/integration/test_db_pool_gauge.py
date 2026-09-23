@@ -11,6 +11,8 @@ from sqlalchemy.pool import QueuePool
 
 from app.core.config import settings
 from app.core.db import get_db, pool_status, warn_when_pool_saturates
+from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.user.repositories import UserRepository
 from tests.conftest import TEST_DATABASE_URL
 
 pytestmark = pytest.mark.anyio
@@ -80,6 +82,15 @@ async def test_async_integration_fixtures_use_the_production_pool(
 
     assert (await python_client.get("/projects?team_id=999999")).status_code == 200
     assert checkouts
+
+
+async def test_direct_business_fixture_keeps_the_client_identity_baseline(
+    business_db_factory,
+):
+    engine = business_db_factory.kw["bind"]
+    _assert_production_pool(engine)
+    async with business_db_factory() as session:
+        assert await UserRepository(session).get_by_handle(CHEESE_HANDLE) is not None
 
 
 async def test_gauge_counts_checked_out_connections_and_saturation_is_logged(

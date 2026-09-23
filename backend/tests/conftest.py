@@ -400,8 +400,35 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     (rather than through the runner and a socket) has to wait for that, the
     same way a room does.
     """
+    consumer_tasks: dict[asyncio.Task, object] = {}
+    runtimes = service._compute._runtimes()
     for _ in range(tries):
+        for runtime in runtimes:
+            subscription = getattr(runtime, "_subscriptions", {}).get(topic_id)
+            if subscription is not None and subscription.consumer_task is not None:
+                consumer_tasks[subscription.consumer_task] = runtime
         if not any(t == topic_id for t, _ in service._hook_work):
+            subscriptions = []
+            for runtime in runtimes:
+                subscription = getattr(runtime, "_subscriptions", {}).get(topic_id)
+                if subscription is not None:
+                    subscriptions.append(subscription)
+            await asyncio.gather(*(s.sink.queue.join() for s in subscriptions))
+            if service._settle_tasks:
+                await asyncio.gather(*tuple(service._settle_tasks))
+            for runtime in runtimes:
+                if topic_id in getattr(runtime, "_subscriptions", {}):
+                    await runtime._close_topic(topic_id)
+            # A Stop removes hook work just before the runtime finishes closing
+            # its subscription. Await consumers already removed from the live
+            # registry so their final DB/session cleanup cannot escape the test.
+            retired = [
+                task
+                for task, runtime in consumer_tasks.items()
+                if topic_id not in getattr(runtime, "_subscriptions", {})
+            ]
+            if retired:
+                await asyncio.gather(*retired, return_exceptions=True)
             return
         await _REAL_SLEEP(0.01)
     raise AssertionError(
