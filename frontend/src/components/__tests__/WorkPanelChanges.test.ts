@@ -593,11 +593,45 @@ describe('task file navigation', () => {
     await flush()
   }
 
+  /** 铺开一条任务自己的改动清单。清单默认是收起的，要看得先点它那个箭头。 */
+  async function expandTask(group: Element) {
+    await fireEvent.click(group.querySelector('.task-change-toggle')!)
+    await flush()
+  }
+
+  it('每个任务默认收起，点箭头就地铺开这一条，且只铺开这一条', async () => {
+    const { container } = mountPanel('topic-A')
+    await openRoom(container)
+    const groups = Array.from(container.querySelectorAll('.task-change-group'))
+    expect(groups).toHaveLength(2)
+    const toggles = groups.map((g) => g.querySelector('.task-change-toggle')!)
+    // 收起态：两条都只剩标题那一行，文件一个也不在页面上。
+    for (const group of groups) {
+      expect(group.querySelector('.task-change-file')).toBeNull()
+      expect(group.textContent).toContain('个文件')
+    }
+    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+
+    await expandTask(groups[0])
+    expect(groups[0].querySelector('.task-change-file')?.textContent).toContain('a.py')
+    expect(groups[1].querySelector('.task-change-file')).toBeNull()
+    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual(['true', 'false'])
+    // 铺开是就地展开，不是进任务：这一页还在，也还没读任何文件。
+    expect(container.querySelector('.room-changes')).not.toBeNull()
+    expect(readFile).not.toHaveBeenCalled()
+
+    await expandTask(groups[0])
+    expect(groups[0].querySelector('.task-change-file')).toBeNull()
+    expect(toggles[0].getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('groups the same path under each task and opens the selected version', async () => {
     const { container } = mountPanel('topic-A')
     await openRoom(container)
     const groups = container.querySelectorAll('.task-change-group')
     expect(groups).toHaveLength(2)
+    await expandTask(groups[0])
+    await expandTask(groups[1])
     expect(groups[0].textContent).toContain('a.py')
     expect(groups[1].textContent).toContain('a.py')
     expect(readFile).not.toHaveBeenCalled()
@@ -625,6 +659,7 @@ describe('task file navigation', () => {
     )
     const { container } = mountPanel('topic-A')
     await openRoom(container)
+    await expandTask(container.querySelectorAll('.task-change-group')[0])
     await fireEvent.click(container.querySelector('.task-change-file')!)
     await flush()
     expect(readFile).toHaveBeenCalledTimes(1)
