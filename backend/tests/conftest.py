@@ -744,37 +744,36 @@ def client(
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_chat_service] = override_get_chat_service
 
-    with TestClient(app) as c:
-        # The cheese write-API is token-gated (app.main.cheese_token_gate); send
-        # the secret on every test request so contract tests exercising those
-        # endpoints (doc/split/decision/...) aren't rejected with 401.
-        c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
-        # Expose the factory so tests can seed data (e.g. memory entries).
-        c.test_factory = setup_factory  # type: ignore[attr-defined]
-        # Direct business coroutines must run through ``portal.call`` with this
-        # factory so they share the request loop and its production-sized pool.
-        c.test_request_factory = test_factory  # type: ignore[attr-defined]
-        c.test_app_engine = engine  # type: ignore[attr-defined]
-        try:
-            yield c
-        finally:
-            # Drain background turns BEFORE leaving the TestClient context:
-            # disposing the engine under a running kickoff turn makes flakes.
-            try:
-                wait_work_idle()
-            finally:
-                # Both pools were used on the portal loop. Close them before
-                # TestClient closes that loop, otherwise asyncpg connections
-                # survive into the next test and fail as attached to a
-                # different loop.
-                try:
-                    c.portal.call(engine.dispose)
-                finally:
-                    c.portal.call(app_engine.dispose)
-
     try:
-        app.dependency_overrides.clear()
+        with TestClient(app) as c:
+            # The cheese write-API is token-gated (app.main.cheese_token_gate); send
+            # the secret on every test request so contract tests exercising those
+            # endpoints (doc/split/decision/...) aren't rejected with 401.
+            c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
+            # Expose the factory so tests can seed data (e.g. memory entries).
+            c.test_factory = setup_factory  # type: ignore[attr-defined]
+            # Direct business coroutines must run through ``portal.call`` with this
+            # factory so they share the request loop and its production-sized pool.
+            c.test_request_factory = test_factory  # type: ignore[attr-defined]
+            c.test_app_engine = engine  # type: ignore[attr-defined]
+            try:
+                yield c
+            finally:
+                # Drain background turns BEFORE leaving the TestClient context:
+                # disposing the engine under a running kickoff turn makes flakes.
+                try:
+                    wait_work_idle()
+                finally:
+                    # Both pools were used on the portal loop. Close them before
+                    # TestClient closes that loop, otherwise asyncpg connections
+                    # survive into the next test and fail as attached to a
+                    # different loop.
+                    try:
+                        c.portal.call(engine.dispose)
+                    finally:
+                        c.portal.call(app_engine.dispose)
     finally:
+        app.dependency_overrides.clear()
         asyncio.run(setup_engine.dispose())
 
 
