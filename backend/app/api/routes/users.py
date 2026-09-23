@@ -2335,10 +2335,12 @@ _RECOVERY_REQUESTED = {
 
 
 async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
-    """Issue a reset token and mail it.
+    """Issue a reset token and mail it; runs after the response has gone.
 
-    A failed send is only logged: the requester is told the same thing either
-    way, and can ask again after the cooldown.
+    Off the request path so that the response takes as long for an unknown
+    address as for a known one. A failed send is only logged: the requester was
+    already told the same thing either way, and can ask again after the
+    cooldown.
     """
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2386,6 +2388,7 @@ async def recover_password_request(
 
     from redis.asyncio import Redis as AsyncRedis
 
+    from app.core.background import spawn
     from app.domain.user.mail_quota import MailQuota
 
     email = payload.email.strip()
@@ -2407,7 +2410,10 @@ async def recover_password_request(
 
     user = await auth_service.get_user_by_email(email)
     if user is not None:
-        await _send_recovery_mail(user.id, email, user.username)
+        spawn(
+            _send_recovery_mail(user.id, email, user.username),
+            name="password recovery mail",
+        )
     return _RECOVERY_REQUESTED
 
 

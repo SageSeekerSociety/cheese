@@ -18,14 +18,19 @@ class _Outbox:
     def __init__(self, *, delivers: bool = True) -> None:
         self.is_configured = True
         self.delivers = delivers
+        self.held = False
         self.sent: list[dict] = []
 
     async def send(self, **kwargs) -> bool:
+        import asyncio
+
+        while self.held:
+            await asyncio.sleep(0.01)
         self.sent.append(kwargs)
         return self.delivers
 
     def wait_for(self, count: int, timeout: float = 5.0) -> None:
-        """Wait for ``count`` mails to have been sent."""
+        """Recovery mail leaves after the response, so wait for it to land."""
         deadline = time.monotonic() + timeout
         while len(self.sent) < count:
             assert time.monotonic() < deadline, f"{len(self.sent)} of {count} sent"
@@ -280,6 +285,22 @@ class TestRecoveryMail:
         outbox.settle(1)
         assert outbox.sent[0]["to"] == user.email
 
+    def test_the_answer_does_not_wait_for_the_mail(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+        outbox.held = True
+        try:
+            resp = _recover(api_client, user.email)
+            assert resp.status_code == 200, resp.text
+            assert outbox.sent == []
+        finally:
+            outbox.held = False
+
+        outbox.wait_for(1)
+        match = re.search(r"token=([\w.-]+)", outbox.sent[0]["body_text"])
+        assert match, outbox.sent[0]
+
     def test_a_failed_send_still_answers_the_same(
         self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
     ):
@@ -341,6 +362,7 @@ class TestOverlongPasswords:
             "/users/recover/password/request", json={"email": user.email}
         )
         assert requested.status_code == 200, requested.text
+        outbox.wait_for(1)
         match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
         assert match, outbox.sent[-1]
         token = match.group(1)
@@ -370,6 +392,7 @@ class TestRecoveryPasswordRule:
         user = user_client.create_user()
         forget_redis_state(user)
         api_client.post("/users/recover/password/request", json={"email": user.email})
+        outbox.wait_for(1)
         match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
         assert match, outbox.sent[-1]
         path = "/users/recover/password/verify"
