@@ -138,7 +138,10 @@ class SudoAuthRequest(BaseModel):
     purpose: SudoPurpose | None = None
 
 
-class DisableTwoFactorRequest(BaseModel):
+class SudoTicketRequest(BaseModel):
+    """The body of an operation that redeems a sudo ticket and needs nothing
+    else."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
@@ -418,7 +421,7 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
 
 
 async def _spend_sudo_ticket(
-    ticket: str | None, *, user_id: int, purpose: SudoPurpose
+    ticket: object, *, user_id: int, purpose: SudoPurpose
 ) -> None:
     """Redeem a sudo ticket for exactly this user and this operation, once.
 
@@ -434,7 +437,7 @@ async def _spend_sudo_ticket(
     from app.common.auth import verify_sudo_ticket
     from app.core.single_use_state import SingleUseUnavailableError, claim
 
-    claims = verify_sudo_ticket(ticket) if ticket else None
+    claims = verify_sudo_ticket(ticket) if isinstance(ticket, str) and ticket else None
     if claims is None or claims.user_id != user_id or claims.purpose != purpose:
         raise SudoRequiredError("Re-authentication required for this operation")
 
@@ -3030,10 +3033,14 @@ async def enable_user_2fa(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    """Two-phase, reference contract: no body → generate a secret and hand it
-    to the client (nothing persisted yet); {secret, code} → verify the live
-    code against that secret, persist it, and return the one-time backup
-    codes."""
+    """Two-phase, reference contract: no code → generate a secret and hand it
+    to the client; {secret, code} → verify the live code against that secret,
+    persist it, and return the one-time backup codes.
+
+    The first phase spends a sudo ticket. The second needs none of its own:
+    it accepts only the secret the first phase offered, so reaching it at all
+    means having re-authenticated.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
@@ -3074,7 +3081,12 @@ async def enable_user_2fa(
                 },
             }
 
-        new_secret = totp_service.generate_secret()
+        await _spend_sudo_ticket(
+            payload.get("sudoTicket"),
+            user_id=auth_user.user_id,
+            purpose=SudoPurpose.TWO_FA_ENABLE,
+        )
+        new_secret = await totp_service.offer_secret(auth_user.user_id)
         otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
         return {
             "code": 200,
@@ -3152,7 +3164,7 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
 )
 async def disable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    payload: DisableTwoFactorRequest = Body(default_factory=DisableTwoFactorRequest),
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
@@ -3241,6 +3253,7 @@ async def get_user_2fa_status(
 )
 async def regenerate_backup_codes(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -3258,6 +3271,11 @@ async def regenerate_backup_codes(
         if not await totp_service.is_2fa_enabled(user_id):
             raise BadRequestError("2FA is not enabled")
 
+        await _spend_sudo_ticket(
+            payload.sudo_ticket,
+            user_id=auth_user.user_id,
+            purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
+        )
         backup_codes = await totp_service.generate_backup_codes(user_id)
         return {
             "code": 201,
@@ -3288,6 +3306,12 @@ async def update_2fa_settings(
     always_required = payload.get("always_required")
     if not isinstance(always_required, bool):
         raise BadRequestError("always_required (boolean) is required")
+
+    await _spend_sudo_ticket(
+        payload.get("sudoTicket"),
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.TWO_FA_SETTINGS,
+    )
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -3327,10 +3351,17 @@ def _challenge_from_credential(credential: dict) -> str:
 )
 async def passkey_register_challenge(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
+    """Start registering a passkey, against a sudo ticket.
+
+    Only this step spends the ticket. Completing the registration needs a
+    challenge this step stored, so nothing can be registered without having
+    come through here.
+    """
     import json
 
     from redis.asyncio import Redis as AsyncRedis
@@ -3339,6 +3370,12 @@ async def passkey_register_challenge(
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can register a passkey.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSKEY_ADD,
+    )
 
     user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
 
@@ -3556,11 +3593,18 @@ async def list_passkeys(
 async def delete_passkey(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     credential_id: Annotated[str, Path(alias="credentialId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can delete their passkeys.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSKEY_DELETE,
+    )
 
     deleted = await passkey_service.delete_passkey(user_id, credential_id)
 

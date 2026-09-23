@@ -263,6 +263,8 @@ class TopicSubscription:
     replay_queue: list[tuple[str, str]] = field(default_factory=list)
     replay_done: set[str] = field(default_factory=set)
     replay_seen_messages: set[str] = field(default_factory=set)
+    # Reconnects can enqueue the same event ID twice; acknowledge the exact copy.
+    replay_waiters: dict[int, asyncio.Event] = field(default_factory=dict)
     # Reassembles the screen's MessageDisplay flushes into whole messages.
     # Subscription-scoped on purpose: its dedup memory (message ids already
     # assembled) has to survive across works, or a flush redelivered after
@@ -1034,6 +1036,8 @@ class ClaudeCodeRuntime:
         subscription = self._subscriptions.get(session.topic_id)
         if subscription is None:
             return
+        last_queued: dict | None = None
+        completed = asyncio.Event()
         try:
             events = read_log(session, since=log_cursor(session))
             if not events:
@@ -1057,9 +1061,17 @@ class ClaudeCodeRuntime:
                 queued = dict(payload)
                 queued["_eid"] = eid
                 subscription.sink.queue.put_nowait(queued)
+                last_queued = queued
+            if last_queued is not None:
+                subscription.replay_waiters[id(last_queued)] = completed
         finally:
             subscription.ready.set()
-        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
+        if last_queued is not None:
+            try:
+                # Live hooks keep arriving; only this replay's tail must finish.
+                await asyncio.wait_for(completed.wait(), timeout=30)
+            finally:
+                subscription.replay_waiters.pop(id(last_queued), None)
 
     async def close(self, session: SessionRef) -> None:
         """Let this session go: stop listening, forget the channel.
@@ -1300,6 +1312,9 @@ class ClaudeCodeRuntime:
                 if holding:
                     subscription.consuming.release()
                 subscription.sink.queue.task_done()
+                completed = subscription.replay_waiters.pop(id(hook), None)
+                if completed is not None:
+                    completed.set()
 
     async def _begin_session_activity(
         self,
