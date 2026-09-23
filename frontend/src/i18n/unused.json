@@ -1,6 +1,5 @@
 [
   "global.back",
-  "global.close",
   "global.confirm",
   "global.confirmDelete",
   "global.createFailed",
@@ -11,7 +10,6 @@
   "global.formValidation.email",
   "global.formValidation.minLength",
   "global.formValidation.numeric",
-  "global.loadFailed",
   "global.loading",
   "global.no",
   "global.publishFailed",
@@ -19,7 +17,6 @@
   "global.save",
   "global.submit",
   "global.success",
-  "global.updateFailed",
   "global.updateSuccess",
   "global.yes",
   "notifications.TEAM_REQUEST_APPROVED.status",

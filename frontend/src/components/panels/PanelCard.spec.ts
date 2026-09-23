@@ -177,6 +177,36 @@ describe('一张卡按卡渲染', () => {
 
 // 两句话之间它做过什么，也是这张卡的一部分：只有话的话，一条跑了半小时的活在这里
 // 就是「开始了」「做完了」两句。
+describe('卡下的平台通知', () => {
+  it.each([
+    ['ci_failed', 'CI 没过', 'CI 日志', 'pytest: 7 failed'],
+    ['card_filed', '等待验收', '本次修改', '修复会话身份隔离'],
+  ])('保留 %s 的可展开详情', async (eventType, headline, detailLabel, detail) => {
+    getRoomTask.mockResolvedValue(
+      card({
+        blocks: [
+          block({
+            kind: 'event',
+            author: 'platform',
+            content: headline,
+            meta: { event_type: eventType, detail, detail_label: detailLabel, who: 'human' },
+          }),
+        ],
+      })
+    )
+    const { getByText, container, queryByText } = mount()
+    await waitFor(() => getByText(headline))
+    const disclosure = container.querySelector('details')!
+    expect(disclosure).not.toBeNull()
+    expect(disclosure.open).toBe(false)
+    await fireEvent.click(disclosure.querySelector('summary')!)
+    expect(disclosure.open).toBe(true)
+    expect(getByText(detail)).toBeTruthy()
+    expect(getByText(detailLabel)).toBeTruthy()
+    expect(queryByText('1 步操作')).toBeNull()
+  })
+})
+
 describe('卡下的过程', () => {
   function step(id: string, tool: string, arg: string, over: Partial<Block> = {}): Block {
     return block({

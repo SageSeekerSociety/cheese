@@ -27,6 +27,7 @@ class ProjectMachineRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID | None = None,
+        session_id: uuid.UUID | None = None,
         machine_id: int | None,
         customer_id: int,
         account_id: int,
@@ -47,6 +48,7 @@ class ProjectMachineRepository:
         machine = ProjectMachine(
             project_id=project_id,
             topic_id=topic_id,
+            session_id=session_id,
             machine_id=machine_id,
             customer_id=customer_id,
             account_id=account_id,
@@ -128,6 +130,19 @@ class ProjectMachineRepository:
             )
         )
         return result.scalars().one_or_none()
+
+    async def get_active_for_session(
+        self, session_id: uuid.UUID
+    ) -> ProjectMachine | None:
+        return (
+            await self._session.scalars(
+                select(ProjectMachine).where(
+                    ProjectMachine.session_id == session_id,
+                    ProjectMachine.released_at.is_(None),
+                    ProjectMachine.superseded_at.is_(None),
+                )
+            )
+        ).one_or_none()
 
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         """All unreleased resources, including superseded VMs awaiting cleanup."""
@@ -418,6 +433,15 @@ class ProjectMachineRepository:
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         if located:
+            # Enrolled project machines keep their ccproxy identity on the
+            # machine row; their DeviceRow is only the connector registration.
+            machine = await self._session.scalar(
+                select(ProjectMachine).where(
+                    ProjectMachine.device_id == located["device_id"]
+                )
+            )
+            if machine is not None:
+                return machine.ccproxy_upstream
             return await self._session.scalar(
                 select(DeviceRow.ccproxy_upstream).where(
                     DeviceRow.device_id == located["device_id"]

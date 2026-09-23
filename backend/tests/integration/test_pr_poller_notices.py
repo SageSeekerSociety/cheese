@@ -12,6 +12,9 @@ GitHub 全程是 test double，复用 `test_accept_pr` 那套世界（平台 Git
 `review/pr_poll.py` 轮询推进），也就是生产上真正跑着的那条路。
 """
 
+import asyncio
+import uuid
+
 import pytest
 
 from tests.conftest import seed_user, wait_work_idle
@@ -36,7 +39,29 @@ def _events(client, topic_id: str, event_type: str) -> list[dict]:
 
     读 `meta.event_type` 而不是文案：文案随时会改，类别码是契约。
     """
-    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    from sqlalchemy import select
+
+    from app.domain.block.models import Block
+
+    async def task_events():
+        async with client.test_factory() as session:
+            rows = list(
+                await session.scalars(
+                    select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                )
+            )
+            return [
+                {
+                    "id": str(row.id),
+                    "kind": row.kind.value,
+                    "content": row.content,
+                    "meta": row.meta,
+                    "task_id": row.task_id,
+                }
+                for row in rows
+            ]
+
+    blocks = asyncio.run(task_events())
     return [
         b
         for b in blocks

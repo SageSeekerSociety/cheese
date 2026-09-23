@@ -151,6 +151,30 @@ def read_background_output(body):
     return {"name": "Read", "input": {"file_path": path}}
 
 
+def execution_handler(rc):
+    base = rc.handler(Handler) if rc else Handler
+
+    class DeviceExecutionHandler(base):
+        def do_POST(self):
+            if self.path != "/execution":
+                return super().do_POST()
+            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            wire = self.server.state["wire"]
+            return self.reply(
+                asyncio.run(
+                    wire.call_executor(
+                        "acceptance-machine",
+                        self.server.state["executor_state"],
+                        payload["method"],
+                        payload.get("params", {}),
+                    )
+                )
+            )
+
+    return DeviceExecutionHandler
+
+
 def case(folder, options):
     tmux = ["tmux", "-L", "cheese-acceptance-" + folder.name]
     rc = (
@@ -163,7 +187,10 @@ def case(folder, options):
         if options.rc
         else None
     )
-    server = Server(("127.0.0.1", 0), rc.handler(Handler) if rc else Handler)
+    server = Server(
+        ("127.0.0.1", 0),
+        execution_handler(rc),
+    )
     if rc:
         rc.base = f"http://127.0.0.1:{server.server_port}"
     server.state = {
@@ -174,6 +201,7 @@ def case(folder, options):
     }
     threading.Thread(target=server.serve_forever, daemon=True).start()
     executor = None
+    wire = None
     center_fd = None
     try:
         executor, target = setup(
@@ -331,11 +359,20 @@ def case(folder, options):
             )
             from app.domain.agent.harness.launch import MachinePlace
             from tests.support.harness_prompts import system_prompt
+            from owner_fixture import WireOwner
 
             owner = folder / "device-owner"
             (owner / ".local/bin").mkdir(parents=True)
             (owner / ".local/bin/claude").symlink_to(options.claude)
             env["HOME"] = str(owner)
+            wire = WireOwner(options.claude, exec_env=env)
+            server.state.update(wire=wire, executor_state=target["state"])
+            if not options.ssh:
+                target = {
+                    "kind": "device",
+                    "url": f"http://127.0.0.1:{server.server_port}/execution",
+                    "mcp_servers": target["mcp_servers"],
+                }
             if rc:
                 env["CHEESE_REMOTE_CONTROL"] = "1"
             place = MachinePlace(
@@ -359,30 +396,11 @@ def case(folder, options):
                 token="fixture-place-token",
             )
             env.update(screen_env)
-            fixture_env = env
-
-            class LocalDeviceHub:
-                async def exec(self, device_id, command, *, stdin, env=None, timeout):
-                    result = await asyncio.to_thread(
-                        subprocess.run,
-                        command,
-                        input=stdin,
-                        env={**fixture_env, **(env or {})},
-                        text=True,
-                        capture_output=True,
-                        timeout=timeout,
-                    )
-                    return {
-                        "exit": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                    }
-
             channel = object.__new__(DeviceChannel)
-            channel._hub = LocalDeviceHub()
+            channel._hub = wire
             launch["command"] = asyncio.run(
                 channel._ship_launcher(
-                    "fixture",
+                    "acceptance-machine",
                     uuid.uuid4(),
                     launch["command"],
                     str(folder / "device-home"),
@@ -584,6 +602,7 @@ def case(folder, options):
                     },
                 )
                 assert check["value"]["stdout"] == "0", check
+        server.assert_healthy()
         summary = {
             "mode": options.mode,
             "version": run([options.claude, "--version"]).strip(),
@@ -594,8 +613,6 @@ def case(folder, options):
             "central_unchanged": True,
             "passed": True,
         }
-        dump(folder / "summary.json", summary)
-        print(json.dumps(summary), flush=True)
     finally:
         if center_fd is not None:
             os.close(center_fd)
@@ -613,9 +630,14 @@ def case(folder, options):
             assert execution_release.release_mount(mountpoint), mountpoint
         if executor is not None:
             subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
+        if wire is not None:
+            wire.close()
         if server:
             server.shutdown()
             server.server_close()
+
+    dump(folder / "summary.json", summary)
+    print(json.dumps(summary), flush=True)
 
 
 def main():

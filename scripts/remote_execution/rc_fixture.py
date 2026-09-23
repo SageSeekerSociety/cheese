@@ -169,7 +169,7 @@ class RemoteControlFixture:
                     self.wfile.write(b": connected\n\n")
                     self.wfile.flush()
                     fixture.connected.set()
-                    while True:
+                    while not self.server.closing:
                         try:
                             event = fixture.events.get(timeout=5)
                             if stream_number != fixture.stream_count:
@@ -197,6 +197,7 @@ class RemoteControlFixture:
                             self.wfile.flush()
                         except OSError:
                             return
+                    return
                 if path.endswith("/worker/events"):
                     for event in (body or {}).get("events", []):
                         payload = event.get("payload", {})
@@ -313,6 +314,15 @@ class RemoteControlFixture:
 
             def do_PUT(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-                return self.route("PUT", json.loads(raw or b"{}"))
+                try:
+                    body = json.loads(raw or b"{}")
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Cannot parse PUT {urlparse(self.path).path}: "
+                        f"content_type={self.headers.get('Content-Type')}, "
+                        f"content_encoding={self.headers.get('Content-Encoding')}, "
+                        f"length={len(raw)}"
+                    ) from exc
+                return self.route("PUT", body)
 
         return Handler

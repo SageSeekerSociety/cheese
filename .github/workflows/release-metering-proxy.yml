@@ -1,0 +1,55 @@
+name: Release metering proxy
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full merged main SHA with successful Build and Required CI
+        required: true
+        type: string
+      interrupt:
+        description: Acknowledge that recreating the proxy interrupts active model streams
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+concurrency:
+  group: metering-proxy-dev
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && inputs.interrupt
+    runs-on: [self-hosted, cheese-dev]
+    environment: dev
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify the exact merged commit and both CI gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          python3 deploy/check-auto-deploy.py --require-ci "$RELEASE_SHA"
+          git checkout --detach "$RELEASE_SHA"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
+      - name: Release the verified image
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          METERING_ALLOW_INTERRUPT: "1"
+        run: bash deploy/release-metering-proxy.sh "$RELEASE_SHA"

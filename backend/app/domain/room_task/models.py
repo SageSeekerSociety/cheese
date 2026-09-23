@@ -164,6 +164,11 @@ class Task(UuidPk, Timestamps, Base):
     # label's answer (`room_task/thread_label.py`), and this column says only
     # who is on the card and whether that worker is still alive.
     subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    execution_agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    execution_parent_session_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    execution_turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
 
     # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——
     # 见 `room_task/binding.py`，那里是唯一读这两列的地方。

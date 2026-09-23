@@ -37,6 +37,7 @@ class CodexChannel:
         self.executor = executor
         self.name = channel.name
         self.provisions_machine = channel.provisions_machine
+        self.deferred_work = channel.deferred_work
 
     def available(self):
         return self.channel.available()

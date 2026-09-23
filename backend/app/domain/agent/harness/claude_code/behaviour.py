@@ -18,7 +18,7 @@ VERIFIED_AGAINST = "2.1.277"
 def declaration() -> Declaration:
     return Declaration(
         pinned_version=CLAUDE_PINNED_VERSION,
-        built_ins=frozenset({BuiltIn.ASK, BuiltIn.TODO}),
+        built_ins=frozenset({BuiltIn.ASK, BuiltIn.TODO, BuiltIn.REMINDER}),
         how_disabled={
             # 这一格是有条件的，两侧的条件是同一个。启动侧：
             # `--disallowedTools` 只长在 `CLAUDE_BASE_ARGS` 上
@@ -39,11 +39,16 @@ def declaration() -> Declaration:
                 "remote-control 会话两侧都不拒绝，答案走 RC 通道。"
                 "平台的等价物是 `cheese ask`"
             ),
-            # TodoWrite 自带一份任务清单，平台的活（split / ready / close-task）
-            # 是另一份。今天平台没有关掉它：`agent/chat.py` 的现场动词表里它是
-            # 「更新任务清单」，也就是照常显示。
-            BuiltIn.TODO: Difference.NO_OFF_SWITCH,
-            BuiltIn.REMINDER: Difference.NOT_BUILT_IN,
+            BuiltIn.TODO: (
+                "TodoWrite and TaskCreate/Update/List/Get are denied by CLI "
+                "arguments and settings in every session. Tasks use Cheese cards; "
+                "TaskStop and SendMessage remain available for native children."
+            ),
+            BuiltIn.REMINDER: (
+                "CronCreate/Delete/List and ScheduleWakeup are denied by CLI "
+                "arguments and settings in every session. Reminders use the "
+                "platform's durable delivery records."
+            ),
             # 平台自己装了一个 Stop hook（device_launch.py 的 cheese-sync）来做
             # 同步，这就是这个骨架没有自动同步的证据。
             BuiltIn.AUTO_SYNC: Difference.NOT_BUILT_IN,

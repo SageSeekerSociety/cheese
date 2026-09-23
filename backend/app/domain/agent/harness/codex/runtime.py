@@ -40,6 +40,7 @@ class Handle:
 class SessionChannel(Protocol):
     name: str
     provisions_machine: bool
+    deferred_work: bool
     builds_model_env: bool
 
     def available(self) -> bool: ...
@@ -78,6 +79,10 @@ class CodexRuntime:
     @property
     def provisions_machine(self) -> bool:
         return self.channel.provisions_machine
+
+    @property
+    def deferred_work(self) -> bool:
+        return self.channel.deferred_work
 
     @property
     def builds_model_env(self) -> bool:
@@ -274,13 +279,19 @@ class CodexRuntime:
             self._listen(session.topic_id)
         return True
 
-    async def deliver(self, topic_id, text, images=None) -> bool:
+    async def deliver(
+        self, topic_id, text, images=None, *, expected_work_id=None
+    ) -> bool:
         handle = self.live.get(topic_id)
         work = self.work.get(topic_id)
         if handle is None or work is None:
             return False
+        if expected_work_id is not None and work != expected_work_id:
+            return False
         status = await self.channel.call(handle, "ping", {})
         if not status.get("turn_id"):
+            return False
+        if self.live.get(topic_id) is not handle or self.work.get(topic_id) != work:
             return False
         await self.channel.call(
             handle,

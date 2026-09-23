@@ -15,10 +15,12 @@ import { getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { markdown } from '../../lib/markdown'
+import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import RoomNotice from '../room/RoomNotice.vue'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 const props = withDefaults(
@@ -98,12 +100,20 @@ const dotStyle = computed(() => (card.value ? columnDotStyle(card.value.presenta
 // 发生过什么只能去「现场」翻——而现场是整个房间的，分不出哪几步是这一件。所以
 // 两句话之间连着的几步操作并成一行「N 步操作」，默认折着，点开是流水账。
 // 芝士自言自语的那种事件（没显式发布的输出）是话，不是操作。
-type Entry = { kind: 'say'; block: Block } | { kind: 'steps'; key: string; blocks: Block[] }
+type Entry =
+  | { kind: 'say'; block: Block }
+  | { kind: 'notice'; block: Block; notice: PlatformNotice }
+  | { kind: 'steps'; key: string; blocks: Block[] }
 
 const entries = computed<Entry[]>(() => {
   const out: Entry[] = []
   for (const b of card.value?.blocks ?? []) {
-    if (b.kind === 'event' && !isNarration(b.meta)) {
+    const notice = b.meta?.event_type && !b.meta?.tool ? platformNotice(b) : null
+    if (notice && !['hidden', 'action', 'turn-summary'].includes(notice.mode)) {
+      out.push({ kind: 'notice', block: b, notice })
+    } else if (notice?.mode === 'hidden') {
+      continue
+    } else if (b.kind === 'event' && !isNarration(b.meta)) {
       const last = out[out.length - 1]
       if (last?.kind === 'steps') last.blocks.push(b)
       else out.push({ kind: 'steps', key: b.id, blocks: [b] })
@@ -196,7 +206,7 @@ async function send() {
 
       <div ref="timelineRef" class="panel-card__timeline">
         <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
-        <template v-for="e in entries" :key="e.kind === 'say' ? e.block.id : e.key">
+        <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div v-if="e.kind === 'say'" class="card-msg">
             <span class="card-msg__who t-meta">{{ e.block.author }}</span>
             <div
@@ -206,6 +216,16 @@ async function send() {
             />
             <span v-else class="card-msg__text t-body">{{ e.block.content }}</span>
           </div>
+          <RoomNotice
+            v-else-if="e.kind === 'notice'"
+            :block="e.block"
+            :notice="e.notice"
+            :run="[e.block]"
+            :name="null"
+            :time="relTime(e.block.created_at)"
+            agent-name="队友"
+            :refs="{ mentionNames: {}, topicTitles: {} }"
+          />
           <div v-else class="card-steps">
             <button
               type="button"

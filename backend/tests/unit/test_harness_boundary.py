@@ -54,6 +54,8 @@ PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
+    # Lazy acquisition installs the shared work executor, through its public door.
+    "app.domain.machine.session_work": ("executor_launch",),
     "app.domain.agent.private_chat": ("private_execution_target",),
     "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
     # --- 边缘：适配器对外的那条边 ---

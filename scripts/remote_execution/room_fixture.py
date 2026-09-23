@@ -1,6 +1,7 @@
 """Ordinary project executor behind the production HTTP and connector transport."""
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -20,10 +21,13 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import script 
 
 class RoomExecutor:
     def __init__(self, folder, claude):
+        from owner_fixture import WireOwner
+
         project, resource = uuid.uuid4(), uuid.uuid4()
         self.project = str(project)
         self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
+        self.snapshots = {}
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
         self.work = self.home / place.CHECKOUT_DIR
         self.state = self.home / ".cheese/executor"
@@ -122,7 +126,7 @@ class RoomExecutor:
         info = json.loads(result.stdout)
         self.target = {
             "kind": "device",
-            "device_id": "executor",
+            "device_id": "acceptance-machine",
             "resource_id": str(resource),
             "home": str(self.home),
             "workspace": str(self.work),
@@ -131,28 +135,80 @@ class RoomExecutor:
             # actually is, the same way a real placement does.
             "state": info["state"],
         }
-        deadline = time.monotonic() + 30
-        while True:
-            try:
-                runtime.request(self.state, "ping")
-                break
-            except (ConnectionError, FileNotFoundError):
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(
-                        (self.home / ".cheese/executor-bootstrap.log").read_text()
-                    )
-                time.sleep(0.1)
+        self.wire = None
+        try:
+            self.wire = WireOwner(claude)
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    asyncio.run(execution.call(self.target, "ping", {}, hub=self.wire))
+                    break
+                except (ConnectionError, FileNotFoundError):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            (self.home / ".cheese/executor-bootstrap.log").read_text()
+                        )
+                    time.sleep(0.1)
+        except BaseException:
+            self.close()
+            raise
 
     def set_api(self, url):
         config = json.loads((self.state / "config.json").read_text())
-        runtime.request(
-            self.state, "configure", {"env": {**config["env"], "CHEESE_API": url}}
+        asyncio.run(
+            execution.call(
+                self.target,
+                "configure",
+                {"env": {**config["env"], "CHEESE_API": url}},
+                hub=self.wire,
+            )
         )
 
     def handler(self, base):
         executor = self
 
         class Handler(base):
+            def do_PUT(self):
+                prefix = (
+                    f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
+                )
+                if not self.path.startswith(prefix):
+                    return super().do_PUT()
+                assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                assert self.headers.get("Content-Type") == "application/x-git-bundle"
+                content = self.rfile.read(int(self.headers["Content-Length"]))
+                digest = hashlib.sha256(content).hexdigest()
+                assert digest == self.headers["X-Content-SHA256"]
+                assert content.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n"))
+                snapshot_sha = self.path.removeprefix(prefix)
+                assert len(snapshot_sha) == 40 and all(
+                    c in "0123456789abcdef" for c in snapshot_sha
+                )
+                head_sha = self.headers["X-Cheese-Head"]
+                assert len(head_sha) == 40 and all(
+                    c in "0123456789abcdef" for c in head_sha
+                )
+                if digest not in executor.snapshots:
+                    directory = executor.owner / "snapshots"
+                    directory.mkdir(exist_ok=True)
+                    bundle = directory / f"{digest}.bundle"
+                    bundle.write_bytes(content)
+                    executor.snapshots[digest] = {
+                        "id": str(uuid.uuid4()),
+                        "snapshot_sha": snapshot_sha,
+                        "head_sha": head_sha,
+                        "digest": digest,
+                        "bundle": str(bundle),
+                    }
+                row = executor.snapshots[digest]
+                return self.reply(
+                    {
+                        "data": {
+                            key: row[key] for key in ("id", "snapshot_sha", "digest")
+                        }
+                    }
+                )
+
             def do_GET(self):
                 if (
                     self.path
@@ -192,7 +248,7 @@ class RoomExecutor:
                         executor.target,
                         payload["method"],
                         payload.get("params", {}),
-                        hub=executor,
+                        hub=executor.wire,
                         timeout=payload.get("timeout", 660),
                     )
                 )
@@ -200,18 +256,14 @@ class RoomExecutor:
 
         return Handler
 
-    async def call_executor(
-        self, device, state, method, params, *, trace_id=None, timeout=660
-    ):
-        assert device == "executor"
-        assert Path(state) == self.state
-        async with asyncio.timeout(timeout):
-            return await asyncio.to_thread(runtime.request, self.state, method, params)
-
     def close(self):
-        subprocess.run(
-            [sys.executable, runtime.__file__, "stop", "--state", str(self.state)],
-            capture_output=True,
-            check=True,
-            timeout=30,
-        )
+        try:
+            subprocess.run(
+                [sys.executable, runtime.__file__, "stop", "--state", str(self.state)],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+        finally:
+            if self.wire is not None:
+                self.wire.close()

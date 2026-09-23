@@ -44,6 +44,7 @@ from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.usage.repositories import ComputeGrantRepository
@@ -122,7 +123,13 @@ def _default_catalog_id(choices: dict[str, dict]) -> str | None:
 
 
 async def _bind_requested_subagent_model(
-    agents, project, choices: dict[str, dict], requested: str, parent_handle: str | None
+    agents,
+    project,
+    choices: dict[str, dict],
+    requested: str,
+    parent_handle: str | None,
+    *,
+    explicit: bool = False,
 ):
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目 AI 队友范围内。
 
@@ -144,7 +151,8 @@ async def _bind_requested_subagent_model(
         if isinstance(parent_model, str) and parent_model
         else _default_catalog_id(choices)
     )
-    if requested_id is not None and requested_id == inherited_id:
+    # A native selection is explicit even when it names the parent's model.
+    if not explicit and requested_id is not None and requested_id == inherited_id:
         return binding.resolve(
             None,
             choices,
@@ -240,7 +248,14 @@ async def admission(
     # 主 agent 开分身时指定的模型：CC 把它写进分身请求体的顶层 model 成员，计量
     # 代理解析出来随本调用带上来。只在分身路径上读 —— 主对话的模型从来由绑定
     # 决定，请求体里那个名字不是输入。
-    requested = (request.headers.get("x-cheese-requested-model") or "").strip()
+    child_model = (
+        (request.headers.get("x-cheese-child-model") or "").strip()
+        if is_subagent
+        else ""
+    )
+    requested = (
+        child_model or (request.headers.get("x-cheese-requested-model") or "").strip()
+    )
     agents = AgentInstanceService(db)
     agent = None
     if project is not None and not is_subagent:
@@ -251,17 +266,48 @@ async def admission(
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(
-                agents, project, choices, requested, claims.get("a")
+                agents,
+                project,
+                choices,
+                requested,
+                claims.get("a"),
+                explicit=bool(child_model),
             )
         else:
             bound = binding.resolve(
                 None,
                 choices,
                 agent_model=agent.configuration.get("model") if agent else None,
-                default_model=(project.settings or {}).get("default_subagent_model")
-                if project and is_subagent
-                else None,
+                default_model=(
+                    (project.settings or {}).get("default_subagent_model")
+                    if project and is_subagent
+                    else None
+                )
+                or ((project.settings or {}).get("default_model") if project else None),
             )
+        if is_subagent and requested and project:
+            choice = choices[bound.model]
+            place = claims.get("t")
+            try:
+                place_id = uuid.UUID(place) if place else None
+            except ValueError:
+                place_id = None
+            outcome = await chat._pass_policy_gate(
+                db,
+                place_id,
+                gate.Call(
+                    resource=gate.Resource.model,
+                    subject=bound.model,
+                    label=choice["label"],
+                    tier=choice["tier"],
+                    approver=project.owner_handle or "",
+                ),
+                gate.policy_of(project.settings),
+                actor=claims.get("a") or "",
+            )
+            if outcome is not None:
+                await db.commit()
+                raise ValidationError(outcome.proposal.content)
     except ValidationError as exc:
         # `reason_kind` is what stops the proxy dressing this up as a budget
         # refusal: it renders every `allow=false` it has ever seen as a 429

@@ -42,7 +42,7 @@ from pathlib import Path
 
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
+from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, disallowed_tools
 from app.domain.agent.harness.launch import (
     ExecutorLaunch,
     LaunchSpec,
@@ -96,7 +96,17 @@ def hooks_settings(
     # 拒并列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不
     # 着后端时这一轮一切照旧。
     sync_agents = [
-        {"hooks": [{"type": "command", "command": "cheese sync-agents", "timeout": 15}]}
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    # Existing rooms can retain a CLI release without sync-agents.
+                    # Discovery must never block a user prompt on that old CLI.
+                    "command": "cheese sync-agents || true",
+                    "timeout": 15,
+                }
+            ]
+        }
     ]
     # A remote machine also has to hand its work back at turn end; the local
     # container edits the real worktree and has nothing to send.
@@ -132,7 +142,7 @@ def hooks_settings(
         "enableArtifact": False,
         # Native questions need the RC answer channel. Without it, keep the
         # matching CLI deny rule so a question cannot strand the turn.
-        "permissions": {"deny": [] if remote_control else list(DISALLOWED_TOOLS)},
+        "permissions": {"deny": disallowed_tools(remote_control=remote_control)},
         # Set before the first turn: changing this later cannot remove a URL
         # already present in the conversation's model-visible history.
         **({"attribution": {"sessionUrl": False}} if remote_control else {}),

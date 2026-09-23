@@ -44,10 +44,8 @@ class Difference(StrEnum):
     #: 了」能作证的时候填它——平台替它装了一个 Stop hook 去做同步，就是这个骨架
     #: 没有同步的证据。
     NOT_BUILT_IN = "not-built-in"
-    #: 自带，而平台今天给不出关闭动作。这就是结论 48 说的「暂缺」。
-    NO_OFF_SWITCH = "no-off-switch"
     #: 还没有人对着钉住的那个 build 读过这一格。也是「暂缺」的一种，但它是一次
-    #: 核查就能消掉的那一种，所以跟上一条分开记。
+    #: 核查就能消掉的那一种。
     NOT_CHECKED_AGAINST_THE_PIN = "not-checked-against-the-pin"
 
 

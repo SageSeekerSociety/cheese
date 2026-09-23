@@ -14,7 +14,6 @@ from sqlalchemy import select
 
 from app.common.auth import decode_token
 from app.core.config import settings
-from app.core.crypto import decrypt_text, encrypt_text
 from app.core.github_install_state import (
     ACCOUNT_LINK_TTL_S,
     mint_account_link_state,
@@ -22,7 +21,13 @@ from app.core.github_install_state import (
 from app.core.redis import get_redis_client
 from app.core.single_use_state import reserve
 from app.domain.oauth.models import UserOAuthConnection
-from app.domain.oauth.services import GitHubProvider, OAuthProviderConfig, OAuthUserInfo
+from app.domain.oauth.services import (
+    GitHubProvider,
+    OAuthProviderConfig,
+    OAuthUserInfo,
+    open_oauth_token,
+    seal_oauth_token,
+)
 from tests.conftest import seed_user
 
 
@@ -121,10 +126,25 @@ def _fetch_connection(client, user_id: int) -> UserOAuthConnection:
     return asyncio.run(_fetch())
 
 
+def _seal(user_id: int, value: str, field: str = "access_token") -> str:
+    return seal_oauth_token(
+        value, user_id=user_id, provider_id="github_app", field=field
+    )
+
+
+def _open(conn, field: str = "access_token") -> str:
+    return open_oauth_token(
+        getattr(conn, field),
+        user_id=conn.user_id,
+        provider_id=conn.provider_id,
+        field=field,
+    )
+
+
 class TestAccountLinkTokenPersistence:
     """#192 gap: the callback used to discard the exchanged access_token.
     These exercise the real DB round trip (real Postgres, real migration
-    column, real Fernet encryption) rather than mocking the repository."""
+    column, real encryption) rather than mocking the repository."""
 
     def test_callback_persists_encrypted_access_and_refresh_token(
         self, client, monkeypatch
@@ -159,9 +179,9 @@ class TestAccountLinkTokenPersistence:
         conn = _fetch_connection(client, user_id)
         assert conn.access_token is not None
         assert conn.access_token != "gh-live-token"  # never stored in plaintext
-        assert decrypt_text(conn.access_token) == "gh-live-token"
+        assert _open(conn) == "gh-live-token"
         assert conn.refresh_token is not None
-        assert decrypt_text(conn.refresh_token) == "gh-refresh-token"
+        assert _open(conn, "refresh_token") == "gh-refresh-token"
         assert conn.token_expires is not None
 
     def test_callback_persists_a_non_ascii_profile_name(self, client, monkeypatch):
@@ -227,7 +247,7 @@ class TestAccountLinkTokenPersistence:
         )
         assert "github_account=success" in r1.headers["location"]
         first = _fetch_connection(client, user_id)
-        assert decrypt_text(first.access_token) == "gh-token-1"
+        assert _open(first) == "gh-token-1"
 
         async def fake_exchange_2(self, code):
             return {"access_token": "gh-token-2"}
@@ -245,7 +265,7 @@ class TestAccountLinkTokenPersistence:
 
         second = _fetch_connection(client, user_id)
         assert second.id == first.id  # updated in place, no duplicate row
-        assert decrypt_text(second.access_token) == "gh-token-2"
+        assert _open(second) == "gh-token-2"
 
     def test_exchange_missing_access_token_redirects_to_error(
         self, client, monkeypatch
@@ -372,7 +392,7 @@ class TestAccountLinkTokenPersistence:
                 )
                 await session.commit()
                 await repo.update_tokens(
-                    live.id, encrypt_text("live-token"), None, None
+                    live.id, _seal(user_id, "live-token"), None, None
                 )
                 await session.commit()
                 assert await svc.get_github_user_token(user_id) == "live-token"
@@ -386,8 +406,8 @@ class TestAccountLinkTokenPersistence:
                 assert conn is not None
                 await repo.update_tokens(
                     conn.id,
-                    encrypt_text("stale-token"),
-                    encrypt_text("stored-refresh"),
+                    _seal(user_id, "stale-token"),
+                    _seal(user_id, "stored-refresh", "refresh_token"),
                     datetime.now(UTC) - timedelta(hours=1),
                 )
                 await session.commit()
@@ -424,12 +444,12 @@ class TestAccountLinkTokenPersistence:
                 session.expire_all()
                 refreshed = await repo.get_by_user_and_provider(user_id, "github_app")
                 assert refreshed is not None
-                assert decrypt_text(refreshed.access_token) == "refreshed-token"
+                assert _open(refreshed) == "refreshed-token"
 
                 # expired again, but this time with no refresh_token on file
                 await repo.update_tokens(
                     refreshed.id,
-                    encrypt_text("stale-again"),
+                    _seal(user_id, "stale-again"),
                     None,
                     datetime.now(UTC) - timedelta(hours=1),
                 )
@@ -482,7 +502,7 @@ class TestAccountLinkTokenPersistence:
                 # Prove the column really holds ciphertext, otherwise the
                 # round-trip assertion below could pass vacuously.
                 assert stored.access_token != plaintext
-                assert decrypt_text(stored.access_token) == plaintext
+                assert _open(stored) == plaintext
 
                 assert (
                     await get_github_user_token_for_handle(session, handle) == plaintext
@@ -517,7 +537,7 @@ class TestAccountLinkTokenPersistence:
                 # expired, nothing to refresh with
                 await repo.update_tokens(
                     conn_id,
-                    encrypt_text("stale-token"),
+                    _seal(user_id, "stale-token"),
                     None,
                     datetime.now(UTC) - timedelta(hours=1),
                 )

@@ -153,9 +153,10 @@ def mount(target_path, mountpoint):
     client = RemoteClient(target)
 
     def call(method, params):
+        client.config = json.loads(target_path.read_text())
+        view.remote_root = client.config["workspace"]
         if method == "context_fs" and params["operation"] == "tree":
             return json.loads(tree_path.read_text())
-        client.config = json.loads(target_path.read_text())
         return client.call(method, params)
 
     class FuseProject(ForwardedProject, Operations):

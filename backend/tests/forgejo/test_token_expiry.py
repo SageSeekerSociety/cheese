@@ -10,8 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.core.crypto import encrypt_text
-from app.domain.agent.forgejo_tokens import ForgejoTokens
+from app.domain.agent.forgejo_tokens import ForgejoTokens, seal_forge_password
 from app.domain.project.models import ProjectForge
 
 
@@ -39,13 +38,14 @@ async def test_provider_rejects_expired_token_without_backend_cleanup():
         )
         assert response.status_code == 201
         try:
+            project_id = uuid.uuid4()
             binding = ProjectForge(
-                project_id=uuid.uuid4(),
+                project_id=project_id,
                 kind="forgejo",
                 repo=username + "/project",
                 url=base + "/" + username + "/project.git",
                 api_url=base + "/api/v1",
-                account_password=encrypt_text(password),
+                account_password=seal_forge_password(project_id, password),
             )
             # No database/cache/sweeper participates in this test.
             token, expires = await ForgejoTokens(binding)._authorize()

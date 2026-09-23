@@ -22,6 +22,22 @@ class AgentSessionRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    async def ensure(
+        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> AgentSession:
+        await self._upsert(
+            topic_id=topic_id, agent_handle=agent_handle, harness=harness, values={}
+        )
+        row = await self.get(topic_id, agent_handle, harness)
+        assert row is not None
+        return row
+
+    async def by_id(self, session_id: uuid.UUID, *, lock: bool = False):
+        query = select(AgentSession).where(AgentSession.id == session_id)
+        if lock:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        return await self._session.scalar(query)
+
     async def resume_token(
         self, topic_id: uuid.UUID, agent_handle: str, harness: str
     ) -> str | None:

@@ -64,7 +64,9 @@ def _file_card(client, room: str, reviewer: str = "alice"):
 
 
 def _filed_events(client, room: str) -> list[dict]:
-    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    blocks = client.get(
+        f"/topics/{room}/tasks/{delivery_task_id(client, room)}"
+    ).json()["data"]["blocks"]
     return [
         b
         for b in blocks
@@ -165,7 +167,9 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
     assert r.status_code == 200, r.text
     wait_work_idle()
 
-    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    blocks = client.get(
+        f"/topics/{room}/tasks/{delivery_task_id(client, room)}"
+    ).json()["data"]["blocks"]
     assert any(
         (b.get("meta") or {}).get("event_type") == "card_rejected" for b in blocks
     )

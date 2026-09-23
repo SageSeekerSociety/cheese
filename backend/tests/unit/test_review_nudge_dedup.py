@@ -6,16 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.domain.delivery.addressing import NOBODY
 from app.domain.review.notes import NoteCode
 from app.domain.review.services import AcceptService
-
-#: 名册在这些用例里是假的（session 是个 MagicMock），而这几条说的是去重和文案，不
-#: 是「谁坐在这个房间里」。席位照样得答得出来，否则寻址连问都问不了。
-_a_seat = patch(
-    "app.domain.review.services.TopicMemberService.addressable_agent_handle",
-    new=AsyncMock(return_value="cheese-seat"),
-)
 
 
 def _service_and_card():
@@ -31,7 +23,10 @@ def _service_and_card():
         pr_head_sha="abc123",
     )
     topic = SimpleNamespace(id=card.topic_id, project_id=uuid.uuid4())
-    service = AcceptService(MagicMock())
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=lambda *_: card.nudge_state)
+    service = AcceptService(session)
+    service._record_task_nudge = AsyncMock()
     return service, card, topic
 
 
@@ -50,7 +45,6 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
                 "app.domain.review.services.TaskService.get",
                 new=AsyncMock(return_value=SimpleNamespace(status="open")),
             ),
-            _a_seat,
         ):
             await service._dispatch_nudges(
                 card=card,
@@ -63,12 +57,14 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
     await _tick()
     first_note = card.note
     assert card.note_code is NoteCode.checks_failed
-    assert runner.submit.call_count == 1
+    assert service._record_task_nudge.await_count == 1
+    runner.submit.assert_not_called()
 
     await _tick()
 
     assert card.note == first_note
-    assert runner.submit.call_count == 1
+    assert service._record_task_nudge.await_count == 1
+    runner.submit.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -90,12 +86,12 @@ async def test_closed_task_keeps_failure_notice_without_invalid_repair_command()
             chat_service=MagicMock(),
             runner=runner,
         )
-    call = runner.submit.call_args.kwargs
+    call = service._record_task_nudge.call_args.kwargs
     # 活已经关了，就谁也没点到 —— 房间里照样看得见这一行，只是不会有人被叫起来。
-    assert call["addressed"] == NOBODY
+    runner.submit.assert_not_called()
     assert "新任务" in call["content"]
     assert "cheese worktree" not in call["content"]
-    assert "cancelled" in call["nudge_meta"]["detail"]
+    assert "cancelled" in call["meta"]["detail"]
 
 
 @pytest.mark.anyio
@@ -107,7 +103,6 @@ async def test_merge_refusal_does_not_claim_checks_are_green():
             "app.domain.review.services.TaskService.get",
             new=AsyncMock(return_value=SimpleNamespace(status="open")),
         ),
-        _a_seat,
     ):
         await service._note_merge_blocked(
             card=card,
@@ -116,7 +111,7 @@ async def test_merge_refusal_does_not_claim_checks_are_green():
             chat_service=MagicMock(),
             runner=runner,
         )
-    call = runner.submit.call_args.kwargs
-    assert "全绿" not in card.note + call["content"] + call["nudge_event"]
+    call = service._record_task_nudge.call_args.kwargs
+    assert "全绿" not in card.note + call["content"] + call["headline"]
     assert str(card.task_id) in call["content"]
     assert "merge method disabled" in call["content"]

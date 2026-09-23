@@ -113,6 +113,8 @@ class RemoteClient:
         self.platform = None
 
     def execution_token(self):
+        if self.config.get("execution_token"):
+            return self.config["execution_token"]
         token_file = self.config.get("token_file")
         if token_file:
             with open(token_file) as stream:
@@ -363,12 +365,128 @@ class RemoteClient:
         return command
 
     def call(self, method, params=None):
+        operation_deadline = time.monotonic() + 660
+        if self.config.get("lease_path") and method in {
+            "invoke",
+            "mcp",
+            "cli",
+            "project_tools",
+        }:
+            # Only a requested execution operation acquires hands. Bootstrap,
+            # context discovery and a platform-only tool never enter this path.
+            response = self.platform_request(
+                {
+                    "method": "POST",
+                    "path": self.config["lease_path"],
+                    "body": {
+                        "env": self.config.get("setup_env", {}),
+                        "timeout": max(0.001, operation_deadline - time.monotonic()),
+                    },
+                }
+            )
+            result = json.loads(response["value"]["stdout"])["data"]
+            if result.get("unavailable"):
+                raise RuntimeError(result["unavailable"])
+            original_workspace = self.config.setdefault(
+                "virtual_workspace", self.config["workspace"]
+            )
+            target = result["target"]
+            if params and method == "invoke":
+                params = {**params, "args": dict(params.get("args", {}))}
+                for field in ("file_path", "path", "notebook_path", "command"):
+                    value = params["args"].get(field)
+                    if isinstance(value, str):
+                        params["args"][field] = value.replace(
+                            original_workspace, target["workspace"]
+                        )
+            changed_lease = self.config.get("generation") != target.get("generation")
+            self.config.update(target)
+            token_file = self.config.get("token_file")
+            if token_file:
+                from pathlib import Path
+
+                Path(token_file).write_text(result["token"])
+                Path(token_file).chmod(0o600)
+            else:
+                self.config["execution_token"] = result["token"]
+            target_file = self.config.get("target_file")
+            if target_file:
+                from pathlib import Path
+
+                path = Path(target_file)
+                temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
+                temporary.write_text(json.dumps(self.config))
+                temporary.chmod(0o600)
+                temporary.replace(path)
+            previous = getattr(self.transport, "connection", None)
+            if previous is not None:
+                previous.close()
+                self.transport.connection = None
+            if target_file and changed_lease:
+                tree = self.call("context_fs", {"operation": "tree"})
+                if tree.get("unsupported_imports") or tree.get("unsupported_paths"):
+                    raise RuntimeError(
+                        "Project context leaves the forwarded project boundary"
+                    )
+                tree_path = Path(target_file).with_name("context-tree.json")
+                temporary = tree_path.with_name(tree_path.name + "." + uuid.uuid4().hex)
+                temporary.write_text(json.dumps(tree))
+                temporary.replace(tree_path)
+                context = self.call("context", {"known_files": {}})
+                if context.get("instructions"):
+                    # No project operation has run yet. Let the caller read its
+                    # newly available repository instructions before trying it.
+                    raise RuntimeError(
+                        "Work environment is ready. "
+                        "The requested operation has not run. "
+                        "Apply these repository instructions "
+                        "before issuing the next tool:\n" + context["instructions"]
+                    )
+        if self.config.get("kind") == "deferred":
+            if method == "context_fs" and (params or {}).get("operation") == "tree":
+                return {"generation": "no-work-lease", "entries": {}}
+            if method == "ping":
+                return {"workspace": self.config["workspace"], "mcp_servers": []}
+            raise MachineOutOfReach
+        if self.config.get("kind") == "unavailable":
+            raise MachineOutOfReach
+        if method == "project_tools":
+            params = params or {}
+            server = params.get("server")
+            if not server:
+                return {"servers": self.config.get("mcp_servers", [])}
+            if server not in self.config.get("mcp_servers", []):
+                raise ValueError("Unknown project MCP server")
+            tool = params.get("name")
+            method = "mcp"
+            params = {
+                "server": server,
+                "method": "tools/call" if tool else "tools/list",
+                "params": {"name": tool, "arguments": params.get("arguments", {})}
+                if tool
+                else {},
+                **(
+                    {"id": params["id"], "tool": f"mcp__{server}__{tool}"}
+                    if tool
+                    else {}
+                ),
+            }
         if self.config.get("kind") == "device":
-            payload = json.dumps({"method": method, "params": params or {}}).encode()
-            deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
+            deadline = min(
+                operation_deadline, time.monotonic() + CONNECT_RETRY_WINDOW_S
+            )
             attempt = 0
             while True:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MachineOutOfReach
+                payload = json.dumps(
+                    {"method": method, "params": params or {}, "timeout": remaining}
+                ).encode()
                 connection, path = self.connection()
+                connection.timeout = remaining
+                if connection.sock:
+                    connection.sock.settimeout(remaining)
                 try:
                     connection.request(
                         "POST",

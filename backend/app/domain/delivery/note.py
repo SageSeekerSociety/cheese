@@ -1,26 +1,9 @@
-"""同 handle 便条的写侧（结论 11，不变量 I14②）。
+"""Private notes between active threads of the same project agent.
 
-## 它是什么
-
-同一个 handle 在一个项目里是**一个参与者**，它在各个地点上的那些会话是它的线程。
-线程之间要说话，走的不是 chat —— chat 是说给房间里的人看的，而一条线程告诉另一条
-线程「那份数据我清完了，口径按新的来」不是房间里的事。所以线程之间走**内部便条**。
-
-读侧的通道早就在用：`chat.notify_running_turn` 把一句话直接递进那条线程**正在跑的
-那一轮**，不进时间线（今天文档变更就是这么递的）。这个模块是写侧 —— 以前没有，一
-条线程想给另一条线程留话，只能在房间里说，于是房间里堆的是两条线程互相对暗号。
-
-## 收件人只能是自己的另一条线程
-
-**不同 handle 之间只走 chat，agent 对 agent 也是**（结论 12）。没有第二条私下通道：
-两个 agent 要说话就在房间里说，人看得见 —— 这是「安全靠可见」在多 agent 下的直接
-推论。所以这里的守卫不是一句提醒，是这条通道成立的条件：收件人那条线程的席位必须
-和发件人是同一个 handle，不是就拒，连「它可能是同一个人开的第二个号」这种判断都不
-做。
-
-守卫读的是**名册**，不是调用方说自己是谁：调用方给的是一条线程的 id，同不同 handle
-由平台拿两边的席位比出来。让调用方声明收件人 handle，等于把这条守卫交给被守的那一
-方去执行。
+Membership allows addressing the room; the active turn's immutable agent seat
+and expected work ID determine whether it may receive this note. An idle or
+different agent's thread does not receive it, and no timeline row or new turn
+is created. Communication between different handles remains visible chat.
 """
 
 from __future__ import annotations
@@ -66,7 +49,9 @@ async def send_note(
         # 一个 handle 是**一个项目里**的一个参与者：跨项目的同名席位不是同一条线程
         # 上的自己，它读的记忆、能看见的东西都是另一套。
         raise ValidationError(NOT_YOUR_OWN_THREAD)
-    seat = await TopicMemberService(session).addressable_agent_handle(target.room_id)
-    if seat != sender:
+    seats = await TopicMemberService(session).agent_handles(target.room_id)
+    if sender not in seats:
         raise ValidationError(NOT_YOUR_OWN_THREAD)
-    return await chat.notify_running_turn(target.room_id, content)
+    return await chat.notify_running_turn(
+        target.room_id, content, recipient_seat=sender
+    )

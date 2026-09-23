@@ -1,117 +1,105 @@
 <template>
   <div>
-    <!-- 标题区域 - 美观大气 -->
-    <div class="mb-12">
-      <div class="d-flex align-center mb-3">
-        <v-icon color="error" size="28" class="mr-3">mdi-alert-circle</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">登录失败</h1>
-      </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">使用 {{ providerName }} 登录时发生错误</p>
-    </div>
+    <AccountHeading
+      :title="t('account.oauth.error.title')"
+      :lede="
+        providerName
+          ? t('account.oauth.error.lede', { provider: providerName })
+          : t('account.oauth.error.ledeUnknownProvider')
+      "
+    />
 
-    <!-- 错误信息区域 -->
-    <div class="mb-8">
-      <v-alert type="error" variant="tonal" density="comfortable">
-        <div class="font-weight-medium mb-1">错误信息：</div>
-        <div>{{ errorMessage }}</div>
-        <div v-if="errorDescription" class="mt-2">
-          <div class="font-weight-medium mb-1">详细描述：</div>
-          <div>{{ errorDescription }}</div>
-        </div>
-      </v-alert>
-    </div>
+    <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
+      {{ errorDescription }}
+    </v-alert>
 
-    <!-- 操作按钮区域 -->
-    <div class="mb-8">
-      <v-btn
-        block
-        color="primary"
-        size="large"
-        to="/account/signin"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
-      >
-        <v-icon start size="20">mdi-arrow-left</v-icon>
-        返回登录页面
-      </v-btn>
+    <v-btn
+      block
+      color="primary"
+      size="large"
+      to="/account/signin"
+      style="text-transform: none; font-weight: 500; height: 48px"
+      class="mb-4"
+    >
+      {{ t('account.backToSignIn') }}
+    </v-btn>
 
-      <v-btn
-        block
-        variant="outlined"
-        color="primary"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        @click="retryOAuth"
-      >
-        <v-icon start size="20">mdi-refresh</v-icon>
-        重试 {{ providerName }} 登录
-      </v-btn>
-    </div>
+    <v-btn
+      v-if="providerId"
+      block
+      variant="outlined"
+      color="on-surface"
+      size="large"
+      style="text-transform: none; font-weight: 500; height: 48px; border-color: var(--line-2)"
+      @click="retryOAuth"
+    >
+      {{ t('account.oauth.error.retry', { provider: providerName }) }}
+    </v-btn>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 
+import { oauthProviderName } from './oauthProvider'
+
+import AccountHeading from '@/components/account/AccountHeading.vue'
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 
 const route = useRoute()
-const router = useRouter()
 
-const errorMessage = ref('')
-const errorDescription = ref('')
-const providerName = ref('')
-const providerId = ref('')
+const queryText = (value: unknown) => (typeof value === 'string' ? value : '')
 
-// 获取提供商显示名称
-const getProviderName = (providerId: string) => {
-  const nameMap: Record<string, string> = {
-    github: 'GitHub',
-    google: 'Google',
-    microsoft: 'Microsoft',
-    qq: 'QQ',
-    wechat: '微信',
-    weibo: '微博',
+const providerId = computed(() => queryText(route.query.provider))
+const providerName = computed(() => (providerId.value ? oauthProviderName(providerId.value) : ''))
+
+// The server's own `error` text in the URL is English and anyone can rewrite
+// it, so the page shows only what the error code maps to.
+const errorDescription = computed(() => {
+  switch (queryText(route.query.error_code)) {
+    case 'ALREADY_LINKED':
+      return t('account.oauth.error.alreadyLinked')
+    case 'BINDING_FAILED':
+      return t('account.oauth.error.bindingFailed')
+    case 'CONSENT_REQUIRED':
+      return t('account.oauth.error.consentRequired')
+    case 'CREATION_FAILED':
+      return t('account.oauth.error.creationFailed')
+    case 'EMAIL_TAKEN':
+      return t('account.oauth.error.emailTaken')
+    case 'INVALID_CREDENTIALS':
+      return t('account.oauth.error.invalidCredentials')
+    case 'INVALID_INVITE_CODE':
+      return t('account.oauth.error.invalidInviteCode')
+    case 'INVALID_NICKNAME':
+      return t('account.oauth.error.invalidNickname')
+    case 'INVALID_PASSWORD':
+      return t('account.oauth.error.invalidPassword')
+    case 'INVALID_USERNAME':
+      return t('account.rule.username')
+    case 'INVITE_CODE_REQUIRED':
+      return t('account.oauth.error.inviteCodeRequired')
+    case 'SESSION_EXPIRED':
+    case 'TOKEN_EXPIRED':
+      return t('account.oauth.error.sessionExpired')
+    case 'TOO_MANY_ATTEMPTS':
+      return t('account.oauth.error.tooManyAttempts')
+    case 'USERNAME_RESERVED':
+      return t('account.oauth.error.usernameReserved')
+    case 'USERNAME_TAKEN':
+      return t('account.oauth.error.usernameTaken')
+    case 'VERIFICATION_FAILED':
+      return t('account.oauth.error.verificationFailed')
+    case 'WEAK_PASSWORD':
+      return t('account.rule.passwordInvalid')
+    default:
+      return t('account.oauth.error.unknown')
   }
-  return nameMap[providerId] || providerId
-}
-
-// 重试 OAuth 登录
-const retryOAuth = () => {
-  if (providerId.value) {
-    UserApi.redirectToOAuthLogin(providerId.value)
-  }
-}
-
-onMounted(() => {
-  const error = route.query.error as string
-  const errorCode = route.query.error_code as string
-  const provider = route.query.provider as string
-
-  errorMessage.value = error || '未知错误'
-  // 根据错误代码提供更详细的描述
-  if (errorCode) {
-    switch (errorCode) {
-      case 'INVALID_PASSWORD':
-        errorDescription.value = '密码验证失败，请检查您的密码是否正确'
-        break
-      case 'SESSION_EXPIRED':
-        errorDescription.value = '验证会话已过期，请重新开始登录流程'
-        break
-      case 'CONSENT_REQUIRED':
-        errorDescription.value = '请返回重新阅读并同意用户协议和隐私政策'
-        break
-      case 'VERIFICATION_FAILED':
-        errorDescription.value = '身份验证失败，请重试或联系技术支持'
-        break
-      default:
-        errorDescription.value = errorCode
-    }
-  } else {
-    errorDescription.value = ''
-  }
-
-  providerId.value = provider || ''
-  providerName.value = getProviderName(provider)
 })
+
+const retryOAuth = () => {
+  UserApi.redirectToOAuthLogin(providerId.value)
+}
 </script>

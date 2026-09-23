@@ -165,6 +165,7 @@ async def test_cloud_inventory_cannot_discard_unrecognized_transcripts(
     client, monkeypatch
 ):
     room_id, cleanup_id = await archived_room(client, monkeypatch)
+
     machine = SimpleNamespace(id=uuid.uuid4(), device_id="cloud")
     monkeypatch.setattr(
         retire.MachineService,
@@ -388,3 +389,36 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "complete"
         assert operation.lease_until is None and operation.lease_holder is None
+
+
+async def test_inventory_retains_every_session_work_allocation(client, monkeypatch):
+    from app.domain.agent_session.services import AgentSessionService
+
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    current, retained = str(uuid.uuid4()), str(uuid.uuid4())
+    monkeypatch.setattr(retire.device_hub, "is_online", lambda _: True)
+    async with client.test_factory() as session:
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        conversation.work_lease = {
+            "device_id": "new-hands",
+            "resource_id": current,
+            "kind": "device",
+        }
+        conversation.execution_request = {
+            "retained_leases": [
+                {"device_id": "old-hands", "resource_id": retained, "kind": "device"}
+            ]
+        }
+        await session.commit()
+        operation = await session.get(RoomCleanup, cleanup_id)
+        entries = await retire._inventory(
+            session, operation, {"new-hands": [], "old-hands": []}
+        )
+        assert {(entry["device_id"], entry["resource_id"]) for entry in entries} == {
+            ("new-hands", current),
+            ("old-hands", retained),
+        }
+        with pytest.raises(RuntimeError, match="inventory failed"):
+            await retire._inventory(session, operation, {"new-hands": []})
