@@ -205,6 +205,8 @@ def record(log, event: str, **values) -> None:
 
 def image_acceptance(options, root: Path) -> int:
     """Run the released owner and its packaged Go connector without code mounts."""
+    os.environ["SANDBOX_TOKEN"] = SECRET
+    from app.core.sandbox_auth import mint_scoped_token
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + f"-{os.getpid()}"
@@ -248,6 +250,7 @@ def image_acceptance(options, root: Path) -> int:
         "DEVICE_CONNECTION_SECRET": SECRET,
         "DEPLOYED_VIA_COMPOSE": "1",
         "JWT_SECRET": "isolated-owner-acceptance-jwt-secret",
+        "SANDBOX_TOKEN": SECRET,
         "PLATFORM_ADMIN_HANDLES": '["acceptance"]',
         "DB_POOL_SIZE": "5",
         "DB_MAX_OVERFLOW": "5",
@@ -265,9 +268,25 @@ def image_acceptance(options, root: Path) -> int:
                 owner_revision=options.owner_revision,
                 port=options.port,
             )
+            started = time.monotonic()
+            record(
+                log,
+                "image_pull_started",
+                cached=bool(
+                    docker(
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{.Id}}",
+                        options.owner_image,
+                        check=False,
+                    )
+                ),
+            )
             docker(
                 "pull", "--platform", "linux/amd64", options.owner_image, timeout=300
             )
+            record(log, "image_pull_finished", elapsed_s=time.monotonic() - started)
             docker("network", "create", network)
             docker(
                 "run",
@@ -294,6 +313,8 @@ def image_acceptance(options, root: Path) -> int:
                 time.sleep(0.5)
             else:
                 raise RuntimeError("isolated Postgres did not start")
+            started = time.monotonic()
+            record(log, "released_migration_started")
             migration_output = docker(
                 "run",
                 "--name",
@@ -320,7 +341,15 @@ def image_acceptance(options, root: Path) -> int:
                 "SELECT version_num FROM alembic_version ORDER BY version_num",
             )
             released_schema = docker(*version_query).splitlines()
+            record(
+                log,
+                "released_migration_finished",
+                heads=released_schema,
+                elapsed_s=time.monotonic() - started,
+            )
             database_port = docker("port", database, "5432/tcp").rsplit(":", 1)[1]
+            started = time.monotonic()
+            record(log, "current_migration_started")
             upgraded = subprocess.run(
                 [sys.executable, "-m", "alembic", "upgrade", "head"],
                 cwd=root / "backend",
@@ -343,6 +372,7 @@ def image_acceptance(options, root: Path) -> int:
                 "schema_upgraded",
                 released_heads=released_schema,
                 current_heads=current_schema,
+                elapsed_s=time.monotonic() - started,
             )
             # The deployed owner command does not migrate. Keep the upgraded
             # schema while the old image performs its real device-token query.
@@ -357,13 +387,37 @@ def image_acceptance(options, root: Path) -> int:
                 "cheese",
                 "-v",
                 "ON_ERROR_STOP=1",
+                "-v",
+                "lease="
+                + json.dumps(
+                    {
+                        "kind": "device",
+                        "device_id": "acceptance-machine",
+                        "resource_id": "22222222-2222-2222-2222-222222222222",
+                        "home": str(work),
+                        "state": str(state),
+                    }
+                ),
                 input="""
 INSERT INTO "user" (id,username,email,created_at,updated_at)
 VALUES (42,'acceptance','acceptance@example.test',now(),now());
 INSERT INTO device (device_id,name,token,owner_user_id,created_at)
 VALUES ('acceptance-machine','acceptance','acceptance',42,now());
+INSERT INTO projects
+ (id,name,owner_handle,ai_mode,summary,settings,created_at,updated_at)
+VALUES ('11111111-1111-1111-1111-111111111111','Acceptance','acceptance',
+        'off','','{}',now(),now());
+INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
+VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
+        'Acceptance','room','active',false,now(),now());
+INSERT INTO agent_sessions
+ (id,topic_id,agent_handle,harness,runtime_location,work_lease,created_at,updated_at)
+VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222',
+        'acceptance-agent','claude-code',:'lease'::json,:'lease'::json,now(),now());
 """,
             )
+            started = time.monotonic()
+            record(log, "owner_starting")
             docker(
                 "run",
                 "-d",
@@ -415,6 +469,7 @@ VALUES ('acceptance-machine','acceptance','acceptance',42,now());
                 connector_version=version,
             )
             wait_for_owner(options.port)
+            record(log, "owner_ready", elapsed_s=time.monotonic() - started)
             assert (
                 httpx.get(
                     url + "/internal/device-connection/snapshot",
@@ -483,6 +538,47 @@ VALUES ('acceptance-machine','acceptance','acceptance',42,now());
                 time.sleep(0.1)
             else:
                 raise RuntimeError("Go connector did not attach")
+            started = time.monotonic()
+            record(log, "roundtrip_started")
+            topic = "22222222-2222-2222-2222-222222222222"
+            endpoint = f"{url}/topics/{topic}/execution/{topic}"
+            token = mint_scoped_token(
+                project_id="11111111-1111-1111-1111-111111111111",
+                topic_id=topic,
+                resource_id=topic,
+            )
+            wrong_project = mint_scoped_token(
+                project_id="44444444-4444-4444-4444-444444444444",
+                topic_id=topic,
+                resource_id=topic,
+            )
+            request = {
+                "method": "invoke",
+                "params": {
+                    "id": "endpoint-authenticated-call",
+                    "tool": "Bash",
+                    "args": {"command": "printf endpoint-result"},
+                },
+            }
+            assert httpx.post(endpoint, json=request).status_code == 401
+            assert (
+                httpx.post(
+                    endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
+                ).status_code
+                == 403
+            )
+            response = httpx.post(
+                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
+            )
+            response.raise_for_status()
+            assert response.json()["value"]["stdout"] == "endpoint-result"
+            record(
+                log,
+                "execution_endpoint_passed",
+                missing_credential=401,
+                wrong_project=403,
+                authenticated_call=200,
+            )
             # The sentinel proves Bash started before the HTTP waiter is killed.
             command = (
                 f"printf started > {shlex.quote(str(work / 'started'))}; sleep 4; "
@@ -523,6 +619,7 @@ VALUES ('acceptance-machine','acceptance','acceptance',42,now());
             assert after["State"]["StartedAt"] == owner_identity["State"]["StartedAt"]
             assert after["RestartCount"] == 0 and connector_worker.poll() is None
             assert hashlib.sha256(binary.read_bytes()).hexdigest() == digest
+            assert docker(*version_query).splitlines() == current_schema
             record(
                 log,
                 "acceptance_passed",
@@ -530,6 +627,7 @@ VALUES ('acceptance-machine','acceptance','acceptance',42,now());
                 session_restored=True,
                 owner_id=after["Id"],
                 connector_pid=connector_worker.pid,
+                elapsed_s=time.monotonic() - started,
                 **result,
             )
         except BaseException as exc:
