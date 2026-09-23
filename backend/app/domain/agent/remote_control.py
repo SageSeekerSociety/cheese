@@ -14,6 +14,7 @@ from typing import cast
 
 import jwt
 from redis.asyncio import Redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, ConflictError, NotFoundError
@@ -545,16 +546,21 @@ return 1
                 await self.authenticate_worker(sid, token)
             except (AuthenticationRequiredError, NotFoundError):
                 return
-            rows = cast(
-                list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]],
-                await self.redis.xread(
-                    # Redis 8's default socket timeout is shorter than a long
-                    # SSE heartbeat interval. Leave room for the read to finish.
-                    {key(sid, "in"): cursor},
-                    block=1000,
-                    count=100,
-                ),
-            )
+            rows: list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]] = []
+            for attempt in range(2):
+                try:
+                    rows = cast(
+                        list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]],
+                        await self.redis.xread(
+                            {key(sid, "in"): cursor}, block=1000, count=100
+                        ),
+                    )
+                    break
+                except RedisTimeoutError:
+                    # Keep the cursor across one short Redis stall; a second
+                    # timeout still surfaces a persistent outage to the caller.
+                    if attempt:
+                        raise
             try:
                 await self.authenticate_worker(sid, token)
             except (AuthenticationRequiredError, NotFoundError):
