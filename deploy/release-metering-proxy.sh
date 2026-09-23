@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The release workflow checks the exact main SHA's build and Required CI first.
+# Both deployment entry points check the exact main SHA's build and Required CI first.
 set -euo pipefail
 umask 077
 
@@ -13,9 +13,6 @@ here="$(cd "$(dirname "$0")" && pwd)"
 proxy_home="${METERING_PROXY_HOME:-$HOME/cheese-proxy-new/deploy/metering-proxy}"
 env_file="$proxy_home/.env"
 [[ -r "$env_file" ]] || { echo 'Metering proxy environment file is missing.' >&2; exit 1; }
-release_dir="$proxy_home/releases/${sha}-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
-mkdir -p "$release_dir"
-
 image="ghcr.io/sageseekersociety/cheese/metering-proxy:$sha"
 docker pull "$image"
 export METERING_PROXY_IMAGE
@@ -30,6 +27,15 @@ working_dir="$(docker inspect cheese-metering-proxy --format '{{index .Config.La
   echo 'Existing metering proxy project or working directory differs from the configured target.' >&2
   exit 1
 }
+current_image="$(docker inspect cheese-metering-proxy --format '{{.Config.Image}}')"
+current_health="$(docker inspect cheese-metering-proxy --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}')"
+# Promoted tags can resolve to the running digest; keep its active streams intact.
+if [[ "$current_image" = "$METERING_PROXY_IMAGE" && "$current_health" = "true healthy" ]]; then
+  echo "Metering proxy already healthy at $METERING_PROXY_IMAGE; no restart needed."
+  exit 0
+fi
+release_dir="$proxy_home/releases/${sha}-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+mkdir -p "$release_dir"
 previous_image="$(docker inspect cheese-metering-proxy --format '{{.Image}}')"
 previous_compose="$(docker inspect cheese-metering-proxy --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 # Keep raw configuration, never docker compose config: its output contains secrets.
@@ -52,7 +58,7 @@ cp "$here/metering-proxy/compose.yml" "$release_dir/compose.yml"
 # locations. The saved compose still references them if the first rollout fails.
 compose=(docker compose --project-directory "$proxy_home" --env-file "$env_file" -p metering-proxy)
 echo "Releasing metering proxy $sha as $METERING_PROXY_IMAGE; active streams may be interrupted."
-if "${compose[@]}" -f "$release_dir/compose.yml" up -d --no-deps --wait --wait-timeout 150 metering-proxy; then
+if "${compose[@]}" -f "$release_dir/compose.yml" up -d --force-recreate --no-deps --wait --wait-timeout 150 metering-proxy; then
   echo "Metering proxy healthy: $METERING_PROXY_IMAGE"
 else
   echo 'Metering proxy failed health verification; restoring the previous image and configuration.' >&2

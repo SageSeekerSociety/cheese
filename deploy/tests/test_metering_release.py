@@ -30,6 +30,8 @@ elif args[0] == "inspect":
     if "config_files" in field: print(os.environ["COMPOSE_FILES"])
     elif "working_dir" in field: print(home)
     elif "compose.project" in field: print(os.environ.get("FAKE_PROJECT", "metering-proxy"))
+    elif ".Config.Image" in field: print(os.environ.get("FAKE_CURRENT_IMAGE", "mitmproxy/mitmproxy:12.1.2"))
+    elif ".State.Running" in field: print(os.environ.get("FAKE_RUNNING", "true") + " " + os.environ.get("FAKE_HEALTH", "healthy"))
     else: print("sha256:previous")
 elif args[0] == "compose" and os.environ.get("FAIL_RELEASE") and record["image"] != "sha256:previous":
     sys.exit(1)
@@ -146,10 +148,11 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertEqual(release[0]["saved_image"], "sha256:previous")
         self.assertNotIn(".:/addons:ro", release[0]["configs"][0])
         self.assertEqual(
-            release[0]["args"][-7:],
+            release[0]["args"][-8:],
             [
                 "up",
                 "-d",
+                "--force-recreate",
                 "--no-deps",
                 "--wait",
                 "--wait-timeout",
@@ -157,6 +160,28 @@ class MeteringReleaseTest(unittest.TestCase):
                 "metering-proxy",
             ],
         )
+
+    def test_healthy_same_digest_preserves_running_streams(self):
+        result, calls = self.run_release(FAKE_CURRENT_IMAGE=DIGEST)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no restart needed", result.stdout)
+        self.assertFalse(any(c["args"][0] == "compose" for c in calls))
+
+    def test_unhealthy_same_digest_is_recreated(self):
+        result, calls = self.run_release(
+            FAKE_CURRENT_IMAGE=DIGEST, FAKE_HEALTH="unhealthy"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(c["args"][0] == "compose" for c in calls), 1)
+        release = next(c for c in calls if c["args"][0] == "compose")
+        self.assertIn("--force-recreate", release["args"])
+
+    def test_stopped_same_digest_is_not_mistaken_for_healthy_service(self):
+        result, calls = self.run_release(
+            FAKE_CURRENT_IMAGE=DIGEST, FAKE_RUNNING="false"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(c["args"][0] == "compose" for c in calls), 1)
 
     def test_missing_digest_never_recreates_service(self):
         result, calls = self.run_release(FAKE_DIGEST="")
@@ -256,6 +281,57 @@ class MeteringWorkflowTest(unittest.TestCase):
                     )
                 else:
                     self.assertFalse(any("checkout" in line for line in recorded))
+
+    def test_dev_deployment_requires_exact_sha_ci_before_metering_release(self):
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/deploy-dev.yml").read_text()
+        )
+        step = next(
+            step
+            for step in workflow["jobs"]["deploy"]["steps"]
+            if step.get("name") == "Release the verified metering image"
+        )
+        self.assertEqual(step["if"], "steps.release.outputs.skip != 'true'")
+        self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
+        self.assertEqual(step["env"]["METERING_ALLOW_INTERRUPT"], "1")
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            (home / "git").write_text(
+                '#!/bin/sh\ncase "$*" in\n'
+                '  "rev-parse HEAD") printf "%s\\n" "$TEST_SHA";;\n'
+                '  *) printf "%s\\n" "bad-or-short-sha";;\nesac\n'
+            )
+            (home / "python3").write_text(
+                '#!/bin/sh\nprintf "gate %s\\n" "$*" >> "$CALLS"\nexit "$CI_STATUS"\n'
+            )
+            (home / "bash").write_text(
+                '#!/bin/sh\nprintf "release %s\\n" "$*" >> "$CALLS"\n'
+            )
+            for path in [home / "git", home / "python3", home / "bash"]:
+                path.chmod(0o755)
+            for status in ["0", "1"]:
+                calls = home / "calls"
+                calls.write_text("")
+                env = dict(
+                    os.environ,
+                    PATH=f"{home}:{os.environ['PATH']}",
+                    CALLS=str(calls),
+                    TEST_SHA="c" * 40,
+                    CI_STATUS=status,
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", step["run"]],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode == 0, status == "0")
+                expected = ["gate deploy/check-auto-deploy.py --require-ci " + "c" * 40]
+                if status == "0":
+                    expected.append(
+                        "release deploy/release-metering-proxy.sh " + "c" * 40
+                    )
+                self.assertEqual(calls.read_text().splitlines(), expected)
 
     def test_build_uses_full_sha_for_metering_and_promotion(self):
         text = (ROOT / ".github/workflows/build.yml").read_text()
