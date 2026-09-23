@@ -69,8 +69,8 @@ mock 外部 GitHub HTTP 调用这一个真正的外部边界）：
   两边拿到同一个最终 token。
 - `test_refresh_http_failure_leaves_stale_token_untouched`：GitHub 调用失败时，库里的旧 token
   原样不动。
-- `test_undecryptable_stored_refresh_token_degrades_without_writing`：`refresh_token` 列不是合
-  法 Fernet 密文时，安全降级为 None、不触碰这一行、也不再去调 GitHub。
+- `test_undecryptable_stored_refresh_token_degrades_without_writing`：`refresh_token` 列解
+  不开时，安全降级为 None、不触碰这一行、也不再去调 GitHub。
 - `test_within_margin_token_is_refreshed_early`：进入续期缓冲期（差 5 分钟过期）也会提前续期。
 
 `tests/unit/test_oauth_service.py` 里对应位置留了两个轻量单元测试（`test_expired_token_delegates

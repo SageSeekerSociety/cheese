@@ -9,7 +9,7 @@
 - `<&backend/app/domain/oauth/repositories.py>`：`create()`/`update_tokens()` 接 `access_token` 参数。
 - `<&backend/app/domain/oauth/services.py>`：
   - `GitHubProvider` 加 `refresh_access_token()`（GitHub 的 refresh_token grant）。
-  - `create_connection()`/新增 `update_connection_tokens()`：写库前用 `app/core/crypto.py` 现成的 Fernet 工具加密 `access_token` 和 `refresh_token`（决策已记录：不只加密 access_token）。
+  - `create_connection()`/新增 `update_connection_tokens()`：写库前用 `app/core/crypto.py` 加密 `access_token` 和 `refresh_token`（决策已记录：不只加密 access_token）。
   - 新增 `get_github_user_token(user_id) -> str | None`：解密返回；未过期或不过期（GitHub 未开 token 过期时响应里没有 `expires_in`）直接返回；过期且有 `refresh_token` 就调用 GitHub 刷新并回写；过期且没有 `refresh_token` 返回 `None` 给调用方走降级路径。
 - `<&backend/app/api/routes/github_account_link.py>`：回调不再复用 `OAuthService.handle_callback`（那个方法丢弃 expires_in/refresh_token，且被 users.py 经典登录流程共用，不宜改签名——决策已记录），改为直接调 `provider.exchange_code`/`get_user_info`。丢弃改成落库；新增「重新走一遍授权（relink）」分支——之前这种情况静默跳过，现在会更新已有连接的 token 而不是留着旧的/空的。
 

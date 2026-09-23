@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.core.crypto import encrypt_text
 from app.core.errors import GatewayUnavailableError
+from app.domain.agent.forgejo_tokens import seal_forge_password
 from app.domain.project.forge import ensure_author_email
 
 
@@ -18,11 +18,13 @@ from app.domain.project.forge import ensure_author_email
 async def test_registering_an_author_preserves_other_authors(concurrent):
     email = "agent-one@agent.cheese.local"
     rows = [{"email": "agent-two@agent.cheese.local", "verified": True}]
+    project_id = uuid.uuid4()
     binding = SimpleNamespace(
         kind="forgejo",
+        project_id=project_id,
         repo="project-account/project",
         api_url="https://forge.invalid/api/v1",
-        account_password=encrypt_text("password"),
+        account_password=seal_forge_password(project_id, "password"),
     )
     session = SimpleNamespace(scalar=AsyncMock(return_value=binding))
     writes = []
@@ -50,11 +52,13 @@ async def test_registering_an_author_preserves_other_authors(concurrent):
     "registered", [[], [{"email": "agent@agent.cheese.local", "verified": False}]]
 )
 async def test_registration_failure_does_not_report_success(registered):
+    project_id = uuid.uuid4()
     binding = SimpleNamespace(
         kind="forgejo",
+        project_id=project_id,
         repo="project-account/project",
         api_url="https://forge.invalid/api/v1",
-        account_password=encrypt_text("password"),
+        account_password=seal_forge_password(project_id, "password"),
     )
     session = SimpleNamespace(scalar=AsyncMock(return_value=binding))
 

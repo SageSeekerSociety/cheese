@@ -24,8 +24,12 @@ import pytest
 
 from app.core.config import Settings
 
+# Any well-formed key: a deployment also refuses to boot without one
+# (test_data_encryption.py), which is not what these tests are about.
+_DATA_KEY = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
 
-def _build(**overrides: str) -> Settings:
+
+def _build(**overrides: object) -> Settings:
     # _env_file=None keeps a stray .env from smuggling a real secret in and
     # masking the case under test; init kwargs already outrank env vars in
     # pydantic-settings, so the values passed here are what actually apply.
@@ -79,6 +83,7 @@ def test_deployment_with_a_real_secret_boots() -> None:
         # (test_config_platform_admins_fail_closed.py); this test is about the
         # secret, so satisfy that other guard rather than trip it.
         platform_admin_handles=["ops"],
+        data_encryption_key=_DATA_KEY,
     )
     assert settings.jwt_secret == "a-genuinely-random-48-char-secret-value"
 
@@ -114,6 +119,7 @@ def test_compose_deployment_with_a_real_secret_boots() -> None:
         # Same reason as above: naming the platform admins is now part of what
         # "a deployment boots" means.
         platform_admin_handles=["ops"],
+        data_encryption_key=_DATA_KEY,
     )
     assert settings.deployed_via_compose is True
 

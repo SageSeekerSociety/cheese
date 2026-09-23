@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from model_fixture import dump, log
+from owner_fixture import OWNER_ENV_DEFAULTS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,6 +25,8 @@ def main():
     options = parser.parse_args()
     if not options.claude or not options.redis:
         parser.error("Both the pinned Claude Code build and redis-server are required")
+    for key, value in OWNER_ENV_DEFAULTS.items():
+        os.environ.setdefault(key, value)
     folder = options.output.resolve()
     folder.mkdir(parents=True, exist_ok=True)
     invocation_file = folder / "invocation.json"
@@ -35,19 +38,23 @@ def main():
     invocation["count"] += 1
     dump(invocation_file, invocation)
     sources = [
+        *ROOT.glob("backend/app/domain/agent/*.py"),
         *ROOT.glob("backend/app/domain/agent/harness/claude_code/**/*.py"),
         *ROOT.glob("backend/app/domain/agent/harness/claude_code/**/*.js"),
+        *ROOT.glob("backend/alembic/**/*.py"),
         *ROOT.glob("scripts/remote_execution/*.py"),
         *ROOT.glob("backend/tests/unit/test_remote*.py"),
-        ROOT / "backend/app/domain/agent/remote_control.py",
         ROOT / "backend/app/api/routes/remote_control.py",
-        ROOT / "backend/app/domain/agent/device_provider.py",
+        ROOT / "backend/scripts/device_connection_lifecycle_acceptance.py",
         ROOT / "backend/app/core/config.py",
+        ROOT / "backend/app/core/sandbox_auth.py",
         ROOT / "scripts/remote_execution/package-lock.json",
         ROOT / "backend/uv.lock",
     ]
     manifest = {
         "python": sys.version,
+        "owner_image": os.environ["ACCEPTANCE_OWNER_IMAGE"],
+        "owner_revision": os.environ["ACCEPTANCE_OWNER_REVISION"],
         "claude": subprocess.check_output(
             [options.claude, "--version"], text=True
         ).strip(),

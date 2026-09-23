@@ -36,10 +36,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.crypto import decrypt_text, encrypt_text
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.repositories import OAuthConnectionRepository
-from app.domain.oauth.services import GitHubProvider, OAuthProviderConfig, OAuthService
+from app.domain.oauth.services import (
+    GitHubProvider,
+    OAuthProviderConfig,
+    OAuthService,
+    open_oauth_token,
+    seal_oauth_token,
+)
 
 _USER_ID_COUNTER = 900_000_000
 
@@ -88,8 +93,10 @@ async def _seed_connection(
             user_id=user_id,
             provider_id="github_app",
             provider_user_id=f"gh-{user_id}",
-            access_token=encrypt_text(access_token),
-            refresh_token=encrypt_text(refresh_token) if refresh_token else None,
+            access_token=_sealed(user_id, access_token, "access_token"),
+            refresh_token=_sealed(user_id, refresh_token, "refresh_token")
+            if refresh_token
+            else None,
             token_expires=datetime.now(UTC) + expires_in,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
@@ -110,9 +117,18 @@ async def _read_connection(
         return result.scalar_one()
 
 
-def _decrypted(value: str | None) -> str:
+def _sealed(user_id: int, value: str, field: str) -> str:
+    return seal_oauth_token(
+        value, user_id=user_id, provider_id="github_app", field=field
+    )
+
+
+def _decrypted(conn: UserOAuthConnection, field: str) -> str:
+    value = getattr(conn, field)
     assert value is not None
-    return decrypt_text(value)
+    return open_oauth_token(
+        value, user_id=conn.user_id, provider_id=conn.provider_id, field=field
+    )
 
 
 @pytest.mark.anyio
@@ -145,8 +161,8 @@ async def test_refresh_survives_outer_transaction_rollback(business_db_factory):
     # A brand new session/connection: proves the refresh was committed to
     # the database for real, independent of the caller's rollback above.
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "fresh-access-token"
-    assert _decrypted(conn.refresh_token) == "fresh-refresh-token"
+    assert _decrypted(conn, "access_token") == "fresh-access-token"
+    assert _decrypted(conn, "refresh_token") == "fresh-refresh-token"
     assert conn.token_expires is not None
     assert conn.token_expires > datetime.now(UTC) + timedelta(hours=7)
 
@@ -165,16 +181,18 @@ async def test_refresh_http_failure_leaves_stale_token_untouched(business_db_fac
         assert token is None
 
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "stale-access-token"
-    assert _decrypted(conn.refresh_token) == "stale-refresh-token"
+    assert _decrypted(conn, "access_token") == "stale-access-token"
+    assert _decrypted(conn, "refresh_token") == "stale-refresh-token"
 
 
 @pytest.mark.anyio
 async def test_undecryptable_stored_refresh_token_degrades_without_writing(
     business_db_factory,
 ):
-    """A refresh_token column that isn't valid Fernet ciphertext (key
-    rotated, or a stray legacy row) must degrade to None, not raise — and
+    """A refresh_token column that can't be decrypted (its key was removed
+    from DATA_ENCRYPTION_KEY, or a stray legacy row) must degrade to None,
+    not raise — and
+
     must not touch the row it can't safely act on."""
     factory = business_db_factory
     user_id = _next_user_id()
@@ -183,8 +201,8 @@ async def test_undecryptable_stored_refresh_token_degrades_without_writing(
             user_id=user_id,
             provider_id="github_app",
             provider_user_id=f"gh-{user_id}",
-            access_token=encrypt_text("stale-access-token"),
-            refresh_token="not-a-fernet-token",
+            access_token=_sealed(user_id, "stale-access-token", "access_token"),
+            refresh_token="not-a-ciphertext",
             token_expires=datetime.now(UTC) - timedelta(hours=1),
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
@@ -203,7 +221,7 @@ async def test_undecryptable_stored_refresh_token_degrades_without_writing(
 
     provider.refresh_access_token.assert_not_awaited()
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "stale-access-token"
+    assert _decrypted(conn, "access_token") == "stale-access-token"
 
 
 @pytest.mark.anyio
@@ -225,7 +243,7 @@ async def test_within_margin_token_is_refreshed_early(business_db_factory):
 
     assert token == "fresh-access-token"
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "fresh-access-token"
+    assert _decrypted(conn, "access_token") == "fresh-access-token"
 
 
 @pytest.mark.anyio
@@ -262,7 +280,7 @@ async def test_concurrent_refresh_serializes_and_calls_github_once(business_db_f
     assert call_count == 1, "the loser must reuse the winner's token, not refresh again"
     assert results[0] == results[1] == "fresh-access-token"
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "fresh-access-token"
+    assert _decrypted(conn, "access_token") == "fresh-access-token"
 
 
 @pytest.mark.anyio
@@ -345,12 +363,16 @@ async def test_refresh_that_lands_second_keeps_the_first_writers_tokens(
         # make a second service call wait rather than race.
         other = await OAuthConnectionRepository(session).get(connection_id)
         assert other is not None
-        other.access_token = encrypt_text("winner-access-token")
-        other.refresh_token = encrypt_text("winner-refresh-token")
+        other.access_token = _sealed(
+            other.user_id, "winner-access-token", "access_token"
+        )
+        other.refresh_token = _sealed(
+            other.user_id, "winner-refresh-token", "refresh_token"
+        )
         other.token_expires = datetime.now(UTC) + timedelta(hours=8)
         await session.commit()
     release.set()
     assert await asyncio.wait_for(refresh, timeout=5) == "winner-access-token"
     conn = await _read_connection(factory, connection_id)
-    assert _decrypted(conn.access_token) == "winner-access-token"
-    assert _decrypted(conn.refresh_token) == "winner-refresh-token"
+    assert _decrypted(conn, "access_token") == "winner-access-token"
+    assert _decrypted(conn, "refresh_token") == "winner-refresh-token"

@@ -57,8 +57,8 @@ def checkout_after_the_round(room):
             b"attachment bytes",
             home=home,
             name="uploads/acceptance/图.png",
-            hub=room,
-            device_id="executor",
+            hub=room.wire,
+            device_id=room.target["device_id"],
             screen="screen",
             execution_target=room.target,
         )

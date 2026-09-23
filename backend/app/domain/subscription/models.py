@@ -15,9 +15,8 @@ feedback 先例不用 PG enum（`app/domain/feedback/models.py`）；操作者�
   同身份后回到 `active`。
 - `revoked`：管理员移除，终态。
 
-凭据三件套（access / refresh / id token）只存 Fernet 密文（
-`app.core.crypto.encrypt_text`，照 `f9a1c7e3b502` 迁移的先例），**绝不进任何
-API 响应**——DTO 在 `services.py` 里脱敏。
+凭据三件套（access / refresh / id token）只存密文（`app.core.crypto`，按订阅
+与列绑定），**绝不进任何 API 响应**——DTO 在 `services.py` 里脱敏。
 """
 
 import uuid
@@ -58,7 +57,7 @@ class LlmSubscription(UuidPk, Timestamps, Base):
     # 重新授权时校验同一身份用。
     id_token_subject: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    # 凭据：Fernet 密文。绝不进 API 响应；pending 期为空。
+    # 凭据：密文。绝不进 API 响应；pending 期为空。
     access_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     refresh_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     id_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
