@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
@@ -482,6 +483,21 @@ def _reject_overlong_password(password: str) -> None:
 
     if password_too_long(password):
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
+
+
+# At least 8 characters, a letter and a character that is neither a letter
+# nor a digit: the symbols the web client's rule accepts are all admitted here.
+_NEW_PASSWORD_PATTERN = re.compile(r"^(?=.*[a-zA-Z])(?=.*[^a-zA-Z0-9]).{8,}$")
+
+
+def _require_new_password(password: str) -> None:
+    """The rule a password chosen for an account must meet, and the length
+    bcrypt can hold. Checked before anything single-use is spent."""
+    if not _NEW_PASSWORD_PATTERN.match(password):
+        raise UnprocessableEntityError(
+            "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
+        )
+    _reject_overlong_password(password)
 
 
 def _normalize_registration_invite_code(
@@ -1331,8 +1347,6 @@ async def register_user(
     - Legacy password-based auth (isLegacyAuth=True, password required)
     - SRP auth (srpSalt/srpVerifier required)
     """
-    import re
-
     from redis.asyncio import Redis as AsyncRedis
 
     from app.domain.user.verification_service import EmailVerificationService
@@ -1383,14 +1397,7 @@ async def register_user(
         _require_srp_hex(srp_salt, srp_verifier)
 
     if has_password:
-        password_pattern = (
-            r'^(?=.*[a-zA-Z])(?=.*[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]).{8,}$'
-        )
-        if not re.match(password_pattern, password):
-            raise UnprocessableEntityError(
-                "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
-            )
-        _reject_overlong_password(password)
+        _require_new_password(password)
 
     # Always verify email code, regardless of invite code
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
