@@ -2,6 +2,7 @@
 """Exercise release ordering against a real commit graph and a fake Docker host."""
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -51,6 +52,7 @@ class ReleaseOrdering(unittest.TestCase):
     def setUp(self):
         self.images = {}
         self.api_failed = False
+        self.health = {}
         self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese"})
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -62,6 +64,8 @@ class ReleaseOrdering(unittest.TestCase):
         if args[:2] == ("docker", "inspect"):
             if args[3] == "{{.Config.Image}}":
                 return self.images[args[-1]]
+            if ".State.Health" in args[3]:
+                return self.health.get(args[-1], "healthy")
             # Retagging an unchanged image leaves this old OCI revision intact.
             return self.base
         if args[:2] == ("gh", "api"):
@@ -93,6 +97,15 @@ class ReleaseOrdering(unittest.TestCase):
 
     def test_same_release_can_be_retried(self):
         self.images = {"backend": f"registry/backend:{self.middle[:7]}"}
+        self.assertFalse(self.check(self.middle))
+
+    def test_duplicate_completion_event_does_not_restart_healthy_release(self):
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.assertTrue(self.check(self.middle))
+
+    def test_failed_same_release_can_be_retried(self):
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.health = {"backend": "unhealthy"}
         self.assertFalse(self.check(self.middle))
 
     def test_first_deployment_needs_no_previous_release(self):
@@ -135,6 +148,82 @@ class ReleaseOrdering(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(), "skip=true\n")
             self.assertEqual(result.stderr, "")
+
+
+class CandidateCI(unittest.TestCase):
+    candidate = "a" * 40
+
+    def run_record(self, **changes):
+        return {"id": 10, "head_sha": self.candidate, "head_branch": "main",
+                "updated_at": "2026-09-22T12:00:00Z",
+                "head_repository": {"full_name": "example/app"}, "event": "push",
+                "status": "completed", "conclusion": "success", **changes}
+
+    def ready(self, build, ci):
+        def command(*args):
+            records = build if "/build.yml/" in args[-1] else ci
+            return json.dumps([{"workflow_runs": records}])
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=command):
+            return GUARD.ci_ready(self.candidate)
+
+    def test_both_completion_orders_require_both_successes(self):
+        done = [self.run_record()]
+        pending = [self.run_record(status="in_progress", conclusion=None)]
+        self.assertFalse(self.ready(done, pending))
+        self.assertFalse(self.ready(pending, done))
+        self.assertTrue(self.ready(done, done))
+
+    def test_missing_failed_cancelled_and_skipped_ci_never_deploy(self):
+        self.assertFalse(self.ready([self.run_record()], []))
+        for conclusion in ("failure", "cancelled", "skipped", "timed_out", "neutral"):
+            with self.subTest(conclusion=conclusion):
+                self.assertFalse(self.ready([self.run_record()], [self.run_record(conclusion=conclusion)]))
+
+    def test_a_previous_green_run_cannot_hide_a_new_attempt(self):
+        old = self.run_record(id=9)
+        for status, conclusion in (("in_progress", None), ("completed", "failure")):
+            self.assertFalse(self.ready([old], [self.run_record(status=status, conclusion=conclusion), old]))
+
+    def test_other_sha_branch_fork_or_pr_success_cannot_authorize_release(self):
+        for changes in ({"head_sha": "b" * 40}, {"head_branch": "feature"},
+                        {"head_repository": {"full_name": "fork/app"}}, {"event": "pull_request"}):
+            with self.subTest(changes=changes):
+                self.assertFalse(self.ready([self.run_record()], [self.run_record(**changes)]))
+
+    def test_rerunning_an_older_run_cannot_hide_its_failure_behind_a_newer_id(self):
+        rerun = self.run_record(id=9, updated_at="2026-09-22T13:00:00Z", conclusion="failure")
+        self.assertFalse(self.ready([self.run_record(), rerun], [self.run_record()]))
+
+    def test_another_in_progress_attempt_blocks_a_completed_success(self):
+        pending = self.run_record(id=9, updated_at="2026-09-22T11:00:00Z", status="in_progress", conclusion=None)
+        self.assertFalse(self.ready([self.run_record(), pending], [self.run_record()]))
+
+    def test_api_failure_stops_eligibility(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=subprocess.CalledProcessError(1, "gh")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                GUARD.ci_ready(self.candidate)
+
+    def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        self.assertEqual(workflow["jobs"]["deploy"]["needs"], "eligibility")
+        self.assertEqual(workflow["jobs"]["deploy"]["if"].strip(), "needs.eligibility.outputs.ready == 'true'")
+        self.assertEqual(workflow["jobs"]["eligibility"]["runs-on"], ["self-hosted", "cheese-ci"])
+        self.assertNotIn("concurrency", workflow)
+        self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
+        triggers = workflow.get("on", workflow.get(True))
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image", "Required CI"})
+        required = yaml.safe_load((ROOT / ".github/workflows/required-ci.yml").read_text())
+        self.assertEqual(required.get("on", required.get(True))["push"]["branches"], ["main"])
+
+    def test_ci_rerun_while_waiting_for_deploy_runner_prevents_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), patch.object(
+                GUARD.sys, "argv", ["check-auto-deploy.py", self.candidate]
+            ), patch.object(GUARD, "ci_ready", return_value=False), patch.object(GUARD, "should_skip") as deploy:
+                GUARD.main()
+            self.assertEqual(output.read_text(), "skip=true\n")
+            deploy.assert_not_called()
 
 
 if __name__ == "__main__":

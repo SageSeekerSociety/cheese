@@ -9,7 +9,8 @@ name: Deploy (dev/test box)
 # prod runs: pull the per-commit images, migrate, up, health-check. The frontend
 # image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
-# Triggered BY the image build finishing, not by the push. The deploy pulls
+# Triggered by either prerequisite finishing; the eligibility job checks both
+# for the candidate SHA without occupying the deployment runner. The deploy pulls
 # per-commit images, so it must not start before they exist — that used to be a
 # separate gate job polling check-runs from a GitHub-hosted runner. Once builds
 # moved onto the box's single runner (hosted minutes ran out 2026-07-26), a gate
@@ -18,20 +19,37 @@ name: Deploy (dev/test box)
 on:
   workflow_dispatch: {}
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image", "Required CI"]
     types: [completed]
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
-# Never run two deploys at once; let an in-flight one finish.
-concurrency:
-  group: deploy-dev
-  cancel-in-progress: false
-
 jobs:
+  eligibility:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Require images and tests for the same commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+          fi
+
   # A failed build used to leave this workflow SKIPPED, which reads exactly like
   # "nothing to do" — so main could sit ahead of the box with nothing red to
   # show it, and a merged fix looked shipped when it was not. This job turns that
@@ -46,6 +64,7 @@ jobs:
   build-did-not-produce-images:
     if: >-
       github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Build and Push Docker Image' &&
       github.event.workflow_run.conclusion != 'success'
     runs-on: [self-hosted, cheese-ci]
     # Echoes one message and exits. The bound was originally about not letting a
@@ -63,11 +82,15 @@ jobs:
           exit 1
 
   deploy:
-    # A manual dispatch trusts the operator's ref; an automatic run requires the
-    # build that triggered it to have SUCCEEDED (a red build has no images).
+    needs: eligibility
+    # Ineligible completion events must not replace a pending valid release.
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    # Automatic releases require successful images and Required CI for this SHA.
+    # A manual dispatch retains the operator's explicit release/rollback path.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      needs.eligibility.outputs.ready == 'true'
     # Names this job's target so GitHub records a deployment for it (a job
     # with `environment:` gets one created on start and marked
     # success/failure at the end). Nothing about the deploy changes — this is
