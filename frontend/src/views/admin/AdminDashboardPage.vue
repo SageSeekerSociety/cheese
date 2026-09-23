@@ -1977,8 +1977,14 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+/* 页头三件套（标题 / 窗口切换 / 时间戳）里最不重要的一个：窄屏让位（截断），
+   不把页头撑出横向滚动。 */
 .ad__stamp {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 分类导轨：7 张迷你摘要卡等宽铺开，窄了横向滚动（不换行 —— 换行会把 7 张卡
@@ -2087,7 +2093,8 @@ onBeforeUnmount(() => {
 }
 
 /* 性能那一类的路由表。它是一整块表而不是卡片：这一类的读法是竖着扫「哪一条 p95
-   最高」，卡片一多就扫不动了。 */
+   最高」，卡片一多就扫不动了。窄屏横滚（`overflow-x: auto` + 表格 min-width）——
+   六列 12.5px 在 320px 里只会互相压，横滚是移动端一等场景下的体面降级。 */
 .ad__perf {
   margin-top: 16px;
   padding: 16px;
@@ -2097,6 +2104,7 @@ onBeforeUnmount(() => {
   border-top-right-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
   border-bottom-left-radius: var(--radius-lg);
+  overflow-x: auto;
 }
 
 .ad__perf-head {
@@ -2107,6 +2115,7 @@ onBeforeUnmount(() => {
 
 .ad__perf-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   font-size: 12.5px;
   line-height: var(--lh-12);
