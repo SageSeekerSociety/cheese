@@ -92,6 +92,9 @@ class AdminModel:
     prices: dict[str, float]  # input/output/cache_read/cache_creation,缺的键不出现
     capabilities: dict[str, bool]  # reasoning / vision / adaptive_thinking
     supports_notes: str | None  # 缺价的原因等人话,priced=False 时给出
+    # 随每次调用透传给上游的额外头（ChatGPT codex 后端要 chatgpt-account-id
+    # 等三件套）。不是凭据,但也不算页面要展示的东西——读回只为审计快照。
+    extra_headers: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -319,17 +322,22 @@ class GatewayAdmin:
         label: str | None = None,
         selectable: bool = False,
         capabilities: Mapping[str, bool] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> str:
         """新建一条运行时模型,返回网关给的 model_id。
 
         ``api_key`` 只进请求体,绝不回显、绝不落日志——它是上游凭据。上游单价「两向
-        都要有」这条不变式由服务层守,这里只如实传网关。
+        都要有」这条不变式由服务层守,这里只如实传网关。``extra_headers`` 是随每次
+        调用透传给上游的额外头(订阅型上游的账号三件套),非空时才写进
+        ``litellm_params``。
         """
         params: dict[str, object] = {"model": upstream_model}
         if api_base:
             params["api_base"] = api_base
         if api_key:
             params["api_key"] = api_key
+        if extra_headers:
+            params["extra_headers"] = dict(extra_headers)
         params.update(_price_params(prices))
         info: dict[str, object] = dict(_capability_params(capabilities))
         info["cheese_selectable"] = bool(selectable)
@@ -361,6 +369,7 @@ class GatewayAdmin:
         label: str | None = None,
         selectable: bool | None = None,
         capabilities: Mapping[str, bool] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> None:
         """改一条运行时模型。``None`` 一律表示「这次不动它」。
 
@@ -392,6 +401,9 @@ class GatewayAdmin:
             params["api_base"] = api_base
         if api_key is not None:
             params["api_key"] = api_key
+        if extra_headers:
+            # PATCH 合并语义:缺省( None / 空)= 不动既有头;给了才整组替换。
+            params["extra_headers"] = dict(extra_headers)
         if prices is not None:
             params.update(_price_params(prices))
         body: dict[str, object] = {}
@@ -672,7 +684,19 @@ def _admin_model(name: str, row: dict) -> AdminModel:
         prices=_read_prices(params, info),
         capabilities=_read_capabilities(info),
         supports_notes=_unpriced_note(params, info),
+        extra_headers=_read_extra_headers(params),
     )
+
+
+def _read_extra_headers(params: object) -> dict[str, str]:
+    """``litellm_params.extra_headers`` 原样读回（只要 str→str 的项）。不是凭据,
+    但只服务审计快照——页面不展示它。"""
+    if not isinstance(params, dict):
+        return {}
+    raw = params.get("extra_headers")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): v for k, v in raw.items() if isinstance(v, str)}
 
 
 def _admin_key(row: dict) -> AdminKey:

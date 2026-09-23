@@ -43,9 +43,20 @@ vi.mock('@/api', async () => {
 // 壳上两处文案走 i18n（刷新按钮的名字、未读徽标的读屏名），而这一组问的是「画不画」，
 // 不是「画的是哪句中文」，所以只换掉取词入口、键原样返回 —— 仓库里既有的做法（见
 // `views/spaces/Index.spec.ts`）。词条本身对不对由 `i18n/catalog.spec.ts` 管。
+//
+// 例外是侧栏那五个分区名（`navigation.admin.*`）：下面「三块都在」「选中项带
+// aria-current」两条是按**分区名**认链接的，键原样返回它们就认不出来了 —— 所以 mock
+// 单把这五个键翻回它们画的词，其余照旧。
+const SECTION_LABELS: Record<string, string> = {
+  'navigation.admin.queue': '队列',
+  'navigation.admin.dashboard': '看板',
+  'navigation.admin.models': '模型',
+  'navigation.admin.spaces': '开板申请',
+  'navigation.admin.members': '成员',
+}
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
-  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+  return { ...actual, useI18n: () => ({ t: (key: string) => SECTION_LABELS[key] ?? key }) }
 })
 
 import AdminLayout from './AdminLayout.vue'
