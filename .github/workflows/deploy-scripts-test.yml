@@ -76,6 +76,7 @@ jobs:
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
           python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/tests/test_front_door_tls.py
           python3 deploy/llm-tunnel/verify-sites.py
 
       - name: Gateway release and image planning
