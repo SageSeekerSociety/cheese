@@ -2370,6 +2370,9 @@ export interface StatsFeedback {
   unread: number
   /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
   series: { date: string; created: number; resolved: number; deployed: number }[]
+  /** 上一等长窗口（`[since-days, since)`）的同口径合计 —— KPI 卡的环比差从这里出。
+   *  可选：旧后端还没有它，前端按「键在才画 delta」接线。 */
+  prev?: { created: number; resolved: number }
 }
 
 /** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
@@ -2428,6 +2431,9 @@ export interface StatsUsage {
       method: string
     }
   }
+  /** 上一等长窗口的同口径合计（环比用），形状与 token / 调用 / 成本三张卡一一对应。
+   *  可选：旧后端还没有它，前端按「键在才画 delta」接线。 */
+  prev?: { tokens: number; calls: number; cost_usd: number }
 }
 
 /** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
@@ -2437,6 +2443,8 @@ export interface StatsPlatform {
   people: {
     total: number
     new: number
+    /** 上一等长窗口新增的账号数（「{d} 日新增」那张卡的环比）。可选，理由同上。 */
+    prev_new?: number
     admins: number
     /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。
      *  `total`/`new`/`series[].created` 仍是和，拆分是附加列。 */
@@ -2649,8 +2657,11 @@ export interface StatsPipeline {
 export interface StatsProduct {
   days: number
   north_star: {
-    /** 按 `decided_at` 分桶、只数**现在**仍是 accepted 的卡。 */
+    /** 按 `decided_at` 分桶、只数**现在**仍是 accepted 的卡 —— 窗口口径，
+     *  和 series、和卡片标签同一把尺子。 */
     total: number
+    /** 上一等长窗口的同一口径合计（环比用）。可选：旧后端还没有它。 */
+    prev_total?: number
     series: { date: string; accepted: number }[]
     note_key: string
   }
@@ -2725,7 +2736,11 @@ export interface StatsShapes {
 }
 export type StatsKind = keyof StatsShapes
 
-export function getStats<K extends StatsKind>(kind: K, opts?: { days?: number }): Promise<StatsShapes[K]> {
+/** 看板的统计窗口。三档而不是任意整数：页头切换器只有三个位置，而「窗口」这一档
+ *  该进 store（切窗口重拉已加载的类），不该在每个调用点各自传一个字面量。 */
+export type StatsDays = 7 | 30 | 90
+
+export function getStats<K extends StatsKind>(kind: K, opts?: { days?: StatsDays }): Promise<StatsShapes[K]> {
   return request<StatsShapes[K]>(`/admin/stats/${kind}${feedbackQuery({ days: opts?.days ?? 7 })}`)
 }
 
