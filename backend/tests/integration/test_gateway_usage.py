@@ -761,6 +761,8 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
     ):
         pass
     await settle_turn(svc, tid)
+    # Stop also starts spool settlement, which may still hold a DB transaction.
+    await asyncio.gather(*svc._settle_tasks)
 
     from sqlalchemy import select
 

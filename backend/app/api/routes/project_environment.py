@@ -162,16 +162,18 @@ async def get_room_environment(
     topic = await room(db, project_id, topic_id)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
-        machine = await ProjectMachineRepository(db).get_active_for_topic(
-            topic.resource_id or topic_id
-        )
-        if machine is None:
-            # Nothing is being prepared, and nothing will be until somebody
-            # speaks: the machine is chosen when the room's first message
-            # arrives. `pending` here was a promise nobody was keeping — the
-            # room sat under 「正在准备运行环境」 with nothing running at all.
+        machines = [
+            machine
+            for machine in await ProjectMachineRepository(db).list_active_for_topic(
+                topic_id
+            )
+            if machine.superseded_at is None
+        ]
+        if not machines:
+            # No allocation exists until a session requests execution. A chat
+            # message alone is not a pending machine reservation.
             state = {"state": "unbound"}
-        elif machine.status == MachineStatus.error:
+        elif any(machine.status == MachineStatus.error for machine in machines):
             state = {"state": "failed", "log": "Cloud 机器创建失败，运行环境尚未接入。"}
         else:
             # A cloud machine on its way IS preparation, whatever stage it's at.

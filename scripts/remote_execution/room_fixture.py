@@ -249,6 +249,7 @@ class RoomExecutor:
                         payload["method"],
                         payload.get("params", {}),
                         hub=executor.wire,
+                        timeout=payload.get("timeout", 660),
                     )
                 )
                 return self.reply(result)
