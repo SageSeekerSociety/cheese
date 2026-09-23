@@ -715,12 +715,13 @@ def refused_connection_acceptance(endpoint, token, work, log):
 
 
 def image_acceptance(options, root: Path) -> int:
-    from app.core.sandbox_auth import mint_scoped_token
-    from app.domain.agent import execution
-    from app.domain.agent.device_hub import DeviceCallError
-    from app.domain.agent.device_hub_rpc import RemoteDeviceHub
-
     with image_owner(options, root) as owner:
+        # The context sets the signing secret before application imports cache it.
+        from app.core.sandbox_auth import mint_scoped_token
+        from app.domain.agent import execution
+        from app.domain.agent.device_hub import DeviceCallError
+        from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+
         work = owner.work
         state = owner.state
         log = owner.log
