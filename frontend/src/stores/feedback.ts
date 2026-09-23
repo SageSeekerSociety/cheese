@@ -75,6 +75,7 @@ import {
   takeParkedFeedbackDraft,
 } from '@/lib/feedbackDraft'
 import { STATUS_LADDER } from '@/lib/feedbackMeta'
+import { windowToApi } from '@/lib/feedbackWindows'
 
 /** 公开列表的栏位。服务端 `PUBLIC_TABS` 是**同一个集合**：加一个栏位是后端改
  *  一处、前端跟着改一处类型的事。 */
@@ -415,8 +416,9 @@ export const useFeedbackStore = defineStore('feedback', {
     adminSort: 'new' as AdminSort,
     adminPageStart: 0,
     /** 看板上「7 日新增 / 7 日解决 / 7 日上线」三个数字点进来时带着的那一段。
-     *  值是链接上的那一天，原样送去查询 —— 「七天前是几号」由看板算一次，这里
-     *  再算一次就会差一个时区。 */
+     *  存的是深链上的**原文**（'7d' 这样的相对窗口，或一个日期）——地址栏和筛选
+     *  chip 都要拿它原样说话；发给服务端时才折成日期（见 `loadAdmin` 与
+     *  `lib/feedbackWindows.ts`）。 */
     adminSince: null as string | null,
     adminResolvedSince: null as string | null,
     adminDeployedSince: null as string | null,
@@ -1289,11 +1291,14 @@ export const useFeedbackStore = defineStore('feedback', {
           tab: this.adminTab,
           q: this.adminQuery.trim(),
           sort: this.adminSort,
-          // `null`（没有这个窗口）折成 `undefined`：查询串里「没给」和「给了个空值」
-          // 是两件事，前者才是「这段日子不筛」。
-          since: this.adminSince ?? undefined,
-          resolvedSince: this.adminResolvedSince ?? undefined,
-          deployedSince: this.adminDeployedSince ?? undefined,
+          // 窗口存原文、发折算：state 里是深链带来的原文（'7d' 或一个日期），发给
+          // 服务端的那一刻才折成日期 —— 后端的三个参数是 datetime，'7d' 原样发出去
+          // 是 422（理由与折法都在 `lib/feedbackWindows.ts`）。`null`（没有这个窗口）
+          // 折成 `undefined`：查询串里「没给」和「给了个空值」是两件事，前者才是
+          // 「这段日子不筛」。
+          since: this.adminSince ? windowToApi(this.adminSince) : undefined,
+          resolvedSince: this.adminResolvedSince ? windowToApi(this.adminResolvedSince) : undefined,
+          deployedSince: this.adminDeployedSince ? windowToApi(this.adminDeployedSince) : undefined,
           pageStart: this.adminPageStart,
           pageSize: PAGE_SIZE,
         })
