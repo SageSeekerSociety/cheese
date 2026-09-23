@@ -8,14 +8,6 @@ name: Backend Test
 # box's own images or a real device stay on the self-hosted pool (e2e,
 # remote-execution).
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'deploy/metering-proxy/**'
-      - '.pre-commit-config.yaml'
-      - '.github/scripts/ensure-apt.sh'
-      - '.github/workflows/test.yml'
   workflow_call:
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
@@ -32,9 +24,8 @@ defaults:
 # previous commit's still-running suite and left main with no result for that
 # commit. A cancelled run is not a red run — main would carry code this
 # workflow never finished checking, with nothing on the commit to say so.
-# Every main push runs the full suite: a squash merge lands on a main that has
-# moved since the PR was tested, and two individually green PRs can be red
-# together. Hosted runners make that affordable.
+# Required CI selects this suite from each main push's changed paths and runs
+# it against the merged commit, including changes since the PR was tested.
 concurrency:
   group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

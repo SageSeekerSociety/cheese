@@ -29,12 +29,21 @@
     "requests": "窗口内调用",
     "failed": "失败请求"
   },
+  "health": {
+    "label": "网关状态"
+  },
   "table": {
     "label": "模型",
     "empty": "暂无模型",
     "calls": "次调用",
     "blocked": "已停用",
-    "readOnly": "只读",
+    "howToEdit": "只读 · 查看改法",
+    "failRate": "失败率 {rate}",
+    "subscriptionOk": "订阅正常",
+    "subscriptionRefreshFailed": "刷新失败",
+    "subscriptionReauth": "需重新授权",
+    "estimateNote": "包月订阅 · 花费为估计值",
+    "sparklineHint": "逐日 token 用量",
     "column": {
       "name": "模型名",
       "origin": "来源",
@@ -42,11 +51,13 @@
       "capabilities": "能力",
       "usage": "窗口内用量",
       "offered": "上架",
+      "status": "状态",
       "actions": "操作"
     },
     "origin": {
       "config": "配置文件",
-      "runtime": "运行时新增"
+      "runtime": "运行时新增",
+      "subscription": "订阅"
     },
     "offered": {
       "on": "已上架",
@@ -87,13 +98,62 @@
     "calls": "调用",
     "tokens": "token",
     "cost": "费用",
+    "failedRequests": "失败请求",
     "configYaml": "配置片段",
     "copy": "复制",
     "copied": "已复制",
     "configNote": "这个模型来自配置文件，只能在 deploy/gateway/config.yaml 里改，然后发布网关。",
     "series": {
-      "tokens": "token"
+      "tokens": "token",
+      "spend": "花费"
+    },
+    "subscription": {
+      "title": "订阅",
+      "account": "账号",
+      "status": "状态",
+      "tokenExpires": "凭据 {time} 过期",
+      "quotaTitle": "额度用量",
+      "quotaRefresh": "刷新读数",
+      "quotaEmpty": "暂无额度读数",
+      "quotaUpdated": "读数 {time} 更新",
+      "quotaStale": "没刷出新读数，显示 {time} 的旧读数",
+      "resetsAt": "{time} 重置",
+      "reauth": "重新授权",
+      "revoke": "移除订阅",
+      "revokeTitle": "移除订阅",
+      "revokeBody": "断开这条订阅，并停用网关模型「{name}」——项目随即选不到它。",
+      "estimateNote": "包月订阅 · 花费为估计值",
+      "tier": {
+        "fiveHour": "5 小时窗口",
+        "sevenDay": "7 天窗口",
+        "thirtyDay": "30 天窗口",
+        "other": "用量窗口"
+      }
     }
+  },
+  "subscription": {
+    "import": "导入订阅",
+    "dialogTitle": "导入 ChatGPT 订阅",
+    "intro": "把一个 ChatGPT 订阅接到平台上：授权完成后，它会作为一个模型出现在列表里，项目可以像选别的模型一样选它。",
+    "reauthIntro": "重新授权你的 ChatGPT 账号：用原来的账号完成授权后，这条订阅会恢复。",
+    "start": "开始授权",
+    "label": "备注名",
+    "labelHint": "可选。写一句这是谁的订阅，之后好认。",
+    "waiting": "等你授权",
+    "codeHint": "打开授权页，登录并输入这串代码",
+    "openPage": "打开授权页",
+    "copy": "复制",
+    "copied": "已复制",
+    "polling": "正在等待授权…",
+    "expiresIn": "代码 {minutes} 分钟后过期",
+    "expired": "代码已过期",
+    "restart": "重新开始",
+    "cancelImport": "取消导入",
+    "success": "订阅已连接",
+    "accountAs": "账号：{email}",
+    "done": "完成",
+    "failed": "授权没完成",
+    "retry": "重试"
   },
   "dialog": {
     "cancel": "取消",
@@ -188,7 +248,34 @@
       "delete": "删模型",
       "blocked": "停用/启用模型",
       "budget": "改额度",
+      "subscriptionStart": "开始导入订阅",
+      "subscriptionComplete": "完成导入订阅",
+      "subscriptionCancel": "取消导入订阅",
+      "subscriptionRefresh": "刷新订阅凭据",
+      "subscriptionRevoke": "移除订阅",
       "other": "其它操作"
+    },
+    "diff": {
+      "show": "查看改动",
+      "hide": "收起",
+      "empty": "这次操作没有字段变化",
+      "yes": "是",
+      "no": "否",
+      "field": {
+        "name": "模型名",
+        "label": "标签",
+        "blocked": "停用状态",
+        "selectable": "上架",
+        "priced": "定价",
+        "upstreamModel": "上游模型",
+        "apiBase": "上游地址",
+        "provider": "供应商",
+        "prices": "单价",
+        "capabilities": "能力",
+        "maxBudgetUsd": "刹车值（美元）",
+        "extraHeaders": "额外请求头",
+        "other": "其它字段"
+      }
     }
   }
 }

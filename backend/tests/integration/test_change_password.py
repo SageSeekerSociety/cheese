@@ -82,7 +82,7 @@ class TestChangePassword:
 
     def test_the_new_password_signs_in_and_the_old_one_does_not(self):
         old = self.user.password
-        new = "a-brand-new-password"
+        new = "a-brand-new-password-1"
 
         resp = self._change(new, self._ticket())
         assert resp.status_code == 200, resp.text
@@ -94,25 +94,25 @@ class TestChangePassword:
         assert self._password_login(old).status_code == 401
 
     def test_a_live_session_alone_cannot_change_the_password(self):
-        refused = self._change("a-brand-new-password", None)
+        refused = self._change("a-brand-new-password-1", None)
         assert refused.status_code == 403, refused.text
         assert refused.json()["error"]["name"] == "SudoRequiredError"
 
         assert self._password_login(self.user.password).status_code == 200
 
     def test_a_ticket_for_something_else_does_not_change_it(self):
-        refused = self._change("a-brand-new-password", self._ticket("2fa:settings"))
+        refused = self._change("a-brand-new-password-1", self._ticket("2fa:settings"))
         assert refused.status_code == 403, refused.text
 
         assert self._password_login(self.user.password).status_code == 200
 
     def test_a_ticket_changes_the_password_once(self):
         ticket = self._ticket()
-        assert self._change("first-new-password", ticket).status_code == 200
+        assert self._change("first-new-password-1", ticket).status_code == 200
 
-        replay = self._change("second-new-password", ticket)
+        replay = self._change("second-new-password-2", ticket)
         assert replay.status_code == 403, replay.text
-        assert self._password_login("first-new-password").status_code == 200
+        assert self._password_login("first-new-password-1").status_code == 200
 
     def test_nobody_else_can_change_it(self):
         other = self.user_client.create_user()
@@ -131,7 +131,7 @@ class TestChangePassword:
         ).json()["data"]["sudoTicket"]
 
         refused = self._change(
-            "a-brand-new-password", other_ticket, headers=other_headers
+            "a-brand-new-password-1", other_ticket, headers=other_headers
         )
         assert refused.status_code == 403, refused.text
         assert self._password_login(self.user.password).status_code == 200
@@ -143,8 +143,13 @@ class TestChangePassword:
 
     @pytest.mark.parametrize(
         ("new", "status"),
-        [("short!a", 422), ("lettersonly", 422), ("x!" * 40, 400)],
-        ids=["too-short", "no-symbol", "over-72-bytes"],
+        [
+            ("sh0rt!a", 422),
+            ("letters0nly", 422),
+            ("no-digits!", 422),
+            ("x!1" * 30, 400),
+        ],
+        ids=["too-short", "no-symbol", "no-digit", "over-72-bytes"],
     )
     def test_a_refused_password_leaves_the_ticket_unspent(self, new: str, status: int):
         ticket = self._ticket()
@@ -153,9 +158,9 @@ class TestChangePassword:
         assert refused.status_code == status, refused.text
         assert self._password_login(self.user.password).status_code == 200
 
-        accepted = self._change("a-valid-password", ticket)
+        accepted = self._change("a-valid-password-1", ticket)
         assert accepted.status_code == 200, accepted.text
-        assert self._password_login("a-valid-password").status_code == 200
+        assert self._password_login("a-valid-password-1").status_code == 200
 
     def test_a_body_without_a_password_is_refused(self):
         refused = self._body({"sudoTicket": self._ticket()})

@@ -17,6 +17,57 @@ report = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(report)
 
 
+class ApiReadTests(unittest.TestCase):
+    def test_transient_failure_repeats_read_then_returns_complete_pages(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Server Error (HTTP 502)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=[error, '[{"jobs": []}]']
+            ) as call,
+            mock.patch.object(report.time, "sleep"),
+            contextlib.redirect_stderr(io.StringIO()) as log,
+        ):
+            self.assertEqual(
+                report.gh_pages("jobs", {"per_page": "100"}), [{"jobs": []}]
+            )
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(call.call_args_list[0], call.call_args_list[1])
+        self.assertIn("HTTP 502", log.getvalue())
+
+    def test_persistent_server_failure_stops_after_three_reads(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Server Error (HTTP 503)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=error
+            ) as call,
+            mock.patch.object(report.time, "sleep"),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(report.subprocess.CalledProcessError),
+        ):
+            report.gh_pages("jobs")
+        self.assertEqual(call.call_count, 3)
+
+    def test_authorization_failure_does_not_retry(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Bad credentials (HTTP 401)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=error
+            ) as call,
+            mock.patch.object(report.time, "sleep") as sleep,
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(report.subprocess.CalledProcessError),
+        ):
+            report.gh_pages("jobs")
+        self.assertEqual(call.call_count, 1)
+        sleep.assert_not_called()
+
+
 def job(
     name,
     conclusion="success",
@@ -218,6 +269,53 @@ class FeedbackReportTest(unittest.TestCase):
                 self.assertEqual(
                     result["cohort_tail_consecutive_clean_first_attempts"], 1
                 )
+
+    def test_experiment_pushes_cannot_satisfy_main_acceptance_streak(self):
+        records = []
+        for index in range(1, 22):
+            source = run(index)
+            source["head_branch"] = (
+                "main" if index < 20 else "experiment/remote-execution"
+            )
+            item = report.analyse_attempt(
+                source,
+                1,
+                [job("acceptance"), job("private-chat")],
+                "remote-execution.yml",
+                "push",
+            )
+            item["test_evidence"] = {"status": "clean"}
+            records.append(item)
+        summary = report.summarize(records)
+        self.assertEqual(
+            summary["remote-execution.yml:push:main"][
+                "cohort_tail_consecutive_clean_first_attempts"
+            ],
+            19,
+        )
+        self.assertEqual(
+            summary["remote-execution.yml:push:experiment/remote-execution"][
+                "unique_run_count"
+            ],
+            2,
+        )
+        records[-1]["head_branch"] = None
+        self.assertEqual(
+            report.summarize(records)["remote-execution.yml:push:(unknown)"][
+                "unique_run_count"
+            ],
+            1,
+        )
+
+    def test_standalone_e2e_requires_its_own_receipt(self):
+        item = report.analyse_attempt(run(), 1, [job("e2e")], "e2e.yml", "push")
+        self.inspect_receipts(item, [self.receipt()])
+        self.assertEqual(item["test_evidence"]["status"], "clean")
+        skipped = report.analyse_attempt(
+            run(), 1, [job("scope"), job("e2e", "skipped")], "e2e.yml", "push"
+        )
+        self.inspect_receipts(skipped, [])
+        self.assertEqual(skipped["test_evidence"]["status"], "unknown")
 
     def test_downloaded_archive_requires_only_the_normalized_receipt(self):
         for name in ("../evidence.json", "unexpected.json"):

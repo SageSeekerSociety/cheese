@@ -192,6 +192,37 @@ class CreateInviteCodeRequest(BaseModel):
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    """The refresh cookie lives as long as the token in it. Without a Max-Age
+    the browser drops it when the session ends while the access token in
+    localStorage survives, and the next refresh signs the user out."""
+    response.set_cookie(
+        "REFRESH_TOKEN",
+        refresh_token,
+        max_age=settings.refresh_token_expires_seconds,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_session_cookie(response: Response, session_id: str) -> None:
+    """Kept as long as the server-side session it names."""
+    from app.domain.user.login_security import SESSION_TTL
+
+    response.set_cookie(
+        "SESSION_ID",
+        session_id,
+        max_age=SESSION_TTL,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+
+
 logger = logging.getLogger(__name__)
 
 # Namespaces the single-use reservations that make a 2FA ticket redeemable
@@ -458,10 +489,10 @@ def _reject_overlong_password(password: str) -> None:
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
-# At least 8 characters, a letter and an ASCII symbol. The symbol class is the
-# web client's (REGEX_PASSWORD), so the form and the server agree on it.
+# At least 8 characters, a letter, a digit and an ASCII symbol: the web
+# client's rule (REGEX_PASSWORD), so the form and the server agree on it.
 _NEW_PASSWORD_PATTERN = re.compile(
-    r"^(?=.*[a-zA-Z])(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
+    r"^(?=.*[a-zA-Z])(?=.*\d)(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
 )
 
 
@@ -470,7 +501,8 @@ def _require_new_password(password: str) -> None:
     bcrypt can hold. Checked before anything single-use is spent."""
     if not _NEW_PASSWORD_PATTERN.match(password):
         raise UnprocessableEntityError(
-            "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
+            "Use at least 8 characters, with a letter, a number, "
+            "and a special character"
         )
     _reject_overlong_password(password)
 
@@ -1437,14 +1469,7 @@ async def register_user(
     access_token = create_access_token(user.id, handle=user.username)
     refresh_token = create_refresh_token(user.id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, refresh_token)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1717,22 +1742,8 @@ async def user_login(
         access_token = create_access_token(user.id, handle=user.username)
         refresh_token = create_refresh_token(user.id)
 
-        response.set_cookie(
-            "REFRESH_TOKEN",
-            refresh_token,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
-        response.set_cookie(
-            "SESSION_ID",
-            session_id,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
+        _set_refresh_cookie(response, refresh_token)
+        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1842,22 +1853,8 @@ async def verify_2fa_login(
         refresh_token = create_refresh_token(user.id)
         session_id = await SessionManager(redis).create_session(user.id)
 
-        response.set_cookie(
-            "REFRESH_TOKEN",
-            refresh_token,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
-        response.set_cookie(
-            "SESSION_ID",
-            session_id,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
+        _set_refresh_cookie(response, refresh_token)
+        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1917,14 +1914,7 @@ async def refresh_access_token(
     access_token = create_access_token(user_id, handle=user.username)
     new_refresh_token = create_refresh_token(user_id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        new_refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, new_refresh_token)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -3200,22 +3190,8 @@ async def passkey_authenticate_verify(
     access_token = create_access_token(user_id, handle=user.username)
     refresh_token = create_refresh_token(user_id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
-    response.set_cookie(
-        "SESSION_ID",
-        session_id,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, refresh_token)
+    _set_session_cookie(response, session_id)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -3532,14 +3508,7 @@ async def _oauth_login_redirect(
         ),
         status_code=302,
     )
-    redirect.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(redirect, refresh_token)
     return redirect
 
 

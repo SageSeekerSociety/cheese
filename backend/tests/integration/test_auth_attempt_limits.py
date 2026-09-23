@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import CreatedUser, UserCreator
 from tests.support.consent import SIGNUP_CONSENT
 
-OVERLONG = "a!" * 36 + "b"  # 73 bytes: one past what bcrypt can take
+OVERLONG = "a1!" * 24 + "b"  # 73 bytes: one past what bcrypt can take
 
 
 class _Outbox:
@@ -215,7 +215,7 @@ class TestOverlongPasswords:
         refused = api_client.post(path, json={"token": token, "password": OVERLONG})
         assert refused.status_code == 400, refused.text
 
-        new_password = "fresh-Password!"
+        new_password = "fresh-Password1!"
         reset = api_client.post(path, json={"token": token, "password": new_password})
         assert reset.status_code == 200, reset.text
         assert _login(api_client, user.username, new_password).status_code == 200
@@ -223,7 +223,7 @@ class TestOverlongPasswords:
 
 class TestRecoveryPasswordRule:
     @pytest.mark.parametrize(
-        "password", ["short!a", "lettersonly", "12345678!"], ids=str
+        "password", ["sh0rt!a", "letters0nly", "12345678!", "no-digits!"], ids=str
     )
     def test_a_weak_password_is_refused_and_the_link_still_works(
         self,
@@ -247,7 +247,7 @@ class TestRecoveryPasswordRule:
         assert _login(api_client, user.username, password).status_code == 401
 
         reset = api_client.post(
-            path, json={"token": match.group(1), "password": "fresh-Password!"}
+            path, json={"token": match.group(1), "password": "fresh-Password1!"}
         )
         assert reset.status_code == 200, reset.text
 

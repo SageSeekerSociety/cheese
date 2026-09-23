@@ -2608,7 +2608,16 @@ def test_the_roster_is_two_lists_and_only_the_added_one_can_be_edited(client, as
     assert roster["added"] == []
     # 根那一批是**行**了，不再是裸 handle：配置里写的名字平台上可能根本没有账号
     # （`fb-admin` 这里就不是真人），没有就回 null，不是报错、也不是回退成 handle。
-    assert roster["root"] == [{"handle": ADMIN, "nickname": None, "avatar_id": None}]
+    assert roster["root"] == [
+        {
+            "handle": ADMIN,
+            "nickname": None,
+            "avatar_id": None,
+            "has_account": False,
+            "registered_at": None,
+            "is_agent": False,
+        }
+    ]
 
     added = _add_admin(client, by=as_admin, target="fb-hired")
     assert added.status_code == 200, added.text
@@ -2627,7 +2636,14 @@ def test_the_roster_is_two_lists_and_only_the_added_one_can_be_edited(client, as
     )
     assert refused.status_code == 409, refused.text
     assert _admins(client, as_admin)["root"] == [
-        {"handle": ADMIN, "nickname": None, "avatar_id": None}
+        {
+            "handle": ADMIN,
+            "nickname": None,
+            "avatar_id": None,
+            "has_account": False,
+            "registered_at": None,
+            "is_agent": False,
+        }
     ]
 
     gone = client.delete(

@@ -12,7 +12,9 @@
  *    一次拉回来本地过滤的实现照样「能用」，只是真人搜不到人（这个部署 1199 个账号）；
  *    不防抖的实现在一次搜索里会把每个前缀都发出去。
  * 3. 移出**先确认再发请求**：这个动作当场决定谁能看别人的私密反馈，而按钮就挨着一个
- *    名字。
+ *    名字。确认框正文是全仓第一处 `<i18n-t>`（handle 回显加粗、英文语序不同，句子
+ *    碎片键被 i18n.md §3 禁掉）—— happy-dom 里插槽渲不渲染得出来，由「handle 出现
+ *    两次 + 后果句整句在」那两条断言钉住。
  * 4. 主行显示**昵称**、handle 作次要信息，而且**同一个串不画两遍**（昵称为空或就是
  *    handle 时只剩一个串）；头像对读屏不可见（名字就在旁边）。
  * 5. 确认框关掉之后**焦点回到触发它的那颗按钮**：没有 activator 的 `VDialog` 自己
@@ -24,6 +26,11 @@
  * 7. 取不到的头像 URL 在**本次会话**里只问一次（`utils/avatarFailures`）。dev 的种子
  *    迁移只往 avatars 表写了行、一张图也没落盘，不记的话每次切回这一页，每个坏 id 都
  *    会再造一个 `<img>` 去撞一次必然 404 的请求。
+ * 8. **账号状态与注册时间**：平台上没账号的行在状态列明画（正常行只画 `—`，不刷一列
+ *    「正常」的噪音），注册时间经 `relTime` 渲染、没账号的画 `—`；`is_agent` 的行在
+ *    who 列挂 agent 徽章。三种「死权限」（没账号/已注销、agent）以前完全不可见。
+ * 9. **刷新时旧名单只压暗（busy）不换骨架**：手上有数据时再取数，骨架闪一下是比
+ *    「旧内容多停半秒」更糟的手感（AdminGrid 的 busy 槽就是为这个存在的）。
  *
  * 没测到的一条，说清楚省得下次有人以为它被覆盖了：**从候选里选中再点「添加」**这一步
  * 在 happy-dom 里做不到 —— `v-autocomplete` 的候选画在浮层菜单里，而浮层在这个环境
@@ -31,6 +38,7 @@
  * 显示服务端原话、框不关）在**预览和 e2e 的真浏览器**里点，不在这一份里。
  */
 import type { Component } from 'vue'
+import type { PlatformAdminsPayload } from '@/api'
 
 import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
@@ -59,13 +67,44 @@ vi.mock('@/api', async () => {
 
 import AdminMembersPage from './AdminMembersPage.vue'
 
+import i18n, { setLocale } from '@/i18n'
+import { relTime } from '@/lib/relTime'
+
+const ANDY_REGISTERED = '2025-11-03T08:12:44Z'
+const PENG_REGISTERED = '2026-01-04T10:00:00Z'
+const BOT_REGISTERED = '2026-03-01T00:00:00Z'
+
 // 两组现在是同一个行形状（`root` 不再是一串裸 handle）。这里特意让三行的
 // nickname/avatar_id 各占一种情况：andy 两样都有、wangchangxin 两样都为 null
-// （平台上没有这个账号）、pengwenbo 是页面上加的、带出处。
-const ROSTER = {
+// （平台上没有这个账号）、pengwenbo 是页面上加的、带出处。新三格也各占一种：
+// wangchangxin 没账号（has_account=false、注册时间 null）、cheese-bot 是 agent
+// （只会从根配置混进来 —— 页面加人服务端拒 agent）、其余行正常。
+const ROSTER: PlatformAdminsPayload = {
   root: [
-    { handle: 'andy', nickname: '安迪', avatar_id: 7 },
-    { handle: 'wangchangxin', nickname: null, avatar_id: null },
+    {
+      handle: 'andy',
+      nickname: '安迪',
+      avatar_id: 7,
+      has_account: true,
+      registered_at: ANDY_REGISTERED,
+      is_agent: false,
+    },
+    {
+      handle: 'wangchangxin',
+      nickname: null,
+      avatar_id: null,
+      has_account: false,
+      registered_at: null,
+      is_agent: false,
+    },
+    {
+      handle: 'cheese-bot',
+      nickname: null,
+      avatar_id: null,
+      has_account: true,
+      registered_at: BOT_REGISTERED,
+      is_agent: true,
+    },
   ],
   added: [
     {
@@ -74,6 +113,9 @@ const ROSTER = {
       avatar_id: 3,
       added_by_handle: 'andy',
       created_at: '2026-09-19T10:00:00Z',
+      has_account: true,
+      registered_at: PENG_REGISTERED,
+      is_agent: false,
     },
   ],
 }
@@ -89,7 +131,7 @@ function mountPage() {
     template: '<v-app><AdminMembersPage /></v-app>',
   }
   return render(Wrapper as unknown as Component, {
-    global: { plugins: [vuetify, createPinia(), router] },
+    global: { plugins: [vuetify, createPinia(), router, i18n] },
   })
 }
 
@@ -115,6 +157,9 @@ beforeAll(() => {
       removeEventListener() {},
     },
   })
+  // 页面文案全走 i18n，而这一组断的是中文词条；`navigator.language` 在 happy-dom 里
+  // 是 `en-US` —— 不钉住语言，断的就成了英文词条（照 `AdminQueuePage.spec.ts`）。
+  setLocale('zh-CN')
 })
 
 beforeEach(() => {
@@ -140,8 +185,8 @@ describe('成员管理', () => {
     // 页面上加的那一行带出处：谁加的、什么时候。
     expect(await findAllByText(/andy 加的/)).toHaveLength(1)
 
-    // 整页只有一个「移出」，在 `pengwenbo` 那一行。根那两行（andy、wangchangxin）
-    // 每个都画一个的话这里会是三个。
+    // 整页只有一个「移出」，在 `pengwenbo` 那一行。根那三行（andy、wangchangxin、
+    // cheese-bot）每个都画一个的话这里会是四个。
     expect(getAllByText('移出')).toHaveLength(1)
   })
 
@@ -154,7 +199,16 @@ describe('成员管理', () => {
 
     // 另一种「只有一个串可画」：昵称本来就是 handle。画两遍的话这里会是 2。
     listPlatformAdmins.mockResolvedValue({
-      root: [{ handle: 'samename', nickname: 'samename', avatar_id: null }],
+      root: [
+        {
+          handle: 'samename',
+          nickname: 'samename',
+          avatar_id: null,
+          has_account: true,
+          registered_at: ANDY_REGISTERED,
+          is_agent: false,
+        },
+      ],
       added: [],
     })
     const again = mountPage()
@@ -210,6 +264,59 @@ describe('成员管理', () => {
     expect(container.querySelector('.am__alert')).toBeNull()
   })
 
+  it('账号状态与注册时间：没账号的明画、正常行画 —；agent 行挂徽章', async () => {
+    const { container, findByText } = mountPage()
+    await findByText('安迪')
+
+    const rowOf = (needle: string) =>
+      Array.from(container.querySelectorAll('tr.am__row')).find((r) => r.textContent?.includes(needle))
+    // 六列：管理员 / 账号状态 / 注册时间 / 来源 / 添加信息 / 操作。
+    const cellsOf = (needle: string) => rowOf(needle)?.querySelectorAll('td')
+
+    // 平台上没有账号的行：状态格明画那句话（带 title 解释），注册时间格是 `—`
+    // （没读到画 `—`，不画 0、也不画一个假时间）。
+    const ghostCells = cellsOf('wangchangxin')
+    expect(ghostCells?.[1].textContent).toContain('平台上没有这个账号')
+    expect(ghostCells?.[1].querySelector('.am__warn')?.getAttribute('title')).toBeTruthy()
+    expect(ghostCells?.[2].textContent?.trim()).toBe('—')
+
+    // 正常行的状态格画 `—`：整页只有那一句警告 —— 不把整列刷成一片「正常」的噪音。
+    expect(container.querySelectorAll('.am__warn')).toHaveLength(1)
+    expect(cellsOf('安迪')?.[1].textContent?.trim()).toBe('—')
+    expect(cellsOf('彭文博')?.[1].textContent?.trim()).toBe('—')
+
+    // agent 徽章：`is_agent` 的根行，who 列（第一格）里挂 chip-neutral，带 title
+    // 解释「为什么这行权限用不上」。全表就这一枚 —— 画到正常行身上也是错。
+    const chip = cellsOf('cheese-bot')?.[0].querySelector('.chip-neutral')
+    expect(chip?.textContent?.trim()).toBe('agent')
+    expect(chip?.getAttribute('title')).toBeTruthy()
+    expect(container.querySelectorAll('tr.am__row .chip-neutral')).toHaveLength(1)
+
+    // 注册时间经 relTime 渲染 —— 同口径比对（import 同一个函数），不猜相对时间词。
+    expect(cellsOf('安迪')?.[2].textContent).toContain(relTime(ANDY_REGISTERED))
+    expect(cellsOf('彭文博')?.[2].textContent).toContain(relTime(PENG_REGISTERED))
+  })
+
+  it('已有名单时刷新：旧名单压暗（busy），不换骨架', async () => {
+    const { container, findByText, getByRole } = mountPage()
+    await findByText('安迪')
+    expect(container.querySelector('.agrid--busy')).toBeNull()
+
+    // 让下一次取数挂起：busy 本来只有半秒，拉长到断言跑完。
+    let release: (value: PlatformAdminsPayload) => void = () => {}
+    listPlatformAdmins.mockImplementation(() => new Promise<PlatformAdminsPayload>((resolve) => (release = resolve)))
+    await fireEvent.click(getByRole('button', { name: '刷新' }))
+
+    // 取数中：旧名单压暗、**内容还在**、没有换成骨架 —— 换骨架的话「安迪」会消失、
+    // `.agrid__bone` 会出现。
+    await vi.waitFor(() => expect(container.querySelector('.agrid--busy')).not.toBeNull())
+    expect(container.querySelector('.agrid__bone')).toBeNull()
+    expect(container.textContent).toContain('安迪')
+
+    release(ROSTER)
+    await vi.waitFor(() => expect(container.querySelector('.agrid--busy')).toBeNull())
+  })
+
   it('确认框关掉之后，焦点回到触发它的那颗「移出」', async () => {
     const { findByText, findAllByRole } = mountPage()
 
@@ -231,7 +338,16 @@ describe('成员管理', () => {
     // 用一个没在别处出现过的 id：失败记忆是**模块级**的 Set，随这一份 spec 的进程
     // 生灭，复用别的用例的 id 会把它们的头像也短路成首字母。
     listPlatformAdmins.mockResolvedValue({
-      root: [{ handle: 'ghost', nickname: null, avatar_id: 424242 }],
+      root: [
+        {
+          handle: 'ghost',
+          nickname: null,
+          avatar_id: 424242,
+          has_account: true,
+          registered_at: ANDY_REGISTERED,
+          is_agent: false,
+        },
+      ],
       added: [],
     })
 
@@ -286,6 +402,7 @@ describe('成员管理', () => {
     // 确认那一行**带名字**：只说「确定删除吗」而实际删掉的是名单上另一个人的话，
     // 按按钮的人没有任何办法发现自己按错了。这里按「那句话在」来认它 —— 名字本身
     // 包在 `<strong>` 里，是一个独立元素，跟周围那几个字凑不成一个 matcher。
+    // 这两条同时钉住 `<i18n-t>`（全仓首用）在 happy-dom 下把插槽正常渲出来。
     expect(await findByText(/移出名单？他马上看不到私密反馈/)).toBeTruthy()
     // 名字出现两处：名单那一行 + 确认框里那个 `<strong>`。
     expect(await findAllByText('pengwenbo')).toHaveLength(2)

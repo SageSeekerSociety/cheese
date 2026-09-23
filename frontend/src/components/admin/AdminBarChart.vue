@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { RouteLocationRaw } from 'vue-router'
+
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -21,10 +23,21 @@ import { fmtNum } from '@/lib/usageFormat'
 //
 // 手写 DOM 而不是 SVG：这一版没有任何需要按坐标算的东西（条长就是百分比），而 DOM 里的
 // 文字可以省略号、可以换行、可以被读屏读到，SVG 里的 `<text>` 三样都做不到。
+//
+// 行可以带 `to`（top_projects 下钻到项目页）：**整行一个链接** —— 行内再摆第二
+// 个可点的东西，一行就有了两个 Tab 站。没有 `to` 的行就是静的（cursor/hover/Tab
+// 三样一样都不给，同 `AdminKpiCard` 文件头那条纪律）。
 const props = withDefaults(
   defineProps<{
     title: string
-    rows: { label: string; value: number }[]
+    rows: {
+      /** 行的**身份**（key 用它不用索引 —— 名字不唯一，两个同名项目不能合成一行）。 */
+      id?: string
+      label: string
+      value: number
+      /** 有去向整行才是链接（见文件头）。 */
+      to?: RouteLocationRaw
+    }[]
     loading?: boolean
   }>(),
   { loading: false }
@@ -61,14 +74,23 @@ function widthOf(value: number): string {
     </p>
 
     <ol v-else class="abr__rows">
-      <li v-for="(row, i) in rows" :key="i" class="abr__row">
+      <li v-for="(row, i) in rows" :key="row.id ?? i" class="abr__item">
         <!-- 名字可能很长（项目名是用户起的）。省略号 + `title`：屏幕上先保住「这是哪几个
              项目」的可扫读性，完整名字鼠标停一下就有，读屏念的是全文。 -->
-        <span class="abr__label" :title="row.label">{{ row.label }}</span>
-        <span class="abr__track" aria-hidden="true">
-          <span class="abr__bar" :style="{ width: widthOf(row.value) }" />
-        </span>
-        <span class="abr__value t-num">{{ fmtNum(row.value) }}</span>
+        <router-link v-if="row.to" :to="row.to" class="abr__row abr__row--link">
+          <span class="abr__label" :title="row.label">{{ row.label }}</span>
+          <span class="abr__track" aria-hidden="true">
+            <span class="abr__bar" :style="{ width: widthOf(row.value) }" />
+          </span>
+          <span class="abr__value t-num">{{ fmtNum(row.value) }}</span>
+        </router-link>
+        <div v-else class="abr__row">
+          <span class="abr__label" :title="row.label">{{ row.label }}</span>
+          <span class="abr__track" aria-hidden="true">
+            <span class="abr__bar" :style="{ width: widthOf(row.value) }" />
+          </span>
+          <span class="abr__value t-num">{{ fmtNum(row.value) }}</span>
+        </div>
       </li>
     </ol>
   </div>
@@ -89,8 +111,6 @@ function widthOf(value: number): string {
   border-bottom-left-radius: var(--radius-lg);
 }
 
-/* 每一行：名字 | 轨道 | 数值。三列用 grid 而不是 flex：名字和数值都要能对齐成一条竖线，
-   而 flex 的 `auto` 宽度会让每一行各算一遍，长名字那一行的数值就跑到别处去了。 */
 .abr__rows {
   display: flex;
   flex-direction: column;
@@ -100,6 +120,12 @@ function widthOf(value: number): string {
   list-style: none;
 }
 
+.abr__item {
+  min-width: 0;
+}
+
+/* 每一行：名字 | 轨道 | 数值。三列用 grid 而不是 flex：名字和数值都要能对齐成一条竖线，
+   而 flex 的 `auto` 宽度会让每一行各算一遍，长名字那一行的数值就跑到别处去了。 */
 .abr__row {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto;
@@ -107,6 +133,30 @@ function widthOf(value: number): string {
   gap: 8px;
   min-width: 0;
   height: 22px;
+  color: inherit;
+  text-decoration: none;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+/* 整行是链接才有的三件事（cursor/hover/焦点环）；hover 只改底色、不改位置，
+   焦点环收进 -2px —— 行高只有 22px，外扩的焦点环会画到隔壁行上。 */
+.abr__row--link {
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .abr__row--link:hover {
+    background: var(--fill);
+  }
+}
+
+.abr__row--link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .abr__label {

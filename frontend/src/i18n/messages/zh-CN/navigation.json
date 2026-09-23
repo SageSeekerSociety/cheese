@@ -22,5 +22,12 @@
     "center": "反馈中心",
     "mine": "我的反馈",
     "admin": "管理后台"
+  },
+  "admin": {
+    "queue": "队列",
+    "dashboard": "看板",
+    "models": "模型",
+    "spaces": "开板申请",
+    "members": "成员"
   }
 }

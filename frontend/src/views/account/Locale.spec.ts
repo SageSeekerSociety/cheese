@@ -25,7 +25,6 @@ vi.mock('@/network/api/legal', () => ({
 
 beforeEach(() => {
   setLocale('en')
-  localStorage.setItem('cheese:domain_warning_seen', '1')
   vi.stubGlobal('visualViewport', new EventTarget())
 })
 afterEach(() => {
@@ -67,13 +66,15 @@ describe('account language', () => {
 
   it('renders registration in English and updates custom validation after switching language', async () => {
     const view = await mount(SignUp)
-    expect(view.getByRole('heading', { name: 'Join Cheese' })).toBeTruthy()
+    expect(view.getByRole('heading', { name: 'Create account' })).toBeTruthy()
     expect(view.getByLabelText('Display name')).toBeTruthy()
     await fireEvent.update(view.getByLabelText('Password', { exact: true }), 'password123')
     await fireEvent.blur(view.getByLabelText('Password', { exact: true }))
-    expect(await view.findByText('Your password must contain a letter, a number, and a special character')).toBeTruthy()
+    expect(
+      await view.findByText('Use at least 8 characters, with a letter, a number, and a special character')
+    ).toBeTruthy()
     await fireEvent.click(view.getByRole('button', { name: '切换到中文' }))
-    expect(await view.findByText('密码必须包含字母、数字、特殊字符')).toBeTruthy()
+    expect(await view.findByText('密码须至少 8 个字符，并包含字母、数字和特殊字符')).toBeTruthy()
     expect((view.getByLabelText('密码', { exact: true }) as HTMLInputElement).value).toBe('password123')
   })
 })

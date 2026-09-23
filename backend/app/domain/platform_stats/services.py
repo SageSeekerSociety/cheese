@@ -11,7 +11,13 @@
 `series` 一律**补齐到 `days` 天**：缺天不补的话折线会把 7 天画成 5 天，而且没有人
 看得出来（断点处是一条平滑的线，不是一段空白）。补 0 走 `dense_series`，判据是窗口
 自己那份日期列表。
+
+`prev` 是**上一个等长窗口**（`[since-days, since)`）的合计，给 KPI 卡的环比差用：
+窗口类的曲线只覆盖当前窗口，「再往前那段一共多少」前端自己算不出来，只能在这里
+一起回答。pipeline 不配 prev —— 它以存量指标为主，没有可环比的流量合计。
 """
+
+from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +68,7 @@ class PlatformStatsService:
         哪儿了，本来就是人各一份，和板子有多大无关。
         """
         since, until, buckets = utc_day_window(days)
+        prev_since = since - timedelta(days=days)
         board = await self._feedback.admin_board_counts()
         mine = await self._feedback.counts(handle=handle, is_admin=True)
         created = await self._feedback.created_series(since=since, until=until)
@@ -81,6 +88,15 @@ class PlatformStatsService:
                 buckets,
                 {"created": created, "resolved": resolved, "deployed": deployed},
             ),
+            # 上一窗口的同一口径合计 —— KPI 卡的「较上周期 ±%」从这里出。
+            "prev": {
+                "created": await self._feedback.count_created_between(
+                    since=prev_since, until=since
+                ),
+                "resolved": await self._feedback.count_reached_resolved_between(
+                    since=prev_since, until=since
+                ),
+            },
         }
 
     async def usage(self, *, days: int) -> dict:
@@ -92,7 +108,9 @@ class PlatformStatsService:
         像「这个月没花钱」。
         """
         since, until, buckets = utc_day_window(days)
+        prev_since = since - timedelta(days=days)
         totals = await self._usage.platform_totals(since=since, until=until)
+        prev_totals = await self._usage.platform_totals(since=prev_since, until=since)
         raw = await self._usage.platform_series(since=since, until=until)
         top = await self._usage.top_projects(
             since=since, until=until, limit=TOP_PROJECTS
@@ -115,6 +133,13 @@ class PlatformStatsService:
             "top_projects": top,
             "by_model": models,
             "by_route": routes,
+            # 上一窗口的同一口径合计（环比用）。`unpriced_tokens` 不进 prev：环比那
+            # 三张卡是 token / 调用 / 成本，prev 的形状与那三张一一对应。
+            "prev": {
+                "tokens": prev_totals["tokens"],
+                "calls": prev_totals["calls"],
+                "cost_usd": prev_totals["cost_usd"],
+            },
             # 额度燃尽：三个项目同时停摆时，上面那条 token 曲线只是「今天用量下降」，
             # 看起来像好消息。`credits` 把「已耗尽 / 快烧完 / unlimited」三个互斥
             # 名单分开给 —— 理由见 `gaps.py` 模块 docstring 第 2 条。
@@ -133,6 +158,7 @@ class PlatformStatsService:
         `MachineInventoryRepository` —— 它是存量，**不是在线数**，原因写在那里。
         """
         since, until, buckets = utc_day_window(days)
+        prev_since = since - timedelta(days=days)
         created = await self._users.accounts_series(since=since, until=until)
         by_kind = await self._users.accounts_series_by_kind(since=since, until=until)
         admins = await AdminService(self._session).admin_handles()
@@ -142,6 +168,10 @@ class PlatformStatsService:
             "people": {
                 "total": await self._users.count_accounts(),
                 "new": sum(created.values()),
+                # 上一窗口新增的账号数 —— 「{d} 日新增」那张卡的环比从这里出。
+                "prev_new": await self._users.count_accounts_between(
+                    since=prev_since, until=since
+                ),
                 "admins": len(admins),
                 # 真人 / agent 的拆分。判据是 `agent_bindings`，和
                 # `IdentityService.is_agent` 同一份 —— 见 `count_accounts_by_kind`。

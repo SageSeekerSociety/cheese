@@ -62,9 +62,14 @@ actually ran, so a documentation-only selection is not evidence for a full
 backend or E2E selection. The workflow records observations only; it does not
 activate a gate.
 
-The scheduled collector includes Required CI and Remote execution acceptance,
-keeping pull-request, merge-group, push, and manual events separate. Browser E2E
-and both remote-execution jobs publish a small `evidence.json` receipt identifying
+The scheduled collector includes Required CI, Remote execution acceptance, and
+standalone E2E, keeping pull-request, merge-group, push, and manual events separate.
+Push and manual cohorts also include the actual head branch in their key, such
+as `remote-execution.yml:push:main`. Experimental or unknown branches cannot
+contribute to main's acceptance streak. The 20-run requirement applies to
+consecutive main push runs; PR, merge-group, and manual runs do not satisfy it.
+
+Browser E2E and both remote-execution jobs publish a small `evidence.json` receipt identifying
 the run, attempt, revision, and suite. The collector validates that identity and
 requires every instrumented suite's receipt before counting a clean run. A test
 retry, resumed test execution, skipped case, or workflow rerun cannot count as clean.

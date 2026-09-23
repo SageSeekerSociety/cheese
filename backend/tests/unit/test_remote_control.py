@@ -597,3 +597,38 @@ async def test_worker_stream_closes_cleanly_when_epoch_changes_while_reading(
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
     assert (await service.command(session["id"], "stop"))["status"] == "queued"
+
+
+async def test_thinking_progress_does_not_crowd_messages_out_of_the_journal(rc):
+    service, create = rc
+    session = await create()
+    message = {"type": "assistant", "uuid": "answer", "message": {"content": []}}
+    await service.receive(session["id"], [{"payload": message}], epoch=0)
+    for batch in range(5):
+        progress = [
+            {
+                "payload": {
+                    "type": "system",
+                    "subtype": "thinking_tokens",
+                    "uuid": f"thinking-{batch}-{i}",
+                    "tokens": i,
+                }
+            }
+            for i in range(1000)
+        ]
+        await service.receive(session["id"], progress, epoch=0)
+    journal = await service.journal(session["id"], "0-0")
+    assert [event["payload"] for event in journal] == [message]
+
+
+async def test_a_retried_event_is_journalled_once_and_forgotten_within_an_hour(rc):
+    service, create = rc
+    session = await create()
+    message = {"type": "assistant", "uuid": "retried", "message": {"content": []}}
+    await service.receive(session["id"], [{"payload": message}], epoch=0)
+    await service.receive(session["id"], [{"payload": message}], epoch=0)
+    assert len(await service.journal(session["id"], "0-0")) == 1
+    markers = [k async for k in service.redis.scan_iter(key(session["id"], "seen:*"))]
+    assert markers
+    for marker in markers:
+        assert 0 < await service.redis.ttl(marker) <= 3600

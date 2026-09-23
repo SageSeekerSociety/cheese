@@ -12,14 +12,17 @@ import {
   setGatewayProjectBudget,
   updateGatewayModel,
 } from '@/api'
+import AdminAuditDiff from '@/components/admin/AdminAuditDiff.vue'
 import AdminBudgetDialog from '@/components/admin/AdminBudgetDialog.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminModelDetailDrawer from '@/components/admin/AdminModelDetailDrawer.vue'
 import AdminModelFormDialog, { type ModelFormPayload } from '@/components/admin/AdminModelFormDialog.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
+import AdminSparkline from '@/components/admin/AdminSparkline.vue'
+import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
 import { relTime } from '@/lib/relTime'
-import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
+import { fmtCost, fmtNum, fmtPercent, fmtSI } from '@/lib/usageFormat'
 
 // 管理后台的「模型管理」（`/admin/models`）。它管的是**网关那一侧的模型台账**，不是
 // 平台自己声明的东西 —— 页面上的每一行都来自 `GET /model/info`，每一处改动都落回网关。
@@ -50,6 +53,14 @@ interface Usage {
   total_tokens: number
 }
 
+/** 模型项上的订阅 overlay（§3.7）：第三种来源徽章「订阅」的数据。 */
+interface SubscriptionOverlay {
+  id: string
+  status: string
+  account_email: string | null
+  quota: { tiers: { name: string; utilization: number; resets_at: string | null }[]; fetched_at: string | null } | null
+}
+
 /** §3.1 的模型项。 */
 interface ModelRow {
   name: string
@@ -65,6 +76,9 @@ interface ModelRow {
   prices: Record<string, number | null | undefined>
   capabilities: Record<string, boolean | undefined>
   usage: Usage
+  /** 行内 sparkline 的逐日 token（与详情折线同源同账）。 */
+  series?: number[]
+  subscription?: SubscriptionOverlay | null
 }
 
 interface GatewayState {
@@ -107,6 +121,9 @@ interface AuditItem {
   target: string
   result: string
   detail: string | null
+  /** 改动前后的字段快照（写入时已脱敏）。「查看改动」按钮与 diff 展开的数据。 */
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
 }
 
 const { t } = useI18n()
@@ -143,6 +160,19 @@ const formError = ref<string | null>(null)
 const drawerOpen = ref(false)
 const drawerName = ref<string | null>(null)
 
+/** 「导入订阅」对话框（页级实例；抽屉里的「重新授权」用的是抽屉自己的定向实例）。 */
+const importOpen = ref(false)
+
+/** 审计区展开「查看改动」的行（按下标记）。diff 在子组件 `AdminAuditDiff` 里画。 */
+const auditExpanded = ref<Set<number>>(new Set())
+
+function toggleAuditDiff(index: number) {
+  const next = new Set(auditExpanded.value)
+  if (next.has(index)) next.delete(index)
+  else next.add(index)
+  auditExpanded.value = next
+}
+
 const budgetOpen = ref(false)
 const budgetProject = ref<ProjectRow | null>(null)
 const budgetSaving = ref(false)
@@ -164,6 +194,60 @@ const gateway = computed(() => models.value?.gateway ?? null)
 const gatewayDown = computed(
   () => gateway.value !== null && (!gateway.value.reachable || !gateway.value.admin_configured)
 )
+
+/** 页头的 readiness 健康灯：常在的一眼状态（`gatewayDown` 那条警告负责解释，
+ *  灯负责让人不看警告也知道网关活没活）。初始未加载不画 —— 「还没读到」不是
+ *  一种健康状态。 */
+const health = computed<{ ok: boolean; text: string; title: string } | null>(() => {
+  const g = gateway.value
+  if (!g) return null
+  if (g.reachable && g.admin_configured && g.readiness) {
+    const fetched = relTime(g.fetched_at)
+    return {
+      ok: true,
+      text: fetched ? `${g.readiness} · ${fetched}` : g.readiness,
+      title: g.detail ?? g.readiness,
+    }
+  }
+  const detail =
+    g.detail ?? (g.admin_configured ? t('models.page.gateway.unreachable') : t('models.page.gateway.unconfigured'))
+  return { ok: false, text: detail, title: detail }
+})
+
+/** 来源徽章的三态：配置文件 / 运行时新增 / **订阅**（有订阅 overlay 时盖过
+ *  runtime —— origin 仍由网关报，订阅身份是平台库 overlay 给的）。 */
+function originKey(row: ModelRow): string {
+  if (row.subscription) return 'models.table.origin.subscription'
+  return row.origin === 'config' ? 'models.table.origin.config' : 'models.table.origin.runtime'
+}
+
+/** 订阅状态 → 词条（列表状态列第二行与徽章状态点共用这一份语义）。 */
+const SUBSCRIPTION_STATUS_KEY: Record<string, string> = {
+  active: 'models.table.subscriptionOk',
+  refresh_failed: 'models.table.subscriptionRefreshFailed',
+  reauth_required: 'models.table.subscriptionReauth',
+}
+
+function subscriptionStatusText(status: string): string {
+  return SUBSCRIPTION_STATUS_KEY[status] ? t(SUBSCRIPTION_STATUS_KEY[status]) : status
+}
+
+/** 订阅状态 → 状态点色调：active 绿 / refresh_failed 琥珀 / reauth_required 红。 */
+function subscriptionDotClass(status: string): string {
+  if (status === 'active') return 'amd__dot--ok'
+  if (status === 'refresh_failed') return 'amd__dot--warn'
+  return 'amd__dot--danger'
+}
+
+/** 状态列的失败率：0 请求画 `—`（「没用到」和「没失败」是两句话）；>5% 红、
+ *  >0 琥珀、否则灰 —— 失败率是一个**例外状态**，正常时它不该抢眼。 */
+function failRate(row: ModelRow): { text: string; title: string; tone: string } {
+  const { requests, failed_requests: failed } = row.usage
+  if (!requests) return { text: '—', title: '', tone: 'amd__rate--muted' }
+  const rate = fmtPercent(failed / requests)
+  const tone = failed / requests > 0.05 ? 'amd__rate--danger' : failed > 0 ? 'amd__rate--warn' : 'amd__rate--muted'
+  return { text: rate, title: t('models.table.failRate', { rate }), tone }
+}
 
 const totals = computed<Usage | null>(() => models.value?.totals ?? null)
 
@@ -203,17 +287,6 @@ const projectTotalsText = computed(() => {
   })
 })
 
-/** 模型表那一行「能力」列里出现哪些词。空数组时这一格画 `—`。
- *  写成 `{ key, label }` 而不是一个拼好的串：两样都是正经元素，拼起来读屏会念成一团。 */
-function capsOf(row: ModelRow): { key: string; label: string }[] {
-  const c = row.capabilities ?? {}
-  const out: { key: string; label: string }[] = []
-  if (c.reasoning) out.push({ key: 'reasoning', label: t('models.capability.reasoning') })
-  if (c.vision) out.push({ key: 'vision', label: t('models.capability.vision') })
-  if (c.adaptive_thinking) out.push({ key: 'adaptive', label: t('models.capability.adaptiveThinking') })
-  return out
-}
-
 /** 模型的显示名。`label` 缺失时退回 `name`（网关里的人给名字时才带 label）。 */
 function displayName(row: ModelRow): string {
   return row.label || row.name
@@ -227,6 +300,11 @@ const AUDIT_ACTION_KEY: Record<string, string> = {
   'model.delete': 'models.audit.action.delete',
   'model.blocked': 'models.audit.action.blocked',
   'project.budget': 'models.audit.action.budget',
+  'subscription.start': 'models.audit.action.subscriptionStart',
+  'subscription.complete': 'models.audit.action.subscriptionComplete',
+  'subscription.cancel': 'models.audit.action.subscriptionCancel',
+  'subscription.refresh': 'models.audit.action.subscriptionRefresh',
+  'subscription.revoke': 'models.audit.action.subscriptionRevoke',
 }
 
 function auditActionLabel(action: string): string {
@@ -418,6 +496,19 @@ onMounted(load)
         </p>
       </div>
       <div class="amd__headtools">
+        <!-- readiness 健康灯：常在的一眼状态，点与文字，完整 detail 挂 title。
+             触屏没有 hover —— detail 同时由 gatewayDown 警告条在页面上给出，
+             灯坏了的人不至于只能盯着一个小点猜。 -->
+        <span
+          v-if="health"
+          class="amd__health"
+          role="status"
+          :aria-label="t('models.health.label')"
+          :title="health.title"
+        >
+          <span class="amd__healthdot" :class="health.ok ? 'amd__dot--ok' : 'amd__dot--danger'" aria-hidden="true" />
+          <span class="amd__healthtext t-meta-read">{{ health.text }}</span>
+        </span>
         <!-- 窗口是三段共用的，所以它摆在页头（页面级），不塞进某一段的工具条里。 -->
         <v-btn-toggle
           :model-value="days"
@@ -490,6 +581,16 @@ onMounted(load)
         <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
         <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
         <div class="amd__spacer" />
+        <!-- 导入订阅是次操作（outlined）：页面上唯一的琥珀仍是「新增模型」。 -->
+        <v-btn
+          variant="outlined"
+          size="small"
+          prepend-icon="mdi-link-variant"
+          :disabled="gatewayDown"
+          @click="importOpen = true"
+        >
+          {{ t('models.subscription.import') }}
+        </v-btn>
         <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
           {{ t('models.page.add') }}
         </v-btn>
@@ -498,7 +599,7 @@ onMounted(load)
       <div class="amd__gridwrap">
         <AdminGrid
           :label="t('models.table.label')"
-          :cols="['280px', '104px', '168px', '150px', '170px', '96px', '150px']"
+          :cols="[null, '96px', '150px', '210px', '180px', '110px', '140px']"
           :bone-widths="['64%', '54%', '70%', '58%', '62%', '50%', '46%']"
           :loading="loading && !models"
           :skeleton-rows="6"
@@ -509,9 +610,9 @@ onMounted(load)
               <th scope="col">{{ t('models.table.column.name') }}</th>
               <th scope="col">{{ t('models.table.column.origin') }}</th>
               <th scope="col">{{ t('models.table.column.price') }}</th>
-              <th scope="col">{{ t('models.table.column.capabilities') }}</th>
               <th scope="col">{{ t('models.table.column.usage') }}</th>
               <th scope="col">{{ t('models.table.column.offered') }}</th>
+              <th scope="col">{{ t('models.table.column.status') }}</th>
               <th scope="col" class="amd__num">{{ t('models.table.column.actions') }}</th>
             </tr>
           </template>
@@ -526,37 +627,75 @@ onMounted(load)
               </button>
             </td>
             <td class="amd__cell">
+              <!-- 订阅徽章带状态点（active 绿 / 刷新失败琥珀 / 需重授权红）：它是第三种
+                   来源，也是一个活的凭据 —— 一眼要同时看出「从哪来」和「还活不活」。 -->
               <span class="amd__tag">
-                {{ row.origin === 'config' ? t('models.table.origin.config') : t('models.table.origin.runtime') }}
+                <span
+                  v-if="row.subscription"
+                  class="amd__dot amd__dot--inline"
+                  :class="subscriptionDotClass(row.subscription.status)"
+                  aria-hidden="true"
+                />
+                {{ t(originKey(row)) }}
               </span>
             </td>
             <td class="amd__cell">
               <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
-            </td>
-            <td class="amd__cell">
-              <span v-if="capsOf(row).length" class="amd__caps">
-                <span v-for="c in capsOf(row)" :key="c.key" class="amd__tag">{{ c.label }}</span>
-              </span>
-              <span v-else class="amd__dim">—</span>
+              <span v-if="row.subscription" class="amd__estimate t-meta-read">{{
+                t('models.table.estimateNote')
+              }}</span>
             </td>
             <td class="amd__cell">
               <span class="amd__usage">
-                <span class="t-num amd__usageMain">{{ fmtCost(row.usage.spend_usd) }}</span>
-                <span class="t-meta-read amd__dim">{{ fmtNum(row.usage.requests) }} {{ t('models.table.calls') }}</span>
-                <!-- 缩写是给人一眼看的，精确值挂在 title 上 —— 这是 fmtSI 那一条约定。 -->
-                <span class="t-meta-read amd__dim" :title="fmtNum(row.usage.total_tokens)"
-                  >{{ fmtSI(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+                <span class="amd__usageRow">
+                  <span class="t-num amd__usageMain">{{ fmtCost(row.usage.spend_usd) }}</span>
+                  <span class="t-meta-read amd__dim"
+                    >{{ fmtNum(row.usage.requests) }} {{ t('models.table.calls') }}</span
+                  >
+                </span>
+                <span class="amd__usageRow">
+                  <!-- 缩写是给人一眼看的，精确值挂在 title 上 —— 这是 fmtSI 那一条约定。 -->
+                  <span class="t-meta-read amd__dim" :title="fmtNum(row.usage.total_tokens)"
+                    >{{ fmtSI(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+                  >
+                  <!-- 行内 sparkline：只承担「趋势长什么样」的一眼形状（aria-hidden）。
+                       逐日精确值的可访问形式是详情抽屉那张数据表（§2.7），不是给 17
+                       行各塞一个 <details> —— 同一列里就有精确总数的 title。 -->
+                  <span class="amd__spark" :title="t('models.table.sparklineHint')">
+                    <AdminSparkline :values="row.series ?? []" :height="20" />
+                  </span>
+                </span>
+              </span>
+            </td>
+            <td class="amd__cell">
+              <span class="amd__usage">
+                <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
+                <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
+                <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
+                <span
+                  v-if="!row.offered && row.blocked_reason"
+                  class="t-meta-read amd__dim amd__reason"
+                  :title="row.blocked_reason"
+                  >{{ row.blocked_reason }}</span
                 >
               </span>
             </td>
             <td class="amd__cell">
-              <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
-              <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
-              <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
+              <span class="amd__usage">
+                <span class="t-num" :class="failRate(row).tone" :title="failRate(row).title">{{
+                  failRate(row).text
+                }}</span>
+                <span v-if="row.subscription" class="t-meta-read amd__dim">{{
+                  subscriptionStatusText(row.subscription.status)
+                }}</span>
+              </span>
             </td>
             <td class="amd__cell amd__cell--actions">
-              <!-- config 模型只读：不给按钮，给一句说明。画一个点了会报错的按钮，比说清楚更难懂。 -->
-              <span v-if="row.origin === 'config'" class="amd__dim">{{ t('models.table.readOnly') }}</span>
+              <!-- config 模型只读：不给按钮，给一个**能点开改法**的入口（抽屉里有 config
+                   复制卡）。一句死「只读」是信息的终点，「查看改法」是起点。 -->
+              <button v-if="row.origin === 'config'" type="button" class="amd__textbtn" @click="openDetail(row)">
+                {{ t('models.table.howToEdit') }}
+              </button>
               <template v-else>
                 <v-btn
                   icon="mdi-pencil-outline"
@@ -691,22 +830,44 @@ onMounted(load)
         <p v-else-if="!audit.length" class="amd__auditEmpty t-meta-read">{{ t('models.audit.empty') }}</p>
         <ol v-else class="amd__auditRows">
           <li v-for="(item, i) in audit" :key="i" class="amd__auditRow">
-            <span class="amd__auditTime t-meta-read t-num">{{ relTime(item.created_at) }}</span>
-            <span class="amd__auditWho t-body">{{ item.actor_handle }}</span>
-            <span class="amd__auditWhat t-body">
-              {{ auditActionLabel(item.action) }}
-              <span class="amd__auditTarget t-num">{{ item.target }}</span>
-            </span>
-            <span class="t-meta-read" :class="item.result === 'ok' ? 'amd__ok' : 'amd__fail'">
-              {{ item.result === 'ok' ? t('models.audit.result.ok') : t('models.audit.result.failed') }}
-            </span>
-            <span v-if="item.detail" class="amd__auditDetail t-meta-read" :title="item.detail">{{ item.detail }}</span>
+            <div class="amd__auditLine">
+              <span class="amd__auditTime t-meta-read t-num">{{ relTime(item.created_at) }}</span>
+              <span class="amd__auditWho t-body">{{ item.actor_handle }}</span>
+              <span class="amd__auditWhat t-body">
+                {{ auditActionLabel(item.action) }}
+                <span class="amd__auditTarget t-num">{{ item.target }}</span>
+              </span>
+              <span class="t-meta-read" :class="item.result === 'ok' ? 'amd__ok' : 'amd__fail'">
+                {{ item.result === 'ok' ? t('models.audit.result.ok') : t('models.audit.result.failed') }}
+              </span>
+              <span v-if="item.detail" class="amd__auditDetail t-meta-read" :title="item.detail">{{
+                item.detail
+              }}</span>
+              <!-- 「查看改动」只在有快照可 diff 时出现：before/after 都为空的那几项
+                   操作没有字段变化可看，按钮摆在那儿只会点出一句「没有变化」。 -->
+              <button
+                v-if="item.before || item.after"
+                type="button"
+                class="amd__textbtn amd__auditDiffBtn"
+                :aria-expanded="auditExpanded.has(i)"
+                @click="toggleAuditDiff(i)"
+              >
+                {{ auditExpanded.has(i) ? t('models.audit.diff.hide') : t('models.audit.diff.show') }}
+              </button>
+            </div>
+            <AdminAuditDiff
+              v-if="auditExpanded.has(i) && (item.before || item.after)"
+              :before="item.before"
+              :after="item.after"
+            />
           </li>
         </ol>
       </div>
     </section>
 
-    <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" />
+    <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" @changed="load" />
+
+    <AdminSubscriptionImportDialog v-model="importOpen" @imported="load" />
 
     <AdminModelFormDialog
       v-model="formOpen"
@@ -807,7 +968,6 @@ onMounted(load)
 .amd__sub {
   margin: 2px 0 0;
   overflow: hidden;
-  max-width: 720px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -884,7 +1044,7 @@ onMounted(load)
 }
 
 .amd__count {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 /* 额度段那句四参数摘要在窄屏比一行还长：`min-width: 0` 让它在 flex 行里**能缩**、
@@ -965,7 +1125,7 @@ onMounted(load)
 .amd__nameSlug,
 .amd__nameStatic {
   overflow: hidden;
-  color: var(--faint);
+  color: var(--muted);
   text-overflow: ellipsis;
 }
 
@@ -1028,7 +1188,7 @@ onMounted(load)
 .amd__auditEmpty {
   margin: 0;
   padding: 20px 16px;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .amd__auditRows {
@@ -1038,10 +1198,6 @@ onMounted(load)
 }
 
 .amd__auditRow {
-  display: grid;
-  grid-template-columns: 88px 140px minmax(0, 1fr) 56px minmax(0, 1.2fr);
-  gap: 12px;
-  align-items: baseline;
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -1050,8 +1206,15 @@ onMounted(load)
   border-bottom: 0;
 }
 
+.amd__auditLine {
+  display: grid;
+  grid-template-columns: 88px 140px minmax(0, 1fr) 56px minmax(0, 1.2fr) auto;
+  gap: 12px;
+  align-items: baseline;
+}
+
 .amd__auditTime {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .amd__auditWho {
@@ -1077,6 +1240,112 @@ onMounted(load)
   white-space: nowrap;
 }
 
+.amd__auditDiffBtn {
+  justify-self: end;
+}
+
+/* 文本按钮（config 行的「查看改法」、审计行的「查看改动」）：看起来像一格文字，
+   行为是一个按钮 —— hover 只变色不移位。 */
+.amd__textbtn {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--accent-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .amd__textbtn:hover {
+    color: var(--accent-press);
+  }
+}
+
+/* 页头健康灯：8px 圆点 + 一句状态。它是「常在」的那一眼，细节在 title 与
+   gatewayDown 警告条上。 */
+.amd__health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.amd__healthdot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.amd__healthtext {
+  overflow: hidden;
+  max-width: 260px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态点（来源徽章里的订阅状态）：与徽章文字同一行。 */
+.amd__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.amd__dot--inline {
+  margin-right: 4px;
+}
+
+.amd__dot--ok {
+  background: var(--ok);
+}
+
+.amd__dot--warn {
+  background: var(--warn);
+}
+
+.amd__dot--danger {
+  background: var(--danger);
+}
+
+.amd__estimate {
+  color: var(--muted);
+}
+
+.amd__reason {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.amd__usageRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 行内 sparkline 的槽位：固定 64×20，多出来的横向空间让给数字。 */
+.amd__spark {
+  flex: 0 0 auto;
+  width: 64px;
+}
+
+.amd__rate--muted {
+  color: var(--muted);
+}
+
+.amd__rate--warn {
+  color: var(--warn-ink);
+}
+
+.amd__rate--danger {
+  color: var(--danger-ink);
+}
+
 .amd__ok {
   color: var(--ok-ink);
 }
@@ -1088,8 +1357,8 @@ onMounted(load)
 /* 窄屏：审计行收成三列，把「改的是什么」那一格让给正文。操作人和时间都还在
    （它们是这一行「谁改了什么」的一半），只让说明那一格换行到下面。 */
 @media (max-width: 900px) {
-  .amd__auditRow {
-    grid-template-columns: 64px 92px minmax(0, 1fr) 48px;
+  .amd__auditLine {
+    grid-template-columns: 64px 92px minmax(0, 1fr) 48px auto;
     gap: 8px;
   }
 

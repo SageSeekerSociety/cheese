@@ -175,7 +175,10 @@ class RoomExecutor:
                 return super().do_GET()
 
             def do_POST(self):
-                if self.path == f"/projects/{executor.project}/git/tasks/{executor.task}":
+                if (
+                    self.path
+                    == f"/projects/{executor.project}/git/tasks/{executor.task}"
+                ):
                     self.rfile.read(int(self.headers.get("Content-Length", "0")))
                     return self.do_GET()
                 if self.path != "/execution":
@@ -190,16 +193,20 @@ class RoomExecutor:
                         payload["method"],
                         payload.get("params", {}),
                         hub=executor,
+                        timeout=payload.get("timeout", 660),
                     )
                 )
                 return self.reply(result)
 
         return Handler
 
-    async def call_executor(self, device, state, method, params, *, trace_id=None):
+    async def call_executor(
+        self, device, state, method, params, *, trace_id=None, timeout=660
+    ):
         assert device == "executor"
         assert Path(state) == self.state
-        return await asyncio.to_thread(runtime.request, self.state, method, params)
+        async with asyncio.timeout(timeout):
+            return await asyncio.to_thread(runtime.request, self.state, method, params)
 
     def close(self):
         subprocess.run(

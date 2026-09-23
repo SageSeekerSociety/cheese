@@ -145,3 +145,30 @@ def test_expired_or_garbage_token_names_nobody():
     )
     assert sa.token_agent_handle(expired) is None
     assert sa.token_agent_handle("not-a-token") is None
+
+
+def test_session_capability_cannot_be_downgraded_to_legacy_owner():
+    import base64
+    import json
+
+    import pytest
+
+    from app.core.sandbox_auth import (
+        bind_resource_token,
+        mint_scoped_token,
+        scoped_token_claims,
+        verify_scoped_token,
+    )
+
+    legacy = mint_scoped_token(project_id="project", topic_id="room")
+    token = bind_resource_token(legacy, "room", session_id="session")
+    assert token.startswith("cxss_")
+    assert verify_scoped_token(token, project_id="project", topic_id="room")
+    assert scoped_token_claims(token)["session"] == "session"
+    # The old reader decodes the complete signed body as base64 JSON. It
+    # cannot interpret the versioned envelope, even on its legacy HTTP path.
+    body, _ = token.split(".", 1)
+    with pytest.raises((ValueError, UnicodeDecodeError)):
+        json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    assert scoped_token_claims(token.removeprefix("cxss_")) is None
+    assert verify_scoped_token(legacy, topic_id="room")

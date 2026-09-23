@@ -37,6 +37,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_archive_retires_storage import _seed_device
 from tests.support import wire
 
 AGENT = "agent"
@@ -104,7 +105,7 @@ async def test_execution_survives_an_unrelated_room_column_rename(
 
 
 @pytest.fixture
-def room(client):
+async def room(client):
     project = client.post(
         "/projects", json={"name": "Central", "owner_handle": "alice"}
     ).json()["data"]
@@ -112,7 +113,11 @@ def room(client):
         "/topics",
         json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
     ).json()["data"]
-    return uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    project_id = uuid.UUID(project["id"])
+    async with client.test_factory() as db:
+        await _seed_device(db, "executor", project_id=project_id)
+        await db.commit()
+    return project_id, uuid.UUID(topic["id"])
 
 
 def channel(client, monkeypatch):

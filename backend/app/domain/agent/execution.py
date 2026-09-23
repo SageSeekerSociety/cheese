@@ -34,7 +34,13 @@ def executor_state(target: dict) -> str:
 
 
 async def call(
-    target: dict, method: str, params: dict, *, hub=None, trace_id=None
+    target: dict,
+    method: str,
+    params: dict,
+    *,
+    hub=None,
+    trace_id=None,
+    timeout: float = 660,
 ) -> dict:
     hub = hub or device_hub
     return await hub.call_executor(
@@ -43,4 +49,5 @@ async def call(
         method,
         params,
         trace_id=trace_id,
+        timeout=timeout,
     )
