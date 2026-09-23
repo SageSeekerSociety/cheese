@@ -409,15 +409,41 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 #: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
 #: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
 #: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
-_PLATFORM_PREFIXES = ("mcp__cheese__", "cheese_")
-_PLATFORM_ALIASES = frozenset({"chat_send"})
+#: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
+#: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
+#: `servers = {"native": ...}`），所以真实名字长这样：
+#: `mcp__native__cheese_feedback_propose`；
+#: `mcp__cheese__` 是这套东西还叫 cheese 时的拼法，仍然认（历史行还躺在库里）。
+#: 只认后者会让整件事**静默失效**：前缀认不出来 → 这一格既不算平台动作、中文标签也
+#: 查不到，于是时间线上原样渲染 `mcp__native__…` 配一个中性点，而它看着完全正常。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
+#: ……但 `mcp__native__` 底下**不都是平台动作**：`invoke` 是这个 harness 搬运读写与
+#: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
+#: 色的点 —— 而那只是读了一个文件。
+_NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
+#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+
+#: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
+#: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
+_MCP_PREFIX = re.compile(r"^mcp__[a-z0-9_]+__")
+
+
+def _short_tool_name(raw_name: str) -> str:
+    """把 MCP 工具名归一成模型看到的那个（`mcp__native__chat_send` → `chat_send`）。"""
+    return _MCP_PREFIX.sub("", raw_name)
 
 
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese tool under any of
     the names a harness publishes it as, or a shell command that invokes the
     machine's `cheese` CLI."""
-    if raw_name.startswith(_PLATFORM_PREFIXES) or raw_name in _PLATFORM_ALIASES:
+    if raw_name in _NOT_A_PLATFORM_TOOL:
+        return False
+    if raw_name.startswith(_PLATFORM_PREFIXES):
+        return True
+    if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))
@@ -2517,7 +2543,7 @@ class ChatService:
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
-            name = event.name.replace("mcp__cheese__", "")
+            name = _short_tool_name(event.name)
             args = event.input or {}
             if state is not None and name in _TASK_TOOLS:
                 # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
@@ -4080,7 +4106,7 @@ class ChatService:
                         continue
                     if not isinstance(event, AgentToolUse):
                         continue  # SessionStart has no historical counterpart
-                    name = event.name.replace("mcp__cheese__", "")
+                    name = _short_tool_name(event.name)
                     if name in _TASK_TOOLS:
                         continue  # task todos are process state, not persisted 现场
                     args = event.input or {}
