@@ -8,10 +8,12 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AdminFeedbackTable from '@/components/admin/AdminFeedbackTable.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
+import AdminQueueFoot from '@/components/admin/AdminQueueFoot.vue'
 import AdminQueueList from '@/components/admin/AdminQueueList.vue'
 import UndoStrip from '@/components/admin/UndoStrip.vue'
 import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetailDrawer.vue'
 import { statusMeta } from '@/lib/feedbackMeta'
+import { relativeDays } from '@/lib/feedbackWindows'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的反馈队列（`/admin/queue`，§4.1）。**这一页是这一轮的主屏** —— 管理侧的
@@ -31,8 +33,12 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 的排序/筛选状态互相覆盖，不做的原因写在规格里 —— 多一份列表就多一次
 // `/admin/feedback` 请求。
 //
-// 已知偏差两条，都写在出现的地方：状态页签是**在手上这一页里筛**（服务端没有按状态查
-// 的参数），三个日期窗口没有可见的筛选指示（看板点进来时带着它，这一层不画 chip）。
+// 工具行上两组控件说的是两件事，位置分组和文案都在重复这一点：栏位 / 搜索 / 日期窗口
+// chip 是**服务端的问法**（换了重拉），状态页签是**在手上这一页里筛**（服务端没有按
+// 状态查的参数）—— 页签右侧那句「只筛这一页」把这个口径写在面上，完整句进 `title`。
+// 三个日期窗口各有可见的一颗 chip（`windowChips`）：看板 KPI 深链带着 `?since=7d`
+// 进来时它是唯一的筛选指示；值在 store 里存原文、发请求时才折成日期
+// （`lib/feedbackWindows.ts` —— 后端的参数是 datetime，'7d' 原样发出去是 422）。
 defineOptions({ name: 'AdminQueuePage' })
 
 const store = useFeedbackStore()
@@ -429,6 +435,8 @@ function clearFilters() {
   if (store.adminSince) store.setAdminSince(null)
   if (store.adminResolvedSince) store.setAdminResolvedSince(null)
   if (store.adminDeployedSince) store.setAdminDeployedSince(null)
+  // 按钮写着「清除筛选」，地址里留着三键的话 F5 会把人送回筛空态。
+  dropQueryKeys(['since', 'resolved_since', 'deployed_since'])
 }
 
 function runAction() {
@@ -607,6 +615,70 @@ function selectLane(lane: AdminTab) {
   void router.replace({ query })
 }
 
+/* ---- 日期窗口 chips ---- */
+
+/** 地址里那三个窗口键。和 store 的三个字段一一对应，但存的是**键名**：chip 上画的、
+ *  地址里摘的都是它。 */
+type WindowKey = 'since' | 'resolved_since' | 'deployed_since'
+
+/** chip 上窗口值的画法：相对窗口（'7d'）画成「近 7 天」，绝对日期原样。store 里存的
+ *  就是深链原文（见 `lib/feedbackWindows.ts`），所以这里只看形状、不用管它从哪来。 */
+function windowValueLabel(raw: string): string {
+  const days = relativeDays(raw)
+  return days === null ? raw : t('feedback.queue.window.days', { n: days })
+}
+
+/** 每个生效的窗口一颗 chip。**键名逐字写全**（同 `LANE_LABEL` 那条理由：i18n 闸门按
+ *  源码字面量认键，拼出来的键它看不见）。 */
+const windowChips = computed(() => {
+  const chips: { key: WindowKey; text: string; clearAria: string }[] = []
+  if (store.adminSince)
+    chips.push({
+      key: 'since',
+      text: t('feedback.queue.window.since', { v: windowValueLabel(store.adminSince) }),
+      clearAria: '',
+    })
+  if (store.adminResolvedSince)
+    chips.push({
+      key: 'resolved_since',
+      text: t('feedback.queue.window.resolved', { v: windowValueLabel(store.adminResolvedSince) }),
+      clearAria: '',
+    })
+  if (store.adminDeployedSince)
+    chips.push({
+      key: 'deployed_since',
+      text: t('feedback.queue.window.deployed', { v: windowValueLabel(store.adminDeployedSince) }),
+      clearAria: '',
+    })
+  for (const c of chips) c.clearAria = `${t('feedback.queue.window.clear')}：${c.text}`
+  return chips
+})
+
+/** 把几个键从地址里摘掉。没有那几键时不发 `replace` —— 清筛选不该在历史里留一条
+ *  什么都没改的地址。 */
+function dropQueryKeys(keys: string[]) {
+  const query = { ...route.query }
+  let changed = false
+  for (const k of keys) {
+    if (k in query) {
+      delete query[k]
+      changed = true
+    }
+  }
+  if (changed) void router.replace({ query })
+}
+
+/** 清一个窗口 = 改 store（setter 自己重拉）+ 把地址里的那一键摘掉 —— 和 `selectLane`
+ *  写回 tab 是同一条规矩：一份事实一个来源，F5 不该复活人刚亲手清掉的筛选。 */
+function clearWindow(key: WindowKey) {
+  if (key === 'since') store.setAdminSince(null)
+  else if (key === 'resolved_since') store.setAdminResolvedSince(null)
+  else store.setAdminDeployedSince(null)
+  dropQueryKeys([key])
+  // chip 没了焦点不能落空：送到旁边的搜索框（鼠标点的不出焦点环，:focus-visible 管这件事）。
+  void nextTick(() => searchEl.value?.focus())
+}
+
 /* ---- 生命周期 ---- */
 
 watch(draft, (value) => {
@@ -764,6 +836,28 @@ onBeforeUnmount(() => {
             />
           </div>
 
+          <!-- 日期窗口 chips（看板 KPI 深链带进来的那几段）。放在搜索框后、状态页签
+               前：窗口是**服务端的问法**，和栏位 / 搜索归一组；状态页签是客户端筛。
+               四态下照画 —— 它们是控件不是数据，错误态带着窗口重试是正当需求。 -->
+          <div
+            v-if="windowChips.length"
+            class="qpage__windows"
+            role="group"
+            :aria-label="t('feedback.queue.window.label')"
+          >
+            <span v-for="chip in windowChips" :key="chip.key" class="qpage__wchip">
+              {{ chip.text }}
+              <button
+                type="button"
+                class="qpage__wchip-x"
+                :aria-label="chip.clearAria"
+                @click="clearWindow(chip.key)"
+              >
+                <v-icon icon="mdi-close" size="12" aria-hidden="true" />
+              </button>
+            </span>
+          </div>
+
           <div class="qpage__tabs" role="radiogroup" :aria-label="t('feedback.queue.label')">
             <button
               v-for="tab in tabs"
@@ -778,6 +872,13 @@ onBeforeUnmount(() => {
               {{ tab === 'all' ? t('feedback.queue.tab.all') : statusMeta(tab).label }}
             </button>
           </div>
+
+          <!-- 状态页签的口径注：只在筛选真的生效时出现。面上留「只筛这一页」五个字
+               （口径是正确性问题，不能整句藏进 title），完整句进 title。不进
+               radiogroup —— 它不是选项，不污染组的语义。 -->
+          <span v-if="statusTab !== 'all'" class="qpage__tabs-note" :title="t('feedback.queue.tab.scopeHint')">
+            {{ t('feedback.queue.tab.scope') }}
+          </span>
         </div>
 
         <!-- 队列与总表**同时只挂一个**（§8 末：视图切换时解绑），否则同一个 `j` 会被两个
@@ -803,16 +904,15 @@ onBeforeUnmount(() => {
           </template>
 
           <template #foot>
-            <span v-if="store.adminQuery.trim()" class="qpage__scope">{{ t('feedback.queue.search.scope') }}</span>
-            <span class="qpage__foot-spacer" />
-            <span class="qpage__foot-count t-num">{{ t('feedback.queue.foot.rows', { n: visible.length }) }}</span>
-            <span v-if="!store.adminHasNext" class="qpage__foot-end">· {{ t('feedback.queue.foot.end') }}</span>
-            <button v-if="store.adminHasPrev" type="button" class="qpage__pager" @click="store.adminPrev()">
-              {{ t('feedback.queue.pager.prev') }}
-            </button>
-            <button v-if="store.adminHasNext" type="button" class="qpage__pager" @click="store.adminNext()">
-              {{ t('feedback.queue.pager.next') }}
-            </button>
+            <!-- 脚的内容两个视图共用一份（`AdminQueueFoot`），壳在各自的列表组件里。 -->
+            <AdminQueueFoot
+              :scope="!!store.adminQuery.trim()"
+              :rows="visible.length"
+              :has-prev="store.adminHasPrev"
+              :has-next="store.adminHasNext"
+              @prev="store.adminPrev()"
+              @next="store.adminNext()"
+            />
           </template>
         </AdminQueueList>
 
@@ -833,22 +933,18 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </template>
-        </AdminFeedbackTable>
 
-        <!-- 列表脚 40px。总表没有脚（`AdminFeedbackTable` 的契约里没有这条插槽），所以
-             翻页只在队列视图里有 —— 契约不在这里改，记在交付说明里。 -->
-        <div v-if="view === 'table'" class="qpage__foot">
-          <span v-if="store.adminQuery.trim()" class="qpage__scope">{{ t('feedback.queue.search.scope') }}</span>
-          <span class="qpage__foot-spacer" />
-          <span class="qpage__foot-count t-num">{{ t('feedback.queue.foot.rows', { n: visible.length }) }}</span>
-          <span v-if="!store.adminHasNext" class="qpage__foot-end">· {{ t('feedback.queue.foot.end') }}</span>
-          <button v-if="store.adminHasPrev" type="button" class="qpage__pager" @click="store.adminPrev()">
-            {{ t('feedback.queue.pager.prev') }}
-          </button>
-          <button v-if="store.adminHasNext" type="button" class="qpage__pager" @click="store.adminNext()">
-            {{ t('feedback.queue.pager.next') }}
-          </button>
-        </div>
+          <template #foot>
+            <AdminQueueFoot
+              :scope="!!store.adminQuery.trim()"
+              :rows="visible.length"
+              :has-prev="store.adminHasPrev"
+              :has-next="store.adminHasNext"
+              @prev="store.adminPrev()"
+              @next="store.adminNext()"
+            />
+          </template>
+        </AdminFeedbackTable>
       </div>
     </template>
 
@@ -880,15 +976,16 @@ onBeforeUnmount(() => {
   background: var(--canvas);
 }
 
-/* 内容列锁 1100（§4.1 的算式就是从它来的：16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 +
-   B + 20 = 1100）。居中而不是靠左：这一页的右边没有东西，靠左会让 1440 与 1920 两种
-   视口下的行宽差出 480px。 */
+/* 内容列锁 1440（--page-w-admin）：16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 +
+   B + 20 = 1440，即 F = 1156 − B（B 是 max-content 的推进按钮，56–84 → F ≈ 1072–1100）。
+   F 的下限仍是 740：可用区不足时整行在 `.qlist` 里横着滚，窄屏行为和 1100 时代一致。
+   居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。 */
 .qpage__inner {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   width: 100%;
-  max-width: var(--page-w-wide);
+  max-width: var(--page-w-admin);
   min-height: 0;
   margin: 0 auto;
 }
@@ -1115,6 +1212,62 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
+/* 日期窗口 chips。中性色不染色：窗口是筛选条件不是告警。工具行本就 `flex-wrap`，
+   三颗 chip 满编时折行不挤翻页签；chips 自己也能折（窄屏下它们跟着工具行换行，
+   一颗也不会被裁）。 */
+.qpage__windows {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qpage__wchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  background: var(--fill);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+}
+
+/* chip 上的 ×：普通 button，天然进 Tab 序；字母键在 window 级、`isTyping` 不误伤
+   （与翻页按钮现状一致）。 */
+.qpage__wchip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.qpage__wchip-x:hover {
+  background: var(--fill-2);
+  color: var(--text);
+}
+
 .qpage__tabs {
   display: flex;
   flex: 0 0 auto;
@@ -1151,6 +1304,15 @@ onBeforeUnmount(() => {
 .qpage__tab--on:hover {
   background: var(--fill-2);
   color: var(--ink);
+}
+
+/* 状态页签的口径注：12px --muted，出现在页签右侧，不推走任何已有控件。 */
+.qpage__tabs-note {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  white-space: nowrap;
 }
 
 /* 无效按键的闪底。0.2s（§7.7 的「出现 / 消失」那一档），中性色 —— 一次落空的按键
@@ -1198,71 +1360,5 @@ onBeforeUnmount(() => {
 
 .qpage__state-btn:hover {
   background: var(--fill);
-}
-
-/* 列表脚的**内容**。队列那一份落在 `AdminQueueList` 的脚里（40px 和那条分隔线由它
-   给），总表那一份没有插槽可用，所以整条脚在这里自己画一遍。 */
-.qpage__foot {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  min-height: 40px;
-  padding: 0 20px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top: 0;
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-lg);
-  border-bottom-left-radius: var(--radius-lg);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.qpage__scope {
-  flex: 0 1 auto;
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qpage__foot-spacer {
-  flex: 1 1 auto;
-}
-
-.qpage__foot-count,
-.qpage__foot-end {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.qpage__pager {
-  flex: 0 0 auto;
-  height: 24px;
-  padding: 0 12px;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 0.12s ease;
-}
-
-.qpage__pager:hover {
-  background: var(--fill);
-}
-
-.qpage__foot-count {
-  margin-left: 4px;
 }
 </style>
