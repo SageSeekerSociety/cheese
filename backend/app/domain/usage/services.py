@@ -35,6 +35,52 @@ class UsageService:
         """
         return await repo.ComputeGrantRepository(self._session).summary(project_id)
 
+    async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
+        """`project_credits` 的批量版：一批项目 → 各自的额度汇总。
+
+        编排两笔批量查询（小队归属一条、grant 一条）再在 Python 里按项目归组，
+        与逐项目的 `summary()` **同一口径**：eligible = 项目 earmark ∪ 本队池
+        （team_id 匹配且 project_id 为 NULL）；一个 grant 都没有 = unlimited。
+        排序不进汇总（`summary` 也不排序），消费顺序是 `consume` 的事。
+
+        逐字段相等性由 `tests/unit/test_credits_batch.py` 钉着：管理页的项目
+        额度表换走这条路之后，数字必须和旧路一个一个对得上。
+        """
+        from app.domain.project.services import ProjectService
+
+        grants_repo = repo.ComputeGrantRepository(self._session)
+        teams = await ProjectService(self._session).teams_for_projects(projects)
+        team_ids = sorted({t for t in teams.values() if t is not None})
+        grants = await grants_repo.list_for_scope(
+            [p.id for p in projects], team_ids
+        )
+        by_project: dict[uuid.UUID, list] = {p.id: [] for p in projects}
+        for grant in grants:
+            if grant.project_id is not None:
+                if grant.project_id in by_project:
+                    by_project[grant.project_id].append(grant)
+                continue
+            # 全队池：归属小队匹配的项目都 eligible。
+            for project in projects:
+                if (
+                    grant.project_id is None
+                    and grant.team_id is not None
+                    and teams.get(project.id) == grant.team_id
+                ):
+                    by_project[project.id].append(grant)
+        out: dict[uuid.UUID, dict] = {}
+        for project in projects:
+            eligible = by_project[project.id]
+            total = sum(g.credits_total for g in eligible)
+            used = sum(g.credits_used for g in eligible)
+            out[project.id] = {
+                "unlimited": not eligible,
+                "credits_total": total,
+                "credits_used": used,
+                "credits_remaining": total - used,
+            }
+        return out
+
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。
 
