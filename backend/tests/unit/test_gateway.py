@@ -253,6 +253,67 @@ async def test_drain_day_rollover_finalizes_yesterday_per_model():
 
 
 @pytest.mark.anyio
+async def test_drain_includes_every_day_between_checkpoint_and_today():
+    today = gw.utc_today()
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    g = _StubGateway(
+        {
+            two_days_ago: {"m": (50, 5, 0.005)},
+            yesterday: {"n": (70, 7, 0.007)},
+            today: {"m": (11, 1, 0.001)},
+        }
+    )
+    checkpoint = {
+        "date": two_days_ago,
+        "models": {"m": {"prompt": 30, "completion": 3, "spend_usd": 0.003}},
+    }
+    rows, next_checkpoint = await gw.drain_new_usage(g, "k", checkpoint)
+    assert _totals(rows) == pytest.approx((101, 10, 0.010))
+    assert {row.model for row in rows} == {"m", "n"}
+    assert next_checkpoint["date"] == today
+    assert await gw.drain_new_usage(g, "k", next_checkpoint) == ([], next_checkpoint)
+
+
+@pytest.mark.anyio
+async def test_pre_split_checkpoint_includes_intervening_day():
+    today = gw.utc_today()
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    g = _StubGateway(
+        {
+            two_days_ago: {"m": (50, 5, 0.005)},
+            yesterday: {"n": (70, 7, 0.007)},
+            today: {"m": (11, 1, 0.001)},
+        }
+    )
+    rows, next_checkpoint = await gw.drain_new_usage(
+        g,
+        "k",
+        {"date": two_days_ago, "prompt": 30, "completion": 3, "spend_usd": 0.003},
+    )
+    assert len(rows) == 1 and rows[0].model == ""
+    assert _totals(rows) == pytest.approx((101, 10, 0.010))
+    assert next_checkpoint["date"] == today
+
+
+@pytest.mark.anyio
+async def test_drain_does_not_advance_past_an_unreadable_intervening_day():
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    class MissingDay(_StubGateway):
+        async def daily_spend_by_model(self, key, date):
+            if date == yesterday:
+                return None
+            return await super().daily_spend_by_model(key, date)
+
+    gateway = MissingDay({two_days_ago: {"m": (50, 5, 0.005)}})
+    checkpoint = {"date": two_days_ago, "models": {}}
+    assert await gw.drain_new_usage(gateway, "k", checkpoint) is None
+
+
+@pytest.mark.anyio
 async def test_drain_without_checkpoint_starts_today():
     today = gw.utc_today()
     g = _StubGateway({today: {"m": (11, 4, 0.0)}})

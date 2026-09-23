@@ -11,7 +11,9 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:$port/api/v1/version"
-curl -fsS --retry 30 --retry-connrefused --retry-delay 1 \
+# A published container port can reset connections while MinIO is starting.
+# This read-only readiness request may retry; a failed startup remains bounded.
+curl -fsS --max-time 2 --retry 30 --retry-all-errors --retry-delay 1 --retry-max-time 30 \
   "http://127.0.0.1:${FORGEJO_TEST_S3_PORT:-33286}/minio/health/live"
 if [ ! -s "$token_file" ]; then
   test_password="$(openssl rand -hex 32)Aa1!"

@@ -22,9 +22,12 @@ import { relTime } from '@/lib/relTime'
  *
  * 列宽只有一份（`<colgroup>` + `table-layout: fixed`）：表头和表体各写一遍的话，两边
  * 迟早差一档，表现是表头文字和它下面那一列对不上。宽度写死的 10 列合计 916，第 2 列
- * 不写宽度 = 吃掉剩下的全部（1100 − 916 = 184）。
+ * 不写宽度 = 吃掉剩下的全部（1440 列下卡内 1438 − 916 ≈ 522）。
  *
  * 不虚拟滚动，同队列（§13 C-05）。
+ *
+ * 插槽两个：`empty`（四态内容归页面）和 `foot`（列表脚，壳是 `.aft__foot`，内容
+ * 两个视图共用 `AdminQueueFoot` 那一份 —— 和 `AdminQueueList` 同一个 house 模式）。
  */
 
 const props = defineProps<{
@@ -269,6 +272,12 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
         </tbody>
       </table>
     </div>
+
+    <!-- 列表脚。几何在这一层（分隔线 + 高度 + 12px 的缝），内容归页面：它才拿得到
+         「还有没有下一页」。和 `AdminQueueList` 的 `.qlist__foot` 同一个模式。 -->
+    <div v-if="$slots.foot" class="aft__foot">
+      <slot name="foot" />
+    </div>
   </div>
 </template>
 
@@ -296,10 +305,27 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
   overflow: auto;
 }
 
+/* 列表脚：镜像 `.qlist__foot`，外加 `gap: 12px`（「已到底」和翻页按钮不该贴着）。
+   透明底 —— `.aft` 没有 overflow（sticky 表头的前提），脚的底色自己画会把卡片底角
+   裁掉，不画就没有裁角问题。 */
+.aft__foot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
 .aft__table {
   width: 100%;
-  /* 1100 是这一页的内容列宽，减掉卡片左右各 1px 描边还剩 1098 —— 表体按 100% 走，
-     这一条只是窄屏下的下限。写成 1100 的话，1100px 的列宽下会常驻一条 2px 的横向滚动条。 */
+  /* 这一页的内容列宽 1440（`--page-w-admin`），减掉卡片左右各 1px 描边还剩 1438 ——
+     表体按 100% 走，这一条只是窄屏下的下限。写成 1440 的话，1440px 的列宽下会常驻
+     一条 2px 的横向滚动条。 */
   min-width: 1080px;
   table-layout: fixed;
   border-collapse: separate;

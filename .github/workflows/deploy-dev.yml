@@ -9,7 +9,8 @@ name: Deploy (dev/test box)
 # prod runs: pull the per-commit images, migrate, up, health-check. The frontend
 # image bundles its own nginx; the ghg edge terminates TLS and hits :80.
 
-# Triggered BY the image build finishing, not by the push. The deploy pulls
+# Triggered by either prerequisite finishing; the eligibility job checks both
+# for the candidate SHA without occupying the deployment runner. The deploy pulls
 # per-commit images, so it must not start before they exist — that used to be a
 # separate gate job polling check-runs from a GitHub-hosted runner. Once builds
 # moved onto the box's single runner (hosted minutes ran out 2026-07-26), a gate
@@ -18,20 +19,37 @@ name: Deploy (dev/test box)
 on:
   workflow_dispatch: {}
   workflow_run:
-    workflows: ["Build and Push Docker Image"]
+    workflows: ["Build and Push Docker Image", "Required CI"]
     types: [completed]
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
-# Never run two deploys at once; let an in-flight one finish.
-concurrency:
-  group: deploy-dev
-  cancel-in-progress: false
-
 jobs:
+  eligibility:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Require images and tests for the same commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
+          fi
+
   # A failed build used to leave this workflow SKIPPED, which reads exactly like
   # "nothing to do" — so main could sit ahead of the box with nothing red to
   # show it, and a merged fix looked shipped when it was not. This job turns that
@@ -46,6 +64,7 @@ jobs:
   build-did-not-produce-images:
     if: >-
       github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Build and Push Docker Image' &&
       github.event.workflow_run.conclusion != 'success'
     runs-on: [self-hosted, cheese-ci]
     # Echoes one message and exits. The bound was originally about not letting a
@@ -63,11 +82,15 @@ jobs:
           exit 1
 
   deploy:
-    # A manual dispatch trusts the operator's ref; an automatic run requires the
-    # build that triggered it to have SUCCEEDED (a red build has no images).
+    needs: eligibility
+    # Ineligible completion events must not replace a pending valid release.
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    # Automatic releases require successful images and Required CI for this SHA.
+    # A manual dispatch retains the operator's explicit release/rollback path.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      needs.eligibility.outputs.ready == 'true'
     # Names this job's target so GitHub records a deployment for it (a job
     # with `environment:` gets one created on start and marked
     # success/failure at the end). Nothing about the deploy changes — this is
@@ -115,32 +138,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
-      # `push` used to carry paths-ignore for docs; a workflow_run event cannot,
-      # so keep the intent here — a docs-only commit must not restart a backend
-      # people are talking to, even though its images were rebuilt.
-      - name: Skip docs-only commits
-        id: scope
-        env:
-          RELEASE_SKIP: ${{ steps.release.outputs.skip }}
-        run: |
-          if [ "$RELEASE_SKIP" = true ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(git diff --name-only HEAD^ HEAD 2>/dev/null || echo '')"
-          echo "$files" | sed 's/^/  changed: /'
-          if [ -n "$files" ] && ! echo "$files" | grep -qvE '(\.md$|^docs/)'; then
-            echo "docs-only commit — not restarting the deployment"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+      # A docs commit can include queued code changes relative to the running
+      # release. Only the running-version guard above may skip this deployment.
 
       # Authenticate for the pull rather than trusting the box's stored login:
       # the images are private, and a deploy must not fail because some other
       # job's cleanup removed a credential.
       - name: Log in to ghcr
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -171,7 +176,7 @@ jobs:
       # spelling is swept out — the backend reads both, so a leftover old line
       # would be configuration that does nothing.
       - name: Configure platform administrators
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         env:
           NEW_PLATFORM_ADMIN_HANDLES: ${{ vars.PLATFORM_ADMIN_HANDLES }}
           OLD_FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
@@ -238,7 +243,7 @@ jobs:
           PY
 
       - name: Docker deploy this commit
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"

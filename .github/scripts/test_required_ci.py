@@ -10,6 +10,36 @@ spec.loader.exec_module(gate)
 
 
 class RequiredCITest(unittest.TestCase):
+    def test_main_parent_preserves_standalone_push_selections(self):
+        # Representative files from every former standalone main-push pattern.
+        previous = {
+            "backend": ["backend/app/main.py", "deploy/metering-proxy/proxy.py",
+                        ".pre-commit-config.yaml", ".github/scripts/ensure-apt.sh",
+                        ".github/workflows/test.yml"],
+            "frontend": ["frontend/src/main.ts", ".github/workflows/frontend.yml"],
+            "e2e": ["backend/app/main.py", "frontend/src/main.ts", "e2e/tests/login.ts",
+                    ".github/scripts/ci-test-evidence.py", ".github/workflows/e2e.yml"],
+            "cli": ["cli/main.go", "backend/tests/fixtures/wire/frame.json",
+                    ".github/workflows/cli.yml"],
+            "guards": ["backend/app/main.py", "frontend/src/main.ts", "deploy/run.sh",
+                       ".claude/scripts/check.sh", ".pre-commit-config.yaml",
+                       ".github/workflows/test.yml", ".github/scripts/check.py"],
+            "deploy": ["deploy/run.sh", ".github/workflows/deploy-scripts-test.yml",
+                       ".github/workflows/deploy-dev.yml", ".github/workflows/deploy-drift.yml",
+                       ".github/workflows/build.yml", ".github/scripts/plan-image-builds.sh",
+                       ".github/scripts/ensure-apt.sh", ".github/scripts/test-plan-image-builds.sh",
+                       "backend/scripts/gateway_supply_probe.py",
+                       "backend/scripts/test_gateway_supply_probe.py"],
+            "harness": ["backend/uv.lock", "backend/app/domain/agent/harness/claude_code/device_launch.py",
+                        "backend/app/domain/agent/harness/codex/host.py",
+                        ".github/workflows/harness-contract.yml"],
+            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml"],
+        }
+        for suite, paths in previous.items():
+            for path in paths:
+                with self.subTest(suite=suite, path=path):
+                    self.assertTrue(gate.select([path])[suite])
+
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])
         self.assertEqual({k for k, v in selected.items() if v}, {"guards"})

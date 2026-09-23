@@ -17,6 +17,57 @@ report = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(report)
 
 
+class ApiReadTests(unittest.TestCase):
+    def test_transient_failure_repeats_read_then_returns_complete_pages(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Server Error (HTTP 502)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=[error, '[{"jobs": []}]']
+            ) as call,
+            mock.patch.object(report.time, "sleep"),
+            contextlib.redirect_stderr(io.StringIO()) as log,
+        ):
+            self.assertEqual(
+                report.gh_pages("jobs", {"per_page": "100"}), [{"jobs": []}]
+            )
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(call.call_args_list[0], call.call_args_list[1])
+        self.assertIn("HTTP 502", log.getvalue())
+
+    def test_persistent_server_failure_stops_after_three_reads(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Server Error (HTTP 503)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=error
+            ) as call,
+            mock.patch.object(report.time, "sleep"),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(report.subprocess.CalledProcessError),
+        ):
+            report.gh_pages("jobs")
+        self.assertEqual(call.call_count, 3)
+
+    def test_authorization_failure_does_not_retry(self):
+        error = report.subprocess.CalledProcessError(
+            1, "gh", stderr="gh: Bad credentials (HTTP 401)"
+        )
+        with (
+            mock.patch.object(
+                report.subprocess, "check_output", side_effect=error
+            ) as call,
+            mock.patch.object(report.time, "sleep") as sleep,
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(report.subprocess.CalledProcessError),
+        ):
+            report.gh_pages("jobs")
+        self.assertEqual(call.call_count, 1)
+        sleep.assert_not_called()
+
+
 def job(
     name,
     conclusion="success",

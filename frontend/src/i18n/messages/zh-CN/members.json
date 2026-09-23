@@ -1,0 +1,71 @@
+{
+  "header": {
+    "title": "成员管理",
+    "subtitle": "这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。",
+    "subtitleTitle": "这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。「部署配置」那一组来自部署配置（PLATFORM_ADMIN_HANDLES），页面上删不掉：能在这里被清空的名单没有回头的路，改它要有服务器权限。"
+  },
+  "toolbar": {
+    "count": "共 {count} 人",
+    "refresh": "刷新",
+    "add": "添加管理员"
+  },
+  "table": {
+    "label": "平台管理员名单",
+    "colMember": "管理员",
+    "colStatus": "账号状态",
+    "colRegistered": "注册时间",
+    "colSource": "来源",
+    "colAddedInfo": "添加信息",
+    "colActions": "操作"
+  },
+  "group": {
+    "root": "部署配置里的根管理员",
+    "added": "页面上添加的",
+    "personUnit": " 人"
+  },
+  "row": {
+    "sourceRoot": "部署配置",
+    "sourceAdded": "页面添加",
+    "notRemovable": "不可移出",
+    "remove": "移出",
+    "addedBy": "{by} 加的 · {time}",
+    "noAccount": "平台上没有这个账号",
+    "noAccountTitle": "这个 handle 在平台上没有账号（或账号已注销）—— 检查部署配置里的拼写；改配置要有服务器权限",
+    "agentBadge": "agent",
+    "agentBadgeTitle": "agent 不能做管理动作，这行权限实际用不上 —— 检查部署配置里的这个名字"
+  },
+  "empty": {
+    "root": "配置里没写人（本地开发如此；部署时必须填）",
+    "added": "还没有在页面上加过管理员 —— 现在名单上的人全部来自部署配置。"
+  },
+  "addDialog": {
+    "title": "添加管理员",
+    "searchLabel": "搜索账号",
+    "searchPlaceholder": "输入 handle 或昵称",
+    "alreadyAdmin": "已经是管理员",
+    "hint": "加进来的人马上就能看到私密反馈和安全问题，也能自己在这里加人。",
+    "cancel": "取消",
+    "submit": "添加"
+  },
+  "confirm": {
+    "title": "移出管理员",
+    "body": "把 {handle} 移出名单？他马上看不到私密反馈和安全问题，也不能再进来加人。",
+    "cancel": "取消",
+    "submit": "移出"
+  },
+  "notice": {
+    "added": "已添加：{handles}",
+    "removed": "已移出：{handle}",
+    "alreadyAbsent": "{handle} 本来就不在名单里",
+    "refusedEntry": "{handle}：{reason}",
+    "listJoin": "、",
+    "refusedJoin": "；"
+  },
+  "error": {
+    "loadFailed": "管理员名单加载失败",
+    "searchFailed": "搜账号失败",
+    "addFailed": "没加成",
+    "removeFailed": "没移出去",
+    "retry": "重试"
+  }
+}

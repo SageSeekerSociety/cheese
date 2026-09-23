@@ -4,10 +4,17 @@ import type { RouteLocationRaw } from 'vue-router'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-// 「等你处理 / 卡住了」那一列。整行是一个目的地 —— 这一块的全部用处就是让人点进去。
+import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+
+// 「等你处理 / 卡住了」那一列。有 `to` 的行整行是一个目的地 —— 这一块的全部用处
+// 就是让人点进去。
 //
 // **一行只有一个焦点元素**（整行的 router-link）：行内再放一个「去处理」按钮会让一行
 // 有两个 Tab 站，读屏要在同一行里听两遍同一个目的地（`AdminNumberList` 同一条纪律）。
+//
+// **`to` 是可选的**：没有目的地的行渲染成静态 `<div>`（cursor/hover/Tab 三样一样都
+// 不给 —— 同 `AdminKpiCard` 文件头那条纪律）。平台里没有设备列表页，「机器连败」那
+// 一栏就只能是读的，装成链接比不点更糟。
 //
 // 空态是一句**邀请**（「今天没有卡住的事」），不是一句道歉。错误和空屏要说怎么恢复，
 // 不是 mood（frontend-design 的 writing 那节）。
@@ -22,12 +29,15 @@ const props = withDefaults(
       /** 只有 `warn` / `danger` 会用到状态色；`ink` 是中性阶（默认）。 */
       tone?: 'ink' | 'ok' | 'warn' | 'danger'
       age?: string
-      to: RouteLocationRaw
+      /** 有去向整行才是链接；没有就渲染成静态行（见文件头）。 */
+      to?: RouteLocationRaw
     }[]
     moreTo?: RouteLocationRaw
     loading?: boolean
     /** 空屏的那句邀请。**必填** —— 不写就只能画一个没有字的框。 */
     empty: string
+    /** 口径注。给了就在标题旁画 info tip（散行注脚的归宿，见 §8 收编）。 */
+    note?: string
   }>(),
   { loading: false }
 )
@@ -42,6 +52,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
   <div class="aal">
     <div class="aal__head">
       <span class="aal__title t-eyebrow-read">{{ title }}</span>
+      <AdminNoteTip v-if="note" :text="note" />
       <span v-if="rows.length" class="aal__count t-meta-read">{{ rows.length }}</span>
     </div>
 
@@ -53,7 +64,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 
     <ol v-else class="aal__rows">
       <li v-for="row in shown" :key="row.id" class="aal__row">
-        <router-link :to="row.to" class="aal__link">
+        <router-link v-if="row.to" :to="row.to" class="aal__link">
           <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
           <span class="aal__body">
             <span class="aal__rowtitle t-body">{{ row.title }}</span>
@@ -62,6 +73,16 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
           <span v-if="row.statusLabel" class="aal__status t-dense">{{ row.statusLabel }}</span>
           <span v-if="row.age" class="aal__age t-meta-read t-num">{{ row.age }}</span>
         </router-link>
+        <!-- 没有 `to` 的行：同一张面孔，静态的壳 —— 不装成一个能点的东西。 -->
+        <div v-else class="aal__link aal__link--static">
+          <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
+          <span class="aal__body">
+            <span class="aal__rowtitle t-body">{{ row.title }}</span>
+            <span v-if="row.subtitle" class="aal__sub t-meta-read">{{ row.subtitle }}</span>
+          </span>
+          <span v-if="row.statusLabel" class="aal__status t-dense">{{ row.statusLabel }}</span>
+          <span v-if="row.age" class="aal__age t-meta-read t-num">{{ row.age }}</span>
+        </div>
       </li>
     </ol>
 
@@ -84,7 +105,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 
 .aal__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -114,11 +135,16 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 }
 
 /* hover 只改底色，不改位置。按项目约定包在 (hover:hover) 里 —— 触屏不会留下
-   粘住的「选中」观感。 */
+   粘住的「选中」观感。**静态行没有这条**（它不是目的地，见文件头）。 */
 @media (hover: hover) and (pointer: fine) {
-  .aal__link:hover {
+  .aal__link:not(.aal__link--static):hover {
     background: var(--fill);
   }
+}
+
+/* 静态行与链接行同一张面孔，唯独没有「能点」的任何暗示。 */
+.aal__link--static {
+  cursor: default;
 }
 
 .aal__bar {
