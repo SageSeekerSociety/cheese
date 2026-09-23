@@ -96,6 +96,77 @@ def _upstream_url(path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
+def _teammate_model_ids(instances: list, choices: dict[str, dict]) -> set[str]:
+    """一个项目的分身可指定的模型集合：每个活跃 AI 队友绑的模型（展开继承）。
+
+    队友没绑模型（``configuration.model`` 为 None）语义是跟着项目主模型走，
+    所以集合里放目录默认那个 id —— 分身请求体里的全名经 ``catalog_id`` 翻译
+    回来，对上的正是它。
+    """
+    default = _default_catalog_id(choices)
+    allowed: set[str] = set()
+    for row in instances:
+        if not row.is_active:
+            continue
+        model = (row.configuration or {}).get("model")
+        if isinstance(model, str) and model:
+            allowed.add(model)
+        elif default is not None:
+            allowed.add(default)
+    return allowed
+
+
+def _default_catalog_id(choices: dict[str, dict]) -> str | None:
+    default = next((c for c in choices.values() if c.get("default")), None)
+    return default["id"] if default else None
+
+
+async def _bind_requested_subagent_model(
+    agents, project, choices: dict[str, dict], requested: str, parent_handle: str | None
+):
+    """分身指定了模型时的绑定：翻译成目录 id，校验它在项目 AI 队友范围内。
+
+    指定了就要么绑它、要么明说为什么不行 —— 静默改写回默认模型正是
+    「指定了却不生效」那个旧行为（I27 的另一种长相）。
+
+    继承不算指定：CC 对每个分身请求都在体里写一个顶层 model 成员，fork 和
+    定义里不带 model 的分身写的是**父会话的模型** —— 那才是「未指定」在请
+    求体里真正的长相。体里的名字翻译回来等于父会话绑定的，退回分身默认，
+    与今天逐字节一致。
+    """
+    requested_id = binding.catalog_id(requested, choices)
+    parent = await agents.for_seat_handle(project, parent_handle)
+    if parent is None:
+        parent = await agents.for_project(project)
+    parent_model = (parent.configuration or {}).get("model") if parent else None
+    inherited_id = (
+        parent_model
+        if isinstance(parent_model, str) and parent_model
+        else _default_catalog_id(choices)
+    )
+    if requested_id is not None and requested_id == inherited_id:
+        return binding.resolve(
+            None,
+            choices,
+            default_model=(project.settings or {}).get("default_subagent_model"),
+        )
+    allowed = _teammate_model_ids(await agents.list_for_project(project.id), choices)
+    # 项目自己的分身默认也合法：主 agent 复述默认值不该吃到一个拒绝。
+    default_sub = (project.settings or {}).get("default_subagent_model")
+    if isinstance(default_sub, str) and default_sub:
+        allowed.add(default_sub)
+    offer = "、".join(sorted(allowed)) or "（这个项目还没有可指定的队友模型）"
+    if requested_id is None:
+        raise ValidationError(
+            f"分身指定的模型 {requested!r} 当前项目的模型目录里没有；可指定：{offer}"
+        )
+    if requested_id not in allowed:
+        raise ValidationError(
+            f"分身指定的模型 {requested!r} 不在项目 AI 队友的范围内；可指定：{offer}"
+        )
+    return binding.resolve(None, choices, agent_model=requested_id)
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False)
@@ -166,21 +237,31 @@ async def admission(
     from app.domain.agent_instance.services import AgentInstanceService
 
     is_subagent = request.headers.get("x-cheese-subagent") == "1"
+    # 主 agent 开分身时指定的模型：CC 把它写进分身请求体的顶层 model 成员，计量
+    # 代理解析出来随本调用带上来。只在分身路径上读 —— 主对话的模型从来由绑定
+    # 决定，请求体里那个名字不是输入。
+    requested = (request.headers.get("x-cheese-requested-model") or "").strip()
+    agents = AgentInstanceService(db)
     agent = None
     if project is not None and not is_subagent:
-        agents = AgentInstanceService(db)
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
+    choices = binding.catalog(project.settings if project else None)
     try:
-        bound = binding.resolve(
-            None,
-            binding.catalog(project.settings if project else None),
-            agent_model=agent.configuration.get("model") if agent else None,
-            default_model=(project.settings or {}).get("default_subagent_model")
-            if project and is_subagent
-            else None,
-        )
+        if project is not None and is_subagent and requested:
+            bound = await _bind_requested_subagent_model(
+                agents, project, choices, requested, claims.get("a")
+            )
+        else:
+            bound = binding.resolve(
+                None,
+                choices,
+                agent_model=agent.configuration.get("model") if agent else None,
+                default_model=(project.settings or {}).get("default_subagent_model")
+                if project and is_subagent
+                else None,
+            )
     except ValidationError as exc:
         # `reason_kind` is what stops the proxy dressing this up as a budget
         # refusal: it renders every `allow=false` it has ever seen as a 429

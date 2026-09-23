@@ -177,19 +177,11 @@ import { vuetifyConfig } from '@/utils/form'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
+import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const router = useRouter()
 const route = useRoute()
-
-// Where to land after login. Honour a ?redirect=… (e.g. the device-approval page
-// sends the human here and wants them back), but only an internal path — never an
-// absolute/external URL — so login can't be used as an open redirect.
-function postLoginTarget(): string {
-  const r = route.query.redirect
-  const path = Array.isArray(r) ? r[0] : r
-  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//') ? path : '/'
-}
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: computed(() =>
@@ -227,13 +219,13 @@ const login = handleSubmit(async (value) => {
     if (data.requires2FA) {
       router.push({
         name: 'Verify2FA',
-        query: { token: data.tempToken },
+        query: { token: data.tempToken, redirect: route.query.redirect },
       })
       return
     }
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signedIn'))
-    router.replace(postLoginTarget())
+    router.replace(postLoginTarget(route.query))
   } catch (e) {
     console.error('登录失败:', e)
     toast.error(requestErrorMessage(e, t('account.signinFailedPleaseTryAgain')))
@@ -262,7 +254,7 @@ const handlePasskeyLogin = async () => {
     // 4. 处理登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signedIn'))
-    router.replace('/')
+    router.replace(postLoginTarget(route.query))
   } catch (error: any) {
     console.error('通行密钥登录失败:', error)
 
@@ -297,6 +289,7 @@ const handleOAuthLogin = async (providerId: string) => {
 
     // 将 state 存储到 localStorage，用于后续验证
     localStorage.setItem('oauth_state', state)
+    stashOAuthRedirect(postLoginTarget(route.query))
 
     // 跳转到 OAuth 登录页面
     UserApi.redirectToOAuthLogin(providerId, state)
@@ -321,6 +314,7 @@ const getProviderIcon = (providerId: string) => {
 }
 
 onMounted(() => {
+  forgetOAuthRedirect()
   fetchOAuthProviders()
 })
 </script>

@@ -205,8 +205,3 @@ export type InitOAuthBindingResponse = {
   provider: string
   bindUrl: string
 }
-
-export type UnbindOAuthConnectionResponse = {
-  success: boolean
-  unboundConnectionId: number
-}

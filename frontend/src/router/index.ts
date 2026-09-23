@@ -7,6 +7,7 @@ import CourseJoinRoutes from './courseJoin'
 import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
+import { carryLoginRedirect } from './loginRedirect'
 import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
@@ -120,6 +121,8 @@ const router = createRouter({
   history: createWebHistory(process.env.BASE_URL),
   routes,
 })
+
+router.beforeEach(carryLoginRedirect)
 
 router.beforeEach(async (to, from, next) => {
   const store = usePageTitleStore()
