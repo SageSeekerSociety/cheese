@@ -236,6 +236,16 @@ async def lifespan(_: FastAPI):
         name="gateway model catalogue",
     )
 
+    # 导入的 ChatGPT 订阅：access_token 小时级，刷新链是 OAuth 订阅的本质，
+    # 刷新责任收在这里（受管代码 + 行锁 + 审计），是对 metering-proxy「无本地
+    # 刷新循环」纪律的有意例外 —— 论证见 `domain/subscription/refresh.py`。
+    from app.domain.subscription.refresh import keep_tokens_fresh
+
+    background.spawn(
+        keep_tokens_fresh(async_session_factory),
+        name="llm subscription refresh",
+    )
+
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 

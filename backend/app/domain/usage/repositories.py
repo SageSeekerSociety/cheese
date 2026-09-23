@@ -427,6 +427,34 @@ class ComputeGrantRepository:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
         return list((await self._session.execute(stmt)).scalars())
 
+    async def list_for_scope(
+        self, project_ids: list[uuid.UUID], team_ids: list[int]
+    ) -> list[ComputeGrant]:
+        """一批项目的额度相关 grant，**一条**查询取回：各项目的 earmark
+        （`project_id IN …`）∪ 各小队的全队池（`team_id IN … AND project_id
+        IS NULL`）。`list_for_project` 的批量版 —— 管理页的项目额度表靠它
+        把 N 次串行查询降为 1 次；按项目拆开归组是调用方在 Python 里做的事
+        （与逐项目同一口径：`usage/services.py::project_credits_batch`）。
+        """
+        conditions = []
+        if project_ids:
+            conditions.append(ComputeGrant.project_id.in_(project_ids))
+        if team_ids:
+            conditions.append(
+                and_(
+                    ComputeGrant.team_id.in_(team_ids),
+                    ComputeGrant.project_id.is_(None),
+                )
+            )
+        if not conditions:
+            return []
+        stmt = select(ComputeGrant).where(or_(*conditions)).order_by(
+            ComputeGrant.project_id.is_(None),
+            ComputeGrant.created_at,
+            ComputeGrant.id,
+        )
+        return list((await self._session.execute(stmt)).scalars())
+
     async def summary(self, project_id: uuid.UUID) -> dict:
         """Team credits this project may spend, including its restricted grants.
 
