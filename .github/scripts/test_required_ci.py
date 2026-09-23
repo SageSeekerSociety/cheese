@@ -10,6 +10,10 @@ spec.loader.exec_module(gate)
 
 
 class RequiredCITest(unittest.TestCase):
+    def test_finalizer_stops_when_the_workflow_is_cancelled(self):
+        workflow = Path(__file__).parents[1] / "workflows" / "required-ci.yml"
+        self.assertIn("    if: ${{ !cancelled() }}\n", workflow.read_text())
+
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])
         self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
