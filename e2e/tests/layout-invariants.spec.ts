@@ -197,10 +197,25 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await expect(page.locator('.comparison-diff')).toHaveCount(0);
   });
 
-  test('登录页', async ({ page }) => {
-    await page.goto('/account/signin');
-    await page.getByLabel('用户名').waitFor();
-    expect(await fieldDefects(page.locator('body'))).toEqual([]);
+  test('账号页：登录、注册、找回密码，桌面与手机', async ({ page }) => {
+    // 注册页的字段带常驻提示（邮箱、密码规则），手机上提示会折行，是这几页里最容易
+    // 让下一个字段的浮动标签压上来的地方。
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      for (const [path, label] of [
+        ['/account/signin', '用户名'],
+        ['/account/signup', '用户名'],
+        ['/account/recover/password', '注册邮箱'],
+      ]) {
+        await page.goto(path);
+        await page.getByLabel(label, { exact: true }).waitFor();
+        expect(await fieldDefects(page.locator('body'))).toEqual([]);
+        expect(await textOverlaps(page.locator('body'))).toEqual([]);
+      }
+    }
   });
 
   test('「修改 AI 队友」对话框', async ({ page }) => {

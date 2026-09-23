@@ -489,10 +489,10 @@ def _reject_overlong_password(password: str) -> None:
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
-# At least 8 characters, a letter and an ASCII symbol. The symbol class is the
-# web client's (REGEX_PASSWORD), so the form and the server agree on it.
+# At least 8 characters, a letter, a digit and an ASCII symbol: the web
+# client's rule (REGEX_PASSWORD), so the form and the server agree on it.
 _NEW_PASSWORD_PATTERN = re.compile(
-    r"^(?=.*[a-zA-Z])(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
+    r"^(?=.*[a-zA-Z])(?=.*\d)(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
 )
 
 
@@ -501,7 +501,8 @@ def _require_new_password(password: str) -> None:
     bcrypt can hold. Checked before anything single-use is spent."""
     if not _NEW_PASSWORD_PATTERN.match(password):
         raise UnprocessableEntityError(
-            "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
+            "Use at least 8 characters, with a letter, a number, "
+            "and a special character"
         )
     _reject_overlong_password(password)
 

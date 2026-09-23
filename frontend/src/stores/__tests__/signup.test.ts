@@ -14,6 +14,7 @@ vi.mock('@/network/api/users', () => ({
 
 describe('signup store invite-code flow', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(UserApi.sendEmailCode).mockResolvedValue({} as never)
