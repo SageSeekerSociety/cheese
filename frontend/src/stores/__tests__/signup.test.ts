@@ -29,6 +29,7 @@ describe('signup store invite-code flow', () => {
       email: 'user@example.com',
       inviteCode: '  invite-once  ',
       password: 'Secret#123',
+      consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' },
     })
 
     expect(UserApi.sendEmailCode).toHaveBeenCalledWith('user@example.com', 'invite-once')
@@ -40,6 +41,7 @@ describe('signup store invite-code flow', () => {
         emailCode: '123456',
         inviteCode: 'invite-once',
         password: 'Secret#123',
+        consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' },
       })
     )
   })

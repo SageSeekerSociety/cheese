@@ -1,3 +1,5 @@
+import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
+
 import { defineStore } from 'pinia'
 
 import { UserApi } from '@/network/api/users'
@@ -8,6 +10,7 @@ interface SignupState {
   email: string
   inviteCode: string
   password: string
+  consent: { documents: AcceptedDocuments; method: ConsentMethod } | null
 }
 
 export const useSignupStore = defineStore('signup', {
@@ -17,6 +20,7 @@ export const useSignupStore = defineStore('signup', {
     email: '',
     inviteCode: '',
     password: '',
+    consent: null,
   }),
 
   actions: {
@@ -26,6 +30,7 @@ export const useSignupStore = defineStore('signup', {
       email: string
       inviteCode?: string
       password: string
+      consent: { documents: AcceptedDocuments; method: ConsentMethod }
     }) {
       // 保存注册信息
       this.username = data.username
@@ -33,6 +38,7 @@ export const useSignupStore = defineStore('signup', {
       this.email = data.email
       this.inviteCode = data.inviteCode?.trim() ?? ''
       this.password = data.password
+      this.consent = data.consent
 
       // 发送验证邮件
       if (import.meta.env.VITE_DISABLE_EMAIL_VERIFY !== 'true') {
@@ -47,6 +53,7 @@ export const useSignupStore = defineStore('signup', {
         password: this.password,
         email: this.email,
         emailCode,
+        consent: this.consent ?? undefined,
         ...(this.inviteCode ? { inviteCode: this.inviteCode } : {}),
       })
 

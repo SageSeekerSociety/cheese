@@ -46,9 +46,11 @@
             实名赛题
           </v-tab> -->
 
-          <v-tab value="policy" :to="{ name: 'PrivacyCenterPolicy' }">
+          <!-- 隐私政策只有一份，就是注册时同意的那份公开页（#1486），这里新开一页链过去 -->
+          <v-tab href="/legal/privacy" target="_blank">
             <v-icon icon="mdi-file-document-outline" size="small" class="mr-1"></v-icon>
             隐私政策
+            <v-icon icon="mdi-open-in-new" size="x-small" class="ml-1"></v-icon>
           </v-tab>
         </v-tabs>
       </v-card>
@@ -92,7 +94,6 @@ const routeToTabMap: Record<string, string> = {
   PrivacyCenterRealNameInfo: 'real-name',
   PrivacyCenterAccessLogs: 'access-logs',
   PrivacyCenterDataSharing: 'data-sharing',
-  PrivacyCenterPolicy: 'policy',
 }
 
 // 根据当前路由更新标签页

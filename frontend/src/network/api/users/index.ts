@@ -1,4 +1,5 @@
 import type { User } from '@/types'
+import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
   AuthMethodsResponse,
   FollowUserResponse,
@@ -47,6 +48,7 @@ export namespace UserApi {
     email: string
     emailCode: string
     inviteCode?: string
+    consent?: { documents: AcceptedDocuments; method: ConsentMethod }
   }) =>
     ApiInstance.request<RegisterResponseDataType>({
       url: '/users',

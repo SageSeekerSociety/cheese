@@ -19,6 +19,9 @@ vi.mock('@/network/api/users', () => ({
   },
 }))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false } }))
+vi.mock('@/network/api/legal', () => ({
+  LegalApi: { listDocuments: vi.fn().mockResolvedValue({ data: { documents: [] } }) },
+}))
 
 beforeEach(() => {
   setLocale('en')
@@ -33,7 +36,11 @@ afterEach(() => {
 async function mount(page: typeof SignIn | typeof SignUp) {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/:pathMatch(.*)*', component: page }],
+    routes: [
+      { path: '/legal/terms', name: 'LegalTerms', component: page },
+      { path: '/legal/privacy', name: 'LegalPrivacy', component: page },
+      { path: '/:pathMatch(.*)*', component: page },
+    ],
   })
   await router.push('/account/signin')
   return render(

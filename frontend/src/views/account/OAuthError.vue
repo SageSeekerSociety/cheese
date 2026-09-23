@@ -98,6 +98,9 @@ onMounted(() => {
       case 'SESSION_EXPIRED':
         errorDescription.value = '验证会话已过期，请重新开始登录流程'
         break
+      case 'CONSENT_REQUIRED':
+        errorDescription.value = '请返回重新阅读并同意用户协议和隐私政策'
+        break
       case 'VERIFICATION_FAILED':
         errorDescription.value = '身份验证失败，请重试或联系技术支持'
         break

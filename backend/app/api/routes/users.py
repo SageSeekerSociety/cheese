@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.legal import client_context
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -44,6 +45,8 @@ from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
+from app.domain.legal.documents import check_current
+from app.domain.legal.services import CONSENT_METHODS, ConsentService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -91,6 +94,12 @@ class SendEmailCodeRequest(BaseModel):
     invite_code: str | None = Field(default=None, alias="inviteCode")
 
 
+class SignupConsent(BaseModel):
+    #: document key → the version shown on the signup page.
+    documents: dict[str, str]
+    method: str
+
+
 class RegisterUserRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -100,6 +109,7 @@ class RegisterUserRequest(BaseModel):
     email_code: str = Field(..., alias="emailCode", min_length=1)
     password: str
     invite_code: str | None = Field(default=None, alias="inviteCode")
+    consent: SignupConsent | None = None
 
 
 class LoginRequest(BaseModel):
@@ -475,6 +485,24 @@ def _normalize_registration_invite_code(
     if not normalized:
         raise UnprocessableEntityError("Invite code is required")
     return normalized
+
+
+def _signup_consent(documents: dict[str, str] | None, method: str | None) -> str | None:
+    """Why this signup's consent cannot be accepted, or None when it can.
+
+    An account is only ever created with a recorded consent to the current
+    version of every document (#1486); a page opened before a newer version
+    was published is sent back to be reread rather than recorded against
+    text the person never saw."""
+    if not documents or method not in CONSENT_METHODS:
+        return "请阅读并同意《用户协议》和《隐私政策》"
+    try:
+        check_current(documents)
+    except ValueError as exc:
+        if str(exc) == "CONSENT_STALE":
+            return "协议已更新，请刷新页面后重新阅读并同意"
+        return "请阅读并同意《用户协议》和《隐私政策》"
+    return None
 
 
 def _invite_code_error(exc: ValueError) -> UnprocessableEntityError:
@@ -1302,6 +1330,7 @@ async def get_registration_config() -> dict:
 )
 async def register_user(
     payload: RegisterUserRequest,
+    request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
@@ -1319,6 +1348,13 @@ async def register_user(
     invite_code = _normalize_registration_invite_code(
         payload.invite_code, required=settings.require_invite_code
     )
+    consent_problem = _signup_consent(
+        payload.consent.documents if payload.consent else None,
+        payload.consent.method if payload.consent else None,
+    )
+    if consent_problem:
+        raise UnprocessableEntityError(consent_problem)
+    assert payload.consent is not None
 
     if invite_code:
         from app.domain.invite.services import InviteCodeService
@@ -1377,6 +1413,16 @@ async def register_user(
         if msg == "EMAIL_TAKEN":
             raise ConflictError("Email already registered") from exc
         raise
+
+    ip, user_agent = client_context(request)
+    await ConsentService(session).record(
+        user_id=user.id,
+        accepted=payload.consent.documents,
+        method=payload.consent.method,
+        entry="signup",
+        ip=ip,
+        user_agent=user_agent,
+    )
 
     # Consume invite code after successful registration
     if invite_code:
@@ -3824,12 +3870,16 @@ async def oauth_verify_conflict(
     summary="Create a new account from the OAuth decision page (form post)",
 )
 async def oauth_create_user(
+    request: Request,
     stateToken: str = Form(...),
     username: str = Form(...),
     nickname: str = Form(...),
     passwordMode: str = Form(default="none"),
     password: str | None = Form(default=None),
     inviteCode: str | None = Form(default=None),
+    consentTerms: str | None = Form(default=None),
+    consentPrivacy: str | None = Form(default=None),
+    consentMethod: str | None = Form(default=None),
     session: AsyncSession = Depends(get_db),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     oauth_service: OAuthService = Depends(get_oauth_service),
@@ -3847,6 +3897,15 @@ async def oauth_create_user(
         return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
     if passwordMode not in ("none", "password"):
         return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
+    consent = {
+        k: v
+        for k, v in (("terms", consentTerms), ("privacy", consentPrivacy))
+        if v is not None
+    }
+    consent_problem = _signup_consent(consent, consentMethod)
+    if consent_problem:
+        return _oauth_error_redirect("CONSENT_REQUIRED", consent_problem)
+    assert consentMethod is not None
     if passwordMode == "password":
         try:
             _require_new_password(password or "")
@@ -3906,6 +3965,15 @@ async def oauth_create_user(
             if str(exc) == "EMAIL_TAKEN":
                 return _oauth_error_redirect("EMAIL_TAKEN", "Email already registered")
             raise
+        ip, user_agent = client_context(request)
+        await ConsentService(session).record(
+            user_id=user.id,
+            accepted=consent,
+            method=consentMethod,
+            entry="oauth_signup",
+            ip=ip,
+            user_agent=user_agent,
+        )
         if invite_code:
             try:
                 await invite_service.consume_code(invite_code)
