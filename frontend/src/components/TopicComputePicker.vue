@@ -9,6 +9,11 @@ import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
 const props = defineProps<{ topicId: string }>()
+const emit = defineEmits<{
+  // 这个房间能看到整台机器。选择器常收在菜单里，而这件事不能跟着收起来——
+  // 挂它的地方据此在外面常驻一个标记。null = 看不到，或者还不知道。
+  (e: 'machine-access', notice: string | null): void
+}>()
 const state = ref<TopicComputeProfile | null>(null)
 const loading = ref(false)
 const saving = ref(false)
@@ -61,6 +66,11 @@ async function pick(choice: ComputeChoice) {
   }
 }
 onMounted(load)
+watch(
+  () => (state.value?.visibility?.machine_access ? state.value.visibility.notice || '' : null),
+  (notice) => emit('machine-access', notice),
+  { immediate: true }
+)
 onMounted(() => window.addEventListener('project-compute-updated', load))
 onBeforeUnmount(() => window.removeEventListener('project-compute-updated', load))
 watch(menuOpen, (open) => {

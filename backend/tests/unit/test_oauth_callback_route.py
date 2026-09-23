@@ -10,15 +10,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.responses import RedirectResponse
+from starlette.requests import Request
 
 from app.api.routes.users import (
     _decode_oauth_state_token,
-    get_oauth_login_url,
     handle_oauth_callback,
 )
 from app.core.config import settings
-from app.core.errors import NotFoundError
 from app.domain.oauth.services import OAuthUserInfo
+
+
+@pytest.fixture(autouse=True)
+def _no_redis(monkeypatch):
+    """These handlers touch Redis for 2FA and single-use state; stand it in.
+    The login state check is covered end to end in the integration suite."""
+    monkeypatch.setattr("app.core.single_use_state.reserve", AsyncMock())
+    monkeypatch.setattr("app.core.single_use_state.claim", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.domain.user.login_security.TOTPService.is_2fa_enabled",
+        AsyncMock(return_value=False),
+    )
 
 
 def _fake_user(user_id: int, email: str, *, hashed_password: str | None = "$2b$fake"):
@@ -30,37 +41,13 @@ def _fake_user(user_id: int, email: str, *, hashed_password: str | None = "$2b$f
     )
 
 
+def _browser() -> Request:
+    """The browser that started the login, carrying its state cookie."""
+    return Request({"type": "http", "headers": [(b"cookie", b"OAUTH_STATE=st-1")]})
+
+
 def _location(resp: RedirectResponse) -> str:
     return resp.headers["location"]
-
-
-# ---------------------------------------------------------------------------
-# login -> 302 to provider authorization URL
-# ---------------------------------------------------------------------------
-
-
-class TestOAuthLoginRedirect:
-    @pytest.mark.anyio
-    async def test_redirects_to_authorization_url(self):
-        oauth = MagicMock()
-        oauth.generate_authorization_url.return_value = (
-            "https://v.ruc.edu.cn/oauth2/authorize?x=1"
-        )
-
-        resp = await get_oauth_login_url("ruc", state="st-1", oauth_service=oauth)
-
-        assert isinstance(resp, RedirectResponse)
-        assert resp.status_code == 302
-        assert _location(resp) == "https://v.ruc.edu.cn/oauth2/authorize?x=1"
-        oauth.generate_authorization_url.assert_called_once_with("ruc", "st-1")
-
-    @pytest.mark.anyio
-    async def test_unknown_provider_raises_not_found(self):
-        oauth = MagicMock()
-        oauth.generate_authorization_url.side_effect = NotFoundError("nope")
-
-        with pytest.raises(NotFoundError):
-            await get_oauth_login_url("nope", state=None, oauth_service=oauth)
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +85,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state="s",
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -131,8 +119,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -168,8 +157,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -191,8 +181,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -209,7 +200,7 @@ class TestOAuthCallback:
         from urllib.parse import parse_qs, urlparse
 
         token = parse_qs(urlparse(loc).query)["stateToken"][0]
-        provider_id, user_info = _decode_oauth_state_token(token)
+        provider_id, user_info, _jti = _decode_oauth_state_token(token)
         assert provider_id == "ruc"
         assert user_info["id"] == "uid-3"
         assert user_info["email"] == "c@ruc.edu.cn"
@@ -223,8 +214,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -244,8 +236,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="bad",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,
@@ -270,8 +263,9 @@ class TestOAuthCallback:
 
         resp = await handle_oauth_callback(
             "ruc",
+            _browser(),
             code="c",
-            state=None,
+            state="st-1",
             session=session,
             oauth_service=oauth,
             auth_service=auth,

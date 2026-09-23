@@ -23,8 +23,10 @@ vi.mock('@/api', async () => {
   // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
   return {
     ...actual,
+    getInbox: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
     listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+    getProjectSite: () => Promise.resolve({ site: null, source_revision: null, candidates: [], can_publish: false }),
   }
 })
 

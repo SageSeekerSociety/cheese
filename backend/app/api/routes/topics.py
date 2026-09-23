@@ -2401,6 +2401,8 @@ _ARTIFACT_MIME = {
     "csv": "text/csv",
     "png": "image/png",
     "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
     # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
     # lives on, reached over the preview tunnel that machine dialled out. HOW to
     # run it — and on which port — is the agent's judgment; the platform only
@@ -2429,6 +2431,8 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".png": "png",
     ".jpg": "jpg",
     ".jpeg": "jpg",
+    ".gif": "gif",
+    ".webp": "webp",
 }
 
 #: Ceiling on a published artifact, matching the chat attachment limit below —
@@ -2583,7 +2587,13 @@ async def show_in_room(
         mime_type=mime,
         refs=[path],
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(topic_id), {"type": "assistant_block", "block": payload}
+    )
+    return ok(payload)
 
 
 @router.get("/{topic_id}/shown")

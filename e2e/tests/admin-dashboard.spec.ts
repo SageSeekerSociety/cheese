@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { login } from './helpers';
+import { appOriginOf, isEnvironmentNoise, login } from './helpers';
 
 // 管理后台的看板（`/admin/dashboard`）。
 //
@@ -21,16 +21,10 @@ test.describe.configure({ timeout: 180_000 });
 /** 浏览器控制台里的话也算断言的一部分（同 `feedback-flows.spec.ts` 的理由）。 */
 const consoleNoise: string[] = [];
 
-/** 放行形状写死的两条：头像 404（头像表里 2/3/4 号有行、磁盘上没有文件，是环境的
- *  缺口，任何一页都会出现）和字体那条外部源的加载失败。**不写成「忽略所有 404」**：
- *  这一页自己发出的请求挂掉时必须红。 */
-const ALLOWED = [
-  /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+$/,
-  /^\[console\] Failed to load resource: net::ERR_[A-Z_]+ @ https?:\/\/cdn\.jsdelivr\.net\//,
-];
-
+/** 这一页自己招来的报错。环境噪声（外部源、种子缺的头像）的判据和反馈那条共用。 */
 function unexpectedNoise(): string[] {
-  return consoleNoise.filter((entry) => !ALLOWED.some((re) => re.test(entry)));
+  const appOrigin = appOriginOf(test.info().project.use.baseURL);
+  return consoleNoise.filter((entry) => !isEnvironmentNoise(entry, appOrigin));
 }
 
 test.beforeEach(({ page }) => {
@@ -114,7 +108,7 @@ test('看板打的是各自那条新接口，各类各自出数', async ({ page 
   expect(seen.filter((r) => r.status >= 400)).toEqual([]);
 
   // 6. 控制台干净（放行那两条环境缺口之外一句都不许有）。
-  expect(unexpectedNoise()).toEqual([]);
+  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
 });
 
 test('切走再切回来不再打接口，也不会把上一类的内容画在当前这一类上', async ({ page }) => {
@@ -142,7 +136,7 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
   // 那一份已经在手上了：再拉一次只是重复读那两张最长的表。
   expect(seen.length).toBe(before);
 
-  expect(unexpectedNoise()).toEqual([]);
+  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
 });
 
 test('后台能切到私密那一栏 —— 它就在 URL 里，也只在 URL 里', async ({ page }) => {

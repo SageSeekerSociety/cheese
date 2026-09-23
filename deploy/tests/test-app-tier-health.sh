@@ -718,6 +718,27 @@ new_rollout_run_dir() {
 nth_log_line() { grep -n -- "$2" "$1" 2>/dev/null | sed -n "${3}p" | cut -d: -f1 || true; }
 last_log_line() { grep -n -- "$2" "$1" 2>/dev/null | tail -n 1 | cut -d: -f1 || true; }
 
+test_rollout_recovers_after_forge_stops_backend() {
+  local run_dir mode
+  for mode in first retry; do
+    run_dir="$(new_rollout_run_dir)"
+    mkdir -p "$run_dir/apphome/forge-migration"
+    if [ "$mode" = retry ]; then
+      touch "$run_dir/apphome/forge-migration/cutover-pending"
+    fi
+    rollout_run "$run_dir" env APPHOME_HOST_PATH="$run_dir/apphome" \
+      APP_TIER_FORGE_CHECK="$([ "$mode" = first ] && echo 2 || echo 0)" \
+      APP_TIER_ROUTER_NEEDS_BACKEND=1 >"$run_dir/release.log" 2>&1 \
+      || { cat "$run_dir/release.log"; fail "forge $mode could not recover the stopped backend"; }
+    grep -F ':18085/healthz' "$run_dir/docker.log" >/dev/null \
+      || fail "recovered release never checked the routed backend"
+    [ ! -f "$run_dir/apphome/forge-migration/cutover-pending" ] \
+      || fail "recovered release retained the cutover guard"
+    rm -rf "$run_dir"
+    echo "PASS: routed backend recovers after forge $mode"
+  done
+}
+
 test_rollout_keeps_a_backend_serving() {
   local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up first_drain second_drain
   run_dir="$(new_rollout_run_dir)"
@@ -1152,6 +1173,7 @@ case "$CASE" in
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
+  forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-retry) test_rollout_preserves_a_successor_still_serving_after_failure ;;
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
@@ -1185,6 +1207,7 @@ case "$CASE" in
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
     test_rollout_keeps_a_backend_serving
+    test_rollout_recovers_after_forge_stops_backend
     test_rollout_preserves_a_successor_still_serving_after_failure
     test_frontend_rollout_keeps_serving
     test_frontend_rollout_rejects_unhealthy_next

@@ -129,7 +129,7 @@ defineExpose({ reload: load })
         v-if="!readOnly"
         size="x-small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
         :disabled="deciding > 0"
         @click="decide({ accept: revisions.map((r) => r.number) })"
       >
@@ -139,7 +139,7 @@ defineExpose({ reload: load })
         v-if="!readOnly"
         size="x-small"
         variant="text"
-        class="c-muted"
+        color="medium-emphasis"
         :disabled="deciding > 0"
         @click="decide({ reject: revisions.map((r) => r.number) })"
       >
@@ -166,7 +166,7 @@ defineExpose({ reload: load })
           <v-btn
             size="x-small"
             variant="text"
-            class="c-muted"
+            color="medium-emphasis"
             :disabled="deciding > 0"
             @click="decide({ reject: [row.number] })"
           >

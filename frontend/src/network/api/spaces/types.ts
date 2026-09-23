@@ -1,4 +1,4 @@
-import type { Page, Space, TaskSubmitterType } from '@/types'
+import type { Page, Space, TaskSubmission, TaskSubmitterType } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -476,6 +476,32 @@ export type PublisherParticipation = {
   participants: number
   completedUsers: number
   taskCount: number
+}
+
+/**
+ * 一门课的作业与验收：一行是「谁的哪份作业」。
+ *
+ * 它是 `TaskSubmission` 加上三个定位用的字段 —— `taskId` / `taskTitle` 说明这是
+ * 哪道作业，`participantId` 是既有的提交与评审接口要的那条报名记录 id。
+ */
+export type SpaceSubmissionRow = TaskSubmission & {
+  taskId: number
+  taskTitle: string
+  participantId: number
+}
+
+/** 课程那一屏的数字。四个数来自同一个口径（每人只算最新一版）。 */
+export type SpaceSubmissionSummary = {
+  participants: number
+  submissions: number
+  pendingReview: number
+  missing: number
+}
+
+export type SpaceSubmissionQueue = {
+  submissions: SpaceSubmissionRow[]
+  summary: SpaceSubmissionSummary
+  page: Page
 }
 
 // ── 教学单元（课程的时间线） ──────────────────────────────────────────────────

@@ -1420,38 +1420,64 @@ onBeforeUnmount(() => {
           <v-icon size="13">mdi-pause-circle-outline</v-icon>
           已暂停 · 改动未保存
         </span>
-        <span
-          v-else-if="saveStatus === 'saved'"
-          class="d-inline-flex align-center ga-1 c-faint me-2"
-          style="font-size: 12px"
-        >
+        <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
           <span class="status-dot status-dot--ok" />已保存
         </span>
         <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
 
+        <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+             就回去。平常用不上，进去的入口在 ⋯ 里。 -->
         <v-btn
-          v-if="!editingBlocked"
+          v-if="!editable && !editingBlocked"
           size="small"
           variant="text"
-          class="me-1 c-muted"
-          :disabled="sourceMode"
+          color="medium-emphasis"
+          class="me-1"
+          title="回到编辑"
           @click="toggleEditable"
         >
-          {{ editable ? '只读' : '编辑' }}
+          只读
         </v-btn>
-        <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-             syntax the visual editor can't fully represent (军规 1)。手机上不提供，
-             见 editingBlocked。 -->
         <v-btn
-          v-if="mdAndUp"
+          v-if="sourceMode"
           size="small"
           variant="text"
-          :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
-          title="源码模式（直接编辑 markdown 原文）"
+          class="me-1 tool-btn--active"
+          title="退出源码模式"
           @click="toggleSourceMode"
         >
           源码
         </v-btn>
+        <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              icon="mdi-dots-horizontal"
+              size="small"
+              variant="text"
+              color="medium-emphasis"
+              title="更多"
+              aria-label="更多"
+            />
+          </template>
+          <v-list density="compact" aria-label="文档选项">
+            <v-list-item
+              v-if="!editingBlocked"
+              :title="editable ? '设为只读' : '回到编辑'"
+              :disabled="sourceMode"
+              @click="toggleEditable"
+            />
+            <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+                 syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+                 见 editingBlocked。 -->
+            <v-list-item
+              v-if="mdAndUp"
+              :title="sourceMode ? '退出源码模式' : '源码模式'"
+              subtitle="直接编辑 markdown 原文"
+              @click="toggleSourceMode"
+            />
+          </v-list>
+        </v-menu>
       </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
            source mode — the states they describe survive a mode switch. -->
@@ -1797,7 +1823,7 @@ onBeforeUnmount(() => {
   gap: 3px;
   padding: 3px 10px;
   border-radius: 8px;
-  font-size: 0.74rem;
+  font-size: 12px;
   color: rgb(var(--v-theme-on-primary));
   background: rgb(var(--v-theme-primary));
   box-shadow: var(--shadow-2);
@@ -2105,6 +2131,8 @@ onBeforeUnmount(() => {
   top: 5px;
   right: 10px;
   font-family: var(--font-mono);
+  /* 装饰性角标，不按可读下限走：它蹲在第一行代码的右上角，放大到 12px 就压住
+     长行的字（量过：标签到 19px，第一行从 16px 起）。 */
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--faint);
@@ -2213,8 +2241,8 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-lossy-banner__icon {
@@ -2232,7 +2260,7 @@ onBeforeUnmount(() => {
   color: var(--accent-ink);
   border-radius: 6px;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
@@ -2259,8 +2287,8 @@ onBeforeUnmount(() => {
   padding: 8px 14px;
   border-bottom: 1px solid var(--line-2);
   background: color-mix(in srgb, var(--warn) 8%, var(--surface));
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-notice--conflict {
@@ -2284,7 +2312,7 @@ onBeforeUnmount(() => {
   color: var(--text);
   border-radius: 6px;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
@@ -2322,7 +2350,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border-radius: 6px;
   padding: 2px 7px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   cursor: pointer;
 }
@@ -2349,7 +2377,7 @@ onBeforeUnmount(() => {
   border: none;
   background: none;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   font-family: ui-monospace, monospace;
   color: var(--ink);
   padding: 5px 9px;

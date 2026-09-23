@@ -124,10 +124,11 @@ describe('看板页', () => {
     // 真环境回 400、页面上是「看板加载失败」。这条断言把「前端指着哪条路」变成测试里
     // 看得见的东西。
     expect(hits).not.toContain('/api/admin/feedback/stats')
-    // 其余六类这一帧没有人要看，不该被顺带拉一次 —— 钉的是**别的 kind 没被顺带拉**，
-    // 不是「同一条路只准打一次」（挂载时控件同步可能多打一次同一条，那是重复不是漏拉）。
-    expect(hits.every((h) => h === '/api/admin/stats/pipeline')).toBe(true)
-    expect(hits.length).toBeGreaterThanOrEqual(1)
+    // 其余六类这一帧没有人要看，不该被顺带拉一次；**默认那一类也只该拉一次**。
+    // 挂载时控件同步（`selectKind` 顺手拉一次）和结尾那句「切片还是 null 就补一次」
+    // 曾经各拉一遍，于是同一分类两个并发请求，而 `loadStats` 完成前不写 `stats`，
+    // 那句必然成立 —— 序号守卫丢掉一个响应，白拉一趟。
+    expect(hits).toEqual(['/api/admin/stats/pipeline'])
   })
 
   it('切分类只拉切过去的那一类，切回来不重拉', async () => {

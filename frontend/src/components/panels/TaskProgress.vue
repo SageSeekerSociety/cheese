@@ -139,76 +139,82 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
       </span>
     </button>
 
-    <div v-if="open" class="task-progress__body">
-      <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="3" class="pb-2" />
+    <!-- 折起 / 展开是高度真的变了，所以要动（0.2s）：下面的文档跟着让位，一跳的话
+         看不出是这一块收起来了还是文档自己往上窜了一截。 -->
+    <Transition name="board-fold">
+      <div v-if="open" class="board-fold">
+        <div class="task-progress__body">
+          <LoadingSkeleton v-if="loading && !rows.length" variant="entry" :rows="3" class="pb-2" />
 
-      <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
+          <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
-      <div v-else-if="!rows.length" class="px-3 py-2">
-        <div class="t-meta c-muted">暂无派出去的任务</div>
-      </div>
-
-      <template v-else>
-        <!-- 三列竖着堆。空的那一列也留着列头和 0：整段消失会让这一段在两次刷新之
-             间跳，而「等你」在哪个位置本身就是信息，不该取决于它此刻有没有东西。 -->
-        <template v-for="col in BOARD_COLUMNS" :key="col.key">
-          <div class="task-progress__group t-meta" :data-column="col.key">
-            <span class="board-dot" :style="columnDotStyle(col.key)" aria-hidden="true" />
-            <span>{{ col.label }}</span>
-            <span class="task-progress__group-count">{{ inColumn(col.key).length }}</span>
+          <div v-else-if="!rows.length" class="px-3 py-2">
+            <div class="t-meta c-muted">暂无派出去的任务</div>
           </div>
-          <ul class="task-progress__list">
-            <li v-for="row in inColumn(col.key)" :key="row.id">
-              <button type="button" class="task-row" @click="emit('open-card', row.id)">
-                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                <span class="task-row__text">
-                  <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
-                  <span class="task-row__line2 t-meta">
-                    <span class="task-row__state">{{ row.presentation.display_status }}</span>
-                    <span class="task-row__sep">·</span>
-                    <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                    <span v-else class="c-faint">暂无负责人</span>
-                    <span class="task-row__sep">·</span>
-                    <span>{{ relTime(lastActivity(row)) }}</span>
-                  </span>
-                </span>
-              </button>
-            </li>
-          </ul>
-        </template>
 
-        <!-- 已完成收在最底下、折起来。「已采纳」和「已收工」的区别没有丢：它们在
-             这一列里是两个不同的短语，展开就看得见。 -->
-        <template v-if="doneRows.length">
-          <button
-            type="button"
-            class="task-progress__group task-progress__group--fold t-meta"
-            :aria-expanded="showDone"
-            @click="showDone = !showDone"
-          >
-            <v-icon size="14">{{ showDone ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-            <span>{{ columnLabel('done') }}</span>
-            <span class="task-progress__group-count">{{ doneRows.length }}</span>
-          </button>
-          <ul v-if="showDone" class="task-progress__list">
-            <li v-for="row in doneRows" :key="row.id">
-              <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
-                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                <span class="task-row__text">
-                  <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
-                  <span class="task-row__line2 t-meta">
-                    <span class="task-row__state">{{ row.presentation.display_status }}</span>
-                    <span class="task-row__sep">·</span>
-                    <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                    <span v-else class="c-faint">暂无负责人</span>
-                  </span>
-                </span>
+          <template v-else>
+            <!-- 三列竖着堆。空的那一列也留着列头和 0：整段消失会让这一段在两次刷新之
+               间跳，而「等你」在哪个位置本身就是信息，不该取决于它此刻有没有东西。 -->
+            <template v-for="col in BOARD_COLUMNS" :key="col.key">
+              <div class="task-progress__group t-meta" :data-column="col.key">
+                <span class="board-dot" :style="columnDotStyle(col.key)" aria-hidden="true" />
+                <span>{{ col.label }}</span>
+                <span class="task-progress__group-count">{{ inColumn(col.key).length }}</span>
+              </div>
+              <ul class="task-progress__list">
+                <li v-for="row in inColumn(col.key)" :key="row.id">
+                  <button type="button" class="task-row" @click="emit('open-card', row.id)">
+                    <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
+                    <span class="task-row__text">
+                      <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                      <span class="task-row__line2 t-meta">
+                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__sep">·</span>
+                        <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
+                        <span v-else class="c-faint">暂无负责人</span>
+                        <span class="task-row__sep">·</span>
+                        <span>{{ relTime(lastActivity(row)) }}</span>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              </ul>
+            </template>
+
+            <!-- 已完成收在最底下、折起来。「已采纳」和「已收工」的区别没有丢：它们在
+               这一列里是两个不同的短语，展开就看得见。 -->
+            <template v-if="doneRows.length">
+              <button
+                type="button"
+                class="task-progress__group task-progress__group--fold t-meta"
+                :aria-expanded="showDone"
+                @click="showDone = !showDone"
+              >
+                <v-icon size="14">{{ showDone ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+                <span>{{ columnLabel('done') }}</span>
+                <span class="task-progress__group-count">{{ doneRows.length }}</span>
               </button>
-            </li>
-          </ul>
-        </template>
-      </template>
-    </div>
+              <ul v-if="showDone" class="task-progress__list">
+                <li v-for="row in doneRows" :key="row.id">
+                  <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
+                    <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
+                    <span class="task-row__text">
+                      <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                      <span class="task-row__line2 t-meta">
+                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__sep">·</span>
+                        <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
+                        <span v-else class="c-faint">暂无负责人</span>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              </ul>
+            </template>
+          </template>
+        </div>
+      </div>
+    </Transition>
   </section>
 </template>
 
@@ -237,7 +243,24 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
   margin-left: auto;
   color: var(--faint);
 }
+.board-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.board-fold-enter-active,
+.board-fold-leave-active {
+  transition:
+    grid-template-rows 0.2s ease,
+    opacity 0.2s ease;
+}
+.board-fold-enter-from,
+.board-fold-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
 .task-progress__body {
+  /* 0fr 那一格里它得能缩到 0：不写的话它按内容撑着，折叠就只剩淡出。 */
+  min-height: 0;
   max-height: 40vh;
   overflow-y: auto;
 }

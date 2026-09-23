@@ -264,10 +264,9 @@ jobs:
         # — 20 minutes after the tests passed, reported as cancelled, which
         # `continue-on-error` never gets to tolerate. Bound the step instead.
         timeout-minutes: 3
-        # Only a red run's report is ever opened, and the green ones were the
-        # largest tenant of the org's 500MB artifact quota: 454MB of the 945MB
-        # live on 2026-09-18, 78 uploads in a week.
-        if: failure()
+        # Keep reports for red runs and for failed attempts whose retry passed.
+        # Clean green runs previously accounted for 454 MB across 78 uploads in one week.
+        if: ${{ !cancelled() && (failure() || hashFiles('e2e/test-results/**/trace.zip') != '') }}
         with:
           name: playwright-report
           path: |

@@ -6,6 +6,7 @@ import {
   DESIGN_RULES,
   formatReport,
   parseStylelintReport,
+  syntaxErrors,
   tightenedBaseline,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
@@ -120,4 +121,23 @@ test('a clean run reports the totals and nothing alarming', () => {
   const text = formatReport(compare({ 'src/a.vue': 2 }, { 'src/a.vue': 2 }))
   assert.match(text, /total: 2 design-token violation\(s\), baseline allows 2/)
   assert.doesNotMatch(text, /New design-token violations/)
+})
+
+// 一个读不出来的文件贡献 0 条违规，对棘轮来说长得像「变好了」。这是真实发生过的：
+// 一个没闭合的花括号带着全绿的测试、类型检查和 stylelint 进了提交。
+test('a file stylelint could not parse is reported, not counted as clean', () => {
+  const broken = [
+    {
+      source: '/repo/frontend/src/components/Room.vue',
+      warnings: [{ line: 42, rule: 'CssSyntaxError', text: 'Unclosed block (CssSyntaxError)' }],
+    },
+  ]
+  assert.deepEqual(parseStylelintReport(broken, toRelativePath), {})
+  assert.deepEqual(syntaxErrors(broken, toRelativePath), [
+    '  src/components/Room.vue:42 Unclosed block (CssSyntaxError)',
+  ])
+})
+
+test('a tree that parses reports no syntax errors', () => {
+  assert.deepEqual(syntaxErrors(SAMPLE, toRelativePath), [])
 })

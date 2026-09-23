@@ -65,9 +65,9 @@ def _connection(**overrides):
     return SimpleNamespace(**defaults)
 
 
-def _make_service(repo=None, redis=None) -> tuple[OAuthService, AsyncMock]:
+def _make_service(repo=None) -> tuple[OAuthService, AsyncMock]:
     repo = repo or AsyncMock()
-    svc = OAuthService(repo=repo, redis=redis)
+    svc = OAuthService(repo=repo)
     return svc, repo
 
 
@@ -829,32 +829,13 @@ class TestGenerateAuthorizationUrl:
 
         assert "state=custom-state" in url
 
-    def test_auto_generates_state_when_none(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github")
-
-        assert "state=" in url
-
-    def test_auto_generates_state_when_empty_string(self):
-        svc, _repo = _make_service()
-        svc._initialized = True
-        svc._providers = {"github": GitHubProvider(_github_config())}
-
-        url = svc.generate_authorization_url("github", state="")
-
-        # Empty string is falsy, so auto-generated state is used
-        assert "state=" in url
-
     def test_provider_not_found(self):
         svc, _repo = _make_service()
         svc._initialized = True
         svc._providers = {}
 
         with pytest.raises(NotFoundError):
-            svc.generate_authorization_url("unknown")
+            svc.generate_authorization_url("unknown", "state")
 
 
 # ---------------------------------------------------------------------------
@@ -1373,72 +1354,6 @@ class TestDeleteConnection:
         result = await svc.delete_connection(connection_id=999, user_id=42)
 
         assert result is False
-
-
-# ---------------------------------------------------------------------------
-# OAuthService.store_oauth_state
-# ---------------------------------------------------------------------------
-
-
-class TestStoreOAuthState:
-    @pytest.mark.anyio
-    async def test_with_redis(self):
-        redis = AsyncMock()
-        svc, _repo = _make_service(redis=redis)
-
-        await svc.store_oauth_state("state-token", {"provider": "github"})
-
-        redis.set.assert_awaited_once()
-        call_args = redis.set.call_args
-        assert call_args[0][0] == "oauth_state:state-token"
-        assert '"provider"' in call_args[0][1]
-        assert call_args[1]["ex"] == 600
-
-    @pytest.mark.anyio
-    async def test_without_redis_is_noop(self):
-        svc, _repo = _make_service(redis=None)
-
-        # Should not raise
-        await svc.store_oauth_state("state-token", {"provider": "github"})
-
-
-# ---------------------------------------------------------------------------
-# OAuthService.get_oauth_state
-# ---------------------------------------------------------------------------
-
-
-class TestGetOAuthState:
-    @pytest.mark.anyio
-    async def test_with_redis_found(self):
-        redis = AsyncMock()
-        redis.get.return_value = '{"provider": "github"}'
-        svc, _repo = _make_service(redis=redis)
-
-        result = await svc.get_oauth_state("state-token")
-
-        redis.get.assert_awaited_once_with("oauth_state:state-token")
-        redis.delete.assert_awaited_once_with("oauth_state:state-token")
-        assert result == {"provider": "github"}
-
-    @pytest.mark.anyio
-    async def test_with_redis_not_found(self):
-        redis = AsyncMock()
-        redis.get.return_value = None
-        svc, _repo = _make_service(redis=redis)
-
-        result = await svc.get_oauth_state("missing-token")
-
-        redis.get.assert_awaited_once()
-        redis.delete.assert_not_awaited()
-        assert result is None
-
-    @pytest.mark.anyio
-    async def test_without_redis_returns_none(self):
-        svc, _repo = _make_service(redis=None)
-
-        result = await svc.get_oauth_state("state-token")
-
-        assert result is None
 
 
 # ---------------------------------------------------------------------------

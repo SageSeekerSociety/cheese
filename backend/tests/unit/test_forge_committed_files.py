@@ -10,6 +10,15 @@ from app.domain.repository import forge_files
 
 
 @pytest.mark.anyio
+async def test_empty_forge_tree_lists_no_committed_files(monkeypatch):
+    files = forge_files.ProjectFiles(None, uuid.uuid4(), None)
+    monkeypatch.setattr(
+        files, "_data", AsyncMock(return_value={"tree": None, "truncated": False})
+    )
+    assert await files.committed_entries("empty-commit") == []
+
+
+@pytest.mark.anyio
 async def test_github_comparison_includes_files_beyond_its_300_file_cap(monkeypatch):
     task = SimpleNamespace(
         id=uuid.uuid4(),

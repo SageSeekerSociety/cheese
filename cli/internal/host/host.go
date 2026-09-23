@@ -269,7 +269,7 @@ func (h *Host) onMsg(m link.Msg) {
 			}
 		}
 	case "exec": // run a one-shot command on this machine and return its output
-		go h.runExec(m)
+		h.startExec(m)
 	case "execution.call":
 		go h.runExecutor(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
@@ -782,12 +782,9 @@ func readRvToken(path string) (string, error) {
 // execMaxOut caps each of stdout/stderr so a runaway command can't exhaust memory.
 const execMaxOut = 1 << 20 // 1 MiB per stream
 
-// runExec runs a one-shot command on this machine and returns stdout/stderr/exit
-// to the server. This is a generic device capability, independent of screens —
-// for setup, health checks, and other fire-and-forget device-side work. The
-// caller may bound it (Timeout), feed it input (Stdin) and cancel it mid-run
-// (an exec.cancel with the same ID); output beyond execMaxOut is dropped.
-func (h *Host) runExec(m link.Msg) {
+// startExec registers cancellation before returning to the wire reader, then
+// starts a one-shot command on this machine.
+func (h *Host) startExec(m link.Msg) {
 	if len(m.Command) == 0 {
 		_ = h.conn.Send(link.Msg{T: "exec.result", ID: m.ID, Stderr: "empty command", Exit: -1})
 		return
@@ -797,11 +794,20 @@ func (h *Host) runExec(m link.Msg) {
 		timeout = 120 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(h.ctx, timeout)
-	defer cancel()
-	if m.ID != "" { // register so an exec.cancel can stop us
+	if m.ID != "" {
+		// Register before the reader accepts the next frame, which may cancel it.
 		h.execMu.Lock()
 		h.execs[m.ID] = cancel
 		h.execMu.Unlock()
+	}
+	go h.runExec(ctx, cancel, m)
+}
+
+// runExec returns stdout, stderr and exit status to the server. Output beyond
+// execMaxOut is dropped.
+func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Msg) {
+	defer cancel()
+	if m.ID != "" {
 		defer func() {
 			h.execMu.Lock()
 			delete(h.execs, m.ID)

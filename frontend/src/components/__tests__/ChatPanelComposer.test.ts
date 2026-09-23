@@ -20,6 +20,8 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
+    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
