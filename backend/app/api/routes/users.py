@@ -2359,9 +2359,7 @@ async def recover_password_verify(
 
     token = payload.token
     new_password = payload.password
-    if not new_password:
-        raise BadRequestError("password is required")
-    _reject_overlong_password(new_password)
+    _require_new_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:

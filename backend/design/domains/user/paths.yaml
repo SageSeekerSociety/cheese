@@ -133,11 +133,11 @@
             properties:
               token:
                 type: string
-              new_password:
+              password:
                 type: string
             required:
               - token
-              - new_password
+              - password
     responses:
       '200':
         description: Password reset successful

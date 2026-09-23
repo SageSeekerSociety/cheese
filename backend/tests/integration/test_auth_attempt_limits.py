@@ -219,6 +219,37 @@ class TestOverlongPasswords:
         assert _login(api_client, user.username, new_password).status_code == 200
 
 
+class TestRecoveryPasswordRule:
+    @pytest.mark.parametrize(
+        "password", ["short!a", "lettersonly", "12345678!"], ids=str
+    )
+    def test_a_weak_password_is_refused_and_the_link_still_works(
+        self,
+        password: str,
+        api_client: TestClient,
+        user_client: UserCreator,
+        outbox: _Outbox,
+        forget_redis_state,
+    ):
+        user = user_client.create_user()
+        forget_redis_state(user)
+        api_client.post("/users/recover/password/request", json={"email": user.email})
+        match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
+        assert match, outbox.sent[-1]
+        path = "/users/recover/password/verify"
+
+        refused = api_client.post(
+            path, json={"token": match.group(1), "password": password}
+        )
+        assert refused.status_code == 422, refused.text
+        assert _login(api_client, user.username, password).status_code == 401
+
+        reset = api_client.post(
+            path, json={"token": match.group(1), "password": "fresh-Password!"}
+        )
+        assert reset.status_code == 200, reset.text
+
+
 class TestLoginBudget:
     def test_the_budget_counts_down_locks_and_refuses_the_right_password(
         self,
