@@ -89,9 +89,10 @@ def test_stage_guides_stay_small(stage):
 
 def test_scenario_selection_uses_the_frontmatter_field():
     """`scenarios:` 从装饰性字段变成真正的选择器。"""
-    # The pre-existing accept-routing skill is tagged `[accept]` and always was.
-    assert "accept-routing" in skills_for_scenario("accept")
-    assert "accept-routing" not in skills_for_scenario(stage_scenario(TopicStage.gate))
+    assert "stage-delegating" in skills_for_scenario(
+        stage_scenario(TopicStage.delegating)
+    )
+    assert "stage-delegating" not in skills_for_scenario("chat")
 
 
 def test_one_scenario_can_be_served_by_several_skills():

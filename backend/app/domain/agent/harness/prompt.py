@@ -95,6 +95,78 @@ def teaching_section(context: TeachingContext) -> str | None:
     return "\n\n".join(parts)
 
 
+#: 实况文档的注入预算（#1535 第 1 条）。无上限的文档注入是实测到 79K 字符失控的
+#: 那个洞；帽子按块各戴各的，超了按丢弃顺序压缩，全文改走按需读取。
+OVERVIEW_DOC_CHAR_BUDGET = 6000
+TOPIC_DOC_CHAR_BUDGET = 6000
+
+_DOC_HEADING_RE = re.compile(r"(?m)^#{1,6} .*$")
+_TEMP_SECTION_RE = re.compile(r"临时|TODO|待办|草稿|暂定|scratch|todo", re.IGNORECASE)
+_PROGRESS_SECTION_RE = re.compile(r"进展|进度|状态|日志|记录|下一步|本周|历史")
+#: 机器写进总览的两段共享事实：丢它们等于静默删掉全项目共同状态，钉死最后才动。
+_KEEP_LAST_SECTIONS = ("大家都该知道的", "项目记忆（由记忆整理迁入）")
+
+
+def _doc_drop_class(label: str) -> int:
+    """0 = 先丢（临时/待办），1 = 次之（进展/记录），2 = 最后才动。"""
+    if any(name in label for name in _KEEP_LAST_SECTIONS):
+        return 2
+    if _TEMP_SECTION_RE.search(label):
+        return 0
+    if _PROGRESS_SECTION_RE.search(label):
+        return 1
+    return 2
+
+
+def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
+    """压一份实况文档进预算帽；没超帽就原样返回，一个字节都不动。
+
+    超帽按小节整段丢，丢弃顺序写死（先丢什么是一份契约，不是启发式）：临时/待办
+    先丢，进展记录次之，目标/约束/决策/约定最后才动；全丢完仍超帽，剩下的从尾部
+    硬截。压缩过才附一行说明——原文多长、全文去哪读；静默截断读起来就是「全文就
+    这么长」。纯函数：提示词每轮重写，同样的输入必须永远得到同样的输出。
+    """
+    if len(text) <= budget:
+        return text
+    original = len(text)
+    headings = list(_DOC_HEADING_RE.finditer(text))
+    segments: list[tuple[int, str]] = []
+    if headings:
+        preamble = text[: headings[0].start()].rstrip("\n")
+        if preamble:
+            # 标题前的无题开头按保留处理：它多半是目标/背景，宁可硬截也不先丢。
+            segments.append((2, preamble))
+        for i, match in enumerate(headings):
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+            body = text[match.start() : end].rstrip("\n")
+            segments.append((_doc_drop_class(match.group(0)), body))
+    else:
+        # 无题长文按段落切，段落的第一行就是它的判据。
+        for para in (p for p in text.split("\n\n") if p.strip()):
+            segments.append((_doc_drop_class(para.splitlines()[0]), para.strip("\n")))
+
+    def joined(segs: list[tuple[int, str]]) -> str:
+        return "\n\n".join(body for _, body in segs)
+
+    kept = segments
+    for drop_class in (0, 1):
+        i = 0
+        while len(joined(kept)) > budget and i < len(kept):
+            if kept[i][0] == drop_class:
+                del kept[i]
+            else:
+                i += 1
+    body = joined(kept)
+    if len(body) > budget:
+        body = body[:budget]
+    note = (
+        f"\n\n> ⚠️ 本文档超预算已压缩：原文 {original} 字符，这里保留 {len(body)} 字符。"
+        "丢弃顺序：临时/待办先丢，进展记录次之，目标/约束/决策/约定最后才动。"
+        f"全文按需读取：{full_read_hint}"
+    )
+    return body + note
+
+
 #: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
 #: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
 #: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
@@ -176,10 +248,11 @@ def build_system_prompt(
         # 剩下交一份文件、交一个地址的，才真的有得选（一个项目可以既交一份报告又
         # 交一个网站），所以下面那几行是说给它们听的。
         #
-        # **清单空着的时候这一段照样出现。** 那是必须说话的那一次：一个交文件的项
-        # 目，第一次交付只能新建，而它起的那个名字会留在清单上，进后面每一轮的开
-        # 场。这一段不在的话，提示里没有一个字提到产物，只剩递卡被打回这一条路能
-        # 让人知道要声明——而递卡是一整轮工作的最后一步。
+        # **清单空着的时候这一段以短指针出现。** 那是必须说话的那一次：一个交文件
+        # 的项目，第一次交付只能新建，而它起的那个名字会留在清单上。指针只留三件
+        # 不能少的——怎么新建、合并不用声明、细则去 accept-request 的 help 看；
+        # 整套说明跟着清单走，不跟着每一轮走（#1535：空清单也全量注入是指令:信息
+        # 约 8:1 的那一处）。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
         # 这一版交出去的是什么，也在递卡时说 (#1085 结论五)。它排在最前面，因为它
         # 的答案决定了后面那两段要不要读。
@@ -221,13 +294,15 @@ def build_system_prompt(
                 "两个都不给、或者两个都给，递卡会被打回。" + about_rule + "\n\n" + lines
             )
         else:
+            # 短指针的三个不能丢：新建要带 about、合并不用声明、细则的权威文本
+            # 在 accept-request --help（CLAUDE.md：help 与代码同源，不会过期）。
             parts.append(
                 head
-                + "清单还空着，这个项目一样东西都还没交出去过。\n\n"
-                + hands_over
-                + "清单上还没有可沿用的，所以用 `new_artifact=<真名>` 加 "
-                "`about=<一句话>` 声明它，返回里带着它的 id，以后交付它的新一版用 "
-                "`artifact=<id>` 点名。" + about_rule
+                + "清单还空着，这个项目一样东西都还没交出去过。第一次交出文件或地址，"
+                "用 `new_artifact=<真名>` 加 `about=<一句话>`（说的是这东西本身，"
+                "不是这一版做了什么）声明它；交出这次合并的**不用声明产物**——交的"
+                "是项目那个仓库，平台自己认得出。写法细则看 "
+                "`cheese accept-request --help`。"
             )
     if roster:
         lines = "\n".join(
@@ -248,12 +323,22 @@ def build_system_prompt(
             "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
             "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
             "（`cheese remember --everyone <事实>`），不要记进只有你自己读得到的"
-            "记忆池。\n" + overview_doc
+            "记忆池。\n"
+            + fit_doc_to_budget(
+                overview_doc,
+                OVERVIEW_DOC_CHAR_BUDGET,
+                full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+            )
         )
     if doc:
         parts.append(
             "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
-            "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
+            "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n"
+            + fit_doc_to_budget(
+                doc,
+                TOPIC_DOC_CHAR_BUDGET,
+                full_read_hint="用 `cheese doc get` 读全文",
+            )
         )
     if memories or memories_omitted:
         block = "## 项目记忆（你已知道的事实，回答时可引用）"
