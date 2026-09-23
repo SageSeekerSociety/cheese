@@ -203,7 +203,7 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
-import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import ConsentGate from './components/account/ConsentGate.vue'
@@ -400,7 +400,7 @@ const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
-const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
+const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
 const newProjectStep = ref(1)
 const newProjectAgentName = ref('')
@@ -418,7 +418,7 @@ const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
 
 function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
-  showNewProjectDialog(teamIdInPath(currentRoute.path))
+  showNewProjectDialog(teamHandleInPath(currentRoute.path))
 }
 
 async function loadProjectTeams() {
@@ -437,7 +437,7 @@ async function loadProjectTeams() {
   } finally {
     loadingTeams.value = false
   }
-  newProjectTeamId.value = defaultTeamFor(presetTeamId.value, newProjectTeams.value)
+  newProjectTeamId.value = defaultTeamFor(presetTeam.value, newProjectTeams.value)
 }
 
 watch(newProjectDialog, (opened) => {

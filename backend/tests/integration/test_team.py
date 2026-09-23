@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, ask_to_join, unique_int
 
 
 class TestTeamIntegration:
@@ -480,13 +480,9 @@ class TestTeamIntegration:
         )
         team_id = create_resp.json()["data"]["team"]["id"]
 
-        request_resp = api_client.post(
-            f"/teams/{team_id}/join-requests",
-            json={"message": "Please let me join!"},
-            headers={"Authorization": f"Bearer {member.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, member.token, "Please let me join!"
         )
-        assert request_resp.status_code == 201
-        request_id = request_resp.json()["data"]["application"]["id"]
 
         list_resp = api_client.get(
             f"/teams/{team_id}/join-requests",

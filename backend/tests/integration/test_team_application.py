@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, ask_to_join, unique_int
 
 
 class TestTeamApplicationIntegration:
@@ -50,17 +50,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Please let me join!"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        assert (
+            ask_to_join(api_client, team_id, requester.token, "Please let me join!") > 0
         )
-        assert resp.status_code == 201, (
-            f"Expected 201, got {resp.status_code}: {resp.text}"
-        )
-        data = resp.json()["data"]
-        assert "application" in data
-        assert data["application"]["id"] > 0
 
     def test_list_pending_requests_for_user(
         self, setup_team_application: dict, api_client: TestClient
@@ -68,11 +60,7 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Join request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
+        ask_to_join(api_client, team_id, requester.token, "Join request")
 
         resp = api_client.get(
             "/users/me/team-requests",
@@ -93,11 +81,7 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Join request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
+        ask_to_join(api_client, team_id, requester.token, "Join request")
 
         resp = api_client.get(
             f"/teams/{team_id}/requests",
@@ -117,12 +101,7 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Join request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        request_id = create_resp.json()["data"]["application"]["id"]
+        request_id = ask_to_join(api_client, team_id, requester.token, "Join request")
 
         resp = api_client.post(
             f"/teams/{team_id}/requests/{request_id}/approve",
@@ -139,12 +118,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Another join request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Another join request"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         resp = api_client.post(
             f"/teams/{team_id}/requests/{request_id}/reject",
@@ -160,12 +136,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Request to cancel"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Request to cancel"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         resp = api_client.delete(
             f"/users/me/team-requests/{request_id}",
@@ -291,12 +264,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Join request for verification"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Join request for verification"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/approve",
@@ -378,12 +348,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Request to reject"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Request to reject"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/reject",
@@ -406,12 +373,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Request to cancel and verify"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Request to cancel and verify"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         api_client.delete(
             f"/users/me/team-requests/{request_id}",
@@ -435,12 +399,9 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Request to approve and verify"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Request to approve and verify"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/approve",
@@ -551,25 +512,22 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Join to become member"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "Join to become member"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/approve",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
+        # Asking again once in is not an error: the answer is where they stand.
         resp = api_client.post(
-            f"/teams/{team_id}/requests",
+            f"/teams/{team_id}/join",
             json={"message": "Try joining again"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 409, (
-            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["team"]["joinStatus"] == "member"
 
     def test_request_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: TestClient
@@ -577,20 +535,21 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "First request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
+        ask_to_join(api_client, team_id, requester.token, "First request")
 
         resp = api_client.post(
-            f"/teams/{team_id}/requests",
+            f"/teams/{team_id}/join",
             json={"message": "Second request"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 409, (
-            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["team"]["joinStatus"] == "pending"
+        mine = api_client.get(
+            "/users/me/team-requests",
+            params={"status": "PENDING"},
+            headers={"Authorization": f"Bearer {requester.token}"},
+        ).json()["data"]["requests"]
+        assert len([r for r in mine if r["teamId"] == team_id]) == 1
 
     def test_invitation_fails_when_already_member(
         self, setup_team_application: dict, api_client: TestClient
@@ -648,25 +607,15 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "First request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        request_id = create_resp.json()["data"]["application"]["id"]
+        request_id = ask_to_join(api_client, team_id, requester.token, "First request")
 
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/reject",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
-        resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Second request after rejection"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        assert resp.status_code == 201, (
-            f"Expected 201, got {resp.status_code}: {resp.text}"
+        ask_to_join(
+            api_client, team_id, requester.token, "Second request after rejection"
         )
 
     def test_user_can_request_again_after_cancellation(
@@ -675,25 +624,17 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        create_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "First request to cancel"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, requester.token, "First request to cancel"
         )
-        request_id = create_resp.json()["data"]["application"]["id"]
 
         api_client.delete(
             f"/users/me/team-requests/{request_id}",
             headers={"Authorization": f"Bearer {requester.token}"},
         )
 
-        resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Second request after cancellation"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        assert resp.status_code == 201, (
-            f"Expected 201, got {resp.status_code}: {resp.text}"
+        ask_to_join(
+            api_client, team_id, requester.token, "Second request after cancellation"
         )
 
     def test_owner_can_invite_again_after_decline(
@@ -760,41 +701,26 @@ class TestTeamApplicationIntegration:
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
-        first_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "First request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        assert first_resp.status_code == 201
-        first_id = first_resp.json()["data"]["application"]["id"]
+        first_id = ask_to_join(api_client, team_id, requester.token, "First request")
 
         api_client.post(
             f"/teams/{team_id}/requests/{first_id}/reject",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
-        second_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Second request"},
-            headers={"Authorization": f"Bearer {requester.token}"},
-        )
-        assert second_resp.status_code == 201
-        second_id = second_resp.json()["data"]["application"]["id"]
+        second_id = ask_to_join(api_client, team_id, requester.token, "Second request")
 
         api_client.delete(
             f"/users/me/team-requests/{second_id}",
             headers={"Authorization": f"Bearer {requester.token}"},
         )
 
-        third_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Third request after rejection and cancellation"},
-            headers={"Authorization": f"Bearer {requester.token}"},
+        third_id = ask_to_join(
+            api_client,
+            team_id,
+            requester.token,
+            "Third request after rejection and cancellation",
         )
-        assert third_resp.status_code == 201, (
-            f"Expected 201, got {third_resp.status_code}"
-        )
-        third_id = third_resp.json()["data"]["application"]["id"]
 
         api_client.post(
             f"/teams/{team_id}/requests/{third_id}/approve",

@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import uuid
 
 from tests.integration.conftest import room_agent_seat
 
@@ -390,6 +391,7 @@ def _insert_team(client, owner: str) -> int:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             team = Team(
                 name=f"team-of-{owner}",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
                 intro="",
                 description="",
                 avatar_id=1,

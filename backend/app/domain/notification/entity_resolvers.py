@@ -66,7 +66,7 @@ class TeamEntityResolver:
                 id=str(team.id),
                 type="team",
                 name=team.name,
-                url=f"/teams/{team.id}",
+                url=f"/teams/{team.handle}",
                 avatarUrl=avatar_url,
                 status=None,
             )

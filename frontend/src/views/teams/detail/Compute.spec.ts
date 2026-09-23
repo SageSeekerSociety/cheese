@@ -12,7 +12,7 @@ import Compute from './Compute.vue'
 import { changeProjectMachinePower, createProjectMachine, getTeamResourceQuotas, listProjectMachines } from '@/api'
 import { teamDataInjectionKey } from '@/keys'
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { teamId: '1' } }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
 vi.mock('@/api', () => ({
   changeProjectMachinePower: vi.fn(),
   createProjectMachine: vi.fn(),
@@ -73,7 +73,7 @@ it('switching projects cannot bypass a full team quota', async () => {
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives })],
-      provide: { [teamDataInjectionKey as symbol]: ref({ role: 'OWNER' }) },
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
   await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
@@ -99,7 +99,7 @@ it('shows the resulting team usage before spending a free slot', async () => {
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives })],
-      provide: { [teamDataInjectionKey as symbol]: ref({ role: 'OWNER' }) },
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
   await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
@@ -133,7 +133,7 @@ it('suspends and resumes the same machine through its project', async () => {
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives })],
-      provide: { [teamDataInjectionKey as symbol]: ref({ role: 'OWNER' }) },
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
   await fireEvent.click(await view.findByRole('button', { name: '休眠' }))

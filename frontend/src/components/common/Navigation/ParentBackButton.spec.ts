@@ -203,13 +203,15 @@ describe('走进一个项目之后，← 回得去', () => {
 // history.back() 的那件事——它会把人踢出整个应用。于是退到数据里的归属关系。
 describe('没有来路时，退到项目所属的小队', () => {
   function ownedBy(team: number | null) {
-    useWorkspaceStore().projects = [{ id: 'project-a', name: 'A', created_at: '', team_id: team }]
+    useWorkspaceStore().projects = [
+      { id: 'project-a', name: 'A', created_at: '', team_id: team, team_handle: team === null ? null : `crew-${team}` },
+    ]
   }
 
   it('← 指向项目所属的小队', async () => {
     ownedBy(12)
     const view = await open('/projects/project-a/running')
-    expect(back(view)?.getAttribute('href')).toBe('/teams/12')
+    expect(back(view)?.getAttribute('href')).toBe('/teams/crew-12')
   })
 
   // 历史遗留的行没有小队（新建项目一律会落到创建者的个人小队）。这种情况诚实的
@@ -244,7 +246,7 @@ describe('没有来路时，退到项目所属的小队', () => {
       JSON.stringify({ name: 'RouteThatNoLongerExists', params: {}, label: '哪儿' })
     )
     const view = await open('/projects/project-a/running')
-    expect(back(view)?.getAttribute('href')).toBe('/teams/12')
+    expect(back(view)?.getAttribute('href')).toBe('/teams/crew-12')
   })
 })
 

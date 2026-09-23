@@ -48,7 +48,7 @@
                 :title="team.name"
                 :subtitle="team.personal ? '只有你自己的小队 · 个人项目与个人算力都在这里' : team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
-                :to="{ name: 'TeamsDetailDefault', params: { teamId: team.id } }"
+                :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"
                 class="my-team-item mb-2"
               >

@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ProjectJoinView.vue'),
     meta: { titleKey: 'work.joinLink.joinTitle', isFullPage: true },
   },
+  {
+    name: 'team-join',
+    path: '/team-invites/:token',
+    component: () => import('@/views/TeamInviteView.vue'),
+    meta: { titleKey: 'work.teamProfile.joinTitle', isFullPage: true },
+  },
   AccountRoutes,
   ...LegalRoutes,
   HomeRoutes,
@@ -154,7 +160,7 @@ router.afterEach((to, from) => {
   recordEntry(to, from, (route) => {
     const dynamic = store.getDynamicTitle(route.name)
     if (dynamic) return dynamic
-    // 由深到浅取第一个有标题的祖先：`/teams/:teamId` 自己没有标题，标题在
+    // 由深到浅取第一个有标题的祖先：`/teams/:handle` 自己没有标题，标题在
     // `/teams` 那一层上。
     for (const record of [...route.matched].reverse()) {
       if (record.meta?.title) return record.meta.title

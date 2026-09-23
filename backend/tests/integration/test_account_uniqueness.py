@@ -280,3 +280,30 @@ async def test_concurrent_first_turns_resolve_to_one_agent_user(db_factory):
 
     assert ids[0] == ids[1]
     assert await _count_users(db_factory, username=handle) == 1
+
+
+async def test_a_username_a_team_holds_is_taken(client):
+    """Users and teams share one namespace: a handle names one of them."""
+    from app.domain.team.models import Team
+
+    async with client.test_factory() as session:
+        now = datetime.now(UTC)
+        session.add(
+            Team(
+                name="Namespace Team",
+                handle="Shared01",
+                intro="",
+                description="",
+                avatar_id=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+    taken = client.post(
+        "/users", json=await _registration("shared01", "s1@example.com")
+    )
+
+    assert taken.status_code == 409, taken.text
+    assert await _count_users(client.test_factory, username="shared01") == 0

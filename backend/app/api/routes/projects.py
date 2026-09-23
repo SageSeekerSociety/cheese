@@ -106,7 +106,8 @@ from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
-from app.domain.shell.service import effective_shell, effective_shells
+from app.domain.shell.service import effective_shells
+from app.domain.team.services import team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -119,26 +120,37 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell) -> dict:
-    """One project's wire payload, with the 壳 it runs under.
+def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
+    """One project's wire payload, with the 壳 it runs under and its team's handle.
 
-    `shell` is not a column on `Project`, so it cannot come from
-    `model_validate` — it is resolved from the project's own settings, its 赛题
-    and that 赛题's 项目集, and filled in here. Every route that returns a project
-    goes through this pair, or the frontend would fall back to the default 壳 on
-    some screens and not others.
+    Neither is a column on `Project`, so neither can come from `model_validate`:
+    the 壳 is resolved from the project's own settings, its 赛题 and that 赛题's
+    项目集, and the handle is what links to the team go by. Every route that
+    returns a project goes through `_project_payloads`, or the frontend would
+    fall back to the default 壳 — or lose the way to the team — on some screens
+    and not others.
     """
     return (
         ProjectOut.model_validate(project)
-        .model_copy(update={"shell": ShellOut.of(shell)})
+        .model_copy(update={"shell": ShellOut.of(shell), "team_handle": team_handle})
         .model_dump(mode="json")
     )
 
 
-async def _shelled_many(db: DbSession, projects: list[Project]) -> list[dict]:
-    """The same, for a list, without a query per project."""
+async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict]:
+    """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
-    return [_shelled(p, shells[p.id]) for p in projects]
+    handles = await team_service(db).handles_of(
+        {p.team_id for p in projects if p.team_id is not None}
+    )
+    return [
+        _shelled(p, shells[p.id], handles.get(p.team_id) if p.team_id else None)
+        for p in projects
+    ]
+
+
+async def _project_payload(db: DbSession, project: Project) -> dict:
+    return (await _project_payloads(db, [project]))[0]
 
 
 @router.get("/resource-limits")
@@ -204,8 +216,7 @@ async def create_project(
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
-    shell = await effective_shell(db, project)
-    return ok(_shelled(project, shell))
+    return ok(await _project_payload(db, project))
 
 
 @router.get("")
@@ -265,7 +276,7 @@ async def list_projects(
             # route happened to 401 and trip the refresh. Say it here instead.
             resolver.reject_failed_credential(who)
             projects, total = [], 0
-    items = await _shelled_many(db, projects)
+    items = await _project_payloads(db, projects)
     return ok(page(items, total))
 
 
@@ -288,7 +299,7 @@ async def projects_for_task(
     actor = await resolver.resolve(fallback_handle=None)
     await resolver.authorize_task(actor, task_id=task_id)
     projects = await ProjectRepository(db).list_for_external_task(task_id)
-    items = await _shelled_many(db, projects)
+    items = await _project_payloads(db, projects)
     return ok(page(items, len(items)))
 
 
@@ -308,11 +319,7 @@ async def project_for_team(
     actor = await resolver.resolve(fallback_handle=None)
     await resolver.authorize_team(actor, team_id=team_id)
     project = await ProjectRepository(db).get_by_team(team_id)
-    data = (
-        _shelled(project, await effective_shell(db, project))
-        if project is not None
-        else None
-    )
+    data = await _project_payload(db, project) if project is not None else None
     return ok(data)
 
 
@@ -323,8 +330,7 @@ async def get_project(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    shell = await effective_shell(db, project)
-    return ok(_shelled(project, shell))
+    return ok(await _project_payload(db, project))
 
 
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
@@ -1675,8 +1681,7 @@ async def set_project_owner(
         handle,
         steward,
     )
-    shell = await effective_shell(db, project)
-    return ok(_shelled(project, shell))
+    return ok(await _project_payload(db, project))
 
 
 # --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------

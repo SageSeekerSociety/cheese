@@ -18,10 +18,11 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
-from app.domain.team.models import RecruitmentStatus, Team, TeamRecruitmentPost
+from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.recruitment_services import RecruitmentService
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -58,17 +59,6 @@ async def _get_recruitment_service(db=Depends(get_db)) -> RecruitmentService:
     )
 
 
-def _team_summary(team: Team | None, *, fallback_id: int) -> dict:
-    if team is None:
-        return {"id": fallback_id, "name": "", "intro": "", "avatarId": None}
-    return {
-        "id": team.id,
-        "name": team.name,
-        "intro": team.intro,
-        "avatarId": team.avatar_id,
-    }
-
-
 def _creator_summary(user, profile, *, fallback_id: int) -> dict:
     if user is None:
         return {"id": fallback_id, "nickname": "", "avatarId": None, "intro": ""}
@@ -100,7 +90,7 @@ def _post_to_api(
 ) -> dict:
     return {
         "id": post.id,
-        "team": _team_summary(teams_map.get(post.team_id), fallback_id=post.team_id),
+        "team": team_summary(teams_map.get(post.team_id), fallback_id=post.team_id),
         "title": post.title,
         "content": post.content,
         "contact": post.contact,

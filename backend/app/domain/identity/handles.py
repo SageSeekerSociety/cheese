@@ -6,6 +6,7 @@ layer. Nothing here touches a session; the authoritative "is this an agent?" ans
 is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 """
 
+import re
 import uuid
 
 from sqlalchemy import ColumnElement, SQLColumnExpression, or_
@@ -107,6 +108,9 @@ ANONYMOUS_HANDLE = "anonymous"
 SYSTEM_HANDLE = "system"
 
 
+_TEAM_PAGES = frozenset({"explore", "mine", "pending"})
+
+
 def is_reserved_username(username: str) -> bool:
     """Whether a *human* is forbidden from registering under this name (#345).
 
@@ -135,6 +139,13 @@ def is_reserved_username(username: str) -> bool:
         # `looks_like_agent_handle` is the same house rule used for display, so
         # the two cannot drift apart into "reserved but renderable as a person".
         or looks_like_agent_handle(folded)
+        # A team that has not picked a handle is named `team-<id>`, in the same
+        # namespace as usernames; no person may already be standing on it.
+        or re.fullmatch(r"team-\d+", folded) is not None
+        # Pages that sit beside `/teams/<handle>`: a team — or a person, whose
+        # handle opens their personal team there — named one of these could
+        # never be reached.
+        or folded in _TEAM_PAGES
     )
 
 
