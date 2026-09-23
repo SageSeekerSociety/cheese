@@ -29,6 +29,7 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
@@ -45,7 +46,7 @@ from app.domain.agent.gateway_admin import (
     GatewayUnreachable,
 )
 from app.domain.agent.models import GatewayAdminAudit
-from app.domain.subscription.models import LlmSubscription
+from app.domain.subscription.models import LlmSubscription, LlmSubscriptionModel
 from app.domain.subscription.openai_codex import (
     OpenAICodexOAuth,
     QuotaSnapshot,
@@ -55,6 +56,7 @@ from app.domain.subscription.openai_codex import (
     extract_account_claims,
 )
 from app.domain.subscription.repositories import LlmSubscriptionRepository
+from app.domain.subscription.schemas import SubscriptionModelIn
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +145,6 @@ class SubscriptionService:
                 provider=provider,
                 label=(label or "")[:200],
                 status="pending",
-                linked_model_name=settings.subscription_linked_model_name,
                 flow_device_auth_id=started.device_auth_id,
                 flow_user_code=started.user_code,
                 flow_expires_at=now + timedelta(seconds=started.expires_in),
@@ -275,27 +276,9 @@ class SubscriptionService:
         sub.last_refresh_error = None
         _clear_flow(sub)
 
-        try:
-            await self._push_to_gateway(sub, tokens.access_token)
-        except GatewayAdminError as exc:
-            # 凭据已在库（这是这次授权最值钱的东西），网关这一下没推上去可以
-            # 之后用手动刷新补 —— 状态照 active 落，错误写进可读字段。
-            # 网关错误原文可能回显 token，落库前过和审计一样的脱敏。
-            from app.domain.agent import gateway_models
-
-            sub.last_refresh_error = gateway_models._scrub(
-                f"凭据已入库，但推进网关失败：{exc}", secrets
-            )
-            await self._record(
-                handle=handle,
-                action="subscription.complete",
-                target=str(sub.id),
-                result="failed",
-                detail=f"推进网关失败：{exc}",
-                after=_audit_snapshot(sub),
-                secrets=secrets,
-            )
-            raise
+        # 导入完成**不推任何模型进网关**：上架哪几个由管理员事后从账号可用清单
+        # 里勾（`set_models`）。写死一个默认上游在这条路上炸过一次 —— 账号不
+        # 支持那个上游时，凭据没错、订阅没错，炸的是每一个用到它的轮次。
         await self._record(
             handle=handle,
             action="subscription.complete",
@@ -304,7 +287,7 @@ class SubscriptionService:
             after=_audit_snapshot(sub),
             secrets=secrets,
         )
-        return {"state": "complete", "subscription": self._dto(sub)}
+        return {"state": "complete", "subscription": await self._dto(sub)}
 
     async def cancel_flow(self, *, handle: str, flow_id: uuid.UUID) -> dict:
         sub = await self._repo.get_locked(flow_id)
@@ -325,11 +308,12 @@ class SubscriptionService:
     # ------------------------------------------------------------------
     async def list(self) -> dict:
         rows = await self._repo.list_all()
-        return {"items": [self._dto(row) for row in rows]}
+        return {"items": [await self._dto(row) for row in rows]}
 
-    def _dto(self, sub: LlmSubscription) -> dict:
+    async def _dto(self, sub: LlmSubscription) -> dict:
         """对外形状（§3.3）。token / 密文字段一个字母都不出现 —— 与
         `gateway_admin.py` 顶部那条铁律同级。"""
+        shelved = await self._repo.shelved_for(sub.id)
         return {
             "id": str(sub.id),
             "provider": sub.provider,
@@ -340,32 +324,39 @@ class SubscriptionService:
             "token_expires_at": _iso(sub.token_expires_at),
             "last_refresh_at": _iso(sub.last_refresh_at),
             "last_refresh_error": sub.last_refresh_error,
-            "linked_model_name": sub.linked_model_name,
+            "models": [
+                {
+                    "name": row.name,
+                    "upstream_model": row.upstream_model,
+                    "label": row.label,
+                }
+                for row in shelved
+            ],
             "quota": _quota_dto(sub),
             "created_by_handle": sub.created_by_handle,
             "created_at": _iso(sub.created_at),
         }
 
-    async def status_by_linked_model(self) -> dict[str, dict]:
-        """模型列表 overlay 的门：linked_model_name → 订阅状态子集。
+    async def status_by_shelved_model(self) -> dict[str, dict]:
+        """模型列表 overlay 的门：上架模型名 → 订阅状态子集。
 
         终态行不 overlay（一条 revoked 的订阅不该再给模型贴「订阅」徽章）。
         service → service 的门（GatewayModelsService 调这里），不碰对方仓储。
         """
-        rows = await self._repo.live_linked()
+        rows = await self._repo.live_shelved()
         return {
-            row.linked_model_name: {
-                "id": str(row.id),
-                "status": row.status,
-                "account_email": row.account_email,
-                "quota": _quota_dto(row),
+            row.name: {
+                "id": str(sub.id),
+                "status": sub.status,
+                "account_email": sub.account_email,
+                "quota": _quota_dto(sub),
                 # 详情抽屉的订阅块要这两样（凭据过期时间、上次刷新失败的原话）；
                 # token / 密文字段照旧一个字母都不出现。
-                "token_expires_at": _iso(row.token_expires_at),
-                "last_refresh_error": row.last_refresh_error,
+                "token_expires_at": _iso(sub.token_expires_at),
+                "last_refresh_error": sub.last_refresh_error,
             }
             for row in rows
-            if row.linked_model_name
+            if (sub := row.subscription) is not None
         }
 
     # ------------------------------------------------------------------
@@ -632,24 +623,21 @@ class SubscriptionService:
         _clear_flow(sub)
 
         gateway_error: GatewayAdminError | None = None
-        if (
-            self._admin is not None
-            and sub.linked_model_name
-            and was_credential_source
-            # 只有被删行真是这个模型最后的凭据来源时才停用它 —— 重授权后删旧行，
-            # 模型正由新的活跃行服务，block 会把在服模型当场断流。
-            and not await self._repo.has_other_live_for_model(
-                sub.linked_model_name, exclude_id=sub.id
-            )
-        ):
+        shelved = await self._repo.shelved_for(sub.id)
+        if self._admin is not None and was_credential_source and shelved:
             try:
                 models = await self._admin.models()
-                found = next(
-                    (m for m in models if m.name == sub.linked_model_name), None
-                )
-                if found is not None and not found.blocked:
-                    await self._admin.set_blocked(found.model_id, True)
-                    await self._after_gateway_write()
+                for row in shelved:
+                    # 只有被删行真是这个模型最后的凭据来源时才停用它 —— 重授权后
+                    # 删旧行，模型正由新的活跃行服务，block 会把在服模型当场断流。
+                    if await self._repo.has_other_live_for_model(
+                        row.name, exclude_id=sub.id
+                    ):
+                        continue
+                    found = next((m for m in models if m.name == row.name), None)
+                    if found is not None and not found.blocked:
+                        await self._admin.set_blocked(found.model_id, True)
+                await self._after_gateway_write()
             except GatewayAdminError as exc:
                 gateway_error = exc
         if gateway_error is not None:
@@ -676,53 +664,276 @@ class SubscriptionService:
         return {"revoked": True}
 
     # ------------------------------------------------------------------
-    # 网关那一半
+    # 上架管理：这个账号能卖哪几个、现在上架了哪几个
     # ------------------------------------------------------------------
-    async def _push_to_gateway(self, sub: LlmSubscription, access_token: str) -> None:
-        """把这个订阅的 access_token 推进网关的运行时模型（存在即改，不在即建）。
+    async def available_models(
+        self, *, handle: str, subscription_id: uuid.UUID
+    ) -> dict:
+        """这个账号当下可用的模型清单（codex 后端答），标注哪些已上架。
 
-        运行时模型落 LiteLLM 自己的库，即改即生效、零重启；计量 / 项目 key /
-        max_budget 刹车因此零改动复用现有管道（估计价就是给刹车与读数用的，
-        mimo 先例）。`extra_headers` 三件套是 ChatGPT codex 后端认账的门票
-        （账号、originator、客户端版本 —— 版本按它门控模型可用性，所以走
-        settings 热配）。没配管理凭据时导入**不能完成**：抛 503 语义，把补救
-        路径（配置后手动刷新）写进原因里。
+        模型可用性按账号门控，只有上游能答 —— 平台写死一份清单，账号不支持时
+        炸的是轮次（gpt-5.2-codex 那次）。认证错误与 `fetch_quota` 同规：清缓
+        存、置 `reauth_required`，让页面把它显示成「要重新授权」。
         """
+        sub = await self._repo.get_locked(subscription_id)
+        if sub is None:
+            raise NotFoundError("这条订阅不存在")
+        access = _decrypt(sub.access_token_enc, sub_id=sub.id)
+        if not access:
+            raise BadRequestError("这条订阅还没有凭据（授权尚未完成）")
+        try:
+            items = await self._oauth.list_models(access, sub.chatgpt_account_id)
+        except SubscriptionTokenInvalid as exc:
+            await self._mark_reauth(sub, str(exc))
+            raise
+        shelved = {row.upstream_model for row in await self._repo.shelved_for(sub.id)}
+        return {
+            "items": [
+                {**item, "shelved": _upstream_of(item["slug"]) in shelved}
+                for item in items
+            ]
+        }
+
+    async def set_models(
+        self,
+        *,
+        handle: str,
+        subscription_id: uuid.UUID,
+        selection: Sequence[SubscriptionModelIn],
+    ) -> dict:
+        """整集替换这条订阅上架的模型：增的上架、撤的下架、留的重推凭据。
+
+        每一行带网关模型名（缺省 = 上游 slug）与上游 slug（缺省补 ``openai/``
+        前缀，与 DTO 回读的 ``upstream_model`` 往返幂等）。三条校验：请求内
+        不重名不重上游；新来的名字不许撞网关里**已经存在**的模型（LiteLLM 对
+        同名模型会并成一组互为 fallback —— 把别人在服的模型并进这组就是把
+        订阅凭据借给了它）；`reauth_required` 凭据已死，先重新授权再上架。
+
+        应用顺序：先网关后落库；任一行的网关操作失败即停（剩下的不再动，
+        已生效的保留），落 failed 审计（after 写实际状态）并把错误原样抛
+        给路由 —— 半完成的集合在页面上读得出来，重试一次接着做完。
+        """
+        sub = await self._repo.get_locked(subscription_id)
+        if sub is None:
+            raise NotFoundError("这条订阅不存在")
+        if sub.status == "reauth_required":
+            raise BadRequestError("这条订阅的凭据已被判失效，请重新授权后再上架")
+        if sub.status not in _REFRESHABLE:
+            raise BadRequestError("这条订阅当前不在可上架模型的状态")
         if self._admin is None:
             raise GatewayUnreachable(
-                "未配置网关管理凭据（llm_gateway_admin_base / key）："
-                "订阅凭据已入库，但挂不上网关模型；配好后用手动刷新完成挂载"
+                "未配置网关管理凭据（llm_gateway_admin_base / key）：上架要写网关"
             )
-        name = sub.linked_model_name or settings.subscription_linked_model_name
-        sub.linked_model_name = name
+        access = _decrypt(sub.access_token_enc, sub_id=sub.id)
+        if not access:
+            raise BadRequestError("这条订阅还没有凭据（授权尚未完成）")
+
+        requested: list[dict] = []
+        seen_names: set[str] = set()
+        seen_upstreams: set[str] = set()
+        for item in selection:
+            name = (item.name or item.upstream_model).strip()
+            upstream = _upstream_of(item.upstream_model)
+            if not name:
+                raise BadRequestError("模型名不能为空")
+            if name in seen_names:
+                raise BadRequestError(f"模型名重复：{name}")
+            if upstream in seen_upstreams:
+                raise BadRequestError(f"同一个上游上架了两次：{upstream}")
+            seen_names.add(name)
+            seen_upstreams.add(upstream)
+            requested.append(
+                {
+                    "name": name,
+                    "upstream": upstream,
+                    "label": (item.label or "").strip(),
+                }
+            )
+
+        current = {row.name: row for row in await self._repo.shelved_for(sub.id)}
+        gateway_models_list = await self._admin.models()
+        for req in requested:
+            if req["name"] in current:
+                continue
+            taken = next(
+                (m for m in gateway_models_list if m.name == req["name"]), None
+            )
+            if taken is not None:
+                raise ConflictError(
+                    f"模型名 {req['name']} 在网关上已存在：换个名字，或先在模型"
+                    "管理里处理那条"
+                )
+
+        before = _audit_snapshot(sub, current=list(current))
         headers = {
             "chatgpt-account-id": sub.chatgpt_account_id or "",
             "originator": settings.codex_originator,
             "version": settings.codex_client_version,
         }
+        api_base = f"{settings.chatgpt_backend_base.rstrip('/')}/codex"
+        first_error: GatewayAdminError | None = None
+
+        # 撤下架：网关上停用（与 revoke 同一条「最后的凭据来源」判据），库里删行。
+        # 网关那一下失败的行**不删库行** —— 库里没了、网关还活着就是一条没人
+        # 认领的在服模型。
+        for name, row in current.items():
+            if name in seen_names:
+                continue
+            if first_error is not None:
+                break
+            try:
+                if not await self._repo.has_other_live_for_model(
+                    name, exclude_id=sub.id
+                ):
+                    found = next(
+                        (m for m in gateway_models_list if m.name == name), None
+                    )
+                    if found is not None and not found.blocked:
+                        await self._admin.set_blocked(found.model_id, True)
+            except GatewayAdminError as exc:
+                first_error = exc
+                break
+            await self._db.delete(row)
+
+        # 上架与留任：新建或重推凭据（token 可能在两次操作之间轮换过）。
+        for req in requested:
+            if first_error:
+                break
+            try:
+                found = next(
+                    (m for m in gateway_models_list if m.name == req["name"]), None
+                )
+                if found is not None:
+                    await self._admin.update_model(
+                        model_id=found.model_id,
+                        upstream_model=req["upstream"],
+                        api_base=api_base,
+                        api_key=access,
+                        extra_headers=headers,
+                    )
+                else:
+                    await self._admin.add_model(
+                        name=req["name"],
+                        upstream_model=req["upstream"],
+                        api_base=api_base,
+                        api_key=access,
+                        prices={
+                            "input": settings.subscription_estimate_input_usd,
+                            "output": settings.subscription_estimate_output_usd,
+                        },
+                        label=req["label"] or "GPT · ChatGPT 订阅",
+                        selectable=True,
+                        capabilities={},
+                        extra_headers=headers,
+                    )
+            except GatewayAdminError as exc:
+                first_error = exc
+                break
+            row = current.get(req["name"])
+            if row is None:
+                self._db.add(
+                    LlmSubscriptionModel(
+                        subscription_id=sub.id,
+                        name=req["name"],
+                        upstream_model=req["upstream"],
+                        label=req["label"],
+                    )
+                )
+            else:
+                row.upstream_model = req["upstream"]
+                row.label = req["label"]
+
+        await self._db.flush()
+        if first_error is None:
+            await self._after_gateway_write()
+            await self._record(
+                handle=handle,
+                action="subscription.models",
+                target=str(sub.id),
+                result="ok",
+                before=before,
+                after=_audit_snapshot(sub, current=sorted(seen_names)),
+            )
+            return await self._dto(sub)
+
+        from app.domain.agent import gateway_models as _gw_models
+
+        detail = _gw_models._scrub(f"上架调整只完成了一部分：{first_error}", {access})
+        sub.last_refresh_error = detail
+        await self._record(
+            handle=handle,
+            action="subscription.models",
+            target=str(sub.id),
+            result="failed",
+            detail=detail,
+            before=before,
+            after=_audit_snapshot(sub),
+            secrets={access},
+        )
+        raise first_error
+
+    # ------------------------------------------------------------------
+    # 网关那一半
+    # ------------------------------------------------------------------
+    async def _push_to_gateway(self, sub: LlmSubscription, access_token: str) -> None:
+        """把 access_token 推进这条订阅**上架的每一个**网关模型（存在即改，不在即建）。
+
+        运行时模型落 LiteLLM 自己的库，即改即生效、零重启；计量 / 项目 key /
+        max_budget 刹车因此零改动复用现有管道（估计价就是给刹车与读数用的，
+        mimo 先例）。`extra_headers` 三件套是 ChatGPT codex 后端认账的门票
+        （账号、originator、客户端版本 —— 版本按它门控模型可用性，所以走
+        settings 热配）。一个都没上架时没有要推的东西（没配网关管理凭据也不
+        是错）；有上架而没配凭据才是 503 —— 凭据在库却挂不上模型，补救路径
+        （配置后手动刷新）写进原因里。
+
+        单个模型的推进失败不挡住其余模型 —— 一行坏掉不该让全订阅的凭据停更；
+        第一个失败在全部尝试完后原样抛出，由调用方按连接性失败落库落审计。
+        """
+        shelved = await self._repo.shelved_for(sub.id)
+        if not shelved:
+            return
+        if self._admin is None:
+            raise GatewayUnreachable(
+                "未配置网关管理凭据（llm_gateway_admin_base / key）："
+                "订阅凭据已入库，但挂不上网关模型；配好后用手动刷新完成挂载"
+            )
+        headers = {
+            "chatgpt-account-id": sub.chatgpt_account_id or "",
+            "originator": settings.codex_originator,
+            "version": settings.codex_client_version,
+        }
+        api_base = f"{settings.chatgpt_backend_base.rstrip('/')}/codex"
         models = await self._admin.models()
-        found = next((m for m in models if m.name == name), None)
-        if found is not None:
-            await self._admin.update_model(
-                model_id=found.model_id,
-                api_key=access_token,
-                extra_headers=headers,
-            )
-        else:
-            await self._admin.add_model(
-                name=name,
-                upstream_model=settings.subscription_upstream_model,
-                api_base=f"{settings.chatgpt_backend_base.rstrip('/')}/codex",
-                api_key=access_token,
-                prices={
-                    "input": settings.subscription_estimate_input_usd,
-                    "output": settings.subscription_estimate_output_usd,
-                },
-                label="GPT · ChatGPT 订阅",
-                selectable=True,
-                capabilities={},
-                extra_headers=headers,
-            )
+        first_error: GatewayAdminError | None = None
+        for row in shelved:
+            try:
+                found = next((m for m in models if m.name == row.name), None)
+                if found is not None:
+                    await self._admin.update_model(
+                        model_id=found.model_id,
+                        api_key=access_token,
+                        extra_headers=headers,
+                    )
+                else:
+                    await self._admin.add_model(
+                        name=row.name,
+                        upstream_model=row.upstream_model,
+                        api_base=api_base,
+                        api_key=access_token,
+                        prices={
+                            "input": settings.subscription_estimate_input_usd,
+                            "output": settings.subscription_estimate_output_usd,
+                        },
+                        label=row.label or "GPT · ChatGPT 订阅",
+                        selectable=True,
+                        capabilities={},
+                        extra_headers=headers,
+                    )
+            except GatewayAdminError as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
         await self._after_gateway_write()
 
     async def _after_gateway_write(self) -> None:
@@ -834,16 +1045,31 @@ def _decrypt(stored: str | None, *, sub_id: uuid.UUID) -> str | None:
         return None
 
 
-def _audit_snapshot(sub: LlmSubscription) -> dict:
-    """审计的 before/after 快照：非凭据、非 PII（email 只存表里那一处）。"""
+def _audit_snapshot(sub: LlmSubscription, *, current: list[str] | None = None) -> dict:
+    """审计的 before/after 快照：非凭据、非 PII（email 只存表里那一处）。
+
+    ``current`` 是这次操作涉及的上架模型名集合（before/after 各取一边）；
+    与上架无关的调用留空。
+    """
     return {
         "provider": sub.provider,
         "label": sub.label,
         "status": sub.status,
-        "linked_model_name": sub.linked_model_name,
+        "shelved_models": current,
         "chatgpt_account_id": sub.chatgpt_account_id,
         "token_expires_at": _iso(sub.token_expires_at),
     }
+
+
+def _upstream_of(upstream_or_slug: str) -> str:
+    """codex slug 归一成 LiteLLM 上游串：缺省补 ``openai/`` 前缀。
+
+    上架接口接受裸 slug（available-models 回来的样子），也接受已经带前缀的
+    完整上游串（DTO 回读后原样提交的样子）—— 两种输入同一个答案，整集
+    替换的往返才幂等。
+    """
+    value = upstream_or_slug.strip()
+    return value if value.startswith("openai/") else f"openai/{value}"
 
 
 def _refresh_state(sub: LlmSubscription) -> dict:

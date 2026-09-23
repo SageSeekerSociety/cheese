@@ -240,11 +240,6 @@ class Settings(BaseSettings):
     subscription_refresh_interval_s: int = 300
     # How long before the access_token expires we refresh it.
     subscription_refresh_margin_s: int = 600
-    # The runtime model on the gateway this subscription feeds.
-    subscription_linked_model_name: str = "gpt-codex-subscription"
-    # The upstream identifier the linked model calls. May need a Responses-API
-    # form (e.g. openai/responses/…) pending the protocol spike.
-    subscription_upstream_model: str = "openai/gpt-5.2-codex"
     # Estimated prices: they exist ONLY so max_budget braking and the spend
     # readout keep working for a flat-rate subscription (the mimo precedent) —
     # they are not a real bill.

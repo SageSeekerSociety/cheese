@@ -309,9 +309,9 @@ class GatewayModelsService:
         }
 
     async def _subscription_overlay(self) -> dict[str, dict]:
-        """订阅 overlay：linked_model_name → 订阅状态。走 SubscriptionService 的门
+        """订阅 overlay：上架模型名 → 订阅状态。走 SubscriptionService 的门
         （service → service，不碰对方仓储）。拼在 15s 缓存**之外**：它是平台库这
-        一侧的答案，与项目额度同一个 freshness 纪律 —— 导入完立刻看得见徽章。
+        一侧的答案，与项目额度同一个 freshness 纪律 —— 上架完立刻看得见徽章。
 
         读取失败（比如库还没迁移出这张表）降级成空 overlay，不让模型列表跟着
         殉葬 —— 列表的头等事是模型本身。
@@ -320,7 +320,7 @@ class GatewayModelsService:
             from app.domain.subscription.services import SubscriptionService
 
             service = SubscriptionService(self._db, None, None)
-            return await service.status_by_linked_model()
+            return await service.status_by_shelved_model()
         except Exception:  # noqa: BLE001 — overlay 是增强，不是列表的命门
             logger.warning("subscription overlay read failed", exc_info=True)
             return {}

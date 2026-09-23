@@ -1,8 +1,8 @@
-"""`llm_subscriptions` 的数据访问。
+"""`llm_subscriptions` 与 `llm_subscription_models` 的数据访问。
 
 读法就四种，各一个方法：行锁取行（刷新/轮询/撤销这些会改状态的路径都要先锁住，
 多副本下串行化 —— 它替代的是 cc-switch 的进程内 mutex）、按 provider 查非终态行、
-按 linked_model_name 批量查（模型列表的 overlay 用）、flow 终结时清 flow_* 字段。
+按上架模型批量查（模型列表的 overlay 用）、flow 终结时清 flow_* 字段。
 """
 
 import uuid
@@ -11,8 +11,9 @@ from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.domain.subscription.models import LlmSubscription
+from app.domain.subscription.models import LlmSubscription, LlmSubscriptionModel
 
 #: 非终态：与 `uq_llm_subscriptions_live_provider` 部分唯一索引同一组值，
 #: 两处必须一起改（一个占位的状态不在这里，唯一约束就拦不住它）。
@@ -82,26 +83,46 @@ class LlmSubscriptionRepository:
         )
         return (await self._session.scalars(stmt)).all()
 
-    async def live_linked(self) -> Sequence[LlmSubscription]:
-        """模型列表 overlay 的读法：挂了模型名、且还在非终态的全部订阅。"""
-        stmt = select(LlmSubscription).where(
-            LlmSubscription.status.in_(LIVE_STATUSES),
-            LlmSubscription.linked_model_name.is_not(None),
+    async def live_shelved(self) -> Sequence[LlmSubscriptionModel]:
+        """模型列表 overlay 的读法：非终态订阅上架的全部模型行（带订阅行）。"""
+        stmt = (
+            select(LlmSubscriptionModel)
+            .join(
+                LlmSubscription,
+                LlmSubscription.id == LlmSubscriptionModel.subscription_id,
+            )
+            .where(LlmSubscription.status.in_(LIVE_STATUSES))
+            .options(selectinload(LlmSubscriptionModel.subscription))
+        )
+        return (await self._session.scalars(stmt)).all()
+
+    async def shelved_for(
+        self, subscription_id: uuid.UUID
+    ) -> Sequence[LlmSubscriptionModel]:
+        """一条订阅上架的全部模型行（上架管理的读法与 DTO 都走它）。"""
+        stmt = (
+            select(LlmSubscriptionModel)
+            .where(LlmSubscriptionModel.subscription_id == subscription_id)
+            .order_by(LlmSubscriptionModel.created_at)
         )
         return (await self._session.scalars(stmt)).all()
 
     async def has_other_live_for_model(
-        self, linked_model_name: str, exclude_id: uuid.UUID
+        self, model_name: str, exclude_id: uuid.UUID
     ) -> bool:
-        """除 exclude_id 外，是否还有非终态行挂着同一个网关模型。
+        """除 exclude_id 外，是否还有非终态订阅上架着同一个网关模型。
 
-        revoke 停用模型前用它确认被删行真是该模型最后的凭据来源 —— 重授权后
-        新行还活跃时，删旧的 superseded 行不该把在服模型停掉。
+        下架/撤销停用模型前用它确认被处理的行真是该模型最后的凭据来源 ——
+        重授权后新行还活跃时，处理旧的 superseded 行不该把在服模型停掉。
         """
         stmt = (
-            select(LlmSubscription.id)
+            select(LlmSubscriptionModel.id)
+            .join(
+                LlmSubscription,
+                LlmSubscription.id == LlmSubscriptionModel.subscription_id,
+            )
             .where(
-                LlmSubscription.linked_model_name == linked_model_name,
+                LlmSubscriptionModel.name == model_name,
                 LlmSubscription.status.in_(LIVE_STATUSES),
                 LlmSubscription.id != exclude_id,
             )

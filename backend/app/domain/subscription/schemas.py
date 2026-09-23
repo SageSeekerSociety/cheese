@@ -21,3 +21,22 @@ class DeviceFlowStart(BaseModel):
     provider: Literal["openai_codex"] = "openai_codex"
     label: str | None = Field(default=None, max_length=200)
     target_subscription_id: uuid.UUID | None = None
+
+
+class SubscriptionModelIn(BaseModel):
+    """上架集合里的一行：上游 slug（或带 ``openai/`` 前缀的完整上游串）+
+    可选的网关模型名（缺省 = slug）与显示名。重复与撞名的判断在服务层。
+    """
+
+    upstream_model: str = Field(min_length=1, max_length=128)
+    name: str | None = Field(default=None, max_length=64)
+    label: str | None = Field(default=None, max_length=200)
+
+
+class SubscriptionModelsPut(BaseModel):
+    """`PUT /admin/subscriptions/{id}/models` 的体 —— 整集替换上架的模型。
+
+    空列表合法：全部下架。
+    """
+
+    models: list[SubscriptionModelIn] = Field(max_length=50)

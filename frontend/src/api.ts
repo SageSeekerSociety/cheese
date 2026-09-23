@@ -3142,10 +3142,20 @@ export interface LlmSubscription {
   token_expires_at: string | null
   last_refresh_at: string | null
   last_refresh_error: string | null
-  linked_model_name: string | null
+  /** 这条订阅上架的模型（导入时为空，由「上架模型」那一步勾选）。 */
+  models: { name: string; upstream_model: string; label: string }[]
   quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
   created_by_handle: string
   created_at: string
+}
+
+/** `available-models` 回来的一项：账号可用的一个模型，及它是否已上架。 */
+export interface SubscriptionAvailableModel {
+  slug: string
+  display_name: string
+  description: string
+  priority: number
+  shelved: boolean
 }
 
 export interface DeviceFlowStartResponse {
@@ -3212,6 +3222,24 @@ export function getSubscriptionQuota(id: string): Promise<{
 export function revokeSubscription(id: string): Promise<{ revoked: boolean }> {
   return request<{ revoked: boolean }>(`/admin/subscriptions/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  })
+}
+
+/** 这个账号当下可用的模型清单（codex 后端答），标注哪些已上架。 */
+export function getSubscriptionAvailableModels(id: string): Promise<{ items: SubscriptionAvailableModel[] }> {
+  return request<{ items: SubscriptionAvailableModel[] }>(
+    `/admin/subscriptions/${encodeURIComponent(id)}/available-models`
+  )
+}
+
+/** 整集替换上架的模型：增的上架、撤的下架（网关停用）、留的重推凭据。空数组 = 全部下架。 */
+export function putSubscriptionModels(
+  id: string,
+  models: { upstream_model: string; name?: string | null; label?: string | null }[]
+): Promise<LlmSubscription> {
+  return request<LlmSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/models`, {
+    method: 'PUT',
+    body: JSON.stringify({ models }),
   })
 }
 

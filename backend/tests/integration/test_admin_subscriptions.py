@@ -34,7 +34,7 @@ from app.core.crypto import decrypt_text, encrypt_text
 from app.domain.agent import gateway_catalog, gateway_models
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.models import GatewayAdminAudit
-from app.domain.subscription.models import LlmSubscription
+from app.domain.subscription.models import LlmSubscription, LlmSubscriptionModel
 from app.domain.subscription.openai_codex import OpenAICodexOAuth
 from tests.integration.conftest import session_auth_headers
 
@@ -117,6 +117,59 @@ def _openai_transport(calls: list[httpx.Request], state: dict) -> httpx.MockTran
                     "refresh_token": state.get("refresh_token", REFRESH),
                     "id_token": state.get("id_token", ID_TOKEN),
                     "expires_in": 3600,
+                },
+            )
+        if path == "/backend-api/codex/models":
+            models_state = state.get("models", "ok")
+            if models_state == "invalid":
+                return httpx.Response(401, json={})
+            if models_state == "down":
+                raise httpx.ConnectError("connection refused")
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "slug": "gpt-6-astra",
+                            "display_name": "GPT-6-Astra",
+                            "description": "Frontier intelligence.",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "priority": 1,
+                        },
+                        {
+                            "slug": "gpt-5.6-sol",
+                            "display_name": "GPT-5.6-Sol",
+                            "description": "",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "priority": 4,
+                        },
+                        {
+                            "slug": "gpt-5.6-luna",
+                            "display_name": "GPT-5.6-Luna",
+                            "description": "",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "priority": 8,
+                        },
+                        {
+                            "slug": "gpt-reserve",
+                            "display_name": "GPT-Reserve",
+                            "description": "",
+                            "visibility": "hide",
+                            "supported_in_api": True,
+                            "priority": 3,
+                        },
+                        {
+                            "slug": "gpt-5.2-codex",
+                            "display_name": "GPT-5.2-Codex",
+                            "description": "",
+                            "visibility": "list",
+                            "supported_in_api": False,
+                            "priority": 2,
+                        },
+                    ]
                 },
             )
         if path == "/backend-api/wham/usage":
@@ -274,20 +327,25 @@ def _audit_blob(rows: list[SimpleNamespace]) -> str:
 def _seed_active(
     client,
     *,
-    linked: str | None = "gpt-codex-subscription",
+    shelved: list[tuple[str, str]] | None = None,
     refresh_token: str = REFRESH,
     subject: str = "sub-test-1",
     account: str = "acct-test-1",
+    status: str = "active",
     snapshot: dict | None = None,
 ) -> uuid.UUID:
-    """直接落一条 `active` 订阅（刷新/额度/撤销这些用例的起点不是导入本身）。"""
+    """直接落一条 `active` 订阅（刷新/额度/撤销/上架这些用例的起点不是导入本身）。
+
+    ``shelved`` 是 ``(网关模型名, 上游串)`` 的列表 —— 这条订阅上架的模型，
+    None 表示一个都没上架。
+    """
 
     async def _go() -> uuid.UUID:
         async with client.test_factory() as session:
             row = LlmSubscription(
                 provider="openai_codex",
                 label="团队的 ChatGPT",
-                status="active",
+                status=status,
                 account_email="admin@example.com",
                 chatgpt_account_id=account,
                 id_token_subject=subject,
@@ -295,7 +353,6 @@ def _seed_active(
                 refresh_token_enc=encrypt_text(refresh_token),
                 id_token_enc=encrypt_text(ID_TOKEN),
                 token_expires_at=datetime.now(UTC) + timedelta(hours=1),
-                linked_model_name=linked,
                 quota_snapshot=snapshot,
                 quota_fetched_at=(
                     datetime.now(UTC) - timedelta(minutes=5) if snapshot else None
@@ -303,6 +360,16 @@ def _seed_active(
                 created_by_handle=ADMIN,
             )
             session.add(row)
+            await session.flush()
+            for name, upstream in shelved or []:
+                session.add(
+                    LlmSubscriptionModel(
+                        subscription_id=row.id,
+                        name=name,
+                        upstream_model=upstream,
+                        label="GPT · ChatGPT 订阅",
+                    )
+                )
             await session.commit()
             return row.id
 
@@ -371,10 +438,11 @@ def test_poll_after_upstream_410_marks_the_flow_expired(client, as_admin, rig):
 
 
 def test_import_full_chain(client, as_admin, rig):
-    """start → poll(pending) → poll(complete)：一条订阅从「没有」到「挂上网关」。
+    """start → poll(pending) → poll(complete)：一条订阅从「没有」到凭据在库。
 
-    钉的是这条链上最值钱的三件事：凭据密文落库可还原、网关收到带三件套头的
-    新建模型、审计两行且一个字明文都不沾。
+    导入完成**不推任何模型进网关**（上架是事后从账号可用清单里勾的那一步）：
+    钉的是这条链上最值钱的三件事 —— 凭据密文落库可还原、网关一下都没被碰、
+    审计两行且一个字明文都不沾。
     """
     started = client.post(
         "/admin/subscriptions/device-flows",
@@ -423,18 +491,14 @@ def test_import_full_chain(client, as_admin, rig):
     assert decrypt_text(row.access_token_enc) == ACCESS
     assert decrypt_text(row.refresh_token_enc) == REFRESH
 
-    # 网关收到一次新建：api_key 是 access_token，extra_headers 三件套齐全。
-    news = [c for c in rig.gateway_calls if c.url.path == "/model/new"]
-    assert len(news) == 1
-    sent = json.loads(news[0].content)
-    params = sent["litellm_params"]
-    assert params["api_key"] == ACCESS
-    assert params["api_base"] == "https://chatgpt.com/backend-api/codex"
-    headers = params["extra_headers"]
-    assert headers["chatgpt-account-id"] == "acct-test-1"
-    assert headers["originator"] == "codex_cli_rs"
-    assert headers["version"]
-    assert rig.refreshed, "写完应让选择器目录重读"
+    # 网关一下都没被碰：不写模型，也就没有「默认上游账号不支持」那种轮次 400。
+    writes = [
+        c
+        for c in rig.gateway_calls
+        if c.url.path == "/model/new" or c.url.path.endswith("/update")
+    ]
+    assert writes == []
+    assert sub_dto["models"] == []
 
     # 审计两行：start 与 complete；素材里一个明文字母都没有。
     rows = _audit_rows(client)
@@ -539,8 +603,10 @@ def test_refresh_dead_token_marks_reauth_required(client, as_admin, rig):
 
 
 def test_refresh_success_rotates_and_pushes_to_gateway(client, as_admin, rig):
-    """刷新成功：换新密文、把新 access_token 经 PATCH 推进已挂的网关模型。"""
-    sub_id = _seed_active(client)
+    """刷新成功：换新密文、把新 access_token 经 PATCH 推进已上架的网关模型。"""
+    sub_id = _seed_active(
+        client, shelved=[("gpt-codex-subscription", "openai/gpt-5.2-codex")]
+    )
     rig.gateway_state["models"] = [
         {
             "model_name": "gpt-codex-subscription",
@@ -583,7 +649,9 @@ def test_refresh_success_rotates_and_pushes_to_gateway(client, as_admin, rig):
 def test_refresh_unreachable_gateway_is_a_503(client, as_admin, rig):
     """OpenAI 刷成功了、网关推不上去：凭据已在库（这半边不能丢），路由把网关
     的不可达翻成 503，订阅状态仍可读。"""
-    sub_id = _seed_active(client)
+    sub_id = _seed_active(
+        client, shelved=[("gpt-codex-subscription", "openai/gpt-5.2-codex")]
+    )
     rig.gateway_state["models"] = []
 
     def down(request: httpx.Request) -> httpx.Response:
@@ -668,8 +736,10 @@ def test_quota_auth_failure_clears_the_snapshot(client, as_admin, rig):
 # --- 撤销 ---------------------------------------------------------------------
 
 
-def test_revoke_blocks_the_linked_model_and_audits(client, as_admin, rig):
-    sub_id = _seed_active(client)
+def test_revoke_blocks_the_shelved_models_and_audits(client, as_admin, rig):
+    sub_id = _seed_active(
+        client, shelved=[("gpt-codex-subscription", "openai/gpt-5.2-codex")]
+    )
     rig.gateway_state["models"] = [
         {
             "model_name": "gpt-codex-subscription",
@@ -708,3 +778,227 @@ def test_list_is_redacted_and_newest_first(client, as_admin, rig):
     blob = json.dumps(items)
     for leaked in (ACCESS, REFRESH, ID_TOKEN, "token_enc"):
         assert leaked not in blob
+
+
+# --- 上架管理 -----------------------------------------------------------------
+
+
+def test_available_models_filters_and_marks_shelved(client, as_admin, rig):
+    """账号可用清单：hide 与 supported_in_api=False 的都不列；已上架的标出来。"""
+    sub_id = _seed_active(client, shelved=[("gpt-5.6-luna", "openai/gpt-5.6-luna")])
+    r = client.get(
+        f"/admin/subscriptions/{sub_id}/available-models",
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()["data"]["items"]
+    assert [i["slug"] for i in items] == ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna"]
+    assert [i["shelved"] for i in items] == [False, False, True]
+    # 上游收到的是带三件套头与 client_version 的请求。
+    sent = [c for c in rig.openai_calls if c.url.path == "/backend-api/codex/models"]
+    assert len(sent) == 1
+    assert sent[0].headers["authorization"] == f"Bearer {ACCESS}"
+    assert sent[0].headers["chatgpt-account-id"] == "acct-test-1"
+    assert sent[0].url.params["client_version"]
+
+
+def test_available_models_auth_failure_marks_reauth(client, as_admin, rig):
+    """凭据被判死：置 reauth_required、路由 502 —— 与额度那条同一个语义。"""
+    sub_id = _seed_active(client)
+    rig.openai_state["models"] = "invalid"
+    r = client.get(
+        f"/admin/subscriptions/{sub_id}/available-models",
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 502, r.text
+    rows = _subs_rows(client)
+    assert rows[0].status == "reauth_required"
+
+
+def test_set_models_shelves_two_and_audits(client, as_admin, rig):
+    """上架两个：网关收到两次新建（三件套头齐全）、库行落两条、审计一行。"""
+    sub_id = _seed_active(client)
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={
+            "models": [
+                {"upstream_model": "gpt-5.6-luna"},
+                {"upstream_model": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
+            ]
+        },
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    dto = r.json()["data"]
+    assert [(m["name"], m["upstream_model"]) for m in dto["models"]] == [
+        ("gpt-5.6-luna", "openai/gpt-5.6-luna"),
+        ("gpt-5.6-sol", "openai/gpt-5.6-sol"),
+    ]
+
+    news = [c for c in rig.gateway_calls if c.url.path == "/model/new"]
+    assert len(news) == 2
+    sent = json.loads(news[0].content)
+    assert sent["model_name"] == "gpt-5.6-luna"
+    params = sent["litellm_params"]
+    assert params["model"] == "openai/gpt-5.6-luna"
+    assert params["api_key"] == ACCESS
+    assert params["api_base"] == "https://chatgpt.com/backend-api/codex"
+    headers = params["extra_headers"]
+    assert headers["chatgpt-account-id"] == "acct-test-1"
+    assert headers["originator"] == "codex_cli_rs"
+    assert rig.refreshed
+
+    audit = [r for r in _audit_rows(client) if r.action == "subscription.models"]
+    assert len(audit) == 1
+    assert audit[0].result == "ok"
+    assert audit[0].before["shelved_models"] == []
+    assert audit[0].after["shelved_models"] == ["gpt-5.6-luna", "gpt-5.6-sol"]
+    assert ACCESS not in _audit_blob(audit)
+
+
+def test_set_models_unshelve_blocks_and_deletes(client, as_admin, rig):
+    """整集替换撤下一个：网关收到停用、库行删掉、留任那个重推凭据。"""
+    sub_id = _seed_active(
+        client,
+        shelved=[
+            ("gpt-5.6-luna", "openai/gpt-5.6-luna"),
+            ("gpt-5.6-sol", "openai/gpt-5.6-sol"),
+        ],
+    )
+    rig.gateway_state["models"] = [
+        {
+            "model_name": "gpt-5.6-luna",
+            "litellm_params": {"model": "openai/gpt-5.6-luna"},
+            "model_info": {"id": "mid-luna", "cheese_selectable": True},
+        },
+        {
+            "model_name": "gpt-5.6-sol",
+            "litellm_params": {"model": "openai/gpt-5.6-sol"},
+            "model_info": {"id": "mid-sol", "cheese_selectable": True},
+        },
+    ]
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={"models": [{"upstream_model": "gpt-5.6-luna"}]},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    dto = r.json()["data"]
+    assert [m["name"] for m in dto["models"]] == ["gpt-5.6-luna"]
+
+    blocks = [c for c in rig.gateway_calls if c.url.path == "/model/block"]
+    assert len(blocks) == 1
+    assert json.loads(blocks[0].content)["model_id"] == "mid-sol"
+    # 留任的 luna 收到一次凭据重推（token 可能已轮换）。
+    patches = [
+        c
+        for c in rig.gateway_calls
+        if c.method == "PATCH" and c.url.path.endswith("/update")
+    ]
+    assert len(patches) == 1
+    assert json.loads(patches[0].content)["litellm_params"]["api_key"] == ACCESS
+
+
+def test_set_models_empty_unshelves_everything(client, as_admin, rig):
+    """空集合合法：全部下架。"""
+    sub_id = _seed_active(client, shelved=[("gpt-5.6-luna", "openai/gpt-5.6-luna")])
+    rig.gateway_state["models"] = [
+        {
+            "model_name": "gpt-5.6-luna",
+            "litellm_params": {"model": "openai/gpt-5.6-luna"},
+            "model_info": {"id": "mid-luna", "cheese_selectable": True},
+        }
+    ]
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={"models": []},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["models"] == []
+    blocks = [c for c in rig.gateway_calls if c.url.path == "/model/block"]
+    assert len(blocks) == 1
+
+
+def test_set_models_name_taken_by_gateway_is_a_conflict(client, as_admin, rig):
+    """新来的名字撞了网关在服的模型 → 409（同名会并成一组，凭据就借出去了）。"""
+    sub_id = _seed_active(client)
+    rig.gateway_state["models"] = [
+        {
+            "model_name": "gpt-5.6-luna",
+            "litellm_params": {"model": "openai/gpt-5.6-luna"},
+            "model_info": {"id": "mid-other", "cheese_selectable": True},
+        }
+    ]
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={"models": [{"upstream_model": "gpt-5.6-luna"}]},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 409, r.text
+    news = [c for c in rig.gateway_calls if c.url.path == "/model/new"]
+    assert news == []
+
+
+def test_set_models_duplicate_name_in_request_is_a_400(client, as_admin, rig):
+    sub_id = _seed_active(client)
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={
+            "models": [
+                {"upstream_model": "gpt-5.6-luna", "name": "codex"},
+                {"upstream_model": "gpt-5.6-sol", "name": "codex"},
+            ]
+        },
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_set_models_reauth_required_is_a_400(client, as_admin, rig):
+    """凭据已死的订阅不能上架：先重新授权。"""
+    sub_id = _seed_active(client, status="reauth_required")
+    r = client.put(
+        f"/admin/subscriptions/{sub_id}/models",
+        json={"models": [{"upstream_model": "gpt-5.6-luna"}]},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_refresh_pushes_every_shelved_model(client, as_admin, rig):
+    """上架了两个的订阅刷新：两个都收到新凭据，不是一个。"""
+    sub_id = _seed_active(
+        client,
+        shelved=[
+            ("gpt-5.6-luna", "openai/gpt-5.6-luna"),
+            ("gpt-5.6-sol", "openai/gpt-5.6-sol"),
+        ],
+    )
+    rig.gateway_state["models"] = [
+        {
+            "model_name": "gpt-5.6-luna",
+            "litellm_params": {"model": "openai/gpt-5.6-luna"},
+            "model_info": {"id": "mid-luna", "cheese_selectable": True},
+        },
+        {
+            "model_name": "gpt-5.6-sol",
+            "litellm_params": {"model": "openai/gpt-5.6-sol"},
+            "model_info": {"id": "mid-sol", "cheese_selectable": True},
+        },
+    ]
+    rig.openai_state["access_token"] = "at-rotated-value"
+    r = client.post(
+        f"/admin/subscriptions/{sub_id}/refresh",
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    patches = [
+        c
+        for c in rig.gateway_calls
+        if c.method == "PATCH" and c.url.path.endswith("/update")
+    ]
+    assert len(patches) == 2
+    for sent_raw in patches:
+        sent = json.loads(sent_raw.content)
+        assert sent["litellm_params"]["api_key"] == "at-rotated-value"

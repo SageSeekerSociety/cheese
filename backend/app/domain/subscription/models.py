@@ -25,7 +25,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import JSON, DateTime, Index, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
@@ -78,8 +78,8 @@ class LlmSubscription(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # 这条订阅喂给网关的哪条运行时模型。
-    linked_model_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 这条订阅喂给网关的运行时模型在 `llm_subscription_models`（1:N）：导入时
+    # 一个都不挂，管理员从账号可用清单里勾选上架。
 
     # device flow 进行中状态（完成/终结后清空）。
     flow_device_auth_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -94,3 +94,33 @@ class LlmSubscription(UuidPk, Timestamps, Base):
     flow_target_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
 
     created_by_handle: Mapped[str] = mapped_column(String(64), default="")
+
+
+class LlmSubscriptionModel(UuidPk, Timestamps, Base):
+    """一条订阅上架的一个模型（网关运行时模型）。
+
+    `name` 是全局唯一的网关模型名 —— 队友选择器按它点名；`upstream_model` 是
+    LiteLLM 的上游串（带 ``openai/`` 前缀的 codex slug）。同一条订阅不许把同一
+    个上游上架两次（部分唯一约束管的是「一个名字全平台只被一个订阅拿着」，
+    由 ``name`` 自身的 unique 兑现）。
+    """
+
+    __tablename__ = "llm_subscription_models"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "subscription_id",
+            "upstream_model",
+            name="uq_llm_subscription_models_sub_upstream",
+        ),
+    )
+
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("llm_subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    # 网关模型名（选择器里队友看到的那个 id）。
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    # LiteLLM 上游串，如 ``openai/gpt-5.6-luna``。
+    upstream_model: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str] = mapped_column(String(200), default="")
+
+    subscription: Mapped[LlmSubscription] = relationship()

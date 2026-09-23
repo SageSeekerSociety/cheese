@@ -9,6 +9,7 @@ import { getGatewayModel, getSubscriptionQuota, revokeSubscription, type Subscri
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
+import AdminSubscriptionModelsDialog from '@/components/admin/AdminSubscriptionModelsDialog.vue'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
 // 一个模型的详情抽屉（契约 §3.2）。**它自己去拉数据**（收一个 `name`），不接一个塞满
@@ -116,6 +117,9 @@ const revokeError = ref<string | null>(null)
 
 /** 定向重新授权的导入对话框（订阅块自己的实例，带着这条订阅的 id）。 */
 const reauthOpen = ref(false)
+
+/** 「上架模型」对话框（订阅块自己的实例）。保存成功与改动同一路径：页面重拉。 */
+const shelveOpen = ref(false)
 
 async function load() {
   if (!props.name) return
@@ -408,6 +412,9 @@ function close() {
             </div>
 
             <div class="amdd__subactions">
+              <v-btn variant="outlined" size="small" @click="shelveOpen = true">
+                {{ t('models.subscription.shelve.button') }}
+              </v-btn>
               <v-btn v-if="sub.status === 'reauth_required'" variant="outlined" size="small" @click="reauthOpen = true">
                 {{ t('models.detail.subscription.reauth') }}
               </v-btn>
@@ -514,6 +521,9 @@ function close() {
       :target-subscription-id="sub.id"
       @imported="onReauthImported"
     />
+
+    <!-- 上架模型：这条订阅喂哪几个模型，从它账号的可用清单里勾。 -->
+    <AdminSubscriptionModelsDialog v-if="sub" v-model="shelveOpen" :subscription-id="sub.id" @saved="emit('changed')" />
   </v-navigation-drawer>
 </template>
 

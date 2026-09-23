@@ -416,6 +416,74 @@ class OpenAICodexOAuth:
                 )
         return QuotaSnapshot(tiers=tiers)
 
+    async def list_models(
+        self, access_token: str, chatgpt_account_id: str | None
+    ) -> list[dict]:
+        """GET {chatgpt_base}/codex/models → 这个账号当下可用的模型清单。
+
+        codex 后端按账号门控模型可用性（``supported_in_api`` 与
+        ``visibility``），所以「能上架哪几个」只有它能答 —— 写死一份清单在平
+        台侧，账号不支持时就是轮次上的 400（gpt-5.2-codex 那次）。这里只回
+        ``visibility == "list"`` 且 ``supported_in_api`` 的项；返回
+        ``{slug, display_name, description, priority}``，按 priority 排序。
+
+        ``client_version`` 是必带的 query 参数（缺了 400），且后端按它门控
+        清单内容 —— 走 settings 热配，与 extra_headers 里的版本同源。
+        401/403 → `SubscriptionTokenInvalid`；传输类 → `SubscriptionUnreachable`。
+        """
+        base = settings.chatgpt_backend_base.rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": _CHATGPT_UA,
+            "Accept": "application/json",
+            "originator": settings.codex_originator,
+            "version": settings.codex_client_version,
+        }
+        if chatgpt_account_id:
+            headers["ChatGPT-Account-Id"] = chatgpt_account_id
+        try:
+            async with self._client(_QUOTA_TIMEOUT) as client:
+                response = await client.get(
+                    f"{base}/codex/models",
+                    headers=headers,
+                    params={"client_version": settings.codex_client_version},
+                )
+        except httpx.HTTPError as exc:
+            raise SubscriptionUnreachable(f"模型清单接口不可达：{_short(exc)}") from exc
+        if response.status_code in (401, 403):
+            raise SubscriptionTokenInvalid("订阅凭据已被 OpenAI 判为失效，需要重新授权")
+        if response.status_code != 200:
+            raise SubscriptionUnreachable(
+                f"模型清单接口返回 HTTP {response.status_code}：{_short_body(response)}"
+            )
+        payload = _json_object(response)
+        raw = payload.get("models")
+        if not isinstance(raw, list):
+            raise SubscriptionUnreachable("模型清单响应里没有 models 列表")
+        items: list[dict] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            slug = entry.get("slug")
+            if not isinstance(slug, str) or not slug:
+                continue
+            if entry.get("visibility") != "list":
+                continue
+            if entry.get("supported_in_api") is not True:
+                continue
+            items.append(
+                {
+                    "slug": slug,
+                    "display_name": entry.get("display_name") or slug,
+                    "description": entry.get("description") or "",
+                    "priority": entry.get("priority")
+                    if isinstance(entry.get("priority"), int)
+                    else 999,
+                }
+            )
+        items.sort(key=lambda item: item["priority"])
+        return items
+
 
 def _unix_to_iso(timestamp: int) -> str | None:
     try:

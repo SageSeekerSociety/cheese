@@ -134,7 +134,7 @@
   "subscription": {
     "import": "Import subscription",
     "dialogTitle": "Import a ChatGPT subscription",
-    "intro": "Connect a ChatGPT subscription to the platform: once authorized, it appears in the list as a model that projects can pick like any other.",
+    "intro": "Connect a ChatGPT subscription to the platform: after authorizing, shelve models from the account's available list, and projects can pick them like any other model.",
     "reauthIntro": "Re-authorize your ChatGPT account: sign in with the original account and the subscription resumes.",
     "start": "Start authorization",
     "label": "Label",
@@ -153,7 +153,14 @@
     "accountAs": "Account: {email}",
     "done": "Done",
     "failed": "Authorization did not complete",
-    "retry": "Try again"
+    "retry": "Try again",
+    "shelve": {
+      "button": "Shelve models",
+      "title": "Choose models to shelve",
+      "intro": "Checked models are served by this subscription's credential on the gateway, and projects can pick them like any other model. Unchecking and saving shelves them off (blocked on the gateway, gone from the picker). Uncheck all and save = shelve nothing.",
+      "empty": "No models are currently available on this account.",
+      "save": "Save selection"
+    }
   },
   "dialog": {
     "cancel": "Cancel",

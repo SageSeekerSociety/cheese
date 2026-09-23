@@ -8,6 +8,8 @@ import {
   getGatewayAudit,
   getGatewayModels,
   getGatewayProjects,
+  listSubscriptions,
+  type LlmSubscription,
   setGatewayModelBlocked,
   setGatewayProjectBudget,
   updateGatewayModel,
@@ -21,6 +23,7 @@ import AdminModelFormDialog, { type ModelFormPayload } from '@/components/admin/
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
+import AdminSubscriptionModelsDialog from '@/components/admin/AdminSubscriptionModelsDialog.vue'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtPercent, fmtSI } from '@/lib/usageFormat'
 
@@ -162,6 +165,36 @@ const drawerName = ref<string | null>(null)
 
 /** 「导入订阅」对话框（页级实例；抽屉里的「重新授权」用的是抽屉自己的定向实例）。 */
 const importOpen = ref(false)
+
+/** 平台上的订阅（一座一订阅，至多一条非终态）。「上架模型」入口跟着它走。 */
+const subscriptions = ref<LlmSubscription[]>([])
+const LIVE_SUBSCRIPTION_STATUSES = new Set(['pending', 'active', 'refresh_failed', 'reauth_required'])
+const liveSubscription = computed(
+  () => subscriptions.value.find((sub) => LIVE_SUBSCRIPTION_STATUSES.has(sub.status)) ?? null
+)
+
+/** 「上架模型」对话框：管 liveSubscription 那一条；导入完成也直接落到它上面。 */
+const shelveOpen = ref(false)
+const shelveTargetId = ref<string | null>(null)
+
+async function loadSubscriptions() {
+  try {
+    subscriptions.value = (await listSubscriptions()).items
+  } catch {
+    subscriptions.value = []
+  }
+}
+
+function openShelve(subscriptionId: string) {
+  shelveTargetId.value = subscriptionId
+  shelveOpen.value = true
+}
+
+/** 导入完成：接着就是把账号可用的模型勾选上架（订阅本身一个模型都还没喂）。 */
+function onImported(sub: LlmSubscription) {
+  void loadSubscriptions()
+  openShelve(sub.id)
+}
 
 /** 审计区展开「查看改动」的行（按下标记）。diff 在子组件 `AdminAuditDiff` 里画。 */
 const auditExpanded = ref<Set<number>>(new Set())
@@ -324,9 +357,10 @@ async function load() {
   } finally {
     loading.value = false
   }
-  // 另外两段各拉各的、各画各的失败：额度那一段挂了不该把模型表也一起清空。
+  // 另外三段各拉各的、各画各的失败：额度那一段挂了不该把模型表也一起清空。
   void loadProjects()
   void loadAudit()
+  void loadSubscriptions()
 }
 
 async function loadProjects() {
@@ -590,6 +624,17 @@ onMounted(load)
           @click="importOpen = true"
         >
           {{ t('models.subscription.import') }}
+        </v-btn>
+        <!-- 上架管理跟着那条活订阅走：一座一订阅，所以一个按钮就够。 -->
+        <v-btn
+          v-if="liveSubscription"
+          variant="outlined"
+          size="small"
+          prepend-icon="mdi-package-variant-closed"
+          :disabled="gatewayDown"
+          @click="openShelve(liveSubscription.id)"
+        >
+          {{ t('models.subscription.shelve.button') }}
         </v-btn>
         <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
           {{ t('models.page.add') }}
@@ -867,7 +912,13 @@ onMounted(load)
 
     <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" @changed="load" />
 
-    <AdminSubscriptionImportDialog v-model="importOpen" @imported="load" />
+    <AdminSubscriptionImportDialog v-model="importOpen" @imported="onImported" />
+    <AdminSubscriptionModelsDialog
+      v-if="shelveTargetId"
+      v-model="shelveOpen"
+      :subscription-id="shelveTargetId"
+      @saved="load"
+    />
 
     <AdminModelFormDialog
       v-model="formOpen"

@@ -42,7 +42,7 @@ from app.domain.subscription.openai_codex import (
     SubscriptionTokenInvalid,
     SubscriptionUnreachable,
 )
-from app.domain.subscription.schemas import DeviceFlowStart
+from app.domain.subscription.schemas import DeviceFlowStart, SubscriptionModelsPut
 from app.domain.subscription.services import SubscriptionService
 
 router = APIRouter(prefix="/admin/subscriptions", tags=["admin"])
@@ -175,6 +175,47 @@ async def subscription_quota(
     return ok(
         await _answered(
             service.fetch_quota(handle=handle, subscription_id=subscription_id)
+        )
+    )
+
+
+@router.get("/{subscription_id}/available-models")
+async def subscription_available_models(
+    subscription_id: uuid.UUID,
+    service: SubscriptionServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """这个账号当下可用的模型清单（codex 后端答），标注哪些已上架。
+
+    可用性按账号门控，平台写死清单的代价是账号不支持时轮次 400 —— 所以
+    上架哪几个从这里勾。凭据被判死 → 502（同 quota 的「要重新授权」）。
+    """
+    return ok(
+        await _answered(
+            service.available_models(handle=handle, subscription_id=subscription_id)
+        )
+    )
+
+
+@router.put("/{subscription_id}/models")
+async def subscription_set_models(
+    subscription_id: uuid.UUID,
+    payload: SubscriptionModelsPut,
+    service: SubscriptionServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """整集替换上架的模型：增的上架、撤的下架（网关停用）、留的重推凭据。
+
+    新来的名字撞网关在服模型 → 409；任一行的网关操作失败即停，已生效的保
+    留，failed 审计落库后把网关原话带出来（503/502）。
+    """
+    return ok(
+        await _answered(
+            service.set_models(
+                handle=handle,
+                subscription_id=subscription_id,
+                selection=payload.models,
+            )
         )
     )
 
