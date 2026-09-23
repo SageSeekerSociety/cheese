@@ -8,8 +8,8 @@
 // 改码的接口没有，所以下面每个输入框背后都是一条还不存在的 PATCH。
 import { computed, ref } from 'vue'
 
+import { type InviteCode, PEOPLE } from '../fixtures'
 import { addCode, codes, me, revokeCode, updateCode } from '../store'
-import { PEOPLE, type InviteCode } from '../fixtures'
 
 const open = ref(false)
 
@@ -40,7 +40,8 @@ function startEdit(row: InviteCode) {
 function saveEdit(code: string) {
   updateCode(code, {
     maxUses: draftUnlimited.value ? null : Math.max(0, draftUses.value ?? 0),
-    expiresAt: draftNoExpiry.value || !draftExpiry.value ? null : new Date(`${draftExpiry.value}T23:59:00`).toISOString(),
+    expiresAt:
+      draftNoExpiry.value || !draftExpiry.value ? null : new Date(`${draftExpiry.value}T23:59:00`).toISOString(),
   })
   editing.value = null
 }
@@ -48,7 +49,8 @@ function saveEdit(code: string) {
 function saveNew() {
   addCode({
     maxUses: draftUnlimited.value ? null : Math.max(1, draftUses.value ?? 10),
-    expiresAt: draftNoExpiry.value || !draftExpiry.value ? null : new Date(`${draftExpiry.value}T23:59:00`).toISOString(),
+    expiresAt:
+      draftNoExpiry.value || !draftExpiry.value ? null : new Date(`${draftExpiry.value}T23:59:00`).toISOString(),
     note: draftNote.value.trim() || '未命名',
   })
   creating.value = false
@@ -163,7 +165,10 @@ const ownerName = (handle: string) => PEOPLE[handle]?.name ?? handle
               </div>
             </div>
             <div class="edit__foot">
-              <span class="edit__warn" :class="{ 'edit__warn--bad': !draftUnlimited && (draftUses ?? 0) < activeCode.useCount }">
+              <span
+                class="edit__warn"
+                :class="{ 'edit__warn--bad': !draftUnlimited && (draftUses ?? 0) < activeCode.useCount }"
+              >
                 {{
                   !draftUnlimited && (draftUses ?? 0) < activeCode.useCount
                     ? `已用掉 ${activeCode.useCount} 个，限制不能低于它`
@@ -194,7 +199,14 @@ const ownerName = (handle: string) => PEOPLE[handle]?.name ?? handle
         <div v-if="creating" class="edit edit--new">
           <div class="edit__field">
             <span class="edit__label">说明</span>
-            <v-text-field v-model="draftNote" density="compact" variant="outlined" hide-details placeholder="比如「十月这批同学」" />
+            <v-text-field
+              v-model="draftNote"
+              autocomplete="off"
+              density="compact"
+              variant="outlined"
+              hide-details
+              placeholder="比如「十月这批同学」"
+            />
           </div>
           <div class="edit__field">
             <span class="edit__label">可用人数</span>
@@ -240,7 +252,9 @@ const ownerName = (handle: string) => PEOPLE[handle]?.name ?? handle
               <span class="list__note">{{ row.note }}</span>
             </div>
             <div class="list__stats">
-              <span><b>{{ usesText(row) }}</b> 人</span>
+              <span
+                ><b>{{ usesText(row) }}</b> 人</span
+              >
               <span :class="{ 'is-warn': expiryText(row).startsWith('已') }">{{ expiryText(row) }}</span>
               <span class="list__by">{{ ownerName(row.createdBy.handle) }} 建</span>
             </div>
@@ -327,7 +341,7 @@ const ownerName = (handle: string) => PEOPLE[handle]?.name ?? handle
   padding: 14px;
   margin-top: 14px;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .edit--new {

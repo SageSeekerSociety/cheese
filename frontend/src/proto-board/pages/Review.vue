@@ -9,7 +9,7 @@ import { computed, ref } from 'vue'
 
 import PanelCard from '../components/PanelCard.vue'
 import { deadlineText } from '../fixtures'
-import { me, pendingTasks, rejectTask, tasks, approveTask } from '../store'
+import { approveTask, me, pendingTasks, rejectTask, tasks } from '../store'
 
 const rejectFor = ref<string | null>(null)
 const reason = ref('')
@@ -21,14 +21,10 @@ const queue = computed(() =>
     const mineB = b.publisher.handle === me.value.handle ? 0 : 1
     if (mineA !== mineB) return mineA - mineB
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  }),
+  })
 )
 
-const recentlyHandled = computed(() =>
-  tasks.value
-    .filter((t) => t.reviewedBy && t.state !== 'PENDING')
-    .slice(0, 4),
-)
+const recentlyHandled = computed(() => tasks.value.filter((t) => t.reviewedBy && t.state !== 'PENDING').slice(0, 4))
 
 function doApprove(id: string) {
   approveTask(id)
@@ -53,9 +49,7 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
     <div class="rev__head">
       <div>
         <h1>审核</h1>
-        <p>
-          所有者和管理员可以审任何一道待审题，<b>包括自己出的那道</b>。不通过要写清原因，作者改完能重新提交。
-        </p>
+        <p>所有者和管理员可以审任何一道待审题，<b>包括自己出的那道</b>。不通过要写清原因，作者改完能重新提交。</p>
       </div>
       <v-chip variant="tonal" label>{{ pendingTasks.length }} 道待审</v-chip>
     </div>
@@ -66,16 +60,28 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
           <div class="queue__main">
             <div class="queue__titleline">
               <router-link :to="`/task/${task.id}`" class="queue__title">{{ task.title }}</router-link>
-              <v-chip v-if="task.publisher.handle === me.handle" size="x-small" label variant="tonal" class="queue__self">
+              <v-chip
+                v-if="task.publisher.handle === me.handle"
+                size="x-small"
+                label
+                variant="tonal"
+                class="queue__self"
+              >
                 你自己出的 · 可直接通过
               </v-chip>
             </div>
             <p class="queue__summary">{{ task.summary }}</p>
             <div class="queue__meta">
-              <span>作者 <b>{{ task.publisher.name }}</b></span>
+              <span
+                >作者 <b>{{ task.publisher.name }}</b></span
+              >
               <span>{{ task.category }}</span>
               <span>{{ task.participantLimit === null ? '领取不限' : `领取上限 ${task.participantLimit}` }}</span>
-              <span>{{ task.minTeamSize === 1 && task.maxTeamSize === 1 ? '单人' : `小队 ${task.minTeamSize}–${task.maxTeamSize}` }}</span>
+              <span>{{
+                task.minTeamSize === 1 && task.maxTeamSize === 1
+                  ? '单人'
+                  : `小队 ${task.minTeamSize}–${task.maxTeamSize}`
+              }}</span>
               <span>{{ deadlineText(task) }}</span>
             </div>
           </div>
@@ -88,12 +94,7 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
       </ul>
     </PanelCard>
 
-    <v-empty-state
-      v-else
-      icon="mdi-check-all"
-      title="队列是空的"
-      text="没有待审的题。有新题提交时会出现在这里。"
-    />
+    <v-empty-state v-else icon="mdi-check-all" title="队列是空的" text="没有待审的题。有新题提交时会出现在这里。" />
 
     <PanelCard v-if="recentlyHandled.length" title="最近处理过" class="rev__recent">
       <ul class="recent">
@@ -116,7 +117,14 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
         <p class="text-body-2 text-medium-emphasis mb-3">
           原因会原样发给作者。写清「哪里不合格、改成什么样」，作者就能直接改，不用来回问。
         </p>
-        <v-textarea v-model="reason" variant="outlined" rows="4" auto-grow placeholder="比如：口径没写清，先定义清楚再提交。" />
+        <v-textarea
+          v-model="reason"
+          autocomplete="off"
+          variant="outlined"
+          rows="4"
+          auto-grow
+          placeholder="比如：口径没写清，先定义清楚再提交。"
+        />
         <div class="d-flex justify-end ga-2 mt-4">
           <v-btn variant="text" @click="rejectFor = null">取消</v-btn>
           <v-btn color="error" variant="flat" :disabled="!reason.trim()" @click="doReject">驳回</v-btn>

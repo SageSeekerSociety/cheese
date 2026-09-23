@@ -38,9 +38,7 @@ const statusSegments = computed(() => {
 const stalled = computed(() => {
   const t = task.value
   if (!t) return []
-  return t.claims.filter(
-    (c) => c.status === 'IN_PROGRESS' && Date.now() - new Date(c.at).getTime() > 5 * 86_400_000,
-  )
+  return t.claims.filter((c) => c.status === 'IN_PROGRESS' && Date.now() - new Date(c.at).getTime() > 5 * 86_400_000)
 })
 
 const teamRows = computed(() => {
@@ -56,7 +54,7 @@ const teamRows = computed(() => {
 
 /** 领取发生在一天里的哪个时段。这张图回答的是「题目发出去之后多久热起来」。 */
 const ROSTER = computed(() =>
-  [...(task.value?.claims ?? [])].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()),
+  [...(task.value?.claims ?? [])].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 )
 
 function daysAgo(iso: string) {
@@ -75,7 +73,11 @@ function daysAgo(iso: string) {
         <p>
           {{ task.publisher.name }} 出题 · {{ task.category }} · {{ deadlineText(task) }} ·
           {{ task.participantLimit === null ? '领取不限' : `领取上限 ${task.participantLimit}` }} ·
-          {{ task.minTeamSize === 1 && task.maxTeamSize === 1 ? '单人' : `小队 ${task.minTeamSize}–${task.maxTeamSize} 人` }}
+          {{
+            task.minTeamSize === 1 && task.maxTeamSize === 1
+              ? '单人'
+              : `小队 ${task.minTeamSize}–${task.maxTeamSize} 人`
+          }}
         </p>
       </div>
       <v-chip variant="tonal" :color="isOpen(task) ? 'success' : 'default'" label>
@@ -86,12 +88,23 @@ function daysAgo(iso: string) {
     <div class="ins__kpis">
       <MetricCard
         label="领取人数"
-        :value="task.participantLimit === null ? `${task.claims.length}` : `${task.claims.length} / ${task.participantLimit}`"
+        :value="
+          task.participantLimit === null ? `${task.claims.length}` : `${task.claims.length} / ${task.participantLimit}`
+        "
         icon="mdi-hand-extended-outline"
-        :hint="task.participantLimit === null ? '不限人数' : `还剩 ${Math.max(0, task.participantLimit - task.claims.length)} 个名额`"
+        :hint="
+          task.participantLimit === null
+            ? '不限人数'
+            : `还剩 ${Math.max(0, task.participantLimit - task.claims.length)} 个名额`
+        "
       />
       <MetricCard label="已提交" :value="task.submitted" icon="mdi-tray-arrow-up" hint="含已通过的" />
-      <MetricCard label="通过率" :value="`${rate(task.passed, task.submitted)}%`" icon="mdi-progress-check" hint="通过 / 提交" />
+      <MetricCard
+        label="通过率"
+        :value="`${rate(task.passed, task.submitted)}%`"
+        icon="mdi-progress-check"
+        hint="通过 / 提交"
+      />
       <MetricCard
         label="领取后一直没动"
         :value="stalled.length"
@@ -109,13 +122,19 @@ function daysAgo(iso: string) {
           :series="[{ name: '累计领取', values: task.claimTrend }]"
           :height="200"
         />
-        <v-empty-state v-else icon="mdi-chart-timeline-variant" title="还没有领取数据" text="题目上板之后这里才会有走势。" />
+        <v-empty-state
+          v-else
+          icon="mdi-chart-timeline-variant"
+          title="还没有领取数据"
+          text="题目上板之后这里才会有走势。"
+        />
       </PanelCard>
 
       <PanelCard title="大家走到哪一步了">
         <SplitBar :segments="statusSegments" />
         <p class="ins__note">
-          通过率 {{ rate(task.passed, task.submitted) }}%，未通过 {{ task.claims.filter((c) => c.status === 'REJECTED').length }} 人。
+          通过率 {{ rate(task.passed, task.submitted) }}%，未通过
+          {{ task.claims.filter((c) => c.status === 'REJECTED').length }} 人。
           这个比例跟整块板的平均比对，才看得出题目是偏难还是偏松。
         </p>
       </PanelCard>

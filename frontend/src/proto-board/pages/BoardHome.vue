@@ -27,13 +27,15 @@ const visible = computed(() => {
       (t) =>
         t.title.toLowerCase().includes(kw) ||
         t.summary.toLowerCase().includes(kw) ||
-        t.tags.some((tag) => tag.toLowerCase().includes(kw)),
+        t.tags.some((tag) => tag.toLowerCase().includes(kw))
     )
   }
   if (sort.value === 'hot') list.sort((a, b) => b.claims.length - a.claims.length)
-  if (sort.value === 'new') list.sort((a, b) => new Date(b.publishedAt ?? b.createdAt).getTime() - new Date(a.publishedAt ?? a.createdAt).getTime())
-  if (sort.value === 'deadline')
-    list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+  if (sort.value === 'new')
+    list.sort(
+      (a, b) => new Date(b.publishedAt ?? b.createdAt).getTime() - new Date(a.publishedAt ?? a.createdAt).getTime()
+    )
+  if (sort.value === 'deadline') list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
   return list
 })
 
@@ -41,7 +43,7 @@ const closingSoon = computed(() =>
   boardTasks.value.filter((t) => {
     const ms = new Date(t.deadline).getTime() - Date.now()
     return isOpen(t) && ms < 3 * 86_400_000
-  }),
+  })
 )
 
 /** 待审队列里属于「我出的」那几道。管理员自己出的题自己能审，所以这句话要在首页说出来。 */
@@ -53,9 +55,7 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
     <div class="home__hero">
       <div>
         <h1 class="home__title">题目板</h1>
-        <p class="home__sub">
-          任何人都可以出题。题目发出后由所有者或管理员审核，通过后上板，谁都能领。
-        </p>
+        <p class="home__sub">任何人都可以出题。题目发出后由所有者或管理员审核，通过后上板，谁都能领。</p>
       </div>
       <div class="home__hero-actions">
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" to="/publish">出题目</v-btn>
@@ -93,15 +93,22 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
     </v-alert>
 
     <div class="home__stats">
-      <span>板上 <b>{{ kpis.published }}</b> 道题</span>
-      <span>共 <b>{{ kpis.claims }}</b> 次领取</span>
-      <span>参与 <b>{{ kpis.participants }}</b> 人</span>
+      <span
+        >板上 <b>{{ kpis.published }}</b> 道题</span
+      >
+      <span
+        >共 <b>{{ kpis.claims }}</b> 次领取</span
+      >
+      <span
+        >参与 <b>{{ kpis.participants }}</b> 人</span
+      >
       <span v-if="closingSoon.length" class="home__stats-warn">{{ closingSoon.length }} 道即将截止</span>
     </div>
 
     <div class="home__filters">
       <v-text-field
         v-model="keyword"
+        autocomplete="off"
         density="compact"
         variant="outlined"
         hide-details
@@ -111,6 +118,7 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
       />
       <v-select
         v-model="category"
+        autocomplete="off"
         :items="CATEGORIES"
         density="compact"
         variant="outlined"

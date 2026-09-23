@@ -28,7 +28,7 @@ const tags = computed(() =>
     .split(/[,，\s]+/)
     .map((t) => t.trim())
     .filter(Boolean)
-    .slice(0, 5),
+    .slice(0, 5)
 )
 
 const errors = computed(() => {
@@ -69,9 +69,18 @@ function submit() {
     <div class="pub__grid">
       <div class="pub__main">
         <PanelCard title="题目内容">
-          <v-text-field v-model="title" label="标题" variant="outlined" density="comfortable" counter="80" maxlength="80" />
+          <v-text-field
+            v-model="title"
+            autocomplete="off"
+            label="标题"
+            variant="outlined"
+            density="comfortable"
+            counter="80"
+            maxlength="80"
+          />
           <v-textarea
             v-model="summary"
+            autocomplete="off"
             label="题干"
             variant="outlined"
             density="comfortable"
@@ -79,9 +88,18 @@ function submit() {
             placeholder="说清楚要做什么、交付什么、怎么算完成。"
           />
           <div class="pub__row">
-            <v-select v-model="category" :items="CATEGORIES" label="分类" variant="outlined" density="comfortable" hide-details />
+            <v-select
+              v-model="category"
+              autocomplete="off"
+              :items="CATEGORIES"
+              label="分类"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+            />
             <v-text-field
               v-model="tagText"
+              autocomplete="off"
               label="标签"
               variant="outlined"
               density="comfortable"
@@ -117,9 +135,25 @@ function submit() {
               <span class="pub__field-help">都填 1 就是单人题；否则领取时要凑够下限才成组。</span>
             </div>
             <div class="pub__field-control">
-              <v-text-field v-model.number="minTeam" type="number" variant="outlined" density="compact" hide-details label="下限" style="max-width: 110px" />
+              <v-text-field
+                v-model.number="minTeam"
+                type="number"
+                variant="outlined"
+                density="compact"
+                hide-details
+                label="下限"
+                style="max-width: 110px"
+              />
               <span class="pub__dash">–</span>
-              <v-text-field v-model.number="maxTeam" type="number" variant="outlined" density="compact" hide-details label="上限" style="max-width: 110px" />
+              <v-text-field
+                v-model.number="maxTeam"
+                type="number"
+                variant="outlined"
+                density="compact"
+                hide-details
+                label="上限"
+                style="max-width: 110px"
+              />
             </div>
           </div>
 

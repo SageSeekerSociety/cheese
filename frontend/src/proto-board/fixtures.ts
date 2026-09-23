@@ -231,8 +231,7 @@ export const TASKS: BoardTask[] = [
   finalize({
     id: 't1',
     title: '给题目板写一个「领取人数」的并发安全实现',
-    summary:
-      '同一道题被很多人同时点「领取」时，不能超发。请实现并给出你判断并发安全的依据（测试、推理或两者都行）。',
+    summary: '同一道题被很多人同时点「领取」时，不能超发。请实现并给出你判断并发安全的依据（测试、推理或两者都行）。',
     category: '系统与网络',
     tags: ['并发', '数据库', '后端'],
     publisher: PEOPLE.caisongyang,

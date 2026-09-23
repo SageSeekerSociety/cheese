@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import PanelCard from '../components/PanelCard.vue'
 import TrendChart from '../components/TrendChart.vue'
-import { CLAIM_LABEL, DAY_LABELS, STATE_LABEL, deadlineText, isOpen } from '../fixtures'
+import { CLAIM_LABEL, DAY_LABELS, deadlineText, isOpen, STATE_LABEL } from '../fixtures'
 import { alreadyClaimed, canManageTask, claimTask, myClaim, tasks } from '../store'
 
 const route = useRoute()
@@ -19,7 +19,7 @@ const task = computed(() => tasks.value.find((t) => t.id === String(route.params
 const claimed = computed(() => (task.value ? alreadyClaimed(task.value) : false))
 const mine = computed(() => (task.value ? myClaim(task.value) : undefined))
 const full = computed(
-  () => task.value?.participantLimit !== null && (task.value?.claims.length ?? 0) >= (task.value?.participantLimit ?? 0),
+  () => task.value?.participantLimit !== null && (task.value?.claims.length ?? 0) >= (task.value?.participantLimit ?? 0)
 )
 const open = computed(() => (task.value ? isOpen(task.value) : false))
 const canSeeRoster = computed(() => (task.value ? canManageTask(task.value) : false))
@@ -51,7 +51,9 @@ const claimLabel = computed(() => {
 
 <template>
   <div v-if="task" class="td">
-    <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="td__back" @click="router.back()">返回</v-btn>
+    <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="td__back" @click="router.back()"
+      >返回</v-btn
+    >
 
     <div class="td__grid">
       <div class="td__main">
@@ -125,13 +127,37 @@ const claimLabel = computed(() => {
               <span v-if="task.participantLimit !== null"> / {{ task.participantLimit }}</span>
               <em v-else> 人（不限）</em>
             </div>
-            <v-progress-linear v-if="task.participantLimit !== null" :model-value="fillPct" height="6" rounded class="pd__bar" />
+            <v-progress-linear
+              v-if="task.participantLimit !== null"
+              :model-value="fillPct"
+              height="6"
+              rounded
+              class="pd__bar"
+            />
           </div>
           <dl class="facts">
-            <div><dt>小队</dt><dd>{{ task.minTeamSize === 1 && task.maxTeamSize === 1 ? '单人' : `${task.minTeamSize}–${task.maxTeamSize} 人` }}</dd></div>
-            <div><dt>截止</dt><dd>{{ deadlineText(task) }}</dd></div>
-            <div><dt>提交</dt><dd>{{ task.submitted }} 份</dd></div>
-            <div><dt>通过</dt><dd>{{ task.passed }} 份</dd></div>
+            <div>
+              <dt>小队</dt>
+              <dd>
+                {{
+                  task.minTeamSize === 1 && task.maxTeamSize === 1
+                    ? '单人'
+                    : `${task.minTeamSize}–${task.maxTeamSize} 人`
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>截止</dt>
+              <dd>{{ deadlineText(task) }}</dd>
+            </div>
+            <div>
+              <dt>提交</dt>
+              <dd>{{ task.submitted }} 份</dd>
+            </div>
+            <div>
+              <dt>通过</dt>
+              <dd>{{ task.passed }} 份</dd>
+            </div>
           </dl>
         </PanelCard>
 
@@ -237,7 +263,7 @@ const claimLabel = computed(() => {
   font-size: 0.83rem;
   line-height: 1.6;
   background: rgba(var(--v-theme-error), 0.07);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .td__reject-hint {

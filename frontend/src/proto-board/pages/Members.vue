@@ -8,7 +8,7 @@
 import { computed, ref } from 'vue'
 
 import PanelCard from '../components/PanelCard.vue'
-import { PEOPLE, ROLE_LABEL, type Person } from '../fixtures'
+import { PEOPLE, type Person, ROLE_LABEL } from '../fixtures'
 import { codes, isOwner, me } from '../store'
 
 interface Row {
@@ -81,6 +81,7 @@ function promote(row: Row) {
       <template #actions>
         <v-text-field
           v-model="keyword"
+          autocomplete="off"
           density="compact"
           variant="outlined"
           hide-details
@@ -129,12 +130,7 @@ function promote(row: Row) {
               <span v-else class="mem__note">建板时就在</span>
             </td>
             <td class="num">
-              <v-btn
-                v-if="isOwner && row.role !== 'OWNER'"
-                size="small"
-                variant="text"
-                @click="promote(row)"
-              >
+              <v-btn v-if="isOwner && row.role !== 'OWNER'" size="small" variant="text" @click="promote(row)">
                 {{ row.role === 'ADMIN' ? '降为成员' : '设为管理员' }}
               </v-btn>
               <span v-else-if="!isOwner" class="mem__note">只有所有者能改</span>
@@ -148,13 +144,12 @@ function promote(row: Row) {
       <div class="join">
         <code class="join__code">{{ activeCode?.code ?? '暂无可用码' }}</code>
         <span class="join__hint">
-          当前码：{{ activeCode ? `${activeCode.useCount} / ${activeCode.maxUses ?? '不限'} 人已用` : '去头部下拉里新建一个' }}。
-          可用人数与有效期在下拉窗口里随时可调。
+          当前码：{{
+            activeCode ? `${activeCode.useCount} / ${activeCode.maxUses ?? '不限'} 人已用` : '去头部下拉里新建一个'
+          }}。 可用人数与有效期在下拉窗口里随时可调。
         </span>
       </div>
-      <p class="mem__foot">
-        成员是「怎么进来的」这件事在这一页是可见的 —— 退群、找错码、码被撤了，都要能对到人。
-      </p>
+      <p class="mem__foot">成员是「怎么进来的」这件事在这一页是可见的 —— 退群、找错码、码被撤了，都要能对到人。</p>
     </PanelCard>
   </div>
 </template>

@@ -17,10 +17,10 @@ import MetricCard from '../components/MetricCard.vue'
 import PanelCard from '../components/PanelCard.vue'
 import SplitBar from '../components/SplitBar.vue'
 import TrendChart from '../components/TrendChart.vue'
-import { DAY_LABELS, SUMMARY, deadlineText, isOpen } from '../fixtures'
+import { DAY_LABELS, deadlineText, isOpen, SUMMARY } from '../fixtures'
 import {
-  CATEGORY_SPLIT,
   boardTasks,
+  CATEGORY_SPLIT,
   claimRanking,
   kpis,
   pendingTasks,
@@ -44,15 +44,15 @@ const stalled = computed(() =>
   tasks.value.flatMap((t) =>
     t.claims
       .filter((c) => c.status === 'IN_PROGRESS' && Date.now() - new Date(c.at).getTime() > 5 * 86_400_000)
-      .map((c) => ({ task: t, who: c })),
-  ),
+      .map((c) => ({ task: t, who: c }))
+  )
 )
 
 const closingSoon = computed(() =>
   boardTasks.value.filter((t) => {
     const ms = new Date(t.deadline).getTime() - Date.now()
     return ms > 0 && ms < 3 * 86_400_000
-  }),
+  })
 )
 
 const coldTasks = computed(() => boardTasks.value.filter((t) => t.claims.length === 0))
@@ -73,7 +73,11 @@ const alerts = computed(() => [
     icon: 'mdi-timer-outline',
     tone: 'danger' as const,
     title: `${closingSoon.value.length} 道题三天内截止`,
-    detail: closingSoon.value.map((t) => t.title).slice(0, 2).join('、') || '—',
+    detail:
+      closingSoon.value
+        .map((t) => t.title)
+        .slice(0, 2)
+        .join('、') || '—',
     count: closingSoon.value.length,
   },
   {
@@ -89,7 +93,11 @@ const alerts = computed(() => [
     icon: 'mdi-snowflake',
     tone: 'muted' as const,
     title: `${coldTasks.value.length} 道题上板后无人领取`,
-    detail: coldTasks.value.map((t) => t.title).slice(0, 2).join('、') || '—',
+    detail:
+      coldTasks.value
+        .map((t) => t.title)
+        .slice(0, 2)
+        .join('、') || '—',
     count: coldTasks.value.length,
   },
 ])
@@ -98,9 +106,7 @@ const alertCount = computed(() => alerts.value.filter((a) => a.count > 0).length
 
 // --- 各 tab 的行数据 -----------------------------------------------------------
 
-const taskRows = computed(() =>
-  [...tasks.value].sort((a, b) => b.claims.length - a.claims.length),
-)
+const taskRows = computed(() => [...tasks.value].sort((a, b) => b.claims.length - a.claims.length))
 
 const participantRows = computed(() => {
   const map = new Map<string, { name: string; claims: number; passed: number; active: number }>()
@@ -124,9 +130,7 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
     <div class="an__head">
       <div>
         <h1>数据看板</h1>
-        <p>
-          整块板的情况。这一屏只对所有者和管理员开放 —— 普通用户在「我的」里只看得到自己出的题。
-        </p>
+        <p>整块板的情况。这一屏只对所有者和管理员开放 —— 普通用户在「我的」里只看得到自己出的题。</p>
       </div>
       <v-chip v-if="alertCount" color="warning" variant="tonal" label>{{ alertCount }} 件待处理</v-chip>
     </div>
@@ -142,7 +146,12 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
     <!-- ===== 总览：先回答「现在怎么样」 ===== -->
     <div v-if="tab === 'overview'" class="an__pane">
       <div class="an__kpis">
-        <MetricCard label="题目总数" :value="kpis.taskTotal" icon="mdi-file-document-multiple-outline" :hint="`${kpis.published} 道已上板`" />
+        <MetricCard
+          label="题目总数"
+          :value="kpis.taskTotal"
+          icon="mdi-file-document-multiple-outline"
+          :hint="`${kpis.published} 道已上板`"
+        />
         <MetricCard
           label="待审核"
           :value="kpis.pending"
@@ -150,7 +159,12 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
           :tone="kpis.pending ? 'warn' : 'muted'"
           :hint="kpis.pending ? '审完才会出现在板上' : '队列是空的'"
         />
-        <MetricCard label="参与人数" :value="kpis.participants" icon="mdi-account-group-outline" :hint="`本周新增 ${SUMMARY.newMembersThisWeek} 人`" />
+        <MetricCard
+          label="参与人数"
+          :value="kpis.participants"
+          icon="mdi-account-group-outline"
+          :hint="`本周新增 ${SUMMARY.newMembersThisWeek} 人`"
+        />
         <MetricCard
           label="领取总数"
           :value="kpis.claims"
@@ -174,7 +188,12 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
             :labels="DAY_LABELS"
             :series="[
               { name: '累计领取', values: trendClaim },
-              { name: '累计提交', values: SUMMARY.submitTrend.map((v) => Math.round((v / Math.max(...SUMMARY.submitTrend)) * kpis.submissions)) },
+              {
+                name: '累计提交',
+                values: SUMMARY.submitTrend.map((v) =>
+                  Math.round((v / Math.max(...SUMMARY.submitTrend)) * kpis.submissions)
+                ),
+              },
             ]"
             :height="220"
           />
@@ -204,7 +223,12 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
     <!-- ===== 待处理：再回答「要我做点什么」 ===== -->
     <div v-else-if="tab === 'alerts'" class="an__pane">
       <div class="an__alerts">
-        <div v-for="a in alerts" :key="a.key" class="alert" :class="[`alert--${a.tone}`, { 'alert--zero': a.count === 0 }]">
+        <div
+          v-for="a in alerts"
+          :key="a.key"
+          class="alert"
+          :class="[`alert--${a.tone}`, { 'alert--zero': a.count === 0 }]"
+        >
           <v-icon :icon="a.icon" size="20" />
           <div class="alert__body">
             <b>{{ a.title }}</b>
@@ -258,12 +282,28 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
                 <div class="an__sub">{{ t.category }}</div>
               </td>
               <td>{{ t.publisher.name }}</td>
-              <td class="num">{{ t.claims.length }}<span v-if="t.participantLimit !== null" class="an__cap"> / {{ t.participantLimit }}</span></td>
+              <td class="num">
+                {{ t.claims.length
+                }}<span v-if="t.participantLimit !== null" class="an__cap"> / {{ t.participantLimit }}</span>
+              </td>
               <td class="num">{{ t.submitted }}</td>
               <td class="num">{{ t.submitted ? pct(t.passed, t.submitted) : 0 }}%</td>
               <td>
-                <v-chip size="x-small" label variant="tonal" :class="t.state === 'PUBLISHED' ? 'tone-ok' : t.state === 'PENDING' ? 'tone-warn' : 'tone-danger'">
-                  {{ t.state === 'PUBLISHED' ? (isOpen(t) ? '已上板' : '已截止') : t.state === 'PENDING' ? '待审核' : '已驳回' }}
+                <v-chip
+                  size="x-small"
+                  label
+                  variant="tonal"
+                  :class="t.state === 'PUBLISHED' ? 'tone-ok' : t.state === 'PENDING' ? 'tone-warn' : 'tone-danger'"
+                >
+                  {{
+                    t.state === 'PUBLISHED'
+                      ? isOpen(t)
+                        ? '已上板'
+                        : '已截止'
+                      : t.state === 'PENDING'
+                        ? '待审核'
+                        : '已驳回'
+                  }}
                 </v-chip>
               </td>
               <td class="an__sub">{{ deadlineText(t) }}</td>

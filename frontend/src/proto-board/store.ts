@@ -11,16 +11,16 @@
 import { computed, ref } from 'vue'
 
 import {
-  IDENTITIES,
-  INITIAL_CODES,
-  PEOPLE,
-  SPACE,
-  TASKS,
   type BoardTask,
   type Claimant,
+  IDENTITIES,
+  INITIAL_CODES,
   type InviteCode,
+  PEOPLE,
   type Person,
   type Role,
+  SPACE,
+  TASKS,
 } from './fixtures'
 
 const identityIndex = ref(0)
@@ -202,11 +202,14 @@ export const claimRanking = computed(() =>
   [...tasks.value]
     .filter((t) => t.state !== 'PENDING')
     .sort((a, b) => b.claims.length - a.claims.length)
-    .slice(0, 6),
+    .slice(0, 6)
 )
 
 export const publisherRanking = computed(() => {
-  const byHandle = new Map<string, { person: Person; tasks: number; claims: number; passed: number; submitted: number }>()
+  const byHandle = new Map<
+    string,
+    { person: Person; tasks: number; claims: number; passed: number; submitted: number }
+  >()
   for (const t of tasks.value) {
     const row = byHandle.get(t.publisher.handle) ?? {
       person: t.publisher,

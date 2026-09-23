@@ -28,7 +28,7 @@ const NAV = computed(() =>
     { to: '/review', label: '审核', icon: 'mdi-clipboard-check-outline', show: isManager.value, badge: true },
     { to: '/members', label: '成员', icon: 'mdi-account-group-outline', show: isManager.value },
     { to: '/analytics', label: '数据看板', icon: 'mdi-chart-box-outline', show: isManager.value },
-  ].filter((i) => i.show),
+  ].filter((i) => i.show)
 )
 
 const activeCode = computed(() => codes.value.find((c) => !c.revoked))
@@ -92,7 +92,12 @@ function goInvite() {
                 <span class="menu__sub">
                   {{ activeCode ? activeCode.code : '暂无' }}
                   <template v-if="activeCode">
-                    · {{ activeCode.maxUses === null ? `${activeCode.useCount}/不限` : `${activeCode.useCount}/${activeCode.maxUses}` }}
+                    ·
+                    {{
+                      activeCode.maxUses === null
+                        ? `${activeCode.useCount}/不限`
+                        : `${activeCode.useCount}/${activeCode.maxUses}`
+                    }}
                   </template>
                 </span>
               </template>
@@ -100,7 +105,7 @@ function goInvite() {
             <v-list-item
               prepend-icon="mdi-account-multiple-outline"
               title="成员与角色"
-              @click="((menuOpen = false), router.push('/members'))"
+              @click="(menuOpen = false), router.push('/members')"
             />
             <v-divider class="my-1" />
             <!-- 只有所有者能改别人的角色，所以这一项不给管理员看（与今天一致）。 -->
@@ -109,7 +114,7 @@ function goInvite() {
               prepend-icon="mdi-account-cog"
               title="管理员设置"
               subtitle="谁可以管理这块板"
-              @click="((menuOpen = false), (adminsDialog = true))"
+              @click="(menuOpen = false), (adminsDialog = true)"
             />
             <v-list-item v-else prepend-icon="mdi-shield-account-outline" title="管理员设置" disabled>
               <template #subtitle>只有所有者能改</template>
@@ -240,7 +245,7 @@ function goInvite() {
   font: inherit;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .board__title--clickable {
@@ -252,7 +257,7 @@ function goInvite() {
 }
 
 .board__avatar {
-  background: linear-gradient(160deg, #7fb2e5, #3f6fa8);
+  background: linear-gradient(160deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary-darken-1)));
 }
 
 .board__name {

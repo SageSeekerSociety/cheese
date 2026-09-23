@@ -55,7 +55,12 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
     <div v-if="tab === 'published'" class="mine__pane">
       <div v-if="myPublished.length" class="mine__kpis">
         <MetricCard label="我出的题" :value="pubStats.tasks" icon="mdi-file-document-outline" hint="含待审与已驳回" />
-        <MetricCard label="累计被领取" :value="pubStats.claims" icon="mdi-hand-extended-outline" hint="已上板题目的领取次数" />
+        <MetricCard
+          label="累计被领取"
+          :value="pubStats.claims"
+          icon="mdi-hand-extended-outline"
+          hint="已上板题目的领取次数"
+        />
         <MetricCard
           label="等审核"
           :value="pubStats.pending"
@@ -88,7 +93,10 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
             <div class="pub-row__meta">
               <span>{{ task.category }}</span>
               <span>{{ deadlineText(task) }}</span>
-              <span>{{ task.claims.length }}{{ task.participantLimit === null ? '' : ` / ${task.participantLimit}` }} 人领取</span>
+              <span
+                >{{ task.claims.length
+                }}{{ task.participantLimit === null ? '' : ` / ${task.participantLimit}` }} 人领取</span
+              >
               <span v-if="fill(task) !== null">{{ fill(task) }}% 满</span>
               <span>提交 {{ task.submitted }} · 通过 {{ task.passed }}</span>
             </div>

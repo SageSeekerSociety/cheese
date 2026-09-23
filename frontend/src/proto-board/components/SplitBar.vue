@@ -74,7 +74,7 @@ const TONE: Record<string, string> = {
 .split__legend i {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .split__name {

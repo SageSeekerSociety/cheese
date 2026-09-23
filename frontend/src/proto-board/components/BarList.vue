@@ -26,7 +26,7 @@ const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
       <span class="bars__value">{{ row.value }}{{ unit ?? '' }}</span>
     </div>
     <p v-if="rows.some((r) => r.hint)" class="bars__foot">
-      <span v-for="r in rows.filter((x) => x.hint)" :key="r.label">{{ r.label }}：{{ r.hint }}　</span>
+      <span v-for="r in rows.filter((x) => x.hint)" :key="r.label">{{ r.label }}：{{ r.hint }}</span>
     </p>
   </div>
   <v-empty-state v-else icon="mdi-chart-bar" :title="empty ?? '暂无数据'" />
@@ -80,6 +80,9 @@ const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
 }
 
 .bars__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
   margin: 4px 0 0;
   color: rgba(var(--v-theme-on-surface), 0.5);
   font-size: 0.72rem;

@@ -3,7 +3,7 @@
 // 状态标、领取进度、小队限制、截止时间都从同一份 task 派生，不各自算一遍。
 import { computed } from 'vue'
 
-import { CLAIM_LABEL, STATE_LABEL, deadlineText, isOpen, type BoardTask } from '../fixtures'
+import { type BoardTask, CLAIM_LABEL, deadlineText, isOpen, STATE_LABEL } from '../fixtures'
 import { alreadyClaimed, myClaim } from '../store'
 
 const props = defineProps<{ task: BoardTask; showPublisher?: boolean }>()
@@ -22,7 +22,7 @@ const stateTone = computed(() => {
 })
 
 const stateText = computed(() =>
-  props.task.state === 'PUBLISHED' && !isOpen(props.task) ? '已截止' : STATE_LABEL[props.task.state],
+  props.task.state === 'PUBLISHED' && !isOpen(props.task) ? '已截止' : STATE_LABEL[props.task.state]
 )
 
 const limitText = computed(() => {
@@ -32,7 +32,9 @@ const limitText = computed(() => {
   return `${used} / ${t.participantLimit} 人`
 })
 
-const full = computed(() => props.task.participantLimit !== null && props.task.claims.length >= props.task.participantLimit)
+const full = computed(
+  () => props.task.participantLimit !== null && props.task.claims.length >= props.task.participantLimit
+)
 
 const teamText = computed(() => {
   const { minTeamSize: lo, maxTeamSize: hi } = props.task
@@ -45,7 +47,13 @@ const claimed = computed(() => alreadyClaimed(props.task))
 </script>
 
 <template>
-  <v-card flat rounded="lg" class="tcard" :class="{ 'tcard--dead': task.state === 'REJECTED' }" :to="`/task/${task.id}`">
+  <v-card
+    flat
+    rounded="lg"
+    class="tcard"
+    :class="{ 'tcard--dead': task.state === 'REJECTED' }"
+    :to="`/task/${task.id}`"
+  >
     <div class="tcard__top">
       <v-chip size="x-small" label variant="tonal" :class="`tone-${stateTone}`">{{ stateText }}</v-chip>
       <v-chip size="x-small" label variant="text" class="tcard__cat">{{ task.category }}</v-chip>
@@ -60,7 +68,9 @@ const claimed = computed(() => alreadyClaimed(props.task))
     <p class="tcard__summary">{{ task.summary }}</p>
 
     <div class="tcard__tags">
-      <v-chip v-for="tag in task.tags" :key="tag" size="x-small" label variant="text" class="tcard__tag">#{{ tag }}</v-chip>
+      <v-chip v-for="tag in task.tags" :key="tag" size="x-small" label variant="text" class="tcard__tag"
+        >#{{ tag }}</v-chip
+      >
     </div>
 
     <div class="tcard__foot">
