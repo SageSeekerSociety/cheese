@@ -127,13 +127,21 @@ class StreamingUsageExtractor:
             return
         try:
             evt = json.loads(raw[6:])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return
-        msg = evt.get("message") or {}
-        self.model = self.model or msg.get("model", "")
+        if not isinstance(evt, dict):
+            return
+        msg = evt.get("message")
+        if not isinstance(msg, dict):
+            msg = {}
+        model = msg.get("model")
+        if not self.model and isinstance(model, str):
+            self.model = model
         for src in (msg.get("usage"), evt.get("usage")):
             if isinstance(src, dict):
-                self.usage.update({k: v for k, v in src.items() if isinstance(v, int)})
+                self.usage.update(
+                    {k: v for k, v in src.items() if type(v) is int and v >= 0}
+                )
 
 
 def usage_from_sse(body: bytes) -> tuple[dict, str]:
