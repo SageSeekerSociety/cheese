@@ -847,12 +847,7 @@ onBeforeUnmount(() => {
           >
             <span v-for="chip in windowChips" :key="chip.key" class="qpage__wchip">
               {{ chip.text }}
-              <button
-                type="button"
-                class="qpage__wchip-x"
-                :aria-label="chip.clearAria"
-                @click="clearWindow(chip.key)"
-              >
+              <button type="button" class="qpage__wchip-x" :aria-label="chip.clearAria" @click="clearWindow(chip.key)">
                 <v-icon icon="mdi-close" size="12" aria-hidden="true" />
               </button>
             </span>
