@@ -28,6 +28,9 @@ from app.core.config import settings
 from app.domain.device.models import DeviceRow
 from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackTimeline
 from app.domain.machine.models import WarmMachine
+from app.domain.project.models import Project
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.topic.models import Topic, TopicKind
 from app.domain.usage.models import ResourceUsage
 from app.domain.user.models import User
 from tests.conftest import seed_user
@@ -592,3 +595,166 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     # 除了它自己之外没有任何请求在飞 —— 报 0 才是真的 0，报 1 会让空闲的平台看着像
     # 「有一条请求一直没处理完」。
     assert after.json()["data"]["active_requests"] == 0
+
+
+# --- 上一窗口合计（prev）：环比差的数据源 -------------------------------------
+#
+# `prev` 是 `[since-days, since)` 这个上一等长窗口的**同一口径**合计 —— KPI 卡的
+# 「较上周期 ±%」从这里出。这一组钉三件事，每一件都是一种能悄悄上线的坏法：
+#
+# * **跨 UTC 日界的种子必须落在 prev 那一侧**。7 天窗口的 prev 是再往前 7 天，
+#   边界挪几个小时（按本地时区切天、或写成 6 天）就会把它算进当前窗口或两个窗口外。
+# * **prev 的口径和当前窗口同一把尺子**。两边各写一份判据的话，环比比的是两个
+#   不同的数 —— 比如「解决」在曲线上是「几条反馈到过 resolved」（distinct），
+#   在 prev 上变成「时间线上有几行」。
+# * **prev 为 0 时字段在、值是 0**，不是整个键缺席 —— 前端按「键在就画 delta」
+#   接线，键缺席和「上一周期是零」在屏幕上必须长得不一样（后者也不画 delta，
+#   但那是 `prev=0` 的语义，不是「后端还没这个字段」）。
+
+
+def _room_with_card(client, *, decided_at: datetime) -> None:
+    """一张落在 ``decided_at`` 决议的采纳卡 —— 北极星环比的样本。
+
+    用例钉的是**计数**，不走递卡流程（同 `test_admin_stats_new_sections.py` 的
+    `_room_with_cards`：直接插行最快也最准）。
+    """
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            project = Project(
+                name=f"prev-{uuid.uuid4().hex[:8]}", owner_handle=REPORTER
+            )
+            s.add(project)
+            await s.flush()
+            room = Topic(
+                project_id=project.id,
+                title="prev 用例",
+                kind=TopicKind.topic,
+                created_at=decided_at,
+            )
+            s.add(room)
+            await s.flush()
+            s.add(
+                AcceptCard(
+                    topic_id=room.id,
+                    reviewer_handle=REPORTER,
+                    routing_reason="最懂",
+                    status=AcceptStatus.accepted,
+                    decided_at=decided_at,
+                    created_at=decided_at,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+
+def test_feedback_prev_counts_the_previous_window_with_the_same_ruler(client, as_admin):
+    """prev 窗口里新建一条、解决一条；当前窗口各一条；两个窗口外一条。
+
+    断言 `prev` 只收上一窗口那两个，而且「解决」数的是反馈条数（distinct），
+    不是时间线行数 —— 后者是同一条反馈改来改去时会虚高的那份。
+    """
+    # 当前窗口：新建一条、今天解决一条。
+    current = _report(client, REPORTER, title="本窗口新建")
+    _set_status(client, as_admin, current["id"], "resolved")
+    # 上一窗口（7 天窗口的 prev 是第 8–14 天）：新建一条 + 解决一条。
+    prev_created = _report(client, REPORTER, title="上一窗口新建")
+    _stamp_feedback(client, _days_ago(10), prev_created["id"])
+    prev_resolved = _report(client, REPORTER, title="上一窗口解决")
+    _set_status(client, as_admin, prev_resolved["id"], "resolved")
+    _stamp_timeline(client, _days_ago(9), prev_resolved["id"], "resolved")
+    # 两个窗口外：谁都不该收它。
+    too_old = _report(client, REPORTER, title="一个月前")
+    _stamp_feedback(client, _days_ago(30), too_old["id"])
+
+    body = _stats(client, as_admin, "feedback", days=DAYS)
+
+    # prev_created 的创建落在 prev；prev_resolved 的**创建**落在当前（今天提的），
+    # 只有它的解决落在 prev —— 两个计数各按各自的时间轴，这正是「同一把尺子」。
+    assert body["prev"] == {"created": 1, "resolved": 1}
+
+
+def test_feedback_prev_is_present_and_zero_when_the_previous_window_is_empty(
+    client, as_admin
+):
+    """上一窗口什么都没有时，`prev` 在、值是 0 —— 前端据此不画 delta。
+
+    键整个缺席是另一回事（旧后端还没有这个字段），两者在屏幕上必须分得开。
+    """
+    _report(client, REPORTER, title="只有当前窗口这条")
+
+    body = _stats(client, as_admin, "feedback", days=DAYS)
+
+    assert body["prev"] == {"created": 0, "resolved": 0}
+
+
+def test_usage_prev_totals_read_the_previous_window(client, as_admin):
+    """用量 prev 是 `platform_totals` 平移一个窗口 —— 同一口径的三个数。
+
+    prev 里没有 `unpriced_tokens`：环比那三张卡是 token / 调用 / 成本，prev 的
+    形状与它们一一对应。
+    """
+    project = uuid.UUID(_project(client, REPORTER))
+    _seed_usage(
+        client,
+        [
+            (_days_ago(0), project, 100, 1.0),
+            # 上一窗口（第 8 天）的两笔：一笔有价、一笔算不出价。
+            (_days_ago(8), project, 200, 2.0),
+            (_days_ago(8), project, 50, 0.0),
+            # 两个窗口外。
+            (_days_ago(30), project, 9999, 99.0),
+        ],
+    )
+
+    body = _stats(client, as_admin, "usage", days=DAYS)
+
+    assert body["prev"] == {"tokens": 250, "calls": 2, "cost_usd": 2.0}
+
+
+def test_platform_prev_new_counts_accounts_created_in_the_previous_window(
+    client, as_admin
+):
+    """`people.prev_new`：上一窗口新增的账号数，和 `new` 同一把尺子。"""
+    # 夹具自己会种一个 agent 账号（落在当前窗口），所以起点先读一遍、后面按差值
+    # 断言 —— 同 `test_platform_reports_accounts_by_day_and_machine_stock` 的理由：
+    # 绝对值断言会在夹具改动时红，而红的原因和这条用例要钉的东西无关。
+    before = _stats(client, as_admin, "platform", days=DAYS)["people"]
+
+    seed_user(client, "stats-prev-window")
+    _stamp_user(client, _days_ago(9), "stats-prev-window")
+
+    body = _stats(client, as_admin, "platform", days=DAYS)
+
+    assert body["people"]["prev_new"] == before["prev_new"] + 1
+    # 当前窗口的 `new` 不该把上一窗口那个算进去：它先落进当前窗口（`seed_user`
+    # 的 created_at 是此刻）、再被按走 —— 一增一减，`new` 回到起点才对。
+    assert body["people"]["new"] == before["new"]
+
+
+def test_product_prev_total_counts_cards_decided_in_the_previous_window(
+    client, as_admin
+):
+    """北极星：total 数当前窗口决议的卡，prev_total 数上一窗口的。
+
+    顺带钉住 `total` 是**窗口口径**（和 series、和卡片标签同一把尺子）：一个
+    全量合计夹在两个窗口口径中间，环比比的就是两个不同的数。
+    """
+    _room_with_card(client, decided_at=_days_ago(2))  # 当前窗口
+    _room_with_card(client, decided_at=_days_ago(9))  # 上一窗口
+    _room_with_card(client, decided_at=_days_ago(30))  # 两个窗口外
+
+    body = _stats(client, as_admin, "product", days=DAYS)
+
+    assert body["north_star"]["total"] == 1
+    assert body["north_star"]["prev_total"] == 1
+    assert [row["accepted"] for row in body["north_star"]["series"]] == [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+    ]

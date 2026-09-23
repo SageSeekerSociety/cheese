@@ -137,6 +137,12 @@
   /* ---- Page width ---- */
   --page-w: 920px; /* reading and forms — the default */
   --page-w-wide: 1100px; /* multi-column dashboards */
+  /* 管理后台的多列仪表盘（看板/队列这类工作台）。1100 在 1920 视口下只用到可用
+     宽度的约 2/3（去全局 rail 64px 与后台侧栏 200px 后），两侧的空白放不下任何
+     信息；1440 是 6 轨 KPI 网格（6×216+padding）的整齐落点，也是长表格仍读得动
+     的上限。后台页的断点一律用容器查询挂在内容列上，不用视口媒体查询——侧栏
+     手动折叠省出的 144px 视口查询看不见。 */
+  --page-w-admin: 1440px; /* admin console workbenches (container-queried grids) */
   /* 连续正文的第三档。920 是给表单和卡片列表的，正文铺满它一行会排到 60 个汉字
      以上，回行时眼睛要横穿一整行去找下一行的开头，很容易跳行；660 下 15px 汉字
      一行约 44 字。前两档的值不动，宽度是这一栏的属性，不是这一次的偏好。 */
@@ -629,6 +635,9 @@ button:not(.v-btn) {
 }
 .page-container--wide {
   max-width: var(--page-w-wide);
+}
+.page-container--admin {
+  max-width: var(--page-w-admin);
 }
 
 /* 渲染出来的 markdown（v-html 塞进来的那一份：总览的概要、项目文档的正文）。

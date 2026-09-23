@@ -241,6 +241,8 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  /* 「已到底」和翻页按钮不该贴着：内容（`AdminQueueFoot`）不带间距，缝由壳给。 */
+  gap: 12px;
   min-height: 40px;
   padding: 0 20px;
   border-top: 1px solid var(--line);

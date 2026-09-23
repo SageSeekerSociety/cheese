@@ -1,7 +1,9 @@
 """Network throughput: delta/rate math, wrap safety, honest unreadables."""
 
-import time
+import math
 from pathlib import Path
+
+import pytest
 
 from app.core import net_io
 
@@ -17,19 +19,19 @@ def setup_function() -> None:
     net_io.reset()
 
 
-def test_rate_math_from_a_known_delta(monkeypatch, tmp_path):
+@pytest.mark.parametrize("started", [100.0, math.nextafter(128.0, 0.0)])
+def test_rate_math_from_a_known_delta(monkeypatch, tmp_path, started):
     _fake_nic(tmp_path, "eth0", 1_000_000, 2_000_000)
     monkeypatch.setenv(net_io.NET_ROOT_ENV, str(tmp_path))
     monkeypatch.setenv(net_io.NET_IFACE_ENV, "eth0")
 
-    prev = (time.monotonic(), 1_000_000, 2_000_000)
+    prev = (started, 1_000_000, 2_000_000)
     _fake_nic(tmp_path, "eth0", 1_100_000, 2_250_000)
-    # 100_000 rx bytes over `dt` → the rate is delta/dt; pin dt by patching
-    # the clock inside `_rates`'s caller. Easier: call `_rates` directly.
+    # Crossing 128 seconds changes float spacing, so subtracting these clock
+    # readings can produce a duration slightly above two seconds.
     now = prev[0] + 2.0
     rx_bps, tx_bps = net_io._rates(prev, now, 1_100_000, 2_250_000)
-    assert rx_bps == 50_000.0
-    assert tx_bps == 125_000.0
+    assert (rx_bps, tx_bps) == pytest.approx((50_000.0, 125_000.0), rel=1e-12, abs=0)
 
 
 def test_counter_wrap_is_zero_not_a_spike():
@@ -87,13 +89,14 @@ def test_ring_is_bounded():
     assert len(net_io._uplink) == net_io.RING_MAX
 
 
-def test_api_io_reflects_http_byte_deltas():
+@pytest.mark.parametrize("started", [100.0, math.nextafter(128.0, 0.0)])
+def test_api_io_reflects_http_byte_deltas(started):
     net_io.note_http_bytes(request_body=100, response_body=250)
-    prev = (time.monotonic(), 100, 250)  # the baseline after the first batch
+    prev = (started, 100, 250)  # the baseline after the first batch
     net_io.note_http_bytes(request_body=50, response_body=100)
     now = prev[0] + 1.0
     rx_bps, tx_bps = net_io._rates(prev, now, 150, 350)
-    assert (rx_bps, tx_bps) == (50.0, 100.0)
+    assert (rx_bps, tx_bps) == pytest.approx((50.0, 100.0), rel=1e-12, abs=0)
     status = net_io.api_io_status()
     assert status["note_key"] == "perf.apiIO"
     assert status["scope"] == "process"

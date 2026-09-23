@@ -421,6 +421,16 @@ class FeedbackService:
         """窗口内「到过」这个状态的反馈数，稀疏；`resolved` / `deployed` 各一条。"""
         return await self._repo.reached_series(status=status, since=since, until=until)
 
+    async def count_created_between(self, *, since: datetime, until: datetime) -> int:
+        """窗口内新建的反馈总数（`created_series` 的合计版，看板环比用）。"""
+        return await self._repo.count_created_between(since=since, until=until)
+
+    async def count_reached_resolved_between(
+        self, *, since: datetime, until: datetime
+    ) -> int:
+        """窗口内「到过 resolved」的反馈总数（`reached_series` 的合计版）。"""
+        return await self._repo.count_reached_resolved_between(since=since, until=until)
+
     async def support_counts(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         return await self._repo.supports_counts(ids)
 

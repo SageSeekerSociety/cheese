@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
-import type { StatsKind } from '@/api'
+import type { StatsDays, StatsKind } from '@/api'
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
 
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -14,10 +14,13 @@ import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
+import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
-import { fmtCompact, fmtCost, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
-import { useFeedbackStore } from '@/stores/feedback'
+import AdminSparkline from '@/components/admin/AdminSparkline.vue'
+import { relTime } from '@/lib/relTime'
+import { fmtCost, fmtDelta, fmtDuration, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
+import { useFeedbackStore, WINDOWED_KINDS } from '@/stores/feedback'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
 //
@@ -34,22 +37,26 @@ import { useFeedbackStore } from '@/stores/feedback'
 //
 //   * **存量与窗口分开**。`counts` 是全量（现在一共多少条），`series` 是窗口内的
 //     （这七天怎么变的）—— 页面上「现在是多少」和「这七天怎么走的」是两个问题，
-//     合成一个数就会有一个是错的。
+//     合成一个数就会有一个是错的。窗口（7/30/90 天）由 store 的 `statsDays` 记，
+//     缓存键就是窗口：切窗口把已加载的窗口类全部重拉（`setStatsDays`），不留多窗口
+//     副本 —— 否则导轨短值会混窗口（用量卡显示 30 天的、反馈卡显示 7 天的）。
 //   * **未定价的 token 单独算**。订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
 //     「没有单价」而不是「免费」；把它们加进总额，会在几百万 token 上印一个
 //     `$0.0000`，读起来像「这个月没花钱」。
 //
-// 墙上每个数字都写得出点下去去哪（§6.3 那张准入表）。机器那四个数是例外，而且是**说
-// 得出理由的例外**：平台里没有一页列设备，它们点不进去，所以那一块只报数、不装成链接
-// （口径是存量，见 `machines`）。
+// 墙上每个数字要么写得出点下去去哪，要么说得出**为什么不能点**（§6.3 那张准入表）。
+// 机器那四个数是例外，而且是**说得出理由的例外**：平台里没有一页列设备，它们点不进
+// 去，所以那一块只报数、不装成链接（口径是存量，见 `machines`）。「机器连败」那一栏
+// 同理 —— 它曾经是跳回 `/admin` 的自链，假 affordance 比不点更糟，所以去掉了。
+//
+// 口径注脚（「这个数是怎么算的」）一律收进 `AdminNoteTip`（标题旁的 info 图标 +
+// tooltip），不再以 12.5px 灰字散行叠在块底 —— 一屏七八条注脚等于没有重点。防误读级
+// 的常驻注每屏至多一条（平台的 machines.note、性能的 perf.note）。
 defineOptions({ name: 'AdminDashboardPage' })
 
 const store = useFeedbackStore()
 const { t } = useI18n()
 const router = useRouter()
-
-/** 页头上那句「过去 7 天」问的窗口。窗口是**页面**的问题（`loadStats` 收参数）。 */
-const DAYS = 7
 
 /** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
  *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
@@ -77,7 +84,17 @@ const queue = (query: Record<string, string> = {}): RouteLocationRaw => ({ path:
 /** 迷你列表最多画几行。和 `AdminNumberList` 的 `SHOWN` 是同一个数。 */
 const SHOWN = 10
 
-/** 顶上那条「四块摘要」—— 这一页的**第一眼**。
+type PulseTone = 'ink' | 'ok' | 'warn' | 'danger'
+
+/** 分类导轨上一颗迷你摘要卡的内容。 */
+interface PulseRow {
+  key: StatsKind
+  value: string
+  hint: string
+  tone: PulseTone
+}
+
+/** 顶上那条分类导轨 —— 这一页的**第一眼**。
  *
  *  分类控件把四块藏在四个抽屉里，于是「反馈在催、用量在涨」这件事要么点三下才看见，
  *  要么根本看不见。这一条把每一块的那**一个**数摆在一起：读的人先知道「现在哪块
@@ -86,116 +103,86 @@ const SHOWN = 10
  *  每块只取一个数（不是四个）：一行摆四个指标 × 四块 = 十六个数，那就不是摘要而是
  *  另一张表。取哪一个，判据是「这一块现在最该被看见的那件事」：
  *
- *   * 反馈 → **待分诊**（有事等着人动）；有急件时换成急件数并染琥珀警示。
+ *   * 反馈 → **待分诊**（有事等着人动）；有急件时换成急件数并染警示色。
  *   * 用量 → 窗口内的 **token**（量级，比钱稳 —— 未定价的那部分没有钱数）。
  *   * 平台 → **健康度**（`healthy` / `degraded`，这一刻的）。
  *   * 性能 → **最慢那条的 p95**（「哪条慢」是这一块唯一要回答的问题）。
  *
  *  点一块就切到那一类 —— 它是导航，不是卡片（`to` 语义上的链接由下面的 KPI 卡承担）。
- */
-/** 摘要条的**短值**。
  *
- *  两个约束，都是从「两排卡片长一样」那次反馈来的：
- *
- *   1. **不重复下面 KPI 行的那一个数**。反馈那块的 KPI 第一张就是「待分诊」、用量
- *      第一张就是「窗口内 token」，摘要条再打一遍就是同一件事说两遍。所以摘要条
- *      给的是**这一块现在最该被看见的那件事**的**短语**（「3 急件」「20 万」），
- *      而不是和 KPI 同一个数字。
- *   2. **短语，不是大数字**。大数字留给下面那排 KPI 卡；摘要条是导航，它的字是
- *      `.t-dense`，不是 `.t-console-title`。
- */
-const pulse = computed(() => {
-  const rows = [
-    {
-      key: 'pipeline',
-      label: t('feedback.dashboard.tab.pipeline'),
+ *  **「没读到」和「是零」必须分开**：那一类还是 null 时短值画「—」，不是「等你 0」
+ *  （`?? 0` 曾经让没加载的类显示一个假 0 —— 全站纪律：没读到画破折号，不画 0）。 */
+const pulse = computed<PulseRow[]>(() => {
+  const row = (key: StatsKind, value: string, hint: string, tone: PulseTone): PulseRow =>
+    store.stats[key] === null ? { key, value: '—', hint, tone: 'ink' } : { key, value, hint, tone }
+  return [
+    row(
+      'pipeline',
       // 「等你」是这一块唯一要回答的问题，而且它**不在**下面的 KPI 第一张
       // （第一张是「还在走」）。
-      value: t('feedback.dashboard.pipeline.kpi.needsYouShort', {
+      t('feedback.dashboard.pipeline.kpi.needsYouShort', {
         n:
           (pipeline.value?.needs_you.reviewer_pending ?? 0) +
           (pipeline.value?.needs_you.open_tasks ?? 0) +
           (pipeline.value?.needs_you.awaiting_answer ?? 0),
       }),
-      hint: t('feedback.dashboard.pipeline.needs.title'),
-      tone: 'ink',
-    },
-    {
-      key: 'product',
-      label: t('feedback.dashboard.tab.product'),
-      value: t('feedback.dashboard.product.northStarShort', {
-        n: product.value?.north_star.total ?? 0,
-      }),
-      hint: t('feedback.dashboard.product.northStar'),
-      tone: 'ink',
-    },
-    {
-      key: 'feedback',
-      label: t('feedback.dashboard.tab.feedback'),
-      value:
-        urgentOpen.value > 0
-          ? t('feedback.dashboard.kpi.urgentShort', { n: urgentOpen.value })
-          : t('feedback.dashboard.kpi.untriagedShort', {
-              n: feedback.value?.total.unassigned ?? 0,
-            }),
-      hint: urgentOpen.value > 0 ? t('feedback.dashboard.kpi.urgent') : t('feedback.dashboard.kpi.untriaged'),
-      tone: urgentOpen.value > 0 ? 'warn' : 'ink',
-    },
-    {
-      key: 'usage',
-      label: t('feedback.dashboard.tab.usage'),
-      value: shortTokens(usage.value?.totals.tokens),
-      hint: t('feedback.dashboard.usage.tokens'),
-      tone: 'ink',
-    },
-    {
-      key: 'platform',
-      label: t('feedback.dashboard.tab.platform'),
-      value:
-        platform.value?.health?.overall === 'healthy'
-          ? t('feedback.dashboard.health.healthy')
-          : platform.value?.health?.overall === 'degraded'
-            ? t('feedback.dashboard.health.degraded')
-            : '—',
-      hint: t('feedback.dashboard.health.title'),
-      tone:
-        platform.value?.health?.overall === 'healthy'
-          ? 'ok'
-          : platform.value?.health?.overall === 'degraded'
-            ? 'danger'
-            : 'ink',
-    },
-    {
-      key: 'performance',
-      label: t('feedback.dashboard.tab.performance'),
-      value: slowestP95.value,
-      hint: t('feedback.dashboard.perf.slowest'),
-      tone: 'ink',
-    },
-    {
-      key: 'integrations',
-      label: t('feedback.dashboard.tab.integrations'),
-      value: t('feedback.dashboard.integrations.delivery.deadShort', {
+      t('feedback.dashboard.pipeline.needs.title'),
+      'ink'
+    ),
+    row(
+      'product',
+      fmtNum(product.value?.north_star.total ?? 0),
+      t('feedback.dashboard.product.northStar', { d: store.statsDays }),
+      'ink'
+    ),
+    row(
+      'feedback',
+      urgentOpen.value > 0
+        ? t('feedback.dashboard.kpi.urgentShort', { n: urgentOpen.value })
+        : t('feedback.dashboard.kpi.untriagedShort', {
+            n: feedback.value?.total.unassigned ?? 0,
+          }),
+      urgentOpen.value > 0 ? t('feedback.dashboard.kpi.urgent') : t('feedback.dashboard.kpi.untriaged'),
+      urgentOpen.value > 0 ? 'warn' : 'ink'
+    ),
+    row('usage', shortTokens(usage.value?.totals.tokens), t('feedback.dashboard.usage.tokens'), 'ink'),
+    row(
+      'platform',
+      platform.value?.health?.overall === 'healthy'
+        ? t('feedback.dashboard.health.healthy')
+        : platform.value?.health?.overall === 'degraded'
+          ? t('feedback.dashboard.health.degraded')
+          : '—',
+      t('feedback.dashboard.health.title'),
+      platform.value?.health?.overall === 'healthy'
+        ? 'ok'
+        : platform.value?.health?.overall === 'degraded'
+          ? 'danger'
+          : 'ink'
+    ),
+    row('performance', slowestP95.value, t('feedback.dashboard.perf.slowest'), 'ink'),
+    row(
+      'integrations',
+      t('feedback.dashboard.integrations.delivery.deadShort', {
         n: integrations.value?.delivery.dead_letters ?? 0,
       }),
-      hint: t('feedback.dashboard.integrations.delivery.title'),
-      tone: (integrations.value?.delivery.dead_letters ?? 0) > 0 ? 'warn' : 'ink',
-    },
+      t('feedback.dashboard.integrations.delivery.title'),
+      (integrations.value?.delivery.dead_letters ?? 0) > 0 ? 'warn' : 'ink'
+    ),
   ]
-  return rows
 })
 
 /** 一键一格，给上面那条导轨按 `StatsKind` 取短值用。`pulse` 仍是数组（渲染顺序），
  *  这里只是同一批数据的按名索引。 */
-const pulseByKey = computed<Record<string, (typeof pulse.value)[number]>>(() => {
-  const out: Record<string, (typeof pulse.value)[number]> = {}
+const pulseByKey = computed<Record<string, PulseRow>>(() => {
+  const out: Record<string, PulseRow> = {}
   for (const row of pulse.value) out[row.key] = row
   return out
 })
 
 /** 20 万 token 这种短写 —— 导轨上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。
  *  走 `fmtSI` 而不是手写阶梯：手写的那份止步于 M，`1e12` 会被打成 `1000000.0M`。 */
-const shortTokens = (n: number | null | undefined): string => (n ? fmtSI(n) : '—')
+const shortTokens = (n: number | null | undefined): string => (n === null || n === undefined ? '—' : fmtSI(n))
 
 /** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
 const slowestP95 = computed(() => {
@@ -218,15 +205,35 @@ const failed = computed(() => !store.statsLoading && current.value === null && s
 const num = (v: number | null | undefined): string => (v === null || v === undefined ? '' : fmtNum(v))
 
 /** 切分类：先写状态（控件立刻跟上），再拉这一类。已经拉过的那一类**不重拉** ——
- *  切回来看到的是刚才那份，而「重新拉一次」是刷新页面的事。 */
+ *  切回来看到的是刚才那份，而「重新拉一次」是刷新按钮或轮询的事。 */
 function selectKind(next: StatsKind) {
   if (next === store.statsKind) return
   store.statsKind = next
-  if (store.stats[next] === null) void store.loadStats(next, DAYS)
+  if (store.stats[next] === null) void store.loadStats(next, store.statsDays)
 }
 
-function sumOf(values: number[] | undefined): string {
-  return values ? fmtNum(values.reduce((acc, n) => acc + n, 0)) : ''
+/** KPI 卡一行的完整形状（模板按这个形状传参，省的每行猜有哪些键）。 */
+interface KpiRow {
+  key: string
+  label: string
+  value: string
+  loading: boolean
+  to?: RouteLocationRaw
+  delta?: string
+  deltaTitle?: string
+  spark?: (number | null)[]
+  note?: string
+}
+
+/** delta 与其口径句（挂 title 的「上一周期（再前 {d} 天）：{v}」）。
+ *  `prev` 缺字段（旧后端）→ 两个都不给，卡上不出现 delta；`prev = 0` → `fmtDelta`
+ *  给空串（不画「+∞%」这种鬼话）。`prevText` 是已格式化的 prev 全值（fmtNum / fmtCost）。 */
+function deltaOf(cur: number | null | undefined, prev: number | null | undefined, prevText: string) {
+  if (prev === null || prev === undefined) return { delta: undefined, deltaTitle: undefined }
+  return {
+    delta: fmtDelta(cur, prev),
+    deltaTitle: t('feedback.dashboard.kpi.vsPrev', { d: store.statsDays, v: prevText }),
+  }
 }
 
 /* ---- 反馈那一块 ---- */
@@ -244,40 +251,52 @@ function sumOf(values: number[] | undefined): string {
  *
  *  口径：`total` 是**全量**（公开 + 私密 + Agent 发现 + 安全问题），和下面那条曲线同
  *  一个板子。此前卡片走的是被 `PUBLIC_ONLY` 收窄的那一份，而曲线是全量 —— 于是「进行中」
- *  和「进行中」在卡片上和图上是两个数，两边各自都看着对。 */
-const feedbackKpis = computed(() => [
-  {
-    key: 'untriaged',
-    label: t('feedback.dashboard.kpi.untriaged'),
-    value: num(feedback.value?.total.unassigned),
-    loading: store.statsLoading,
-    to: queue({ assigned: 'none' }),
-  },
-  {
-    key: 'inProgress',
-    label: t('feedback.dashboard.kpi.inProgress'),
-    value: num(feedback.value?.total.open),
-    loading: store.statsLoading,
-    to: queue({ status: 'in_progress' }),
-  },
-  {
-    key: 'created7d',
-    label: t('feedback.dashboard.kpi.created7d'),
-    value: sumOf(feedback.value?.series.map((row) => row.created)),
-    loading: store.statsLoading,
-    to: queue({ since: '7d' }),
-  },
-  {
-    key: 'resolved7d',
-    label: t('feedback.dashboard.kpi.resolved7d'),
-    value: sumOf(feedback.value?.series.map((row) => row.resolved)),
-    loading: store.statsLoading,
-    to: queue({ resolved_since: '7d' }),
-  },
-])
+ *  和「进行中」在卡片上和图上是两个数，两边各自都看着对。
+ *
+ *  新增/解决两张卡带窗口内逐日 spark 与上一窗口环比（`prev`，后端配套②）；四张卡
+ *  的 `to` 都保留 —— 队列有对应的筛选口径，是真目的地。 */
+const feedbackKpis = computed<KpiRow[]>(() => {
+  const f = feedback.value
+  const createdSum = f?.series.reduce((acc, row) => acc + row.created, 0)
+  const resolvedSum = f?.series.reduce((acc, row) => acc + row.resolved, 0)
+  return [
+    {
+      key: 'untriaged',
+      label: t('feedback.dashboard.kpi.untriaged'),
+      value: num(f?.total.unassigned),
+      loading: store.statsLoading,
+      to: queue({ assigned: 'none' }),
+    },
+    {
+      key: 'inProgress',
+      label: t('feedback.dashboard.kpi.inProgress'),
+      value: num(f?.total.open),
+      loading: store.statsLoading,
+      to: queue({ status: 'in_progress' }),
+    },
+    {
+      key: 'created',
+      label: t('feedback.dashboard.kpi.createdInWindow', { d: store.statsDays }),
+      value: createdSum === undefined ? '' : fmtNum(createdSum),
+      loading: store.statsLoading,
+      to: queue({ since: `${store.statsDays}d` }),
+      spark: f?.series.map((row) => row.created) ?? [],
+      ...deltaOf(createdSum, f?.prev?.created, fmtNum(f?.prev?.created ?? 0)),
+    },
+    {
+      key: 'resolved',
+      label: t('feedback.dashboard.kpi.resolvedInWindow', { d: store.statsDays }),
+      value: resolvedSum === undefined ? '' : fmtNum(resolvedSum),
+      loading: store.statsLoading,
+      to: queue({ resolved_since: `${store.statsDays}d` }),
+      spark: f?.series.map((row) => row.resolved) ?? [],
+      ...deltaOf(resolvedSum, f?.prev?.resolved, fmtNum(f?.prev?.resolved ?? 0)),
+    },
+  ]
+})
 
 /** 队列那四栏的计数 —— **筛选，不是划分**（`agent` 是来源，和公开/私密重叠），所以
- *  四个数加起来不等于总数。这一行要说清这件事，否则「四个数对不上」会被读成算错了。 */
+ *  四个数加起来不等于总数。这句话收在标题旁的口径 tip 里（见模板）。 */
 const feedbackColumns = computed(() => {
   const c = feedback.value?.columns
   return [
@@ -351,40 +370,54 @@ function displayNo(displayId: string): number {
 
 /* ---- 用量那一块 ---- */
 
-const usageKpis = computed(() => [
-  {
-    key: 'tokens',
-    label: t('feedback.dashboard.usage.tokens'),
-    value: num(usage.value?.totals.tokens),
-    loading: store.statsLoading,
-    to: queue(),
-  },
-  {
-    key: 'calls',
-    label: t('feedback.dashboard.usage.calls'),
-    value: num(usage.value?.totals.calls),
-    loading: store.statsLoading,
-    to: queue(),
-  },
-  /* 成本和「算不出价钱的 token」是两张卡，不是页脚的一行字。两件事各自是一个数，而
-     「一行正文 + 一行脚注」那种写法把它们降级成了注释 —— 和左边那样的四张卡对齐之后，
-     这一类的 KPI 行才和反馈那一类长得一样。两张都不带 `to`：队列没有按钱筛的口径。 */
-  {
-    key: 'cost',
-    label: t('feedback.dashboard.cost.kpi'),
-    value: usage.value ? fmtCost(usage.value.totals.cost_usd) : '',
-    loading: store.statsLoading,
-  },
-  {
-    key: 'unpriced',
-    label: t('feedback.dashboard.cost.unpricedLabel'),
-    value: num(usage.value?.totals.unpriced_tokens),
-    loading: store.statsLoading,
-  },
-])
+/** 用量的 KPI。tokens/calls/cost 三张带逐日 spark 与上一窗口环比（`prev`）；成本与
+ *  「算不出价钱的 token」两卡同挂一句口径 tip（它们是两张卡，不是页脚一行字 ——
+ *  两件事各自是一个数，而「一行正文 + 一行脚注」那种写法把它们降级成了注释）。
+ *
+ *  **tokens/calls 曾经有 `to: queue()` 空筛选 —— 删了**：队列没有按用量筛选的口径，
+ *  假 affordance 比不点更糟。成本/未定价两张本来就无 `to`，口径经 tip 给。 */
+const usageKpis = computed<KpiRow[]>(() => {
+  const u = usage.value
+  const costNote = u ? t('feedback.dashboard.cost.note') : undefined
+  return [
+    {
+      key: 'tokens',
+      label: t('feedback.dashboard.usage.tokens'),
+      value: num(u?.totals.tokens),
+      loading: store.statsLoading,
+      spark: u?.series.map((row) => row.tokens) ?? [],
+      ...deltaOf(u?.totals.tokens, u?.prev?.tokens, fmtNum(u?.prev?.tokens ?? 0)),
+    },
+    {
+      key: 'calls',
+      label: t('feedback.dashboard.usage.calls'),
+      value: num(u?.totals.calls),
+      loading: store.statsLoading,
+      spark: u?.series.map((row) => row.calls) ?? [],
+      ...deltaOf(u?.totals.calls, u?.prev?.calls, fmtNum(u?.prev?.calls ?? 0)),
+    },
+    {
+      key: 'cost',
+      label: t('feedback.dashboard.cost.kpi'),
+      value: u ? fmtCost(u.totals.cost_usd) : '',
+      loading: store.statsLoading,
+      spark: u?.series.map((row) => row.cost_usd) ?? [],
+      ...deltaOf(u?.totals.cost_usd, u?.prev?.cost_usd, u?.prev ? fmtCost(u.prev.cost_usd) : ''),
+      note: costNote,
+    },
+    {
+      key: 'unpriced',
+      label: t('feedback.dashboard.cost.unpricedLabel'),
+      value: num(u?.totals.unpriced_tokens),
+      loading: store.statsLoading,
+      note: costNote,
+    },
+  ]
+})
 
 /** 窗口内每天的 token。**只画 token 一条**：调用次数和钱各自有不同的量级，三条线画在
- *  一根轴上会有两条贴着底走 —— 而「贴着底的那条是不是 0」正是这张图要回答的问题。 */
+ *  一根轴上会有两条贴着底走 —— 而「贴着底的那条是不是 0」正是这张图要回答的问题。
+ *  calls/cost_usd 的去向是上面三张卡的 sparkline（量纲各自的迷你形状，不进同一张图）。 */
 const usageSeries = computed<ChartSeries[]>(() => [
   {
     name: t('feedback.dashboard.usage.tokens'),
@@ -394,9 +427,15 @@ const usageSeries = computed<ChartSeries[]>(() => [
 ])
 
 /** 用量最高的几个项目。条只报 token —— 同一根条上再叠一个「花了多少钱」，它们的长度
- *  就各自代表不同的东西，而长短本来是用来比的。项目名原样给组件（它自己省略号）。 */
+ *  就各自代表不同的东西，而长短本来是用来比的。项目名原样给组件（它自己省略号）。
+ *  行带 `project_id`（**身份**）与去向：整行一个链接，下钻到项目页。 */
 const topProjects = computed(() =>
-  (usage.value?.top_projects ?? []).map((row) => ({ label: row.name, value: row.tokens }))
+  (usage.value?.top_projects ?? []).map((row) => ({
+    id: row.project_id,
+    label: row.name,
+    value: row.tokens,
+    to: { path: `/projects/${row.project_id}` } as RouteLocationRaw,
+  }))
 )
 
 /** 按模型拆。行本身带上钱与「算不出价」的两列，因为这一张表要回答的正是「贵的是
@@ -454,17 +493,12 @@ const healthRows = computed(() => {
   }))
 })
 
-/** 成本那一行下面那句口径。两个数（金额、没有单价的 token）各自已经是 KPI 卡了，
- *  这句话说的是**它们之间的关系** —— 订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
- *  「没有单价」而不是「免费」，所以金额里没有它们，也不该被读成「这个月没花钱」。
- *  一行字，跟着那两张卡走；`usage` 还没到时不画。 */
-const costNote = computed(() => (usage.value ? t('feedback.dashboard.cost.note') : ''))
-
 /* ---- 性能那一块 ----
  *
  * 它是四类里唯一**读进程内存**的（另外三类读库），所以页面上必须把那三件口径说
  * 出来：没有窗口（只有此刻）、重启即清零、只覆盖业务 API。不说的话，读者会把它当
- * 成「整个平台的、有历史的」数 —— 而它两个都不是。
+ * 成「整个平台的、有历史的」数 —— 而它两个都不是。perf.note 因此是**常驻**的那条
+ * 注（每屏至多一条的额度给了它），不进 tip。
  */
 
 /* ---- 交付管线（新） ---------------------------------------------------- */
@@ -473,7 +507,8 @@ const pipeline = computed(() => store.stats.pipeline)
 
 /** 活四站：建卡 → 决议 → 合并 → 归档。**没有「闸门」那一站** —— 机器闸门已退役
  *  （#296），画上去就是一个永远空的站。四站各是**不同卡在不同时刻**的通过量，不是
- *  同一批样本的漏斗，所以 `AdminLiveSpine` 用导轨不用漏斗图。 */
+ *  同一批样本的漏斗，所以 `AdminLiveSpine` 用导轨不用漏斗图。停留行挂 p90/最长的
+ *  title 明细（站面只摆 p50，屏幕不被分位数淹）。 */
 const spineStages = computed(() => {
   const p = pipeline.value
   if (!p) return []
@@ -490,24 +525,32 @@ const spineStages = computed(() => {
       label: t(STATION_KEY.filed),
       count: filed,
       dwellSeconds: p.dwell.open_card_age.p50_seconds,
+      p90Seconds: null,
+      maxSeconds: p.dwell.open_card_age.max_seconds,
     },
     {
       key: 'decided',
       label: t(STATION_KEY.decided),
       count: p.dwell.filed_to_decision.count,
       dwellSeconds: p.dwell.filed_to_decision.p50_seconds,
+      p90Seconds: p.dwell.filed_to_decision.p90_seconds,
+      maxSeconds: p.dwell.filed_to_decision.max_seconds,
     },
     {
       key: 'merged',
       label: t(STATION_KEY.merged),
       count: merged,
       dwellSeconds: p.dwell.filed_to_merge.p50_seconds,
+      p90Seconds: p.dwell.filed_to_merge.p90_seconds,
+      maxSeconds: p.dwell.filed_to_merge.max_seconds,
     },
     {
       key: 'archived',
       label: t(STATION_KEY.archived),
       count: archived,
       dwellSeconds: p.dwell.accepted_not_archived.max_seconds,
+      p90Seconds: null,
+      maxSeconds: p.dwell.accepted_not_archived.max_seconds,
     },
   ]
 })
@@ -531,7 +574,11 @@ const spineStuck = computed(() => {
   return rows
 })
 
-const pipelineKpis = computed(() => {
+/** 交付的五张卡。「递卡受阻」（`blocking_refile`）是非终态、会堵死整间房重新递卡
+ *  的那部分积压 —— 它和「还在走」同挂一句 backlog 口径；「等你处理」挂三个理由的
+ *  拆分明细（验收人/报告人/被点名）。pipeline 不配 delta：它以存量指标为主，没有
+ *  可环比的流量合计（后端也不回 prev）。 */
+const pipelineKpis = computed<KpiRow[]>(() => {
   const p = pipeline.value
   return [
     {
@@ -539,6 +586,7 @@ const pipelineKpis = computed(() => {
       label: t('feedback.dashboard.pipeline.kpi.live'),
       value: num(p?.backlog.live_total),
       loading: store.statsLoading,
+      note: t('feedback.dashboard.pipeline.backlog.note'),
     },
     {
       key: 'stuck',
@@ -559,6 +607,20 @@ const pipelineKpis = computed(() => {
         (p?.needs_you.reviewer_pending ?? 0) + (p?.needs_you.open_tasks ?? 0) + (p?.needs_you.awaiting_answer ?? 0)
       ),
       loading: store.statsLoading,
+      note: p
+        ? t('feedback.dashboard.pipeline.needs.breakdown', {
+            r: p.needs_you.reasons.reviewer,
+            p: p.needs_you.reasons.reporter,
+            a: p.needs_you.reasons.asked,
+          })
+        : undefined,
+    },
+    {
+      key: 'blockingRefile',
+      label: t('feedback.dashboard.pipeline.kpi.blockingRefile'),
+      value: num(p?.backlog.blocking_refile),
+      loading: store.statsLoading,
+      note: t('feedback.dashboard.pipeline.backlog.note'),
     },
   ]
 })
@@ -614,6 +676,8 @@ const failureRows = computed(() => {
   return rows
 })
 
+/** 机器连败的行。**没有 `to`**：平台里没有一页列设备，它曾经是跳回 `/admin` 的自链
+ *  —— 假链接比不点更糟（设备列表页列为线外事项，有了再接上）。 */
 const hostRows = computed(() =>
   (pipeline.value?.host_health.rows ?? []).map((row) => ({
     id: row.device_id,
@@ -621,7 +685,6 @@ const hostRows = computed(() =>
     subtitle: row.last_failure_code ?? '',
     statusLabel: String(row.consecutive_failures),
     tone: row.quarantined_until ? ('danger' as const) : ('warn' as const),
-    to: { path: '/admin' },
   }))
 )
 
@@ -629,12 +692,18 @@ const hostRows = computed(() =>
 
 const product = computed(() => store.stats.product)
 
-const productKpis = computed(() => [
+const productKpis = computed<KpiRow[]>(() => [
   {
     key: 'north',
-    label: t('feedback.dashboard.product.northStar'),
+    label: t('feedback.dashboard.product.northStar', { d: store.statsDays }),
     value: num(product.value?.north_star.total),
     loading: store.statsLoading,
+    spark: product.value?.north_star.series.map((row) => row.accepted) ?? [],
+    ...deltaOf(
+      product.value?.north_star.total,
+      product.value?.north_star.prev_total,
+      fmtNum(product.value?.north_star.prev_total ?? 0)
+    ),
   },
   {
     key: 'returned',
@@ -664,7 +733,7 @@ const productKpis = computed(() => [
 
 const northSeries = computed<ChartSeries[]>(() => [
   {
-    name: t('feedback.dashboard.product.northStar'),
+    name: t('feedback.dashboard.product.northStar', { d: store.statsDays }),
     values: product.value?.north_star.series.map((row) => row.accepted) ?? [],
     style: 'solid',
   },
@@ -706,7 +775,7 @@ const usefulnessSegments = computed(() => {
 
 const integrations = computed(() => store.stats.integrations)
 
-const integrationKpis = computed(() => [
+const integrationKpis = computed<KpiRow[]>(() => [
   {
     key: 'expired',
     label: t('feedback.dashboard.integrations.oauth.expired'),
@@ -774,6 +843,18 @@ const creditMeters = computed(() => {
   return rows
 })
 
+/** 「额度燃尽」标题旁的口径 tip：那句互斥集合的说明，追加按实价/扁平率的拆分明细
+ *  （`credits.burn` 的两个分量，原是响应里没人读的两个数）。 */
+const creditsNote = computed(() => {
+  const base = t('feedback.dashboard.credits.note')
+  const c = credits.value
+  if (!c) return base
+  return `${base} ${t('feedback.dashboard.credits.burnDetail', {
+    priced: fmtNum(c.burn.priced_credits),
+    flat: fmtNum(c.burn.flat_credits),
+  })}`
+})
+
 const extras = computed(() => platform.value?.extras ?? null)
 
 const extrasRows = computed(() => {
@@ -786,6 +867,7 @@ const extrasRows = computed(() => {
     ratio: number
     tone: 'ink' | 'ok' | 'warn' | 'danger'
     hint: string
+    note: string
   }[] = []
   if (x.disk.available && x.disk.used_pct !== undefined) {
     rows.push({
@@ -795,6 +877,7 @@ const extrasRows = computed(() => {
       ratio: x.disk.used_pct / 100,
       tone: x.disk.tier === 'critical' ? 'danger' : x.disk.tier === 'warn' ? 'warn' : 'ink',
       hint: `${x.disk.free_gb} GB`,
+      note: t('feedback.dashboard.extras.disk.note'),
     })
   }
   if (x.preview.available) {
@@ -805,10 +888,48 @@ const extrasRows = computed(() => {
       ratio: 0,
       tone: 'ink',
       hint: '',
+      note: t('feedback.dashboard.extras.preview.note'),
     })
   }
   return rows
 })
+
+/** 常驻机器/项目机器的状态名 → 词条键。**字面量键表 + 原名兜底**（同 `HEALTH_KEY` 的
+ *  模式）：拼出来的键 `catalog.spec.ts` 会判死键；台账里冒出表里没有的新状态时，
+ *  原样显示状态名，不静默吞掉。 */
+const MACHINE_STATE_KEY: Record<string, string> = {
+  preparing: 'feedback.dashboard.extras.machineState.preparing',
+  ready: 'feedback.dashboard.extras.machineState.ready',
+  claimed: 'feedback.dashboard.extras.machineState.claimed',
+  error: 'feedback.dashboard.extras.machineState.error',
+}
+
+const PROJECT_STATUS_KEY: Record<string, string> = {
+  leased: 'feedback.dashboard.extras.projectStatus.leased',
+  released: 'feedback.dashboard.extras.projectStatus.released',
+  error: 'feedback.dashboard.extras.projectStatus.error',
+}
+
+/** 状态分布 → ShareBar 的段。按值降序，明度按 `ink → muted → faint` 顺次发
+ *  （§2.7：不用色相区分系列）。空分布（台账全零）返回空数组 —— 那一格整个不渲染，
+ *  不画一条「全是零」的假分布。 */
+const STATE_SHADES = ['ink', 'muted', 'faint'] as const
+
+function stateSegments(byState: Record<string, number> | undefined, keys: Record<string, string>) {
+  return Object.entries(byState ?? {})
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([state, n], i) => ({
+      label: t(keys[state] ?? state),
+      value: n,
+      shade: STATE_SHADES[Math.min(i, STATE_SHADES.length - 1)],
+    }))
+}
+
+const warmSegments = computed(() => stateSegments(extras.value?.machines.warm_by_state, MACHINE_STATE_KEY))
+const projectMachineSegments = computed(() =>
+  stateSegments(extras.value?.machines.project_by_status, PROJECT_STATUS_KEY)
+)
 
 const reliability = computed(() => {
   const p = store.stats.performance as (typeof store.stats.performance & { reliability?: any }) | null
@@ -905,6 +1026,20 @@ const uptimeText = computed(() => {
 
 const perfRoutes = computed(() => perf.value?.routes ?? [])
 
+/** 展开着的路由行（`${method} ${route}`）。行首 chevron 整行一个按钮；展开行内嵌
+ *  这条路由的分钟级 spark（响应里一直回、此前没人读的 24 个点）。 */
+const expandedRoute = ref<string | null>(null)
+
+function toggleRoute(key: string) {
+  expandedRoute.value = expandedRoute.value === key ? null : key
+}
+
+/** spark 全 null 的路由没有可展开的东西 —— chevron 进禁用态（不是藏起来：同一列的
+ *  图标有有无无，比「有的行窄一截」好读）。 */
+function sparkDead(spark: (number | null)[]): boolean {
+  return spark.every((v) => v === null)
+}
+
 /** 被截断的那部分要说出来：表里只有前 N 条，写「12 条」而不写「共 34 条」的话，
  *  读者会以为这就是全部。 */
 /** 「有样本 X / 共 Y」—— 分母是注册的全部路由。
@@ -933,6 +1068,14 @@ const routesText = computed(() => {
       })
 })
 
+/** 路由表块头那句口径（收进 tip）：routesNote 原话，溢出丢弃的样本数 >0 时追加一句
+ *  —— 静默丢弃读起来像「就这些」。 */
+const perfTableNote = computed(() => {
+  const base = t('feedback.dashboard.perf.routesNote')
+  const dropped = perf.value?.dropped_series ?? 0
+  return dropped > 0 ? `${base} ${t('feedback.dashboard.perf.dropped', { n: dropped })}` : base
+})
+
 /** 网络吞吐的短读数。**读不到画「—」，绝不画 0** —— 0 说「网是闲的」，null 说
  *  「看不见」，两者在屏幕上必须长得不一样。 */
 function bps(v: number | null | undefined): string {
@@ -950,7 +1093,7 @@ const lagText = computed(() => {
 
 /* ---- 平台那一块 ---- */
 
-const peopleKpis = computed(() => [
+const peopleKpis = computed<KpiRow[]>(() => [
   {
     key: 'accounts',
     label: t('feedback.dashboard.people.total'),
@@ -973,9 +1116,15 @@ const peopleKpis = computed(() => [
   },
   {
     key: 'new',
-    label: t('feedback.dashboard.people.new'),
+    label: t('feedback.dashboard.people.newInWindow', { d: store.statsDays }),
     value: num(platform.value?.people.new),
     loading: store.statsLoading,
+    spark: platform.value?.people.series.map((row) => row.created) ?? [],
+    ...deltaOf(
+      platform.value?.people.new,
+      platform.value?.people.prev_new,
+      fmtNum(platform.value?.people.prev_new ?? 0)
+    ),
   },
   {
     key: 'admins',
@@ -985,17 +1134,26 @@ const peopleKpis = computed(() => [
   },
 ])
 
+/** 新增账号的逐日曲线：**真人 / Agent 两条**（拆分列一直在响应里，此前没人读）。
+ *  真人走实线（`--text`），Agent 走虚线（`--muted`）—— 系列语义由图例文字承担，
+ *  不靠色相。 */
 const signupSeries = computed<ChartSeries[]>(() => [
   {
-    name: t('feedback.dashboard.people.new'),
-    values: platform.value?.people.series.map((row) => row.created) ?? [],
+    name: t('feedback.dashboard.people.humans'),
+    values: platform.value?.people.series.map((row) => row.human_created) ?? [],
     style: 'solid',
+  },
+  {
+    name: t('feedback.dashboard.people.agents'),
+    values: platform.value?.people.series.map((row) => row.agent_created) ?? [],
+    style: 'dashed',
   },
 ])
 
 /** 机器那四行。**存量，不是在线数** —— 在线状态住在进程内存里，库里没有可以查的那一
  *  列（`platform_stats/repositories.py` 的模块 docstring）。这句话必须写在页面上：一个
- *  「机器 5」的数字，读的人默认会当成「现在有 5 台在跑」。 */
+ *  「机器 5」的数字，读的人默认会当成「现在有 5 台在跑」。它是平台屏**常驻**的那条注
+ *  （每屏至多一条的额度给了它），不进 tip。 */
 const machines = computed(() => [
   { key: 'devices', label: t('feedback.dashboard.machines.devices'), value: num(platform.value?.machines.devices) },
   {
@@ -1011,19 +1169,23 @@ const machines = computed(() => [
   },
 ])
 
-/** 日期轴的标签。三类各有一条 series，长度都是 `days`。 */
+/** 日期轴的标签。**按类显式取 series**（产品类此前落到 feedback 的 series 上 ——
+ *  今天恰好同窗口所以没错，但那是隐性依赖，不是设计）：product → `north_star.series`、
+ *  feedback → `feedback.series`、usage → `usage.series`、platform → `people.series`。 */
 const xLabels = computed(() => {
   const series =
     kind.value === 'platform'
       ? platform.value?.people.series
       : kind.value === 'usage'
         ? usage.value?.series
-        : feedback.value?.series
+        : kind.value === 'product'
+          ? product.value?.north_star.series
+          : feedback.value?.series
   return (series ?? []).map((row) => dayLabel(row.date))
 })
 
 /** 轴标签写「9/15」：轴上七个点，写全年月日是七串数字挤在一起，而窗口在页头上已经
- *  说了是过去七天。 */
+ *  说了是几天。 */
 function dayLabel(date: string): string {
   // 后端给的是 `YYYY-MM-DD`（或带时间的 ISO 串），取前两段就够，别交给 `Date` 去解析
   // —— 那会按本地时区把日期挪一天。
@@ -1039,75 +1201,166 @@ function onSelectDay(index: number) {
   void router.push(queue({ since: date.slice(0, 10) }))
 }
 
+/* ---- 时效性：时间戳、轮询、重试 ------------------------------------------ */
+
+/** 「HH:MM」（补零）。直接读 `Date` 的时分，不把字符串交给 `Date` 解析。 */
+function hhmm(at: number): string {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** 页头那句「更新于 HH:MM」。当前类还没成功拉到过（`statsAt` 为 null）时是空串；
+ *  超过 5 分钟追加「· N 分钟前」—— 切回旧类时一眼看出这份数据有多旧。 */
+const stampText = computed(() => {
+  const at = store.statsAt[kind.value]
+  if (at === null) return ''
+  const ageMin = Math.floor((Date.now() - at) / 60_000)
+  return ageMin >= 5
+    ? t('feedback.dashboard.updatedAtStale', { time: hhmm(at), n: ageMin })
+    : t('feedback.dashboard.updatedAt', { time: hhmm(at) })
+})
+
+/** 导轨卡的 `title`：口径提示句，加上那一类的更新时刻（§10.4 —— 常驻年龄行是
+ *  噪音，但指针停上去时「这份数据是什么时候的」要拿得到）。 */
+function kindTitle(k: StatsKind): string {
+  const hint = pulseByKey.value[k]?.hint ?? ''
+  const at = store.statsAt[k]
+  if (at === null) return hint
+  return `${hint} · ${t('feedback.dashboard.updatedAt', { time: hhmm(at) })}`
+}
+
+/** 轮询只覆盖「这一刻」的两类（平台健康、接口耗时），60s。窗口类（交付/产品/反馈/
+ *  用量）有手动 R 和切窗口已经足够；integrations 是存量慢变（它的死信/未发在
+ *  performance.reliability 里有同源读数，沾性能类的轮询光）。 */
+const POLL_KINDS: StatsKind[] = ['platform', 'performance']
+const POLL_MS = 60_000
+
+let pollTimer: number | undefined
+
+function pollTick() {
+  if (document.visibilityState !== 'visible') return
+  if (!POLL_KINDS.includes(kind.value)) return
+  void store.loadStats(kind.value, store.statsDays)
+}
+
+/** 回到可见时补一次（如果这一类已经旧过一个周期）。轮询失败不打扰 —— `loadStats`
+ *  失败只写 `store.error`，旧数据配旧时间戳还在，错误块只在「什么都没拿到」时整屏。 */
+function onVisibleAgain() {
+  if (document.visibilityState !== 'visible') return
+  if (!POLL_KINDS.includes(kind.value)) return
+  const at = store.statsAt[kind.value]
+  if (at !== null && Date.now() - at > POLL_MS) void store.loadStats(kind.value, store.statsDays)
+}
+
+/** 错误块的重试：**真重拉**当前这一类；反馈类顺带把迷你列表那一路也重拉
+ *  （它走的是 `loadAdmin`，不在 `loadStats` 里）。 */
+function retry() {
+  void store.loadStats(store.statsKind, store.statsDays)
+  if (store.statsKind === 'feedback') void store.loadAdmin()
+}
+
 onMounted(() => {
-  // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
-  // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
+  // 默认落点是**交付**（store 的 statsKind 初始值）：管理员早上第一个问题是
+  // 「现在该我动的是哪几件」，不是「今天 token 多少」。用户显式选过的分类由
+  // store 记着，重挂载原样恢复 —— 这里只补拉「当前这一类还没有数据」的情形。
   //
-  // 两条分支必须互斥，而且都要**由自己那一支**去拉：`selectKind` 会顺手拉一次，
-  // 所以这里不能再补一句「分类的切片还是 null 就拉」。`loadStats` 只写
-  // `statsBusy`、不在完成前写 `stats`，于是那一句在首次挂载时**必然**成立，
-  // 变成同一分类两个并发请求，而 store 里的序号守卫（feedback.ts 的 `statsSeq`）
-  // 会把先回来的那个响应丢掉 —— 白拉一趟，首屏还多等一个来回。
-  if (store.statsKind === 'feedback') {
-    selectKind('pipeline')
-  } else if (store.stats[store.statsKind] === null) {
-    void store.loadStats(store.statsKind, DAYS)
+  // `loadStats` 只写 `statsBusy`、不在完成前写 `stats`，所以「切片还是 null 就拉」
+  // 在首次挂载时**必然**成立一次 —— 这正是要的；但不要在上面的分支之外再补第二句，
+  // 否则同一分类两个并发请求，store 的序号守卫（feedback.ts 的 `statsSeq`）会把先
+  // 回来的那个响应丢掉。
+  if (store.stats[store.statsKind] === null) {
+    void store.loadStats(store.statsKind, store.statsDays)
   }
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
   // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
+
+  pollTimer = window.setInterval(pollTick, POLL_MS)
+  document.addEventListener('visibilitychange', onVisibleAgain)
+})
+
+onBeforeUnmount(() => {
+  window.clearInterval(pollTimer)
+  document.removeEventListener('visibilitychange', onVisibleAgain)
 })
 </script>
 
 <template>
   <div class="ad">
-    <div class="ad__inner page-container--wide">
+    <div class="ad__inner page-container--admin">
       <header class="ad__head">
         <h1 class="t-console-title">{{ t('feedback.dashboard.title') }}</h1>
-        <span class="ad__window t-meta-read">{{ t('feedback.dashboard.window') }}</span>
+        <div class="ad__head-side">
+          <!-- 统计窗口 7/30/90。只有窗口类（`WINDOWED_KINDS`）给这个切换器：
+               性能读进程内存、集成是存量，它们没有「过去 N 天」。切窗口由
+               `setStatsDays` 把已加载的窗口类全部重拉（缓存键=窗口）。 -->
+          <v-btn-toggle
+            v-if="WINDOWED_KINDS.includes(store.statsKind)"
+            :model-value="store.statsDays"
+            mandatory
+            density="compact"
+            variant="outlined"
+            divided
+            :aria-label="t('feedback.dashboard.window.switchAria')"
+            @update:model-value="store.setStatsDays($event as StatsDays)"
+          >
+            <v-btn :value="7" size="small">{{ t('feedback.dashboard.window.d7') }}</v-btn>
+            <v-btn :value="30" size="small">{{ t('feedback.dashboard.window.d30') }}</v-btn>
+            <v-btn :value="90" size="small">{{ t('feedback.dashboard.window.d90') }}</v-btn>
+          </v-btn-toggle>
+          <span class="ad__stamp t-meta-read">{{ stampText }}</span>
+        </div>
       </header>
 
       <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
-           看哪一类，再看数字。`v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头
-           那条 `--line-2` 抢同一种「这里是边界」的意思，而分类不是边界，是一次筛选。
+           看哪一类，再看数字。原生按钮条的迷你摘要卡（标签 + 短值 + 状态点），不是
+           v-btn-toggle —— 7 颗挤按钮在宽档下读不出「哪块需要我」，卡条把每一块最该
+           被看见的那个数摆成第一信息层。
 
-           **两行并成一行**（管理员指着两排问过「这两行是同一个东西」）。原本下面还
-           有一条摘要条 `.ad__pulse`，和这里同一批键、同一批标签、同一个 `selectKind`，
-           只多带一个短值 —— 于是每个目的地在页面上出现两次。现在短值就长在这一行里，
-           摘要条整条删除。
-
-           短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它，按钮的
-           accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
+           短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它和状态点，
+           按钮的 accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
            `getByRole('button', { name: '反馈', exact: true })` 会因为名字变成
-           「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。 -->
-      <div class="ad__kinds">
-        <v-btn-toggle
-          :model-value="store.statsKind"
-          mandatory
-          density="comfortable"
-          variant="outlined"
-          divided
-          @update:model-value="selectKind($event as StatsKind)"
+           「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。
+           窄了横向滚动不换行 —— 换行会把 7 张卡堆成一面墙。 -->
+      <div class="ad__kinds" role="group" :aria-label="t('feedback.dashboard.kindsAria')">
+        <button
+          v-for="k in KINDS"
+          :key="k"
+          type="button"
+          class="ad__kind"
+          :class="{ 'ad__kind--on': k === store.statsKind }"
+          :aria-pressed="k === store.statsKind"
+          :title="kindTitle(k)"
+          @click="selectKind(k)"
         >
-          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small" :title="pulseByKey[k]?.hint">
-            {{ t(TAB_KEY[k]) }}
+          <span class="ad__kind-label t-eyebrow-read">{{ t(TAB_KEY[k]) }}</span>
+          <span class="ad__kind-row">
             <span
-              v-if="pulseByKey[k]"
-              class="ad__kinds-val t-dense t-num"
-              :class="`ad__kinds-val--${pulseByKey[k]!.tone}`"
+              v-if="pulseByKey[k] && pulseByKey[k]!.tone !== 'ink'"
+              class="ad__kind-dot"
+              :class="`ad__kind-dot--${pulseByKey[k]!.tone}`"
+              aria-hidden="true"
+            />
+            <span
+              class="ad__kind-val t-dense t-num"
+              :class="`ad__kind-val--${pulseByKey[k]!.tone}`"
               aria-hidden="true"
               >{{ pulseByKey[k]!.value }}</span
             >
-          </v-btn>
-        </v-btn-toggle>
+          </span>
+        </button>
       </div>
 
-      <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
-           的名字，不是数据。 -->
-      <p v-if="failed" class="ad__none">
+      <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
+           正文是**服务端原话**（不改写），重试是唯一主操作（琥珀份额归它），而且
+           真重拉 —— 不是把错误状态清掉装没事。 -->
+      <div v-if="failed" class="ad__none">
         <span class="ad__none-title">{{ t('feedback.dashboard.error.title') }}</span>
-        <span class="ad__none-desc">{{ t('feedback.dashboard.error.desc') }}</span>
-      </p>
+        <span class="ad__none-desc">{{ store.error }}</span>
+        <v-btn color="primary" size="small" class="ad__retry" @click="retry">
+          {{ t('feedback.dashboard.retry') }}
+        </v-btn>
+      </div>
 
       <!-- 交付管线：产品自己的主链。默认落点 —— 「现在该我动的是哪几件」排第一。 -->
       <template v-else-if="kind === 'pipeline'">
@@ -1118,6 +1371,7 @@ onMounted(() => {
             :label="kpi.label"
             :value="kpi.value"
             :loading="kpi.loading"
+            :note="kpi.note"
           />
         </div>
 
@@ -1131,12 +1385,14 @@ onMounted(() => {
             :rows="needsYouRows"
             :loading="store.statsLoading"
             :empty="t('feedback.dashboard.pipeline.needs.empty')"
+            :note="t('feedback.dashboard.pipeline.needs.note')"
           />
           <AdminActionList
             :title="t('feedback.dashboard.pipeline.stuck.title')"
             :rows="stuckRows"
             :loading="store.statsLoading"
             :empty="t('feedback.dashboard.pipeline.stuck.empty')"
+            :note="t('feedback.dashboard.pipeline.stuck.note')"
           />
         </div>
 
@@ -1152,19 +1408,13 @@ onMounted(() => {
             :rows="hostRows"
             :loading="store.statsLoading"
             :empty="t('feedback.dashboard.pipeline.host.empty')"
+            :note="t('feedback.dashboard.pipeline.host.note')"
           />
         </div>
-
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.title') }}</p>
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.backlog.note') }}</p>
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.stuck.note') }}</p>
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.needs.note') }}</p>
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.host.note') }}</p>
       </template>
 
       <!-- 产品健康：北极星 + 两条护栏 + 两条「今天算不出来」。 -->
       <template v-else-if="kind === 'product'">
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.product.title') }}</p>
         <div class="ad__kpis">
           <AdminKpiCard
             v-for="kpi in productKpis"
@@ -1172,17 +1422,20 @@ onMounted(() => {
             :label="kpi.label"
             :value="kpi.value"
             :loading="kpi.loading"
+            :delta="kpi.delta"
+            :delta-title="kpi.deltaTitle"
+            :spark="kpi.spark"
           />
         </div>
 
         <div class="ad__row">
           <AdminLineChart
-            :title="t('feedback.dashboard.product.northStar')"
+            :title="t('feedback.dashboard.product.northStar', { d: store.statsDays })"
             :x-labels="xLabels"
             :series="northSeries"
             :loading="store.statsLoading"
+            :note="t('feedback.dashboard.product.northStarNote')"
           />
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.northStarNote') }}</p>
           <AdminShareBar
             :title="t('feedback.dashboard.product.rejection.title')"
             :segments="rejectionSegments"
@@ -1200,17 +1453,18 @@ onMounted(() => {
 
         <!-- 算不出来的那两条：**带理由**，不画一个假 0。 -->
         <section class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.product.unavailable.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.product.unavailable.title')
+            }}<AdminNoteTip :text="t('feedback.dashboard.product.unavailable.note')" />
+          </h2>
           <p v-for="row in productUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
             {{ row.text }}
           </p>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.unavailable.note') }}</p>
         </section>
       </template>
 
       <!-- 集成健康：静默降级。**没有 days** —— 凭据与投递是存量问题。 -->
       <template v-else-if="kind === 'integrations'">
-        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.integrations.title') }}</p>
         <div class="ad__kpis">
           <AdminKpiCard
             v-for="kpi in integrationKpis"
@@ -1258,9 +1512,9 @@ onMounted(() => {
                 ? ''
                 : `${Math.round(integrations.passkey.coverage * 100)}%`
             "
+            :note="t('feedback.dashboard.integrations.passkey.note')"
             :loading="store.statsLoading"
           />
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.passkey.note') }}</p>
         </div>
 
         <p class="ad__block-note t-meta-read">
@@ -1288,13 +1542,23 @@ onMounted(() => {
           :note="t('feedback.dashboard.integrations.delivery.note')"
           :loading="store.statsLoading"
         />
+        <!-- 最早待补发的那一封是多久以前的（相对时间）。`null` = 没有待补发，不画。 -->
+        <p v-if="integrations?.delivery.oldest_unsent_at" class="ad__block-note t-meta-read">
+          {{
+            t('feedback.dashboard.integrations.delivery.oldest', {
+              time: relTime(integrations.delivery.oldest_unsent_at),
+            })
+          }}
+        </p>
 
         <section class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.integrations.unavailable.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.integrations.unavailable.title')
+            }}<AdminNoteTip :text="t('feedback.dashboard.integrations.unavailable.note')" />
+          </h2>
           <p v-for="row in integrationsUnavailable" :key="row.name" class="ad__none-desc t-meta-read">
             {{ row.text }}
           </p>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.unavailable.note') }}</p>
         </section>
       </template>
 
@@ -1308,6 +1572,9 @@ onMounted(() => {
             :value="kpi.value"
             :loading="kpi.loading"
             :to="kpi.to"
+            :delta="kpi.delta"
+            :delta-title="kpi.deltaTitle"
+            :spark="kpi.spark"
           />
         </div>
 
@@ -1316,16 +1583,17 @@ onMounted(() => {
           {{ t('feedback.dashboard.kpi.urgent', { n: urgentOpen }) }}
         </p>
 
-        <!-- 四栏计数。**筛选不是划分**，所以行末那句口径必须在。 -->
+        <!-- 四栏计数。**筛选不是划分**，所以口径在标题旁的 tip 里等着。 -->
         <section class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.column.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.column.title') }}<AdminNoteTip :text="t('feedback.dashboard.column.note')" />
+          </h2>
           <div class="ad__split-grid">
             <div v-for="col in feedbackColumns" :key="col.key" class="ad__split-cell">
               <span class="ad__split-label t-eyebrow-read">{{ col.label }}</span>
               <span class="ad__split-value t-console-title t-num">{{ col.value }}</span>
             </div>
           </div>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.column.note') }}</p>
         </section>
 
         <div class="ad__row">
@@ -1361,7 +1629,10 @@ onMounted(() => {
             :label="kpi.label"
             :value="kpi.value"
             :loading="kpi.loading"
-            :to="kpi.to"
+            :delta="kpi.delta"
+            :delta-title="kpi.deltaTitle"
+            :spark="kpi.spark"
+            :note="kpi.note"
           />
         </div>
 
@@ -1375,10 +1646,8 @@ onMounted(() => {
           <AdminBarChart :title="t('feedback.dashboard.usage.top')" :rows="topProjects" :loading="store.statsLoading" />
         </div>
 
-        <!-- 成本与「未定价 token」这两件事已经是上面那两张 KPI 卡了，这里只剩**它们
-             之间的关系**那一句：金额里没有「算不出价钱」的那部分。以前它们挤在页脚一行
-             里（一行正文加一行脚注），两个数被降级成了注释。 -->
-        <p v-if="costNote" class="ad__cost-note t-meta">{{ costNote }}</p>
+        <!-- 成本与「未定价 token」这两件事是上面那两张 KPI 卡，它们之间的关系那句
+             （金额里没有「算不出价钱」的部分）收在两卡各自的口径 tip 里。 -->
 
         <!-- 两个正交的拆分：模型答「贵的是哪个模型」，通路答「贵的是计费方式还是模型」。
              并排放是因为**只有两个一起看**才答得出那个问题。 -->
@@ -1400,7 +1669,9 @@ onMounted(() => {
         <!-- 额度燃尽：三个互斥名单（已耗尽 / 快烧完 / 不限量）。少了它，三个项目同时
              停摆时 token 曲线只是「今天用量下降」，看起来像好消息。 -->
         <section class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.credits.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.credits.title') }}<AdminNoteTip :text="creditsNote" />
+          </h2>
           <div class="ad__split-grid">
             <AdminMeterBar
               v-for="row in creditMeters"
@@ -1414,12 +1685,12 @@ onMounted(() => {
               :loading="store.statsLoading"
             />
           </div>
+          <!-- 不限量数 / 燃烧速率 / 预计用尽：这是**数据行**不是注脚，原位保留。 -->
           <p v-if="credits" class="ad__block-note t-meta-read">
             {{ t('feedback.dashboard.credits.unlimited') }} {{ credits.unlimited_count }} ·
             {{ t('feedback.dashboard.credits.burn') }} {{ credits.burn.credits_per_day.toFixed(1) }}/d ·
             {{ t('feedback.dashboard.credits.eta') }} —
           </p>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.credits.note') }}</p>
         </section>
       </template>
 
@@ -1446,6 +1717,11 @@ onMounted(() => {
         </div>
 
         <div class="ad__perf">
+          <div class="ad__perf-head">
+            <h2 class="ad__block-title">
+              {{ t('feedback.dashboard.perf.tableTitle') }}<AdminNoteTip :text="perfTableNote" />
+            </h2>
+          </div>
           <table class="ad__perf-table">
             <thead>
               <tr>
@@ -1458,53 +1734,89 @@ onMounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route}`">
-                <!-- 方法 + 路由**模板**。模板里那个 `{id}` 要看得见：读者说「这条慢」
-                     时，指的正是这个模板。状态码是**属性**不是身份，收在 errors 一列。 -->
-                <td class="ad__perf-where">
-                  <span class="ad__perf-method">{{ row.method }}</span>
-                  <span class="ad__perf-path num-leaf">{{ row.route }}</span>
-                </td>
-                <td class="t-num ad__perf-num">{{ row.count ? fmtNum(row.count) : '—' }}</td>
-                <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
-                <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
-                <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
-                <td class="t-num ad__perf-num">{{ row.error_count ? fmtNum(row.error_count) : '—' }}</td>
-              </tr>
+              <template v-for="row in perfRoutes" :key="`${row.method} ${row.route}`">
+                <tr>
+                  <!-- 方法 + 路由**模板**。模板里那个 `{id}` 要看得见：读者说「这条慢」
+                       时，指的正是这个模板。状态码是**属性**不是身份，收在 errors 一列。
+                       行首 chevron 展开这条路由的分钟级 spark；spark 全 null 的行没有
+                       可展开的东西，chevron 禁用。 -->
+                  <td class="ad__perf-where">
+                    <button
+                      type="button"
+                      class="ad__perf-toggle"
+                      :aria-expanded="expandedRoute === `${row.method} ${row.route}`"
+                      :disabled="sparkDead(row.spark)"
+                      :aria-label="`${row.method} ${row.route}`"
+                      @click="toggleRoute(`${row.method} ${row.route}`)"
+                    >
+                      <span
+                        class="mdi"
+                        :class="
+                          expandedRoute === `${row.method} ${row.route}` ? 'mdi-chevron-down' : 'mdi-chevron-right'
+                        "
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <span class="ad__perf-method">{{ row.method }}</span>
+                    <span class="ad__perf-path num-leaf">{{ row.route }}</span>
+                  </td>
+                  <td class="t-num ad__perf-num">{{ row.count ? fmtNum(row.count) : '—' }}</td>
+                  <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
+                  <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
+                  <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
+                  <td class="t-num ad__perf-num">{{ row.error_count ? fmtNum(row.error_count) : '—' }}</td>
+                </tr>
+                <tr v-if="expandedRoute === `${row.method} ${row.route}`" class="ad__perf-detail">
+                  <td colspan="6">
+                    <p class="ad__perf-sparknote t-meta-read">{{ t('feedback.dashboard.perf.sparkTitle') }}</p>
+                    <AdminSparkline :values="row.spark" :height="32" />
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
+          <!-- 常驻注（每屏至多一条的额度给了它）：进程内存、重启清零、只覆盖业务 API。 -->
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
-          <p class="ad__perf-note t-meta-read">{{ t('feedback.dashboard.perf.routesNote') }}</p>
         </div>
 
         <!-- 网络吞吐：两面都给，各有口径（见 `core/net_io.py`）。上行是**这台机器的
              网卡**（含计量代理到 LLM 的出向流量），api 是本进程的 HTTP 载荷。
-             读不到画「—」—— 0 会把「看不见」说成「网是闲的」。 -->
+             读不到画「—」—— 0 会把「看不见」说成「网是闲的」。读数下面的迷你线是
+             逐分钟样本的形状（响应里一直回、此前没人画）。 -->
         <section v-if="netUplink || netApi" class="ad__split">
           <h2 class="ad__block-title">{{ t('feedback.dashboard.perf.network.title') }}</h2>
           <div class="ad__split-grid">
             <div v-if="netUplink" class="ad__split-cell">
-              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
+              <span class="ad__cell-head">
+                <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
+                <AdminNoteTip
+                  :text="t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' })"
+                />
+              </span>
               <span class="t-dense num-leaf" :title="netUplink.note_key">
                 ↓ {{ bps(netUplink.rx_bps) }} · ↑ {{ bps(netUplink.tx_bps) }}
               </span>
-              <p class="ad__block-note t-meta-read">
-                {{ t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' }) }}
-              </p>
+              <AdminSparkline :values="netUplink.samples.map((s) => s.rx_bps)" :height="32" />
             </div>
             <div v-if="netApi" class="ad__split-cell">
-              <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
+              <span class="ad__cell-head">
+                <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
+                <AdminNoteTip :text="t('feedback.dashboard.perf.network.apiNote')" />
+              </span>
               <span class="t-dense num-leaf" :title="netApi.note_key">
                 ↓ {{ bps(netApi.rx_bps) }} · ↑ {{ bps(netApi.tx_bps) }}
               </span>
-              <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.perf.network.apiNote') }}</p>
+              <AdminSparkline :values="netApi.samples.map((s) => s.rx_bps)" :height="32" />
             </div>
           </div>
         </section>
 
         <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
         <section v-if="reliability" class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.reliability.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.reliability.title')
+            }}<AdminNoteTip :text="t('feedback.dashboard.reliability.note')" />
+          </h2>
           <div class="ad__split-grid">
             <div class="ad__split-cell">
               <span class="ad__split-label t-eyebrow-read">{{
@@ -1521,9 +1833,15 @@ onMounted(() => {
             <div class="ad__split-cell">
               <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.reliability.title') }}</span>
               <span class="ad__split-value t-console-title t-num">{{ num(reliability.spool?.unread) }}</span>
+              <span class="ad__cell-note t-meta-read t-num">
+                {{
+                  t('feedback.dashboard.reliability.oldest', {
+                    age: fmtDuration(reliability.spool?.oldest_age_seconds),
+                  })
+                }}
+              </span>
             </div>
           </div>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.reliability.note') }}</p>
         </section>
       </template>
 
@@ -1536,6 +1854,9 @@ onMounted(() => {
             :label="kpi.label"
             :value="kpi.value"
             :loading="kpi.loading"
+            :delta="kpi.delta"
+            :delta-title="kpi.deltaTitle"
+            :spark="kpi.spark"
           />
         </div>
 
@@ -1555,6 +1876,7 @@ onMounted(() => {
                 <dd class="t-num">{{ row.value }}</dd>
               </template>
             </dl>
+            <!-- 常驻注（每屏至多一条的额度给了它）：这四行是存量，不是在线数。 -->
             <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.machines.note') }}</p>
           </section>
         </div>
@@ -1562,7 +1884,9 @@ onMounted(() => {
         <!-- 健康度：**这一刻**的，和上面两组的「存量 / 窗口」不是一回事。状态色只在
              这一行用（up / stalling / down），全页别处都是中性阶。 -->
         <section v-if="healthRows.length" class="ad__health">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.health.title') }}</h2>
+          <h2 class="ad__block-title">
+            {{ t('feedback.dashboard.health.title') }}<AdminNoteTip :text="t('feedback.dashboard.health.note')" />
+          </h2>
           <div class="ad__health-grid">
             <div v-for="row in healthRows" :key="row.key" class="ad__health-cell">
               <span class="ad__health-dot" :class="`ad__health-dot--${row.tone}`" aria-hidden="true" />
@@ -1570,27 +1894,40 @@ onMounted(() => {
               <span class="ad__health-status t-body">{{ row.status }}</span>
             </div>
           </div>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.health.note') }}</p>
         </section>
 
-        <!-- 三样缺口：磁盘（只这台后端）/ 预览（进程内存）/ 机器普查（台账行不是容器）。 -->
+        <!-- 配额与缺口：磁盘（只这台后端）/ 预览（进程内存）两条计量，加机器普查的
+             两张状态分布（台账行与状态，不是容器数 —— 那句口径写在两张图各自的注里）。 -->
         <section class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.extras.disk.title') }}</h2>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.title') }}</p>
-          <AdminMeterBar
-            v-for="row in extrasRows"
-            :key="row.label"
-            :label="row.label"
-            :value-text="row.valueText"
-            :limit="row.limit"
-            :ratio="row.ratio"
-            :tone="row.tone"
-            :hint="row.hint"
-            :loading="store.statsLoading"
-          />
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.disk.note') }}</p>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.preview.note') }}</p>
-          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.note') }}</p>
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.extras.title') }}</h2>
+          <div class="ad__split-grid">
+            <AdminMeterBar
+              v-for="row in extrasRows"
+              :key="row.label"
+              :label="row.label"
+              :value-text="row.valueText"
+              :limit="row.limit"
+              :ratio="row.ratio"
+              :tone="row.tone"
+              :hint="row.hint"
+              :note="row.note"
+              :loading="store.statsLoading"
+            />
+            <AdminShareBar
+              v-if="warmSegments.length"
+              :title="t('feedback.dashboard.extras.warmStates')"
+              :segments="warmSegments"
+              :note="t('feedback.dashboard.extras.machines.note')"
+              :loading="store.statsLoading"
+            />
+            <AdminShareBar
+              v-if="projectMachineSegments.length"
+              :title="t('feedback.dashboard.extras.projectStates')"
+              :segments="projectMachineSegments"
+              :note="t('feedback.dashboard.extras.machines.note')"
+              :loading="store.statsLoading"
+            />
+          </div>
         </section>
       </template>
     </div>
@@ -1609,11 +1946,15 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-/* 1100 那一列的水平居中。宽度走 `page-container--wide`，这里只管位置。 */
+/* 1440 那一列的水平居中（宽度走 `page-container--admin`，这里只管位置）。
+   `container-type: inline-size`：下面所有断点都是**容器查询**（先例：
+   `RunningWorkView`，理由相同 —— 侧栏能手折，折出来的 144px 视口媒体查询看不见，
+   断点要看的是「这一格有多宽」）。 */
 .ad__inner {
   display: flex;
   flex-direction: column;
   margin: 0 auto;
+  container-type: inline-size;
 }
 
 /* 页头 56px，下沿用 `--line-2`（§4.2）。 */
@@ -1622,23 +1963,136 @@ onMounted(() => {
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   height: 56px;
   border-bottom: 1px solid var(--line-2);
 }
 
-.ad__window {
-  flex: 0 0 auto;
-}
-
-.ad__kinds {
+.ad__head-side {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  gap: 12px;
+}
+
+/* 页头三件套（标题 / 窗口切换 / 时间戳）里最不重要的一个：窄屏让位（截断），
+   不把页头撑出横向滚动。 */
+.ad__stamp {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分类导轨：7 张迷你摘要卡等宽铺开，窄了横向滚动（不换行 —— 换行会把 7 张卡
+   堆成一面墙）。 */
+.ad__kinds {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
   margin: 16px 0 0;
+  overflow-x: auto;
+}
+
+/* 一张迷你摘要卡：标签（12px eyebrow）+ 一行「状态点 + 短值（13px dense）」，约 54px
+   高。它是**按钮**（切分类）不是卡片，圆角用 `--radius-md`。 */
+.ad__kind {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 112px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+/* 选中态 = 「选中行」的底色（`--line-2` 在设计系统里就是选中行的 fill）。
+   **不用琥珀** —— 后台的琥珀份额已给侧栏选中条，一屏一处。 */
+.ad__kind--on {
+  background: var(--line-2);
+  border-color: var(--line-2);
+}
+
+/* hover 只改底色、不改位置；选中卡不变。包在 (hover:hover) 里：触屏点过之后
+   `:hover` 会粘着，那张卡看起来像被选中了。 */
+@media (hover: hover) and (pointer: fine) {
+  .ad__kind:not(.ad__kind--on):hover {
+    background: var(--fill);
+  }
+}
+
+.ad__kind:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ad__kind-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ad__kind-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 状态点：8px 圆点，状态色 mark 档（真实状态，不是装饰）。 */
+.ad__kind-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.ad__kind-dot--ok {
+  background: var(--ok);
+}
+
+.ad__kind-dot--warn {
+  background: var(--warn);
+}
+
+.ad__kind-dot--danger {
+  background: var(--danger);
+}
+
+/* 短值是附属读数：字色压一档、不跟标签抢；只有警示/健康/危险三档改色。 */
+.ad__kind-val {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__kind-val--warn {
+  color: var(--warn-ink);
+}
+
+.ad__kind-val--ok {
+  color: var(--ok-ink);
+}
+
+.ad__kind-val--danger {
+  color: var(--danger-ink);
 }
 
 /* 性能那一类的路由表。它是一整块表而不是卡片：这一类的读法是竖着扫「哪一条 p95
-   最高」，卡片一多就扫不动了。 */
+   最高」，卡片一多就扫不动了。窄屏横滚（`overflow-x: auto` + 表格 min-width）——
+   六列 12.5px 在 320px 里只会互相压，横滚是移动端一等场景下的体面降级。 */
 .ad__perf {
   margin-top: 16px;
   padding: 16px;
@@ -1648,10 +2102,18 @@ onMounted(() => {
   border-top-right-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
   border-bottom-left-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+
+.ad__perf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .ad__perf-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   font-size: 12.5px;
   line-height: var(--lh-12);
@@ -1699,43 +2161,99 @@ onMounted(() => {
   color: var(--ink);
 }
 
+/* 展开 chevron：整行一个按钮。禁用态（spark 全 null）淡到 `--faint`，不藏 ——
+   同一列的图标有有无无，比「有的行窄一截」好读。 */
+.ad__perf-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-right: 4px;
+  color: var(--muted);
+  vertical-align: middle;
+  cursor: pointer;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  transition: color 0.12s ease;
+}
+
+.ad__perf-toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.ad__perf-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ad__perf-toggle:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.ad__perf-toggle .mdi {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* 展开行：底色换一档标出「它属于上面那一行」。 */
+.ad__perf-detail td {
+  padding: 8px 16px 12px;
+  background: var(--fill);
+  text-align: left;
+}
+
+.ad__perf-sparknote {
+  margin: 0 0 6px;
+}
+
 .ad__perf-note {
   margin: 12px 0 0;
   line-height: var(--lh-12);
 }
 
+/* KPI 网格：窄 2 列 → ≥560 4 列 → ≥1320 auto-fit（4–6 列，卡数不一也不留空轨）。
+   断点是**容器查询**（挂 `.ad__inner`），理由见 `.ad__inner`。 */
 .ad__kpis {
   display: grid;
-  /* 四列等宽，跟着容器走 —— 卡片自己写死了高度，宽度由格子给。 */
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-top: 16px;
 }
 
-/* 平台那一类只有三张卡：写死四列的话第四格是空的，看起来像少了一张。 */
-.ad__kpis:has(> :nth-child(3):last-child) {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+@container (min-width: 560px) {
+  .ad__kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-/* 窄屏：一排四张挤不下，退成两排两列。再窄下去（一格不到 140px）文字开始被压。 */
-@media (max-width: 900px) {
-  .ad__kpis,
-  .ad__kpis:has(> :nth-child(3):last-child) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* ≥1320 用 auto-fit 不写死 6 列：各类卡数不同（交付/平台 5、其余 4），auto-fit 让
+   4 卡的类自动 4 等分、5–6 卡的类铺满，不留空轨。 */
+@container (min-width: 1320px) {
+  .ad__kpis {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 }
 
 .ad__row {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   margin-top: 24px;
 }
 
-/* 窄屏成一列：两块并排之后各自都不到 300px，图里的刻度会互相压。 */
-@media (max-width: 1100px) {
+/* 两块并排要各到 ~300px 以上，图里的刻度才不互相压 —— 所以双栏从 720 容器宽开始。 */
+@container (min-width: 720px) {
   .ad__row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+
+  .ad__row--equal {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 
@@ -1759,11 +2277,10 @@ onMounted(() => {
   color: var(--muted);
 }
 
-/* 成本那句口径。整行、缩进与上面那两张卡对齐，字号是元信息那一档 —— 它是一条
-   注解，不是第三个数。 */
-.ad__cost-note {
-  margin: 12px 0 0;
-  line-height: var(--lh-12);
+/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（§0）。 */
+.ad__retry {
+  align-self: flex-start;
+  margin-top: 8px;
 }
 
 /* 急件警示行。只有真的压着没人管的急件时才画，所以它一出现就该被看见 —— 用
@@ -1775,26 +2292,6 @@ onMounted(() => {
   line-height: var(--lh-12);
 }
 
-/* 分类导轨里那个短值 —— 摘要条并进来之后的归宿。它是附属读数，所以字色压一档、
-   不跟标签抢注意力；只有警示/健康/危险三档会改色，其余用 `--muted`。 */
-.ad__kinds-val {
-  margin-left: 6px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.ad__kinds-val--warn {
-  color: var(--warn-ink);
-}
-
-.ad__kinds-val--ok {
-  color: var(--ok-ink, var(--muted));
-}
-
-.ad__kinds-val--danger {
-  color: var(--danger-ink, var(--warn-ink));
-}
-
 /* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个
    筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
 .ad__split {
@@ -1803,13 +2300,19 @@ onMounted(() => {
 
 .ad__split-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
-@media (max-width: 900px) {
+@container (min-width: 560px) {
   .ad__split-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 1320px) {
+  .ad__split-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 }
 
@@ -1837,6 +2340,17 @@ onMounted(() => {
   font-size: 20px;
 }
 
+/* 格内 label + 口径 tip 同一行（网络吞吐两格）。 */
+.ad__cell-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ad__cell-note {
+  color: var(--muted);
+}
+
 /* 健康度。**状态色只在这一块用**（up / stalling / down），全页别处都是中性阶：一屏里
    只有一处有颜色的时候，那一处就是「需要看的地方」。 */
 .ad__health {
@@ -1845,13 +2359,13 @@ onMounted(() => {
 
 .ad__health-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
-@media (max-width: 900px) {
+@container (min-width: 720px) {
   .ad__health-grid {
-    grid-template-columns: repeat(1, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -1898,16 +2412,16 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.ad__row--equal {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
 .ad__machines {
   display: flex;
   flex-direction: column;
 }
 
+/* 块标题：标题 + （可选的）口径 tip 同一行。 */
 .ad__block-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0 0 12px;
   font-size: 15px;
   line-height: var(--lh-15);
