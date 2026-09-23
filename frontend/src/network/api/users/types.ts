@@ -45,23 +45,9 @@ export type GetPasskeysResponse = {
 }
 
 export type AuthMethodsResponse = {
-  supports_srp: boolean
   supports_passkey: boolean
   supports_2fa: boolean
   requires_2fa: boolean
-}
-
-export type SrpInitResponse = {
-  salt: string
-  serverPublicEphemeral: string
-}
-
-export type SrpVerifyResponse = {
-  serverProof: string
-  accessToken?: string
-  requires2FA: boolean
-  tempToken?: string
-  user?: User
 }
 
 export interface TokenPayload {
@@ -135,11 +121,7 @@ export type GetOAuthProvidersResponse = {
 // OAuth 验证请求类型
 export interface OAuthVerifyRequest {
   sessionId: string
-  // 密码验证
   password?: string
-  // SRP 验证
-  clientPublicEphemeral?: string
-  clientProof?: string
 }
 
 // OAuth 状态信息类型
@@ -174,10 +156,8 @@ export interface OAuthCreateUserRequest {
   stateToken: string
   username: string
   nickname: string
-  passwordMode: 'none' | 'srp' // 支持纯OAuth模式和SRP密码模式
-  // SRP 模式下的可选参数
-  srpSalt?: string
-  srpVerifier?: string
+  passwordMode: 'none' | 'password'
+  password?: string
   inviteCode?: string
 }
 
@@ -199,35 +179,6 @@ export interface OAuthBindUserRequest {
 }
 
 export type OAuthBindUserResponse = {
-  user: {
-    id: number
-    username: string
-    email: string
-  }
-  token: string
-}
-
-// SRP 绑定初始化请求类型
-export interface OAuthSrpBindInitRequest {
-  stateToken: string
-  username: string
-  clientPublicEphemeral: string
-}
-
-export type OAuthSrpBindInitResponse = {
-  sessionId: string
-  salt: string
-  serverPublicEphemeral: string
-}
-
-// SRP 绑定验证请求类型
-export interface OAuthSrpBindVerifyRequest {
-  sessionId: string
-  clientPublicEphemeral: string
-  clientProof: string
-}
-
-export type OAuthSrpBindVerifyResponse = {
   user: {
     id: number
     username: string

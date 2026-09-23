@@ -7,8 +7,7 @@ interface SignupState {
   nickname: string
   email: string
   inviteCode: string
-  srpSalt: string
-  srpVerifier: string
+  password: string
 }
 
 export const useSignupStore = defineStore('signup', {
@@ -17,8 +16,7 @@ export const useSignupStore = defineStore('signup', {
     nickname: '',
     email: '',
     inviteCode: '',
-    srpSalt: '',
-    srpVerifier: '',
+    password: '',
   }),
 
   actions: {
@@ -27,16 +25,14 @@ export const useSignupStore = defineStore('signup', {
       nickname: string
       email: string
       inviteCode?: string
-      srpSalt: string
-      srpVerifier: string
+      password: string
     }) {
       // 保存注册信息
       this.username = data.username
       this.nickname = data.nickname
       this.email = data.email
       this.inviteCode = data.inviteCode?.trim() ?? ''
-      this.srpSalt = data.srpSalt
-      this.srpVerifier = data.srpVerifier
+      this.password = data.password
 
       // 发送验证邮件
       if (import.meta.env.VITE_DISABLE_EMAIL_VERIFY !== 'true') {
@@ -48,8 +44,7 @@ export const useSignupStore = defineStore('signup', {
       const response = await UserApi.register({
         username: this.username,
         nickname: this.nickname,
-        srpSalt: this.srpSalt,
-        srpVerifier: this.srpVerifier,
+        password: this.password,
         email: this.email,
         emailCode,
         ...(this.inviteCode ? { inviteCode: this.inviteCode } : {}),
