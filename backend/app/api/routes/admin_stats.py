@@ -90,6 +90,51 @@ async def platform_stats(
     return ok(await service.platform(days=days))
 
 
+
+def _http_endpoints(app) -> list[tuple[str, str]]:
+    """整张 HTTP 路由表：`(method, path_template)`，一条端点一个方法一行。
+
+    FastAPI 0.137 起 ``app.routes`` 不再摊平 ``include_router`` 进来的路由：它们
+    各自是一个 ``_IncludedRouter`` 壳（本仓库 73 个壳里是全部业务端点），只扫
+    ``isinstance(r, APIRoute)`` 会**只剩 main.py 直挂的那 3 条**，看板上于是
+    「很多 api 都没显示」。壳上 ``effective_route_contexts()`` 会递归展开到真
+    正的 ``APIRoute``，所以走它，不再靠 ``app.routes`` 的形状。
+
+    跳过 `HEAD`（它和 GET 是同一个处理器，两行说的是同一件事）和 `OPTIONS`。
+    FastAPI 自带的 `/openapi.json`、`/docs` 也列出来 —— 这一页的全部意义就是不漏。
+    """
+    from fastapi.routing import APIRoute
+
+    def walk(node) -> list[APIRoute]:
+        if isinstance(node, APIRoute):
+            return [node]
+        if hasattr(node, "effective_route_contexts"):
+            out: list[APIRoute] = []
+            for ctx in node.effective_route_contexts():
+                out.extend(walk(getattr(ctx, "original_route", None)))
+            return out
+        original = getattr(node, "original_router", None)
+        if original is not None:
+            out = []
+            for child in getattr(original, "routes", ()) or ():
+                out.extend(walk(child))
+            return out
+        return []
+
+    seen: set[tuple[str, str]] = set()
+    endpoints: list[tuple[str, str]] = []
+    for entry in app.routes:
+        for route in walk(entry):
+            for method in route.methods or ():
+                if method in ("HEAD", "OPTIONS"):
+                    continue
+                key = (method, route.path)
+                if key not in seen:
+                    seen.add(key)
+                    endpoints.append(key)
+    return endpoints
+
+
 @router.get("/performance")
 async def performance_stats(
     service: StatsServiceDep,
@@ -105,24 +150,7 @@ async def performance_stats(
     「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
     毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
     """
-    # 「有哪些路由」是 FastAPI 路由表的事，不在指标注册表里 —— 注册表只记得
-    # **被访问过**的那些。看板要列出**每一条**端点（没样本的也占一行，分位数是
-    # `None`），所以把整张表递下去，不是一个计数。
-    #
-    # 跳过 `HEAD`（它和 GET 是同一个处理器，两行说的是同一件事），跳过 Mount /
-    # WebSocketRoute（不是 HTTP 端点）。FastAPI 自带的 `/openapi.json`、`/docs`
-    # 也列出来 —— 又一个「悄悄少报几条」的过滤器，而这一页的全部意义就是不漏。
-    from fastapi.routing import APIRoute
-
-    routes: list[tuple[str, str]] = []
-    for r in request.app.routes:
-        if not isinstance(r, APIRoute):
-            continue
-        for method in r.methods or ():
-            if method in ("HEAD", "OPTIONS"):
-                continue
-            routes.append((method, r.path))
-    return ok(await service.performance(routes_registered=routes))
+    return ok(await service.performance(routes_registered=list(_http_endpoints(request.app))))
 
 
 @router.get("/pipeline")
