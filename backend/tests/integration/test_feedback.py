@@ -3004,3 +3004,229 @@ def test_the_cap_counts_a_rolling_day_not_a_calendar_one(client, monkeypatch):
 
     asyncio.run(_backdate())
     assert _submit(client, REPORTER, "一天之后再发一条").status_code == 200
+
+
+# --- 对抗审计查出来的（2026-09-22）-------------------------------------------
+#
+# 下面这几条不是从产品讨论里长出来的，是一轮九镜头对抗审计（每条发现再交给两个互相
+# 看不见的怀疑者去证伪）查出来、又逐条回代码核对过的。共同点是**读代码看不出来**：
+# 两条要在真并发下才出得来，一条要在两个面上对同一条 handle 提问才看得见差异。
+
+
+def test_the_public_surface_does_not_grant_what_the_admin_surface_refuses(
+    client, monkeypatch
+):
+    """同一条 handle 在两个面上必须是同一个答案。
+
+    `/admin/*` 的每个 handler 都过 `require_platform_admin` → `refuse_management_
+    action`，它在名单之前拒两种调用者：作用域凭证（`via == "cheese"`）和带 agent
+    绑定的 handle。公共 `/feedback/*` 以前只问名单（`service.is_admin(handle)`），
+    于是同一条 handle 在 `/admin/feedback` 上是 403，在 `/feedback/{id}` 上却拿到了
+    管理员的那一支 —— 能读别人的私密条目、拿到内部管理备注、删掉任何人的反馈。
+    而全仓库唯一的「删整条反馈」路由恰好长在公共面上（`admin_feedback.py` 没有
+    DELETE），所以这个管理动作从来没有被那道拒绝看过一眼。
+
+    这里问的是**同一条 handle、同一张凭证**在两个面上的答案。公共面不该整个 403
+    （一个 agent 是来读它自己提过的那条的合法读者），要的只是「别把管理员那一支给它」。
+    """
+    agent = "agent-on-the-list"
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
+    screen = _register_screen(handle=agent)
+    try:
+        headers = {"X-Cheese-Screen": screen.token}
+        private = _report(client, REPORTER, title="私密的那条", visibility="private")
+        public = _report(client, STRANGER, title="别人的公开那条")
+
+        # 管理面：这张凭证被拒。
+        refused = client.get("/admin/feedback", headers=headers)
+        assert refused.status_code == 403, refused.text
+
+        # 公共面：同一个请求者的答案必须不是「管理员」。
+        meta = client.get("/feedback/meta", headers=headers)
+        assert meta.status_code == 200, meta.text
+        assert meta.json()["data"]["is_admin"] is False
+
+        # 别人的私密条目看不见 —— 404 而不是 403（见 `visible_row`）。
+        hidden = client.get(f"/feedback/{private['id']}", headers=headers)
+        assert hidden.status_code == 404, hidden.text
+
+        # 看得见的别人的反馈也删不掉：403（看得见，但不是他的）。
+        gone = client.delete(f"/feedback/{public['id']}", headers=headers)
+        assert gone.status_code == 403, gone.text
+        assert (
+            client.get(
+                f"/feedback/{public['id']}", headers=session_auth_headers(STRANGER)
+            ).status_code
+            == 200
+        )
+    finally:
+        _unregister(screen)
+
+
+def test_an_agent_on_the_admin_list_is_no_admin_on_the_public_surface(
+    client, monkeypatch
+):
+    """上一条的另一半：拒的理由是**参与者**（handle 带 agent 绑定），不是凭证。
+
+    这条 handle 拿的是自己的会话 token，没有任何「无人值守」的样子 —— 挡住它的是
+    绑定。控制组是同一个名单上的真人：他照旧是管理员，所以上面那个 False 不是
+    「名单根本没被读到」。
+    """
+    project = _project(client, REPORTER)
+    made = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    agent = agent_instance_handle(made.json()["data"]["id"])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
+
+    headers = session_auth_headers(agent)
+    private = _report(client, STRANGER, title="别人的私密", visibility="private")
+
+    assert client.get("/admin/feedback", headers=headers).status_code == 403
+    assert (
+        client.get("/feedback/meta", headers=headers).json()["data"]["is_admin"]
+        is False
+    )
+    assert client.get(f"/feedback/{private['id']}", headers=headers).status_code == 404
+
+    # 控制组：真人在这两个面上都还是管理员。
+    mine = session_auth_headers(REPORTER)
+    assert client.get("/admin/feedback", headers=mine).status_code == 200
+    assert client.get("/feedback/meta", headers=mine).json()["data"]["is_admin"] is True
+    assert client.get(f"/feedback/{private['id']}", headers=mine).status_code == 200
+
+
+async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client):
+    """首读游标是 upsert，不是先读后插。
+
+    `FeedbackReadState` 上有 `uq_feedback_read_state_user`，而同一个人的两条请求真的
+    会同时到：手动 `markRead()` 没有 in-flight 守卫，它和 `markReadOnce()` 各自去重，
+    而去重表是**每个标签页一份**的。先读后插时两边都读到「还没有这一行」、都插，败者
+    在 flush 抛 `IntegrityError`，没有 handler 认它 —— 「把游标推到此刻」这个**幂等**
+    动作回 500。这个形状这个模块已经为点赞、评论点赞、加管理员各修过一次，这条是漏的。
+
+    断言不是「没炸」而是「八条都拿到了同一个 handle」：`on_conflict_do_update` 的
+    `RETURNING` 在冲突那一侧也要有行返回，写成 `do_nothing` 的话败者拿空结果、
+    当场 `scalar_one()` 抛 `NoResultFound` —— 那是另一个 500。
+    """
+    factory = client.test_factory
+    at = datetime.now(UTC)
+
+    async def bump() -> str:
+        async with factory() as session:
+            row = await FeedbackRepository(session).bump_read_state(STRANGER, at)
+            await session.commit()
+            return row.user_handle
+
+    assert await asyncio.gather(*[bump() for _ in range(8)]) == [STRANGER] * 8
+
+    async with factory() as session:
+        row = await FeedbackRepository(session).get_read_state(STRANGER)
+    assert row is not None
+    assert row.last_read_at == at
+
+
+async def test_the_bell_does_not_count_a_reply_nobody_can_see(client):
+    """未读计数和线程列表读的是同一个判据。
+
+    `count_activity_since` 的评论那一支以前只写 `deleted_at IS NULL`，没有套
+    `live_comment_clause()` —— 于是「父亲已被软删、自己还活着」的孤儿回复会被算成一条
+    新动静。那个函数的 docstring 写着它「被每一个计数或返回评论的 reader 共用，两者
+    不能互相矛盾」，这一处是唯一没遵守的 reader。症状：铃铛上写着 1，点进去线程里什么
+    都没有，而这个数清不掉（`mark_read` 推的是游标，孤儿永远比游标新）。
+    """
+    factory = client.test_factory
+    feedback_id, top_id = await _seed_thread(factory)
+
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        parent = await repo.get_comment(top_id)
+        assert parent is not None
+        await repo.soft_delete_comment(parent)
+        await session.commit()
+
+    headers = session_auth_headers(REPORTER)
+    client.post("/feedback/read", headers=headers)
+
+    # 孤儿：父亲已经软删，它自己的 `deleted_at` 还是 NULL，而且落在游标之后。
+    async with factory() as session:
+        await FeedbackRepository(session).add_comment(
+            feedback_id=feedback_id,
+            author_handle=STRANGER,
+            author_user_id=None,
+            author_is_agent=False,
+            body="父亲已经没了，我还活着",
+            parent_id=top_id,
+            reply_to_handle=None,
+        )
+        await session.commit()
+
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] == 0
+
+    # 同一条反馈上、同一个人写的一条**看得见**的评论照旧算数 —— 上面那个 0 不是
+    # 「计数根本没在跑」。
+    _comment(client, STRANGER, str(feedback_id), "这条看得见")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] >= 1
+
+
+async def test_two_sends_of_one_card_at_once_file_one_report(
+    python_client, stub_project_forge
+):
+    """同一张提案卡被同时按了两次发送。
+
+    顺序的那一版是 `test_sending_the_same_card_twice_files_one_report`，而它证明的是
+    「记下了 `accepted_feedback_id`」，不是「并发也只有一个」—— `client` 是同步的
+    TestClient，一次只有一个请求在飞。`python_client` 是同一个 app 的 ASGI 直连版本，
+    `gather` 出来的两个请求各自过一个 `get_db`，在服务端是真并发。
+
+    没有按 block 命名的那把事务级咨询锁时，两边都读到「还没发过」、各插一条逐字相同的
+    反馈，卡片只记得其中一条 —— 而路由的 docstring 承诺的恰恰是「绝不能变成又落了一条
+    一模一样的」。锁必须在**读那一行之前**拿：锁后还要重新 SELECT，READ COMMITTED 下
+    才看得见赢家提交的 meta。
+    """
+    c = python_client
+    as_reporter = session_auth_headers(REPORTER)
+    project = (
+        await c.post("/projects", json={"name": "P"}, headers=as_reporter)
+    ).json()["data"]["id"]
+    topic = (
+        await c.post(
+            "/topics",
+            json={"project_id": project, "title": "并发提案"},
+            headers=as_reporter,
+        )
+    ).json()["data"]["id"]
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    title = "沙箱里 make 装不上依赖"
+    proposed = await c.post(
+        f"/topics/{topic}/feedback-proposals",
+        json={
+            "title": title,
+            "what_happened": "make 停在 could not resolve host",
+            "user_said": "用户没有就这个问题说过话，以上是芝士自己观察到的",
+        },
+        headers={"X-Cheese-Token": token},
+    )
+    assert proposed.status_code == 200, proposed.text
+    block_id = proposed.json()["data"]["block_id"]
+    url = f"/topics/{topic}/feedback-proposals/{block_id}/accept"
+    body = {"title": title, "what_happened": "make 停在 could not resolve host"}
+
+    first, second = await asyncio.gather(
+        c.post(url, json=body, headers=as_reporter),
+        c.post(url, json=body, headers=as_reporter),
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    # 两次发送说的是同一条反馈。
+    assert first.json()["data"]["id"] == second.json()["data"]["id"]
+
+    async with c.test_factory() as session:
+        rows = (
+            (await session.execute(select(Feedback).where(Feedback.title == title)))
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1

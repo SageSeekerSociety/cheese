@@ -377,6 +377,20 @@ export const useFeedbackStore = defineStore('feedback', {
      *  下一页要在列表尾巴上转个圈，**而且两者互不代表对方在跑** —— 「加载更多」
      *  的请求还在飞的时候按一下搜索，屏幕不该先整片闪成骨架再换内容。 */
     loadingMore: false,
+    /** 「下一页从哪儿开始」= **已经向服务端取回过的行数**，不是 `items.length`。
+     *
+     *  没人插队时两者相等 —— 而这正是它以前写成 `items.length` 的原因。但 `items`
+     *  是 `appendPage` 按 id 去重之后的数组：中间有人新提了一条反馈，下一次
+     *  `pageStart` 就小于服务端眼里「我们已经翻到哪儿了」，请求回的全是手上已有的行，
+     *  去重之后长度一动不动，于是「还有没有下一页」也永远不动 —— 屏幕上是一颗点得
+     *  下去、点了没反应的按钮，外加一条被顶到偏移量之前、永远取不回来的新反馈。
+     *  这个计数器只加不减，和服务端那个偏移量才是一回事。 */
+    listRequested: 0,
+    /** 命中缓存之后那次**背后的重拉**在不在飞。缓存命中时 `loading` 故意留 false
+     *  （缓存先画，别闪骨架），于是 `loadMoreList` 那道 `this.loading` 门在这段窗口
+     *  里是开着的：它按**旧的长列表**算偏移量，而这次重拉马上会把 `items` 换成短的
+     *  第一页，两个响应接起来就漏掉中间一整段，并且再也补不上。 */
+    listRefreshing: false,
     query: '',
     tab: 'all' as FeedbackTab,
     /* ---- 公开列表的四个筛选（反馈中心那一排控件）。
@@ -448,6 +462,10 @@ export const useFeedbackStore = defineStore('feedback', {
     mineLoading: false,
     /** 同 `loadingMore`，只是「我的反馈」那一份。 */
     mineLoadingMore: false,
+    /** 同 `listRequested`，只是「我的反馈」那一份。 */
+    mineRequested: 0,
+    /** 同 `listRefreshing`，只是「我的反馈」那一份。 */
+    mineRefreshing: false,
     /* ---- 详情。`detail` 是**当前这一条**；换一条时整个对象换掉。 ---- */
     detail: null as FeedbackDetail | null,
     detailLoading: false,
@@ -506,13 +524,15 @@ export const useFeedbackStore = defineStore('feedback', {
     hotMinItems(state): number {
       return state.meta?.hot_min_items ?? 5
     },
-    /** 手上这一页后面还有没有。**用服务端给的 `total` 判**，不用「这一页是不是满的」：
+    /** 后面还有没有。判据是**取回来的行数**和 `total`，不是 `items.length`：后者是
+     *  去重之后的长度，有人插队时会永远小于 `total`，按钮就永远在（见
+     *  `listRequested`）。仍然**用服务端给的 `total` 判**，不用「这一页是不是满的」：
      *  一页 50 条、总共正好 50 条时，「满员」会让人多按一次才看见空页。 */
     listHasMore(state): boolean {
-      return state.items.length < state.total
+      return state.listRequested < state.total
     },
     mineHasMore(state): boolean {
-      return state.mineItems.length < state.mineTotal
+      return state.mineRequested < state.mineTotal
     },
     /** 当前停着的那一类在不在加载中。页面读的是它，所以「切到另一类」不会把已经拿到的
      *  这一类按成骨架。 */
@@ -623,7 +643,11 @@ export const useFeedbackStore = defineStore('feedback', {
       if (cached) {
         this.items = cached.items
         this.total = cached.total
+        // 缓存里那一份就是「上一次翻到哪儿」——偏移量接着它走，不接着这次还在飞的
+        // 第一页走（`listRefreshing` 保证这两件事不会同时在跑）。
+        this.listRequested = cached.items.length
         this.loading = false
+        this.listRefreshing = true
       } else {
         this.loading = true
       }
@@ -634,6 +658,7 @@ export const useFeedbackStore = defineStore('feedback', {
         if (seq !== listSeq) return
         this.items = page.data
         this.total = page.total
+        this.listRequested = page.data.length
         listCache = { key, items: page.data, total: page.total }
         this._commitCounts(page.counts, rev)
       } catch (error) {
@@ -645,9 +670,15 @@ export const useFeedbackStore = defineStore('feedback', {
         // 态里：不清空就等于把它一起藏起来。
         this.items = []
         this.total = 0
+        this.listRequested = 0
         listCache = null
       } finally {
-        if (seq === listSeq) this.loading = false
+        // 两个标志只有**最后那一次**请求收得回来：被顶掉的那次提前关掉的话，正在
+        // 飞的那次重拉就没人替它关门了（`listRefreshing` 只在缓存命中那一路置位）。
+        if (seq === listSeq) {
+          this.loading = false
+          this.listRefreshing = false
+        }
       }
     },
 
@@ -720,13 +751,15 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /** 取列表的下一页，接在手上这份后面。
      *
-     *  **三道门都在这里，不在按钮上**：`disabled` 只挡得住鼠标，回车、快速双击、
-     *  以及慢响应期间的那一下都会绕过去。三道各挡一个具体的坏结果 ——
+     *  **四道门都在这里，不在按钮上**：`disabled` 只挡得住鼠标，回车、快速双击、
+     *  以及慢响应期间的那一下都会绕过去。四道各挡一个具体的坏结果 ——
      *  `loadingMore` 挡「同一段追加两遍」，`loading` 挡「第一页还在飞的时候偏移量
-     *  按旧清单算、屏幕上出现一段谁也记不得的空档」，`!listHasMore` 挡「到底了还在
-     *  取」。 */
+     *  按旧清单算、屏幕上出现一段谁也记不得的空档」，`listRefreshing` 挡同一件事的
+     *  另一半（缓存命中时 `loading` 是故意不上锁的，见那个字段），`!listHasMore`
+     *  挡「到底了还在取」。 */
     async loadMoreList(): Promise<void> {
-      if (this.loadingMore || this.loading || !this.listHasMore) return
+      if (this.loadingMore || this.loading || this.listRefreshing) return
+      if (!this.listHasMore) return
       // 这一页属于**发它时那个问题**（栏位 + 搜索词）。`seq` 是那一刻的号：栏位或
       // 搜索词在飞的这段时间里变了的话，回来的是上一个问题的第 N 页，接上去就是
       // 两份清单拼在一起 —— 所以它回来了也只配丢掉。
@@ -736,13 +769,17 @@ export const useFeedbackStore = defineStore('feedback', {
       // 于是第 2 页起**四个筛选整个丢掉**：筛选结果后面接着一堆不匹配的行，而两份
       // 各自看着都对。
       const { key, params } = this._listQuestion()
-      const pageStart = this.items.length
+      // 偏移量是**取回来过的行数**，不是 `items.length`（见 `listRequested`）。
+      const pageStart = this.listRequested
       this.loadingMore = true
       try {
         const page = await listFeedback({ ...params, pageStart })
         if (seq !== listSeq) return
         this.items = appendPage(this.items, page.data)
         this.total = page.total
+        // 服务端这次真的交出了几行，偏移量就往前走几行 —— 去重丢掉的那几行也算
+        // 「服务端已经给过了」，重复要它们才是这一页卡死的原因。
+        this.listRequested += page.data.length
         // 缓存跟着长：翻进详情页再退回来时，用户已经展开的那几页还在，不必从头再
         // 点一遍。代价是下一次 `loadList` 命中它之后会重拉第一页、把长度收回 50 ——
         // 这是「缓存只是先画」那句话本来就承认的事（见 `loadList`）。
@@ -781,7 +818,9 @@ export const useFeedbackStore = defineStore('feedback', {
       if (cached) {
         this.mineItems = cached.items
         this.mineTotal = cached.total
+        this.mineRequested = cached.items.length
         this.mineLoading = false
+        this.mineRefreshing = true
       } else {
         this.mineLoading = true
       }
@@ -791,6 +830,7 @@ export const useFeedbackStore = defineStore('feedback', {
         if (seq !== mineSeq) return
         this.mineItems = page.data
         this.mineTotal = page.total
+        this.mineRequested = page.data.length
         mineCache = { items: page.data, total: page.total }
       } catch (error) {
         if (seq !== mineSeq) return
@@ -800,9 +840,13 @@ export const useFeedbackStore = defineStore('feedback', {
         // 才画得出来。
         this.mineItems = []
         this.mineTotal = 0
+        this.mineRequested = 0
         mineCache = null
       } finally {
-        if (seq === mineSeq) this.mineLoading = false
+        if (seq === mineSeq) {
+          this.mineLoading = false
+          this.mineRefreshing = false
+        }
       }
     },
 
@@ -810,14 +854,16 @@ export const useFeedbackStore = defineStore('feedback', {
      *  这一页没有参数，它的问题永远是同一个（「和我有关的那些」），变的只有身份，
      *  而身份换了会走 `resetFeedbackCaches()` 那条路。 */
     async loadMoreMine(): Promise<void> {
-      if (this.mineLoadingMore || this.mineLoading || !this.mineHasMore) return
+      if (this.mineLoadingMore || this.mineLoading || this.mineRefreshing) return
+      if (!this.mineHasMore) return
       const seq = mineSeq
-      const pageStart = this.mineItems.length
+      const pageStart = this.mineRequested
       this.mineLoadingMore = true
       try {
         const page = await listMyFeedback({ pageSize: PAGE_SIZE, pageStart })
         if (seq !== mineSeq) return
         this.mineItems = appendPage(this.mineItems, page.data)
+        this.mineRequested += page.data.length
         this.mineTotal = page.total
         mineCache = { items: this.mineItems, total: page.total }
       } catch (error) {
@@ -1206,6 +1252,10 @@ export const useFeedbackStore = defineStore('feedback', {
         dropListCaches()
         this.items = []
         this.mineItems = []
+        // 偏移量跟着数组一起归零：两者说的是同一件事（手上这份从哪儿来），
+        // 只清一个的话下一次「加载更多」会从旧偏移量上接着要。
+        this.listRequested = 0
+        this.mineRequested = 0
         // 顺手把刚落地的这条写进详情缓存：提交之后紧接着去的就是它的详情页，而手上
         // 这一份就是服务端刚回的**整条**。这里能这么写不是猜的 —— `POST /feedback`
         // 和 `GET /feedback/{id}` 在服务端走的是同一个 `_detail(...)` 序列化，形状
