@@ -26,6 +26,70 @@ from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 pytestmark = pytest.mark.anyio
 
 
+async def test_replay_finishes_without_waiting_for_new_live_work(tmp_path, monkeypatch):
+    from app.domain.agent import event_spool
+    from app.domain.agent.harness.claude_code import hooks_substrate
+
+    project, topic = _uuid.uuid4(), _uuid.uuid4()
+    spool = tmp_path / "spool"
+    monkeypatch.setattr(hooks_substrate.ws, "spool_dir", lambda _p, _t: spool)
+    event_spool.append(
+        spool,
+        "historical",
+        {"hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {}},
+    )
+    router = HookRouter()
+    runtime = ClaudeCodeRuntime(Channel(), router=router)
+    history_started, release_history = asyncio.Event(), asyncio.Event()
+    live_started, release_live = asyncio.Event(), asyncio.Event()
+    landed = []
+
+    async def consume(_p, _t, _work, _event, eid, _seen, _unsolicited):
+        if eid == "historical":
+            history_started.set()
+            await release_history.wait()
+        else:
+            live_started.set()
+            await release_live.wait()
+        landed.append(eid)
+
+    runtime.bind_events(consume)
+    await runtime.ensure_subscription(project, topic, paused=True)
+    replay = asyncio.create_task(
+        runtime.replay(
+            SessionRef(project, topic, harness="claude-code"), known_texts=set()
+        )
+    )
+    try:
+        await asyncio.wait_for(history_started.wait(), timeout=1)
+        assert not replay.done(), "Recovery returned before its historical event landed"
+        router.push(
+            str(topic),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {},
+                "_eid": "live",
+            },
+        )
+        release_history.set()
+        await asyncio.wait_for(live_started.wait(), timeout=1)
+        await asyncio.wait_for(asyncio.shield(replay), timeout=1)
+        assert landed == ["historical"]
+        assert (
+            event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+        )
+        release_live.set()
+        await runtime._subscriptions[topic].sink.queue.join()
+        assert landed == ["historical", "live"]
+    finally:
+        release_history.set()
+        release_live.set()
+        replay.cancel()
+        await asyncio.gather(replay, return_exceptions=True)
+        await runtime._close_topic(topic)
+
+
 async def test_recovery_keeps_other_rooms_when_one_subscription_fails(monkeypatch):
     from app.domain.agent.device_hub import DeviceCallError
 
