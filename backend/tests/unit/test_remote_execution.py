@@ -1889,7 +1889,14 @@ def test_prepare_adds_the_teammate_sync_hook_exactly_once():
     from app.domain.agent.harness.claude_code.remote_execution import client
 
     hooks = {
-        "SessionStart": [{"hooks": [{"type": "command", "command": "cheese-hook"}]}]
+        "SessionStart": [
+            {
+                "hooks": [
+                    {"type": "command", "command": "cheese-hook"},
+                    {"type": "command", "command": "cheese sync-agents"},
+                ]
+            }
+        ]
     }
     client._ensure_sync_agents_hook(hooks)
     client._ensure_sync_agents_hook(hooks)
@@ -1897,7 +1904,7 @@ def test_prepare_adds_the_teammate_sync_hook_exactly_once():
         commands = [
             hook["command"] for group in hooks[event] for hook in group["hooks"]
         ]
-        assert commands.count("cheese sync-agents") == 1
+        assert commands.count("cheese sync-agents || true") == 1
     assert hooks["SessionStart"][0]["hooks"][0]["command"] == "cheese-hook"
 
 
