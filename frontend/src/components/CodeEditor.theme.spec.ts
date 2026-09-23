@@ -43,10 +43,13 @@ async function mount() {
   vi.resetModules()
   const { default: CodeEditor } = await import('./CodeEditor.vue')
   const vuetify = createVuetify({ theme: { defaultTheme: 'light', themes: { light: {}, dark: { dark: true } } } })
-  return render(CodeEditor, {
+  const view = render(CodeEditor, {
     props: { modelValue: 'const a = 1', filename: 'a.ts' },
     global: { plugins: [vuetify] },
   })
+  // Monaco 是挂载时才去取的（它有 4MB，不该跟着房间页一起下），编辑器晚几拍才建好。
+  for (let i = 0; i < 12; i += 1) await new Promise((r) => setTimeout(r, 0))
+  return view
 }
 
 /** 最后一次 defineTheme 拿到的配色。 */

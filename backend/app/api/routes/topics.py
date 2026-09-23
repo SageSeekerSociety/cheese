@@ -2587,7 +2587,13 @@ async def show_in_room(
         mime_type=mime,
         refs=[path],
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(topic_id), {"type": "assistant_block", "block": payload}
+    )
+    return ok(payload)
 
 
 @router.get("/{topic_id}/shown")

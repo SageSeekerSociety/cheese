@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     frontend_oauth_error_path: str = "/account/oauth/error"
     frontend_oauth_verify_path: str = "/account/oauth/verify"
     frontend_oauth_complete_path: str = "/account/oauth/complete"
+    frontend_2fa_verify_path: str = "/account/verify-2fa"
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
@@ -923,8 +924,8 @@ class Settings(BaseSettings):
           described above. Under it, ``environment`` saying "development" is
           evidence the env file failed, not evidence this is a dev box.
         - ``environment`` outside dev/test — the line the rest of the app already
-          draws (secure cookies, the X-User-Id gate). Still checked, for any
-          deployment that does not run through this compose file.
+          draws (secure cookies). Still checked, for any deployment that does
+          not run through this compose file.
 
         Local dev and the test suite set neither, keep the default secret and
         never trip this, which is why fail-closed does not take the suite down.

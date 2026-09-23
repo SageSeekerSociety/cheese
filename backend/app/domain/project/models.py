@@ -115,6 +115,19 @@ class ProjectMember(UuidPk, Timestamps, Base):
     )
 
 
+class ProjectJoinLink(UuidPk, Timestamps, Base):
+    """A manager's revocable invitation for anyone holding the link."""
+
+    __tablename__ = "project_join_links"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    token: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class InvitationStatus(enum.StrEnum):
     pending = "pending"
     accepted = "accepted"

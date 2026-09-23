@@ -1,0 +1,80 @@
+name: Required CI feedback measurement
+
+on:
+  schedule:
+    # Four bounded cohorts stay below the per-repository GITHUB_TOKEN API budget.
+    # Each run observes a six-hour block only after a further six hours to settle.
+    - cron: '23 0,6,12,18 * * *'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Inclusive UTC run-created bound; supply both bounds or neither'
+        required: false
+        type: string
+      until:
+        description: 'Inclusive UTC run-created bound; supply both bounds or neither'
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: required-ci-feedback-measurement
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select a fixed cohort window
+        id: window
+        env:
+          REQUESTED_SINCE: ${{ inputs.since || '' }}
+          REQUESTED_UNTIL: ${{ inputs.until || '' }}
+        run: >-
+          python3 .github/scripts/ci-feedback-window.py
+          --since "$REQUESTED_SINCE"
+          --until "$REQUESTED_UNTIL"
+          --github-output "$GITHUB_OUTPUT"
+          --parameters logs/ci-feedback/window.json
+
+      - name: Collect Required CI attempts and job timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/ci-feedback-report.py
+          --repo "${{ github.repository }}"
+          --workflow required-ci.yml
+          --since "${{ steps.window.outputs.since }}"
+          --until "${{ steps.window.outputs.until }}"
+          --output-dir logs/ci-feedback
+          > logs/ci-feedback/collector-result.json
+
+      - name: Publish cohort summary
+        if: ${{ success() }}
+        run: |
+          {
+            echo '## Required CI feedback measurement'
+            echo
+            echo 'This is one mixed-scope observation window, not a long-term stability claim.'
+            echo 'PR and merge-group cohorts, attempts, and latest-run outcomes remain separate.'
+            echo 'This measurement does not activate the 20-green acceptance gate. Actions metadata cannot show Playwright retries, so the clean-run criterion still needs artifact evidence.'
+            echo
+            echo '```json'
+            cat logs/ci-feedback/collector-result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain report, raw API responses, and progress
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: required-ci-feedback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/ci-feedback/
+          if-no-files-found: error
+          retention-days: 90

@@ -132,6 +132,7 @@ def analyse_attempt(
         "job_queue_seconds": queues,
         "job_queue_unknown_count": queue_unknown,
         "job_count": len(jobs),
+        "executed_job_names": sorted(str(job.get("name")) for job in executed),
         "unknown_metrics": unknown,
     }
 
@@ -145,6 +146,21 @@ def summarize(records: list[dict]) -> dict:
         latest = [
             item for item in attempts if item["attempt"] == item["latest_attempt"]
         ]
+        first_attempts = [item for item in attempts if item["attempt"] == 1]
+        ordered_first = sorted(
+            first_attempts,
+            key=lambda item: (item.get("run_created_at") or "", item["run_id"]),
+        )
+        streak = (
+            None
+            if any(parse_time(item.get("run_created_at")) is None for item in ordered_first)
+            else 0
+        )
+        if streak is not None:
+            for item in reversed(ordered_first):
+                if item["outcome"] != "success":
+                    break
+                streak += 1
         success_elapsed = [
             item["run_created_to_final_job_completed_seconds"]
             for item in latest
@@ -157,9 +173,18 @@ def summarize(records: list[dict]) -> dict:
             if item["run_created_to_first_failure_seconds"] is not None
         ]
         queues = [value for item in attempts for value in item["job_queue_seconds"]]
+        selection_groups: dict[str, list[dict]] = {}
+        for item in latest:
+            signature = " | ".join(item["executed_job_names"]) or "(no executed jobs)"
+            selection_groups.setdefault(signature, []).append(item)
         result[f"{workflow}:{event}"] = {
             "unique_run_count": len(latest),
             "attempt_count": len(attempts),
+            "cohort_tail_consecutive_first_attempt_successes": streak,
+            "first_attempt_outcomes": {
+                name: sum(item["outcome"] == name for item in first_attempts)
+                for name in ("success", "failure", "cancelled", "pending", "other")
+            },
             "attempt_outcomes": {
                 name: sum(item["outcome"] == name for item in attempts)
                 for name in ("success", "failure", "cancelled", "pending", "other")
@@ -176,6 +201,33 @@ def summarize(records: list[dict]) -> dict:
             "job_queue_unknown_count": sum(
                 item["job_queue_unknown_count"] for item in attempts
             ),
+            "latest_attempt_selection_cohorts": {
+                signature: {
+                    "run_count": len(items),
+                    "successful_run_created_to_all_jobs_complete_api_proxy": distribution(
+                        [
+                            item["run_created_to_final_job_completed_seconds"]
+                            for item in items
+                            if item["outcome"] == "success"
+                            and item[
+                                "run_created_to_final_job_completed_seconds"
+                            ]
+                            is not None
+                        ]
+                    ),
+                    "latest_attempt_outcomes": {
+                        name: sum(item["outcome"] == name for item in items)
+                        for name in (
+                            "success",
+                            "failure",
+                            "cancelled",
+                            "pending",
+                            "other",
+                        )
+                    },
+                }
+                for signature, items in sorted(selection_groups.items())
+            },
             "attempts_with_unknown_metrics": [
                 {
                     "run_id": item["run_id"],
