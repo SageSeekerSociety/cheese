@@ -183,6 +183,18 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(container.querySelector('.file-list')).toBeTruthy()
     expect(readFile).not.toHaveBeenCalled()
   })
+
+  it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
+    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+
+    const { container } = mountPanel()
+    await flush()
+    await clickChip(container, 'site/index.html')
+
+    // 房间里没有它（读取失败），所以它落在树上——.html 在那边是 diff，不是网页。
+    expect(visible(container, '.panel-changes')).toBe(true)
+    expect(selectedTab(container)).toContain('改动')
+  })
 })
 
 // 自由区：读者自己开的那几份。固定区的几格永远在；这几格是他开的，也由他关。
@@ -261,26 +273,34 @@ describe('自由区', () => {
     expect(readPreviewFile).toHaveBeenCalledWith('topic-A', '报告.docx')
   })
 
-  it('网页只有预览那一格画得出来：点开的是当前预览，就去那一格', async () => {
-    const { getPreview } = await import('../../api')
+  it('房间里的网页开成它自己的页签：内容域按路径画得了它', async () => {
     getDoc.mockResolvedValue({ content: '成品见 <&site/index.html>\n' })
+    readPreviewFile.mockResolvedValue({
+      path: 'site/index.html',
+      content: '<h1>成品</h1>',
+      version: 'v1',
+      bytes: 15,
+      binary: false,
+      too_large: false,
+    })
     const { container } = mountPanel()
     await flush()
-    // 芝士是在这一轮里才摆出来的：打开房间时预览还是空的。
-    vi.mocked(getPreview).mockResolvedValue({
-      kind: 'file',
-      path: 'site/index.html',
-      mime: 'text/html',
-      url: 'https://p.example/',
-      artifact_id: 'a1',
-      version: 'v1',
-    } as Awaited<ReturnType<typeof getPreview>>)
 
     await clickChip(container, 'site/index.html')
 
-    expect(freeTabs(container)).toEqual([])
-    expect(selectedTab(container)).toContain('预览')
-    vi.mocked(getPreview).mockResolvedValue(null)
+    expect(freeTabs(container)).toEqual(['~index.html'])
+    expect(selectedTab(container)).toBe('index.html')
+  })
+
+  it('仓库树里的 .html 仍然去「改动」那格：那是源码，不是房间里的那一份', async () => {
+    getDoc.mockResolvedValue({ content: '源码见 <&site/index.html>\n' })
+    const { container } = mountPanel()
+    await flush()
+
+    await clickChip(container, 'site/index.html')
+
+    expect(freeTabs(container)).toEqual(['~index.html'])
+    expect(selectedTab(container)).toBe('index.html')
   })
 
   it('能画出来的文件就算是当前预览，也开成自己的页签', async () => {
