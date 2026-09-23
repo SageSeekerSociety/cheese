@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
 from app.core.db import get_db, pool_status, warn_when_pool_saturates
@@ -51,6 +51,8 @@ async def test_shared_application_engine_serves_requests_from_the_production_poo
 async def test_sync_client_requests_use_the_production_pool(client):
     engine = client.test_app_engine
     _assert_production_pool(engine)
+    assert client.test_request_factory.kw["bind"] is engine
+    assert isinstance(client.test_factory.kw["bind"].pool, NullPool)
     checkouts = []
 
     @event.listens_for(engine.sync_engine, "checkout")
