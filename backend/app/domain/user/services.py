@@ -1,14 +1,13 @@
-import asyncio
 import re
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime
 
-import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
+from app.domain.user.passwords import check_password, hash_password
 from app.domain.user.repositories import (
     UserFollowingRepository,
     UserProfileRepository,
@@ -245,11 +244,7 @@ class UserAuthService:
         if user.hashed_password.startswith("SRP:"):
             return None
 
-        if not await asyncio.to_thread(
-            bcrypt.checkpw,
-            password.encode("utf-8"),
-            user.hashed_password.encode("utf-8"),
-        ):
+        if not await check_password(password, user.hashed_password):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)
@@ -273,11 +268,7 @@ class UserAuthService:
         return await self._user_repo.get_by_email(email)
 
     async def update_password(self, user_id: int, new_password: str) -> None:
-        hashed = (
-            await asyncio.to_thread(
-                bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt()
-            )
-        ).decode("utf-8")
+        hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
 
     async def set_srp_credentials(
@@ -325,11 +316,7 @@ class UserAuthService:
         if await self._user_repo.is_email_taken(email):
             raise ValueError("EMAIL_TAKEN")
 
-        hashed = (
-            await asyncio.to_thread(
-                bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
-            )
-        ).decode("utf-8")
+        hashed = await hash_password(password)
         user = await self._user_repo.create_user(
             username=username,
             email=email,

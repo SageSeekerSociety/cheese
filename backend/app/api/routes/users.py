@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -73,6 +72,8 @@ from app.domain.user.services import UserAuthService, UserProfileService
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+
+    from app.domain.user.login_security import LoginRateLimiter
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -464,6 +465,15 @@ async def _spend_sudo_ticket(
         raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
     if not spent:
         raise SudoRequiredError("Re-authentication required for this operation")
+
+
+def _reject_overlong_password(password: str) -> None:
+    """Refused before anything is consumed: bcrypt cannot hash it, and failing
+    after the email code or reset token is spent would cost the user both."""
+    from app.domain.user.passwords import MAX_PASSWORD_BYTES, password_too_long
+
+    if password_too_long(password):
+        raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
 def _normalize_registration_invite_code(
@@ -1233,7 +1243,8 @@ async def send_register_email_code(
     """Send email verification code for registration.
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
-    Falls back to success response if email not configured (for dev).
+    Answers success without sending if email is not configured (for dev); a
+    configured sender that fails is a 503 and leaves no code behind.
     Any valid email address is accepted.
     """
     import re
@@ -1374,6 +1385,7 @@ async def register_user(
             raise UnprocessableEntityError(
                 "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
             )
+        _reject_overlong_password(password)
 
     # Always verify email code, regardless of invite code
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
@@ -1622,6 +1634,20 @@ async def get_auth_methods(
     }
 
 
+async def _spend_login_attempt(limiter: "LoginRateLimiter", username: str) -> int:
+    """Spend one slot of the username's login budget before the credential is
+    checked, and return how many remain; see ``consume_attempt`` for why the
+    slot goes first. The caller clears the budget once the credential holds."""
+    if await limiter.is_locked_out(username):
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    budget = await limiter.consume_attempt(username)
+    if budget is None:
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    return budget
+
+
 @router.post(
     "/auth/login",
     summary="User Login",
@@ -1649,23 +1675,23 @@ async def user_login(
     try:
         rate_limiter = LoginRateLimiter(redis)
 
-        if await rate_limiter.is_locked_out(username):
-            remaining = await rate_limiter.get_remaining_lockout_seconds(username)
-            raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+        budget = await _spend_login_attempt(rate_limiter, username)
 
         auth_result = await auth_service.authenticate(
             username=username, password=password
         )
         if auth_result is None:
-            attempts = await rate_limiter.record_failed_attempt(username)
-            remaining_attempts = max(0, 5 - attempts)
-            if remaining_attempts == 0:
+            if budget == 0:
                 raise ForbiddenError("Account locked due to too many failed attempts")
             raise AuthenticationRequiredError(
-                f"Invalid username or password. {remaining_attempts} attempts remaining"
+                f"Invalid username or password. {budget} attempts remaining"
             )
 
         user, profile = auth_result
+        # Refunded as soon as the password is right, not after 2FA: the slot
+        # was spent up front, so returning "2FA required" first would leave it
+        # spent. The second step has a budget of its own.
+        await rate_limiter.clear_attempts(username)
 
         totp_service = TOTPService(redis)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
@@ -1689,8 +1715,6 @@ async def user_login(
             await _spend_2fa_attempt(
                 redis, user.id, lambda: totp_service.verify_2fa(user.id, totp_code)
             )
-
-        await rate_limiter.clear_attempts(username)
 
         session_manager = SessionManager(redis)
         client_ip = request.client.host if request.client else ""
@@ -1847,6 +1871,8 @@ async def srp_login_verify(
             )
         await redis.delete(srp_key)
 
+        await _spend_login_attempt(rate_limiter, username)
+
         success, server_proof_hex = _srp_verify_session(
             server_secret_hex=server_secret,
             client_public_hex=client_public,
@@ -1857,7 +1883,6 @@ async def srp_login_verify(
         )
 
         if not success:
-            await rate_limiter.record_failed_attempt(username)
             raise AuthenticationRequiredError("Invalid username or password")
 
         # SRP verified — clear rate limiter
@@ -2191,7 +2216,7 @@ async def sudo_auth(
                 "Password authentication not available for this account"
             )
 
-        import bcrypt
+        from app.domain.user.passwords import check_password
 
         hashed_password = user.hashed_password
 
@@ -2200,11 +2225,7 @@ async def sudo_auth(
             await _spend_sudo_password_attempt(
                 redis,
                 auth_user.user_id,
-                lambda: asyncio.to_thread(
-                    bcrypt.checkpw,
-                    password.encode("utf-8"),
-                    hashed_password.encode("utf-8"),
-                ),
+                lambda: check_password(password, hashed_password),
                 message="Invalid password",
             )
         finally:
@@ -2683,6 +2704,7 @@ async def reset_password(
 
     if len(new_password) < 6:
         raise BadRequestError("Password must be at least 6 characters")
+    _reject_overlong_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2791,6 +2813,8 @@ async def recover_password_verify(
 
     if not has_password and not has_srp:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_password:
+        _reject_overlong_password(new_password)
     if has_srp:
         _require_srp_hex(srp_salt, srp_verifier)
 
@@ -4234,11 +4258,9 @@ async def oauth_verify_conflict(
             hashed = user.hashed_password or ""
             if hashed.startswith("SRP:") or not hashed or not password:
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
-            import bcrypt
+            from app.domain.user.passwords import check_password
 
-            if not await asyncio.to_thread(
-                bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
-            ):
+            if not await check_password(password, hashed):
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
         else:
             success, _proof = _srp_verify_session(
@@ -4390,7 +4412,7 @@ async def oauth_bind_user(
     if not await _spend_oauth_password_attempt(username):
         return _oauth_too_many_attempts_redirect()
 
-    import bcrypt
+    from app.domain.user.passwords import check_password
 
     user = await auth_service._user_repo.get_by_username(username)
     hashed = (user.hashed_password or "") if user is not None else ""
@@ -4401,9 +4423,7 @@ async def oauth_bind_user(
         or not hashed
         or hashed.startswith("SRP:")
         or not password
-        or not await asyncio.to_thread(
-            bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
-        )
+        or not await check_password(password, hashed)
     ):
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
     await _clear_oauth_password_attempts(username)
