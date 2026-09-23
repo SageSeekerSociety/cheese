@@ -68,6 +68,22 @@ def _run_proxy(program: str) -> None:
     )
 
 
+def test_unavailable_search_tools_do_not_search_the_session_host():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        for (const tool of ['Glob', 'Grep']) {
+          const result = await handlers['tool.call']({}, {
+            tool, tool_use_id: 'search', path: '/center', pattern: 'private',
+          }, () => {throw new Error('searched session host')});
+          assert.match(result.deny, /use Bash/);
+        }
+    """)
+
+
 def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
     _run_proxy("""
         import assert from 'node:assert/strict';

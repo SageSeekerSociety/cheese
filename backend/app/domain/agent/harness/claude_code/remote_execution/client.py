@@ -47,8 +47,6 @@ NATIVE_TOOLS = (
     "Edit",
     "Write",
     "Bash",
-    "Glob",
-    "Grep",
     "NotebookEdit",
     "TaskStop",
 )
@@ -216,7 +214,13 @@ def prepare(
     # 放在名单里，那次放手会被当成「没处理」一律拒掉，这条硬性要求在房间里就不成
     # 立。漏出去的只有一次停在中心机上的 `TaskStop`——它不动文件、不跑命令，正是这
     # 道闸门要挡的两样都不沾。
-    guarded = tuple(tool for tool in NATIVE_TOOLS if tool != "TaskStop")
+    # The pinned serve build has no Glob/Grep. Keep their local guard even
+    # though they are not invocable remotely: another interactive build must
+    # not search the session host when it offers them.
+    guarded = tuple(tool for tool in NATIVE_TOOLS if tool != "TaskStop") + (
+        "Glob",
+        "Grep",
+    )
     hooks.setdefault("PreToolUse", []).insert(
         0,
         {

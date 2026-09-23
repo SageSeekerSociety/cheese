@@ -80,6 +80,11 @@ export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
     const { tool, tool_use_id, agentId, ...args } = e;
+    // The pinned executor's `mcp serve` does not expose these tools. Never
+    // fall through to a search on the conversation host.
+    if (tool === "Glob" || tool === "Grep") {
+      return { deny: `${tool} is unavailable on the executor; use Bash with rg or find to search the work machine.` };
+    }
     if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {

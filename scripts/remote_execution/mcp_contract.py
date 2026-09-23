@@ -184,6 +184,13 @@ def checks(serve):
         if needed - tools
         else f"{len(tools)} tools",
     )
+    yield (
+        "search uses Bash because native Glob/Grep are not served",
+        not ({"Glob", "Grep"} & tools),
+        "native search became available; replace the explicit plugin refusal"
+        if {"Glob", "Grep"} & tools
+        else "Glob/Grep unavailable; Bash is the supported remote search path",
+    )
 
     started = time.monotonic()
     slow = serve.request(
