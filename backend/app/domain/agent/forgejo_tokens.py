@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlsplit
@@ -11,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from sqlalchemy import delete, select
 
-from app.core.crypto import decrypt_text, encrypt_text
+from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.db import SessionFactory, async_session_factory
 from app.domain.project.models import ForgeToken, ProjectForge
 
@@ -22,6 +23,43 @@ REDIRECT_URI = "http://127.0.0.1:9/"
 
 class ForgejoTokenError(RuntimeError):
     pass
+
+
+def seal_forge_password(project_id: uuid.UUID, password: str) -> str:
+    return encrypt(Purpose.FORGE_PASSWORD, password, bound_to=f"project:{project_id}")
+
+
+def forge_password(binding: ProjectForge) -> str:
+    """The project's forge account password, decrypted."""
+    if binding.account_password is None:
+        raise ForgejoTokenError("Forgejo project account is not configured")
+    return decrypt(
+        Purpose.FORGE_PASSWORD,
+        binding.account_password,
+        bound_to=f"project:{binding.project_id}",
+    )
+
+
+def _token_binding(project_id: uuid.UUID, api_url: str, username: str) -> str:
+    return f"project:{project_id}:{api_url}:{username}"
+
+
+def seal_forge_token(
+    project_id: uuid.UUID, api_url: str, username: str, token: str
+) -> str:
+    return encrypt(
+        Purpose.FORGE_TOKEN,
+        token,
+        bound_to=_token_binding(project_id, api_url, username),
+    )
+
+
+def open_forge_token(token: ForgeToken) -> str:
+    return decrypt(
+        Purpose.FORGE_TOKEN,
+        token.value,
+        bound_to=_token_binding(token.project_id, token.api_url, token.username),
+    )
 
 
 class _Form(HTMLParser):
@@ -75,7 +113,7 @@ class ForgejoTokens:
             form = _Form(response.text).inputs
             form.update(
                 user_name=self.binding.repo.split("/", 1)[0],
-                password=decrypt_text(self.binding.account_password),
+                password=forge_password(self.binding),
             )
             response = await client.post(base + "/user/login", data=form)
             _require(response, "login", 302, 303)
@@ -152,15 +190,18 @@ class ForgejoTokens:
                 .limit(1)
             )
             if cached is not None:
-                return decrypt_text(cached.value), cached.expires_at.isoformat()
+                return open_forge_token(cached), cached.expires_at.isoformat()
             await session.rollback()
             token, expires_at = await self._authorize()
+            username = self.binding.repo.split("/", 1)[0]
             session.add(
                 ForgeToken(
                     project_id=self.binding.project_id,
                     api_url=self.binding.api_url,
-                    username=self.binding.repo.split("/", 1)[0],
-                    value=encrypt_text(token),
+                    username=username,
+                    value=seal_forge_token(
+                        self.binding.project_id, self.binding.api_url, username, token
+                    ),
                     expires_at=expires_at,
                 )
             )

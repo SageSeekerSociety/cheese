@@ -1,5 +1,7 @@
 """Application configuration loaded from environment / .env."""
 
+import base64
+import binascii
 import hashlib
 from functools import lru_cache
 
@@ -14,6 +16,34 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the API layer because the device launcher needs the same string to tell an
 # agent where its app will be mounted, and the domain cannot import the API.
 GATEWAY_MOUNT = "/api"
+
+# What an unconfigured development machine or test run encrypts with. Public
+# by construction, so a deployment may never use it; see
+# `Settings._require_data_encryption_key`.
+DEVELOPMENT_DATA_ENCRYPTION_KEY = "Y2hlZXNlLWRldmVsb3BtZW50LWRhdGEta2V5LTAwMDA="
+
+
+def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
+    """DATA_ENCRYPTION_KEY as raw 32-byte keys; empty when it is unset.
+
+    Raises ValueError naming what is wrong with an entry, never the entry.
+    """
+    entries = [entry.strip() for entry in value.split(",")]
+    if entries == [""]:
+        return ()
+    keys: list[bytes] = []
+    for position, entry in enumerate(entries, start=1):
+        try:
+            key = base64.urlsafe_b64decode(entry.encode("ascii"))
+        except (binascii.Error, UnicodeEncodeError, ValueError):
+            key = b""
+        if len(entry) != 44 or len(key) != 32:
+            raise ValueError(
+                f"DATA_ENCRYPTION_KEY entry {position} is not the base64url "
+                "encoding of 32 bytes (44 characters)."
+            )
+        keys.append(key)
+    return tuple(keys)
 
 
 class Settings(BaseSettings):
@@ -923,7 +953,13 @@ class Settings(BaseSettings):
         default=False, alias="APPLICATION_RANK_CHECK_ENFORCED"
     )
     rank_jump: int = Field(default=1, alias="APPLICATION_RANK_JUMP")
-    realname_encryption_key: str = Field(default="", alias="REALNAME_ENCRYPTION_KEY")
+    # The master key for every value the app encrypts at rest (#1482): base64url
+    # of 32 random bytes. A comma-separated list rotates it — the first entry
+    # encrypts, every entry decrypts. Empty on a developer's machine and in the
+    # test suite, which then use DEVELOPMENT_DATA_ENCRYPTION_KEY; a deployment
+    # refuses to boot without a real one (`_require_data_encryption_key`).
+    # Read through `app.core.crypto`, never directly.
+    data_encryption_key: str = ""
 
     # --- App ---
     cors_origins: list[str] = [
@@ -1106,6 +1142,48 @@ class Settings(BaseSettings):
             "deploy/.env.prod.example). If you are sure nobody should administer "
             "feedback, set it to a handle you control rather than leaving it "
             "empty."
+        )
+
+    @model_validator(mode="after")
+    def _require_data_encryption_key(self) -> "Settings":
+        """Refuse to boot on a malformed key anywhere, or a missing one deployed.
+
+        Every secret the app keeps at rest — 2FA secrets, forge passwords,
+        OAuth tokens, real-name fields — is encrypted under this key, so a
+        deployment running on the public development key protects nothing, and
+        one whose key silently changed could read none of it back. Same two
+        signals as the JWT_SECRET guard, for the same reason (#439), and a
+        RuntimeError for the same reason: a ValueError would be wrapped into a
+        ValidationError whose repr carries every secret in the input.
+        """
+        generate = (
+            'python -c "import base64, os; '
+            'print(base64.urlsafe_b64encode(os.urandom(32)).decode())"'
+        )
+        try:
+            keys = parse_data_encryption_keys(self.data_encryption_key)
+        except ValueError as exc:
+            raise RuntimeError(f"{exc} Generate one with: {generate}") from None
+        development = base64.urlsafe_b64decode(DEVELOPMENT_DATA_ENCRYPTION_KEY)
+        if keys and development not in keys:
+            return self
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+        raise RuntimeError(
+            "DATA_ENCRYPTION_KEY is missing or is the public development key on "
+            f"a deployment (ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). It encrypts every secret stored in the database; set it in "
+            "the backend env file and keep it with the database backups, "
+            f"because nothing encrypted under it can be read without it. "
+            f"Generate one with: {generate}"
         )
 
 

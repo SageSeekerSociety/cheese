@@ -23,9 +23,9 @@ class TestTwoFactorIntegration:
         self.user = authenticated_user
         self.headers = auth_headers
         yield
-        # TOTP state lives in Redis and does NOT roll back with the per-test
+        # Attempt budgets live in Redis and do NOT roll back with the per-test
         # DB transaction, while user ids restart with each session's fresh DB —
-        # stale keys would flip "2FA required" on unrelated future test users.
+        # a stale lockout would land on an unrelated future test user.
         import redis
 
         from app.core.config import settings
@@ -36,10 +36,6 @@ class TestTwoFactorIntegration:
             STEP_UP_2FA_LOCKOUT_PREFIX,
             STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
             STEP_UP_PASSWORD_LOCKOUT_PREFIX,
-            TOTP_ALWAYS_PREFIX,
-            TOTP_BACKUP_PREFIX,
-            TOTP_PENDING_PREFIX,
-            TOTP_SECRET_PREFIX,
             TWO_FACTOR_ATTEMPTS_PREFIX,
             TWO_FACTOR_LOCKOUT_PREFIX,
         )
@@ -49,12 +45,6 @@ class TestTwoFactorIntegration:
             *(
                 f"{p}{self.user.user_id}"
                 for p in (
-                    TOTP_SECRET_PREFIX,
-                    TOTP_BACKUP_PREFIX,
-                    TOTP_ALWAYS_PREFIX,
-                    TOTP_PENDING_PREFIX,
-                    # A 15-minute lockout outlives the test that earned it,
-                    # and user ids restart with each session's fresh DB.
                     TWO_FACTOR_ATTEMPTS_PREFIX,
                     TWO_FACTOR_LOCKOUT_PREFIX,
                     BACKUP_CODE_ATTEMPTS_PREFIX,
@@ -210,6 +200,35 @@ class TestTwoFactorIntegration:
             json={"temp_token": self._temp_token(), "code": code},
         )
         assert replay.status_code == 401
+
+    def test_2fa_survives_losing_redis(self):
+        """Redis is not backed up, so nothing about the factor may live there:
+        after it is emptied, signing in still asks for the second factor, and
+        the same authenticator and backup codes still complete it."""
+        import redis
+
+        from app.core.config import settings
+
+        secret, codes = self._enable_2fa()
+        r = redis.Redis.from_url(settings.redis_url)
+        r.flushdb()
+        r.close()
+
+        status = self.client.get(
+            f"/users/{self.user.user_id}/2fa/status", headers=self.headers
+        )
+        assert status.json()["data"]["enabled"] is True
+        resp = self.client.post(
+            "/users/auth/verify-2fa",
+            json={"temp_token": self._temp_token(), "code": pyotp.TOTP(secret).now()},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["user"]["id"] == self.user.user_id
+        backup = self.client.post(
+            "/users/auth/verify-2fa",
+            json={"temp_token": self._temp_token(), "code": codes[1]},
+        )
+        assert backup.status_code == 200, backup.text
 
     def test_verify_2fa_rejects_wrong_token_type(self):
         secret, _codes = self._enable_2fa()

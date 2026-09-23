@@ -244,10 +244,10 @@ def image_owner(options, root: Path, *, start_runtime=True):
             ("GITHUB_JOB", "acceptance"),
         )
     )
-    database, owner_name, migration = (
-        f"{network}-{suffix}" for suffix in ("db", "owner", "migrate")
+    database, owner_name, migration, cache = (
+        f"{network}-{suffix}" for suffix in ("db", "owner", "migrate", "redis")
     )
-    containers = [migration, owner_name, database]
+    containers = [migration, owner_name, database, cache]
     children = []
     connector_worker = None
     runtime_started = False
@@ -276,6 +276,10 @@ def image_owner(options, root: Path, *, start_runtime=True):
         "DEVICE_CONNECTION_SECRET": SECRET,
         "DEPLOYED_VIA_COMPOSE": "1",
         "JWT_SECRET": "isolated-owner-acceptance-jwt-secret",
+        # A deployment refuses to boot or migrate without a real data key.
+        "DATA_ENCRYPTION_KEY": "b3duZXItYWNjZXB0YW5jZS1kYXRhLWtleS0wMDAwMDE=",
+        # And a deployment's migration needs its Redis, to carry 2FA across.
+        "REDIS_URL": f"redis://{cache}:6379/0",
         "SANDBOX_TOKEN": SECRET,
         "PLATFORM_ADMIN_HANDLES": '["acceptance"]',
         "DB_POOL_SIZE": "5",
@@ -334,6 +338,19 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 "POSTGRES_DB=cheese",
                 "mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2",
             )
+            docker(
+                "run",
+                "-d",
+                "--name",
+                cache,
+                "--label",
+                resource_label,
+                "--network",
+                network,
+                "-p",
+                "127.0.0.1::6379",
+                "mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9",
+            )
             for _ in range(60):
                 if "accepting connections" in docker(
                     "exec", database, "pg_isready", "-U", "postgres", check=False
@@ -379,6 +396,7 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 elapsed_s=time.monotonic() - started,
             )
             database_port = docker("port", database, "5432/tcp").rsplit(":", 1)[1]
+            cache_port = docker("port", cache, "6379/tcp").rsplit(":", 1)[1]
             started = time.monotonic()
             record(log, "current_migration_started")
             upgraded = subprocess.run(
@@ -388,6 +406,7 @@ def image_owner(options, root: Path, *, start_runtime=True):
                     **os.environ,
                     **env,
                     "DATABASE_URL": f"postgresql+asyncpg://postgres:postgres@127.0.0.1:{database_port}/cheese",
+                    "REDIS_URL": f"redis://127.0.0.1:{cache_port}/0",
                 },
                 text=True,
                 capture_output=True,

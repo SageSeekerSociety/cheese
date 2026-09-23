@@ -11,11 +11,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.crypto import decrypt_text, encrypt_text
+from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 logger = logging.getLogger(__name__)
+
+
+def seal_oauth_token(value: str, *, user_id: int, provider_id: str, field: str) -> str:
+    """Encrypt one token column, bound to its owner, provider and column."""
+    return encrypt(
+        Purpose.OAUTH_TOKEN,
+        value,
+        bound_to=f"user:{user_id}:{provider_id}:{field}",
+    )
+
+
+def open_oauth_token(stored: str, *, user_id: int, provider_id: str, field: str) -> str:
+    return decrypt(
+        Purpose.OAUTH_TOKEN,
+        stored,
+        bound_to=f"user:{user_id}:{provider_id}:{field}",
+    )
+
 
 # Refresh an expiring GitHub user-to-server token this long before it
 # actually expires, so a token handed to a caller has headroom to be used.
@@ -433,8 +451,22 @@ class OAuthService:
                 provider_id=provider_id,
                 provider_user_id=provider_user_id,
                 raw_profile=raw_profile,
-                access_token=encrypt_text(access_token) if access_token else None,
-                refresh_token=encrypt_text(refresh_token) if refresh_token else None,
+                access_token=seal_oauth_token(
+                    access_token,
+                    user_id=user_id,
+                    provider_id=provider_id,
+                    field="access_token",
+                )
+                if access_token
+                else None,
+                refresh_token=seal_oauth_token(
+                    refresh_token,
+                    user_id=user_id,
+                    provider_id=provider_id,
+                    field="refresh_token",
+                )
+                if refresh_token
+                else None,
                 token_expires=token_expires,
             )
         except IntegrityError:
@@ -459,30 +491,52 @@ class OAuthService:
         a token refresher has no profile to offer. A flow that DID just fetch
         the provider's user endpoint should pass it, so re-linking repairs a
         profile that was stored incomplete."""
+        conn = await self._repo.get(connection_id)
+        if conn is None:
+            raise NotFoundError("OAuth connection not found")
+        user_id, provider_id = conn.user_id, conn.provider_id
         await self._repo.update_tokens(
             connection_id,
-            encrypt_text(access_token) if access_token else None,
-            encrypt_text(refresh_token) if refresh_token else None,
+            seal_oauth_token(
+                access_token,
+                user_id=user_id,
+                provider_id=provider_id,
+                field="access_token",
+            )
+            if access_token
+            else None,
+            seal_oauth_token(
+                refresh_token,
+                user_id=user_id,
+                provider_id=provider_id,
+                field="refresh_token",
+            )
+            if refresh_token
+            else None,
             token_expires,
             raw_profile=raw_profile,
         )
 
-    def _decrypt_stored_token(self, stored: str, *, user_id: int) -> str | None:
+    def _decrypt_stored_token(
+        self, stored: str, *, user_id: int, provider_id: str, field: str
+    ) -> str | None:
         """A token column decrypted, or None when the ciphertext can't be read.
 
-        Tokens are Fernet-encrypted at rest, so a rotated ``CHEESE_SECRET`` or a
-        legacy plaintext row makes ``decrypt_text`` raise. That must not blow up
+        Tokens are encrypted at rest (``app.core.crypto``), so a value sealed
+        under a key no longer configured makes decryption raise. That must not blow up
         the caller (the accept flow degrades on None, it does not handle
         exceptions from here) — but it must never be silent either: an
         unnoticed token problem is exactly how the "returns raw ciphertext" bug
         survived, so this always logs.
         """
         try:
-            return decrypt_text(stored)
+            return open_oauth_token(
+                stored, user_id=user_id, provider_id=provider_id, field=field
+            )
         except Exception:
             logger.exception(
                 "github account link: stored token for user %s could not be "
-                "decrypted (key rotated, or a legacy plaintext row?) — "
+                "decrypted (was its key removed from DATA_ENCRYPTION_KEY?) — "
                 "treating the account link as unavailable",
                 user_id,
             )
@@ -519,7 +573,12 @@ class OAuthService:
             conn.token_expires is None
             or conn.token_expires - datetime.now(UTC) > _GITHUB_TOKEN_REFRESH_MARGIN
         ):
-            token = self._decrypt_stored_token(conn.access_token, user_id=user_id)
+            token = self._decrypt_stored_token(
+                conn.access_token,
+                user_id=user_id,
+                provider_id=conn.provider_id,
+                field="access_token",
+            )
             return token, (None if token else TOKEN_UNAVAILABLE_UNDECRYPTABLE)
 
         if not conn.refresh_token:
@@ -597,15 +656,23 @@ class OAuthService:
                     # Someone else refreshed it while we waited for the lock.
                     return (
                         self._decrypt_stored_token(
-                            conn.access_token, user_id=conn.user_id
+                            conn.access_token,
+                            user_id=conn.user_id,
+                            provider_id=conn.provider_id,
+                            field="access_token",
                         )
                         if conn.access_token
                         else None
                     )
                 seen_refresh = conn.refresh_token
-                user_id = conn.user_id
+                user_id, owner_provider = conn.user_id, conn.provider_id
             stored_refresh = (
-                self._decrypt_stored_token(seen_refresh, user_id=user_id)
+                self._decrypt_stored_token(
+                    seen_refresh,
+                    user_id=user_id,
+                    provider_id=owner_provider,
+                    field="refresh_token",
+                )
                 if seen_refresh
                 else None
             )
@@ -634,8 +701,18 @@ class OAuthService:
                 ).replace_tokens_if_unchanged(
                     connection_id,
                     seen_refresh_token=seen_refresh,
-                    access_token=encrypt_text(new_access_token),
-                    refresh_token=encrypt_text(new_refresh_token or stored_refresh),
+                    access_token=seal_oauth_token(
+                        new_access_token,
+                        user_id=user_id,
+                        provider_id=owner_provider,
+                        field="access_token",
+                    ),
+                    refresh_token=seal_oauth_token(
+                        new_refresh_token or stored_refresh,
+                        user_id=user_id,
+                        provider_id=owner_provider,
+                        field="refresh_token",
+                    ),
                     token_expires=new_expires,
                 )
                 await session.commit()
@@ -654,7 +731,12 @@ class OAuthService:
             or conn.token_expires - datetime.now(UTC) <= _GITHUB_TOKEN_REFRESH_MARGIN
         ):
             return None
-        return self._decrypt_stored_token(conn.access_token, user_id=conn.user_id)
+        return self._decrypt_stored_token(
+            conn.access_token,
+            user_id=conn.user_id,
+            provider_id=conn.provider_id,
+            field="access_token",
+        )
 
     async def list_user_connections(self, user_id: int) -> list[dict]:
         conns = await self._repo.list_by_user(user_id)
@@ -736,9 +818,9 @@ async def get_github_user_token_for_handle(
     open/merge needs to act as the App on the user's behalf.
 
     A thin handle → user_id adapter over ``OAuthService.get_github_user_token``,
-    deliberately NOT its own token lookup: tokens are Fernet-encrypted at rest
+    deliberately NOT its own token lookup: tokens are encrypted at rest
     (``create_connection`` / ``update_connection_tokens`` both call
-    ``encrypt_text``), and expiry/refresh handling lives on that method. Reading
+    ``seal_oauth_token``), and expiry/refresh handling lives on that method. Reading
     ``conn.access_token`` straight off the row — as this function used to — hands
     the caller raw ciphertext, which is non-empty and so passes every
     ``if not token`` guard before failing against GitHub with a 401 that looks

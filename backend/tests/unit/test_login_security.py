@@ -190,16 +190,31 @@ class TestPending2faTicket:
         assert verify_2fa_pending_token(create_access_token(7)) is None
 
 
-class TestTOTPService:
-    @pytest.fixture
-    def mock_redis(self):
-        return AsyncMock()
+async def _user(session) -> int:
+    import uuid
+    from datetime import UTC, datetime
 
+    from app.domain.user.models import User
+
+    now = datetime.now(UTC)
+    user = User(
+        username=f"totp-{uuid.uuid4().hex[:8]}",
+        email=f"{uuid.uuid4().hex[:8]}@example.invalid",
+        hashed_password="x",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(user)
+    await session.flush()
+    return user.id
+
+
+class TestTOTPCodes:
     @pytest.fixture
-    def totp_service(self, mock_redis):
+    def totp_service(self):
         from app.domain.user.login_security import TOTPService
 
-        return TOTPService(mock_redis)
+        return TOTPService(AsyncMock())
 
     def test_generate_secret(self, totp_service) -> None:
         secret = totp_service.generate_secret()
@@ -218,132 +233,164 @@ class TestTOTPService:
         import pyotp
 
         secret = pyotp.random_base32()
-        totp = pyotp.TOTP(secret)
-        code = totp.now()
-        assert totp_service.verify_code(secret, code) is True
+        assert totp_service.verify_code(secret, pyotp.TOTP(secret).now()) is True
 
     def test_verify_code_invalid(self, totp_service) -> None:
-        secret = "JBSWY3DPEHPK3PXP"
-        assert totp_service.verify_code(secret, "000000") is False
-
-    @pytest.mark.anyio
-    async def test_enable_2fa_valid_code_persists_secret(
-        self, totp_service, mock_redis
-    ) -> None:
-        import pyotp
-
-        secret = pyotp.random_base32()
-        mock_redis.get.return_value = secret.encode()
-        code = pyotp.TOTP(secret).now()
-        assert await totp_service.enable_2fa(123, secret, code) is True
-        mock_redis.set.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_enable_2fa_invalid_code_rejected(
-        self, totp_service, mock_redis
-    ) -> None:
-        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
-        assert await totp_service.enable_2fa(123, "JBSWY3DPEHPK3PXP", "000000") is False
-        mock_redis.set.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_enable_2fa_refuses_a_secret_it_never_offered(
-        self, totp_service, mock_redis
-    ) -> None:
-        import pyotp
-
-        secret = pyotp.random_base32()
-        mock_redis.get.return_value = None
-        code = pyotp.TOTP(secret).now()
-        assert await totp_service.enable_2fa(123, secret, code) is False
-        mock_redis.set.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_is_2fa_enabled_true(self, totp_service, mock_redis) -> None:
-        mock_redis.exists.return_value = 1
-        assert await totp_service.is_2fa_enabled(123) is True
-
-    @pytest.mark.anyio
-    async def test_is_2fa_enabled_false(self, totp_service, mock_redis) -> None:
-        mock_redis.exists.return_value = 0
-        assert await totp_service.is_2fa_enabled(123) is False
-
-    @pytest.mark.anyio
-    async def test_disable_2fa(self, totp_service, mock_redis) -> None:
-        mock_redis.delete.return_value = 1
-        result = await totp_service.disable_2fa(123)
-        assert result is True
+        assert totp_service.verify_code("JBSWY3DPEHPK3PXP", "000000") is False
 
 
-class TestTOTPServiceExtended:
-    """Additional TOTP tests for uncovered methods."""
+class TestTOTPServiceStorage:
+    """The factor as stored in Postgres, through the service's own methods."""
 
     @pytest.fixture
-    def mock_redis(self):
-        return AsyncMock()
+    async def session(self, db_factory):
+        async with db_factory() as session:
+            yield session
 
     @pytest.fixture
-    def totp_service(self, mock_redis):
+    def totp(self, session):
         from app.domain.user.login_security import TOTPService
 
-        return TOTPService(mock_redis)
+        return TOTPService(session)
 
-    @pytest.mark.anyio
-    async def test_generate_backup_codes_shape_and_storage(
-        self, totp_service, mock_redis
-    ):
-        from unittest.mock import MagicMock
-
-        pipe = MagicMock()
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
-
-        codes = await totp_service.generate_backup_codes(123)
-        assert len(codes) == 10
-        assert all(len(c) == 8 for c in codes)
-        pipe.delete.assert_called_once()
-        pipe.sadd.assert_called_once()
-        # stored values are digests, never the raw codes
-        stored = pipe.sadd.call_args.args[1:]
-        assert not set(codes) & set(stored)
-
-    @pytest.mark.anyio
-    async def test_verify_backup_code_one_time(self, totp_service, mock_redis):
-        mock_redis.srem.return_value = 1
-        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is True
-        mock_redis.srem.return_value = 0
-        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is False
-
-    @pytest.mark.anyio
-    async def test_always_required_flag(self, totp_service, mock_redis):
-        mock_redis.exists.return_value = 1
-        assert await totp_service.is_always_required(123) is True
-        await totp_service.set_always_required(123, False)
-        mock_redis.delete.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_verify_2fa_no_secret(self, totp_service, mock_redis):
-        mock_redis.get.return_value = None
-        result = await totp_service.verify_2fa(123, "123456")
-        assert result is False
-
-    @pytest.mark.anyio
-    async def test_verify_2fa_valid(self, totp_service, mock_redis):
+    async def _enable(self, totp, user_id: int) -> str:
         import pyotp
 
-        secret = pyotp.random_base32()
-        totp = pyotp.TOTP(secret)
-        code = totp.now()
-        mock_redis.get.return_value = secret.encode()
-
-        result = await totp_service.verify_2fa(123, code)
-        assert result is True
+        secret = await totp.offer_secret(user_id)
+        assert await totp.enable_2fa(user_id, secret, pyotp.TOTP(secret).now())
+        return secret
 
     @pytest.mark.anyio
-    async def test_verify_2fa_invalid(self, totp_service, mock_redis):
-        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
-        result = await totp_service.verify_2fa(123, "000000")
-        assert result is False
+    async def test_enabling_needs_the_offered_secret_and_a_live_code(
+        self, totp, session
+    ) -> None:
+        import pyotp
+
+        user_id = await _user(session)
+        assert await totp.is_2fa_enabled(user_id) is False
+        offered = await totp.offer_secret(user_id)
+        other = pyotp.random_base32()
+        assert not await totp.enable_2fa(user_id, other, pyotp.TOTP(other).now())
+        assert not await totp.enable_2fa(user_id, offered, "000000")
+        assert await totp.is_2fa_enabled(user_id) is False
+        assert await totp.enable_2fa(user_id, offered, pyotp.TOTP(offered).now())
+        assert await totp.is_2fa_enabled(user_id) is True
+
+    @pytest.mark.anyio
+    async def test_an_expired_offer_cannot_be_confirmed(
+        self, totp, session, monkeypatch
+    ) -> None:
+        import pyotp
+
+        from app.domain.user import login_security
+
+        user_id = await _user(session)
+        monkeypatch.setattr(login_security, "TOTP_PENDING_TTL_S", -1)
+        offered = await totp.offer_secret(user_id)
+        assert not await totp.enable_2fa(user_id, offered, pyotp.TOTP(offered).now())
+
+    @pytest.mark.anyio
+    async def test_codes_verify_against_the_stored_secret(self, totp, session) -> None:
+        import pyotp
+
+        user_id = await _user(session)
+        assert await totp.verify_2fa(user_id, "123456") is False
+        secret = await self._enable(totp, user_id)
+        assert await totp.verify_2fa(user_id, pyotp.TOTP(secret).now()) is True
+        assert await totp.verify_2fa(user_id, "000000") is False
+
+    @pytest.mark.anyio
+    async def test_the_secret_is_not_stored_in_the_clear(self, totp, session) -> None:
+        from sqlalchemy import text
+
+        user_id = await _user(session)
+        secret = await self._enable(totp, user_id)
+        stored = (await session.execute(text("SELECT * FROM user_two_factor"))).all()
+        assert secret not in repr(stored)
+
+    @pytest.mark.anyio
+    async def test_a_backup_code_works_once(self, totp, session) -> None:
+        user_id = await _user(session)
+        await self._enable(totp, user_id)
+        codes = await totp.generate_backup_codes(user_id)
+        assert len(codes) == 10 and all(len(c) == 8 for c in codes)
+        assert await totp.verify_backup_code(user_id, codes[0].upper()) is True
+        assert await totp.verify_backup_code(user_id, codes[0]) is False
+        assert await totp.verify_backup_code(user_id, codes[1]) is True
+
+    @pytest.mark.anyio
+    async def test_a_backup_code_belongs_to_one_user(self, totp, session) -> None:
+        alice, bob = await _user(session), await _user(session)
+        await self._enable(totp, alice)
+        await self._enable(totp, bob)
+        codes = await totp.generate_backup_codes(alice)
+        assert await totp.verify_backup_code(bob, codes[0]) is False
+        assert await totp.verify_backup_code(alice, codes[0]) is True
+
+    @pytest.mark.anyio
+    async def test_backup_codes_are_not_stored_in_the_clear(
+        self, totp, session
+    ) -> None:
+        from sqlalchemy import text
+
+        user_id = await _user(session)
+        await self._enable(totp, user_id)
+        codes = await totp.generate_backup_codes(user_id)
+        stored = repr(
+            (await session.execute(text("SELECT * FROM user_backup_code"))).all()
+        )
+        assert not any(code in stored for code in codes)
+
+    @pytest.mark.anyio
+    async def test_regenerating_replaces_the_old_codes(self, totp, session) -> None:
+        user_id = await _user(session)
+        await self._enable(totp, user_id)
+        old = await totp.generate_backup_codes(user_id)
+        new = await totp.generate_backup_codes(user_id)
+        assert await totp.verify_backup_code(user_id, old[0]) is False
+        assert await totp.verify_backup_code(user_id, new[0]) is True
+
+    @pytest.mark.anyio
+    async def test_backup_codes_survive_a_key_rotation(
+        self, totp, session, monkeypatch
+    ) -> None:
+        import base64
+        import os
+
+        from app.core.config import settings
+
+        old_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+        new_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+        monkeypatch.setattr(settings, "data_encryption_key", old_key)
+        user_id = await _user(session)
+        await self._enable(totp, user_id)
+        codes = await totp.generate_backup_codes(user_id)
+        monkeypatch.setattr(settings, "data_encryption_key", f"{new_key},{old_key}")
+        assert await totp.verify_backup_code(user_id, codes[0]) is True
+        assert await totp.is_2fa_enabled(user_id) is True
+
+    @pytest.mark.anyio
+    async def test_disabling_removes_the_factor_and_its_codes(
+        self, totp, session
+    ) -> None:
+        user_id = await _user(session)
+        await self._enable(totp, user_id)
+        codes = await totp.generate_backup_codes(user_id)
+        await totp.set_always_required(user_id, True)
+        assert await totp.disable_2fa(user_id) is True
+        assert await totp.is_2fa_enabled(user_id) is False
+        assert await totp.is_always_required(user_id) is False
+        assert await totp.verify_backup_code(user_id, codes[0]) is False
+        assert await totp.disable_2fa(user_id) is False
+
+    @pytest.mark.anyio
+    async def test_always_required_flag(self, totp, session) -> None:
+        user_id = await _user(session)
+        assert await totp.is_always_required(user_id) is False
+        await totp.set_always_required(user_id, True)
+        assert await totp.is_always_required(user_id) is True
+        await totp.set_always_required(user_id, False)
+        assert await totp.is_always_required(user_id) is False
 
 
 class TestLoginRateLimiterExtended:

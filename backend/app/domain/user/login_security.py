@@ -1,18 +1,20 @@
+import hashlib
+import hmac
 import logging
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 import jwt
 import pyotp
 from redis.asyncio import Redis
+from sqlalchemy import and_, delete, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.crypto import Purpose, decrypt, encrypt, keyed_digest, keyed_digests
 from app.core.errors import ForbiddenError
-
-if TYPE_CHECKING:
-    pass
-
+from app.domain.user.models import UserBackupCode, UserTwoFactor
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +46,9 @@ STEP_UP_2FA_LOCKOUT_PREFIX = "cheese:2fa_stepup_lockout:"
 # other being ground down.
 STEP_UP_PASSWORD_ATTEMPTS_PREFIX = "cheese:sudo_password_attempts:"
 STEP_UP_PASSWORD_LOCKOUT_PREFIX = "cheese:sudo_password_lockout:"
-TOTP_SECRET_PREFIX = "cheese:totp_secret:"
-TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
-TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
-# The secret offered by the first step of 2FA setup, awaiting its confirming
-# code. Only a secret offered here can be confirmed, so the re-authentication
-# the first step asks for covers the whole setup.
-TOTP_PENDING_PREFIX = "cheese:totp_pending:"
+# How long the secret offered by the first step of 2FA setup waits for its
+# confirming code. Only an offered secret can be confirmed, so the
+# re-authentication the first step asks for covers the whole setup.
 TOTP_PENDING_TTL_S = 600
 SESSION_PREFIX = "cheese:session:"
 USER_SESSIONS_PREFIX = "cheese:user_sessions:"
@@ -199,8 +197,15 @@ class StepUpPasswordRateLimiter(LoginRateLimiter):
 
 
 class TOTPService:
-    def __init__(self, redis: Redis) -> None:
-        self._redis = redis
+    """The TOTP second factor, kept in Postgres (#1482).
+
+    It used to live only in Redis, where losing the data silently switched
+    every user's second factor off. Attempt budgets stay in Redis: losing
+    those only resets a counter.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
 
     def generate_secret(self) -> str:
         return pyotp.random_base32()
@@ -213,26 +218,39 @@ class TOTPService:
         totp = pyotp.TOTP(secret)
         return totp.verify(code, valid_window=1)
 
+    async def _factor(self, user_id: int) -> UserTwoFactor | None:
+        return await self._session.get(UserTwoFactor, user_id)
+
+    async def _factor_for_update(self, user_id: int) -> UserTwoFactor:
+        factor = await self._factor(user_id)
+        if factor is None:
+            factor = UserTwoFactor(user_id=user_id)
+            self._session.add(factor)
+        return factor
+
     async def is_2fa_enabled(self, user_id: int) -> bool:
-        key = f"{TOTP_SECRET_PREFIX}{user_id}"
-        return await self._redis.exists(key) > 0
+        factor = await self._factor(user_id)
+        return factor is not None and factor.secret is not None
 
     async def verify_2fa(self, user_id: int, code: str) -> bool:
-        key = f"{TOTP_SECRET_PREFIX}{user_id}"
-        secret = await self._redis.get(key)
-        if not secret:
+        factor = await self._factor(user_id)
+        if factor is None or factor.secret is None:
             return False
-
-        secret_str = secret.decode() if isinstance(secret, bytes) else secret
-        return self.verify_code(secret_str, code)
+        secret = decrypt(Purpose.TOTP_SECRET, factor.secret, bound_to=f"user:{user_id}")
+        return self.verify_code(secret, code)
 
     async def offer_secret(self, user_id: int) -> str:
         """Generate a secret for this user to confirm, replacing any earlier
         offer."""
         secret = self.generate_secret()
-        await self._redis.set(
-            f"{TOTP_PENDING_PREFIX}{user_id}", secret, ex=TOTP_PENDING_TTL_S
+        factor = await self._factor_for_update(user_id)
+        factor.pending_secret = encrypt(
+            Purpose.TOTP_PENDING_SECRET, secret, bound_to=f"user:{user_id}"
         )
+        factor.pending_expires_at = datetime.now(UTC) + timedelta(
+            seconds=TOTP_PENDING_TTL_S
+        )
+        await self._session.flush()
         return secret
 
     async def enable_2fa(self, user_id: int, secret: str, code: str) -> bool:
@@ -244,61 +262,112 @@ class TOTPService:
         secret at all, and the step that offered it — the one gated on
         re-authentication — could simply be skipped.
         """
-        pending_key = f"{TOTP_PENDING_PREFIX}{user_id}"
-        offered = await self._redis.get(pending_key)
-        if offered is None:
+        factor = await self._factor(user_id)
+        if (
+            factor is None
+            or factor.pending_secret is None
+            or factor.pending_expires_at is None
+            or factor.pending_expires_at <= datetime.now(UTC)
+        ):
             return False
-        offered_str = offered.decode() if isinstance(offered, bytes) else offered
-        if offered_str != secret or not self.verify_code(secret, code):
+        offered = decrypt(
+            Purpose.TOTP_PENDING_SECRET,
+            factor.pending_secret,
+            bound_to=f"user:{user_id}",
+        )
+        if not hmac.compare_digest(offered, secret) or not self.verify_code(
+            secret, code
+        ):
             return False
-        await self._redis.set(f"{TOTP_SECRET_PREFIX}{user_id}", secret)
-        await self._redis.delete(pending_key)
+        factor.secret = encrypt(Purpose.TOTP_SECRET, secret, bound_to=f"user:{user_id}")
+        factor.pending_secret = None
+        factor.pending_expires_at = None
+        await self._session.flush()
         return True
 
     async def disable_2fa(self, user_id: int) -> bool:
-        deleted = await self._redis.delete(
-            f"{TOTP_SECRET_PREFIX}{user_id}",
-            f"{TOTP_BACKUP_PREFIX}{user_id}",
-            f"{TOTP_ALWAYS_PREFIX}{user_id}",
+        await self._session.execute(
+            delete(UserBackupCode).where(UserBackupCode.user_id == user_id)
         )
-        return deleted > 0
+        removed = await self._session.execute(
+            delete(UserTwoFactor)
+            .where(UserTwoFactor.user_id == user_id)
+            .returning(UserTwoFactor.secret)
+        )
+        return any(secret is not None for secret in removed.scalars())
 
-    # --- Backup codes (reference parity): 10 one-time codes, 8 hex chars,
-    # stored as SHA-256 digests so a Redis dump does not leak usable codes. ---
+    # --- Backup codes (reference parity): 10 one-time codes, 8 hex chars. ---
+    #
+    # Stored as HMAC-SHA256 under a subkey of DATA_ENCRYPTION_KEY, not as a
+    # plain or slow hash. A code has only 32 bits of entropy, so any unkeyed
+    # hash — bcrypt included — falls to exhausting that space from a database
+    # dump; the key lives outside the database, and without it a dump is
+    # useless. A keyed digest is also exact, so a code is consumed by one
+    # indexed DELETE, which is what makes it single-use under concurrency. The
+    # message is the user plus the code's SHA-256, which binds each digest to
+    # its owner and let the codes that were kept in Redis as SHA-256 digests
+    # carry over without the codes themselves.
+
+    @staticmethod
+    def _code_message(user_id: int, code: str) -> bytes:
+        normalized = code.strip().lower().encode()
+        return f"user:{user_id}:".encode() + hashlib.sha256(normalized).digest()
 
     async def generate_backup_codes(self, user_id: int) -> list[str]:
-        import hashlib
-        import secrets as _secrets
-
-        codes = [_secrets.token_hex(4) for _ in range(10)]
-        key = f"{TOTP_BACKUP_PREFIX}{user_id}"
-        pipe = self._redis.pipeline()
-        pipe.delete(key)
-        pipe.sadd(key, *[hashlib.sha256(c.encode()).hexdigest() for c in codes])
-        await pipe.execute()
+        codes = [secrets.token_hex(4) for _ in range(10)]
+        await self._session.execute(
+            delete(UserBackupCode).where(UserBackupCode.user_id == user_id)
+        )
+        for code in codes:
+            key_id, digest = keyed_digest(
+                Purpose.TOTP_BACKUP_CODE, self._code_message(user_id, code)
+            )
+            self._session.add(
+                UserBackupCode(user_id=user_id, key_id=key_id, digest=digest)
+            )
+        await self._session.flush()
         return codes
 
     async def verify_backup_code(self, user_id: int, code: str) -> bool:
-        """One-time: a matching code is atomically removed on use."""
-        import hashlib
-
-        digest = hashlib.sha256(code.strip().lower().encode()).hexdigest()
-        removed = await self._redis.srem(f"{TOTP_BACKUP_PREFIX}{user_id}", digest)
-        return removed > 0
+        """One-time: a matching code is deleted, and the deletion committed,
+        before this returns — a later failure in the request cannot give it
+        back, and of two concurrent uses only one finds the row."""
+        digests = keyed_digests(
+            Purpose.TOTP_BACKUP_CODE, self._code_message(user_id, code)
+        )
+        used = await self._session.execute(
+            delete(UserBackupCode)
+            .where(
+                UserBackupCode.user_id == user_id,
+                or_(
+                    *(
+                        and_(
+                            UserBackupCode.key_id == key_id,
+                            UserBackupCode.digest == digest,
+                        )
+                        for key_id, digest in digests.items()
+                    )
+                ),
+            )
+            .returning(UserBackupCode.id)
+        )
+        if used.first() is None:
+            return False
+        await self._session.commit()
+        return True
 
     # --- always_required flag (surfaced in /2fa/status and /2fa/settings).
     # With no trusted-device feature, login asks for 2FA whenever it is
     # enabled, so the flag currently only affects what the UI reports. ---
 
     async def is_always_required(self, user_id: int) -> bool:
-        return await self._redis.exists(f"{TOTP_ALWAYS_PREFIX}{user_id}") > 0
+        factor = await self._factor(user_id)
+        return factor is not None and factor.always_required
 
     async def set_always_required(self, user_id: int, value: bool) -> None:
-        key = f"{TOTP_ALWAYS_PREFIX}{user_id}"
-        if value:
-            await self._redis.set(key, b"1")
-        else:
-            await self._redis.delete(key)
+        factor = await self._factor_for_update(user_id)
+        factor.always_required = value
+        await self._session.flush()
 
 
 class SessionManager:
