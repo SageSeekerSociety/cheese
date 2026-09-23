@@ -668,6 +668,16 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         "subagent",
         "workflow",
     }
+    selected_model = flow.request.headers.pop("x-cheese-child-model", "")
+    child_model = selected_model if is_subagent else ""
+    if is_messages and is_subagent and not child_model:
+        _refuse(
+            flow,
+            400,
+            "invalid_request_error",
+            "cheese: native child model selection is missing; restart the session with the current harness transport",
+        )
+        return
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
@@ -676,7 +686,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         def check_admission():
             check_started = time.perf_counter()
             verdict = (
-                ADMISSION.check(project_id, topic_id, bearer, subagent=True)
+                ADMISSION.check(
+                    project_id, topic_id, bearer, subagent=True, child_model=child_model
+                )
+                if child_model
+                else ADMISSION.check(project_id, topic_id, bearer, subagent=True)
                 if is_subagent
                 else ADMISSION.check(project_id, topic_id, bearer)
             )

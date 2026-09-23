@@ -674,7 +674,7 @@ def _resolve_compute_id(
     return topic_compute_profile or project_configs(project_settings).default.profile
 
 
-def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
+def _model_policy_call(project, agent=None) -> gate.Call:
     """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
 
     两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
@@ -688,12 +688,8 @@ def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
     bound = binding.resolve(
         None,
         choices,
-        agent_model=agent.configuration.get("model")
-        if agent and not subagent
-        else None,
-        default_model=(project.settings or {}).get("default_subagent_model")
-        if subagent
-        else None,
+        agent_model=agent.configuration.get("model") if agent else None,
+        default_model=(project.settings or {}).get("default_model"),
     )
     return gate.Call(
         resource=gate.Resource.model,
@@ -4241,6 +4237,7 @@ class ChatService:
             None,
             binding.catalog(project.settings),
             agent_model=agent.configuration.get("model"),
+            default_model=(project.settings or {}).get("default_model"),
         )
         # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
         # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
@@ -4250,23 +4247,29 @@ class ChatService:
         # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
         # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
         async with self._sessions() as session:
-            calls = [_model_policy_call(project, agent)]
-            child_call = _model_policy_call(project, subagent=True)
-            if child_call.subject != calls[0].subject:
-                calls.append(child_call)
-            for call in calls:
-                proposed = await self._pass_policy_gate(
-                    session,
-                    topic_id,
-                    call,
-                    gate.policy_of(project.settings),
-                    actor=acting_agent or agent.handle,
-                )
-                if proposed is not None:
-                    await session.commit()
-                    raise gate.OverTier(proposed.proposal.content)
+            proposed = await self._pass_policy_gate(
+                session,
+                topic_id,
+                _model_policy_call(project, agent),
+                gate.policy_of(project.settings),
+                actor=acting_agent or agent.handle,
+            )
+            if proposed is not None:
+                await session.commit()
+                raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
         model = bound.wire_model
+        child_default = (project.settings or {}).get("default_subagent_model") or (
+            project.settings or {}
+        ).get("default_model")
+        child_choices = binding.catalog(project.settings)
+        # An unused invalid child default must not block a valid main override.
+        # Preserve it for the child request's admission refusal, never replace it.
+        child_model = child_default
+        if not child_default or child_default in child_choices:
+            child_model = binding.resolve(
+                None, child_choices, default_model=child_default
+            ).wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
@@ -4296,7 +4299,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v3-native-skills"
+                + ":explicit-chat-v4-native-model-choice"
                 # A room already holding a screen keeps the argv it was started
                 # with, and nothing here compares argv — so a launch flag that
                 # changes is a change no live room adopts and nothing reports.
@@ -4312,6 +4315,7 @@ class ChatService:
             "env": {
                 "CHEESE_AGENT_CONFIG": config_hash,
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
             },
             # Which conversation the turn belongs to, and so which session's
             # machines it runs on. Separate from `agent_handle` below, which is

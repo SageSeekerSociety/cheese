@@ -44,6 +44,7 @@ from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.usage.repositories import ComputeGrantRepository
@@ -173,14 +174,52 @@ async def admission(
         if agent is None:
             agent = await agents.for_project(project)
     try:
+        choices = binding.catalog(project.settings if project else None)
+        child_model = (
+            request.headers.get("x-cheese-child-model") if is_subagent else None
+        )
+        requested = None
+        if child_model:
+            requested = binding.catalog_id(child_model, choices)
+            if requested is None:
+                raise ValidationError(
+                    f"Native child model {child_model!r} is unavailable"
+                )
         bound = binding.resolve(
             None,
-            binding.catalog(project.settings if project else None),
-            agent_model=agent.configuration.get("model") if agent else None,
-            default_model=(project.settings or {}).get("default_subagent_model")
-            if project and is_subagent
-            else None,
+            choices,
+            agent_model=requested
+            or (agent.configuration.get("model") if agent else None),
+            default_model=(
+                (project.settings or {}).get("default_subagent_model")
+                if project and is_subagent
+                else None
+            )
+            or ((project.settings or {}).get("default_model") if project else None),
         )
+        if requested and project:
+            choice = choices[bound.model]
+            place = claims.get("t")
+            try:
+                place_id = uuid.UUID(place) if place else None
+            except ValueError:
+                place_id = None
+            outcome = await chat._pass_policy_gate(
+                db,
+                place_id,
+                gate.Call(
+                    resource=gate.Resource.model,
+                    subject=bound.model,
+                    label=choice["label"],
+                    tier=choice["tier"],
+                    approver=project.owner_handle or "",
+                ),
+                gate.policy_of(project.settings),
+                actor=claims.get("a") or "",
+            )
+            if outcome is not None:
+                await db.commit()
+                raise ValidationError(outcome.proposal.content)
     except ValidationError as exc:
         # `reason_kind` is what stops the proxy dressing this up as a budget
         # refusal: it renders every `allow=false` it has ever seen as a 429

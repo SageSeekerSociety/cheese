@@ -146,3 +146,128 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
     ).json()["data"]
     assert not result["allow"]
     assert result["reason_kind"] == "binding"
+
+
+@pytest.mark.anyio
+async def test_removed_main_is_refused_but_unused_defaults_do_not_block_overrides(
+    client, monkeypatch, tmp_path
+):
+    project = create(client)
+    pid = project["id"]
+    teammate = agents(client, pid)[0]
+    assert (
+        client.put(f"/projects/{pid}/default-model", json={"model": "opus"}).status_code
+        == 200
+    )
+    from app.core.errors import ValidationError
+    from app.domain.agent_instance import configuration
+
+    available = configuration.subscription_model_listings()
+    monkeypatch.setattr(
+        configuration,
+        "subscription_model_listings",
+        lambda: [item for item in available if item.id != "opus"],
+    )
+    token = mint_scoped_token(
+        project_id=pid,
+        topic_id=project["root_topic_id"],
+        agent_handle=teammate["seat_handle"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    for child in (False, True):
+        result = client.post(
+            "/llm/admission",
+            headers={**headers, **({"X-Cheese-Subagent": "1"} if child else {})},
+        ).json()["data"]
+        assert not result["allow"], result
+        assert result["reason_kind"] == "binding"
+    chat = ChatService(
+        session_factory=client.test_factory,
+        compute=stub_compute(),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    with pytest.raises(ValidationError, match="opus"):
+        await chat._model_kwargs(
+            uuid.UUID(pid),
+            ClaudeCodeRuntime(DeviceChannel()),
+            uuid.UUID(project["root_topic_id"]),
+        )
+    assert (
+        client.put(
+            f"/projects/{pid}/agents/{teammate['id']}",
+            json={"configuration": {"model": "sonnet"}},
+        ).status_code
+        == 200
+    )
+    main = client.post("/llm/admission", headers=headers).json()["data"]
+    assert main["allow"], main
+    assert "sonnet" in main["supply"]["model"]
+    kwargs, _ = await chat._model_kwargs(
+        uuid.UUID(pid),
+        ClaudeCodeRuntime(DeviceChannel()),
+        uuid.UUID(project["root_topic_id"]),
+    )
+    assert "sonnet" in kwargs["model"]
+    assert kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "opus"
+    assert (
+        client.put(
+            f"/projects/{pid}/default-model", json={"subagent_model": "sonnet"}
+        ).status_code
+        == 200
+    )
+    child = client.post(
+        "/llm/admission", headers={**headers, "X-Cheese-Subagent": "1"}
+    ).json()["data"]
+    assert child["allow"], child
+    assert "sonnet" in child["supply"]["model"]
+
+
+def test_explicit_native_child_models_are_validated_against_catalog_and_policy(client):
+    project = create(client)
+    pid = project["id"]
+    teammate = agents(client, pid)[0]
+    assert (
+        client.put(
+            f"/projects/{pid}/default-model",
+            json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+        ).status_code
+        == 200
+    )
+    token = mint_scoped_token(
+        project_id=pid,
+        topic_id=project["root_topic_id"],
+        agent_handle=teammate["seat_handle"],
+    )
+    headers = {"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"}
+    for model in ("claude-opus-5", "deepseek-flash", "not-offered"):
+        result = client.post(
+            "/llm/admission", headers={**headers, "X-Cheese-Child-Model": model}
+        ).json()["data"]
+        if model == "not-offered":
+            assert not result["allow"], result
+            assert result["reason_kind"] == "binding"
+        else:
+            assert result["allow"], result
+            assert result["supply"]["model"] == model
+    # A main request cannot smuggle a different model through the child hint.
+    result = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Cheese-Child-Model": "claude-opus-5",
+        },
+    ).json()["data"]
+    assert result["supply"]["model"] == "deepseek-flash"
+    assert (
+        client.put(
+            f"/projects/{pid}/tier-policy",
+            json={"allowed_tiers": ["included"], "over_tier": "deny"},
+        ).status_code
+        == 200
+    )
+    denied = client.post(
+        "/llm/admission", headers={**headers, "X-Cheese-Child-Model": "claude-opus-5"}
+    ).json()["data"]
+    assert not denied["allow"], denied
+    assert denied["reason_kind"] == "binding"

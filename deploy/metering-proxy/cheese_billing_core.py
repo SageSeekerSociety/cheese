@@ -280,12 +280,19 @@ class Verdict:
 
 
 def _post_admission(
-    url: str, bearer: str, timeout_s: float, *, subagent: bool = False
+    url: str,
+    bearer: str,
+    timeout_s: float,
+    *,
+    subagent: bool = False,
+    child_model: str = "",
 ) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
     headers = {"Authorization": f"Bearer {bearer}"}
     if subagent:
         headers["X-Cheese-Subagent"] = "1"
+        if child_model:
+            headers["X-Cheese-Child-Model"] = child_model
     req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
@@ -351,10 +358,16 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, str, str, bool], tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str, str, bool, str], tuple[float, Verdict]] = {}
 
     def check(
-        self, project_id: str, topic_id: str, bearer: str, *, subagent: bool = False
+        self,
+        project_id: str,
+        topic_id: str,
+        bearer: str,
+        *,
+        subagent: bool = False,
+        child_model: str = "",
     ) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
@@ -364,6 +377,7 @@ class AdmissionGate:
             topic_id,
             hashlib.sha256(bearer.encode()).hexdigest(),
             subagent,
+            child_model if subagent else "",
         )
         now = time.time()
         with self._lock:
@@ -372,7 +386,15 @@ class AdmissionGate:
                 return hit[1]
         try:
             verdict = (
-                self._post(self._url, bearer, self._timeout, subagent=True)
+                self._post(
+                    self._url,
+                    bearer,
+                    self._timeout,
+                    subagent=True,
+                    child_model=child_model,
+                )
+                if subagent and child_model
+                else self._post(self._url, bearer, self._timeout, subagent=True)
                 if subagent
                 else self._post(self._url, bearer, self._timeout)
             )

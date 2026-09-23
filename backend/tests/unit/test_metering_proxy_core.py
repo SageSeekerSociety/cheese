@@ -50,6 +50,40 @@ def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
     assert calls == [False, True]
 
 
+def test_two_child_model_choices_do_not_share_an_admission_cache_entry():
+    calls = []
+
+    def admit(url, bearer, timeout, *, subagent=False, child_model=""):
+        calls.append(child_model)
+        return core.Verdict(True, "", model=child_model)
+
+    gate = core.AdmissionGate("http://fixture/admission", post=admit)
+    for model in ("claude-opus-5", "claude-sonnet-5", "claude-opus-5"):
+        assert (
+            gate.check("p", "t", "token", subagent=True, child_model=model).model
+            == model
+        )
+    assert calls == ["claude-opus-5", "claude-sonnet-5"]
+
+
+def test_child_selection_is_sent_to_backend_admission():
+    response = io.BytesIO(b'{"data":{"allow":true,"supply":{"model":"claude-opus-5"}}}')
+    with mock.patch.object(
+        core.urllib.request, "urlopen", return_value=response
+    ) as opened:
+        verdict = core._post_admission(
+            "http://backend/llm/admission",
+            "fixture-token",
+            3.0,
+            subagent=True,
+            child_model="claude-opus-5",
+        )
+    request = opened.call_args.args[0]
+    assert request.get_header("X-cheese-subagent") == "1"
+    assert request.get_header("X-cheese-child-model") == "claude-opus-5"
+    assert verdict.model == "claude-opus-5"
+
+
 def _mint(claims: dict, secret: str = SECRET) -> str:
     """The backend's exact minting algorithm (sandbox_auth.mint_scoped_token):
     urlsafe-b64 JSON body, HMAC-SHA256 sig, both unpadded."""
