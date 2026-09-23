@@ -6,7 +6,6 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import and_, or_, select, true
 
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
@@ -25,7 +24,6 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_TIERS
-from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
@@ -33,7 +31,6 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
 from app.domain.project.services import ProjectService
-from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -86,54 +83,6 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
         return presentation(row)
     if old and old.get("status", "ready") != "ready":
         raise ConflictError("机器分配仍在进行，请稍后再换机")
-    instance_id = (
-        select(AgentInstance.id)
-        .where(
-            AgentInstance.project_id == topic.project_id,
-            AgentInstance.handle == row.agent_handle,
-        )
-        .scalar_subquery()
-    )
-    # A card owner is not its native caller. Use the authenticated start's
-    # instance and parent token, retaining a conservative barrier only where
-    # older records cannot establish which session owns the unfinished child.
-    parent_matches = (
-        or_(
-            Task.execution_parent_session_id == row.resume_token,
-            Task.execution_parent_session_id.is_(None),
-        )
-        if row.resume_token
-        else true()
-    )
-    if await db.scalar(
-        select(Task.id)
-        .where(
-            Task.room_id == topic_id,
-            Task.subagent_id.is_not(None),
-            Task.status == TaskStatus.open,
-            Task.conclusion.is_(None),
-            or_(
-                Task.execution_agent_instance_id.is_(None),
-                and_(Task.execution_agent_instance_id == instance_id, parent_matches),
-            ),
-        )
-        .limit(1)
-    ):
-        raise ConflictError("请先核实并结束尚未交回结论的子任务")
-    if old and device_hub.is_online(old["device_id"]):
-        # Existing calls finish on the retained lease. Only long-running
-        # background work needs to finish before selecting another machine.
-        background = await execution.call(
-            old,
-            "control",
-            {"subtype": "background_tasks"},
-            hub=device_hub,
-            timeout=10,
-        )
-        if not isinstance(background.get("tasks"), list):
-            raise ConflictError("无法核实旧机器的后台工作，请稍后重试")
-        if any(task.get("status") == "running" for task in background["tasks"]):
-            raise ConflictError("旧机器还有后台工作，请先结束后再换机")
     if (request.get("choice") or {}).get("profile") == "cloud":
         await MachineService(db).supersede_session_machine(session_id, actor=actor)
     row.execution_request = {

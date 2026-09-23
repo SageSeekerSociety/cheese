@@ -84,6 +84,7 @@
     "cloud": "云端 · 标准配置",
     "unavailable": "{name} · 不可用",
     "initial": "房间初始配置",
-    "numberedSession": "{name}（会话 {number}）"
+    "numberedSession": "{name}（会话 {number}）",
+    "switchWarning": "更换电脑可能中断正在运行的任务，并丢失未保存的工作。后续操作将使用新电脑。"
   }
 }

@@ -24,9 +24,10 @@ from tests.integration.conftest import session_auth_headers
 pytestmark = pytest.mark.anyio
 
 
+@pytest.mark.parametrize("background_state", ["running", "unresponsive"])
 @pytest.mark.parametrize("old_online", [True, False])
 async def test_first_tool_acquires_the_addressed_sessions_device(
-    client, monkeypatch, old_online
+    client, monkeypatch, old_online, background_state
 ):
     project = client.post(
         "/projects", json={"name": "Session hands", "owner_handle": "alice"}
@@ -234,9 +235,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         await db.flush()
         child_id = child.id
         await db.commit()
-    blocked = client.put(choice_path, headers=owner_headers, json=selection)
-    assert blocked.status_code == 409
-    assert "子任务" in blocked.json()["message"]
     bob_path = f"/topics/{topic_id}/sessions/{second_id}/work-choice"
     bob_change = client.put(bob_path, headers=owner_headers, json=selection)
     assert bob_change.status_code == 200, bob_change.text
@@ -247,23 +245,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         json={"env": {}},
     )
     assert bob_tools.status_code == 200, bob_tools.text
-    async with client.test_factory() as db:
-        child = await db.get(Task, child_id)
-        child.conclusion = "Completed"
-        # A recorded child of a previous native parent is historical evidence,
-        # not evidence that this session's current parent still runs it.
-        db.add(
-            Task(
-                project_id=project_id,
-                room_id=topic_id,
-                title="Old parent child",
-                subagent_id="old-child",
-                execution_agent_instance_id=instance.id,
-                execution_parent_session_id="previous-native-ada",
-                execution_turn_id=uuid.uuid4(),
-            )
-        )
-        await db.commit()
     # A real execution timeout leaves NULL in the dispatch log. It is unknown,
     # not proof of an active call and must not permanently lock machine choice.
     remote.side_effect = TimeoutError("lost response")
@@ -279,18 +260,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         )
         dispatch_id = dispatch.id
         assert dispatch.outcome is None
-    remote.side_effect = lambda target, *args, **kwargs: (
-        {"tasks": [{"status": "running"}]}
-        if args[0] == "control"
-        else {"device": target["device_id"]}
-    )
-    assert (
-        client.put(choice_path, headers=owner_headers, json=selection).status_code
-        == 409
-    )
-    remote.side_effect = lambda target, *args, **kwargs: (
-        {"tasks": []} if args[0] == "control" else {"device": target["device_id"]}
-    )
     hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
         f"/topics/{topic_id}/sessions/work-leases", headers=owner_headers
@@ -347,7 +316,11 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         if params.get("id") == "in-flight-read":
             admitted.set()
             await asyncio.to_thread(release.wait, 10)
-        return {"tasks": []} if method == "control" else {"device": target["device_id"]}
+        if method == "control":
+            if background_state == "unresponsive":
+                raise TimeoutError("old executor does not respond")
+            return {"tasks": [{"status": "running"}]}
+        return {"device": target["device_id"]}
 
     remote.side_effect = finishing_call
     with ThreadPoolExecutor(max_workers=1) as requests:
@@ -382,6 +355,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         finished = pending_call.result(timeout=10)
     assert finished.status_code == 200, finished.text
     assert finished.json()["device"] == first_device
+    assert not any(call.args[1] == "control" for call in remote.await_args_list)
+    async with client.test_factory() as db:
+        assert (await db.get(Task, child_id)).conclusion is None
     assert response.json()["data"]["session"]["lease"] is None
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",

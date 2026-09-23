@@ -84,6 +84,7 @@
     "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
     "initial": "Initial room configuration",
-    "numberedSession": "{name} (Session {number})"
+    "numberedSession": "{name} (Session {number})",
+    "switchWarning": "Changing computers may interrupt running tasks and lose unsaved work. Subsequent operations will use the new computer."
   }
 }

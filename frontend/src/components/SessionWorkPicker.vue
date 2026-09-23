@@ -150,6 +150,7 @@ watch(
             :label="t('work.sessionMachine.machine')"
             :disabled="busy"
           />
+          <p role="note" class="mb-2">{{ t('work.sessionMachine.switchWarning') }}</p>
           <p>{{ t('work.sessionMachine.retained') }}</p>
         </template>
         <p v-if="notice" role="status">{{ notice }}</p>

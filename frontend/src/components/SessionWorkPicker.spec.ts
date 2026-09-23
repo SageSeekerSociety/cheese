@@ -104,6 +104,9 @@ describe('session work machine selection', () => {
     await fireEvent.mouseDown(screen.getByLabelText('队友'))
     await fireEvent.click(await screen.findByRole('option', { name: 'builder' }))
     await chooseMachine()
+    expect(screen.getByRole('note').textContent).toBe(
+      '更换电脑可能中断正在运行的任务，并丢失未保存的工作。后续操作将使用新电脑。'
+    )
     expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
     api.setSessionWorkChoice.mockResolvedValue({
       session: session({ id: 'session-b', agent_handle: 'builder', choice: device, lease: null }),

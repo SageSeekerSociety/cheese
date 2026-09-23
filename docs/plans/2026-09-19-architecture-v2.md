@@ -1120,6 +1120,7 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 
 换机不产生待审批提议 [已定] 结论 40：
 用户选择并确认，agent 可直接选择自己会话可用的已授权资源；资源权限或额度不满足时返回原因。
+Running background work and unfinished child tasks do not block a machine change. The picker warns that switching may interrupt tasks or lose unsaved work before the user confirms.
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
