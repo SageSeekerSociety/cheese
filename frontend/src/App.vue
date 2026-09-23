@@ -262,7 +262,7 @@ router.isReady().then(async () => {
   watch(() => router.currentRoute.value.path, updateDocumentTitle, { immediate: true })
   watch(() => store.updateTrigger, updateDocumentTitle)
   watch(titleManager.fullTitle, updateDocumentTitle)
-  watch([() => store.siteName, () => store.separator], updateDocumentTitle)
+  watch(() => store.separator, updateDocumentTitle)
 })
 
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了

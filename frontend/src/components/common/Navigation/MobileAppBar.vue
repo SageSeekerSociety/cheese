@@ -182,6 +182,7 @@ import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
+import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
 
@@ -207,7 +208,7 @@ const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
 
-const currentTitle = ref('知是社区')
+const currentTitle = ref(t('global.cheese'))
 
 // 切换抽屉状态
 const toggleDrawer = () => {
@@ -222,7 +223,7 @@ const toggleDrawer = () => {
 // getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
 const updateTitle = () => {
   const current = getRouteHierarchy.value.find((item) => item.title)
-  currentTitle.value = current?.title ?? '知是社区'
+  currentTitle.value = current?.title ?? t('global.cheese')
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })

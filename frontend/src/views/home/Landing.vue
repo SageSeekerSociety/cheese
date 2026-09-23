@@ -9,6 +9,7 @@ import i18n, { t } from '@/i18n'
 import AccountService from '@/services/account'
 
 const loggedIn = computed(() => AccountService.loggedIn)
+const year = new Date().getFullYear()
 const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
 const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
 const stages = computed(() => [
@@ -643,7 +644,7 @@ function moveTab(event: KeyboardEvent, group: 'stage' | 'audience') {
         </span>
       </a>
       <p>{{ t('publicSite.peopleAndAiGettingWorkDoneTogether') }}</p>
-      <span> {{ t('publicSite.2026Cheese') }} </span>
+      <span> {{ t('global.copyright', { year }) }} </span>
     </footer>
   </main>
 </template>

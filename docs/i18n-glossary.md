@@ -132,8 +132,10 @@ Delete this discussion? All of its replies will be deleted too.`
 
 ## 4. 品牌词
 
-**芝士 = Cheese。** 平台名，永远大写 C，永远不翻译，中文界面里就是「芝士」（既有 `joinCheese = "Join Cheese"`、
-`welcomeBackToCheese = "Welcome back to Cheese"` 已经这么做了）。
+**知是 = Cheese。** 平台名。中文界面里写「知是」，不写「知是社区」；英文写 Cheese，永远大写 C，永远不翻译
+（`global.cheese`）。
+
+**芝士只指 AI 队友。** 「芝士」是项目里那位 AI 成员的名字，不是平台名，不要拿它称呼平台。
 
 ## 5. 存疑——需要产品 owner 拍板
 
