@@ -332,4 +332,32 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       }
     }
   });
+
+  test('看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
+    await login(page);
+
+    // 宽度变档的回执：1920 视口下内容列曾经停在 1100（约 1/3 是死空白）。admin 档
+    // 是 1440，网格跟着容器查询升档 —— 这两条断言量的就是「宽出来的部分有人用」。
+    await page.setViewportSize({ width: 1920, height: 900 });
+    await page.goto('/admin/dashboard');
+    await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+
+    // 三个分类的文字在宽档下也不压（宽档更容易出「网格升档后列数变了」的排版事故）。
+    for (const tab of ['反馈', '用量', '平台']) {
+      await page.getByRole('button', { name: tab, exact: true }).click();
+      await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
+      await expect(page.locator('.akpi__skel')).toHaveCount(0);
+      expect(await textOverlaps(page.locator('body')), `1920px · ${tab}`).toEqual([]);
+    }
+
+    // 内容列吃满 admin 档的 1440（侧栏展开时 1920 视口的可用宽是 1608，1440 居中）。
+    const innerWidth = await page.locator('.ad__inner').evaluate((el) => el.getBoundingClientRect().width);
+    expect(Math.round(innerWidth)).toBe(1440);
+    // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在「平台」类，
+    // 5 张卡）。
+    const tracks = await page
+      .locator('.ad__kpis')
+      .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
+    expect(tracks).toBeGreaterThanOrEqual(4);
+  });
 });
