@@ -1483,6 +1483,7 @@ class DeviceChannel(Channel):
                 from app.domain.agent.remote_control import store
 
                 control = store()
+                # An unreadable journal is unknown, never permission to kill work.
                 session = await control.current(str(topic_id), agent_handle)
                 if session is not None:
                     snapshot = await control.snapshot(session)
