@@ -17,6 +17,8 @@ from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 async def _seed(factory, credits: float | None = 100.0):
     async with factory() as session:

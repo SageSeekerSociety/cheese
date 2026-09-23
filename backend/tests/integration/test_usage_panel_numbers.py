@@ -23,6 +23,8 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 async def _seed(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
@@ -249,7 +251,7 @@ async def test_priced_turns_report_no_unpriced_tokens(db_factory):
 @pytest.mark.anyio
 async def test_usage_endpoints_expose_turns_and_unpriced_tokens(client):
     """Both panel rows (本话题 / 全项目) carry the same honest fields."""
-    pid, tid = await _seed(client.test_factory)
+    pid, tid = client.portal.call(lambda: _seed(client.test_request_factory))
     turn = uuid.uuid4()
     async with client.test_factory() as session:
         repo = UsageRepository(session)

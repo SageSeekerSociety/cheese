@@ -37,7 +37,7 @@ from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 #: 一张卡的线程标识，平台开卡时算出来的那个样子。
 _THREAD_LABEL = "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"

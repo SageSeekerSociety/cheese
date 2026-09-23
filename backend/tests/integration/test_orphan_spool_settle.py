@@ -28,6 +28,8 @@ from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 def _spool_event(spool, eid: str, payload: dict) -> None:
     """Simulate the cheese-hook forwarder's atomic write of one hook."""

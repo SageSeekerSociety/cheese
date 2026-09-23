@@ -22,10 +22,12 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 @pytest.mark.anyio
 async def test_a_project_that_asks_for_a_harness_nobody_deployed_does_not_run(
-    db_factory, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch, stub_project_forge
 ):
     """这台机器上没有 codex，那这一轮就不开始——不改用 claude-code 跑。
 

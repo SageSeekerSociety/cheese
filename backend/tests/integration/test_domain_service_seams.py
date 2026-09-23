@@ -28,7 +28,7 @@ from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 
 def _now() -> datetime:

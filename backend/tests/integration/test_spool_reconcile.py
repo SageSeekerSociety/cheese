@@ -26,6 +26,8 @@ from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 class QuietScreen(StubChannel):
     """A turn that produces no events of its own — so the only 现场 event under

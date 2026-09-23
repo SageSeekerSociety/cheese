@@ -21,6 +21,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 async def _topic(factory) -> uuid.UUID:
     async with factory() as session:

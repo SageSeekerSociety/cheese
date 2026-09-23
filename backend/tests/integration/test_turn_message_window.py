@@ -21,6 +21,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 class RecordingScreen(StubChannel):
     """记下每一轮拿到的 prompt；第一轮的会话停在半路，直到 `release` 放行。
