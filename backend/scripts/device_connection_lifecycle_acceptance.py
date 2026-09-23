@@ -13,11 +13,16 @@ import multiprocessing
 import os
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -214,10 +219,10 @@ def record(log, event: str, **values) -> None:
     log.flush()
 
 
-def image_acceptance(options, root: Path) -> int:
+@contextmanager
+def image_owner(options, root: Path, *, start_runtime=True):
     """Run the released owner and its packaged Go connector without code mounts."""
     os.environ["SANDBOX_TOKEN"] = SECRET
-    from app.core.sandbox_auth import mint_scoped_token
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + f"-{os.getpid()}"
@@ -517,22 +522,23 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
             record(
                 log, "authentication_rejected", internal_rpc=403, device_websocket=403
             )
-            subprocess.run(
-                [sys.executable, runtime.__file__, "start", "--state", str(state)],
-                input=json.dumps(
-                    {
-                        "workspace": str(work),
-                        "env": {},
-                        "private": True,
-                        "claude": str(options.claude.resolve()),
-                    }
-                ),
-                text=True,
-                capture_output=True,
-                check=True,
-                timeout=30,
-            )
-            runtime_started = True
+            if start_runtime:
+                subprocess.run(
+                    [sys.executable, runtime.__file__, "start", "--state", str(state)],
+                    input=json.dumps(
+                        {
+                            "workspace": str(work),
+                            "env": {},
+                            "private": True,
+                            "claude": str(options.claude.resolve()),
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=30,
+                )
+                runtime_started = True
             config = work / "connector.json"
             config.write_text(
                 json.dumps(
@@ -564,97 +570,20 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
                 time.sleep(0.1)
             else:
                 raise RuntimeError("Go connector did not attach")
-            started = time.monotonic()
-            record(log, "roundtrip_started")
-            topic = "22222222-2222-2222-2222-222222222222"
-            endpoint = f"{url}/topics/{topic}/execution/{topic}"
-            token = mint_scoped_token(
-                project_id="11111111-1111-1111-1111-111111111111",
-                topic_id=topic,
-                resource_id=topic,
-            )
-            wrong_project = mint_scoped_token(
-                project_id="44444444-4444-4444-4444-444444444444",
-                topic_id=topic,
-                resource_id=topic,
-            )
-            request = {
-                "method": "invoke",
-                "params": {
-                    "id": "endpoint-authenticated-call",
-                    "tool": "Bash",
-                    "args": {"command": "printf endpoint-result"},
-                },
-            }
-            assert httpx.post(endpoint, json=request).status_code == 401
-            assert (
-                httpx.post(
-                    endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
-                ).status_code
-                == 403
-            )
-            response = httpx.post(
-                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
-            )
-            response.raise_for_status()
-            assert response.json()["value"]["stdout"] == "endpoint-result"
-            record(
-                log,
-                "execution_endpoint_passed",
-                missing_credential=401,
-                wrong_project=403,
-                authenticated_call=200,
-            )
-            # The sentinel proves Bash started before the HTTP waiter is killed.
-            command = (
-                f"printf started > {shlex.quote(str(work / 'started'))}; sleep 4; "
-                "printf 'run\\n' >> execution-count; printf owner-retained-result"
-            )
-            results: multiprocessing.Queue = multiprocessing.Queue()
-            for generation in (1, 2):
-                child = multiprocessing.Process(
-                    target=backend_waiter,
-                    args=(results, generation, options.port, str(state), command),
-                )
-                children.append(child)
-                child.start()
-                if generation == 1:
-                    for _ in range(200):
-                        if (work / "started").exists():
-                            break
-                        assert child.is_alive(), (
-                            "first backend exited before Bash started"
-                        )
-                        time.sleep(0.1)
-                    else:
-                        raise RuntimeError("Bash did not start")
-                    child.kill()
-                    child.join(timeout=5)
-                    record(
-                        log, "backend_stopped", generation=1, exit_code=child.exitcode
-                    )
-            result = results.get(timeout=30)
-            children[-1].join(timeout=5)
-            value = result["body"]["result"]["value"]
-            assert result["generation"] == 2 and children[-1].exitcode == 0
-            assert value["stdout"] == "owner-retained-result" and value["stderr"] == ""
-            assert value["interrupted"] is False
-            assert (work / "execution-count").read_text().splitlines() == ["run"]
-            after = json.loads(docker("inspect", owner_name))[0]
-            assert after["Id"] == owner_identity["Id"] and after["State"]["Running"]
-            assert after["State"]["StartedAt"] == owner_identity["State"]["StartedAt"]
-            assert after["RestartCount"] == 0 and connector_worker.poll() is None
-            assert hashlib.sha256(binary.read_bytes()).hexdigest() == digest
-            assert docker(*version_query).splitlines() == current_schema
-            record(
-                log,
-                "acceptance_passed",
-                execution_count=1,
-                session_restored=True,
-                owner_id=after["Id"],
-                connector_pid=connector_worker.pid,
-                elapsed_s=time.monotonic() - started,
-                **result,
+            yield SimpleNamespace(
+                work=work,
+                state=state,
+                log=log,
+                docker=docker,
+                owner_name=owner_name,
+                owner_identity=owner_identity,
+                connector_worker=connector_worker,
+                binary=binary,
+                digest=digest,
+                version_query=version_query,
+                current_schema=current_schema,
+                children=children,
+                url=url,
             )
         except BaseException as exc:
             record(log, "acceptance_failed", error=repr(exc))
@@ -690,6 +619,278 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
                     docker("rm", "-f", name, check=False)
                 docker("network", "rm", network, check=False)
     print(log_path)
+
+
+def refused_connection_acceptance(endpoint, token, work, log):
+    """Restore an actual HTTP listener only after the tool's connect is refused."""
+    from app.domain.agent.executor_transport import RemoteClient
+
+    refused = threading.Event()
+    requests = []
+
+    class Forward(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            requests.append(body)
+            response = httpx.post(
+                endpoint,
+                content=body,
+                headers={"X-Cheese-Token": self.headers["X-Cheese-Token"]},
+                timeout=30,
+            )
+            self.send_response(response.status_code)
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+    class ObservedClient(RemoteClient):
+        def connection(self):
+            connection, path = super().connection()
+            original = connection.request
+
+            def request(*args, **kwargs):
+                try:
+                    return original(*args, **kwargs)
+                except ConnectionRefusedError:
+                    refused.set()
+                    raise
+
+            connection.request = request
+            return connection, path
+
+    token_file = work / "refused-connect.token"
+    token_file.write_text(token)
+    token_file.chmod(0o600)
+    with ThreadingHTTPServer(
+        ("127.0.0.1", 0), Forward, bind_and_activate=False
+    ) as server:
+        # Choose a free port, then close it until the client observes the real
+        # refusal. A bound, unlistened socket can hang connects on macOS.
+        server.server_bind()
+        server.socket.close()
+        server.socket = socket.socket(server.address_family, server.socket_type)
+        client = ObservedClient(
+            {
+                "kind": "device",
+                "url": f"http://127.0.0.1:{server.server_port}/execution",
+                "token_file": str(token_file),
+            }
+        )
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            pending = workers.submit(
+                client.call,
+                "invoke",
+                {
+                    "id": "refused-connect-call",
+                    "tool": "Bash",
+                    "args": {
+                        "command": (
+                            "printf 'run\\n' >> refused-count; printf restored-endpoint"
+                        )
+                    },
+                },
+            )
+            if not refused.wait(5):
+                if pending.done():
+                    pending.result()
+                raise AssertionError("tool call never observed a refused connection")
+            server.server_bind()
+            server.server_activate()
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                result = pending.result(timeout=30)
+                assert result["value"]["stdout"] == "restored-endpoint"
+                assert len(requests) == 1
+                assert (work / "refused-count").read_text().splitlines() == ["run"]
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+    record(log, "refused_connection_recovered", requests_sent=1, execution_count=1)
+
+
+def image_acceptance(options, root: Path) -> int:
+    from app.core.sandbox_auth import mint_scoped_token
+    from app.domain.agent import execution
+    from app.domain.agent.device_hub import DeviceCallError
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+
+    with image_owner(options, root) as owner:
+        work = owner.work
+        state = owner.state
+        log = owner.log
+        docker = owner.docker
+        owner_name = owner.owner_name
+        owner_identity = owner.owner_identity
+        connector_worker = owner.connector_worker
+        binary = owner.binary
+        digest = owner.digest
+        version_query = owner.version_query
+        current_schema = owner.current_schema
+        children = owner.children
+        url = owner.url
+
+        async def recorded_state_roundtrip():
+            backend = RemoteDeviceHub(url, SECRET)
+            target = {
+                "device_id": "acceptance-machine",
+                "home": str(work),
+                "state": str(state),
+            }
+            try:
+                result = await execution.call(target, "ping", {}, hub=backend)
+                assert result["workspace"] == str(work)
+                assert not (work / ".cheese/executor").exists()
+                try:
+                    await execution.call(
+                        {key: value for key, value in target.items() if key != "state"},
+                        "ping",
+                        {},
+                        hub=backend,
+                    )
+                except DeviceCallError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "unrecorded executor state unexpectedly worked"
+                    )
+            finally:
+                await backend.close()
+
+        asyncio.run(recorded_state_roundtrip())
+        record(log, "recorded_state_passed", unrecorded_state_rejected=True)
+        started = time.monotonic()
+        record(log, "roundtrip_started")
+        topic = "22222222-2222-2222-2222-222222222222"
+        endpoint = f"{url}/topics/{topic}/execution/{topic}"
+        token = mint_scoped_token(
+            project_id="11111111-1111-1111-1111-111111111111",
+            topic_id=topic,
+            resource_id=topic,
+        )
+        wrong_project = mint_scoped_token(
+            project_id="44444444-4444-4444-4444-444444444444",
+            topic_id=topic,
+            resource_id=topic,
+        )
+        request = {
+            "method": "invoke",
+            "params": {
+                "id": "endpoint-authenticated-call",
+                "tool": "Bash",
+                "args": {"command": "printf endpoint-result"},
+            },
+        }
+        assert httpx.post(endpoint, json=request).status_code == 401
+        assert (
+            httpx.post(
+                endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
+            ).status_code
+            == 403
+        )
+        # An unrelated Topic column disappeared while this owner stayed on its
+        # released schema model (#1259). Authorization must not select it.
+        docker(
+            *version_query[:-1], "ALTER TABLE topics RENAME title TO acceptance_title"
+        )
+        try:
+            response = httpx.post(
+                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
+            )
+        finally:
+            docker(
+                *version_query[:-1],
+                "ALTER TABLE topics RENAME acceptance_title TO title",
+            )
+        response.raise_for_status()
+        assert response.json()["value"]["stdout"] == "endpoint-result"
+        record(
+            log,
+            "execution_endpoint_passed",
+            missing_credential=401,
+            wrong_project=403,
+            authenticated_call=200,
+            unrelated_topic_column_absent=True,
+            recorded_state=str(state),
+            inferred_state=str(work / ".cheese/executor"),
+        )
+        refused_connection_acceptance(endpoint, token, work, log)
+        # The sentinel proves Bash started before the HTTP waiter is killed.
+        command = (
+            f"printf started > {shlex.quote(str(work / 'started'))}; "
+            f"while [ ! -e {shlex.quote(str(work / 'continue'))} ]; "
+            "do sleep 0.1; done; "
+            "printf 'run\\n' >> execution-count; printf owner-retained-result"
+        )
+        results: multiprocessing.Queue = multiprocessing.Queue()
+        for generation in (1, 2):
+            child = multiprocessing.Process(
+                target=backend_waiter,
+                args=(results, generation, options.port, str(state), command),
+            )
+            children.append(child)
+            child.start()
+            if generation == 1:
+                for _ in range(200):
+                    if (work / "started").exists():
+                        break
+                    assert child.is_alive(), "first backend exited before Bash started"
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("Bash did not start")
+
+                async def reject_busy_drain():
+                    backend = RemoteDeviceHub(url, SECRET)
+                    try:
+                        await backend._request(
+                            "POST", "/internal/device-connection/release-drain"
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        assert exc.response.status_code == 409
+                        assert "X-Device-Id" not in exc.response.headers
+                        assert (
+                            exc.response.json()["detail"] == "device calls are active"
+                        )
+                    else:
+                        raise AssertionError(
+                            "owner accepted drain during an active call"
+                        )
+                    finally:
+                        await backend.close()
+
+                asyncio.run(reject_busy_drain())
+                record(log, "unexpected_conflict_preserved", status=409)
+                child.kill()
+                child.join(timeout=5)
+                record(log, "backend_stopped", generation=1, exit_code=child.exitcode)
+            else:
+                (work / "continue").write_text("replacement started\n")
+        result = results.get(timeout=30)
+        children[-1].join(timeout=5)
+        value = result["body"]["result"]["value"]
+        assert result["generation"] == 2 and children[-1].exitcode == 0
+        assert value["stdout"] == "owner-retained-result" and value["stderr"] == ""
+        assert value["interrupted"] is False
+        assert (work / "execution-count").read_text().splitlines() == ["run"]
+        after = json.loads(docker("inspect", owner_name))[0]
+        assert after["Id"] == owner_identity["Id"] and after["State"]["Running"]
+        assert after["State"]["StartedAt"] == owner_identity["State"]["StartedAt"]
+        assert after["RestartCount"] == 0 and connector_worker.poll() is None
+        assert hashlib.sha256(binary.read_bytes()).hexdigest() == digest
+        assert docker(*version_query).splitlines() == current_schema
+        record(
+            log,
+            "acceptance_passed",
+            execution_count=1,
+            session_restored=True,
+            owner_id=after["Id"],
+            connector_pid=connector_worker.pid,
+            elapsed_s=time.monotonic() - started,
+            **result,
+        )
     return 0
 
 
