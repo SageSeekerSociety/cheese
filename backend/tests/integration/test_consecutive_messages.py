@@ -23,7 +23,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 
 
 class WorkingScreen(StubChannel):
@@ -129,7 +129,7 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(
     ]
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()
 
 
@@ -167,7 +167,7 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(
     assert re.fullmatch(r"\[wangchangxin\]: <@cheese-[0-9a-f]+>", heads[1]), heads
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()
 
 
@@ -223,5 +223,5 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(
     assert re.search(r"<@cheese-[0-9a-f]+>", screen.prompts[0]), screen.prompts[0]
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()

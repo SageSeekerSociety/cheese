@@ -10,10 +10,16 @@ from tests.conftest import settle_turn
 
 class _Runtime:
     def __init__(self, topic_id, consumer):
+        runtime = self
+
+        class _RetiringQueue:
+            async def join(self):
+                runtime._subscriptions.pop(topic_id)
+
         self._subscriptions = {
             topic_id: SimpleNamespace(
                 consumer_task=consumer,
-                sink=SimpleNamespace(queue=asyncio.Queue()),
+                sink=SimpleNamespace(queue=_RetiringQueue()),
             )
         }
 

@@ -19,7 +19,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 
 
 class RecordingScreen(StubChannel):
@@ -138,7 +138,7 @@ async def test_message_posted_mid_turn_is_not_lost_from_the_next_prompt(
         ),
         5,
     )
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2
     # 断言就是「在不在」：旧窗口从 turn1 的 AI 回复起算，这句被切掉且永不再来。
@@ -172,7 +172,7 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     agent.release.set()
     await asyncio.wait_for(turn1, 5)
     await asyncio.wait_for(turn2, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2
     second = agent.prompts[1]
@@ -214,7 +214,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(
     await settle_turn(svc, topic_id)
     frames1 = await asyncio.wait_for(turn1, 5)
     frames2 = await asyncio.wait_for(turn2, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     # 两句都到了，各一次，顺序就是说话的顺序。
     assert [p.split("\n\n", 1)[0] for p in agent.prompts] == [
@@ -267,7 +267,7 @@ async def test_resume_turn_still_speaks_as_the_platform(business_db_factory, tmp
         5,
     )
     await asyncio.gather(*agent._answering)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2, "没人说话的轮次不是冗余轮，不能被吞掉"
     resumed = agent.prompts[1]

@@ -26,7 +26,7 @@ from app.domain.agent.profiles import (
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 
 
 def _replace_chat_sleep(monkeypatch, sleep):
@@ -251,7 +251,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     from sqlalchemy import select
 
@@ -298,7 +298,7 @@ async def test_gateway_daily_delta_larger_than_int32_is_recorded(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     from sqlalchemy import select
 
@@ -495,7 +495,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     async with factory() as session:
         summary = await ComputeGrantRepository(session).summary(pid)
@@ -523,7 +523,7 @@ async def test_late_spend_rows_land_via_deferred_drain(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     # Let the deferred task run (its sleep is patched away).
     import asyncio as _asyncio
 
@@ -731,7 +731,7 @@ async def test_usage_rows_record_their_route(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     from sqlalchemy import select
 
@@ -772,7 +772,7 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     # Stop also starts spool settlement, which may still hold a DB transaction.
     await asyncio.gather(*svc._settle_tasks)
 
@@ -835,7 +835,7 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     from sqlalchemy import select
 

@@ -423,9 +423,6 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
                     settle_tasks.append(task)
             if settle_tasks:
                 await asyncio.gather(*settle_tasks)
-            for runtime in runtimes:
-                if topic_id in getattr(runtime, "_subscriptions", {}):
-                    await runtime._close_topic(topic_id)
             # A Stop removes hook work just before the runtime finishes closing
             # its subscription. Await consumers already removed from the live
             # registry so their final DB/session cleanup cannot escape the test.
@@ -444,6 +441,19 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     raise AssertionError(
         f"turn on {topic_id} never closed; open work: {list(service._hook_work)}"
     )
+
+
+async def close_topic_subscriptions(service, topic_id) -> None:
+    """Explicitly release persistent runtime subscriptions at a test boundary."""
+    for runtime in service._compute._runtimes():
+        if topic_id in getattr(runtime, "_subscriptions", {}):
+            await runtime._close_topic(topic_id)
+
+
+async def finish_turn(service, topic_id) -> None:
+    """Settle a turn, then release its subscriptions at a test boundary."""
+    await settle_turn(service, topic_id)
+    await close_topic_subscriptions(service, topic_id)
 
 
 def stub_compute(channel: StubChannel | None = None) -> ComputePool:

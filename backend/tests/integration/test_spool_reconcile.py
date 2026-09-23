@@ -24,7 +24,13 @@ from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import (
+    StubChannel,
+    close_topic_subscriptions,
+    finish_turn,
+    settle_turn,
+    stub_compute,
+)
 
 
 class QuietScreen(StubChannel):
@@ -174,7 +180,7 @@ async def test_spooled_event_is_backfilled_then_deduped(
         topic_id=topic_id, author="u", content="再来", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert len(_event_blocks_for(rows, eid)) == 1  # deduped, not duplicated
@@ -236,7 +242,7 @@ async def test_spooled_chat_message_is_backfilled(
     )
     async for _ in svc.converse(topic_id=tid, author="u", content="再来", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert (
@@ -299,7 +305,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
             topic_id=tid, author="u", content="继续", summon=True
         )
     ]
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     event_frames = [
         f
@@ -387,6 +393,7 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
         rows = await BlockRepository(session).list_for_topic(tid)
     matches = [b for b in _progress(rows) if b.content == text]
     assert len(matches) == 1  # not duplicated
+    await close_topic_subscriptions(svc, tid)
 
 
 @pytest.mark.anyio
@@ -412,7 +419,7 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     # The re-delivery is dropped: one event landed, not two.
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -445,7 +452,7 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
     # The later turn is what reconciles the spool.
     async for _ in svc.converse(topic_id=tid, author="u", content="接着", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
@@ -567,7 +574,7 @@ async def test_spooled_message_flushes_land_as_one_block(
 
     async for _ in svc.converse(topic_id=tid, author="u", content="继续", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
@@ -606,7 +613,7 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     _spool_flush(spool, "f1", "m1", 1, "第二行", final=True)
     async for _ in svc.converse(topic_id=tid, author="u", content="再催", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
@@ -661,7 +668,7 @@ async def test_live_coalesced_message_is_not_backfilled_again(
     pid, tid = await _project_topic(factory)
     async for _ in svc.converse(topic_id=tid, author="u", content="说吧", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
     spool = ws.spool_dir(pid, tid)
     _spool_flush(spool, "f0", "m1", 0, "第一行\n")
@@ -672,7 +679,7 @@ async def test_live_coalesced_message_is_not_backfilled_again(
         topic_id=tid, author="u", content="继续", summon=True
     ):
         pass
-    await settle_turn(quiet, tid)
+    await finish_turn(quiet, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
@@ -699,7 +706,7 @@ async def test_abandoned_partial_lands_joined_after_grace(
     _spool_flush(spool, "f1", "m1", 1, "然后就断了", age_s=stale)
     async for _ in svc.converse(topic_id=tid, author="u", content="人呢", summon=True):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
@@ -766,7 +773,7 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(live, tid)
+    await finish_turn(live, tid)
 
     _spool_stop(ws.spool_dir(pid, tid), "stop-1", text)
     quiet = _quiet_service(factory, tmp_path)
@@ -774,7 +781,7 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
         topic_id=tid, author="u", content="再来", summon=True
     ):
         pass
-    await settle_turn(quiet, tid)
+    await finish_turn(quiet, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)

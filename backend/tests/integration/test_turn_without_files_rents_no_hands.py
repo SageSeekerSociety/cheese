@@ -43,7 +43,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
-from tests.conftest import StubChannel, settle_turn
+from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.integration.conftest import session_auth_headers
 
 pytestmark = pytest.mark.anyio
@@ -310,7 +310,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
         topic_id=topic_id, author="u", content="刚才那个结论是什么", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert channel.asked == [False], "私聊这一轮不该去要手"
     async with factory() as session:

@@ -25,7 +25,7 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 
 
 class SlowScreen(StubChannel):
@@ -406,7 +406,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
     runner.subscribe_messages()
     await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
 
 
@@ -467,7 +467,7 @@ async def test_other_teammate_message_waits_for_live_turn(
     assert screen.runs == 1
     screen.release.set()
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     assert "Second task" in screen.last_prompt
     assert screen.runs == 2
 
@@ -494,7 +494,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
         topic_id=tid, author="u", content="Write a plan", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     replies = [
@@ -534,7 +534,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         topic_id=topic_id, author="u", content="start", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     async with factory() as session:
         topic = await TopicRepository(session).get(topic_id)
@@ -597,7 +597,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     # The parked turn finishes normally afterwards.
     agent.release.set()
     await asyncio.wait_for(turn, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
@@ -656,7 +656,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -721,7 +721,7 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert agent.calls == 1
     async with factory() as session:
@@ -821,7 +821,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
     provider.release.set()
     await asyncio.wait_for(run, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     # Finishing the original run preserves that marker; later work will not
     # say the injected message all over again.
@@ -927,7 +927,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
         if (block.meta or {}).get("event_type") == "delivery_fallback"
     ]
     assert len(persisted) == 1
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
 
 @pytest.mark.anyio

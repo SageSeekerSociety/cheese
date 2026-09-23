@@ -24,7 +24,7 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
 
@@ -286,7 +286,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
     assert len(agent.prompts) == 1
     assert "[u]: 修一下登录页" in agent.prompts[0]  # the original text, verbatim
     await runner.drain()
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
 
 
 def test_parked_hook_schedules_a_settle(client, tmp_path, monkeypatch):

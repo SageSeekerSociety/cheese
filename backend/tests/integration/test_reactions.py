@@ -10,7 +10,7 @@ import pytest
 
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
-from tests.conftest import settle_turn, stub_compute
+from tests.conftest import finish_turn, stub_compute
 from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
@@ -235,4 +235,4 @@ async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
     async with factory() as session:
         rows = (await session.scalars(select(BlockReaction))).all()
     assert rows == []
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
