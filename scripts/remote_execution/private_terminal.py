@@ -401,6 +401,7 @@ def main():
         checkout = None
         if room:
             checkout = checkout_after_the_round(room)
+        server.assert_healthy()
         dump(folder / "provider-requests.json", requests)
         terminal()
         dump(

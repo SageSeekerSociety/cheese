@@ -4,6 +4,7 @@ import datetime as dt
 import gzip
 import json
 import shutil
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -22,6 +23,15 @@ def log(path, value):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        error = traceback.format_exc()
+        self.state.setdefault("handler_errors", []).append(error)
+        log(self.state["dir"] / "handler-errors.jsonl", {"error": error})
+        super().handle_error(request, client_address)
+
+    def assert_healthy(self):
+        assert not self.state.get("handler_errors"), self.state["handler_errors"]
 
 
 class Handler(BaseHTTPRequestHandler):
