@@ -47,3 +47,19 @@ method.
 
 The feedback targets and remaining optimization work are tracked in
 [issue #1279](https://github.com/SageSeekerSociety/cheese/issues/1279).
+
+## Recurring measurement
+
+Required CI feedback measurement runs at 00:23, 06:23, 12:23 and 18:23 UTC. Each run measures one
+non-overlapping six-hour UTC block after a further six hours for runs to settle. A manual dispatch may supply both UTC bounds to reproduce a
+different fixed cohort. Each run retains the report, immutable attempt records,
+raw paginated API responses, inputs and progress log for 90 days.
+
+The report keeps pull-request and merge-group events separate. It reports
+first-attempt outcomes and the cohort-tail first-attempt success streak separately
+from latest outcomes after reruns. Timing is also grouped by the jobs that
+actually ran, so a documentation-only selection is not evidence for a full
+backend or E2E selection. The workflow records observations only; it does not
+activate a gate. GitHub Actions job metadata also cannot reveal a Playwright test
+that passed on retry, so the 20-clean-run acceptance criterion still requires
+the retained test artifacts.
