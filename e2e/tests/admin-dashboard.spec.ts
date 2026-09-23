@@ -22,9 +22,14 @@ test.describe.configure({ timeout: 180_000 });
 const consoleNoise: string[] = [];
 
 /** 这一页自己招来的报错。环境噪声（外部源、种子缺的头像）的判据和反馈那条共用。 */
-function unexpectedNoise(): string[] {
+function unexpectedNoise(allowed500Path?: string): string[] {
   const appOrigin = appOriginOf(test.info().project.use.baseURL);
-  return consoleNoise.filter((entry) => !isEnvironmentNoise(entry, appOrigin));
+  return consoleNoise.filter((entry) => {
+    // The error-state test deliberately injects one 500; allow only that request's
+    // browser console line, while keeping all unrelated console errors actionable.
+    if (allowed500Path && entry.includes(allowed500Path) && entry.includes('500')) return false;
+    return !isEnvironmentNoise(entry, appOrigin);
+  });
 }
 
 test.beforeEach(({ page }) => {
@@ -212,12 +217,29 @@ test('看板拉取失败：错误块显示服务端原话，「重试」真重�
   await expect(page.locator('.ad__kpis').getByText('等你处理')).toBeVisible();
   await expect(page.getByText('看板加载失败')).toHaveCount(0);
 
-  expect(unexpectedNoise(), '浏览器控制台不该有报错').toEqual([]);
+  expect(unexpectedNoise('/api/admin/stats/pipeline?days=7'), '除测试注入的 500 外，浏览器控制台不该有报错').toEqual([]);
 });
 
 test('下钻：用量横条指向项目页，性能表 chevron 展开分钟级 spark', async ({ page }) => {
   await login(page);
   const seen = watchStats(page);
+
+  // CI starts from an empty usage database. Keep the real endpoint, response envelope,
+  // aggregation, and all other fields; add one display row only when the real query
+  // has no project to drill into.
+  await page.route('**/api/admin/stats/usage**', async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (response.ok() && payload.data.top_projects.length === 0) {
+      payload.data.top_projects = [{
+        project_id: '00000000-0000-4000-8000-000000000001',
+        name: 'CI drill-down project',
+        tokens: 1,
+        cost_usd: 0,
+      }];
+    }
+    await route.fulfill({ response, json: payload });
+  });
 
   await page.goto('/admin/dashboard');
   await expect

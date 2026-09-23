@@ -96,7 +96,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { jwtDecode } from 'jwt-decode'
-import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -167,15 +166,9 @@ const submit = handleSubmit(async (value) => {
       throw new Error(t('account.invalidPasswordResetLink'))
     }
 
-    // 生成 SRP 盐值和验证器
-    const srpSalt = srp.generateSalt()
-    const privateKey = srp.derivePrivateKey(srpSalt, username.value, value.password)
-    const srpVerifier = srp.deriveVerifier(privateKey)
-
     await UserApi.recoverPasswordVerify({
       token: token.value,
-      srpSalt,
-      srpVerifier,
+      password: value.password,
     })
 
     toast.success(t('account.passwordResetPleaseSignInAgain'))

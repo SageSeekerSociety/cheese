@@ -68,7 +68,6 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
-import srp from 'secure-remote-password/client'
 
 import { UserApi } from '@/network/api/users'
 
@@ -82,12 +81,9 @@ const errorMessage = ref('')
 const password = ref('')
 
 // URL 参数
-const verificationType = ref<'password' | 'srp'>('password')
 const email = ref('')
 const sessionId = ref('')
 const stateToken = ref('') // 新的决策流程使用
-const salt = ref('')
-const serverPublicEphemeral = ref('')
 
 // 验证规则
 const passwordRules = [(v: string) => !!v || '请输入密码', (v: string) => v.length >= 8 || '密码至少8位']
@@ -102,11 +98,7 @@ const handleVerify = async () => {
   errorMessage.value = ''
 
   try {
-    if (verificationType.value === 'password') {
-      await verifyWithPassword()
-    } else {
-      await verifyWithSRP()
-    }
+    await verifyWithPassword()
   } catch (err) {
     handleVerifyError(err)
   } finally {
@@ -143,74 +135,11 @@ const verifyWithPassword = async () => {
   }
 }
 
-// SRP 验证
-const verifyWithSRP = async () => {
-  try {
-    // 生成客户端密钥对
-    const clientEphemeral = srp.generateEphemeral()
-
-    if (stateToken.value) {
-      // 新的决策流程 - 使用 SRP 绑定专用接口
-      // 1. 初始化 SRP 绑定
-      const initResponse = await UserApi.initOAuthSrpBinding({
-        stateToken: stateToken.value,
-        username: email.value,
-        clientPublicEphemeral: clientEphemeral.public,
-      })
-
-      // 2. 派生私钥和会话密钥
-      const privateKey = srp.derivePrivateKey(initResponse.data.salt, email.value, password.value)
-      const session = srp.deriveSession(
-        clientEphemeral.secret,
-        initResponse.data.serverPublicEphemeral,
-        initResponse.data.salt,
-        email.value,
-        privateKey
-      )
-
-      // 3. 验证 SRP 绑定（通过表单提交）
-      UserApi.verifyOAuthSrpBinding({
-        sessionId: initResponse.data.sessionId,
-        clientPublicEphemeral: clientEphemeral.public,
-        clientProof: session.proof,
-      })
-      // 后端会重定向，不需要处理响应
-    } else {
-      // 传统强制绑定流程 - 使用现有的 SRP 参数
-      // 派生私钥
-      const privateKey = srp.derivePrivateKey(salt.value, email.value, password.value)
-
-      // 派生会话密钥
-      const session = srp.deriveSession(
-        clientEphemeral.secret,
-        serverPublicEphemeral.value,
-        salt.value,
-        email.value,
-        privateKey
-      )
-
-      await UserApi.verifyOAuth({
-        sessionId: sessionId.value,
-        clientPublicEphemeral: clientEphemeral.public,
-        clientProof: session.proof,
-      })
-      // 如果没有抛出异常，说明验证成功，等待后端重定向
-    }
-  } catch (err: any) {
-    // 如果是重定向响应，直接跳转
-    if (err.response && err.response.status === 302) {
-      window.location.href = err.response.headers.location
-      return
-    }
-    throw new Error('安全验证失败，请检查您的密码')
-  }
-}
-
 // 处理验证错误
 const handleVerifyError = (err: any) => {
   console.error('OAuth 验证失败:', err)
 
-  if (err.message.includes('密码') || err.message.includes('SRP') || err.message.includes('安全验证')) {
+  if (err.message.includes('密码')) {
     errorMessage.value = '密码错误，请重新输入'
   } else {
     error.value = '验证失败，请重试'
@@ -219,12 +148,9 @@ const handleVerifyError = (err: any) => {
 
 onMounted(() => {
   // 获取 URL 参数
-  verificationType.value = (route.query.type as 'password' | 'srp') || 'password'
   email.value = (route.query.email as string) || ''
   sessionId.value = (route.query.sessionId as string) || ''
   stateToken.value = (route.query.stateToken as string) || ''
-  salt.value = (route.query.salt as string) || ''
-  serverPublicEphemeral.value = (route.query.serverPublicEphemeral as string) || ''
 
   // 验证必要参数
   if (!email.value) {
@@ -235,11 +161,6 @@ onMounted(() => {
   // 必须有sessionId（传统流程）或stateToken（新决策流程）其中之一
   if (!sessionId.value && !stateToken.value) {
     error.value = '验证参数不完整，请重新开始登录流程'
-    return
-  }
-
-  if (verificationType.value === 'srp' && (!salt.value || !serverPublicEphemeral.value)) {
-    error.value = 'SRP 验证参数不完整，请重新开始登录流程'
     return
   }
 })

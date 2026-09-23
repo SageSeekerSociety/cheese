@@ -22,16 +22,12 @@ on:
 # each merge in its own group: with a shared `github.ref` key, a second merge
 # cancelled the first one's run and main was left with no result for that
 # commit — and a cancelled run is not a red run, so main can carry code this
-# workflow never finished checking with nothing on the commit to say so. It is
-# also precisely the wrong run to cancel: the scope job below already skips
-# main pushes whose tree passed on the PR, so anything reaching the e2e job is
-# a commit CI has NOT seen. build.yml already keyed on sha for main; these did
-# not. PR refs keep the ref key, so repeated pushes to one PR still supersede
-# each other.
+# workflow never finished checking with nothing on the commit to say so. Main
+# must retain a result for every source-changing commit. PR refs keep the
+# ref key, so repeated pushes to one PR still supersede each other.
 #
 # Least privilege: none of these jobs write anything back to GitHub, so the
-# token they run with should not be able to. Jobs that DO need more (the
-# `scope` gh-api jobs) declare it at job level, which overrides this.
+# token they run with should not be able to.
 permissions:
   contents: read
 
@@ -40,89 +36,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # See test.yml: merged squash commits contain the exact PR tree already gated.
-  # The cheap API decision preserves full CI for direct main pushes.
-  scope:
-    # This API-only decision must not wait for the finite E2E runner pool.
-    # Hosted Ubuntu includes gh; the repository is public.
-    runs-on: ubuntu-latest
-    # Same job as test.yml's scope: measured median 0.2m, wide margin.
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    outputs:
-      run_heavy: ${{ steps.decide.outputs.run_heavy }}
-    steps:
-      - name: Decide whether this commit already passed PR CI
-        id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # PR runs now belong to the caller, not this reusable workflow.
-          WORKFLOW_FILE: required-ci.yml
-        run: |
-          run_heavy=true
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            if pr_head="$(gh api \
-              -H 'Accept: application/vnd.github+json' \
-              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-              --jq '.[] | select(.merged_at != null and .merge_commit_sha == env.GITHUB_SHA) | .head.sha')"; then
-              if [ -n "$pr_head" ] && passed="$(gh api --method GET \
-                "/repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs" \
-                -f head_sha="$pr_head" -f event=pull_request -f status=success \
-                --jq '.workflow_runs | length')"; then
-                if [ "$passed" -gt 0 ]; then
-                  run_heavy=false
-                  echo "::notice::Exact squash-merge tree already passed this PR workflow; skipping duplicate main suite"
-                fi
-              fi
-            else
-              echo "::warning::Could not inspect associated PRs; running the suite (safe fallback)"
-            fi
-          fi
-          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
-
+  # Every matching main commit runs E2E. A PR result belongs to the PR head
+  # and may have excluded this workflow, so it cannot prove the merged commit
+  # ran it.
   e2e:
-    needs: scope
     env:
       JWT_SECRET: test-secret
       ENVIRONMENT: test
       DOCKER_CONTEXT: default
-    # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
-    # it answers "did this exact commit already pass CI on its PR, so can the
-    # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
-    # `== 'true'` it did: when `scope` failed, its output was empty, the
-    # condition was false, and the heavy jobs were SKIPPED — the workflow
-    # reported nothing ran and looked green-ish, having tested nothing.
-    #
-    # That is not hypothetical. On 2026-08-13 the org's Actions billing lapsed;
-    # every ubuntu-latest job was refused before it started ("The job was not
-    # started because recent account payments have failed"), 0 steps, 2 seconds.
-    # `scope` was hosted at the time, so it died, and with it the self-hosted
-    # `test` job on machines that were sitting idle and perfectly able to run.
-    # That lapse is also why `scope` itself has since moved onto the pool — but
-    # the rule below stays regardless: an optimisation must never veto the tests.
-    #
-    # Now: skip only on an explicit `false` from a `scope` that actually ran.
-    # Any other outcome — failed, cancelled, never started — means we do not
-    # know, and not knowing means run the tests.
-    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
-    # Not ubuntu-latest: this is a private repo, so hosted minutes are billed
-    # per-minute, and this job needs native amd64 Docker plus the Playwright
-    # browser install. Runs on the cheese-ci pool (MicroCloud VMs, one runner
-    # slot each — see docs/infrastructure.md), NOT on the dev box: the box is
-    # the deploy target and its single slot serialized every heavy job.
     runs-on: [self-hosted, cheese-ci]
     # Same reasoning as test.yml's: a successful `e2e` runs 5m41s to 10m26s
     # (median 7m33s) over the last 40 runs, and 15 minutes has already
     # cancelled a run at 20m01s that was slow rather than stuck.
     timeout-minutes: 25
-    # Persists backend/srp_rs's Cargo build cache outside the checkout, same
-    # as test.yml's migration-heads/test jobs — see the comment on
-    # migration-heads there for the full reasoning (why this path survives
-    # actions/checkout and is immune to docker prune, and why it's keyed per
-    # job rather than shared).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -163,9 +89,6 @@ jobs:
             "DROP DATABASE IF EXISTS \"$CHEESE_E2E_DB\" WITH (FORCE)"
           docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"$CHEESE_E2E_DB\""
-
-      - name: Point Cargo at the persistent target dir
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
 
       # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
       # See the note in test.yml's migration-heads job.
@@ -208,9 +131,6 @@ jobs:
       - name: Install backend deps
         working-directory: backend
         run: uv sync --all-extras
-
-      - name: Report Cargo target cache size
-        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Run migrations
         working-directory: backend

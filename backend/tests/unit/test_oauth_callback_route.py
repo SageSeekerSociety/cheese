@@ -139,7 +139,9 @@ class TestOAuthCallback:
         assert pending["userId"] == 9 and pending["type"] == "password"
 
     @pytest.mark.anyio
-    async def test_email_conflict_srp_user_gets_srp_params(self, monkeypatch):
+    async def test_email_conflict_with_an_srp_record_asks_for_the_password(
+        self, monkeypatch
+    ):
         info = OAuthUserInfo(id="uid-6", email="s@ruc.edu.cn", name="S")
         oauth = _oauth_service(user_info=info, existing_connection=None)
         auth = _auth_service(
@@ -148,12 +150,12 @@ class TestOAuthCallback:
             )
         )
         session = MagicMock(rollback=AsyncMock())
+        stored: dict = {}
 
-        monkeypatch.setattr("app.api.routes.users._store_oauth_pending", AsyncMock())
-        monkeypatch.setattr(
-            "app.api.routes.users._srp_generate_ephemeral",
-            lambda verifier: ("srv-pub", "srv-sec"),
-        )
+        async def _fake_store(session_id, data):
+            stored[session_id] = data
+
+        monkeypatch.setattr("app.api.routes.users._store_oauth_pending", _fake_store)
 
         resp = await handle_oauth_callback(
             "ruc",
@@ -166,9 +168,9 @@ class TestOAuthCallback:
         )
 
         loc = _location(resp)
-        assert "type=srp" in loc
-        assert "salt=aa11" in loc
-        assert "serverPublicEphemeral=srv-pub" in loc
+        assert "type=password" in loc and "sessionId=" in loc
+        (pending,) = stored.values()
+        assert pending["userId"] == 21 and pending["type"] == "password"
 
     @pytest.mark.anyio
     async def test_unknown_identity_redirects_to_decision_page(self):

@@ -23,8 +23,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: remote-execution-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep every main result: a shared group can replace a pending run even when
+  # cancel-in-progress is false. PRs and the experiment branch still supersede
+  # stale runs.
+  group: remote-execution-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   private-chat:
@@ -65,10 +68,6 @@ jobs:
           version: '0.12.1'
           cache-local-path: ${{ env.UV_SHARED_CACHE }}
           enable-cache: false
-      - name: Load the runner Rust toolchain
-        run: |
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/cargo" --version
       - run: uv sync --project backend --locked
       - name: Install native terminal test dependencies
         run: |
@@ -219,9 +218,6 @@ jobs:
           enable-cache: false
       - name: Install terminal test dependencies
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          cargo --version
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
           redis_key="$(apt-cache show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
           redis_cache="$HOME/.cache/cheese-ci/redis-debs/$redis_key"

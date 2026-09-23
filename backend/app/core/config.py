@@ -103,8 +103,6 @@ class Settings(BaseSettings):
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
-    # main's auth (real SRP/JWT login — A3): the merged app uses this as the
-    # canonical identity. jwt_secret signs/verifies the product's access tokens.
     redis_url: str = "redis://localhost:6379/0"
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and

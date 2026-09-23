@@ -124,9 +124,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser'
-import * as srp from 'secure-remote-password/client'
 
 import { sudoPurposeFor } from '@/utils/sudo'
 
@@ -149,21 +147,12 @@ const totpCode = ref('')
 const errorMessage = ref('')
 const webAuthnSupported = ref(false)
 
-// 添加 SRP 相关状态
-const srpSession = ref<{
-  clientEphemeral?: { secret: string; public: string }
-  serverPublicEphemeral?: string
-  salt?: string
-}>({})
-
 // 在 SudoVerify.vue 中添加认证方法相关的状态
 const authMethods = ref<{
-  supports_srp: boolean
   supports_passkey: boolean
   supports_2fa: boolean
   requires_2fa: boolean
 }>({
-  supports_srp: false,
   supports_passkey: false,
   supports_2fa: false,
   requires_2fa: false,
@@ -207,7 +196,7 @@ const handlePasskeyVerify = async () => {
 
 // 密码验证
 const handlePasswordVerify = async () => {
-  if (!password.value || !currentUserName.value) {
+  if (!password.value) {
     errorMessage.value = '请输入密码'
     return
   }
@@ -215,59 +204,8 @@ const handlePasswordVerify = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    // 先获取认证方法
-    const methodsResponse = await UserApi.getAuthMethods(currentUserName.value)
-    const methods = methodsResponse.data
-
-    if (methods.supports_srp) {
-      // 使用 SRP 流程
-      // 1. 生成客户端临时值对
-      srpSession.value.clientEphemeral = srp.generateEphemeral()
-
-      // 2. 发送空的 credentials 到服务器初始化 SRP
-      const initResponse = await UserApi.verifySudoSrpInit()
-
-      const { salt, serverPublicEphemeral } = initResponse.data
-      srpSession.value.salt = salt
-      srpSession.value.serverPublicEphemeral = serverPublicEphemeral
-
-      // 3. 使用服务器返回的盐值和临时值生成会话密钥和证明
-      const privateKey = srp.derivePrivateKey(salt, currentUserName.value, password.value)
-      const clientSession = srp.deriveSession(
-        srpSession.value.clientEphemeral.secret,
-        serverPublicEphemeral,
-        salt,
-        currentUserName.value,
-        privateKey
-      )
-
-      // 4. 发送客户端证明到服务器
-      const verifyResponse = await UserApi.verifySudoSrpVerify(
-        {
-          clientPublicEphemeral: srpSession.value.clientEphemeral.public,
-          clientProof: clientSession.proof,
-        },
-        purpose.value
-      )
-
-      const { serverProof, sudoTicket } = verifyResponse.data
-
-      // 5. 验证服务器证明
-      srp.verifySession(srpSession.value.clientEphemeral.public, clientSession, serverProof)
-
-      // 6. 完成验证
-      await handleVerifySuccess(sudoTicket)
-    } else {
-      // 使用传统密码验证
-      const response = await UserApi.verifySudoPassword(password.value, purpose.value)
-
-      // 如果服务器返回了 srpUpgraded = true，说明账户已自动升级到 SRP
-      if (response.data.srpUpgraded) {
-        toast.success('您的账户安全性已自动升级')
-      }
-
-      await handleVerifySuccess(response.data.sudoTicket)
-    }
+    const response = await UserApi.verifySudoPassword(password.value, purpose.value)
+    await handleVerifySuccess(response.data.sudoTicket)
   } catch (error: any) {
     errorMessage.value = error.message || '验证失败'
   } finally {

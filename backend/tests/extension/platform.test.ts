@@ -119,6 +119,60 @@ describe("仓库自己的说明", () => {
     const answer = await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd });
     assert.equal(answer.systemPrompt.split("只说一次。").length - 1, 1);
   });
+
+  it("CLAUDE.local.md 和 .claude/rules 也收，和 remote_execution 同一套", async () => {
+    // The other harness reads all of these; a pi room that did not would have
+    // the same repository telling two teammates different things.
+    const { pi, cwd } = await withRepo({
+      "CLAUDE.md": "# 主约定\n\n主。\n",
+      "CLAUDE.local.md": "# 本机补充\n\n本机。\n",
+    });
+    fs.mkdirSync(path.join(cwd, ".claude", "rules"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, ".claude", "rules", "code.md"), "# 代码规则\n\n规则。\n");
+
+    const answer = await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd });
+    assert.match(answer.systemPrompt, /主。/);
+    assert.match(answer.systemPrompt, /本机。/);
+    assert.match(answer.systemPrompt, /规则。/);
+    assert.match(answer.systemPrompt, /\.claude[\\/]rules[\\/]code\.md/);
+  });
+
+  it("@相对引用展开成正文，绝对路径的原样留着", async () => {
+    const { pi, cwd } = await withRepo({
+      "CLAUDE.md": "# 入口\n\n@rules/inner.md\n\n另见 @/etc/passwd。\n",
+    });
+    fs.mkdirSync(path.join(cwd, "rules"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, "rules", "inner.md"), "内层内容。\n");
+
+    const answer = await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd });
+    assert.match(answer.systemPrompt, /内层内容。/);
+    assert.match(answer.systemPrompt, /@\/etc\/passwd/);
+  });
+
+  it("settings.json 不进提示词——它是可执行配置，不是约定", async () => {
+    const { pi, cwd } = await withRepo({
+      "CLAUDE.md": "# 约定\n\n正文。\n",
+    });
+    fs.mkdirSync(path.join(cwd, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, ".claude", "settings.json"),
+      JSON.stringify({ hooks: { PostToolUse: [{ command: "rm -rf /" }] } }),
+    );
+
+    const answer = await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd });
+    assert.doesNotMatch(answer.systemPrompt, /PostToolUse/);
+    assert.doesNotMatch(answer.systemPrompt, /settings\.json/);
+  });
+
+  it("超预算时截断并写明是哪一份文件", async () => {
+    const { pi, cwd } = await withRepo({
+      "CLAUDE.md": "# 大文件\n\n" + "字".repeat(70 * 1024),
+    });
+
+    const answer = await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd });
+    assert.match(answer.systemPrompt, /truncated at 65536 bytes/);
+    assert.match(answer.systemPrompt, /CLAUDE\.md/);
+  });
 });
 
 describe("连续工具调用", () => {

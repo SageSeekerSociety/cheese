@@ -8,13 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
-from app.domain.user.passwords import check_password, hash_password
+from app.domain.user.passwords import (
+    check_password,
+    hash_password,
+    password_too_long,
+)
 from app.domain.user.repositories import (
     UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
 )
+from app.domain.user.srp_verifier import srp_password_matches
 
 USERNAME_MIN_LENGTH = 4
 USERNAME_MAX_LENGTH = 32
@@ -267,19 +272,12 @@ class UserAuthService:
         username: str,
         password: str,
     ) -> tuple[User, UserProfile] | None:
-        """Validate username/password using the bcrypt hash stored in DB.
+        """Validate username/password against the stored credential.
 
         Returns (user, profile) when successful; otherwise None.
         """
         user = await self._user_repo.get_by_username(username)
-        if user is None or not user.hashed_password:
-            return None
-
-        # SRP users cannot authenticate via legacy password
-        if user.hashed_password.startswith("SRP:"):
-            return None
-
-        if not await check_password(password, user.hashed_password):
+        if user is None or not await self.verify_password(user, password):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)
@@ -289,6 +287,26 @@ class UserAuthService:
             return None
 
         return user, profile
+
+    async def verify_password(self, user: User, password: str) -> bool:
+        """Check ``password`` against the user's stored credential.
+
+        An SRP record is checked by recomputing its verifier and, on a match,
+        replaced with a bcrypt hash. A password bcrypt cannot hold (over 72
+        bytes) is accepted but leaves the SRP record in place.
+        """
+        stored = user.hashed_password or ""
+        if not stored or not password:
+            return False
+        if not stored.startswith("SRP:"):
+            return await check_password(password, stored)
+        if not srp_password_matches(stored, user.username, password):
+            return False
+        if not password_too_long(password):
+            await self._user_repo.update_password(
+                user.id, await hash_password(password)
+            )
+        return True
 
     async def get_user_with_profile(self, user_id: int) -> tuple[User, UserProfile]:
         user = await self._user_repo.get_by_id(user_id)
@@ -305,11 +323,6 @@ class UserAuthService:
     async def update_password(self, user_id: int, new_password: str) -> None:
         hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
-
-    async def set_srp_credentials(
-        self, user_id: int, srp_salt: str, srp_verifier: str
-    ) -> None:
-        await self._user_repo.update_password(user_id, f"SRP:{srp_salt}:{srp_verifier}")
 
     @staticmethod
     def _reject_reserved(username: str) -> None:
@@ -339,11 +352,9 @@ class UserAuthService:
         password: str,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
-        """Create a new user using legacy password-based auth.
+        """Create a new user whose password is stored as a bcrypt hash.
 
-        NOTE: This is a simplified Python-side registration:
-        - 不发送真实邮件，也不校验 emailCode。
-        - 仅覆盖最常见的用户名/邮箱 + 密码注册路径。
+        The email code is the caller's to check; this does not send mail.
         """
         self._reject_reserved(username)
         if await self._user_repo.is_username_taken(username):
@@ -360,51 +371,20 @@ class UserAuthService:
             avatar_id=default_avatar_id,
         )
 
-    async def register_with_srp(
-        self,
-        *,
-        username: str,
-        nickname: str,
-        email: str,
-        srp_salt: str,
-        srp_verifier: str,
-        default_avatar_id: int = 1,
-    ) -> tuple[User, UserProfile]:
-        """Create a new user using SRP-based auth.
-
-        SRP salt and verifier are stored as the hashed_password field for now.
-        In a full SRP implementation, separate columns would be used.
-        """
-        self._reject_reserved(username)
-        if await self._user_repo.is_username_taken(username):
-            raise ValueError("USERNAME_TAKEN")
-        if await self._user_repo.is_email_taken(email):
-            raise ValueError("EMAIL_TAKEN")
-
-        srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-        return await self._create_account(
-            username=username,
-            email=email,
-            hashed_password=srp_data,
-            nickname=nickname,
-            avatar_id=default_avatar_id,
-        )
-
     async def register_oauth_decision(
         self,
         *,
         email: str,
         username: str,
         nickname: str,
-        srp_salt: str | None = None,
-        srp_verifier: str | None = None,
+        password: str | None = None,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
         """Create the account chosen on the OAuth decision page. The user picked
-        the username/nickname and optionally set a password (SRP credentials);
-        without one the account authenticates solely through the provider."""
+        the username/nickname and optionally set a password; without one the
+        account authenticates solely through the provider."""
         self._reject_reserved(username)
-        hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
+        hashed = await hash_password(password) if password else None
         return await self._create_account(
             username=username,
             email=email,
