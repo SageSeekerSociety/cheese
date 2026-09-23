@@ -425,9 +425,9 @@ const handleAddPasskey = async () => {
   addingPasskey.value = true
   try {
     await withSudo(
-      async () => {
+      async (sudoTicket) => {
         // 1. 获取注册选项
-        const optionsResponse = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!)
+        const optionsResponse = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
         const optionsJSON = optionsResponse.data.options
 
         // 2. 开始注册流程
@@ -471,16 +471,23 @@ const handleDeletePasskey = async (credentialId: string) => {
 
   if (!confirmed) return
 
+  await deletePasskey(credentialId)
+}
+
+// 验证后回到本页时从这里重试：用户已经确认过，不再弹确认框
+const deletePasskey = async (credentialId: string) => {
+  if (!currentUserId.value) return
+
   deletingPasskey.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.deletePasskey(currentUserId.value!, credentialId)
+      async (sudoTicket) => {
+        await UserApi.deletePasskey(currentUserId.value!, credentialId, sudoTicket)
         await fetchPasskeys()
         toast.success('密钥已删除')
       },
       'deletePasskey',
-      null,
+      { credentialId },
       router
     )
   } catch (error: any) {
@@ -525,6 +532,10 @@ onMounted(async () => {
       disableTOTP: handleDisableTOTP,
       generateBackupCodes: handleConfirmGenerateBackupCodes,
       addPasskey: handleAddPasskey,
+      deletePasskey: async () => {
+        const credentialId = sudoStore.retryOperation?.opData?.credentialId
+        if (credentialId) await deletePasskey(credentialId)
+      },
       initTOTP: handleInitTOTP,
       update2FASettings: async () => {
         if (sudoStore.retryOperation?.opData !== undefined) {
@@ -571,8 +582,8 @@ const handleInitTOTP = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        const response = await UserApi.initializeTOTP(currentUserId.value!)
+      async (sudoTicket) => {
+        const response = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
         totpSecret.value = response.data.secret
         qrCodeData.value = response.data.qrcode
         showTOTPSetup.value = true
@@ -675,8 +686,8 @@ const handleConfirmGenerateBackupCodes = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        const response = await UserApi.generateBackupCodes(currentUserId.value!)
+      async (sudoTicket) => {
+        const response = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
         backupCodes.value = response.data.backup_codes
         showGenerateBackupCodesDialog.value = false
         setupStep.value = 'backup'
@@ -700,8 +711,8 @@ const handleUpdateSettings = async (value: boolean) => {
   settingsLoading.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.update2FASettings(currentUserId.value!, value)
+      async (sudoTicket) => {
+        await UserApi.update2FASettings(currentUserId.value!, value, sudoTicket)
       },
       'update2FASettings',
       value,

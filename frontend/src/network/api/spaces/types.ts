@@ -521,6 +521,8 @@ export type TeachingUnit = {
   assignmentTaskId: number | null
   publishedAt: number | null
   dueAt: number | null
+  /** 这一周的小测；null = 没有。学生首页靠它决定要不要给「本周有小测」那个入口。 */
+  quizId: number | null
 }
 
 export type GetTeachingUnitsResponseData = {
@@ -550,4 +552,117 @@ export type PatchTeachingUnitRequestData = {
   dueAt?: number | null
   clearDueAt?: boolean
   published?: boolean
+}
+
+/** 这道题怎么答、怎么判，由 `kind` 决定（见后端 quiz_models）。 */
+export type QuizQuestionKind = 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_BLANK' | 'SHORT_ANSWER'
+
+export type Quiz = {
+  id: number
+  spaceId: number
+  unitId: number
+  title: string
+  dueAt: number | null
+}
+
+export type QuizQuestion = {
+  id: number
+  position: number
+  kind: QuizQuestionKind
+  prompt: string
+  options: string[]
+  points: number
+  /** 只有老师那份有 —— 学生的载荷里没有这一格（答案键从不发给学生）。 */
+  answer?: unknown
+}
+
+export type QuizAttempt = {
+  id: number
+  userId: number
+  submittedAt: number
+  gradedAt: number | null
+  /** 学生那份才有：已经判出来的分，与「还有题等着老师判」。 */
+  score?: number
+  pendingReview?: boolean
+}
+
+export type QuizAnswer = {
+  questionId: number
+  response: unknown
+  awardedPoints: number | null
+  comment: string
+  needsReview: boolean
+}
+
+/** 一行「谁交的」。老师的载荷里才有。 */
+export type QuizSubmission = {
+  attemptId: number
+  userId: number
+  submittedAt: number
+  gradedAt: number | null
+  score: number
+  maxScore: number
+  user?: { id: number; username: string; nickname?: string }
+}
+
+/** 复核队列里的一项：一道等着老师判的简答。 */
+export type QuizReviewItem = {
+  answerId: number
+  attemptId: number
+  userId: number
+  submittedAt: number
+  questionId: number
+  kind: QuizQuestionKind
+  prompt: string
+  referenceAnswer: unknown
+  points: number
+  response: unknown
+  user?: { id: number; username: string; nickname?: string }
+}
+
+/**
+ * 小测页的全部东西。`quiz` 为 null = 这一周还没有小测（学生什么都看不到）。
+ *
+ * **学生那份没有 `answer`，也没有 `submissions` / `reviewQueue`** —— 分叉在服务端
+ * 一次做完，前端不自己判一次权限。
+ */
+export type TeachingQuizData = {
+  quiz: Quiz | null
+  canTeach?: boolean
+  questions?: QuizQuestion[]
+  maxScore?: number
+  myAttempt?: QuizAttempt | null
+  myAnswers?: QuizAnswer[]
+  submissions?: QuizSubmission[]
+  reviewQueue?: QuizReviewItem[]
+}
+
+export type PostQuizRequestData = {
+  title: string
+  dueAt?: number | null
+}
+
+export type PatchQuizRequestData = {
+  title?: string
+  dueAt?: number | null
+  clearDueAt?: boolean
+}
+
+export type PostQuizQuestionRequestData = {
+  kind: QuizQuestionKind
+  prompt: string
+  options?: string[]
+  answer?: unknown
+  points?: number
+}
+
+export type PatchQuizQuestionRequestData = PostQuizQuestionRequestData
+
+export type PostQuizAttemptRequestData = {
+  answers: { questionId: number; response: unknown }[]
+}
+
+export type PatchQuizAnswerRequestData = {
+  points: number
+  comment?: string
 }
