@@ -20,12 +20,7 @@ defineProps<{
 <template>
   <v-tooltip :text="text" location="top" open-on-click :open-delay="0">
     <template #activator="{ props: tip }">
-      <button
-        type="button"
-        class="ant"
-        v-bind="tip"
-        :aria-label="t('feedback.dashboard.noteTip.aria')"
-      >
+      <button type="button" class="ant" v-bind="tip" :aria-label="t('feedback.dashboard.noteTip.aria')">
         <span class="ant__icon mdi mdi-information-outline" aria-hidden="true" />
       </button>
     </template>

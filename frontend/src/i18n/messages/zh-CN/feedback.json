@@ -2,11 +2,21 @@
   "queue": {
     "label": "反馈队列",
     "tab": {
-      "all": "全部"
+      "all": "全部",
+      "scope": "只筛这一页",
+      "scopeHint": "状态页签只在当前这一页里筛，其他页里可能还有同状态的反馈"
     },
     "search": {
       "placeholder": "搜索反馈",
       "scope": "只搜标题、摘要、正文、提交人"
+    },
+    "window": {
+      "label": "日期筛选",
+      "since": "提交：{v}",
+      "resolved": "解决：{v}",
+      "deployed": "上线：{v}",
+      "days": "近 {n} 天",
+      "clear": "清除这个日期筛选"
     },
     "lane": {
       "label": "栏位",
@@ -54,7 +64,8 @@
       "resolved": "标记已修复",
       "deployed": "标记已上线"
     },
-    "supports": "支持 {n}"
+    "supports": "支持 {n}",
+    "comments": "评论 {n}"
   },
   "queueDetail": {
     "back": "返回",

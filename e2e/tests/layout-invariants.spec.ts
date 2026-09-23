@@ -270,6 +270,30 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(detail)).toEqual([]);
   });
 
+  test('管理后台 · 队列页宽档（1920 视口）', async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto('/admin/queue');
+    await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
+    await expect(page.locator('.qlist')).toBeVisible();
+
+    // 1440 封顶居中：1920 去掉 64 全局 rail 与 200 侧栏后可用 1656，这一档两侧
+    // 各留 108。量的参照物是 `.admin-shell__main`（它自己无 padding），不是按
+    // 264 这个常数反推——侧栏宽度将来再改，这条用例量的东西不变。
+    const box = await page.locator('.qpage__inner').boundingBox();
+    const main = await page.locator('.admin-shell__main').boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(1438);
+    expect(box!.width).toBeLessThanOrEqual(1442);
+    const left = box!.x - main!.x;
+    const right = main!.x + main!.width - (box!.x + box!.width);
+    expect(Math.abs(left - 108)).toBeLessThanOrEqual(2);
+    expect(Math.abs(right - 108)).toBeLessThanOrEqual(2);
+
+    // 宽档的意义是整行在 1440 里放得下，不是把横滚挪到更宽的屏上。
+    const noHScroll = await page.locator('.qlist').evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    expect(noHScroll).toBeTruthy();
+  });
+
   test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
     await login(page);
     await page.goto('/admin/members');
