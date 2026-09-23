@@ -2918,6 +2918,21 @@ export interface GatewayModelInfo {
   usage: GatewayUsageNumbers
   /** 仅 origin=config 时给出：可复制的 config.yaml 片段（页面「怎么改」那一段）。 */
   config_yaml?: string
+  /** 行内 sparkline 的逐日 token（与详情折线同源同账）；窗口内没用过是逐日 0。 */
+  series?: number[]
+  /** 这条模型由一条导入的订阅喂养时的 overlay（终态订阅不给）：列表「订阅」徽章
+   *  与详情抽屉订阅块的数据。 */
+  subscription?: GatewaySubscriptionOverlay | null
+}
+
+/** 列表/详情里模型项上的订阅 overlay。 */
+export interface GatewaySubscriptionOverlay {
+  id: string
+  status: string
+  account_email: string | null
+  token_expires_at?: string | null
+  last_refresh_error?: string | null
+  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
 }
 
 export interface GatewayModelsPayload {
@@ -3009,6 +3024,9 @@ export interface GatewayAuditEntry {
   target: string
   result: 'ok' | 'failed'
   detail: string | null
+  /** 改动前后的字段快照（写入时已脱敏）。两者都为空时这项操作没有可展示的字段变化。 */
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
 }
 
 export interface GatewayAuditPayload {
@@ -3070,6 +3088,103 @@ export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number 
 
 export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
   return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
+}
+
+/* ---- 管理端（LLM 订阅导入）----
+ *
+ * 「网关池里的订阅型上游」的平台侧一半：device flow 四步（开、轮询、取消）加凭据
+ * 生命周期（列表、手动刷新、按需额度、移除）。凭据永不出现 —— 服务端 DTO 已经
+ * 脱敏，这里也没有一个 token 字段。 */
+
+/** 一个速率窗口的额度读数（wham/usage 的解析结果）。`utilization` 是 0–100。 */
+export interface SubscriptionQuotaTier {
+  name: string
+  utilization: number
+  resets_at: string | null
+}
+
+/** 一条平台级 LLM 订阅（契约 §3.3 的 DTO）。token 与密文字段一个字母都不在。 */
+export interface LlmSubscription {
+  id: string
+  provider: string
+  label: string
+  status: string
+  account_email: string | null
+  chatgpt_account_id: string | null
+  token_expires_at: string | null
+  last_refresh_at: string | null
+  last_refresh_error: string | null
+  linked_model_name: string | null
+  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
+  created_by_handle: string
+  created_at: string
+}
+
+export interface DeviceFlowStartResponse {
+  flow_id: string
+  user_code: string
+  verification_uri: string
+  expires_in: number
+  interval: number
+}
+
+/** 轮询一次的三态：`pending` 继续等；`complete` 带订阅 DTO；`expired` 要重开一个。 */
+export type DeviceFlowPollResponse =
+  | { state: 'pending' }
+  | { state: 'complete'; subscription: LlmSubscription }
+  | { state: 'expired' }
+
+/** 开一次导入（或定向重授权：`targetSubscriptionId` 非空时服务端校验同一身份）。 */
+export function startSubscriptionDeviceFlow(body: {
+  provider?: 'openai_codex'
+  label?: string | null
+  target_subscription_id?: string | null
+}): Promise<DeviceFlowStartResponse> {
+  return request<DeviceFlowStartResponse>('/admin/subscriptions/device-flows', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function pollSubscriptionDeviceFlow(flowId: string): Promise<DeviceFlowPollResponse> {
+  return request<DeviceFlowPollResponse>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/poll`, {
+    method: 'POST',
+  })
+}
+
+export function cancelSubscriptionDeviceFlow(flowId: string): Promise<{ cancelled: boolean }> {
+  return request<{ cancelled: boolean }>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/cancel`, {
+    method: 'POST',
+  })
+}
+
+export function listSubscriptions(): Promise<{ items: LlmSubscription[] }> {
+  return request<{ items: LlmSubscription[] }>('/admin/subscriptions')
+}
+
+/** 手动刷新一次并推进网关。凭据被判死时回 `reauth_required` 状态（不是报错）。 */
+export function refreshSubscription(id: string): Promise<{
+  status: string
+  token_expires_at: string | null
+  last_refresh_error: string | null
+}> {
+  return request(`/admin/subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' })
+}
+
+/** 按需查一次额度。传输错误时服务端回旧快照（`stale: true`）。 */
+export function getSubscriptionQuota(id: string): Promise<{
+  tiers: SubscriptionQuotaTier[]
+  queried_at: string | null
+  stale: boolean
+}> {
+  return request(`/admin/subscriptions/${encodeURIComponent(id)}/quota`)
+}
+
+/** 移除一条订阅：置终态，并 best-effort 停用挂在网关上的模型。 */
+export function revokeSubscription(id: string): Promise<{ revoked: boolean }> {
+  return request<{ revoked: boolean }>(`/admin/subscriptions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */

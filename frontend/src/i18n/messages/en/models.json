@@ -29,12 +29,21 @@
     "requests": "Calls in window",
     "failed": "Failed requests"
   },
+  "health": {
+    "label": "Gateway"
+  },
   "table": {
     "label": "Models",
     "empty": "No models yet",
     "calls": "calls",
     "blocked": "Blocked",
-    "readOnly": "Read-only",
+    "howToEdit": "Read-only · How to edit",
+    "failRate": "{rate} failed",
+    "subscriptionOk": "Subscription OK",
+    "subscriptionRefreshFailed": "Refresh failed",
+    "subscriptionReauth": "Re-auth required",
+    "estimateNote": "Subscription · spend is estimated",
+    "sparklineHint": "Daily token usage",
     "column": {
       "name": "Model",
       "origin": "Origin",
@@ -42,11 +51,13 @@
       "capabilities": "Capabilities",
       "usage": "Usage in window",
       "offered": "Offered",
+      "status": "Status",
       "actions": "Actions"
     },
     "origin": {
       "config": "Config file",
-      "runtime": "Added at runtime"
+      "runtime": "Added at runtime",
+      "subscription": "Subscription"
     },
     "offered": {
       "on": "Offered",
@@ -87,13 +98,62 @@
     "calls": "Calls",
     "tokens": "tokens",
     "cost": "Cost",
+    "failedRequests": "Failed requests",
     "configYaml": "Config snippet",
     "copy": "Copy",
     "copied": "Copied",
     "configNote": "This model comes from the config file. It can only be changed in deploy/gateway/config.yaml, then the gateway is published.",
     "series": {
-      "tokens": "tokens"
+      "tokens": "tokens",
+      "spend": "Spend"
+    },
+    "subscription": {
+      "title": "Subscription",
+      "account": "Account",
+      "status": "Status",
+      "tokenExpires": "Credentials expire {time}",
+      "quotaTitle": "Quota",
+      "quotaRefresh": "Refresh reading",
+      "quotaEmpty": "No quota reading yet",
+      "quotaUpdated": "Reading updated {time}",
+      "quotaStale": "Could not refresh; showing the reading from {time}",
+      "resetsAt": "resets {time}",
+      "reauth": "Re-authorize",
+      "revoke": "Remove subscription",
+      "revokeTitle": "Remove subscription",
+      "revokeBody": "This disconnects the subscription and blocks the gateway model “{name}” — projects can no longer pick it.",
+      "estimateNote": "Subscription · spend is estimated",
+      "tier": {
+        "fiveHour": "5-hour window",
+        "sevenDay": "7-day window",
+        "thirtyDay": "30-day window",
+        "other": "Usage window"
+      }
     }
+  },
+  "subscription": {
+    "import": "Import subscription",
+    "dialogTitle": "Import a ChatGPT subscription",
+    "intro": "Connect a ChatGPT subscription to the platform: once authorized, it appears in the list as a model that projects can pick like any other.",
+    "reauthIntro": "Re-authorize your ChatGPT account: sign in with the original account and the subscription resumes.",
+    "start": "Start authorization",
+    "label": "Label",
+    "labelHint": "Optional. Note whose subscription this is so you can tell it apart later.",
+    "waiting": "Waiting for you",
+    "codeHint": "Open the authorization page, sign in, and enter this code",
+    "openPage": "Open the authorization page",
+    "copy": "Copy",
+    "copied": "Copied",
+    "polling": "Waiting for authorization…",
+    "expiresIn": "The code expires in {minutes} minutes",
+    "expired": "The code has expired",
+    "restart": "Start over",
+    "cancelImport": "Cancel import",
+    "success": "Subscription connected",
+    "accountAs": "Account: {email}",
+    "done": "Done",
+    "failed": "Authorization did not complete",
+    "retry": "Try again"
   },
   "dialog": {
     "cancel": "Cancel",
@@ -188,7 +248,34 @@
       "delete": "Deleted a model",
       "blocked": "Blocked/unblocked a model",
       "budget": "Changed a limit",
+      "subscriptionStart": "started subscription import",
+      "subscriptionComplete": "completed subscription import",
+      "subscriptionCancel": "cancelled subscription import",
+      "subscriptionRefresh": "refreshed subscription token",
+      "subscriptionRevoke": "revoked subscription",
       "other": "Other action"
+    },
+    "diff": {
+      "show": "Show changes",
+      "hide": "Hide",
+      "empty": "No field changed",
+      "yes": "Yes",
+      "no": "No",
+      "field": {
+        "name": "Name",
+        "label": "Label",
+        "blocked": "Blocked",
+        "selectable": "Offered",
+        "priced": "Priced",
+        "upstreamModel": "Upstream model",
+        "apiBase": "Upstream host",
+        "provider": "Provider",
+        "prices": "Prices",
+        "capabilities": "Capabilities",
+        "maxBudgetUsd": "Brake (USD)",
+        "extraHeaders": "Extra headers",
+        "other": "Other fields"
+      }
     }
   }
 }
