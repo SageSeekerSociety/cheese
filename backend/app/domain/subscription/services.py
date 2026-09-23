@@ -131,6 +131,10 @@ class SubscriptionService:
                 )
             for row in await self._repo.pendings_for_provider(provider):
                 row.status = "superseded"
+        # 部分唯一索引在**同一事务内**也算数，而一次 flush 里 INSERT 先于
+        # UPDATE —— 先把旧行的终态单独落下去，再插新的 pending 行，否则新行
+        # 落库那一刻旧行在库里还是非终态，直接撞 `uq_..._live_provider`。
+        await self._db.flush()
 
         now = _utcnow()
         sub = self._repo.add(
