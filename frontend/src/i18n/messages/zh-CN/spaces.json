@@ -339,6 +339,12 @@
     "noMembers": "暂无成员",
     "setAsAdmin": "设为管理员",
     "unsetAsAdmin": "取消管理员",
+    "dangerZone": "危险操作",
+    "deleteSpace": "删除题目板",
+    "deleteSpaceHint": "删除后这块题目板会从所有人的列表里消失，且无法恢复。只有题目板所有者能删除它。",
+    "confirmDeleteSpace": "确定要删除题目板「{name}」吗？删除后它对所有人消失，且无法恢复。",
+    "deleteSpaceSuccess": "题目板已删除",
+    "deleteSpaceFailed": "删除题目板失败",
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
