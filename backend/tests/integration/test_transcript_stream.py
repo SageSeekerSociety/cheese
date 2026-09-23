@@ -13,7 +13,7 @@ from app.core.storage import LocalStorageBackend
 from app.domain.topic import transcript_stream as stream
 from app.domain.topic.models import RawTranscript
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 
 async def test_a_blocked_upload_times_out_and_can_retry(db_factory, tmp_path):

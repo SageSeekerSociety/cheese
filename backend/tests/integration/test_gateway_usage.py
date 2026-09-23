@@ -28,6 +28,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 def _replace_chat_sleep(monkeypatch, sleep):
     from app.domain.agent import chat

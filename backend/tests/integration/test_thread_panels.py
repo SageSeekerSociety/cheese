@@ -82,8 +82,12 @@ async def test_a_room_totals_what_ran_in_it(client):
     就是那个会话在花钱。"""
     pid, room = _room(client)
     _thread(client, room)
-    await _spend(client.test_factory, pid, room, tokens=100)
-    await _spend(client.test_factory, pid, room, tokens=42)
+    client.portal.call(
+        lambda: _spend(client.test_request_factory, pid, room, tokens=100)
+    )
+    client.portal.call(
+        lambda: _spend(client.test_request_factory, pid, room, tokens=42)
+    )
 
     stats = client.get(f"/topics/{room}/usage").json()["data"]
     assert stats["total_tokens"] == 142
@@ -98,7 +102,9 @@ async def test_a_card_has_no_bill_of_its_own(client):
     """
     pid, room = _room(client)
     thread = _thread(client, room)
-    await _spend(client.test_factory, pid, room, tokens=100)
+    client.portal.call(
+        lambda: _spend(client.test_request_factory, pid, room, tokens=100)
+    )
 
     assert client.get(f"/topics/{thread}/usage").status_code == 404
 
@@ -115,8 +121,12 @@ async def test_a_cards_site_rides_with_the_card(client):
     """
     pid, room = _room(client)
     thread = _thread(client, room)
-    await _event(client.test_factory, pid, room, "房间里跑的")
-    await _event(client.test_factory, pid, room, "这条支线跑的", thread)
+    client.portal.call(
+        lambda: _event(client.test_request_factory, pid, room, "房间里跑的")
+    )
+    client.portal.call(
+        lambda: _event(client.test_request_factory, pid, room, "这条支线跑的", thread)
+    )
 
     assert client.get(f"/topics/{thread}/transcript").status_code == 404
     blocks = client.get(f"/topics/{room}/tasks/{thread}").json()["data"]["blocks"]
@@ -129,8 +139,12 @@ async def test_a_rooms_site_does_not_swallow_its_threads(client):
     """另一半：房间的现场还是房间自己的主线，不因为派了活就多出别处的动作。"""
     pid, room = _room(client)
     thread = _thread(client, room)
-    await _event(client.test_factory, pid, room, "房间里跑的")
-    await _event(client.test_factory, pid, room, "这条支线跑的", thread)
+    client.portal.call(
+        lambda: _event(client.test_request_factory, pid, room, "房间里跑的")
+    )
+    client.portal.call(
+        lambda: _event(client.test_request_factory, pid, room, "这条支线跑的", thread)
+    )
 
     shown = [
         b["content"]
@@ -150,8 +164,14 @@ async def test_a_cards_timeline_can_be_cut_to_its_newest(client):
     pid, room = _room(client)
     thread = _thread(client, room)
     for i in range(3):
-        await _event(client.test_factory, pid, room, f"第 {i} 步", thread)
-    await _event(client.test_factory, pid, room, "房间里跑的")
+        client.portal.call(
+            lambda i=i: _event(
+                client.test_request_factory, pid, room, f"第 {i} 步", thread
+            )
+        )
+    client.portal.call(
+        lambda: _event(client.test_request_factory, pid, room, "房间里跑的")
+    )
 
     newest = client.get(f"/topics/{room}/tasks/{thread}?limit=2").json()["data"]
     assert [b["content"] for b in newest["blocks"]] == ["第 1 步", "第 2 步"]

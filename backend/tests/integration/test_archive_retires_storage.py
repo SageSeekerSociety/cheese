@@ -26,7 +26,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.main import app as asgi_app
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 
 async def _put(path: str, body: bytes, *, token: str | None) -> httpx.Response:

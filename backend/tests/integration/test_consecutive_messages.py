@@ -25,6 +25,8 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 class WorkingScreen(StubChannel):
     """一个接了活就一直在干、直到被放行才收工的会话。

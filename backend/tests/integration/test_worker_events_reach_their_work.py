@@ -48,7 +48,7 @@ from app.domain.room_task.thread_label import thread_label
 from app.domain.topic.repositories import TopicProgressRepository
 from app.domain.topic.services import TopicService
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 
 class _IdleChannel(Channel):

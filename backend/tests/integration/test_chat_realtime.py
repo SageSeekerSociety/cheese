@@ -27,6 +27,8 @@ from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 class SlowScreen(StubChannel):
     """A session that works for minutes: it takes the prompt and answers only

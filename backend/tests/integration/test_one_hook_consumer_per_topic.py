@@ -39,7 +39,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 REPLY = "这轮我把三处都改了，测试也跑绿了。"
 

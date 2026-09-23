@@ -16,7 +16,7 @@ from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 
 async def test_archive_deadline_is_stable_across_retries_and_configuration_changes(
@@ -69,7 +69,9 @@ async def test_cancel_before_claim_reuses_environment_without_device_commands(
         assert room.resource_id is None
         assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
         await session.commit()
-    assert await retire.sweep_retired_storage(client.test_factory) == {
+    assert client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    ) == {
         "completed": 0,
         "pending": 0,
     }
@@ -87,7 +89,9 @@ async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
     monkeypatch.setattr(retire, "_inventory", inventory)
     monkeypatch.setattr(retire, "_device_action", action)
     monkeypatch.setattr(retire, "_flush_transcripts", flush)
-    result = await retire.sweep_retired_storage(client.test_factory)
+    result = client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
     assert result == {"completed": 0, "pending": 1}
     assert [call.args[3] for call in action.await_args_list] == [
         "prepare",
@@ -100,7 +104,9 @@ async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
     # A fresh worker/session resumes the same recorded resource, not a fresh inventory.
     flush.side_effect = None
     flush.return_value = []
-    assert await retire.sweep_retired_storage(client.test_factory) == {
+    assert client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    ) == {
         "completed": 1,
         "pending": 0,
     }
@@ -126,7 +132,9 @@ async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeyp
     monkeypatch.setattr(
         retire, "_device_action", AsyncMock(side_effect=TimeoutError("no stop receipt"))
     )
-    await retire.sweep_retired_storage(client.test_factory)
+    client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "preparing"
         with pytest.raises(ConflictError, match="正在停止"):
@@ -150,7 +158,9 @@ async def test_unpublished_backend_source_can_be_reopened_before_parking(
             ]
         ),
     )
-    await retire.sweep_retired_storage(client.test_factory)
+    client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "pending"
@@ -246,7 +256,9 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
 
     monkeypatch.setattr(retire, "_device_action", old_device)
     monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
-    await retire.sweep_retired_storage(client.test_factory)
+    client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "claimed"
         await TopicService(session).unarchive(room_id, by="owner")
@@ -287,7 +299,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
     action = AsyncMock(side_effect=RuntimeError("device offline"))
     monkeypatch.setattr(retire, "_device_action", action)
     monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
-    await retire.sweep_retired_storage(client.test_factory)
+    client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "claimed" and operation.last_error == "device offline"
@@ -295,7 +309,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
         assert isinstance(room.resource_id, uuid.UUID) and room.resource_id != room_id
         await session.commit()
     action.side_effect = None
-    assert await retire.sweep_retired_storage(client.test_factory) == {
+    assert client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    ) == {
         "completed": 1,
         "pending": 0,
     }
@@ -366,7 +382,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         operation.lease_holder = "another-backend:1:deadbeef"
         await session.commit()
     # Another process is on it: this sweep does not touch it.
-    assert await retire.sweep_retired_storage(client.test_factory) == {
+    assert client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    ) == {
         "completed": 0,
         "pending": 0,
     }
@@ -377,7 +395,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         # That process died: its lease ran out.
         operation.lease_until = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
-    assert await retire.sweep_retired_storage(client.test_factory) == {
+    assert client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    ) == {
         "completed": 1,
         "pending": 0,
     }

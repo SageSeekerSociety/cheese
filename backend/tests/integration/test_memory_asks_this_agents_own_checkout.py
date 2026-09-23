@@ -19,7 +19,7 @@ from app.domain.memory.redundant import agent_checkout_search
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 HANDS_OF_THE_REVIEWER = "reviewer-hands"
 HANDS_OF_THE_DEFAULT = "default-hands"

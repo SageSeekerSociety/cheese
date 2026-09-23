@@ -46,7 +46,7 @@ from app.domain.user.models import User
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import session_auth_headers
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
 
 INSTALLED = {
     "workspace": "/project",

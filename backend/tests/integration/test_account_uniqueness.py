@@ -121,7 +121,12 @@ async def test_username_differing_only_in_case_is_taken(client):
     )
 
     assert second.status_code == 409, second.text
-    assert await _count_users(client.test_factory, username="casey01") == 1
+    assert (
+        client.portal.call(
+            lambda: _count_users(client.test_request_factory, username="casey01")
+        )
+        == 1
+    )
 
 
 async def test_email_differing_only_in_case_is_taken(client):
@@ -210,7 +215,12 @@ async def test_oauth_create_for_a_linked_identity_leaves_no_second_account(clien
     again = _oauth_create(client, provider_uid="linked-1", username="linked_second")
 
     assert again["error_code"] == "ALREADY_LINKED"
-    assert await _count_users(client.test_factory, username="linked_second") == 0
+    assert (
+        client.portal.call(
+            lambda: _count_users(client.test_request_factory, username="linked_second")
+        )
+        == 0
+    )
 
 
 async def test_a_linked_provider_identity_cannot_be_linked_again(db_factory):

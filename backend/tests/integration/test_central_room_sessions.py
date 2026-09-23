@@ -279,7 +279,9 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         session, Opening("shared system", model="fixture", agent_handle="agent")
     )
     assert handle.thread_id == "codex-thread"
-    place = await session_place(client.test_factory, topic, AGENT, "codex")
+    place = client.portal.call(
+        lambda: session_place(client.test_request_factory, topic, AGENT, "codex")
+    )
     assert place is not None
     assert place.runtime == {
         "harness": "codex",
@@ -413,7 +415,9 @@ async def test_old_executor_process_takes_release_bootstrap(
     }
     await central.ensure_ready(**kwargs)
     central._hub.exec.assert_awaited_once()
-    place = await session_place(client.test_factory, topic)
+    place = client.portal.call(
+        lambda: session_place(client.test_request_factory, topic)
+    )
     assert place is not None
     target = place.lease
     assert target["upgrade_pending"] is upgrade_pending
@@ -600,7 +604,9 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     assert target["device_id"] == "executor"
     assert target["context_tree"] == {"generation": "fixture", "entries": {}}
     assert target["url"].startswith("http://central-api/")
-    place = await session_place(client.test_factory, topic)
+    place = client.portal.call(
+        lambda: session_place(client.test_request_factory, topic)
+    )
     assert place is not None
     assert place.machine == "center"
     assert place.lease == target
@@ -638,7 +644,9 @@ async def test_a_lease_on_another_executor_is_rented_again_not_refused(
         precheck=Placement("executor", 1, "agent", rented=True),
     )
     central._hub.exec.assert_awaited_once()
-    place = await session_place(client.test_factory, topic)
+    place = client.portal.call(
+        lambda: session_place(client.test_request_factory, topic)
+    )
     assert place is not None
     assert place.lease["device_id"] == "executor"
 

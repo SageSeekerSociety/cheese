@@ -13,6 +13,8 @@ from app.domain.agent.chat import ChatService
 from tests.conftest import stub_compute
 from tests.integration.conftest import chat_ws_url, room_agent_seat
 
+pytestmark = pytest.mark.usefixtures("stub_project_forge")
+
 
 def _create_topic(client, owner: str = "alice") -> str:
     p = client.post("/projects", json={"name": "P"}).json()["data"]
