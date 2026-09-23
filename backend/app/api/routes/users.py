@@ -2216,21 +2216,17 @@ async def sudo_auth(
             raise BadRequestError("password is required")
 
         user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
-        if not user.hashed_password or user.hashed_password.startswith("SRP:"):
+        if not user.hashed_password:
             raise AuthenticationRequiredError(
                 "Password authentication not available for this account"
             )
-
-        from app.domain.user.passwords import check_password
-
-        hashed_password = user.hashed_password
 
         redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
         try:
             await _spend_sudo_password_attempt(
                 redis,
                 auth_user.user_id,
-                lambda: check_password(password, hashed_password),
+                lambda: auth_service.verify_password(user, password),
                 message="Invalid password",
             )
         finally:
@@ -4275,15 +4271,12 @@ async def oauth_verify_conflict(
     if not await _spend_oauth_password_attempt(pending["username"]):
         return _oauth_too_many_attempts_redirect()
     try:
-        if pending["type"] == "password":
-            password = payload.get("password") or ""
+        password = payload.get("password") or ""
+        # A plaintext password is checked against whatever the account stores
+        # now, so an SRP account can answer an "srp" session with it too.
+        if password or pending["type"] == "password":
             user, _profile = await auth_service.get_user_with_profile(user_id)
-            hashed = user.hashed_password or ""
-            if hashed.startswith("SRP:") or not hashed or not password:
-                return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
-            from app.domain.user.passwords import check_password
-
-            if not await check_password(password, hashed):
+            if not await auth_service.verify_password(user, password):
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
         else:
             success, _proof = _srp_verify_session(
@@ -4455,19 +4448,9 @@ async def oauth_bind_user(
     if not await _spend_oauth_password_attempt(username):
         return _oauth_too_many_attempts_redirect()
 
-    from app.domain.user.passwords import check_password
-
     user = await auth_service._user_repo.get_by_username(username)
-    hashed = (user.hashed_password or "") if user is not None else ""
-    # SRP accounts must use the bind/srp/init + verify pair; they, unknown
-    # users and wrong passwords all get the same answer.
-    if (
-        user is None
-        or not hashed
-        or hashed.startswith("SRP:")
-        or not password
-        or not await check_password(password, hashed)
-    ):
+    # Unknown users and wrong passwords get the same answer.
+    if user is None or not await auth_service.verify_password(user, password):
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
     await _clear_oauth_password_attempts(username)
 
