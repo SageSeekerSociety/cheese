@@ -989,7 +989,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         bootstrap.configure(payload)
         capsys.readouterr()
         original = ready()
-        task = runtime.request(
+        started = runtime.request(
             state,
             "invoke",
             {
@@ -1002,7 +1002,9 @@ def test_executor_release_waits_for_commands_and_preserves_results(
                     "run_in_background": True,
                 },
             },
-        )["value"]["backgroundTaskId"]
+        )
+        assert "value" in started, started
+        task = started["value"]["backgroundTaskId"]
         changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
         if update_kind == "runtime":
             changed += b"\n# release fixture\n"
@@ -1017,7 +1019,14 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         ).decode()
         before = source.read_bytes()
         payload["env"]["CHEESE_TOKEN"] = "refreshed-while-busy"
-        bootstrap.configure(payload)
+        try:
+            bootstrap.configure(payload)
+        except RuntimeError as error:
+            log = home / ".cheese/executor-bootstrap.log"
+            pytest.fail(
+                f"{error}; executor-bootstrap.log:\n"
+                f"{log.read_text() if log.exists() else '<missing>'}"
+            )
         deferred = json.loads(capsys.readouterr().out)
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
@@ -1041,7 +1050,14 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert result["stdout"] == "kept"
-        bootstrap.configure(payload)
+        try:
+            bootstrap.configure(payload)
+        except RuntimeError as error:
+            log = home / ".cheese/executor-bootstrap.log"
+            pytest.fail(
+                f"{error}; restart executor-bootstrap.log:\n"
+                f"{log.read_text() if log.exists() else '<missing>'}"
+            )
         capsys.readouterr()
         updated = ready()
         assert updated["pid"] != original["pid"]
