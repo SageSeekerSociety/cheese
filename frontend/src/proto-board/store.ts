@@ -20,6 +20,7 @@ import {
   type Person,
   type Role,
   SPACE,
+  type TaskFile,
   TASKS,
 } from './fixtures'
 
@@ -76,6 +77,8 @@ export function publishTask(draft: {
   videoUrl?: string | null
   /** 从 PDF 批量发时写「PDF · 第 2 页」，手写的题没有这一项。 */
   origin?: string
+  /** 发题时附上的材料。可选：不附就是空数组。 */
+  files?: TaskFile[]
 }): BoardTask {
   const task: BoardTask = {
     id: `new-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -92,6 +95,7 @@ export function publishTask(draft: {
     maxTeamSize: draft.maxTeamSize,
     videoUrl: draft.videoUrl ?? null,
     origin: draft.origin,
+    files: draft.files ?? [],
     submitted: 0,
     passed: 0,
     claimTrend: [],
@@ -104,7 +108,8 @@ export function publishTask(draft: {
 /** 从 PDF 生成的那批草稿，勾选确认之后落到这里 —— 和手写一样进待审队列。
  *  真平台是 `POST /tasks/publish/from-pdf/confirm`：预览归预览，不确认不落库。 */
 export function publishFromPdf(
-  drafts: { title: string; summary: string; category: string; sourcePage: number }[]
+  drafts: { title: string; summary: string; category: string; sourcePage: number }[],
+  files: TaskFile[] = []
 ): BoardTask[] {
   return drafts.map((d) =>
     publishTask({
@@ -117,6 +122,7 @@ export function publishFromPdf(
       maxTeamSize: 1,
       deadlineDays: 14,
       origin: `PDF · 第 ${d.sourcePage} 页`,
+      files,
     })
   )
 }

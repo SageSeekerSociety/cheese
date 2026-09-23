@@ -8,7 +8,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import PanelCard from '../components/PanelCard.vue'
-import { bilibiliBvid, CATEGORIES, PDF_PREVIEW } from '../fixtures'
+import { bilibiliBvid, CATEGORIES, FILE_ICON, fileSize, PDF_PREVIEW, type TaskFile } from '../fixtures'
 import { isManager, publishFromPdf, publishTask } from '../store'
 
 const router = useRouter()
@@ -27,6 +27,31 @@ const minTeam = ref(1)
 const maxTeam = ref(1)
 const deadlineDays = ref(14)
 const videoUrl = ref('')
+
+// --- 附件（可选）--------------------------------------------------------------
+//
+// 原型里没有真的文件选择器，用一份「可挑的文件」代替：点「添加附件」从菜单里挑一个，
+// 挑完就出现在下面。真平台上**题目还没有附件这一层**（最近的两个原语是挂在提交物
+// 要求上的 Attachment 与素材库的 Material），所以这里给的是要设计的那一层。
+const files = ref<TaskFile[]>([])
+const attachMenu = ref(false)
+
+const FILE_PICKS: TaskFile[] = [
+  { name: '起步代码.zip', size: 132 * 1024, kind: 'archive', downloads: 0 },
+  { name: '接口约定.md', size: 6 * 1024, kind: 'doc', downloads: 0 },
+  { name: '样例数据.csv', size: 78 * 1024, kind: 'doc', downloads: 0 },
+  { name: '时序图.png', size: 214 * 1024, kind: 'image', downloads: 0 },
+  { name: '题目原文.pdf', size: 1_208_320, kind: 'pdf', downloads: 0 },
+]
+
+function addFile(f: TaskFile) {
+  if (!files.value.some((x) => x.name === f.name)) files.value.push({ ...f })
+  attachMenu.value = false
+}
+
+function removeFile(name: string) {
+  files.value = files.value.filter((f) => f.name !== name)
+}
 
 /** 非 B 站链接能存不能播，所以这里不是拦，是问一句（与真平台表单同一个做法）。 */
 const videoWarn = ref(false)
@@ -71,6 +96,7 @@ function create() {
     maxTeamSize: maxTeam.value,
     deadlineDays: deadlineDays.value,
     videoUrl: videoUrl.value.trim() || null,
+    files: files.value,
   })
   pendingSubmit.value = false
   videoWarn.value = false
@@ -84,6 +110,13 @@ function create() {
  *  报回来的信息**，所以照样摆在界面上。 */
 const parsing = ref(false)
 const parsed = ref(false)
+/** 解析时抽出来的东西可以顺手当附件发出去：原 PDF、以及那几张插图。 */
+const attachSource = ref(true)
+const attachImages = ref(true)
+
+const pdfFiles = computed(() =>
+  PDF_PREVIEW.files.filter((f) => (f.kind === 'pdf' ? attachSource.value : attachImages.value))
+)
 /** 确认发布之后的回执：显示「刚发了几道」，并给一个去队列的入口。 */
 const publishedCount = ref(0)
 
@@ -128,7 +161,8 @@ function confirmPdf() {
       summary: d.summary.trim(),
       category: d.category,
       sourcePage: d.sourcePage,
-    }))
+    })),
+    pdfFiles.value
   )
   // 就地给回执，不跳走：审核队列是「先审自己的、再按提交时间从早到晚」排的，
   // 刚发的题会落在队列靠后，跳过去反而看不见自己刚做了什么。
@@ -240,6 +274,17 @@ function confirmPdf() {
           </li>
         </ul>
 
+        <!-- 解析出来的东西顺手当附件：原 PDF 与那几张插图，选中就跟着这批题一起发。 -->
+        <div class="pdf__attach">
+          <b>附带给领取者</b>
+          <div class="pdf__attach-row">
+            <v-checkbox v-model="attachSource" label="原 PDF 文件" density="compact" hide-details />
+            <v-checkbox v-model="attachImages" label="抽出的插图（3 张）" density="compact" hide-details />
+            <v-spacer />
+            <span class="pdf__attach-note">这 {{ pdfFiles.length }} 个文件会附在<b>每一道</b>生成出来的题上</span>
+          </div>
+        </div>
+
         <div class="pdf__actions">
           <span class="pdf__actions-note">
             确认后这 {{ pickedDrafts.length }} 道都会进<b>待审核</b>队列 —— 解析归解析，上板还是要人审。
@@ -328,6 +373,46 @@ function confirmPdf() {
               </template>
               <template v-else>只支持 Bilibili 链接；不填也可以。</template>
             </div>
+          </div>
+        </PanelCard>
+
+        <PanelCard
+          title="附件（可选）"
+          subtitle="领取这道题的人和审核它的人都能下载；没领的人看得到文件名，下载要等领取"
+        >
+          <ul v-if="files.length" class="att__list">
+            <li v-for="f in files" :key="f.name" class="att__row">
+              <v-icon :icon="FILE_ICON[f.kind]" size="18" />
+              <span class="att__name">{{ f.name }}</span>
+              <span class="att__size">{{ fileSize(f.size) }}</span>
+              <v-spacer />
+              <v-btn size="x-small" variant="text" color="error" @click="removeFile(f.name)">移除</v-btn>
+            </li>
+          </ul>
+          <p v-else class="att__empty">
+            还没有附件。题目本身能说清就不必附；要给学生起步代码、样例数据、题面 PDF 时再附。
+          </p>
+
+          <div class="att__actions">
+            <v-menu v-model="attachMenu" location="bottom">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" variant="tonal" prepend-icon="mdi-paperclip" size="small"> 添加附件 </v-btn>
+              </template>
+              <v-list density="compact" class="att__menu">
+                <v-list-subheader>原型里没有真的文件选择器，从这几个里挑</v-list-subheader>
+                <v-list-item
+                  v-for="p in FILE_PICKS"
+                  :key="p.name"
+                  :title="p.name"
+                  :subtitle="fileSize(p.size)"
+                  :prepend-icon="FILE_ICON[p.kind]"
+                  @click="addFile(p)"
+                />
+              </v-list>
+            </v-menu>
+            <span class="att__note">
+              {{ files.length ? `共 ${files.length} 个文件` : '最多 10 个，单个 20MB 以内（原型里是假的）' }}
+            </span>
           </div>
         </PanelCard>
 
@@ -624,6 +709,79 @@ function confirmPdf() {
   margin-top: 4px;
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.78rem;
+}
+
+.pdf__attach {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  font-size: 0.8rem;
+}
+
+.pdf__attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.pdf__attach-note {
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.76rem;
+}
+
+/* ---- 附件 ---- */
+
+.att__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  margin: 0 0 12px;
+  list-style: none;
+}
+
+.att__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+}
+
+.att__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.att__size {
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.att__empty {
+  margin: 0 0 12px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.78rem;
+}
+
+.att__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.att__note {
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.74rem;
+}
+
+.att__menu {
+  max-height: 300px;
 }
 
 .pdf__list {

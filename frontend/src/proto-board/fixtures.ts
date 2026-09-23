@@ -41,6 +41,34 @@ export interface Claimant {
   status: 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 }
 
+/** 题目的附件。**真平台上题目还没有这一层** —— 最接近的两个原语是挂在「提交物
+ *  要求」上的 `Attachment`（type/url/meta）和素材库的 `Material`（带 name 与
+ *  download_count）。这里按后者的形状取字段：有名字、有大小、有下载次数，
+ *  因为「发题时附一份材料、领取的人下下来用」本来就是那件事。 */
+export interface TaskFile {
+  name: string
+  /** 字节。 */
+  size: number
+  kind: 'pdf' | 'image' | 'code' | 'archive' | 'doc'
+  /** 已有多少人下过。 */
+  downloads: number
+}
+
+/** 把字节数说成人话。 */
+export function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+export const FILE_ICON: Record<TaskFile['kind'], string> = {
+  pdf: 'mdi-file-pdf-box',
+  image: 'mdi-file-image-outline',
+  code: 'mdi-file-code-outline',
+  archive: 'mdi-folder-zip-outline',
+  doc: 'mdi-file-document-outline',
+}
+
 export interface BoardTask {
   id: string
   title: string
@@ -63,6 +91,8 @@ export interface BoardTask {
   videoUrl?: string | null
   /** 这道题是怎么来的。从 PDF 生成的那批会写「PDF · 第 2 页」，手写的没有这一项。 */
   origin?: string
+  /** 发题时附上的材料，领取者和审核者可以下载。可选。 */
+  files?: TaskFile[]
   claims: Claimant[]
   /** 最近 12 天的累计领取。派生自 `claims`，见 `finalize()`。 */
   claimTrend: number[]
@@ -247,6 +277,10 @@ const CURATED: BoardTask[] = [
     minTeamSize: 1,
     maxTeamSize: 1,
     videoUrl: 'https://www.bilibili.com/video/BV1xx411c7mD',
+    files: [
+      { name: '并发领取测试脚手架.zip', size: 48 * 1024, kind: 'archive', downloads: 12 },
+      { name: '接口约定.md', size: 6 * 1024, kind: 'doc', downloads: 21 },
+    ],
     claims: makeRoster({
       named: [
         ['pengwenbo', 10, 'PASSED'],
@@ -718,6 +752,18 @@ function makeBulkTasks(): BoardTask[] {
         maxTeamSize: team,
         // 每 9 道里有一道带讲解视频，让「带视频的题」在列表里也看得见。
         videoUrl: i % 9 === 0 ? 'https://www.bilibili.com/video/BV1Q5411T7YB' : null,
+        // 每 5 道里有一道带附件，列表上那个回形针标记才有东西可指。
+        files:
+          i % 5 === 0
+            ? [
+                {
+                  name: `题目材料-${i + 1}.zip`,
+                  size: (60 + i * 7) * 1024,
+                  kind: 'archive' as const,
+                  downloads: 3 + (i % 17),
+                },
+              ]
+            : undefined,
         claims,
       })
     )
@@ -865,6 +911,13 @@ export const PDF_PREVIEW = {
   templateUsed: '计算机系统基础 · 标准题模板',
   tokenUsed: 18742,
   imageCount: 3,
+  /** 解析时顺手能当附件发出去的东西：原 PDF 本身，以及抽出来的那几张插图。 */
+  files: [
+    { name: '计算机系统基础-第五次作业.pdf', size: 2_411_724, kind: 'pdf' as const, downloads: 0 },
+    { name: '第 2 页-图 1.png', size: 184_320, kind: 'image' as const, downloads: 0 },
+    { name: '第 9 页-图 1.png', size: 226_918, kind: 'image' as const, downloads: 0 },
+    { name: '第 9 页-图 2.png', size: 143_570, kind: 'image' as const, downloads: 0 },
+  ],
   drafts: [
     {
       key: 'd1',

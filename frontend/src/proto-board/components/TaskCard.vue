@@ -73,6 +73,10 @@ const claimed = computed(() => alreadyClaimed(props.task))
         <v-icon icon="mdi-play-circle-outline" size="13" start />
         视频
       </v-chip>
+      <v-chip v-if="task.files?.length" size="x-small" label variant="tonal" class="tcard__files">
+        <v-icon icon="mdi-paperclip" size="13" start />
+        附件 {{ task.files.length }}
+      </v-chip>
       <v-chip v-for="tag in task.tags" :key="tag" size="x-small" label variant="text" class="tcard__tag"
         >#{{ tag }}</v-chip
       >

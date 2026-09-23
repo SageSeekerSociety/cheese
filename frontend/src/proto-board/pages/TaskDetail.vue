@@ -8,7 +8,18 @@ import { useRoute, useRouter } from 'vue-router'
 
 import PanelCard from '../components/PanelCard.vue'
 import TrendChart from '../components/TrendChart.vue'
-import { bilibiliBvid, CLAIM_LABEL, DAY_LABELS, deadlineText, isOpen, STATE_LABEL, videoEmbedUrl } from '../fixtures'
+import {
+  bilibiliBvid,
+  CLAIM_LABEL,
+  DAY_LABELS,
+  deadlineText,
+  FILE_ICON,
+  fileSize,
+  isOpen,
+  STATE_LABEL,
+  type TaskFile,
+  videoEmbedUrl,
+} from '../fixtures'
 import { alreadyClaimed, canManageTask, claimTask, myClaim, reviewWork, submitWork, tasks } from '../store'
 
 const route = useRoute()
@@ -46,6 +57,21 @@ function doSubmit() {
 /** 判作业：出题人本人或管理员都能判（真平台 `may_teach_task`）。 */
 function doReview(handle: string, accepted: boolean) {
   if (task.value) reviewWork(task.value.id, handle, accepted)
+}
+
+/** 附件能不能下：出题人、管理员、以及**已经领了这道题的人**。
+ *  没领的人看得到文件名和大小（不然没法判断要不要领），但下载按钮是灰的。 */
+const canDownload = computed(() => !!task.value && (canManageTask(task.value) || claimed.value))
+
+const justDownloaded = ref<string | null>(null)
+
+function download(f: TaskFile) {
+  if (!canDownload.value) return
+  f.downloads += 1
+  justDownloaded.value = f.name
+  window.setTimeout(() => {
+    if (justDownloaded.value === f.name) justDownloaded.value = null
+  }, 2200)
 }
 
 /** 只有 B 站链接能在详情页里播；其它域名存得下、播不了，这里要说清是哪一种。 */
@@ -116,6 +142,37 @@ const claimLabel = computed(() => {
               这道题挂了视频链接，但<b>不是 B 站链接</b>，所以放不出来：
               <span class="td__video-url">{{ video.url }}</span>
             </div>
+          </div>
+
+          <!-- 附件：拿得到材料才谈得上做。没领的人看得到清单，下载要等领取。 -->
+          <div v-if="task.files?.length" class="td__files">
+            <div class="td__files-head">
+              <v-icon icon="mdi-paperclip" size="16" />
+              <b>题目附件</b>
+              <span class="td__files-count">{{ task.files.length }} 个</span>
+              <v-spacer />
+              <span class="td__files-rule">
+                {{ canDownload ? '你可以下载' : '领取这道题之后才能下载' }}
+              </span>
+            </div>
+            <ul class="td__files-list">
+              <li v-for="f in task.files" :key="f.name">
+                <v-icon :icon="FILE_ICON[f.kind]" size="18" />
+                <span class="td__file-name">{{ f.name }}</span>
+                <span class="td__file-size">{{ fileSize(f.size) }}</span>
+                <span class="td__file-dl">{{ f.downloads }} 次下载</span>
+                <v-spacer />
+                <span v-if="justDownloaded === f.name" class="td__file-done">已开始下载（原型里不会真下）</span>
+                <v-btn
+                  size="x-small"
+                  variant="tonal"
+                  :disabled="!canDownload"
+                  prepend-icon="mdi-download"
+                  @click="download(f)"
+                  >下载</v-btn
+                >
+              </li>
+            </ul>
           </div>
 
           <div class="td__claim">
@@ -501,5 +558,62 @@ const claimLabel = computed(() => {
   font-family: var(--font-mono, monospace);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- 附件 ---- */
+
+.td__files {
+  padding: 12px 14px;
+  margin-top: 14px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  border-radius: var(--radius-md);
+}
+
+.td__files-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.84rem;
+}
+
+.td__files-count,
+.td__files-rule {
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-size: 0.74rem;
+}
+
+.td__files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  margin: 10px 0 0;
+  list-style: none;
+}
+
+.td__files-list li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.82rem;
+}
+
+.td__file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td__file-size,
+.td__file-dl {
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.td__file-done {
+  color: rgb(var(--v-theme-success));
+  font-size: 0.74rem;
 }
 </style>
