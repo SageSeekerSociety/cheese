@@ -124,10 +124,12 @@ def test_a_deployment_refuses_to_boot_without_a_real_key(signal, key: str) -> No
     "key",
     [
         "not-base64-at-all",
-        base64.urlsafe_b64encode(os.urandom(16)).decode(),
-        base64.urlsafe_b64encode(os.urandom(48)).decode(),
-        _new_key() + ",",
-        _new_key() + ",short",
+        # Fixed values: parameters are part of the test id, and every xdist
+        # worker must collect the same ids.
+        base64.urlsafe_b64encode(bytes(range(16))).decode(),
+        base64.urlsafe_b64encode(bytes(range(48))).decode(),
+        base64.urlsafe_b64encode(bytes(range(32))).decode() + ",",
+        base64.urlsafe_b64encode(bytes(range(32))).decode() + ",short",
     ],
 )
 @pytest.mark.parametrize("environment", ["production", "development", "test"])
