@@ -146,3 +146,131 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
     ).json()["data"]
     assert not result["allow"]
     assert result["reason_kind"] == "binding"
+
+
+# --- 开分身时指定模型（范围 = 项目 AI 队友） ------------------------------
+# CC 把主 agent 给分身指定的模型写进分身请求体的顶层 model 成员，计量代理解
+# 析出来随 admission 带上来（X-Cheese-Requested-Model）。指定了就要么绑它、
+# 要么明说为什么不行 —— 静默改写回分身默认正是「指定了却不生效」那个旧行为。
+
+
+def _subagent_headers(pid, topic_id, requested=None):
+    token = mint_scoped_token(project_id=pid, topic_id=topic_id)
+    headers = {"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"}
+    if requested is not None:
+        headers["X-Cheese-Requested-Model"] = requested
+    return headers
+
+
+@pytest.mark.anyio
+async def test_a_subagent_may_ask_for_a_teammates_model(client):
+    project = create(client)
+    pid = project["id"]
+    response = client.post(
+        f"/projects/{pid}/agents",
+        json={
+            "handle": "spark",
+            "display_name": "Spark",
+            "configuration": {"model": "sonnet"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    # CC 在写请求体前就把别名翻成全名,所以准入收到的是 wire 名;
+    # 目录是唯一能把它翻回 id 的地方。
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "claude-sonnet-5"),
+    ).json()["data"]
+    assert body["allow"] is True
+    assert "sonnet" in body["supply"]["model"]
+    assert body["supply"]["pool"] == "subscription"
+
+
+@pytest.mark.anyio
+async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client):
+    """fork 分身继承父模型：主芝士没绑模型（None）时,白名单里放的是展开后
+    的项目默认 —— 继承父模型的分身不能因为「没指定」而被改道。"""
+    project = create(client)
+    pid = project["id"]
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "deepseek-flash"),
+    ).json()["data"]
+    assert body["allow"] is True
+    assert body["supply"]["model"] == "deepseek-flash"
+
+
+@pytest.mark.anyio
+async def test_a_subagent_asking_outside_the_teammates_is_refused_by_name(client):
+    project = create(client)
+    pid = project["id"]
+    client.post(
+        f"/projects/{pid}/agents",
+        json={
+            "handle": "spark",
+            "display_name": "Spark",
+            "configuration": {"model": "sonnet"},
+        },
+    )
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "opus"),
+    ).json()["data"]
+    assert body["allow"] is False
+    assert body["reason_kind"] == "binding"
+    assert "不在项目 AI 队友的范围内" in body["reason"]
+    # 拒绝要给出可指定的范围,不然就是一句没法行动的「不行」。
+    assert "sonnet" in body["reason"]
+
+
+@pytest.mark.anyio
+async def test_a_subagent_asking_for_a_model_the_catalogue_lacks_is_refused(client):
+    project = create(client)
+    pid = project["id"]
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "glm-4.7"),
+    ).json()["data"]
+    assert body["allow"] is False
+    assert body["reason_kind"] == "binding"
+    assert "模型目录里没有" in body["reason"]
+
+
+@pytest.mark.anyio
+async def test_an_unspecified_subagent_keeps_the_project_default(client):
+    """没指定的分身（fork、定义里不带 model 的）维持现状:走分身默认。"""
+    project = create(client)
+    pid = project["id"]
+    response = client.put(
+        f"/projects/{pid}/default-model",
+        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+    )
+    assert response.status_code == 200, response.text
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"]),
+    ).json()["data"]
+    assert body["allow"] is True
+    assert "sonnet" in body["supply"]["model"]
+    # 而「指定的恰好就是分身默认」是合法的 —— 复述默认值不该吃到一个拒绝。
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "sonnet"),
+    ).json()["data"]
+    assert body["allow"] is True
+    assert "sonnet" in body["supply"]["model"]
+
+
+@pytest.mark.anyio
+async def test_the_requested_model_header_is_ignored_off_the_subagent_path(client):
+    """主对话的模型从来由绑定决定：同一个头在主对话请求上不是输入。"""
+    project = create(client)
+    pid = project["id"]
+    token = mint_scoped_token(project_id=pid, topic_id=project["root_topic_id"])
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Cheese-Requested-Model": "sonnet",
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["allow"] is True
+    assert body["supply"]["model"] == "deepseek-flash"

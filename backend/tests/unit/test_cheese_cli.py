@@ -740,3 +740,73 @@ def test_the_feedback_tool_says_when_to_use_it():
         assert "用户的使用方式" in description
         # 不要打断：这条卡是提案，不是发布。
         assert "中途" in description
+
+
+def test_sync_agents_writes_and_prunes_teammate_definitions(monkeypatch, tmp_path):
+    """活跃队友各得一份 mate-<handle>.md（名字、一句话描述、model）；退休的
+    被清掉；不是它写的 agent 文件一个不动。"""
+    cli = _load()
+    monkeypatch.setattr(cli, "PROJECT", "proj")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def request(method, path, body=None, **kwargs):
+        assert (method, path) == ("GET", "/projects/proj/agents")
+        return {
+            "data": {
+                "data": [
+                    {
+                        "handle": "cheese",
+                        "display_name": "芝士",
+                        "is_active": True,
+                        "type_name": None,
+                        "configuration": {"body": "你是主芝士。", "model": None},
+                    },
+                    {
+                        "handle": "spark",
+                        "display_name": "Spark",
+                        "is_active": True,
+                        "type_name": "coder",
+                        "configuration": {"body": "", "model": "glm-4.6"},
+                    },
+                    {
+                        "handle": "old",
+                        "display_name": "Old",
+                        "is_active": False,
+                        "type_name": None,
+                        "configuration": {"model": "sonnet"},
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "mate-old.md").write_text("stale")
+    (agents / "keep.md").write_text("someone else's file")
+    cli.main()
+    spark = (agents / "mate-spark.md").read_text()
+    assert "name: spark" in spark
+    assert "model: glm-4.6" in spark
+    assert "Spark（模型 glm-4.6） · coder" in spark
+    main_def = (agents / "mate-cheese.md").read_text()
+    assert "model: inherit" in main_def
+    assert "你是主芝士。" in main_def
+    assert not (agents / "mate-old.md").exists()
+    assert (agents / "keep.md").read_text() == "someone else's file"
+
+
+def test_sync_agents_never_breaks_the_session(monkeypatch, tmp_path, capsys):
+    """它只是发现层（闸在准入）：后端够不着时打一行警告，恒退出 0。"""
+    cli = _load()
+    monkeypatch.setattr(cli, "PROJECT", "proj")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def boom(method, path, body=None, **kwargs):
+        raise RuntimeError("backend unreachable")
+
+    monkeypatch.setattr(cli, "_call", boom)
+    cli.main()
+    assert "sync-agents 跳过" in capsys.readouterr().err

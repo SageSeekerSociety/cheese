@@ -81,6 +81,7 @@ from cheese_billing_core import (  # noqa: E402
     StreamingUsageExtractor,
     control_answer,
     proxy_basic_password,
+    requested_model_of,
     verify_scoped_token,
 )
 
@@ -343,6 +344,33 @@ def _write_bound_model(
         return out
 
     flow.request.stream = write
+
+
+def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
+    """`_write_bound_model` for a body that is already whole in RAM.
+
+    Only the deferred subagent path is buffered (it had to read the body to
+    learn the requested model), and for it this rewrite is almost always the
+    identity — the admission already bound the very model the body names. The
+    miss handling matches the streaming path: drop the body, mark the flow,
+    and let the response hook deliver the refusal that names why (I27).
+    """
+    if not model:
+        return
+    rewrite = ModelRewrite(model)
+    out = rewrite.feed(flow.request.content or b"")
+    # The second, empty feed is the end-of-stream signal: a body whose head
+    # never completed a `model` member only misses at this point.
+    out += rewrite.feed(b"")
+    if rewrite.missed and not flow.metadata.get("cheese_model_missed"):
+        flow.metadata["cheese_model_missed"] = model
+        logger.error(
+            "no top-level model member in a buffered /v1/messages body; "
+            "refusing the turn rather than running it on the client's own "
+            "choice instead of %s",
+            model,
+        )
+    flow.request.content = out
 
 
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
@@ -653,48 +681,137 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     flow.metadata["cheese_attr"] = (project_id, topic_id)
 
     is_messages = "/v1/messages" in flow.request.path
-
-    # Asked for EVERY request, not only /v1/messages. The upstream connection is
-    # opened by whichever request comes first, and Claude Code's startup
-    # api/oauth/profile check beats the first turn to it — so the identity that
-    # connection authenticates as has to be settled by then, or the turn's own
-    # ticket goes out over the wrong one. Cheap: verdicts are cached per
-    # (project, topic) — the topic is part of the answer, not just of the
-    # question, because the identity it resolves belongs to that topic's machine.
-    verdict = None
     is_subagent = bool(
         flow.request.headers.get("x-claude-code-agent-id")
     ) or flow.request.headers.get("x-claude-code-request-class") in {
         "subagent",
         "workflow",
     }
-    if project_id and ADMISSION_URL:
-        # Off-loop: urllib blocks, and one slow admission call must not stall
-        # every other flow through the proxy.
-        admission_started = time.perf_counter()
 
-        def check_admission():
-            check_started = time.perf_counter()
-            verdict = (
-                ADMISSION.check(project_id, topic_id, bearer, subagent=True)
-                if is_subagent
-                else ADMISSION.check(project_id, topic_id, bearer)
-            )
-            return verdict, check_started, time.perf_counter()
-
-        verdict, check_started, check_finished = await asyncio.to_thread(
-            check_admission
+    # A subagent's /v1/messages defers everything from here to the `request`
+    # hook: admission honours the model the parent named for this subagent,
+    # and that name sits in the request body, which has not arrived at header
+    # time. Only this class pays for a buffered body — the main conversation's
+    # turns, the long ones whose size is the #654 OOM, keep streaming through.
+    if is_messages and is_subagent:
+        flow.request.stream = False
+        flow.metadata["cheese_deferred"] = (
+            project_id,
+            topic_id,
+            bearer,
+            carries_own_credential,
         )
-        admission_finished = time.perf_counter()
-        flow.metadata["cheese_admission_ms"] = (
-            admission_finished - admission_started
-        ) * 1000
-        flow.metadata["cheese_admission_phases_ms"] = {
-            "thread_queue": (check_started - admission_started) * 1000,
-            "check": (check_finished - check_started) * 1000,
-            "loop_resume": (admission_finished - check_finished) * 1000,
-        }
+        return
 
+    verdict = None
+    if project_id and ADMISSION_URL:
+        verdict = await _admit(
+            flow, project_id, topic_id, bearer, subagent=is_subagent
+        )
+
+    _route(
+        flow,
+        verdict,
+        is_messages=is_messages,
+        project_id=project_id,
+        bearer=bearer,
+        carries_own_credential=carries_own_credential,
+        keep_haiku=not is_subagent,
+    )
+
+
+async def _admit(
+    flow, project_id, topic_id, bearer, *, subagent, requested_model=""
+):
+    """One admission call, off the event loop and timed.
+
+    Asked for EVERY request, not only /v1/messages. The upstream connection is
+    opened by whichever request comes first, and Claude Code's startup
+    api/oauth/profile check beats the first turn to it — so the identity that
+    connection authenticates as has to be settled by then, or the turn's own
+    ticket goes out over the wrong one. Cheap: verdicts are cached per
+    (project, topic) — the topic is part of the answer, not just of the
+    question, because the identity it resolves belongs to that topic's machine.
+    """
+    # Off-loop: urllib blocks, and one slow admission call must not stall
+    # every other flow through the proxy.
+    admission_started = time.perf_counter()
+
+    def check_admission():
+        check_started = time.perf_counter()
+        verdict = (
+            ADMISSION.check(
+                project_id,
+                topic_id,
+                bearer,
+                subagent=True,
+                requested_model=requested_model,
+            )
+            if subagent
+            else ADMISSION.check(project_id, topic_id, bearer)
+        )
+        return verdict, check_started, time.perf_counter()
+
+    verdict, check_started, check_finished = await asyncio.to_thread(check_admission)
+    admission_finished = time.perf_counter()
+    flow.metadata["cheese_admission_ms"] = (
+        admission_finished - admission_started
+    ) * 1000
+    flow.metadata["cheese_admission_phases_ms"] = {
+        "thread_queue": (check_started - admission_started) * 1000,
+        "check": (check_finished - check_started) * 1000,
+        "loop_resume": (admission_finished - check_finished) * 1000,
+    }
+    return verdict
+
+
+async def request(flow: http.HTTPFlow) -> None:
+    """The deferred half of admission, for a subagent's /v1/messages.
+
+    Runs once the request body is whole in RAM (these flows left
+    `requestheaders` with streaming off, for exactly this read): take the
+    model the parent named off the body, ask admission with it, then walk the
+    same routing as every other request.
+    """
+    deferred = flow.metadata.get("cheese_deferred")
+    if not deferred:
+        return
+    project_id, topic_id, bearer, carries_own_credential = deferred
+    requested = requested_model_of(flow.request.content or b"")
+    verdict = None
+    if project_id and ADMISSION_URL:
+        verdict = await _admit(
+            flow,
+            project_id,
+            topic_id,
+            bearer,
+            subagent=True,
+            requested_model=requested,
+        )
+    _route(
+        flow,
+        verdict,
+        is_messages=True,
+        project_id=project_id,
+        bearer=bearer,
+        carries_own_credential=carries_own_credential,
+        keep_haiku=False,
+        buffered=True,
+    )
+
+
+def _route(
+    flow,
+    verdict,
+    *,
+    is_messages,
+    project_id,
+    bearer,
+    carries_own_credential,
+    keep_haiku,
+    buffered=False,
+):
+    """Refuse or forward after admission: the tail every request walks."""
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
             # #198: an exposed proxy must not spend the subscription for a
@@ -725,7 +842,10 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
                         "this deployment; no model call was made",
                     )
                     return
-                _write_bound_model(flow, verdict.model)
+                if buffered:
+                    _write_bound_model_buffered(flow, verdict.model)
+                else:
+                    _write_bound_model(flow, verdict.model)
                 return
         if METER.would_exceed(TOKEN_CAP):
             used = METER.used()
@@ -740,7 +860,10 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         if verdict is not None:
             # The subscription pool serves the haiku family itself, so the
             # CLI's own background requests stay on it.
-            _write_bound_model(flow, verdict.model, keep_haiku=not is_subagent)
+            if buffered:
+                _write_bound_model_buffered(flow, verdict.model)
+            else:
+                _write_bound_model(flow, verdict.model, keep_haiku=keep_haiku)
 
     # A stale x-api-key would override whatever bearer goes upstream, on either
     # path below — so it is dropped before the branch, not inside one.

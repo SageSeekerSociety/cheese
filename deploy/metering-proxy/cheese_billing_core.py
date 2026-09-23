@@ -272,12 +272,18 @@ class Verdict:
 
 
 def _post_admission(
-    url: str, bearer: str, timeout_s: float, *, subagent: bool = False
+    url: str, bearer: str, timeout_s: float, *, subagent: bool = False,
+    requested_model: str = "",
 ) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
     headers = {"Authorization": f"Bearer {bearer}"}
     if subagent:
         headers["X-Cheese-Subagent"] = "1"
+        if requested_model:
+            # 主 agent 开这个分身时指定的模型（从请求体顶层 model 成员读出的原
+            # 样）。准入拿它决定「绑它」还是「拒绝并列出可选」——不带就是沿用
+            # 项目的分身默认。
+            headers["X-Cheese-Requested-Model"] = requested_model
     req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
@@ -343,19 +349,27 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[tuple[str, str, str, bool], tuple[float, Verdict]] = {}
+        self._cache: dict[tuple[str, str, str, bool, str], tuple[float, Verdict]] = {}
 
     def check(
-        self, project_id: str, topic_id: str, bearer: str, *, subagent: bool = False
+        self,
+        project_id: str,
+        topic_id: str,
+        bearer: str,
+        *,
+        subagent: bool = False,
+        requested_model: str = "",
     ) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
-        # A relaunched agent can select a different model supply in the same room.
+        # A relaunched agent can select a different model supply in the same room;
+        # two subagents of one room can name two different requested models.
         key = (
             project_id,
             topic_id,
             hashlib.sha256(bearer.encode()).hexdigest(),
             subagent,
+            requested_model,
         )
         now = time.time()
         with self._lock:
@@ -364,7 +378,13 @@ class AdmissionGate:
                 return hit[1]
         try:
             verdict = (
-                self._post(self._url, bearer, self._timeout, subagent=True)
+                self._post(
+                    self._url,
+                    bearer,
+                    self._timeout,
+                    subagent=True,
+                    requested_model=requested_model,
+                )
                 if subagent
                 else self._post(self._url, bearer, self._timeout)
             )
@@ -683,3 +703,20 @@ def _string_end(data: bytes, start: int) -> int | None:
             return i + 1
         i += 1
     return None
+
+
+def requested_model_of(body: bytes) -> str:
+    """请求体顶层 ``model`` 成员的原样值 —— 主 agent 给这个分身指定的那一个。
+
+    与 ``ModelRewrite`` 共用同一个解析器：读到的是 CC 写进请求体的指定，不是
+    改写后要绑的那个。成员缺席或不是字符串时为空串，调用方按「未指定」处理
+    （沿用项目的分身默认）。
+    """
+    span = top_level_model_span(body)
+    if span is None:
+        return ""
+    try:
+        value = json.loads(body[span[0] : span[1]])
+    except ValueError:
+        return ""
+    return value if isinstance(value, str) else ""

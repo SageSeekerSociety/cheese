@@ -137,12 +137,15 @@ def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
 
 
 def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_path):
+    """分身的 /v1/messages 推迟到 `request` 钩子才准入：主 agent 指定的模型
+    在请求体里，头部时刻体还没到。准入拿到的指定随调用带上去，绑定用缓冲
+    改写写回 —— 即使体里是 haiku 也照绑（分身的 keep_haiku 从来是关）。"""
     mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
-    def admit(project, topic, bearer, *, subagent=False):
-        calls.append(subagent)
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
         return _verdict(model="claude-opus-5" if subagent else "claude-sonnet-5")
 
     mod.ADMISSION = SimpleNamespace(check=admit)
@@ -154,10 +157,37 @@ def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_p
         }
     )
     asyncio.run(mod.requestheaders(flow))
-    assert calls == [True]
+    # 头部时刻不做准入、不开流式：等请求体到齐。
+    assert calls == []
+    assert flow.request.stream is False
     assert flow.response is None
+    flow.request.content = b'{"model":"claude-haiku-4-5","messages":[]}'
+    asyncio.run(mod.request(flow))
+    assert calls == [(True, "claude-haiku-4-5")]
+    assert flow.response is None
+    assert json.loads(flow.request.content)["model"] == "claude-opus-5"
+
+
+def test_the_main_conversation_keeps_streaming_its_body(monkeypatch, tmp_path):
+    """缓冲只落在分身头上：主对话的 turn 是长会话反复重 POST 的大体（#654
+    OOM 的教训），它必须还在头部时刻准入、流式改写。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(flow))
+    assert calls == [(False, "")]
+    assert callable(flow.request.stream)
+    # keep_haiku:主对话里 CLI 自己发给小快家族的请求留在 haiku。
     body = flow.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
-    assert json.loads(body)["model"] == "claude-opus-5"
+    assert json.loads(body)["model"] == "claude-haiku-4-5"
 
 
 def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
