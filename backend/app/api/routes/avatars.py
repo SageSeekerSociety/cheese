@@ -8,6 +8,7 @@ import aiofiles
 import aiofiles.os
 from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, UploadFile
 
+from app.api.conditional import if_none_match_hits
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -61,25 +62,6 @@ async def _read_avatar_file(avatar_id: int) -> bytes | None:
         return None
 
 
-def _if_none_match_hits(header: str, etag: str) -> bool:
-    """Does ``If-None-Match`` say the client already has this exact avatar?
-
-    ``*`` means "any representation" and is what a client sends for a resource it
-    has never seen. The header is a comma-separated list and each entry may carry
-    the weak prefix ``W/``; both are handled because both are what browsers and
-    proxies actually send.
-    """
-    if header.strip() == "*":
-        return True
-    for candidate in header.split(","):
-        value = candidate.strip()
-        if value.startswith("W/"):
-            value = value[2:].lstrip()
-        if value.strip('"') == etag:
-            return True
-    return False
-
-
 def _stored_avatar_response(
     content: bytes,
     *,
@@ -111,7 +93,7 @@ def _stored_avatar_response(
         "ETag": f'"{etag}"',
         "Last-Modified": last_modified,
     }
-    if if_none_match and _if_none_match_hits(if_none_match, etag):
+    if if_none_match and if_none_match_hits(if_none_match, etag):
         return Response(status_code=304, headers=cache_headers)
     return Response(
         content=content,

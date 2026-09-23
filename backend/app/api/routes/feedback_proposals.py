@@ -17,6 +17,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -186,6 +187,22 @@ async def accept_feedback_proposal(
     一次发送。
     """
     place, actor = await _actor_in_topic(db, resolver, topic_id)
+    # 「这次发送是不是第一次」读的是 `block.meta`，而那一行是一次快照 —— 所以锁必须
+    # 在**读它之前**拿，不能读完再锁：锁上之后仍然要重新 SELECT，READ COMMITTED 下
+    # 这条 SELECT 才看得见赢家提交的 meta。反过来（先读、后锁）两边读到的都是「还没
+    # 发过」，各插一条逐字相同的反馈，卡片只记得其中一条 —— 正是 docstring 里那句
+    # 「绝不能变成又落了一条一模一样的」在并发下失效的样子。
+    #
+    # 键按 block 命名，和 `ProposalService._lock_topic` 的 `feedback-proposal:{topic}`
+    # 是两个命名空间：那一条管「这个话题今天还能不能再提一张」，这一条管「这张卡还能
+    # 不能被发送第二次」，两件事，不该互相排队。
+    #
+    # 事务级锁（`pg_advisory_xact_lock`）：持到本次 `db.commit()`，也就是卡片记上
+    # `accepted_feedback_id` 的那一刻，正好盖住需要串行的那一段。
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"feedback-proposal-accept:{block_id}"},
+    )
     block = await _require_proposal_block(db, topic_id, block_id)
     payload = proposal_rules.proposal_block_or_404(block)
     service = FeedbackService(db)

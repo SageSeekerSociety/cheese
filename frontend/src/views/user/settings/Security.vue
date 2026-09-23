@@ -544,25 +544,13 @@ onMounted(async () => {
         }
       },
       changePassword: async () => {
-        if (sudoStore.retryOperation?.opData?.newPassword) {
-          // 直接使用保存的新密码信息进行修改
-          if (!currentUserId.value || !currentUserName.value) return
-
-          const newPwd = sudoStore.retryOperation.opData.newPassword
-          const srpSalt = srp.generateSalt()
-          const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPwd)
-          const srpVerifier = srp.deriveVerifier(privateKey)
-
-          try {
-            await UserApi.changePassword(currentUserId.value, {
-              srpSalt,
-              srpVerifier,
-            })
-            toast.success('密码修改成功')
-          } catch (error: any) {
-            console.error('Failed to change password:', error)
-            toast.error(error.message || '密码修改失败')
-          }
+        const newPwd = sudoStore.retryOperation?.opData?.newPassword
+        if (!newPwd) return
+        try {
+          await submitNewPassword(newPwd)
+        } catch (error: any) {
+          console.error('Failed to change password:', error)
+          toast.error(error.message || '密码修改失败')
         }
       },
     }
@@ -748,33 +736,39 @@ const handleChangePassword = async () => {
 
   isChangingPassword.value = true
   try {
-    await withSudo(
-      async () => {
-        if (!currentUserId.value || !currentUserName.value) return
-
-        // 生成新的 SRP 盐值和验证器
-        const srpSalt = srp.generateSalt()
-        const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPassword.value)
-        const srpVerifier = srp.deriveVerifier(privateKey)
-
-        await UserApi.changePassword(currentUserId.value, {
-          srpSalt,
-          srpVerifier,
-        })
-
-        toast.success('密码修改成功')
-        handleCancelChangePassword()
-      },
-      'changePassword',
-      { newPassword: newPassword.value }, // 将新密码信息保存在 data 中
-      router
-    )
+    await submitNewPassword(newPassword.value)
+    handleCancelChangePassword()
   } catch (error: any) {
     console.error('Failed to change password:', error)
     passwordError.value = error.message || '密码修改失败'
   } finally {
     isChangingPassword.value = false
   }
+}
+
+// 按钮和验证后的重试都走这里，重试时才拿得到票
+const submitNewPassword = async (newPwd: string) => {
+  await withSudo(
+    async (sudoTicket) => {
+      if (!currentUserId.value || !currentUserName.value) return
+
+      // 生成新的 SRP 盐值和验证器
+      const srpSalt = srp.generateSalt()
+      const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPwd)
+      const srpVerifier = srp.deriveVerifier(privateKey)
+
+      await UserApi.changePassword(currentUserId.value, {
+        srpSalt,
+        srpVerifier,
+        sudoTicket,
+      })
+
+      toast.success('密码修改成功')
+    },
+    'changePassword',
+    { newPassword: newPwd }, // 将新密码信息保存在 data 中
+    router
+  )
 }
 
 // 取消修改密码

@@ -13,7 +13,7 @@ import { toast } from 'vuetify-sonner'
 import { defineStore } from 'pinia'
 
 import { SpacesApi } from '@/network/api/spaces'
-import { PatchSpaceRequestData } from '@/network/api/spaces/types'
+import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
 
 export const useSpaceStore = defineStore('space', () => {
   const currentSpace = ref<Space | null>(null)
@@ -213,10 +213,7 @@ export const useSpaceStore = defineStore('space', () => {
     }
   }
 
-  const updateCategory = async (
-    categoryId: number,
-    data: { name?: string; description?: string | null; displayOrder?: number }
-  ) => {
+  const updateCategory = async (categoryId: number, data: PatchSpaceCategoryRequestData) => {
     if (!currentSpaceId.value) return
 
     try {

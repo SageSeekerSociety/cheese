@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,11 +48,23 @@ class AdminRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
     async def remove_admin(self, handle: str) -> bool:
-        """删一行，同样幂等 —— 删一个本来就不在名单里的人，「不在」就是答案。"""
-        stmt = select(PlatformAdmin).where(PlatformAdmin.handle == handle)
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        if row is None:
-            return False
-        await self._session.delete(row)
-        await self._session.flush()
-        return True
+        """删一行，同样幂等 —— 删一个本来就不在名单里的人，「不在」就是答案。
+
+        `select → delete` 那两步是一个并发竞态：两个人同时删同一个 handle，两边
+        都 SELECT 到那一行，后 flush 的那次 DELETE 一行也没匹配上，SQLAlchemy 把
+        `StaleDataError` 抛到路由上成了一个 500 —— 而这件事的正确结果是 200（「这
+        个人不在名单里」已经成立）。一条 `DELETE ... RETURNING id` 输不掉这个竞态，
+        和 `add_admin` 的 `INSERT ... ON CONFLICT ... RETURNING` 是同一个形状：让
+        数据库自己裁决，输的那次拿到空结果。`RETURNING` 顺便让布尔值诚实 —— 只有
+        真删掉一行才有 id 回来。
+
+        用的是泛型 `sqlalchemy.delete`：`dialects.postgresql` 那套只多导出一个
+        `insert`（`pg_insert` 的存在理由只是它独有的 `on_conflict_*`），`RETURNING`
+        是 PostgreSQL 方言从泛型构造里就能译出来的，不需要一个 pg 专属的 delete。
+        """
+        stmt = (
+            delete(PlatformAdmin)
+            .where(PlatformAdmin.handle == handle)
+            .returning(PlatformAdmin.id)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
