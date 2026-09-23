@@ -826,6 +826,22 @@ class Settings(BaseSettings):
     email_smtp_username: str = Field(default="", alias="EMAIL_SMTP_USERNAME")
     email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
     email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
+    #: A second SMTP account tried when the one above fails to send. Unset
+    #: (empty host) means there is no fallback and a failure is final.
+    email_fallback_from_address: str = Field(
+        default="", alias="EMAIL_FALLBACK_FROM_ADDRESS"
+    )
+    email_fallback_smtp_host: str = Field(default="", alias="EMAIL_FALLBACK_SMTP_HOST")
+    email_fallback_smtp_port: int = Field(default=587, alias="EMAIL_FALLBACK_SMTP_PORT")
+    email_fallback_smtp_username: str = Field(
+        default="", alias="EMAIL_FALLBACK_SMTP_USERNAME"
+    )
+    email_fallback_smtp_password: str = Field(
+        default="", alias="EMAIL_FALLBACK_SMTP_PASSWORD"
+    )
+    email_fallback_smtp_ssl: bool = Field(
+        default=False, alias="EMAIL_FALLBACK_SMTP_SSL_ENABLE"
+    )
 
     notification_email_batch_size: int = Field(
         default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
