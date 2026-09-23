@@ -82,14 +82,17 @@ def load_skills(names: list[str]) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
-# Direct API callers have no native Skill loader.
-DEFAULT_CHAT_SKILLS = ["chat", "doc-form"]
+# Direct API callers have no native Skill loader — both halves stay inline.
+DEFAULT_CHAT_SKILLS = ["chat", "chat-detail", "doc-form"]
 
-# Every response needs the chat guide; loading it as a tool can add a model round.
+# The resident half (timing rules) is always inline; the rest of the guide is a
+# lazily-loaded native skill (chat-detail), so the pointer has to say so rather
+# than claim the whole guide is below. NOT named "cheese-chat": device_launch
+# rm -f's that exact path on every reuse — it is the retired legacy name.
 NATIVE_CHAT_GUIDANCE = (
     "普通输出和最终答复不会发布到聊天；用 chat_send 工具主动发送。"
     "平台操作用同名的 cheese_* 工具，没有对应工具的平台 API 用 platform_request。"
-    "聊天说明已在下方提供，无需调用 Skill 工具加载。"
+    "聊天协作的其余细则（语气、发布调用、与文档配合）用 Skill 工具加载 chat-detail。"
     "编写或更新话题文档时加载 cheese-docs。"
     "能直接回答就发送答案，需要继续处理就先发送你理解的意思和下一步。"
     "排队或执行中追加的用户消息也按此处理。"
@@ -141,7 +144,10 @@ def native_skill_files() -> dict[str, str]:
                 continue
             relative = source.relative_to(_NATIVE_SKILL_SRC).as_posix()
             files[f"skills/{relative}"] = source.read_text(encoding="utf-8")
-    for source, name in (("doc_form.md", "cheese-docs"),):
+    for source, name in (
+        ("doc_form.md", "cheese-docs"),
+        ("chat_detail.md", "chat-detail"),
+    ):
         meta, body = _parse(_SKILL_DIR / source)
         body = body.replace("doc-form", "cheese-docs")
         description = meta["description"].replace("doc-form", "cheese-docs")

@@ -263,6 +263,8 @@ async def test_resume_turn_still_speaks_as_the_platform(client, tmp_path):
         ),
         5,
     )
+    await asyncio.gather(*agent._answering)
+    await settle_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2, "没人说话的轮次不是冗余轮，不能被吞掉"
     resumed = agent.prompts[1]

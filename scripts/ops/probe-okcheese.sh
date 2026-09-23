@@ -7,7 +7,8 @@
 # would catch:
 #
 #   reachable      the site is served through a reverse SSH tunnel from the dev
-#                  box to a Hong Kong box. Either end going away takes the domain
+#                  box to a Hong Kong box, which forwards the TLS stream by SNI
+#                  without decrypting it. Either end going away takes the domain
 #                  with it and nothing else reports that.
 #   redirect       a browser sends you to http first. When Caddy did not own :80
 #                  that landed on a different, months-old deployment whose login
@@ -15,14 +16,16 @@
 #   providers      the tunnel can be up while what is behind it is broken. An
 #                  empty provider list means nobody can log in, which a 200 on
 #                  the front page does not reveal.
-#   certificate    these names are issued over TLS-ALPN only, so a renewal that
-#                  starts failing is silent until the certificate expires.
+#   certificate    the certificate lives on the dev box and is renewed by the
+#                  daily cheese-front-tls-renew.timer through Cloudflare DNS
+#                  (deploy/llm-tunnel/tls-renew.sh). Renewal starts 30 days before
+#                  expiry, so under 25 days left means it has failed for days.
 #
 # Exit 0 = all good. Exit 1 = a check failed, with the reason on stdout.
 set -uo pipefail
 
 HOST=${OKCHEESE_HOST:-okcheese.com}
-CERT_MIN_DAYS=${CERT_MIN_DAYS:-14}
+CERT_MIN_DAYS=${CERT_MIN_DAYS:-25}
 fails=()
 
 say() { printf '%s\n' "$*"; }
@@ -62,7 +65,7 @@ if [ -n "$not_after" ]; then
     if [ "$days" -ge "$CERT_MIN_DAYS" ]; then
       say "OK   certificate expires in $days days ($not_after)"
     else
-      fails+=("the certificate expires in $days days ($not_after) — renewal here has only the TLS-ALPN path, so check it now")
+      fails+=("the certificate expires in $days days ($not_after) — the dev box's daily renewal (cheese-front-tls-renew.service) has been failing, check its journal")
     fi
   else
     fails+=("could not parse the certificate expiry '$not_after'")

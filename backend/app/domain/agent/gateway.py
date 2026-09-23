@@ -39,7 +39,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 8.0
+# /spend/logs has no useful index and full-scans LiteLLM's spend table —
+# measured 24-102 s on 2026-09-23. The old 8 s timed out every drain, which
+# silently billed zeros (a caught exception returns None, and the caller
+# writes an unmetered row).
+_TIMEOUT = 60.0
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,7 @@ class GatewayModel:
     priced: bool
 
 
-def _price_is_set(*sources: object) -> bool:
+def price_is_set(*sources: object) -> bool:
     """Will the gateway bill this model at a non-zero rate?
 
     Both directions must carry a rate. A model priced on one side only bills
@@ -140,14 +144,9 @@ class LlmGateway:
             someone to pick a model we route to on their behalf.
           - ``cheese_label``: what to call it; the id when absent.
 
-        A model added to the gateway at RUNTIME (``db_model``, via its admin API
-        rather than ``config.yaml``) is never offered, whatever it is marked.
-        That path is open on this deployment — ``STORE_MODEL_IN_DB=True`` — and
-        it is the only way to put a model in front of people without a release,
-        which is exactly why it waits: a model's price is the one field nobody
-        can check by looking at the model, and going through config.yaml is what
-        puts a second pair of eyes on it. Deleting the ``db_model`` clause below
-        opens it.
+        A model the gateway reports as ``blocked`` is never selectable, however
+        ``cheese_selectable`` is set: the gateway refuses to route it, so
+        offering it would hand someone a route that cannot be called.
         """
         try:
             async with self._client() as client:
@@ -174,15 +173,15 @@ class LlmGateway:
             params = row.get("litellm_params")
             info = info if isinstance(info, dict) else {}
             label = info.get("cheese_label")
-            declared_in_config = info.get("db_model") is not True
             out.append(
                 GatewayModel(
                     id=name,
                     label=label if isinstance(label, str) and label else name,
                     selectable=(
-                        info.get("cheese_selectable") is True and declared_in_config
+                        info.get("cheese_selectable") is True
+                        and info.get("blocked") is not True
                     ),
-                    priced=_price_is_set(params, info),
+                    priced=price_is_set(params, info),
                 )
             )
         return out

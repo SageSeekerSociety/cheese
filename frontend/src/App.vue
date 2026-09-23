@@ -57,6 +57,9 @@
       </div>
     </v-main>
 
+    <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里 -->
+    <ConsentGate />
+
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
@@ -203,6 +206,7 @@ import { useEventListener } from '@vueuse/core'
 import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'

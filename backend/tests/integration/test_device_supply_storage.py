@@ -100,9 +100,11 @@ def test_visibility_defaults_to_isolated_when_omitted(
     is the test that reddens if either inner default drifts back."""
 
     async def _run() -> None:
+        # A fresh name: this database keeps the demo seed's users.
+        handle = f"owner-{uuid.uuid4().hex[:8]}"
         owner = User(
-            username="grace",
-            email="grace@example.io",
+            username=handle,
+            email=f"{handle}@example.io",
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )

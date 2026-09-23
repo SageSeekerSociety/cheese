@@ -12,6 +12,7 @@
 叫什么、有几个。
 """
 
+import uuid
 from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,18 @@ from app.domain.usage import repositories as repo
 
 class UsageService:
     def __init__(self, session: AsyncSession) -> None:
+        self._session = session
         self._repo = repo.UsageRepository(session)
+
+    async def project_credits(self, project_id: uuid.UUID) -> dict:
+        """一个项目在算力账上的额度：总额 / 已用 / 剩余 / 是不是不限额。
+
+        `compute_grants` 是本领域的一张表，而「这个项目还能花多少」只有它答得出 ——
+        网关那把虚拟 key 上的 `max_budget` 只是这个数的换算结果。管理页要同时看「账
+        上是多少」和「刹车上被设成了多少」，所以这扇门得把它转出去；别处直接摸
+        `ComputeGrantRepository` 就是又开一道口径，两个数哪天漂开时没人说得清哪个对。
+        """
+        return await repo.ComputeGrantRepository(self._session).summary(project_id)
 
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:
         """窗口内的总量：tokens / calls / cost_usd / unpriced_tokens。

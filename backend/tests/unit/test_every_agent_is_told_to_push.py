@@ -31,3 +31,18 @@ def test_it_is_there_for_a_room_that_has_nothing_else_in_its_prompt():
     """
     assert "随时 push" in _assembled(untitled=True)
     assert "随时 push" in _assembled(role="后端", untitled=False)
+
+
+def test_the_naming_block_is_only_here_while_the_topic_is_unnamed():
+    named = _assembled(untitled=False)
+    unnamed = _assembled(untitled=True)
+
+    assert "本轮第一件事：先给本话题起名" not in named
+    assert "本轮第一件事：先给本话题起名" in unnamed
+
+
+def test_naming_comes_before_the_push_rule():
+    """起名块自己写着「先于一切」——排不到前面，那段话就是空头支票。"""
+    unnamed = _assembled(untitled=True)
+
+    assert unnamed.index("先给本话题起名") < unnamed.index("随时 push")

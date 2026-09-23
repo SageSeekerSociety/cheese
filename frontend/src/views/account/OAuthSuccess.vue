@@ -39,6 +39,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const route = useRoute()
@@ -110,7 +111,7 @@ onMounted(async () => {
 
     // 延迟跳转到主页
     setTimeout(() => {
-      router.replace('/')
+      router.replace(takeOAuthRedirect())
     }, 1500)
   } catch (err) {
     processing.value = false

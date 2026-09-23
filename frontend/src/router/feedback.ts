@@ -87,6 +87,13 @@ export default [
         meta: { title: '看板', isFullPage: true },
       },
       {
+        // 网关模型管理那一页。和其它分区一样是壳里的一块，不是独立域名。
+        path: 'models',
+        name: 'AdminModels',
+        component: () => import('@/views/admin/AdminModelsPage.vue'),
+        meta: { title: '模型管理', isFullPage: true },
+      },
+      {
         // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
         // 地址与分区名都跟着它自己的 PR 走。名字改过一次 —— 见 AdminLayout 里那条注释。
         path: 'spaces',

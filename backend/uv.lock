@@ -6,12 +6,6 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
-[manifest]
-members = [
-    "cheesex-backend",
-    "srp-rs",
-]
-
 [[package]]
 name = "aioboto3"
 version = "15.5.0"
@@ -566,7 +560,6 @@ dependencies = [
     { name = "redis" },
     { name = "segno" },
     { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "srp-rs" },
     { name = "structlog" },
     { name = "tiktoken" },
     { name = "uvicorn", extra = ["standard"] },
@@ -617,7 +610,6 @@ requires-dist = [
     { name = "redis", specifier = ">=8.0.1" },
     { name = "segno", specifier = ">=1.6.6" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "srp-rs", editable = "srp_rs" },
     { name = "structlog", specifier = ">=26.1.0" },
     { name = "tiktoken", specifier = ">=0.13.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.53.0" },
@@ -2234,11 +2226,6 @@ wheels = [
 asyncio = [
     { name = "greenlet" },
 ]
-
-[[package]]
-name = "srp-rs"
-version = "0.1.0"
-source = { editable = "srp_rs" }
 
 [[package]]
 name = "starlette"

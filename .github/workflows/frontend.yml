@@ -29,11 +29,6 @@ name: Frontend Test
 # produces the bundle that ships. If a job that builds the deployable artifact is
 # ever added, it must match the Dockerfile instead.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend.yml'
   workflow_call:
 # No step here comments, pushes or reads another workflow's runs — checkout is
 # the only thing that wants the token at all. Without this block the run would

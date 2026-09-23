@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, Sequence, String
+from sqlalchemy import Boolean, DateTime, Index, Integer, Sequence, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -15,6 +15,22 @@ class User(Base):
     """
 
     __tablename__ = "user"
+    # Case-insensitive, and only among live accounts: a deleted account's name
+    # and email are free to be taken again.
+    __table_args__ = (
+        Index(
+            "uq_user_username_lower",
+            func.lower(text("username")),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_user_email_lower",
+            func.lower(text("email")),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String, nullable=False)
@@ -39,6 +55,14 @@ class User(Base):
 
 class UserProfile(Base):
     __tablename__ = "user_profile"
+    __table_args__ = (
+        Index(
+            "uq_user_profile_user_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column("user_id", Integer, nullable=False)

@@ -332,6 +332,12 @@
     "noMembers": "No members yet",
     "setAsAdmin": "Set as admin",
     "unsetAsAdmin": "Remove admin",
+    "dangerZone": "Danger zone",
+    "deleteSpace": "Delete problem board",
+    "deleteSpaceHint": "Deleting removes this board from everyone's lists for good. Only its owner can delete it.",
+    "confirmDeleteSpace": "Delete the problem board \"{name}\"? It disappears for everyone and can't be undone.",
+    "deleteSpaceSuccess": "Problem board deleted",
+    "deleteSpaceFailed": "Couldn't delete the problem board",
     "auditTasks": {
       "title": "Problems awaiting review",
       "noTasks": "No problems awaiting review",

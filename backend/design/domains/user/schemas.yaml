@@ -131,9 +131,6 @@ RegisterRequest:
       type: string
     emailCode:
       type: string
-    isLegacyAuth:
-      type: boolean
-      description: Whether to use legacy authentication
   required:
     - username
     - nickname

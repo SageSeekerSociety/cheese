@@ -131,6 +131,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_split",
         "cheese_status",
         "cheese_sync",
+        "cheese_sync_agents",
         "cheese_tell",
         "cheese_title",
         "cheese_unlock",

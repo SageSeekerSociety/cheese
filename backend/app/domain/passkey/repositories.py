@@ -33,8 +33,11 @@ class PasskeyRepository:
             created_at=now,
             updated_at=now,
         )
-        self._session.add(entity)
-        await self._session.flush()
+        # Added inside the savepoint: begin_nested() flushes pending objects
+        # first, which would put the INSERT outside it.
+        async with self._session.begin_nested():
+            self._session.add(entity)
+            await self._session.flush()
         return entity
 
     async def get_by_credential_id(
