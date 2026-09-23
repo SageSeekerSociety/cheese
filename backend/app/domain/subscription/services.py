@@ -405,9 +405,7 @@ class SubscriptionService:
           网关那一下可以补推）。
         """
         now = _utcnow()
-        was_expired = (
-            sub.token_expires_at is None or sub.token_expires_at <= now
-        )
+        was_expired = sub.token_expires_at is None or sub.token_expires_at <= now
         stored_refresh = _decrypt(sub.refresh_token_enc, sub_id=sub.id)
         if not stored_refresh:
             sub.status = "reauth_required"

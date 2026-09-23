@@ -57,9 +57,7 @@ async def keep_tokens_fresh(
     while True:
         try:
             async with session_factory() as session:
-                service = SubscriptionService(
-                    session, oauth_factory(), admin_factory()
-                )
+                service = SubscriptionService(session, oauth_factory(), admin_factory())
                 await service.refresh_due()
         except Exception:  # noqa: BLE001 — 一圈失败绝不能杀死刷新循环
             logger.warning("llm subscription refresh pass failed", exc_info=True)

@@ -30,9 +30,7 @@ class LlmSubscriptionRepository:
     async def get(self, subscription_id: uuid.UUID) -> LlmSubscription | None:
         return await self._session.get(LlmSubscription, subscription_id)
 
-    async def get_locked(
-        self, subscription_id: uuid.UUID
-    ) -> LlmSubscription | None:
+    async def get_locked(self, subscription_id: uuid.UUID) -> LlmSubscription | None:
         """行锁取行。会改状态的路径（轮询完成、刷新、撤销）一律走它。"""
         stmt = (
             select(LlmSubscription)
@@ -52,9 +50,7 @@ class LlmSubscriptionRepository:
         )
         return await self._session.scalar(stmt)
 
-    async def pendings_for_provider(
-        self, provider: str
-    ) -> Sequence[LlmSubscription]:
+    async def pendings_for_provider(self, provider: str) -> Sequence[LlmSubscription]:
         """该 provider 所有 `pending` 行：新 flow 开启时把它们顶成 superseded。"""
         stmt = select(LlmSubscription).where(
             LlmSubscription.provider == provider,

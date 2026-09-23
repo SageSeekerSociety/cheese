@@ -621,7 +621,9 @@ def _room_with_card(client, *, decided_at: datetime) -> None:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name=f"prev-{uuid.uuid4().hex[:8]}", owner_handle=REPORTER)
+            project = Project(
+                name=f"prev-{uuid.uuid4().hex[:8]}", owner_handle=REPORTER
+            )
             s.add(project)
             await s.flush()
             room = Topic(

@@ -253,9 +253,7 @@ class OpenAICodexOAuth:
             interval=interval if isinstance(interval, int) and interval > 0 else 5,
         )
 
-    async def poll_device_flow(
-        self, device_auth_id: str, user_code: str
-    ) -> PollResult:
+    async def poll_device_flow(self, device_auth_id: str, user_code: str) -> PollResult:
         """POST …/deviceauth/token。403/404 = 还在等，410 = flow 死了。"""
         try:
             async with self._client(_OAUTH_TIMEOUT) as client:
@@ -323,9 +321,7 @@ class OpenAICodexOAuth:
                 response = await client.post(
                     self._oauth_url("/oauth/token"),
                     data=form,
-                    headers={
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
         except httpx.HTTPError as exc:
             raise SubscriptionUnreachable(
@@ -334,8 +330,7 @@ class OpenAICodexOAuth:
         if response.status_code != 200:
             code = self._refresh_error_code(response.text)
             if (
-                response.status_code in (401, 403)
-                or code in _REFRESH_DEAD_CODES
+                response.status_code in (401, 403) or code in _REFRESH_DEAD_CODES
             ) and invalid_token is not None:
                 raise SubscriptionTokenInvalid(
                     "订阅凭据已被 OpenAI 判为失效，需要重新授权"
@@ -386,9 +381,7 @@ class OpenAICodexOAuth:
         except httpx.HTTPError as exc:
             raise SubscriptionUnreachable(f"额度接口不可达：{_short(exc)}") from exc
         if response.status_code in (401, 403):
-            raise SubscriptionTokenInvalid(
-                "订阅凭据已被 OpenAI 判为失效，需要重新授权"
-            )
+            raise SubscriptionTokenInvalid("订阅凭据已被 OpenAI 判为失效，需要重新授权")
         if response.status_code != 200:
             raise SubscriptionUnreachable(
                 f"额度接口返回 HTTP {response.status_code}：{_short_body(response)}"

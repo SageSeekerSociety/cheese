@@ -82,9 +82,7 @@ class LlmSubscription(UuidPk, Timestamps, Base):
     linked_model_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # device flow 进行中状态（完成/终结后清空）。
-    flow_device_auth_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
+    flow_device_auth_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     flow_user_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     flow_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

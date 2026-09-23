@@ -191,7 +191,5 @@ async def revoke_subscription(
     网关的原话带出来（503/502），审计落 failed。
     """
     return ok(
-        await _answered(
-            service.revoke(handle=handle, subscription_id=subscription_id)
-        )
+        await _answered(service.revoke(handle=handle, subscription_id=subscription_id))
     )
