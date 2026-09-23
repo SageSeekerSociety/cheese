@@ -22,8 +22,8 @@ export default {
       name: 'SignUpStart',
       component: () => import('@/views/account/signup/Start.vue'),
       meta: {
-        title: '注册',
-        titleKey: 'account.createAccount',
+        title: '创建账号',
+        titleKey: 'account.signUp.title',
       },
     },
     {

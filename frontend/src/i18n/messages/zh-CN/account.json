@@ -1,52 +1,30 @@
 {
   "accountEmail": "注册邮箱",
-  "alreadyHaveAnAccount": "已经有账号了？",
   "and": "和",
   "backToSignIn": "返回登录",
   "checkYourInboxForAPasswordReset": "重置密码邮件已发送，请注意查收",
-  "chooseAnEmailAddress": "邮箱建议",
-  "close": "关闭",
-  "confirmPassword": "确认密码",
   "couldNotSendTheEmailPleaseTry": "发送失败，请重试",
-  "createAccount": "立即注册",
-  "displayName": "显示名称",
-  "dontShowAgain": "不再提醒",
-  "emailAddress": "电子邮箱",
   "enterAnInvitationCode": "请输入邀请码",
-  "forRegistration": "注册。",
   "forgotPassword": "找回密码",
   "iAgreeToThe": "同意",
-  "iHaveAnAccount": "已有账号",
   "invitationCode": "邀请码",
-  "joinCheese": "加入知是社区",
-  "or": "或",
-  "password": "密码",
-  "passwordsDoNotMatch": "两次输入的密码不一致",
   "pleaseAcceptTheTermsOfServiceAnd": "请同意用户协议和隐私政策",
   "privacyPolicy": "隐私政策",
-  "registrationFailedPleaseTryAgain": "注册失败，请重试",
   "registrationSettingsCouldNotBeLoadedRefresh": "暂时无法获取注册配置，请刷新页面重试",
   "rememberYourPassword": "想起密码了？",
   "resetYourPassword": "重置账户密码",
   "sendResetEmail": "发送重置邮件",
-  "signIn2": "立即登录",
-  "someChallengesAreOnlyAvailableToParticular": "部分题目可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。",
-  "startSharingKnowledgeWithYourTeam": "开启您的知识共享之旅",
   "termsOfService": "用户协议",
   "thirdpartySigninFailed": "OAuth 登录失败",
-  "universityEmail": "学校邮箱",
-  "useLettersNumbersUnderscoresOrChineseCharacters": "昵称只能使用英文字母、数字、下划线、中文",
-  "useLettersNumbersUnderscoresOrHyphensFor": "用户名只能使用英文字母、数字、下划线",
-  "username": "用户名",
   "verifyYourIdentityWithYourAccountEmail": "通过注册邮箱验证身份",
-  "weRecommendA": "建议使用",
-  "workEmail": "企业邮箱",
   "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
   "layout": {
     "home": "知是首页"
   },
   "field": {
     "confirmPassword": "确认密码",
+    "displayName": "显示名称",
+    "email": "电子邮箱",
     "hidePassword": "隐藏密码",
     "newPassword": "新密码",
     "password": "密码",
@@ -54,9 +32,12 @@
     "username": "用户名"
   },
   "rule": {
+    "displayName": "显示名称只能使用字母、数字、下划线和中文",
+    "emailHint": "建议使用学校或单位邮箱，部分题目仅对特定邮箱开放",
     "passwordHint": "至少 8 个字符，包含字母、数字和特殊字符",
     "passwordInvalid": "密码须至少 8 个字符，并包含字母、数字和特殊字符",
-    "passwordsDoNotMatch": "两次输入的密码不一致"
+    "passwordsDoNotMatch": "两次输入的密码不一致",
+    "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符"
   },
   "signIn": {
     "title": "登录",
@@ -77,6 +58,12 @@
     "notice": {
       "passwordReset": "密码已重置，请使用新密码登录"
     }
+  },
+  "signUp": {
+    "title": "创建账号",
+    "submit": "创建账号",
+    "haveAccount": "已有账号",
+    "failed": "注册失败，请重试"
   },
   "verifyEmail": {
     "title": "验证邮箱",

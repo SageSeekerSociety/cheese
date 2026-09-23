@@ -23,7 +23,7 @@
 | 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room**：room 在本平台另有含义（房间），会与话题混 |
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
-| 赛题 | **challenge** | 既有英文已经这么用：中文「部分赛题可能仅对特定域名邮箱开放」对应的 `account.someChallengesAreOnlyAvailableToParticular` 写的是 `Some challenges are…`。出现 25 次，是这套 catalog 里最大的一个术语。**不用 problem / contest**：problem 是算法题，contest 是比赛本身而非题目。见 §5 第 3 条，这里有个命名陷阱 |
+| 赛题 | **challenge** | 注册页邮箱提示「部分题目仅对特定邮箱开放」对应的 `account.rule.emailHint` 写的是 `Some challenges are open only to…`。出现 25 次，是这套 catalog 里最大的一个术语。**不用 problem / contest**：problem 是算法题，contest 是比赛本身而非题目。见 §5 第 3 条，这里有个命名陷阱 |
 | 任务 | **task** | 指平台里的工作单元时（`publicSite.taskProgress = 任务进展`、`/topics/{topic_id}/tasks/{task_id}`）。**不用 job**：job 在技术语境里是后台作业。中文「任务」在 catalog 里还有第二种用法，指的其实是**赛题 = challenge**，见 §5 第 3 条 |
 | 分类 | **category** | `views/spaces/detail/ManageCategories.vue`、`spaces.detail.manageCategories.*`。**不用 tag**：tag 是另一套东西（`network/api/tags/`） |
 | 域名组 | **domain group** | `views/spaces/detail/ManageDomainGroups.vue`、`spaces.domainGroups.*`。域 = **domain**，不用 field / realm |
@@ -167,8 +167,8 @@ Delete this discussion? All of its replies will be deleted too.`
    两边是同一个实体的证据：字段名一一对应（`taskName` / `taskLevel` / `taskDescription`），
    而且 `PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
    外部佐证是既有英文：`tasks.form.accessControl.enableAccessRestrictionHint`（开启后，只有指定域名邮箱的
-   用户才能查看和参与此**赛题**）对应 `account.someChallengesAreOnlyAvailableToParticular`
-   （Some **challenges** are only available to…）。
+   用户才能查看和参与此**赛题**）与注册页的 `account.rule.emailHint`
+   （Some **challenges** are open only to…）说的是同一道门槛。
 
    **所以英译一律 challenge，`spaces.detail.publishTask.*` 也一样。** 这条不再是存疑项。
    剩下的是要改**中文**的地方，不是翻译能解决的：
