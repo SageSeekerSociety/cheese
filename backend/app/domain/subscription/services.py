@@ -345,6 +345,10 @@ class SubscriptionService:
                 "status": row.status,
                 "account_email": row.account_email,
                 "quota": _quota_dto(row),
+                # 详情抽屉的订阅块要这两样（凭据过期时间、上次刷新失败的原话）；
+                # token / 密文字段照旧一个字母都不出现。
+                "token_expires_at": _iso(row.token_expires_at),
+                "last_refresh_error": row.last_refresh_error,
             }
             for row in rows
             if row.linked_model_name
