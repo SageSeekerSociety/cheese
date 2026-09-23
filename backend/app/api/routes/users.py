@@ -151,9 +151,12 @@ _SRP_HEX = r"^[0-9a-fA-F]+$"
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    srp_salt: str = Field(..., alias="srpSalt", pattern=_SRP_HEX, max_length=1024)
-    srp_verifier: str = Field(
-        ..., alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
+    password: str | None = None
+    srp_salt: str | None = Field(
+        default=None, alias="srpSalt", pattern=_SRP_HEX, max_length=1024
+    )
+    srp_verifier: str | None = Field(
+        default=None, alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
     )
     sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
@@ -2858,7 +2861,8 @@ async def change_password(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    """Replace the account's password with new SRP credentials.
+    """Replace the account's password, given in plaintext or as SRP
+    credentials.
 
     Other sessions stay signed in: the session layer cannot yet revoke them
     (#1481).
@@ -2866,14 +2870,23 @@ async def change_password(
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can change their password.")
 
+    password = payload.password
+    srp_salt = payload.srp_salt
+    srp_verifier = payload.srp_verifier
+    if password:
+        _require_new_password(password)
+    elif not (srp_salt and srp_verifier):
+        raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+
     await _spend_sudo_ticket(
         payload.sudo_ticket,
         user_id=auth_user.user_id,
         purpose=SudoPurpose.PASSWORD_CHANGE,
     )
-    await auth_service.set_srp_credentials(
-        user_id, payload.srp_salt, payload.srp_verifier
-    )
+    if password:
+        await auth_service.update_password(user_id, password)
+    elif srp_salt and srp_verifier:
+        await auth_service.set_srp_credentials(user_id, srp_salt, srp_verifier)
 
     return {"code": 200, "message": "Password changed successfully"}
 
