@@ -39,9 +39,9 @@ afterEach(() => {
 })
 
 describe('re-authenticating with a password', () => {
-  it('sends the password itself, even for an account the server still marks as SRP', async () => {
+  it('sends the password itself', async () => {
     vi.mocked(UserApi.getAuthMethods).mockResolvedValue({
-      data: { supports_srp: true, supports_passkey: false, supports_2fa: false, requires_2fa: false },
+      data: { supports_passkey: false, supports_2fa: false, requires_2fa: false },
     } as never)
     vi.mocked(UserApi.verifySudoPassword).mockResolvedValue({
       data: { verified: true, sudoTicket: 'ticket' },
