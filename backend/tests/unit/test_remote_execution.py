@@ -36,6 +36,37 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+def test_acceptance_cleanup_leaves_another_runs_same_named_case_alive(
+    tmp_path, monkeypatch
+):
+    scripts = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
+    monkeypatch.syspath_prepend(str(scripts))
+    acceptance_spec = importlib.util.spec_from_file_location(
+        "acceptance_isolation", scripts / "acceptance.py"
+    )
+    acceptance = importlib.util.module_from_spec(acceptance_spec)
+    acceptance_spec.loader.exec_module(acceptance)
+    cases = [tmp_path / name / "native-terminal-rc-1" for name in ("run-a", "run-b")]
+    servers = [acceptance.tmux_server(folder) for folder in cases]
+    # Keep even the deliberately broken negative control away from other runs.
+    with tempfile.TemporaryDirectory(prefix="ci-tmux-", dir="/tmp") as sockets:
+        monkeypatch.setenv("TMUX_TMPDIR", sockets)
+        try:
+            for server in servers:
+                acceptance.run(
+                    server + ["new-session", "-d", "-s", "agent", "sleep 300"]
+                )
+            identity = ["display-message", "-p", "-t", "agent", "#{pane_pid}"]
+            second_pid = acceptance.run(servers[1] + identity).strip()
+            acceptance.run(servers[0] + ["kill-server"])
+            assert acceptance.run(servers[1] + identity).strip() == second_pid
+        finally:
+            for server in servers:
+                subprocess.run(
+                    server + ["kill-server"], capture_output=True, timeout=10
+                )
+
+
 def _proxy_source() -> str:
     return (
         (RUNTIME.parent / "proxy.js")
