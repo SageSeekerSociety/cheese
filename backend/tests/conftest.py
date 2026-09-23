@@ -15,6 +15,7 @@ A stub agent keeps tests off the live model.
 """
 
 import asyncio
+import inspect
 import os
 import re
 import sys
@@ -26,7 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
@@ -78,13 +79,11 @@ _REDIS_DB = isolation.redis_database(
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
-# Tests run many event loops per process; the shared app engine must not pool
-# asyncpg connections across them (app.core.db reads this before building it).
-os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
+from app.core.db import engine as app_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
@@ -110,6 +109,17 @@ settings.authz_enforce_topic_access = True
 # uses.
 settings.notification_email_drain_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
+
+
+def _production_test_engine(url: str):
+    """Build the same bounded pool shape the application uses in production."""
+    return create_async_engine(
+        url,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_s,
+        pool_pre_ping=settings.db_pool_pre_ping,
+    )
 
 
 def _topics_with_pending_hooks() -> set[str]:
@@ -686,13 +696,16 @@ def client(
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
-    # NullPool → every connection is created fresh in its calling event loop, so
-    # the TestClient's portal loop and this fixture's setup loop never share an
-    # asyncpg connection (which is loop-bound). Isolation is per-test TRUNCATE.
-    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    # Requests run on TestClient's portal loop and use the production QueuePool
+    # shape. Test setup/inspection still runs through a separate NullPool: the
+    # synchronous test body uses short-lived asyncio.run loops, so sharing its
+    # connections with the portal would cross event-loop ownership.
+    engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
+    setup_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    setup_factory = async_sessionmaker(setup_engine, expire_on_commit=False)
 
-    asyncio.run(_truncate_all(engine))
+    asyncio.run(_truncate_all(setup_engine))
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
 
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
@@ -700,7 +713,7 @@ def client(
     async def _seed_agent_user() -> None:
         from app.domain.identity.services import IdentityService
 
-        async with test_factory() as session:
+        async with setup_factory() as session:
             await IdentityService(session).ensure_agent_user()
             await session.commit()
 
@@ -737,14 +750,32 @@ def client(
         # endpoints (doc/split/decision/...) aren't rejected with 401.
         c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
         # Expose the factory so tests can seed data (e.g. memory entries).
-        c.test_factory = test_factory  # type: ignore[attr-defined]
-        yield c
-        # Drain background turns BEFORE leaving the TestClient context:
-        # disposing the engine under a running kickoff turn makes flakes.
-        wait_work_idle()
+        c.test_factory = setup_factory  # type: ignore[attr-defined]
+        # Direct business coroutines must run through ``portal.call`` with this
+        # factory so they share the request loop and its production-sized pool.
+        c.test_request_factory = test_factory  # type: ignore[attr-defined]
+        c.test_app_engine = engine  # type: ignore[attr-defined]
+        try:
+            yield c
+        finally:
+            # Drain background turns BEFORE leaving the TestClient context:
+            # disposing the engine under a running kickoff turn makes flakes.
+            try:
+                wait_work_idle()
+            finally:
+                # Both pools were used on the portal loop. Close them before
+                # TestClient closes that loop, otherwise asyncpg connections
+                # survive into the next test and fail as attached to a
+                # different loop.
+                try:
+                    c.portal.call(engine.dispose)
+                finally:
+                    c.portal.call(app_engine.dispose)
 
-    app.dependency_overrides.clear()
-    asyncio.run(engine.dispose())
+    try:
+        app.dependency_overrides.clear()
+    finally:
+        asyncio.run(setup_engine.dispose())
 
 
 # --- PostgreSQL test-DB plumbing (per-worker, see the module docstring) --------
@@ -1171,6 +1202,9 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     """
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
+        explicit_anyio = request.node.get_closest_marker("anyio") is not None
+        if explicit_anyio or inspect.iscoroutinefunction(request.function):
+            request.getfixturevalue("_app_engine_on_test_loop")
 
 
 @pytest.fixture(scope="session")
@@ -1262,11 +1296,29 @@ async def db_factory(_pg_schema):
     saying so in the fixture list is also how ``_pg_schema_gate`` learns this
     test needs a database at all.
     """
-    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    engine = _production_test_engine(TEST_DATABASE_URL)
     await _truncate_all(engine)
-    yield async_sessionmaker(engine, expire_on_commit=False)
-    await _fail_on_background_work("db_factory")
-    await engine.dispose()
+    try:
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        try:
+            await _fail_on_background_work("db_factory")
+        finally:
+            await engine.dispose()
+
+
+@pytest.fixture
+async def _app_engine_on_test_loop():
+    """Close singleton connections before their test-owned event loop closes."""
+    yield
+    await app_engine.dispose()
+
+
+@pytest.fixture
+def production_app_engine(_pg_schema):
+    """Expose the singleton application engine for its pool contract tests."""
+    assert isinstance(app_engine.pool, QueuePool)
+    return app_engine
 
 
 @pytest.fixture
@@ -1283,7 +1335,7 @@ async def python_client(
 
     from app.domain.identity.services import IdentityService
 
-    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
     await _truncate_all(engine)
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
@@ -1320,19 +1372,26 @@ async def python_client(
     app.dependency_overrides[get_chat_service] = override_get_chat_service
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        headers={"X-Cheese-Token": SANDBOX_TOKEN},
-    ) as c:
-        # Expose the per-worker factory so contract tests can seed rows (e.g. a
-        # real authenticated user) on the SAME DB the app reads through get_db.
-        c.test_factory = test_factory  # type: ignore[attr-defined]
-        yield c
-
-    app.dependency_overrides.clear()
-    await _fail_on_background_work("python_client")
-    await engine.dispose()
+    try:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"X-Cheese-Token": SANDBOX_TOKEN},
+        ) as c:
+            # Expose the per-worker factory so contract tests can seed rows (e.g. a
+            # real authenticated user) on the SAME DB the app reads through get_db.
+            c.test_factory = test_factory  # type: ignore[attr-defined]
+            c.test_app_engine = engine  # type: ignore[attr-defined]
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+        try:
+            await _fail_on_background_work("python_client")
+        finally:
+            try:
+                await engine.dispose()
+            finally:
+                await app_engine.dispose()
 
 
 # --- shared seed helpers -----------------------------------------------------
