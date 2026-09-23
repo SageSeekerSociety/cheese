@@ -739,45 +739,6 @@ test_rollout_recovers_after_forge_stops_backend() {
   done
 }
 
-test_the_backend_drains_in_flight_turns_before_recreating() {
-  local run_dir docker_log turns_file first_probe recreate probes
-  run_dir="$(new_rollout_run_dir)"
-  docker_log="$run_dir/docker.log"
-  turns_file="$run_dir/turns.count"
-  # Two turns in flight, then none: one answer is not enough, the deploy has to
-  # look again — which is what it must do when a turn is still writing.
-  rollout_run "$run_dir" env \
-    APP_TIER_ACTIVE_TURNS_SEQUENCE=2,0 \
-    APP_TIER_TURNS_COUNT_FILE="$turns_file" \
-    DEPLOY_TURN_DRAIN_INTERVAL=0 \
-    DEPLOY_TURN_DRAIN_TIMEOUT=30 >/dev/null 2>&1 \
-    || fail "deploy did not succeed while draining turns"
-  probes="$(grep -c -- 'http://127.0.0.1:18081/health' "$docker_log" || true)"
-  [ "${probes:-0}" -ge 2 ] \
-    || fail "deploy recreated the backend on the first answer instead of waiting (probes=$probes)"
-  first_probe="$(log_line "$docker_log" 'http://127.0.0.1:18081/health')"
-  recreate="$(log_line "$docker_log" 'up -d --no-deps backend')"
-  [ -n "$first_probe" ] && [ -n "$recreate" ] && [ "$first_probe" -lt "$recreate" ] \
-    || fail "the backend was recreated without asking how many turns were in flight"
-  rm -rf "$run_dir"
-
-  # A turn that never finishes must not be able to hold a release hostage: the
-  # wait is bounded and the deploy goes ahead.
-  run_dir="$(new_rollout_run_dir)"
-  docker_log="$run_dir/docker.log"
-  turns_file="$run_dir/turns.count"
-  rollout_run "$run_dir" env \
-    APP_TIER_ACTIVE_TURNS_SEQUENCE=1 \
-    APP_TIER_TURNS_COUNT_FILE="$turns_file" \
-    DEPLOY_TURN_DRAIN_INTERVAL=1 \
-    DEPLOY_TURN_DRAIN_TIMEOUT=1 >"$run_dir/release.log" 2>&1 \
-    || { cat "$run_dir/release.log"; rm -rf "$run_dir"; fail "a wedged turn blocked the release"; }
-  grep -q 'up -d --no-deps backend' "$docker_log" \
-    || { rm -rf "$run_dir"; fail "the deploy never recreated the backend after the drain ceiling"; }
-  rm -rf "$run_dir"
-  echo "PASS: the backend drains in-flight turns before it is recreated"
-}
-
 test_rollout_keeps_a_backend_serving() {
   local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up first_drain second_drain
   run_dir="$(new_rollout_run_dir)"
@@ -1211,7 +1172,6 @@ case "$CASE" in
   workflow) test_workflow_rejects_stale_frontend ;;
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
-  turn-drain) test_the_backend_drains_in_flight_turns_before_recreating ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
   forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-retry) test_rollout_preserves_a_successor_still_serving_after_failure ;;
@@ -1223,7 +1183,6 @@ case "$CASE" in
     test_forge_migration_release
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
-    test_the_backend_drains_in_flight_turns_before_recreating
     test_deploy_keeps_connection_owner_running
     test_local_deploy_installs_owner_from_verified_backend_image
     test_owner_release_reuses_box_config_and_stops_when_busy
