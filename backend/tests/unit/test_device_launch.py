@@ -1849,6 +1849,23 @@ def test_a_summarisation_stream_that_stalls_is_bounded():
     assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
 
 
+def test_the_stream_watchdog_gets_the_turns_own_ceiling_not_the_180s_default():
+    """The watchdog's idle window has to outlast a quiet but live turn.
+
+    Left to itself the CLI uses 180 s whenever it believes it is on the
+    first-party API — which this deployment is, since `ANTHROPIC_BASE_URL` is
+    deliberately unset — and no hop on the path writes a keepalive byte, so a
+    long thinking window looks exactly like a dead connection and the turn is
+    killed mid-stream. Setting the variable is what leaves that 180 s branch;
+    the value has to be the platform's own turn ceiling, not a second shorter
+    one, or the watchdog becomes the binding limit on turn length.
+    """
+    from app.core.config import settings
+
+    env = device_launch.hooks_settings()["env"]
+    assert int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) >= settings.agent_turn_timeout_s * 1000
+
+
 def _claude_json_from(script: str) -> dict:
     """The `.claude.json` the launch script writes, as the shell would leave it."""
     line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
