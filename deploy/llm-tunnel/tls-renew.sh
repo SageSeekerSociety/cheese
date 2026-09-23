@@ -28,10 +28,14 @@ CERTBOT_IMAGE="${CERTBOT_IMAGE:-certbot/dns-cloudflare:v5.8.0}"
 
 domains=()
 for domain in "$@"; do domains+=(-d "$domain"); done
-docker run --rm \
+# As this script's user, not the image's root: otherwise every file certbot
+# writes is root-owned and the copy into ACTIVE_DIR below cannot read it.
+mkdir -p "$TLS_STATE_DIR/letsencrypt"
+docker run --rm --user "$(id -u):$(id -g)" \
   -v "$TLS_STATE_DIR/letsencrypt:/etc/letsencrypt" \
   -v "$TLS_STATE_DIR/cloudflare.ini:/cloudflare.ini:ro" \
   "$CERTBOT_IMAGE" certonly --non-interactive --agree-tos --register-unsafely-without-email \
+  --config-dir /etc/letsencrypt --work-dir /etc/letsencrypt/work --logs-dir /etc/letsencrypt/logs \
   --dns-cloudflare --dns-cloudflare-credentials /cloudflare.ini \
   --dns-cloudflare-propagation-seconds 30 \
   --cert-name "$1" --keep-until-expiring "${domains[@]}"
