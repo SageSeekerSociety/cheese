@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
+    ConflictError,
     ForbiddenError,
     InternalServerError,
     NotFoundError,
@@ -68,7 +69,14 @@ from app.domain.user.repositories import (
     UserRepository,
     UserStatisticsRepository,
 )
-from app.domain.user.services import UserAuthService, UserProfileService
+from app.domain.user.services import (
+    NICKNAME_MAX_LENGTH,
+    USERNAME_MAX_LENGTH,
+    UserAuthService,
+    UserProfileService,
+    is_valid_username,
+    normalize_nickname,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -1354,8 +1362,7 @@ async def register_user(
     if not email_code:
         raise BadRequestError("emailCode is required")
 
-    username_pattern = r"^[a-zA-Z0-9_-]+$"
-    if not re.match(username_pattern, username):
+    if not is_valid_username(username):
         raise UnprocessableEntityError("Invalid username format")
     # Next to the format check, not down in the service (#345): the service
     # runs after email-code verification, so a reserved name would only be
@@ -1365,9 +1372,7 @@ async def register_user(
     if is_reserved_username(username):
         raise UnprocessableEntityError("该用户名是平台保留字，请换一个")
 
-    nickname_pattern = r"^[^\s]+$"
-    if not re.match(nickname_pattern, nickname):
-        raise UnprocessableEntityError("Invalid nickname format")
+    nickname = normalize_nickname(nickname)
 
     has_srp = srp_salt and srp_verifier
     has_password = bool(password)
@@ -1418,14 +1423,14 @@ async def register_user(
     except ValueError as exc:
         msg = str(exc)
         if msg == "USERNAME_TAKEN":
-            raise UnprocessableEntityError("Username already registered") from exc
+            raise ConflictError("Username already registered") from exc
         if msg == "USERNAME_RESERVED":
             # Deliberately says WHY rather than reusing "already registered":
             # nobody holds this name, and telling the user it is taken would be
             # a lie they cannot act on (#345).
             raise UnprocessableEntityError("该用户名是平台保留字，请换一个") from exc
         if msg == "EMAIL_TAKEN":
-            raise UnprocessableEntityError("Email already registered") from exc
+            raise ConflictError("Email already registered") from exc
         raise
 
     # Consume invite code after successful registration
@@ -3868,15 +3873,9 @@ async def _pop_oauth_pending(session_id: str) -> dict | None:
         await redis.aclose()
 
 
-def _clean_nickname(raw: str) -> str:
-    cleaned = "".join(
-        ch if (ch.isalnum() or ch == "_" or "一" <= ch <= "龥") else "_" for ch in raw
-    )
-    return cleaned[:16] or "user"
-
-
 async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
-    """(suggestedUsername, suggestedNickname) — username de-duplicated."""
+    """(suggestedUsername, suggestedNickname), both passing the rules the
+    create form is checked against, the username de-duplicated."""
     import secrets as _secrets
 
     base_raw = (
@@ -3885,18 +3884,30 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
         or user_info.get("name")
         or f"user_{user_info.get('id')}"
     )
-    base = "".join(ch for ch in str(base_raw) if ch.isalnum() or ch in "_-") or "user"
+    suffix_length = 7  # "_" + token_hex(3)
+    base = (
+        "".join(
+            ch for ch in str(base_raw) if ch.isascii() and (ch.isalnum() or ch in "_-")
+        )[: USERNAME_MAX_LENGTH - suffix_length]
+        or "user"
+    )
     username = base
     # A reserved name is suggested exactly as readily as a taken one — the
     # provider's `preferredUsername` could be "system" — so treat it the same
     # way here instead of letting the user hit the wall on submit (#345).
-    while await auth_service.is_username_taken(username) or is_reserved_username(
-        username
+    while (
+        not is_valid_username(username)
+        or await auth_service.is_username_taken(username)
+        or is_reserved_username(username)
     ):
         username = f"{base}_{_secrets.token_hex(3)}"
-    nickname = _clean_nickname(
-        str(user_info.get("name") or user_info.get("preferredUsername") or username)
+    raw_nickname = str(
+        user_info.get("name") or user_info.get("preferredUsername") or username
     )
+    try:
+        nickname = normalize_nickname(raw_nickname[:NICKNAME_MAX_LENGTH])
+    except UnprocessableEntityError:
+        nickname = username
     return username, nickname
 
 
@@ -4202,6 +4213,7 @@ async def get_oauth_state(
 
 async def _complete_oauth_binding(
     *,
+    session: AsyncSession,
     auth_service: UserAuthService,
     oauth_service: OAuthService,
     user_id: int,
@@ -4209,24 +4221,35 @@ async def _complete_oauth_binding(
     user_info: dict,
     **extra: str | None,
 ) -> RedirectResponse:
-    """Create the provider↔user connection (idempotence guard) and log in."""
+    """Create the provider↔user connection (idempotence guard) and log in.
+
+    When the identity belongs to someone else, everything this request wrote
+    is rolled back, so an account created for the binding does not outlive it.
+    """
+    provider_user_id = str(user_info.get("id"))
     existing = await oauth_service.get_connection_by_provider(
-        provider_id=provider_id, provider_user_id=str(user_info.get("id"))
+        provider_id=provider_id, provider_user_id=provider_user_id
     )
-    if existing:
-        if existing["userId"] != user_id:
-            return _oauth_error_redirect(
-                "ALREADY_LINKED", "This OAuth account is linked to another user"
+    if existing is None:
+        try:
+            await oauth_service.create_connection(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_user_id=provider_user_id,
+                raw_profile={
+                    "email": user_info.get("email"),
+                    "name": user_info.get("name"),
+                },
             )
-    else:
-        await oauth_service.create_connection(
-            user_id=user_id,
-            provider_id=provider_id,
-            provider_user_id=str(user_info.get("id")),
-            raw_profile={
-                "email": user_info.get("email"),
-                "name": user_info.get("name"),
-            },
+        except ConflictError:
+            # Linked by a concurrent request since the lookup above.
+            existing = await oauth_service.get_connection_by_provider(
+                provider_id=provider_id, provider_user_id=provider_user_id
+            )
+    if existing is not None and existing["userId"] != user_id:
+        await session.rollback()
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     return await _oauth_login_redirect(auth_service, user_id, provider_id, **extra)
 
@@ -4278,6 +4301,7 @@ async def oauth_verify_conflict(
 
         await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user_id,
@@ -4307,15 +4331,17 @@ async def oauth_create_user(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
-    import re
-
     try:
         provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{4,32}", username):
+    if not is_valid_username(username):
         return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
+    try:
+        nickname = normalize_nickname(nickname)
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
     if passwordMode not in ("none", "srp"):
         return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
     if passwordMode == "srp" and not (srpSalt and srpVerifier):
@@ -4351,22 +4377,38 @@ async def oauth_create_user(
         return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
     if await auth_service.is_username_taken(username):
         return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
-
     if not await _redeem_oauth_state_token(jti):
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    # Before the account is created, not after: a second stateToken for an
+    # identity linked meanwhile would otherwise leave an account behind with
+    # nothing linked to it.
+    if await oauth_service.get_connection_by_provider(
+        provider_id=provider_id, provider_user_id=str(user_info.get("id"))
+    ):
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
+        )
 
     try:
         email = (
             user_info.get("email")
             or f"oauth-{provider_id}-{user_info.get('id')}@placeholder.internal"
         )
-        user, _profile = await auth_service.register_oauth_decision(
-            email=email,
-            username=username,
-            nickname=_clean_nickname(nickname),
-            srp_salt=srpSalt if passwordMode == "srp" else None,
-            srp_verifier=srpVerifier if passwordMode == "srp" else None,
-        )
+        try:
+            user, _profile = await auth_service.register_oauth_decision(
+                email=email,
+                username=username,
+                nickname=nickname,
+                srp_salt=srpSalt if passwordMode == "srp" else None,
+                srp_verifier=srpVerifier if passwordMode == "srp" else None,
+            )
+        except ValueError as exc:
+            # Lost a race the checks above could not see.
+            if str(exc) == "USERNAME_TAKEN":
+                return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+            if str(exc) == "EMAIL_TAKEN":
+                return _oauth_error_redirect("EMAIL_TAKEN", "Email already registered")
+            raise
         if invite_code:
             try:
                 await invite_service.consume_code(invite_code)
@@ -4376,6 +4418,7 @@ async def oauth_create_user(
                     "INVALID_INVITE_CODE", str(_invite_code_error(exc))
                 )
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user.id,
@@ -4430,6 +4473,7 @@ async def oauth_bind_user(
 
     try:
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user.id,
@@ -4541,6 +4585,7 @@ async def oauth_bind_srp_verify(
 
     try:
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=int(pending["userId"]),

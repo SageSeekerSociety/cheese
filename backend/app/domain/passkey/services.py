@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn import (
     generate_authentication_options,
@@ -17,7 +18,7 @@ from webauthn.helpers.structs import (
 )
 
 from app.core.config import settings
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.passkey.repositories import PasskeyRepository
 
 
@@ -114,15 +115,21 @@ class PasskeyService:
         device_type = getattr(verification, "credential_device_type", "single_device")
         backed_up = getattr(verification, "credential_backed_up", False)
 
-        cred = await self._repo.create(
-            user_id=user_id,
-            credential_id=bytes_to_base64url(verification.credential_id),
-            public_key=verification.credential_public_key,
-            counter=verification.sign_count,
-            device_type=device_type,
-            backed_up=backed_up,
-            transports=transports,
-        )
+        credential_id = bytes_to_base64url(verification.credential_id)
+        try:
+            cred = await self._repo.create(
+                user_id=user_id,
+                credential_id=credential_id,
+                public_key=verification.credential_public_key,
+                counter=verification.sign_count,
+                device_type=device_type,
+                backed_up=backed_up,
+                transports=transports,
+            )
+        except IntegrityError:
+            if await self._repo.get_by_credential_id(credential_id) is None:
+                raise
+            raise ConflictError("This passkey is already registered") from None
 
         return {
             "id": cred.id,

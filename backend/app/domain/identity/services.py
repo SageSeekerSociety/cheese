@@ -21,6 +21,7 @@ trail keeps the distinct handles.
 import uuid
 from collections.abc import Sequence
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.handles import (
@@ -72,16 +73,26 @@ class IdentityService:
         and on every turn — never duplicates."""
         user = await self._users.get_by_handle(handle)
         if user is None:
-            user = await self._create_agent_user(handle=handle)
+            try:
+                user = await self._create_agent_user(handle=handle)
+            except IntegrityError:
+                # Two first turns raced; the other one's row is the agent.
+                user = await self._users.get_by_handle(handle)
+                if user is None:
+                    raise
         if await self._bindings.get_for_user(user.id) is None:
             await self._bindings.add(user_id=user.id, kind=AgentBindingKind.platform)
         # The display name lives on the profile (the User row only carries the
         # handle). Without it every agent would render as its raw
         # ``cheese-<hex>`` handle instead of 芝士 — identity forks, display does not.
         if await self._profiles.get_profile_by_user_id(user.id) is None:
-            await self._profiles.create_profile(
-                user_id=user.id, nickname=name, intro="", avatar_id=1
-            )
+            try:
+                await self._profiles.create_profile(
+                    user_id=user.id, nickname=name, intro="", avatar_id=1
+                )
+            except IntegrityError:
+                if await self._profiles.get_profile_by_user_id(user.id) is None:
+                    raise
         return user
 
     async def ensure_room_agent_user(self, topic_id: uuid.UUID) -> User:
