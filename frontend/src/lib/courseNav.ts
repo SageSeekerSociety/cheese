@@ -20,6 +20,11 @@ export interface CourseNavCell {
   icon: string
   /** i18n key，前缀 `spaces.course.nav.`。 */
   label: string
+  /**
+   * 这一格属于哪个模块（`COURSE_MODULES` 的键）。**不写 = 永远露出来** —— 课程
+   * 总览那样的格子是这门课本身，不归任何开关管。
+   */
+  module?: string
 }
 
 /**
@@ -31,22 +36,90 @@ export interface CourseNavCell {
  */
 export const COURSE_TEACHER_CELLS: readonly CourseNavCell[] = [
   { route: 'SpacesCourseHome', icon: 'mdi-view-dashboard-outline', label: 'spaces.course.nav.overview' },
-  { route: 'SpacesCourseUnits', icon: 'mdi-calendar-week-outline', label: 'spaces.course.nav.units' },
-  { route: 'SpacesCourseAssignments', icon: 'mdi-clipboard-check-outline', label: 'spaces.course.nav.assignments' },
+  {
+    route: 'SpacesCourseUnits',
+    icon: 'mdi-calendar-week-outline',
+    label: 'spaces.course.nav.units',
+    module: 'units',
+  },
+  {
+    route: 'SpacesCourseAssignments',
+    icon: 'mdi-clipboard-check-outline',
+    label: 'spaces.course.nav.assignments',
+    module: 'assignments',
+  },
   { route: 'SpacesCoursePeople', icon: 'mdi-account-group-outline', label: 'spaces.course.nav.people' },
   {
     route: 'SpacesDetailAnalyticsLearning',
     icon: 'mdi-comment-question-outline',
     label: 'spaces.course.nav.stuck',
+    module: 'stuck',
   },
 ]
 
 /** 学生看到的格：我这门课要做什么。没有题目、没有报名、没有算力。 */
 export const COURSE_STUDENT_CELLS: readonly CourseNavCell[] = [
   { route: 'SpacesCourseHome', icon: 'mdi-school-outline', label: 'spaces.course.nav.myCourse' },
-  { route: 'SpacesCourseAssignments', icon: 'mdi-clipboard-text-outline', label: 'spaces.course.nav.thisWeek' },
-  { route: 'SpacesCourseTeam', icon: 'mdi-account-multiple-outline', label: 'spaces.course.nav.team' },
+  {
+    route: 'SpacesCourseAssignments',
+    icon: 'mdi-clipboard-text-outline',
+    label: 'spaces.course.nav.thisWeek',
+    module: 'assignments',
+  },
+  {
+    route: 'SpacesCourseTeam',
+    icon: 'mdi-account-multiple-outline',
+    label: 'spaces.course.nav.team',
+    module: 'team',
+  },
 ]
+
+/**
+ * 这门课可以拨的模块。键与服务端 `backend/app/domain/space/course_modules.py` 的
+ * `MODULE_KEYS` 是同一张表（服务端验键、这里给名字）。
+ *
+ * **`wired` 说的是「今天有没有界面在听这个开关」。** 拨了没反应的开关比没有开关
+ * 更糟，所以配置页只画 `wired: true` 的那几格，其余的在页面下方一句话交代：接上
+ * 界面之后它们自己会出现（数据早就存得住，缺的只是那个界面）。
+ */
+export const COURSE_MODULES: readonly {
+  key: string
+  label: string
+  /** 这一格开/关时界面上会多/少什么，用一句人话写在配置页上。 */
+  effect: string
+  wired: boolean
+}[] = [
+  { key: 'units', label: 'spaces.course.module.units', effect: 'spaces.course.module.unitsEffect', wired: true },
+  {
+    key: 'assignments',
+    label: 'spaces.course.module.assignments',
+    effect: 'spaces.course.module.assignmentsEffect',
+    wired: true,
+  },
+  { key: 'team', label: 'spaces.course.module.team', effect: 'spaces.course.module.teamEffect', wired: true },
+  { key: 'stuck', label: 'spaces.course.module.stuck', effect: 'spaces.course.module.stuckEffect', wired: true },
+  { key: 'quiz', label: 'spaces.course.module.quiz', effect: '', wired: false },
+  { key: 'materials', label: 'spaces.course.module.materials', effect: '', wired: false },
+  { key: 'progress', label: 'spaces.course.module.progress', effect: '', wired: false },
+  { key: 'pool', label: 'spaces.course.module.pool', effect: '', wired: false },
+]
+
+/**
+ * 一个模块开着吗。**缺省是开着** —— 没声明的键 = 显示，所以 `{}` 是一间全都露出来
+ * 的课，老题目板（连这个字段都没有）也落在同一档。这与服务端
+ * `course_modules.is_on` 是同一条规矩。
+ */
+export function moduleOn(modules: Record<string, boolean> | undefined, key: string): boolean {
+  return modules?.[key] !== false
+}
+
+/** 按开关筛过的格子。没挂模块的格子（课程总览）永远在。 */
+export function visibleCourseCells(
+  cells: readonly CourseNavCell[],
+  modules: Record<string, boolean> | undefined
+): readonly CourseNavCell[] {
+  return cells.filter((cell) => !cell.module || moduleOn(modules, cell.module))
+}
 
 export function courseCells(isTeacher: boolean): readonly CourseNavCell[] {
   return isTeacher ? COURSE_TEACHER_CELLS : COURSE_STUDENT_CELLS

@@ -202,6 +202,24 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
           --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check out the released connection owner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Released by release-device-connection run 35770200245.
+          ref: fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          path: tmp/owner-compat-baseline
+      - name: Current backend collects a call from the released owner
+        timeout-minutes: 3
+        env:
+          ACCEPTANCE_COMMIT: ${{ github.sha }}
+          OPENAI_API_KEY: test-openai-key
+          ANTHROPIC_AUTH_TOKEN: test-anthropic-token
+        run: >-
+          backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py
+          --owner-source tmp/owner-compat-baseline
+          --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          --claude scripts/remote_execution/node_modules/.bin/claude
+          --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
       - name: Verify ordinary room turns through the connector
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
@@ -254,4 +272,5 @@ jobs:
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
+            logs/device-connection-acceptance-*.jsonl
           retention-days: 3

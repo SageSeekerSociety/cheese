@@ -13,6 +13,17 @@
  *    不防抖的实现在一次搜索里会把每个前缀都发出去。
  * 3. 移出**先确认再发请求**：这个动作当场决定谁能看别人的私密反馈，而按钮就挨着一个
  *    名字。
+ * 4. 主行显示**昵称**、handle 作次要信息，而且**同一个串不画两遍**（昵称为空或就是
+ *    handle 时只剩一个串）；头像对读屏不可见（名字就在旁边）。
+ * 5. 确认框关掉之后**焦点回到触发它的那颗按钮**：没有 activator 的 `VDialog` 自己
+ *    不归还焦点，掉到 `body` 上键盘用户就得从头 Tab 回来。
+ * 6. 头像那格画的是**这个人自己的图**（`/avatars/<id>`），没挑过的人画彩色首字母、而
+ *    不是所有人共用的 `/avatars/default`。`avatar_id` 为 null 是「从没挑过」的判据，
+ *    漏判时把 null 交给 `getAvatarUrl` 会回一张**所有没挑过头像的人共用**的脸 —— 一列
+ *    头像变成同一张，比按 handle 派生的颜色更难把人分辨开，而分辨人正是头像唯一的活。
+ * 7. 取不到的头像 URL 在**本次会话**里只问一次（`utils/avatarFailures`）。dev 的种子
+ *    迁移只往 avatars 表写了行、一张图也没落盘，不记的话每次切回这一页，每个坏 id 都
+ *    会再造一个 `<img>` 去撞一次必然 404 的请求。
  *
  * 没测到的一条，说清楚省得下次有人以为它被覆盖了：**从候选里选中再点「添加」**这一步
  * 在 happy-dom 里做不到 —— `v-autocomplete` 的候选画在浮层菜单里，而浮层在这个环境
@@ -21,6 +32,7 @@
  */
 import type { Component } from 'vue'
 
+import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -47,9 +59,23 @@ vi.mock('@/api', async () => {
 
 import AdminMembersPage from './AdminMembersPage.vue'
 
+// 两组现在是同一个行形状（`root` 不再是一串裸 handle）。这里特意让三行的
+// nickname/avatar_id 各占一种情况：andy 两样都有、wangchangxin 两样都为 null
+// （平台上没有这个账号）、pengwenbo 是页面上加的、带出处。
 const ROSTER = {
-  root: ['andy', 'wangchangxin'],
-  added: [{ handle: 'pengwenbo', added_by_handle: 'andy', created_at: '2026-09-19T10:00:00Z' }],
+  root: [
+    { handle: 'andy', nickname: '安迪', avatar_id: 7 },
+    { handle: 'wangchangxin', nickname: null, avatar_id: null },
+  ],
+  added: [
+    {
+      handle: 'pengwenbo',
+      nickname: '彭文博',
+      avatar_id: 3,
+      added_by_handle: 'andy',
+      created_at: '2026-09-19T10:00:00Z',
+    },
+  ],
 }
 
 function mountPage() {
@@ -104,14 +130,125 @@ describe('成员管理', () => {
 
     expect(await findByText('部署配置里的根管理员')).toBeTruthy()
     expect(await findByText('页面上添加的')).toBeTruthy()
+    // 主行是昵称，handle 是次要信息：两个串都在。
+    expect(await findByText('安迪')).toBeTruthy()
+    expect(await findByText('彭文博')).toBeTruthy()
     expect(await findByText('pengwenbo')).toBeTruthy()
     expect(await findByText('andy')).toBeTruthy()
+    // `wangchangxin` 没有昵称（平台上没这个账号）：主行退回 handle，而且只画一次。
+    expect(await findByText('wangchangxin')).toBeTruthy()
     // 页面上加的那一行带出处：谁加的、什么时候。
     expect(await findAllByText(/andy 加的/)).toHaveLength(1)
 
     // 整页只有一个「移出」，在 `pengwenbo` 那一行。根那两行（andy、wangchangxin）
     // 每个都画一个的话这里会是三个。
     expect(getAllByText('移出')).toHaveLength(1)
+  })
+
+  it('昵称和 handle 不相同时，昵称在前、handle 作次要信息；昵称就是 handle 时只画一遍', async () => {
+    const { findByText, findAllByText } = mountPage()
+    expect(await findByText('安迪')).toBeTruthy()
+    // 昵称和 handle 不同：昵称是主行，「安迪」不出现第二次。
+    expect(await findAllByText('安迪')).toHaveLength(1)
+    expect(await findAllByText('andy')).toHaveLength(1)
+
+    // 另一种「只有一个串可画」：昵称本来就是 handle。画两遍的话这里会是 2。
+    listPlatformAdmins.mockResolvedValue({
+      root: [{ handle: 'samename', nickname: 'samename', avatar_id: null }],
+      added: [],
+    })
+    const again = mountPage()
+    expect(await again.findByText('samename')).toBeTruthy()
+    expect(await again.findAllByText('samename')).toHaveLength(1)
+  })
+
+  it('名单里的头像是装饰：对读屏不可见', async () => {
+    const { container, findByText } = mountPage()
+    await findByText('andy')
+
+    const avatars = container.querySelectorAll('.fb-avatar')
+    expect(avatars.length).toBeGreaterThan(0)
+    avatars.forEach((el) => {
+      // 没有 `aria-hidden` 的话，读屏会把头像当成一个无名图形挨个念出来。
+      expect(el.closest('[aria-hidden="true"]')).toBeTruthy()
+    })
+  })
+
+  it('挑过头像的人画各自的 /avatars/<id>，没挑过的人画彩色首字母而不是 /avatars/default', async () => {
+    const { container, findByText } = mountPage()
+    await findByText('安迪')
+
+    const rowOf = (needle: string) =>
+      Array.from(container.querySelectorAll('tr.am__row')).find((r) => r.textContent?.includes(needle))
+
+    // 挑过的人：这一行的图指向**他自己那个 id**。两行各断言一次，才排得掉「某一列
+    // 画对了、其余行画成同一张固定图」这种半对 —— 传错 `avatarId`（漏传、传成 handle、
+    // 或哪一行写死一个常量）在这两条里总有一条会红。
+    const andyImg = rowOf('安迪')?.querySelector('img')
+    expect(andyImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
+    expect(andyImg?.getAttribute('src')).toMatch(/\/avatars\/7$/)
+    const pengImg = rowOf('彭文博')?.querySelector('img')
+    expect(pengImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
+    expect(pengImg?.getAttribute('src')).toMatch(/\/avatars\/3$/)
+
+    // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母。把 null 交给
+    // `getAvatarUrl` 会回 `/avatars/default`，那是所有没挑过头像的人共用的一张脸。
+    const noAvatar = rowOf('wangchangxin')
+    expect(noAvatar?.querySelector('img')).toBeNull()
+    expect(noAvatar?.querySelector('.user-avatar-char')?.textContent).toBe('W')
+  })
+
+  it('根那组里平台上没有账号的人照常画一行：不报错、不空白', async () => {
+    const { container, findByText } = mountPage()
+
+    // 昵称、头像都为 null（平台上根本没这个账号）：主行退回 handle，这一行照常出现。
+    const row = (await findByText('wangchangxin')).closest('tr')
+    expect(row?.textContent).toContain('wangchangxin')
+    // 头像那格是彩色首字母，不是空白。
+    expect(row?.querySelector('.user-avatar-char')?.textContent).toBe('W')
+    // 「平台里没这个账号」不是错误：加载完不该弹任何失败提示（`v-alert` 那一块）。
+    expect(container.querySelector('.am__alert')).toBeNull()
+  })
+
+  it('确认框关掉之后，焦点回到触发它的那颗「移出」', async () => {
+    const { findByText, findAllByRole } = mountPage()
+
+    const removeButton = await findByText('移出')
+    await fireEvent.click(removeButton)
+
+    // 取消（浮层里那个），不是行上那颗。
+    const cancels = await findAllByRole('button', { name: '取消' })
+    const dialogCancel = cancels.find((b) => b.closest('.v-overlay'))
+    expect(dialogCancel).toBeTruthy()
+    await fireEvent.click(dialogCancel as HTMLElement)
+
+    // Vuetify 的 `VDialog` 在没有 activator 时不会把焦点还回去，页面自己送。
+    // `findByText` 给的是按钮里那层文字 `<span>`，焦点落在它外面那颗真 `<button>` 上。
+    await vi.waitFor(() => expect(document.activeElement).toBe(removeButton.closest('button')))
+  })
+
+  it('取不到的头像：本次会话里不再发第二次请求', async () => {
+    // 用一个没在别处出现过的 id：失败记忆是**模块级**的 Set，随这一份 spec 的进程
+    // 生灭，复用别的用例的 id 会把它们的头像也短路成首字母。
+    listPlatformAdmins.mockResolvedValue({
+      root: [{ handle: 'ghost', nickname: null, avatar_id: 424242 }],
+      added: [],
+    })
+
+    const first = mountPage()
+    await first.findByText('ghost')
+    const img = first.container.querySelector('tr.am__row img')
+    expect(img, '第一次进来还是要去问一次，不能预判').not.toBeNull()
+    img?.dispatchEvent(new Event('error'))
+    await nextTick()
+    first.unmount()
+
+    // 再进一次：这个 URL 已知取不到（`utils/avatarFailures`），不该再造 `<img>` ——
+    // 也就不会再发那一次必然 404 的请求，直接画彩色首字母。
+    const second = mountPage()
+    await second.findByText('ghost')
+    expect(second.container.querySelector('tr.am__row img')).toBeNull()
+    expect(second.container.querySelector('tr.am__row .user-avatar-char')?.textContent).toBe('G')
   })
 
   it('搜账号打到服务端，而且只打一次', async () => {

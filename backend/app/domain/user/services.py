@@ -89,6 +89,36 @@ async def chosen_avatars_by_handle(
     }
 
 
+async def faces_by_handle(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, tuple[str | None, int | None]]:
+    """handle -> (昵称, 自己挑过的头像 id)，平台上没有这个 handle 的不在里面。
+
+    和 ``chosen_avatars_by_handle`` 走同一条实现路径 —— 一次把 handle 翻成 user，
+    再一次把（昵称, 头像）一起取回来，**总共两条查询**，名单多长都是两条。分成
+    「查昵称」「查头像」两次会让同一个 join 写两遍，而「哪一行是默认头像」这条规则
+    也就多了一个漂开的机会（现状：`UserProfileRepository` 里只此一处）。
+
+    和 ``chosen_avatars_by_handle`` 的唯一差别是**缺省怎么写**：那边「没挑过」就
+    整条不见，调用方据此画彩色首字母；这边一行的名字和脸要一起画，所以**有账号的
+    人一定在映射里**（没昵称、没挑过就是 (None, None)），只有平台上根本没有这个
+    handle 时整条缺失 —— 部署配置里写错一个名字是允许的，那一行仍然是名单的一份。
+
+    放在这里而不是调用方：和旁边两个一样，「这个账号叫什么、有没有挑过头像」是
+    `User` / `UserProfile` 的事实，写一份才不会两边各答一次「删掉的账号算不算」。
+    """
+    wanted = {h for h in handles if h}
+    if not wanted:
+        return {}
+    users = await UserRepository(session).get_by_handles(sorted(wanted))
+    profiles = await UserProfileRepository(session).nickname_and_avatar_by_user_id(
+        [u.id for u in users.values()]
+    )
+    return {
+        handle: profiles.get(user.id, (None, None)) for handle, user in users.items()
+    }
+
+
 def normalize_nickname(raw: str) -> str:
     """Trim a user-supplied nickname and reject the unusable ones.
 
@@ -138,11 +168,23 @@ class AccountService:
     async def count_accounts(self) -> int:
         return await self._repo.count_accounts()
 
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """真人 / agent 的存量拆分。判据是 `agent_bindings`（与
+        `IdentityService.is_agent` 同一份），见
+        `UserRepository.count_accounts_by_kind`。"""
+        return await self._repo.count_accounts_by_kind()
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:
         """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
         return await self._repo.accounts_series(since=since, until=until)
+
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """同 `accounts_series`，但真人 / agent 各一条。"""
+        return await self._repo.accounts_series_by_kind(since=since, until=until)
 
 
 class UserProfileService:
@@ -237,6 +279,11 @@ class UserAuthService:
             )
         ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
+
+    async def set_srp_credentials(
+        self, user_id: int, srp_salt: str, srp_verifier: str
+    ) -> None:
+        await self._user_repo.update_password(user_id, f"SRP:{srp_salt}:{srp_verifier}")
 
     @staticmethod
     def _reject_reserved(username: str) -> None:

@@ -47,7 +47,9 @@ function watchStats(page: Page) {
   return seen;
 }
 
-/** 分类开关里点某一个页签。**只在 `.ad__kinds` 里找**：摘要条（`.ad__pulse`）那几块
+/** 分类开关里点某一个页签。**只在 `.ad__kinds` 里找**：两行页签并成一行之后，
+ *  页签里的短值是 `aria-hidden` 的附属读数（accessible name 保持裸标签），所以
+ *  `exact: true` 仍能唯一定位到那颗按钮。
  *  也写着同一批标签、也带 button 的可访问名字（role=tab 虽然换掉了隐式 role，但
  *  `getByRole('button', { name: '…' })` 在部分版本里仍会撞上邻近控件），收窄到开关
  *  这一层才能点到「切换分类」那个控件本身。 */
@@ -115,7 +117,7 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
 
   await page.goto('/admin/dashboard');
   await expect.poll(() => seen.find((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 }).toBeTruthy();
-  // **限定在 `.ad__kpis`（明细那一行）里找**：顶上那条摘要条（`.ad__pulse`）也
+  // **限定在 `.ad__kpis`（明细那一行）里找**：顶上那条分类导轨（`.ad__kinds`）里
   // 常驻着同一批短语（那是它的 value/hint），而摘要是**跨块**的导航，不算「上一类的内容」。
   // 不加这一层限定，`getByText('等你处理')` 会命中两处、报 strict mode 违规；而下面那条
   // 「切走之后数 0」也会永远不成立 —— 摘要条本来就不跟着分类消失。

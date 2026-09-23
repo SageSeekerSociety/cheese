@@ -134,14 +134,31 @@ class PlatformStatsService:
         """
         since, until, buckets = utc_day_window(days)
         created = await self._users.accounts_series(since=since, until=until)
+        by_kind = await self._users.accounts_series_by_kind(since=since, until=until)
         admins = await AdminService(self._session).admin_handles()
+        kinds = await self._users.count_accounts_by_kind()
         return {
             "days": days,
             "people": {
                 "total": await self._users.count_accounts(),
                 "new": sum(created.values()),
                 "admins": len(admins),
-                "series": dense_series(buckets, {"created": created}),
+                # 真人 / agent 的拆分。判据是 `agent_bindings`，和
+                # `IdentityService.is_agent` 同一份 —— 见 `count_accounts_by_kind`。
+                # `total` / `new` / `series.created` 仍是**和**：拆分是附加列，不是
+                # 把老口径改写成只数真人。
+                "humans": kinds["humans"],
+                "agents": kinds["agents"],
+                "new_humans": sum(by_kind["humans"].values()),
+                "new_agents": sum(by_kind["agents"].values()),
+                "series": dense_series(
+                    buckets,
+                    {
+                        "created": created,
+                        "human_created": by_kind["humans"],
+                        "agent_created": by_kind["agents"],
+                    },
+                ),
             },
             "machines": await self._machines.counts(),
             # 「平台现在健康吗」——和上面两组的差别是**这一刻**的，不是存量也不是
@@ -154,16 +171,25 @@ class PlatformStatsService:
             "extras": await self._gaps.platform_extras(),
         }
 
-    async def performance(self, *, routes_registered: int | None = None) -> dict:
+    async def performance(
+        self, *, routes_registered: list[tuple[str, str]] | int | None = None
+    ) -> dict:
         """性能那一块：**这一刻**的接口耗时 + 投递与事件积压。
 
         前半在 `performance_snapshot()`（进程内存，重启即清零，只有这一个进程）。
         后半是新加的：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。
         """
+        from app.core.metrics import registry
         from app.domain.platform_stats.performance import performance_snapshot
 
         snap = performance_snapshot(routes_registered=routes_registered)
         snap["reliability"] = await self._gaps.reliability()
+        # 这两个是活的读数，快照自己不碰（它只看路由指标和网络速率环）。
+        # `active_requests` 减 1：读它的这一次请求自己就在里面。
+        snap["active_requests"] = max(
+            0, registry.gauge("http_requests_active").value - 1
+        )
+        snap["uptime_seconds"] = registry.export()["uptime_seconds"]
         return snap
 
     async def pipeline(self, *, days: int) -> dict:
