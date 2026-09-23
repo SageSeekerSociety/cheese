@@ -107,7 +107,7 @@ def test_the_person_who_started_the_turn_hears_the_question(client):
     bob = seed_user(client, "bob")
     _pid, room = _room(client)
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="bob")
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="bob")
     )
 
     _ask(client, room)
@@ -129,7 +129,7 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(client):
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="system")
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="system")
     )
 
     _ask(client, room)

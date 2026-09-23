@@ -47,9 +47,13 @@ assertions and workflow selection when using an entry.
   automatically replaces a connector whose binary digest differs. The
   source-only smoke substitutes device authentication and uses a Python
   connector harness; it does not verify the released-image boundary.
-- General backend fixtures may use `NullPool` for event-loop isolation. Keep
-  that lifecycle constraint visible when adding bounded-pool coverage; changing
-  every fixture to a pooled engine requires its own lifecycle design.
+- Application requests and direct business calls use production-sized
+  `QueuePool` engines that are disposed on their owning loop. With the sync
+  `client` fixture, run direct business coroutines through `client.portal.call`
+  with `client.test_request_factory`. `client.test_factory` is the separate
+  `NullPool` handle for setup and inspection that intentionally run on
+  short-lived `asyncio.run` loops; do not pass it into application services.
+
   `backend/tests/integration/test_remote_read_connections.py` already exercises
   forge and machine reads with a one-connection pool, checking another session
   can query during the substituted remote call. Extend that pattern for the

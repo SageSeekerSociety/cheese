@@ -129,7 +129,7 @@ def channel(client, monkeypatch):
             }
         ),
     )
-    executor = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     executor.precheck = AsyncMock(
         return_value=Placement("executor", 1, "agent", rented=True)
     )
@@ -154,14 +154,18 @@ async def test_a_harness_without_an_executor_is_refused_by_name(
     """
     project, topic = room
     central = channel(client, monkeypatch)
-    with pytest.raises(ScreenSetupError, match="pi"):
-        await central.ensure_ready(
-            session=ref(project, topic),
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=PiLaunch(system_prompt="System", model="glm-5.2"),
-            precheck=await central.precheck(ref(project, topic), needs_place=True),
-        )
+
+    async def exercise():
+        with pytest.raises(ScreenSetupError, match="pi"):
+            await central.ensure_ready(
+                session=ref(project, topic),
+                token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+                env={},
+                launch=PiLaunch(system_prompt="System", model="glm-5.2"),
+                precheck=await central.precheck(ref(project, topic), needs_place=True),
+            )
+
+    client.portal.call(exercise)
 
 
 # What the executor installation reports about itself. ``state`` is where it put
@@ -201,109 +205,127 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
     selected._ensure_screen = AsyncMock(
         return_value=SimpleNamespace(device_id="center")
     )
-    await selected.ensure_ready(
-        session=ref(project, topic),
-        token=mint_scoped_token(
-            project_id=str(project), topic_id=str(topic), agent_handle="other-teammate"
-        ),
-        env={},
-        memory_scope=None,
-        owner=None,
-        turn_id=None,
-        launch=ClaudeLaunch("System"),
-        precheck=Placement("executor", 1, "room-stand-in", rented=True),
-    )
-    screen = selected._ensure_screen.await_args.kwargs
-    assert screen["agent_handle"] == "other-teammate"
-    assert screen["agent_user_id"] == actor_id
-    if not central_execution:
-        captured = machine_launcher.screen_env(
-            MachinePlace(
-                home=str(tmp_path),
-                workdir=str(tmp_path),
-                store="",
-                state="",
-                api_base="http://fixture",
+
+    async def exercise():
+        await selected.ensure_ready(
+            session=ref(project, topic),
+            token=mint_scoped_token(
                 project_id=str(project),
                 topic_id=str(topic),
-                agent_handle=screen["agent_handle"],
+                agent_handle="other-teammate",
             ),
-            hook_url="http://fixture/hooks",
-            token=screen["token"],
+            env={},
+            memory_scope=None,
+            owner=None,
+            turn_id=None,
+            launch=ClaudeLaunch("System"),
+            precheck=Placement("executor", 1, "room-stand-in", rented=True),
         )
-    assert captured["CHEESE_AUTHOR"] == "other-teammate"
-    env = {
-        **os.environ,
-        **captured,
-        "GIT_COMMITTER_NAME": "fixture",
-        "GIT_COMMITTER_EMAIL": "fixture@example.test",
-    }
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(tmp_path),
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "Fixture",
-        ],
-        env=env,
-        check=True,
-        capture_output=True,
-    )
-    result = subprocess.run(
-        ["git", "-C", str(tmp_path), "show", "-s", "--format=%an <%ae>"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert result.stdout.strip() == "other-teammate <other-teammate@agent.cheese.local>"
+        screen = selected._ensure_screen.await_args.kwargs
+        assert screen["agent_handle"] == "other-teammate"
+        assert screen["agent_user_id"] == actor_id
+        if not central_execution:
+            captured = machine_launcher.screen_env(
+                MachinePlace(
+                    home=str(tmp_path),
+                    workdir=str(tmp_path),
+                    store="",
+                    state="",
+                    api_base="http://fixture",
+                    project_id=str(project),
+                    topic_id=str(topic),
+                    agent_handle=screen["agent_handle"],
+                ),
+                hook_url="http://fixture/hooks",
+                token=screen["token"],
+            )
+        assert captured["CHEESE_AUTHOR"] == "other-teammate"
+        env = {
+            **os.environ,
+            **captured,
+            "GIT_COMMITTER_NAME": "fixture",
+            "GIT_COMMITTER_EMAIL": "fixture@example.test",
+        }
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Fixture",
+            ],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", str(tmp_path), "show", "-s", "--format=%an <%ae>"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert (
+            result.stdout.strip()
+            == "other-teammate <other-teammate@agent.cheese.local>"
+        )
+
+    client.portal.call(exercise)
 
 
 @pytest.mark.anyio
 async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
     project, topic = room
     central = channel(client, monkeypatch)
-    central._hub.exec.side_effect = [
-        {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
-    ]
-    codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    session = SessionRef(project, topic, AGENT, harness="codex")
-    actual_agent = (await central.precheck(session, needs_place=True)).agent_handle
-    handle = await codex.ensure(
-        session, Opening("shared system", model="fixture", agent_handle=actual_agent)
-    )
-    assert handle.thread_id == "codex-thread"
-    place = await session_place(client.test_factory, topic, AGENT, "codex")
-    assert place is not None
-    assert place.runtime == {
-        "harness": "codex",
-        "agent_handle": actual_agent,
-        "state": handle.state,
-    }
-    assert place.lease is None
-    central._hub.call_executor.return_value = {
-        "thread_id": "codex-thread",
-        "alive": True,
-    }
-    assert await codex.discover("center") == [handle]
-    # 中心通道同时被 Claude Code 和 Codex 两个 runtime 包着（``build_compute_pool``），
-    # 所以它答不出哪一条会话是谁的，也不该答：它把落在自己这儿的会话原样交出来，
-    # 骨架的名字当 ``running`` 一起交（``Channel.discover`` 的契约）。
-    central.restore_screens = AsyncMock(
-        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
-    )
-    central.executor.discover = AsyncMock(return_value=[])
-    assert await central.discover("center") == [(project, topic, None, "codex")]
-    # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
-    # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
-    assert await ClaudeCodeRuntime(central).recover("center") == []
+
+    async def exercise():
+        central._hub.exec.side_effect = [
+            {
+                "exit": 0,
+                "stdout": json.dumps({"thread_id": "codex-thread", "alive": True}),
+            },
+        ]
+        codex = CodexChannel(central, ClaudeLaunch("system").execution)
+        session = SessionRef(project, topic, AGENT, harness="codex")
+        actual_agent = (await central.precheck(session, needs_place=True)).agent_handle
+        handle = await codex.ensure(
+            session,
+            Opening("shared system", model="fixture", agent_handle=actual_agent),
+        )
+        assert handle.thread_id == "codex-thread"
+        place = await session_place(client.test_request_factory, topic, AGENT, "codex")
+        assert place is not None
+        assert place.runtime == {
+            "harness": "codex",
+            "agent_handle": actual_agent,
+            "state": handle.state,
+        }
+        assert place.lease is None
+        central._hub.call_executor.return_value = {
+            "thread_id": "codex-thread",
+            "alive": True,
+        }
+        assert await codex.discover("center") == [handle]
+        # 中心通道同时被 Claude Code 和 Codex 两个 runtime 包着
+        # （``build_compute_pool``），
+        # 所以它答不出哪一条会话是谁的，也不该答：它把落在自己这儿的会话原样交出来，
+        # 骨架的名字当 ``running`` 一起交（``Channel.discover`` 的契约）。
+        central.restore_screens = AsyncMock(
+            side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
+        )
+        central.executor.discover = AsyncMock(return_value=[])
+        assert await central.discover("center") == [(project, topic, None, "codex")]
+        # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
+        # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
+        assert await ClaudeCodeRuntime(central).recover("center") == []
+
+    client.portal.call(exercise)
 
 
 @pytest.mark.anyio
@@ -325,42 +347,46 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
     project, topic = room
     central = channel(client, monkeypatch)
 
-    async def free_while(gate: asyncio.Event) -> None:
-        await asyncio.wait_for(gate.wait(), 5)
-        async with client.test_factory() as writer:
-            held = await writer.execute(
-                text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
-                {"id": topic},
+    async def exercise():
+
+        async def free_while(gate: asyncio.Event) -> None:
+            await asyncio.wait_for(gate.wait(), 5)
+            async with client.test_factory() as writer:
+                held = await writer.execute(
+                    text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+                    {"id": topic},
+                )
+                assert held.scalar_one() == topic
+                await writer.rollback()
+
+        opening = asyncio.Event()
+        opened = asyncio.Event()
+
+        async def slow_screen(*args, **kwargs):
+            opening.set()
+            await opened.wait()
+            return SimpleNamespace(device_id="center")
+
+        central._ensure_screen = AsyncMock(side_effect=slow_screen)
+
+        setup = asyncio.create_task(
+            central.ensure_ready(
+                session=ref(project, topic),
+                token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+                env={},
+                launch=ClaudeLaunch("System"),
+                precheck=await central.precheck(ref(project, topic), needs_place=True),
             )
-            assert held.scalar_one() == topic
-            await writer.rollback()
-
-    opening = asyncio.Event()
-    opened = asyncio.Event()
-
-    async def slow_screen(*args, **kwargs):
-        opening.set()
-        await opened.wait()
-        return SimpleNamespace(device_id="center")
-
-    central._ensure_screen = AsyncMock(side_effect=slow_screen)
-
-    setup = asyncio.create_task(
-        central.ensure_ready(
-            session=ref(project, topic),
-            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref(project, topic), needs_place=True),
         )
-    )
-    try:
-        await free_while(opening)
-        opened.set()
-        await asyncio.wait_for(setup, 10)
-    finally:
-        opened.set()
-        setup.cancel()
+        try:
+            await free_while(opening)
+            opened.set()
+            await asyncio.wait_for(setup, 10)
+        finally:
+            opened.set()
+            setup.cancel()
+
+    client.portal.call(exercise)
 
 
 @pytest.mark.anyio
@@ -369,31 +395,35 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
 ):
     project, topic = room
     central = channel(client, monkeypatch)
-    precheck = await central.precheck(ref(project, topic), needs_place=True)
-    screen = await central.ensure_ready(
-        session=ref(project, topic),
-        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-        env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
-        launch=ClaudeLaunch("System"),
-        precheck=precheck,
-        turn_id=uuid.uuid4(),
-    )
-    assert screen.device_id == "center"
-    central._hub.exec.assert_not_awaited()
-    opening = central._ensure_screen.await_args.kwargs
-    assert "CHEESE_ENVIRONMENT" not in opening["env"]
-    target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
-    assert target["kind"] == "deferred"
-    assert target["lease_path"].endswith("/work-lease")
-    place = await session_place(client.test_factory, topic)
-    assert place is not None
-    assert place.machine == "center"
-    assert place.lease is None
-    monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
-    assert await central.precheck(ref(project, topic), needs_place=True) == precheck
-    central._hub.is_online = lambda device: device == "executor"
-    with pytest.raises(ScreenSetupError, match="未连接"):
-        await central.precheck(ref(project, topic), needs_place=True)
+
+    async def exercise():
+        precheck = await central.precheck(ref(project, topic), needs_place=True)
+        screen = await central.ensure_ready(
+            session=ref(project, topic),
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
+            launch=ClaudeLaunch("System"),
+            precheck=precheck,
+            turn_id=uuid.uuid4(),
+        )
+        assert screen.device_id == "center"
+        central._hub.exec.assert_not_awaited()
+        opening = central._ensure_screen.await_args.kwargs
+        assert "CHEESE_ENVIRONMENT" not in opening["env"]
+        target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+        assert target["kind"] == "deferred"
+        assert target["lease_path"].endswith("/work-lease")
+        place = await session_place(client.test_request_factory, topic)
+        assert place is not None
+        assert place.machine == "center"
+        assert place.lease is None
+        monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
+        assert await central.precheck(ref(project, topic), needs_place=True) == precheck
+        central._hub.is_online = lambda device: device == "executor"
+        with pytest.raises(ScreenSetupError, match="未连接"):
+            await central.precheck(ref(project, topic), needs_place=True)
+
+    client.portal.call(exercise)
 
 
 @pytest.mark.anyio
@@ -457,7 +487,7 @@ async def test_scoped_execution_does_not_hold_admission_connection_during_remote
 )
 @pytest.mark.anyio
 async def test_owner_execution_route_preserves_scope_and_reaches_device(
-    client, room, monkeypatch, recorded, dialled
+    db_factory, room, monkeypatch, recorded, dialled
 ):
     """The owner dials where the placement says, not where it would install.
 
@@ -469,7 +499,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     failed against a path that was correct in the other half.
     """
     project, topic = room
-    async with client.test_factory() as db:
+    async with db_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
         await place_session(
@@ -486,7 +516,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
         await db.commit()
 
     async def owner_db():
-        async with client.test_factory() as db:
+        async with db_factory() as db:
             yield db
 
     monkeypatch.setattr(settings, "device_connection_owner", True)

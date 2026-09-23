@@ -546,6 +546,8 @@ def test_timeout_keeps_quota_reserved_and_retry_finishes_same_claim(
                 uuid.UUID(topics[index]), actor=actor
             )
 
+            )
+
         async with client.test_request_factory() as session:
             first = await ensure(session, 0)
             assert first.device_id is None

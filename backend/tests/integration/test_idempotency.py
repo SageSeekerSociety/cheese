@@ -25,7 +25,6 @@ adoption of a PR already open on the same head branch). The test is here anyway,
 because "we believe it is covered" and "it is covered" are different claims.
 """
 
-import asyncio
 import uuid
 
 import pytest
@@ -97,7 +96,7 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     tid = _topic(client, pid)
     text = "我先把这五条落到代码上逐一自查，不动手改。"
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -118,11 +117,11 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
         await _turn()  # the attempt that got interrupted
         await _turn()  # the auto-resume, saying the same thing again
 
-    asyncio.run(_both())
+    client.portal.call(lambda: _both())
 
-    said = asyncio.run(
-        _count(
-            client.test_factory,
+    said = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Block)
             .where(
@@ -145,7 +144,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     tid = _topic(client, pid)
     text = "好的"
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -166,11 +165,11 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
         await _turn(uuid.uuid4())
         await _turn(uuid.uuid4())
 
-    asyncio.run(_both())
+    client.portal.call(lambda: _both())
 
-    said = asyncio.run(
-        _count(
-            client.test_factory,
+    said = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Block)
             .where(
@@ -214,9 +213,9 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
-    children = asyncio.run(
-        _count(
-            client.test_factory,
+    children = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Task)
             .where(Task.room_id == uuid.UUID(tid)),
@@ -240,9 +239,9 @@ def test_decision_is_recorded_once(client, in_a_turn):
     assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
     assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
 
-    rows = asyncio.run(
-        _count(
-            client.test_factory,
+    rows = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Block)
             .where(
@@ -269,9 +268,9 @@ def test_milestone_is_pinned_once(client, in_a_turn):
     assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
     assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
 
-    rows = asyncio.run(
-        _count(
-            client.test_factory,
+    rows = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Milestone)
             .where(Milestone.project_id == uuid.UUID(pid)),
@@ -365,25 +364,25 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
             == 200
         )
 
-    decisions = asyncio.run(
-        _count(
-            client.test_factory,
+    decisions = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Block)
             .where(Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.decision),
         )
     )
-    milestones = asyncio.run(
-        _count(
-            client.test_factory,
+    milestones = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Milestone)
             .where(Milestone.project_id == uuid.UUID(pid)),
         )
     )
-    children = asyncio.run(
-        _count(
-            client.test_factory,
+    children = client.portal.call(
+        lambda: _count(
+            client.test_request_factory,
             select(func.count())
             .select_from(Task)
             .where(Task.room_id == uuid.UUID(tid)),
@@ -404,14 +403,14 @@ def test_the_same_key_can_only_be_claimed_once(client):
     key = action_key(CONTINUATION, "decision", "同一件事")
 
     async def _claims() -> tuple[bool, bool]:
-        async with client.test_factory() as s1:
+        async with client.test_request_factory() as s1:
             first = await idem.claim(s1, key, action="decision", scope_id="t")
             await s1.commit()
-        async with client.test_factory() as s2:
+        async with client.test_request_factory() as s2:
             second = await idem.claim(s2, key, action="decision", scope_id="t")
             await s2.commit()
         return first, second
 
-    first, second = asyncio.run(_claims())
+    first, second = client.portal.call(lambda: _claims())
     assert first is True
     assert second is False

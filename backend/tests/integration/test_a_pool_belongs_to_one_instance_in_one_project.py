@@ -35,13 +35,12 @@ class Screen(StubChannel):
         return True
 
 
-async def _turn_in(client, tmp_path, *, private: bool, facts: dict[str, str]) -> str:
+async def _turn_in(factory, tmp_path, *, private: bool, facts: dict[str, str]) -> str:
     """开一个项目、往指定的池里写几条核心记忆、跑一轮，交回这一轮的 system prompt。
 
     ``facts``：``{"about_person" | "own": 内容}``。写的是 core 层，因为注入只带
     core（`recall_pools`）——普通记忆要 `cheese recall` 才拿得到，注入里本来就不该有。
     """
-    factory = client.test_factory
     screen = Screen()
     svc = ChatService(
         session_factory=factory,
@@ -93,8 +92,13 @@ async def test_an_ordinary_room_carries_what_is_known_about_the_people_in_it(
     从前这条事实只有在私聊里才进得了提示词，所以同一位芝士在项目总览里跟同一个人
     说话时，表现得像从没认识过他。
     """
-    prompt = await _turn_in(
-        client, tmp_path, private=False, facts={"about_person": ABOUT_THE_PERSON}
+    prompt = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            private=False,
+            facts={"about_person": ABOUT_THE_PERSON},
+        )
     )
     assert ABOUT_THE_PERSON in prompt
 
@@ -105,11 +109,13 @@ async def test_a_private_chat_still_carries_the_agents_own_pool(client, tmp_path
     旧分支把整轮的池换成了 `[(user, owner)]`，于是芝士在私聊里连自己在这个项目学
     到的东西都不记得——它只是不再是同一位芝士了。
     """
-    prompt = await _turn_in(
-        client,
-        tmp_path,
-        private=True,
-        facts={"about_person": ABOUT_THE_PERSON, "own": WHAT_IT_LEARNED},
+    prompt = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            private=True,
+            facts={"about_person": ABOUT_THE_PERSON, "own": WHAT_IT_LEARNED},
+        )
     )
     assert ABOUT_THE_PERSON in prompt
     assert WHAT_IT_LEARNED in prompt
@@ -123,14 +129,24 @@ async def test_another_projects_cheese_does_not_read_it(client, tmp_path):
     """
     # A 项目：关于 u 的这条事实写在这里，而且这一轮读得到（前提，否则下面的
     # 「读不到」证明不了任何事）。
-    here = await _turn_in(
-        client, tmp_path, private=False, facts={"about_person": ABOUT_THE_PERSON}
+    here = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            private=False,
+            facts={"about_person": ABOUT_THE_PERSON},
+        )
     )
     assert ABOUT_THE_PERSON in here, "前提：写它的那个项目里本来就读得到"
 
     # B 项目：同一个人 u 在场，同一个库，只是芝士是另一个实例。键是全局的那一天，
     # 这一句会命中。
-    elsewhere = await _turn_in(
-        client, tmp_path, private=False, facts={"own": WHAT_IT_LEARNED}
+    elsewhere = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            private=False,
+            facts={"own": WHAT_IT_LEARNED},
+        )
     )
     assert ABOUT_THE_PERSON not in elsewhere

@@ -53,13 +53,15 @@ async def _space(session) -> int:
 # ---------------------------------------------------------------------------
 
 
-async def test_project_service_get_finds_project_and_returns_none_for_unknown(client):
-    async with client.test_factory() as session:
+async def test_project_service_get_finds_project_and_returns_none_for_unknown(
+    business_db_factory,
+):
+    async with business_db_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         await session.commit()
         pid = project.id
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         service = ProjectService(session)
         found = await service.get(pid)
         assert found is not None
@@ -85,8 +87,10 @@ async def _card(session, topic_id, *, status: AcceptStatus, pr_number=None):
     return card
 
 
-async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(client):
-    async with client.test_factory() as session:
+async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(
+    business_db_factory,
+):
+    async with business_db_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_open = await topics.create(project_id=project.id, title="A", created_by="u")
@@ -100,19 +104,19 @@ async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(client):
         await session.commit()
         open_id = open_card.id
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         ids = await AcceptService(session).open_pr_card_ids()
         assert ids == [open_id]
 
 
-async def test_open_pr_card_ids_skips_cards_on_archived_topics(client):
+async def test_open_pr_card_ids_skips_cards_on_archived_topics(business_db_factory):
     """孤儿卡修复 (#291) 的判据也在这个接缝里：已归档话题上的卡不算「开着」。
 
     这里直接改话题状态，而不是走 ``TopicService.archive``——归档路径自己就会把卡关掉，
     要造的恰恰是它防的那种历史遗留行：卡还骑着 PR 等采纳，话题已经归档。轮询器要是
     还去跟进它，就是拿 GitHub 凭据去动没人跟的活儿。
     """
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_live = await topics.create(
@@ -129,12 +133,12 @@ async def test_open_pr_card_ids_skips_cards_on_archived_topics(client):
         await session.commit()
         live_id = live_card.id
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         assert await AcceptService(session).open_pr_card_ids() == [live_id]
 
 
-async def test_open_pr_card_ids_is_empty_when_nothing_is_pending(client):
-    async with client.test_factory() as session:
+async def test_open_pr_card_ids_is_empty_when_nothing_is_pending(business_db_factory):
+    async with business_db_factory() as session:
         ids = await AcceptService(session).open_pr_card_ids()
         assert ids == []
 
@@ -144,12 +148,14 @@ async def test_open_pr_card_ids_is_empty_when_nothing_is_pending(client):
 # ---------------------------------------------------------------------------
 
 
-async def test_sql_device_service_persists_the_flow_in_the_database(client):
+async def test_sql_device_service_persists_the_flow_in_the_database(
+    business_db_factory,
+):
     """工厂拿到的必须是 SQL 后端：换一个 session 还能读到同一个 flow。
 
     接错后端（比如内存实现）时这条会红——start 的 code 在新 session 里查不到。
     """
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         user = User(
             username=f"dev-{uuid.uuid4().hex[:6]}",
             email=f"{uuid.uuid4().hex[:8]}@example.io",
@@ -163,10 +169,10 @@ async def test_sql_device_service_persists_the_flow_in_the_database(client):
         owner_id = user.id
 
     # 换 session：pending
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         assert (await sql_device_service(session).poll(code))["status"] == "pending"
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         # `supply`/`visibility` 无默认值（#282 决定 2 / #358）：每个入口自己表态。
         # 这里是人拿 connector 注册自己那台常驻机器，所以是 self_hosted，且默认
         # isolated（未勾选「让它看到整台机器」）。
@@ -179,7 +185,7 @@ async def test_sql_device_service_persists_the_flow_in_the_database(client):
         await session.commit()
         device_id, token = device.device_id, device.token
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         service = sql_device_service(session)
         polled = await service.poll(code)
         assert polled["status"] == "approved"

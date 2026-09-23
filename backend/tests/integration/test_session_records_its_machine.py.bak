@@ -240,7 +240,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         resumes_by = await AgentSessionService(db).resume_token(
             topic, "ada", harness=deployment_harness()
         )
-    target = _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
+    target = await _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
     assert target["device_id"] == client.session_test_devices["hands-b"]
     assert target["resource_id"] != before_resource
 
@@ -268,7 +268,9 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         resumes_by = await sessions.resume_token(
             topic, "ada", harness=deployment_harness()
         )
-    on_new_host = _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
+    on_new_host = _open(
+        central, project, topic, "ada", "hands-b", resume=resumes_by
+    )
 
     opened = central._ensure_screen.await_args.kwargs
     assert opened["device_id"] == "center-two"

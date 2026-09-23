@@ -144,27 +144,32 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
     assert "alice" in _topic_handles(client, tid)
 
 
-async def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
+def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
     """小队带进来的人，管理者也移不掉 —— 删名册那一行不会让他离开项目。
 
     ``list_members`` 里有一句 ``if handle in explicit: continue``：小队那一行只在名册
     上没有同名成员行时才补出来。所以删掉表里那一行不是把人移出去，只是把盖在小队行
     上的那块布掀开 —— 下一次读名册他又在。接口回成功而什么都没变，比拒绝更糟：管理
     者以为清理干净了。拒绝要指向真正的出口（小队），并且**一个字节都不写**。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
-    captain = await _user(factory, "captain")
-    mate = await _user(factory, "mate")
 
-    async with factory() as session:
-        team = await team_service(session).create_team(
-            name="小队", intro="", description="", avatar_id=1, owner_id=captain
-        )
-        await TeamRepository(session).add_member(team.id, mate, TeamMemberRole.MEMBER)
-        project = await ProjectService(session).create(
-            name="P", owner_handle="captain", team_id=team.id
-        )
-        pid = str(project.id)
-        await session.commit()
+    async def seed() -> str:
+        factory = client.test_request_factory
+        captain = await _user(factory, "captain")
+        mate = await _user(factory, "mate")
+        async with factory() as session:
+            team = await team_service(session).create_team(
+                name="小队", intro="", description="", avatar_id=1, owner_id=captain
+            )
+            await TeamRepository(session).add_member(
+                team.id, mate, TeamMemberRole.MEMBER
+            )
+            project = await ProjectService(session).create(
+                name="P", owner_handle="captain", team_id=team.id
+            )
+            await session.commit()
+            return str(project.id)
+
+    pid = client.portal.call(seed)
 
     # 建项目时 ``_seed_roster`` 已经替队友落了一行 —— 正是「删得掉但删了没用」那种。
     assert "mate" in _project_handles(client, pid)
@@ -177,29 +182,32 @@ async def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
     assert "mate" in _project_handles(client, pid)
 
 
-async def test_a_team_row_without_a_member_row_is_still_a_404(client):
+def test_a_team_row_without_a_member_row_is_still_a_404(client):
     """后进小队的人在小队里读出来（没有成员行），移他仍是 404 —— 次序不变。
 
     「他不在名册上」和「他的访问来自小队」是两件事，答复也不同：名册上根本没有这一
     行时，404 才是那句话该有的答复，不该被小队那条挡成 409。这里用「建完项目之后才
     入队」造出这个形状 —— 那一行是 ``list_members`` 读时补的。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
-    captain = await _user(factory, "captain")
-    latecomer = await _user(factory, "latecomer")
 
-    async with factory() as session:
-        team = await team_service(session).create_team(
-            name="小队", intro="", description="", avatar_id=1, owner_id=captain
-        )
-        project = await ProjectService(session).create(
-            name="P", owner_handle="captain", team_id=team.id
-        )
-        pid = str(project.id)
-        # 入队发生在建项目**之后**：没有人替他落成员行。
-        await TeamRepository(session).add_member(
-            team.id, latecomer, TeamMemberRole.MEMBER
-        )
-        await session.commit()
+    async def seed() -> str:
+        factory = client.test_request_factory
+        captain = await _user(factory, "captain")
+        latecomer = await _user(factory, "latecomer")
+        async with factory() as session:
+            team = await team_service(session).create_team(
+                name="小队", intro="", description="", avatar_id=1, owner_id=captain
+            )
+            project = await ProjectService(session).create(
+                name="P", owner_handle="captain", team_id=team.id
+            )
+            # 入队发生在建项目**之后**：没有人替他落成员行。
+            await TeamRepository(session).add_member(
+                team.id, latecomer, TeamMemberRole.MEMBER
+            )
+            await session.commit()
+            return str(project.id)
+
+    pid = client.portal.call(seed)
 
     rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
     row = next(m for m in rows if m["user_handle"] == "latecomer")
@@ -212,7 +220,7 @@ async def test_a_team_row_without_a_member_row_is_still_a_404(client):
     assert "latecomer" in _project_handles(client, pid)
 
 
-async def test_the_owner_query_locks_the_rows_it_reads(client):
+def test_the_owner_query_locks_the_rows_it_reads(client):
     """``owners_by_topic`` 真的把这些 owner 行锁住了 —— 「两个人同时退」的根据。
 
     「最后一个 owner」是**读出来再决定**的，两笔并发退项目的各自读到「这间房有两个
@@ -228,25 +236,25 @@ async def test_the_owner_query_locks_the_rows_it_reads(client):
     tid = _topic(client, pid, "alice")
     topic_id = uuid.UUID(tid)
 
-    factory = client.test_factory  # type: ignore[attr-defined]
-    async with factory() as holder:
-        locked = await TopicMembershipRepository(holder).owners_by_topic([topic_id])
-        assert locked == {topic_id: ["alice"]}
-        async with factory() as other:
-            # 收 DBAPIError 而不是 OperationalError：asyncpg 的 LockNotAvailableError
-            # 不在 SQLAlchemy 那张「哪种 DBAPI 异常等于哪种 DBAPIError」的表里，于是
-            # 原样包成最外层的 DBAPIError —— 那也是 55P03 在这条驱动上唯一的共同祖先。
-            with pytest.raises(DBAPIError) as err:
-                await other.execute(
-                    select(TopicMembership)
-                    .where(
-                        TopicMembership.topic_id == topic_id,
-                        TopicMembership.role == TopicRole.owner,
+    async def contend() -> None:
+        factory = client.test_request_factory
+        async with factory() as holder:
+            locked = await TopicMembershipRepository(holder).owners_by_topic([topic_id])
+            assert locked == {topic_id: ["alice"]}
+            async with factory() as other:
+                # asyncpg's LockNotAvailableError is wrapped as DBAPIError.
+                with pytest.raises(DBAPIError) as err:
+                    await other.execute(
+                        select(TopicMembership)
+                        .where(
+                            TopicMembership.topic_id == topic_id,
+                            TopicMembership.role == TopicRole.owner,
+                        )
+                        .with_for_update(nowait=True)
                     )
-                    .with_for_update(nowait=True)
-                )
-            # 55P03 lock_not_available：别的连接正握着这些行。
-            assert "lock" in str(err.value).lower()
+                assert "lock" in str(err.value).lower()
+
+    client.portal.call(contend)
 
 
 def test_the_owner_cannot_leave(client, bearer):
@@ -400,26 +408,31 @@ async def _user(factory: Any, username: str) -> int:
         return uid
 
 
-async def test_a_teammate_is_told_to_leave_the_team(client):
+def test_a_teammate_is_told_to_leave_the_team(client):
     """访问来自小队的人退不了项目：他退得出的是小队。
 
     报错必须指向小队 —— 否则他在项目这边点一次、被拒一次，永远不知道该去哪儿。
     席位也不该被这位退场顺手撤掉：他的访问本来就不是项目发的（``list_members``
     读时继承，不留第二份授权），退的是小队。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
-    captain = await _user(factory, "captain")
-    mate = await _user(factory, "mate")
 
-    async with factory() as session:
-        team = await team_service(session).create_team(
-            name="小队", intro="", description="", avatar_id=1, owner_id=captain
-        )
-        await TeamRepository(session).add_member(team.id, mate, TeamMemberRole.MEMBER)
-        project = await ProjectService(session).create(
-            name="P", owner_handle="captain", team_id=team.id
-        )
-        pid = str(project.id)
-        await session.commit()
+    async def seed() -> str:
+        factory = client.test_request_factory
+        captain = await _user(factory, "captain")
+        mate = await _user(factory, "mate")
+        async with factory() as session:
+            team = await team_service(session).create_team(
+                name="小队", intro="", description="", avatar_id=1, owner_id=captain
+            )
+            await TeamRepository(session).add_member(
+                team.id, mate, TeamMemberRole.MEMBER
+            )
+            project = await ProjectService(session).create(
+                name="P", owner_handle="captain", team_id=team.id
+            )
+            await session.commit()
+            return str(project.id)
+
+    pid = client.portal.call(seed)
 
     # 队友在名册上 —— 而且是 ``_seed_roster`` 落下的**真**成员行，删得掉但那不是他要
     # 的「离开」（小队下一次读名册又把他带回来）。挡在前面的因此必须是「访问来自小

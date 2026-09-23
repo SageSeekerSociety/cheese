@@ -28,7 +28,9 @@ def _fresh_intake(monkeypatch):
 def in_process_db(client, monkeypatch):
     """The middleware opens its OWN session (the request's is already broken), so
     point that factory at the same database this client reads from."""
-    monkeypatch.setattr(backend_log, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(
+        backend_log, "async_session_factory", client.test_request_factory
+    )
     return client
 
 
@@ -246,7 +248,7 @@ def test_repeated_crashes_of_one_route_still_produce_one_block(
     assert len(_backend_events(client, tid)) == 1
 
 
-async def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
+def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
     in_process_db,
 ):
     """End to end for the case a recurrence-driven summary could never reach:
@@ -263,8 +265,10 @@ async def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
     assert len(_backend_events(client, tid)) == 1  # the flood itself stays one line
 
     # …and then nothing else ever fails. The clock is what closes the window.
-    written = await backend_log.flush_expired(
-        now=time.time() + backend_log.DEDUP_WINDOW_S + 1
+    written = client.portal.call(
+        lambda: backend_log.flush_expired(
+            now=time.time() + backend_log.DEDUP_WINDOW_S + 1
+        )
     )
 
     assert written == 1
@@ -276,7 +280,7 @@ async def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
     assert "\n" not in summary["content"]
 
 
-async def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
+def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
     client = in_process_db
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -286,7 +290,7 @@ async def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
         token=mint_scoped_token(project_id=pid, topic_id=tid),
     )
 
-    assert await backend_log.flush_expired() == 0
+    assert client.portal.call(backend_log.flush_expired) == 0
     assert len(_backend_events(client, tid)) == 1
 
 

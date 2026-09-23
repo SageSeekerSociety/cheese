@@ -236,7 +236,9 @@ async def test_admission_tells_the_room_once_for_a_refused_turn_in_flight(client
     topic_id = client.post("/topics", json={"project_id": pid, "title": "T"}).json()[
         "data"
     ]["id"]
-    turn_id = await open_turn(client.test_factory, uuid.UUID(topic_id))
+    turn_id = client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(topic_id))
+    )
     await _exhaust(client, pid)
     token = mint_scoped_token(project_id=pid, topic_id=topic_id)
     headers = {"Authorization": f"Bearer {token}"}

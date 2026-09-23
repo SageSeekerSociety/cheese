@@ -196,7 +196,7 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     parent, child = client.portal.call(seed)
     original = git_store.head(project, child.branch_name)
-    client.portal.call(retarget_completed_dependencies, client.test_factory)
+    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
     github.update_pr.assert_awaited_once_with(123, base=parent.base_branch)
 
     async def check():
@@ -210,7 +210,7 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     client.portal.call(check)
     assert git_store.head(project, child.branch_name) == original
-    client.portal.call(retarget_completed_dependencies, client.test_factory)
+    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
     assert github.update_pr.await_count == 1
 
 
@@ -247,7 +247,7 @@ def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypat
 
     async def race():
         sweep = asyncio.create_task(
-            retarget_completed_dependencies(client.test_factory)
+            retarget_completed_dependencies(client.test_request_factory)
         )
         await asyncio.wait_for(in_flight.wait(), timeout=5)
         async with client.test_factory() as session:

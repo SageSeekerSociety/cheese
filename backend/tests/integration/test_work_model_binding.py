@@ -49,9 +49,9 @@ def _on_a_machine() -> ClaudeCodeRuntime:
     return ClaudeCodeRuntime(DeviceChannel())
 
 
-async def _room(client) -> dict[str, uuid.UUID]:
+async def _room(factory) -> dict[str, uuid.UUID]:
     """一个房间，里面一条活。项目按正常路子建，所以它自带它的芝士。"""
-    async with client.test_factory() as session:
+    async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="alice")
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
@@ -70,25 +70,25 @@ def _card(client, ids) -> dict:
     return response.json()["data"]
 
 
-def _chat(client, tmp_path) -> ChatService:
+def _chat(factory, tmp_path) -> ChatService:
     return ChatService(
-        session_factory=client.test_factory,
+        session_factory=factory,
         compute=stub_compute(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
 
 
-async def _rebind(client, ids, model: str) -> None:
-    async with client.test_factory() as session:
+async def _rebind(factory, ids, model: str) -> None:
+    async with factory() as session:
         work = await session.get(Task, ids["work"])
         work.model = model
         await session.commit()
 
 
-async def _use_the_pool(client, ids) -> None:
+async def _use_the_pool(factory, ids) -> None:
     """把这个项目挪到网关池 —— 供给是项目自己的设置，不是部署的开关。"""
-    async with client.test_factory() as session:
+    async with factory() as session:
         project = await session.get(Project, ids["project"])
         project.settings = {**(project.settings or {}), "supply": "gateway"}
         await session.commit()
@@ -99,10 +99,12 @@ async def _use_the_pool(client, ids) -> None:
 
 @pytest.mark.anyio
 async def test_the_rooms_main_line_runs_on_the_project_default(client, tmp_path):
-    ids = await _room(client)
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
 
-    kwargs, _route = await _chat(client, tmp_path)._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    kwargs, _route = client.portal.call(
+        lambda: _chat(client.test_request_factory, tmp_path)._model_kwargs(
+            ids["project"], _on_a_machine(), ids["room"]
+        )
     )
 
     assert kwargs["model"] == "deepseek-flash"
@@ -113,11 +115,11 @@ async def test_editing_the_agent_changes_the_next_turn_not_the_prepared_turn(
     client, tmp_path
 ):
     """A teammate override changes its next turn without mutating a prepared turn."""
-    ids = await _room(client)
-    chat = _chat(client, tmp_path)
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
+    chat = _chat(client.test_request_factory, tmp_path)
 
-    in_flight, _route = await chat._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    in_flight, _route = client.portal.call(
+        lambda: chat._model_kwargs(ids["project"], _on_a_machine(), ids["room"])
     )
 
     async with client.test_factory() as session:
@@ -136,8 +138,8 @@ async def test_editing_the_agent_changes_the_next_turn_not_the_prepared_turn(
         instance.configuration = {**instance.configuration, "model": "sonnet"}
         await session.commit()
 
-    later, _route = await chat._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    later, _route = client.portal.call(
+        lambda: chat._model_kwargs(ids["project"], _on_a_machine(), ids["room"])
     )
 
     assert in_flight["model"] == "deepseek-flash"
@@ -167,9 +169,9 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
     ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
     monkeypatch.setattr(app_settings, "subscription_ca_backend_path", str(ca))
     monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
-    ids = await _room(client)
-    await _use_the_pool(client, ids)
-    chat = _chat(client, tmp_path)
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
+    client.portal.call(lambda: _use_the_pool(client.test_request_factory, ids))
+    chat = _chat(client.test_request_factory, tmp_path)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
@@ -187,20 +189,22 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
             launch=ClaudeLaunch(system_prompt="", model=kwargs["model"]),
         )
 
-    before, before_pool = await chat._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    before, before_pool = client.portal.call(
+        lambda: chat._model_kwargs(ids["project"], _on_a_machine(), ids["room"])
     )
-    running = await screen_for(before)
-    assert await screen_for(before) is running, "什么都没改，屏幕当然接着用"
+    running = client.portal.call(lambda: screen_for(before))
+    assert client.portal.call(lambda: screen_for(before)) is running, (
+        "什么都没改，屏幕当然接着用"
+    )
 
     monkeypatch.setattr(app_settings, "agent_model", "deepseek-flash")
-    after, after_pool = await chat._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    after, after_pool = client.portal.call(
+        lambda: chat._model_kwargs(ids["project"], _on_a_machine(), ids["room"])
     )
     assert (before["model"], after["model"]) == ("glm-5.2", "deepseek-flash")
     assert before_pool == after_pool, "池没动，动的只有模型"
 
-    restarted = await screen_for(after)
+    restarted = client.portal.call(lambda: screen_for(after))
     assert restarted.sid != running.sid
     assert hub.closed == [running.sid]
 
@@ -214,14 +218,16 @@ async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(client, tmp_p
 
     而房间主线已经开跑的那一轮拿的是开轮那一刻的快照，改不动。
     """
-    ids = await _room(client)
-    in_flight, _route = await _chat(client, tmp_path)._model_kwargs(
-        ids["project"], _on_a_machine(), ids["room"]
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
+    in_flight, _route = client.portal.call(
+        lambda: _chat(client.test_request_factory, tmp_path)._model_kwargs(
+            ids["project"], _on_a_machine(), ids["room"]
+        )
     )
 
     assert _card(client, ids)["model"] == "deepseek-flash"
 
-    await _rebind(client, ids, "opus")
+    client.portal.call(lambda: _rebind(client.test_request_factory, ids, "opus"))
 
     assert _card(client, ids)["model"] == "opus"
     assert in_flight["model"] == "deepseek-flash"
@@ -236,13 +242,15 @@ async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(clien
     数据库：项目把供给从订阅改成网关，或者运维从目录里摘掉一个型号，先前绑上去的
     那批活立刻全部解析不出来。拒绝留在执行路径上（`binding.resolve`，I27）。
     """
-    ids = await _room(client)
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
     async with client.test_factory() as session:
         session.add(
             Task(project_id=ids["project"], room_id=ids["room"], title="另一条活")
         )
         await session.commit()
-    await _rebind(client, ids, "no-such-model")
+    client.portal.call(
+        lambda: _rebind(client.test_request_factory, ids, "no-such-model")
+    )
 
     board = client.get(f"/topics/{ids['room']}/tasks")
     assert board.status_code == 200, board.text
@@ -257,8 +265,8 @@ async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(clien
 
 @pytest.mark.anyio
 async def test_the_card_shows_the_last_model_the_work_actually_spent_on(client):
-    ids = await _room(client)
-    await _rebind(client, ids, "opus")
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
+    client.portal.call(lambda: _rebind(client.test_request_factory, ids, "opus"))
 
     async with client.test_factory() as session:
         for index, model in enumerate(("claude-opus-5", "claude-sonnet-5")):
@@ -301,8 +309,8 @@ async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(cli
     字，而模型根本没动 —— 用户读到的是「模型被换了」。③ 的字面（显示 = 最后一行
     用量的 model）两种写法都满足，所以只有这一条能把它钉住。
     """
-    ids = await _room(client)
-    await _rebind(client, ids, "sonnet")
+    ids = client.portal.call(lambda: _room(client.test_request_factory))
+    client.portal.call(lambda: _rebind(client.test_request_factory, ids, "sonnet"))
     before = _card(client, ids)["model"]
 
     async with client.test_factory() as session:

@@ -812,8 +812,7 @@ def test_a_like_still_lands_under_a_finished_report(client, as_admin):
 # `ON CONFLICT DO NOTHING` 在这两条上不是微优化，是正确性。被替换掉的写法是
 # 「先 SELECT 有没有、再 INSERT」，两个重叠的请求都会读到「没有」，第二个撞唯一约束
 # 回 500 —— 用户看到的是「点一下按钮把页面搞坏了」。单连接跑不出来（同一根连接上
-# 两条语句本来就是串行的），所以这里从 `client.test_factory` 上开**真的几条连接**：
-# 它的 engine 是 NullPool，每个 session 一根自己的连接。
+# 两条语句本来就是串行的），所以这里从 production-sized QueuePool 上开**真的几条连接**。
 
 
 async def _seed_thread(
@@ -850,8 +849,8 @@ async def _seed_thread(
     return ids
 
 
-async def test_eight_likes_at_once_leave_exactly_one_row(client):
-    factory = client.test_factory
+async def test_eight_likes_at_once_leave_exactly_one_row(business_db_factory):
+    factory = business_db_factory
     _, comment_id = await _seed_thread(factory)
 
     async def like(handle: str) -> bool:
@@ -870,13 +869,13 @@ async def test_eight_likes_at_once_leave_exactly_one_row(client):
         assert await FeedbackRepository(session).comment_like_count(comment_id) == 1
 
 
-async def test_supporting_twice_at_once_leaves_exactly_one_row(client):
+async def test_supporting_twice_at_once_leaves_exactly_one_row(business_db_factory):
     """反馈级的那个支持按钮，同一个毛病，同一副药。
 
     这条是修 `add_support` 时补的：评论点赞是新的，所以从第一天就用对的写法；支持
     是早就有的，改之前它一直在这个竞态里，而且从外面看和「按钮坏了」一模一样。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     feedback_id, _ = await _seed_thread(factory)
 
     async def support() -> bool:
@@ -894,7 +893,7 @@ async def test_supporting_twice_at_once_leaves_exactly_one_row(client):
         assert await FeedbackRepository(session).supports_count(feedback_id) == 1
 
 
-async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
+def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
     """孤儿回复：父亲已经软删，而它自己的 `deleted_at` 还是 NULL。
 
     这个形状不用等竞态也能造出来 —— 级联跑完之后再插一条回复就是它。而竞态窗口里
@@ -905,30 +904,32 @@ async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
     读的时候必须挡住，因为客户端是「取顶层、再问每条的回复」—— 一条回复的父亲不在
     返回里，它就永远画不出来，于是这条评论数得出来、看不见、也没有按钮能删掉。
     """
-    factory = client.test_factory
-    feedback_id, top_id = await _seed_thread(factory)
 
-    async with factory() as session:
-        repo = FeedbackRepository(session)
-        parent = await repo.get_comment(top_id)
-        assert parent is not None
-        # 级联带走的是**当时**已经存在的回复；跑完之后新插的这条正是孤儿。
-        await repo.soft_delete_comment(parent)
-        await repo.add_comment(
-            feedback_id=feedback_id,
-            author_handle=STRANGER,
-            author_user_id=None,
-            author_is_agent=False,
-            body="父亲已经没了，我还活着",
-            parent_id=top_id,
-            reply_to_handle=None,
-        )
-        await session.commit()
+    async def arrange() -> uuid.UUID:
+        factory = client.test_request_factory
+        feedback_id, top_id = await _seed_thread(factory)
+        async with factory() as session:
+            repo = FeedbackRepository(session)
+            parent = await repo.get_comment(top_id)
+            assert parent is not None
+            await repo.soft_delete_comment(parent)
+            await repo.add_comment(
+                feedback_id=feedback_id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body="父亲已经没了，我还活着",
+                parent_id=top_id,
+                reply_to_handle=None,
+            )
+            await session.commit()
+        async with factory() as session:
+            repo = FeedbackRepository(session)
+            assert (await repo.page_comments(feedback_id)).rows == []
+            assert await repo.comment_counts([feedback_id]) == {}
+        return feedback_id
 
-    async with factory() as session:
-        repo = FeedbackRepository(session)
-        assert (await repo.page_comments(feedback_id)).rows == []
-        assert await repo.comment_counts([feedback_id]) == {}
+    feedback_id = client.portal.call(arrange)
 
     # 三条读路径说的是同一件事：帖子、详情里的评论数、帖子里的那一条。
     assert _thread(client, REPORTER, str(feedback_id)) == []
@@ -939,7 +940,9 @@ async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
     assert detail["comments"] == 0
 
 
-async def test_a_reply_that_arrives_while_its_parent_is_being_deleted(client):
+async def test_a_reply_that_arrives_while_its_parent_is_being_deleted(
+    client, business_db_factory
+):
     """把竞态**跑一遍**，而且拿时间去量它 —— 不是从文档里抄一句「不冲突」。
 
     上一条用例钉的是「孤儿长什么样、三条读路径挡不挡得住」，它自己的 docstring 写明
@@ -963,7 +966,9 @@ async def test_a_reply_that_arrives_while_its_parent_is_being_deleted(client):
     **不变式与走哪条分支无关**：看不见的父亲带不出看得见的儿子。所以读路径验的是
     三个入口的一致性，而不是某一行在不在。
     """
-    factory = client.test_factory
+    # HTTP only observes after the competing transactions finish, so the
+    # owning-loop business pool can run the race without cross-loop sharing.
+    factory = business_db_factory
     feedback_id, top_id = await _seed_thread(factory)
 
     async def delete_and_hold() -> None:
@@ -1085,7 +1090,9 @@ async def _seed_comments(
     return ids
 
 
-async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(client):
+async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(
+    business_db_factory,
+):
     """翻页不漏不重 —— 包括 `created_at` 全撞在一起的时候。
 
     同一时间戳不是硬造出来的角落：`NOW()` 在一条语句里对每一行是同一个值，批量导入
@@ -1093,7 +1100,7 @@ async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(cl
     查询里的先后可以不一样，翻页于是漏行、或者把同一行发两遍；把 `id` 并进游标才是
     全序。这个用例把所有顶层评论的时间戳**钉成同一个值**，再一页一页翻到底。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     feedback_id, top_ids, _ = await _seed_comments(factory, tops=7)
     same_instant = datetime(2026, 1, 1, tzinfo=UTC)
     async with factory() as session:
@@ -1121,7 +1128,9 @@ async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(cl
     assert sorted(seen) == sorted(top_ids)
 
 
-async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(client):
+async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(
+    business_db_factory,
+):
     """楼内回复自己一页，而**一页带了几条**和**这栋楼一共有几条**是两件事。
 
     `reply_counts` 是后者，`reply_cursors` 是「还有的话从哪儿接着取」。两个都对着
@@ -1129,7 +1138,7 @@ async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(cl
     少了那一条，一栋正好 2 条的楼会被判成还有下一页，客户端于是发一次必然取到空页
     的请求。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     feedback_id, top_ids, reply_ids = await _seed_comments(factory, tops=1, replies=5)
     async with factory() as session:
         repo = FeedbackRepository(session)
@@ -1201,15 +1210,16 @@ def test_the_thread_tells_the_client_how_many_replies_a_building_has(client):
     ]
 
 
-async def test_paging_the_thread_does_not_shrink_the_count_on_the_card(client):
+def test_paging_the_thread_does_not_shrink_the_count_on_the_card(client):
     """卡片上那个数字是**这条反馈一共有几条评论**，不是这一页有几条。
 
     分页之前 `comments` 是 `len(thread)`；分页之后那就是一页的大小，卡片上的数字会
     随翻页往下掉 —— 屏幕上是「评论 50」，翻一次变成「评论 21」，而一条评论都没少。
     """
-    factory = client.test_factory
-    feedback_id, top_ids, _ = await _seed_comments(
-        factory, tops=feedback_repo.THREAD_PAGE + 1
+    feedback_id, _, _ = client.portal.call(
+        lambda: _seed_comments(
+            client.test_request_factory, tops=feedback_repo.THREAD_PAGE + 1
+        )
     )
     r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(REPORTER))
     assert r.status_code == 200, r.text
@@ -1266,7 +1276,9 @@ def test_replies_cannot_be_pulled_across_reports(client):
     assert r.json()["data"]["items"] == []
 
 
-async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeypatch):
+async def test_chunked_in_queries_answer_the_same_as_one_big_one(
+    business_db_factory, monkeypatch
+):
     """分批之后**合起来**的答案和一次问完一样。
 
     `_IN_BATCH` 的由来是 asyncpg 把参数个数编进 int16，超过 32767 条直接抛
@@ -1274,7 +1286,7 @@ async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeyp
     条回路：切、逐批查、合并。合并写错（覆盖而不是并集）在真实规模下只会表现为
     「一大片评论的点赞数突然都是 0」，很难从现象倒回来。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     feedback_id, top_ids, _ = await _seed_comments(factory, tops=5)
     monkeypatch.setattr(feedback_repo, "_IN_BATCH", 2)
     async with factory() as session:
@@ -3179,7 +3191,9 @@ def test_an_agent_on_the_admin_list_is_no_admin_on_the_public_surface(
     assert client.get(f"/feedback/{private['id']}", headers=mine).status_code == 200
 
 
-async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client):
+async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(
+    business_db_factory,
+):
     """首读游标是 upsert，不是先读后插。
 
     `FeedbackReadState` 上有 `uq_feedback_read_state_user`，而同一个人的两条请求真的
@@ -3192,7 +3206,7 @@ async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client
     `RETURNING` 在冲突那一侧也要有行返回，写成 `do_nothing` 的话败者拿空结果、
     当场 `scalar_one()` 抛 `NoResultFound` —— 那是另一个 500。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     at = datetime.now(UTC)
 
     async def bump() -> str:
@@ -3209,7 +3223,7 @@ async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client
     assert row.last_read_at == at
 
 
-async def test_the_bell_does_not_count_a_reply_nobody_can_see(client):
+def test_the_bell_does_not_count_a_reply_nobody_can_see(client):
     """未读计数和线程列表读的是同一个判据。
 
     `count_activity_since` 的评论那一支以前只写 `deleted_at IS NULL`，没有套
@@ -3218,31 +3232,38 @@ async def test_the_bell_does_not_count_a_reply_nobody_can_see(client):
     不能互相矛盾」，这一处是唯一没遵守的 reader。症状：铃铛上写着 1，点进去线程里什么
     都没有，而这个数清不掉（`mark_read` 推的是游标，孤儿永远比游标新）。
     """
-    factory = client.test_factory
-    feedback_id, top_id = await _seed_thread(factory)
 
-    async with factory() as session:
-        repo = FeedbackRepository(session)
-        parent = await repo.get_comment(top_id)
-        assert parent is not None
-        await repo.soft_delete_comment(parent)
-        await session.commit()
+    async def arrange() -> tuple[uuid.UUID, uuid.UUID]:
+        factory = client.test_request_factory
+        feedback_id, top_id = await _seed_thread(factory)
+        async with factory() as session:
+            repo = FeedbackRepository(session)
+            parent = await repo.get_comment(top_id)
+            assert parent is not None
+            await repo.soft_delete_comment(parent)
+            await session.commit()
+        return feedback_id, top_id
+
+    feedback_id, top_id = client.portal.call(arrange)
 
     headers = session_auth_headers(REPORTER)
     client.post("/feedback/read", headers=headers)
 
     # 孤儿：父亲已经软删，它自己的 `deleted_at` 还是 NULL，而且落在游标之后。
-    async with factory() as session:
-        await FeedbackRepository(session).add_comment(
-            feedback_id=feedback_id,
-            author_handle=STRANGER,
-            author_user_id=None,
-            author_is_agent=False,
-            body="父亲已经没了，我还活着",
-            parent_id=top_id,
-            reply_to_handle=None,
-        )
-        await session.commit()
+    async def orphan() -> None:
+        async with client.test_request_factory() as session:
+            await FeedbackRepository(session).add_comment(
+                feedback_id=feedback_id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body="父亲已经没了，我还活着",
+                parent_id=top_id,
+                reply_to_handle=None,
+            )
+            await session.commit()
+
+    client.portal.call(orphan)
 
     assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] == 0
 
