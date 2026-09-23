@@ -28,6 +28,7 @@ dict —— 平台那半每次现查，所以改了算力额度不必等缓存�
 刷，用户要等最长一个刷新周期才看得到新模型（或还看得到一个已停用的）。
 """
 
+import logging
 import re
 import time
 import uuid
@@ -58,6 +59,8 @@ from app.domain.agent.schemas import ModelCreate, ModelUpdate
 from app.domain.project.services import ProjectService
 from app.domain.usage.services import UsageService
 
+logger = logging.getLogger(__name__)
+
 # 网关侧答案的存活时间。15 秒是「同一个人连点两下」和「页面自己在轮询」之间的那
 # 个位置：短到不会让人看到过期的上线状态，长到一次页面加载只问网关一遍。
 _TTL_SECONDS = 15.0
@@ -77,8 +80,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # 单价与能力在网关管理 API 与页面契约里用同一套语义键；流转成 litellm_params 的
 # `*_cost_per_token` 只发生在 `_prices_for_gateway` 一处。
 _PRICE_KEYS = ("input", "output", "cache_read", "cache_creation")
-# 审计去敏要认的字段名（大小写、连字符/下划线都归一）——只剔上游凭据，`api_base` 不动。
-_KEY_FIELD_NAMES = {"api_key", "apikey"}
+# 审计去敏要认的字段名（大小写、连字符/下划线都归一）——只剔凭据，`api_base` 不动。
+# 后三个是订阅导入的 OAuth 三件套：不扩这份名单，订阅的审计素材会把明文 token 落库。
+_KEY_FIELD_NAMES = {"api_key", "apikey", "access_token", "refresh_token", "id_token"}
 
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -279,6 +283,7 @@ class GatewayModelsService:
         # 就没有「部分正确」可给：一张空表会被读成「这里一个模型都没有」。
         models = await self._require_models()
         usage = await self._usage_window(start, end)
+        overlay = await self._subscription_overlay()
         return {
             "gateway": {
                 "reachable": True,
@@ -289,18 +294,36 @@ class GatewayModelsService:
             },
             "window": window,
             "totals": _usage_to_dict(usage.totals),
-            "models": [self._item(m, usage) for m in models],
+            "models": [self._item(m, usage, overlay.get(m.name)) for m in models],
         }
 
     async def detail(self, *, name: str, days: int) -> dict:
         start, end, since, until = self._window(days)
         model = await self._current_model(name)
         usage = await self._usage_window(start, end)
+        overlay = await self._subscription_overlay()
         return {
-            "model": self._item(model, usage),
+            "model": self._item(model, usage, overlay.get(name)),
             "series": self._series(name, usage),
             "platform_usage": await self._platform_usage(name, since, until),
         }
+
+    async def _subscription_overlay(self) -> dict[str, dict]:
+        """订阅 overlay：linked_model_name → 订阅状态。走 SubscriptionService 的门
+        （service → service，不碰对方仓储）。拼在 15s 缓存**之外**：它是平台库这
+        一侧的答案，与项目额度同一个 freshness 纪律 —— 导入完立刻看得见徽章。
+
+        读取失败（比如库还没迁移出这张表）降级成空 overlay，不让模型列表跟着
+        殉葬 —— 列表的头等事是模型本身。
+        """
+        try:
+            from app.domain.subscription.services import SubscriptionService
+
+            service = SubscriptionService(self._db, None, None)
+            return await service.status_by_linked_model()
+        except Exception:  # noqa: BLE001 — overlay 是增强，不是列表的命门
+            logger.warning("subscription overlay read failed", exc_info=True)
+            return {}
 
     def _series(self, name: str, usage: UsageWindow) -> list[dict]:
         """折线取的是**同一次** `_usage_window` 里那份逐日明细。
@@ -313,8 +336,7 @@ class GatewayModelsService:
         """
         out: list[dict] = []
         for day in usage.daily:
-            by_model = day.get("by_model")
-            row = by_model.get(name) if isinstance(by_model, dict) else None
+            row = _daily_model_row(name, day)
             out.append(
                 {
                     "date": day.get("date", ""),
@@ -374,22 +396,23 @@ class GatewayModelsService:
     ) -> list[dict]:
         by_alias = {k.alias: k for k in keys}
         by_user = {k.user_id: k for k in keys if k.user_id}
-        credits = UsageService(self._db)
         projects, _total = await ProjectService(self._db).list_all()
-        items = []
-        for project in projects:
-            items.append(
-                await self._project_item(project, by_alias, by_user, usage, credits)
-            )
-        return items
+        # 额度汇总一次批量取（teams 归属一条 JOIN、grants 一条 IN），不是逐项目
+        # 各查一遍 —— 项目多的时候，2N+1 次串行往返和 3 次之间的差就是这段
+        # 页面加载的肉眼差。口径与逐项目的 `project_credits` 逐字段相等
+        # （`tests/unit/test_credits_batch.py` 钉着这件事）。
+        summaries = await UsageService(self._db).project_credits_batch(projects)
+        return [
+            self._project_item(project, by_alias, by_user, usage, summaries[project.id])
+            for project in projects
+        ]
 
-    async def _project_item(
-        self, project, by_alias, by_user, usage: UsageWindow, credits: UsageService
+    def _project_item(
+        self, project, by_alias, by_user, usage: UsageWindow, summary: dict
     ) -> dict:
         key = by_alias.get(f"project-{project.id}") or by_user.get(
             f"project:{project.id}"
         )
-        summary = await credits.project_credits(project.id)
         # 刹车值的「应有」值是算力换算来的；unlimited（没有发放记录）时没有这个数，
         # 此时 key 上任何 max_budget 都是一次显式的覆盖。
         derived = None
@@ -434,6 +457,10 @@ class GatewayModelsService:
                     "target": row.target,
                     "result": row.result,
                     "detail": row.detail,
+                    # 写入时已 `_redact`，读侧直接给 —— 它们回答的是「改了什么」，
+                    # 审计区从「谁动了」升级成「动了什么」就靠这两个字段。
+                    "before": row.before,
+                    "after": row.after,
                 }
                 for row in rows
             ]
@@ -485,6 +512,7 @@ class GatewayModelsService:
             label=data.get("label"),
             selectable=selectable,
             capabilities=data.get("capabilities") or {},
+            extra_headers=data.get("extra_headers"),
         )
         await self._after_write()
         return await self._read_back(name, data, model_id)
@@ -541,6 +569,10 @@ class GatewayModelsService:
             kwargs["prices"] = _prices_for_gateway(prices)
         if data.get("capabilities") is not None:
             kwargs["capabilities"] = data["capabilities"]
+        # PATCH 合并语义在客户端兑现：缺省 = 不动既有头，订阅模型经表单改标签/
+        # 价格时不会把订阅导入写进去的三件套弄丢。
+        if data.get("extra_headers"):
+            kwargs["extra_headers"] = data["extra_headers"]
 
         await self._admin.update_model(**kwargs)  # type: ignore[union-attr]
         await self._after_write()
@@ -653,9 +685,8 @@ class GatewayModelsService:
         keys = await self._keys_raw()
         by_alias = {k.alias: k for k in keys}
         by_user = {k.user_id: k for k in keys if k.user_id}
-        return await self._project_item(
-            project, by_alias, by_user, usage, UsageService(self._db)
-        )
+        summary = await UsageService(self._db).project_credits(project.id)
+        return self._project_item(project, by_alias, by_user, usage, summary)
 
     # ------------------------------------------------------------------
     # 读回 + 审计
@@ -674,7 +705,8 @@ class GatewayModelsService:
             return _item_from_payload(name, data, model_id)
         found = next((m for m in models if m.name == name), None)
         if found is not None:
-            return self._item(found, usage)
+            overlay = await self._subscription_overlay()
+            return self._item(found, usage, overlay.get(name))
         return _item_from_payload(name, data, model_id, usage.by_model.get(name))
 
     async def _record(
@@ -708,7 +740,12 @@ class GatewayModelsService:
     # ------------------------------------------------------------------
     # 拼装
     # ------------------------------------------------------------------
-    def _item(self, model: AdminModel, usage: UsageWindow) -> dict:
+    def _item(
+        self,
+        model: AdminModel,
+        usage: UsageWindow,
+        subscription: dict | None = None,
+    ) -> dict:
         offered = model.selectable and model.priced and not model.blocked
         item = {
             "name": model.name,
@@ -729,6 +766,12 @@ class GatewayModelsService:
             "prices": dict(model.prices),
             "capabilities": dict(model.capabilities),
             "usage": _usage_to_dict(usage.by_model.get(model.name)),
+            # 行内 sparkline 的逐日 token：从**同一次** `_usage_window` 里切
+            # （与详情折线同源同账，零额外网关调用 —— 另调一次就多打一枪，
+            # 还会让两处的数对不上）。
+            "series": _daily_tokens(model.name, usage),
+            # 第三种来源徽章「订阅」的数据；没有订阅挂在这条模型上时是 None。
+            "subscription": subscription,
         }
         if model.origin == "config":
             # 只对 config 模型给这段可复制文本：它唯一的改法是编辑 config.yaml，
@@ -752,6 +795,22 @@ _ZERO_USAGE = {
     "cache_read_tokens": 0,
     "total_tokens": 0,
 }
+
+
+def _daily_model_row(name: str, day: dict) -> ModelUsage | None:
+    """`usage.daily` 一天里某个模型的那一份；没用过是 None。"""
+    by_model = day.get("by_model")
+    row = by_model.get(name) if isinstance(by_model, dict) else None
+    return row if isinstance(row, ModelUsage) else None
+
+
+def _daily_tokens(name: str, usage: UsageWindow) -> list[int]:
+    """列表项的逐日 token 序列：与 `_series` 同一次窗口、同一个切法。"""
+    out: list[int] = []
+    for day in usage.daily:
+        row = _daily_model_row(name, day)
+        out.append(row.total_tokens if row is not None else 0)
+    return out
 
 
 def _usage_to_dict(usage: ModelUsage | None) -> dict:
@@ -929,6 +988,9 @@ def _model_snapshot(model: AdminModel) -> dict:
         "provider": model.provider,
         "prices": dict(model.prices),
         "capabilities": dict(model.capabilities),
+        # 非凭据（订阅上游的账号 id 与客户端标识），可进审计；api_key 一类的
+        # 真凭据 `AdminModel` 本就从网关剥掉了。
+        "extra_headers": dict(model.extra_headers),
     }
 
 
@@ -974,4 +1036,6 @@ def _item_from_payload(
         "prices": prices,
         "capabilities": dict(data.get("capabilities") or {}),
         "usage": _usage_to_dict(usage),
+        "series": [],
+        "subscription": None,
     }

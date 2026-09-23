@@ -150,8 +150,9 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
                     "resource_id": resource,
                 }
     result = list(entries.values())
-    machine = await MachineService(session).topic_machine(operation.topic_id)
-    if machine is not None:
+    for machine in await MachineService(session).list_active_for_topic(
+        operation.topic_id
+    ):
         if machine.device_id is not None:
             if (
                 not device_hub.is_online(machine.device_id)

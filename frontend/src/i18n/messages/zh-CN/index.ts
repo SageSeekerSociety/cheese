@@ -3,6 +3,7 @@ import comments from './comments.json'
 import editor from './editor.json'
 import feedback from './feedback.json'
 import global from './global.json'
+import members from './members.json'
 import models from './models.json'
 import navigation from './navigation.json'
 import notifications from './notifications.json'
@@ -15,6 +16,7 @@ import work from './work.json'
 
 export default {
   global,
+  members,
   models,
   navigation,
   publicSite,

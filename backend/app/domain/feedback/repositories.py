@@ -929,6 +929,35 @@ class FeedbackRepository:
         rows = (await self._session.execute(stmt)).all()
         return {row[0].date(): int(row[1]) for row in rows}
 
+    async def count_created_between(self, *, since: datetime, until: datetime) -> int:
+        """窗口内新建的反馈总数 —— `created_series` 的合计版（看板环比用）。
+
+        和 `created_series` 同一个 WHERE（未删 + 半开窗口），只是不分桶：环比要的
+        是「上一个窗口一共多少」，不是它的形状。两处各写一份判据的话，合计和曲线
+        迟早对不上。
+        """
+        stmt = select(func.count(Feedback.id)).where(
+            Feedback.deleted_at.is_(None),
+            Feedback.created_at >= since,
+            Feedback.created_at < until,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def count_reached_resolved_between(
+        self, *, since: datetime, until: datetime
+    ) -> int:
+        """窗口内「到过 resolved」的反馈总数 —— `reached_series` 的合计版。
+
+        `count(DISTINCT feedback_id)`，判据和 `reached_series` 同一条（见那里的
+        docstring）：解决数是「几条反馈到过这里」，不是「时间线上有几行」。
+        """
+        stmt = select(func.count(func.distinct(FeedbackTimeline.feedback_id))).where(
+            FeedbackTimeline.status == FeedbackStatus.resolved,
+            FeedbackTimeline.at >= since,
+            FeedbackTimeline.at < until,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
     async def list_related_to(
         self, handle: str, *, is_admin: bool, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
