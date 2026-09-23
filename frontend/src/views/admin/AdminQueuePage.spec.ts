@@ -300,7 +300,9 @@ describe('行 meta 与列表脚', () => {
     // 安全栏那条手写的 urgent（proto-feedback-fixtures.ts:594，私密 + 安全问题，
     // 公共栏里看不见它，得换栏位 —— 换栏位是服务端的问法，会重新取数）。
     await fireEvent.click(getByRole('radio', { name: '安全' }))
-    await waitFor(() => expect(rowOf(container, 'FB-1033').querySelector('.qrow__pri--urgent')?.textContent?.trim()).toBe('紧急'))
+    await waitFor(() =>
+      expect(rowOf(container, 'FB-1033').querySelector('.qrow__pri--urgent')?.textContent?.trim()).toBe('紧急')
+    )
   })
 
   it('两个视图共用同一只脚：行数与「已到底」一致，各自只有一只', async () => {
