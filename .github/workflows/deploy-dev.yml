@@ -138,32 +138,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
-      # `push` used to carry paths-ignore for docs; a workflow_run event cannot,
-      # so keep the intent here — a docs-only commit must not restart a backend
-      # people are talking to, even though its images were rebuilt.
-      - name: Skip docs-only commits
-        id: scope
-        env:
-          RELEASE_SKIP: ${{ steps.release.outputs.skip }}
-        run: |
-          if [ "$RELEASE_SKIP" = true ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(git diff --name-only HEAD^ HEAD 2>/dev/null || echo '')"
-          echo "$files" | sed 's/^/  changed: /'
-          if [ -n "$files" ] && ! echo "$files" | grep -qvE '(\.md$|^docs/)'; then
-            echo "docs-only commit — not restarting the deployment"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+      # A docs commit can include queued code changes relative to the running
+      # release. Only the running-version guard above may skip this deployment.
 
       # Authenticate for the pull rather than trusting the box's stored login:
       # the images are private, and a deploy must not fail because some other
       # job's cleanup removed a credential.
       - name: Log in to ghcr
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -194,7 +176,7 @@ jobs:
       # spelling is swept out — the backend reads both, so a leftover old line
       # would be configuration that does nothing.
       - name: Configure platform administrators
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         env:
           NEW_PLATFORM_ADMIN_HANDLES: ${{ vars.PLATFORM_ADMIN_HANDLES }}
           OLD_FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
@@ -261,7 +243,7 @@ jobs:
           PY
 
       - name: Docker deploy this commit
-        if: steps.scope.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"

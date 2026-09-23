@@ -108,6 +108,25 @@ class ReleaseOrdering(unittest.TestCase):
         self.health = {"backend": "unhealthy"}
         self.assertFalse(self.check(self.middle))
 
+    def test_docs_after_queued_code_still_deploys_relative_to_running_release(self):
+        self.git("checkout", "-q", "--detach", self.base)
+        (self.history / "app.py").write_text("print('new release')\n")
+        self.git("add", "app.py")
+        code = self.commit("queued code")
+        (self.history / "README.md").write_text("Updated documentation\n")
+        self.git("add", "README.md")
+        docs = self.commit("docs after queued code")
+        self.assertEqual(self.git("diff", "--name-only", code, docs), "README.md")
+        self.assertIn("app.py", self.git("diff", "--name-only", self.base, docs))
+        self.images = {"backend": f"registry/backend:{self.base[:7]}",
+                       "frontend": f"registry/frontend:{self.base[:7]}"}
+        self.assertFalse(self.check(docs))
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        for step in workflow["jobs"]["deploy"]["steps"]:
+            self.assertNotEqual(step.get("id"), "scope")
+            if step.get("name") == "Log in to ghcr":
+                self.assertEqual(step["if"], "steps.release.outputs.skip != 'true'")
+
     def test_first_deployment_needs_no_previous_release(self):
         self.api_failed = True
         self.assertFalse(self.check(self.newest))
@@ -140,14 +159,9 @@ class ReleaseOrdering(unittest.TestCase):
 
     def test_skipped_release_stays_skipped_before_candidate_checkout(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
-        step = next(step for step in workflow["jobs"]["deploy"]["steps"] if step.get("id") == "scope")
-        with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
-            output = Path(directory) / "output"
-            environment = {**os.environ, "RELEASE_SKIP": "true", "GITHUB_OUTPUT": str(output)}
-            result = subprocess.run(["bash", "-eu", "-c", step["run"]], cwd=directory, env=environment, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(output.read_text(), "skip=true\n")
-            self.assertEqual(result.stderr, "")
+        checkout = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                        if step.get("name", "").startswith("Check out the built commit"))
+        self.assertEqual(checkout["if"], "steps.release.outputs.skip != 'true'")
 
 
 class CandidateCI(unittest.TestCase):
