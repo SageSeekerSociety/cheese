@@ -38,6 +38,7 @@ class TestTwoFactorIntegration:
             STEP_UP_PASSWORD_LOCKOUT_PREFIX,
             TOTP_ALWAYS_PREFIX,
             TOTP_BACKUP_PREFIX,
+            TOTP_PENDING_PREFIX,
             TOTP_SECRET_PREFIX,
             TWO_FACTOR_ATTEMPTS_PREFIX,
             TWO_FACTOR_LOCKOUT_PREFIX,
@@ -51,6 +52,7 @@ class TestTwoFactorIntegration:
                     TOTP_SECRET_PREFIX,
                     TOTP_BACKUP_PREFIX,
                     TOTP_ALWAYS_PREFIX,
+                    TOTP_PENDING_PREFIX,
                     # A 15-minute lockout outlives the test that earned it,
                     # and user ids restart with each session's fresh DB.
                     TWO_FACTOR_ATTEMPTS_PREFIX,
@@ -66,12 +68,32 @@ class TestTwoFactorIntegration:
         )
         r.close()
 
+    def _password_ticket(self, purpose: str) -> str:
+        """A ticket for ``purpose``, got by re-entering the password — the one
+        credential every account in these tests has, 2FA or not."""
+        resp = self.client.post(
+            "/users/auth/sudo",
+            headers=self.headers,
+            json={
+                "method": "password",
+                "credentials": {"password": self.user.password},
+                "purpose": purpose,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["sudoTicket"]
+
+    def _offer_secret(self):
+        return self.client.post(
+            f"/users/{self.user.user_id}/2fa/enable",
+            headers=self.headers,
+            json={"sudoTicket": self._password_ticket("2fa:enable")},
+        )
+
     def _enable_2fa(self) -> tuple[str, list[str]]:
         """Run the two-phase enable dance; returns (secret, backup_codes)."""
-        init = self.client.post(
-            f"/users/{self.user.user_id}/2fa/enable", headers=self.headers, json={}
-        )
-        assert init.status_code == 200
+        init = self._offer_secret()
+        assert init.status_code == 200, init.text
         data = init.json()["data"]
         assert data["otpauth_url"].startswith("otpauth://")
         assert data["qrcode"].startswith("data:image/png;base64,")
@@ -127,9 +149,7 @@ class TestTwoFactorIntegration:
             "always_required": False,
         }
 
-        again = self.client.post(
-            f"/users/{self.user.user_id}/2fa/enable", headers=self.headers, json={}
-        )
+        again = self._offer_secret()
         assert again.status_code == 400
 
         disable = self._disable(self._sudo_ticket(secret))
@@ -142,9 +162,7 @@ class TestTwoFactorIntegration:
         assert status.json()["data"]["enabled"] is False
 
     def test_enable_rejects_bad_confirmation_code(self):
-        init = self.client.post(
-            f"/users/{self.user.user_id}/2fa/enable", headers=self.headers, json={}
-        )
+        init = self._offer_secret()
         secret = init.json()["data"]["secret"]
         confirm = self.client.post(
             f"/users/{self.user.user_id}/2fa/enable",
@@ -664,7 +682,9 @@ class TestTwoFactorIntegration:
         _secret, old_codes = self._enable_2fa()
 
         regen = self.client.post(
-            f"/users/{self.user.user_id}/2fa/backup-codes", headers=self.headers
+            f"/users/{self.user.user_id}/2fa/backup-codes",
+            headers=self.headers,
+            json={"sudoTicket": self._password_ticket("2fa:backup-codes")},
         )
         assert regen.status_code == 200
         body = regen.json()
@@ -685,7 +705,10 @@ class TestTwoFactorIntegration:
         put = self.client.put(
             f"/users/{self.user.user_id}/2fa/settings",
             headers=self.headers,
-            json={"always_required": True},
+            json={
+                "always_required": True,
+                "sudoTicket": self._password_ticket("2fa:settings"),
+            },
         )
         assert put.status_code == 200
         assert put.json()["data"] == {"success": True, "always_required": True}
@@ -710,3 +733,117 @@ class TestTwoFactorIntegration:
         ]:
             resp = getattr(self.client, method)(path, headers=other_headers)
             assert resp.status_code == 403, path
+
+    # --- The rest of the second-factor management is re-authenticated too.
+    #
+    # Turning 2FA on, replacing its backup codes and changing when it is asked
+    # for each hand whoever holds the session a lasting say over the factor
+    # itself, so each one asks for a ticket minted for it alone.
+
+    def _backup_codes(self, ticket: str | None = None):
+        return self.client.post(
+            f"/users/{self.user.user_id}/2fa/backup-codes",
+            headers=self.headers,
+            json={} if ticket is None else {"sudoTicket": ticket},
+        )
+
+    def _settings(self, always_required: bool, ticket: str | None = None):
+        body: dict = {"always_required": always_required}
+        if ticket is not None:
+            body["sudoTicket"] = ticket
+        return self.client.put(
+            f"/users/{self.user.user_id}/2fa/settings",
+            headers=self.headers,
+            json=body,
+        )
+
+    def _always_required(self) -> bool:
+        resp = self.client.get(
+            f"/users/{self.user.user_id}/2fa/status", headers=self.headers
+        )
+        return resp.json()["data"]["always_required"]
+
+    def test_starting_2fa_setup_needs_a_ticket(self):
+        refused = self.client.post(
+            f"/users/{self.user.user_id}/2fa/enable", headers=self.headers, json={}
+        )
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+
+    def test_setup_confirms_only_the_secret_it_offered(self):
+        """The confirming step takes no ticket of its own, so a secret the
+        caller made up must not get through it — or the gated first step
+        could simply be skipped."""
+        own_secret = pyotp.random_base32()
+        confirm = self.client.post(
+            f"/users/{self.user.user_id}/2fa/enable",
+            headers=self.headers,
+            json={"secret": own_secret, "code": pyotp.TOTP(own_secret).now()},
+        )
+        assert confirm.status_code == 422, confirm.text
+        assert self._2fa_enabled() is False
+
+        offered = self._offer_secret().json()["data"]["secret"]
+        confirm = self.client.post(
+            f"/users/{self.user.user_id}/2fa/enable",
+            headers=self.headers,
+            json={"secret": own_secret, "code": pyotp.TOTP(own_secret).now()},
+        )
+        assert confirm.status_code == 422, confirm.text
+        assert self._2fa_enabled() is False
+
+        confirm = self.client.post(
+            f"/users/{self.user.user_id}/2fa/enable",
+            headers=self.headers,
+            json={"secret": offered, "code": pyotp.TOTP(offered).now()},
+        )
+        assert confirm.status_code == 200, confirm.text
+        assert self._2fa_enabled() is True
+
+    def test_regenerating_backup_codes_needs_a_ticket(self):
+        _secret, codes = self._enable_2fa()
+
+        refused = self._backup_codes()
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+
+        # The old codes are untouched, so the refusal really did nothing.
+        resp = self._verify(self._temp_token(), codes[0])
+        assert resp.status_code == 200, resp.text
+
+    def test_changing_2fa_settings_needs_a_ticket(self):
+        self._enable_2fa()
+
+        refused = self._settings(True)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+        assert self._always_required() is False
+
+    def test_a_ticket_opens_only_the_operation_it_was_minted_for(self):
+        self._enable_2fa()
+
+        refused = self._backup_codes(self._password_ticket("2fa:settings"))
+        assert refused.status_code == 403, refused.text
+
+        refused = self._settings(True, self._password_ticket("2fa:backup-codes"))
+        assert refused.status_code == 403, refused.text
+        assert self._always_required() is False
+
+    def test_a_management_ticket_is_spent_by_its_first_use(self):
+        self._enable_2fa()
+        ticket = self._password_ticket("2fa:settings")
+
+        assert self._settings(True, ticket).status_code == 200
+        assert self._always_required() is True
+
+        replay = self._settings(False, ticket)
+        assert replay.status_code == 403, replay.text
+        assert self._always_required() is True
+
+    def test_a_totp_re_authentication_opens_management_too(self):
+        secret, _codes = self._enable_2fa()
+        resp = self._sudo_totp(pyotp.TOTP(secret).now(), purpose="2fa:backup-codes")
+        assert resp.status_code == 200, resp.text
+
+        regen = self._backup_codes(resp.json()["data"]["sudoTicket"])
+        assert regen.status_code == 200, regen.text

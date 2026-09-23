@@ -40,6 +40,15 @@
         >
           {{ t('spaces.course.myCourse.openWork') }}
         </v-btn>
+        <v-btn
+          v-if="currentUnit.quizId"
+          class="ms-2"
+          color="primary"
+          variant="outlined"
+          :to="{ name: 'SpacesCourseQuiz', params: { spaceId }, query: { unit: String(currentUnit.id) } }"
+        >
+          {{ t('spaces.course.myCourse.openQuiz') }}
+        </v-btn>
         <p v-else class="text-medium-emphasis mb-0">
           {{ t('spaces.course.myCourse.nothingToHandIn') }}
         </p>

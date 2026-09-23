@@ -235,10 +235,6 @@ jobs:
         working-directory: e2e
         run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: pnpm exec playwright install --with-deps chromium
-
       # Non-default ports: this job used to run on the dev box, which serves the
       # dev deployment on 8081, and Playwright died with "8081 is already used"
       # before a single test ran. It now runs on the cheese-ci pool where
@@ -251,7 +247,7 @@ jobs:
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
-        run: pnpm exec playwright test
+        run: bash ./run-isolated.sh
 
       - name: Upload test report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

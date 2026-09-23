@@ -105,7 +105,21 @@ def _enable_2fa(client: TestClient, user: CreatedUser) -> str:
     resp = _login(client, user)
     assert resp.status_code == 200, resp.text
     headers = {"Authorization": f"Bearer {resp.json()['data']['accessToken']}"}
-    init = client.post(f"/users/{user.user_id}/2fa/enable", headers=headers, json={})
+    sudo = client.post(
+        "/users/auth/sudo",
+        headers=headers,
+        json={
+            "method": "password",
+            "credentials": {"password": user.password},
+            "purpose": "2fa:enable",
+        },
+    )
+    assert sudo.status_code == 200, sudo.text
+    init = client.post(
+        f"/users/{user.user_id}/2fa/enable",
+        headers=headers,
+        json={"sudoTicket": sudo.json()["data"]["sudoTicket"]},
+    )
     secret = init.json()["data"]["secret"]
     confirm = client.post(
         f"/users/{user.user_id}/2fa/enable",
