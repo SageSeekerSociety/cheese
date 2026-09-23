@@ -490,21 +490,25 @@ class MachineService:
             disk_gb=choice.disk_gb,
         )
 
+    async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
+        return await self._repo.list_active_for_topic(topic_id)
+
     async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
         return await self._repo.get_active_for_topic(topic_id)
 
     async def detach_archived_machine(self, topic_id: uuid.UUID) -> None:
         """Reopening gets new compute; the recorded cleanup still owns the old VM."""
         await self._repo.lock_topic(topic_id)
-        machine = await self._repo.get_active_for_topic(topic_id)
-        if machine is None:
-            return
+        machines = await self._repo.list_active_for_topic(topic_id)
         binding = await self._devices.topic_binding(topic_id)
-        if binding is not None and binding.device_id == machine.device_id:
+        if binding is not None and any(
+            binding.device_id == machine.device_id for machine in machines
+        ):
             await self._devices.release_topic_device(
                 topic_id, reason="reopen after cleanup claim"
             )
-        await self._repo.mark_released(machine, when=datetime.now(UTC))
+        for machine in machines:
+            await self._repo.mark_released(machine, when=datetime.now(UTC))
 
     async def release_archived_machine(self, machine_id: uuid.UUID) -> None:
         """Delete the recorded VM even if its room now has a newer allocation."""

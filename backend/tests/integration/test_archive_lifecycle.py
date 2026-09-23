@@ -167,7 +167,9 @@ async def test_cloud_inventory_cannot_discard_unrecognized_transcripts(
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     machine = SimpleNamespace(id=uuid.uuid4(), device_id="cloud")
     monkeypatch.setattr(
-        retire.MachineService, "topic_machine", AsyncMock(return_value=machine)
+        retire.MachineService,
+        "list_active_for_topic",
+        AsyncMock(return_value=[machine]),
     )
     monkeypatch.setattr(
         retire,

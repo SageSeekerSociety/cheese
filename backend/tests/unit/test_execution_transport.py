@@ -181,13 +181,19 @@ class SocketDevice:
     def __init__(self):
         self.sizes = []
         self.devices = []
+        self.timeouts = []
         self.hub = DeviceHub()
 
-    async def call_executor(self, device_id, state, method, params, *, trace_id=None):
+    async def call_executor(
+        self, device_id, state, method, params, *, trace_id=None, timeout=660
+    ):
         self.devices.append(device_id)
+        self.timeouts.append(timeout)
         await self.hub.attach_device(device_id, self)
         await self.hub.on_device_message(device_id, {"t": "hello", "executor": True})
-        return await self.hub.call_executor(device_id, state, method, params)
+        return await self.hub.call_executor(
+            device_id, state, method, params, timeout=timeout, trace_id=trace_id
+        )
 
     async def send_json(self, message):
         if message["t"] == "welcome":
@@ -217,9 +223,14 @@ async def test_large_file_control_crosses_connector_without_truncation(executor)
     (work / "large.txt").write_text(content)
     device = SocketDevice()
     result = await execution.call(
-        target, "control", {"subtype": "read_file", "path": "large.txt"}, hub=device
+        target,
+        "control",
+        {"subtype": "read_file", "path": "large.txt"},
+        hub=device,
+        timeout=30,
     )
     assert result["contents"] == content
+    assert device.timeouts == [30]
     assert max(device.sizes) < 1 << 20
     assert set(device.devices) == {"project-device"}
     assert not (state / "relay").exists()

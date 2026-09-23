@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow, DeviceTopicRow, HostedDeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.supply import binding_visibility, has_runnable_transport
 from app.domain.project.models import Project, ProjectMember
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicMembership
@@ -75,6 +76,22 @@ async def device_ran_place(
         return False
     return device_id in await SqlDeviceRepository(session).device_ids_by_project(
         project_id
+    )
+
+
+async def execution_device_authorized(
+    session: AsyncSession, device_id: str, project_id: uuid.UUID
+) -> bool:
+    supply = await session.scalar(
+        select(DeviceRow.supply)
+        .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+        .where(DeviceRow.device_id == device_id)
+    )
+    return (
+        supply is not None
+        and has_runnable_transport(binding_visibility(supply))
+        and device_id
+        in await SqlDeviceRepository(session).device_ids_by_project(project_id)
     )
 
 
@@ -142,6 +159,45 @@ async def session_places(
         )
     ).all()
     return [(row.runtime_location, row.work_lease) for row in located]
+
+
+async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
+    """Only an un-upgraded lease can be addressed by a pre-session credential.
+
+    A new session becoming the sole row never grants an old room token access.
+    Keep this reader until all old screens have naturally reopened.
+    """
+    rows = (
+        await session.execute(
+            select(
+                AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
+            )
+            .where(AgentSession.topic_id == place_id)
+            .with_for_update()
+        )
+    ).all()
+    legacy = [
+        row
+        for row in rows
+        if row.work_lease
+        and row.work_lease.get("kind") == "device"
+        and not row.work_lease.get("generation")
+        and not row.work_lease.get("session_id")
+    ]
+    return legacy[0] if len(legacy) == 1 else None
+
+
+async def session_execution(
+    session: AsyncSession, place_id: uuid.UUID, session_id: uuid.UUID
+):
+    """Read exactly the session named by the signed execution credential."""
+    return (
+        await session.execute(
+            select(AgentSession.runtime_location, AgentSession.work_lease)
+            .where(AgentSession.topic_id == place_id, AgentSession.id == session_id)
+            .with_for_update()
+        )
+    ).one_or_none()
 
 
 async def place(session: AsyncSession, place_id: uuid.UUID) -> Place | None:
