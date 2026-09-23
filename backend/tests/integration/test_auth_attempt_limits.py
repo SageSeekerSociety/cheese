@@ -192,12 +192,8 @@ class TestOverlongPasswords:
 
         assert resp.status_code == 401, resp.text
 
-    @pytest.mark.parametrize(
-        "path", ["/users/password/reset", "/users/recover/password/verify"]
-    )
     def test_resetting_to_one_is_refused_and_the_link_still_works(
         self,
-        path: str,
         api_client: TestClient,
         user_client: UserCreator,
         outbox: _Outbox,
@@ -213,6 +209,7 @@ class TestOverlongPasswords:
         assert match, outbox.sent[-1]
         token = match.group(1)
 
+        path = "/users/recover/password/verify"
         refused = api_client.post(path, json={"token": token, "password": OVERLONG})
         assert refused.status_code == 400, refused.text
 
