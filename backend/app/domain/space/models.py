@@ -68,6 +68,19 @@ class Space(Base):
         nullable=False,
         default=list,
     )
+    # 这门课开着哪几个模块 (course template): `{"quiz": false}` = 小测从界面上
+    # 收起来。Declarative data, and an ABSENT key means ON — so `{}` is a course
+    # with everything shown, and adding a module later needs no backfill. Read it
+    # through `app.domain.space.course_modules.normalize` / `is_on`, never off the
+    # column directly, and never as a branch on capability (that module's
+    # docstring says why).
+    course_modules: Mapped[dict] = mapped_column(
+        "course_modules",
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

@@ -166,6 +166,21 @@
           {{ isCourse ? t('spaces.course.nav.settings') : t('spaces.detail.adminOperations') }}
         </v-list-subheader>
 
+        <!-- 课程模板的配置：拨模块开关、写这周的教学参数。只在课程里出现 ——
+             老题目板没有「一门课」这回事，也就没有可配的东西。 -->
+        <v-list-item
+          v-if="isCourse"
+          rounded="lg"
+          :to="{ name: 'SpacesCourseSettings', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-tune-variant</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.course.settings.title') }}</v-list-item-title>
+        </v-list-item>
+
         <v-list-item
           rounded="lg"
           :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId: spaceId } }"
@@ -263,7 +278,7 @@ import { storeToRefs } from 'pinia'
 import { getAvatarUrl } from '@/utils/materials'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
-import { COURSE_STUDENT_CELLS, COURSE_TEACHER_CELLS } from '@/lib/courseNav'
+import { COURSE_STUDENT_CELLS, COURSE_TEACHER_CELLS, visibleCourseCells } from '@/lib/courseNav'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
 
@@ -282,8 +297,14 @@ const isCurrentUserAtLeastAdmin = computed(() => {
 // 老题目板没有声明，是 false，侧栏它就一行都不变。
 const isCourse = computed(() => space.value?.isCourse === true)
 
-// 课程里露哪几格：老师 = 本版管理员（名单就是上面那份 `space.admins`，不另判权限）。
-const courseCells = computed(() => (isCurrentUserAtLeastAdmin.value ? COURSE_TEACHER_CELLS : COURSE_STUDENT_CELLS))
+// 课程里露哪几格：老师 = 本版管理员（名单就是上面那份 `space.admins`，不另判权限），
+// 再按这门课拨过的模块开关筛一遍（缺省全开，老板子没有这个字段也全开）。
+const courseCells = computed(() =>
+  visibleCourseCells(
+    isCurrentUserAtLeastAdmin.value ? COURSE_TEACHER_CELLS : COURSE_STUDENT_CELLS,
+    space.value?.courseModules
+  )
+)
 
 // 创建者 = 题目板的所有者。设/撤管理员是创建者的事，入口只给他。
 const isCurrentUserOwner = computed(() => {

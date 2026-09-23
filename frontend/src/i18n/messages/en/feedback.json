@@ -168,12 +168,20 @@
       "durationDays": "{d} d {h} h",
       "col": {
         "route": "Endpoint",
-        "count": "Calls"
+        "count": "Calls",
+        "errors": "Errors"
       },
       "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
       "slowest": "Slowest p95",
       "routesOf": "{shown} sampled / {total} registered",
-      "routesNote": "The denominator is every route the app has registered; the numerator is the ones hit since restart. A low number does not mean few routes — unsampled routes never appear here."
+      "routesNote": "Every registered endpoint gets a row, never-hit ones included (their call count shows an em-dash). The percentiles are exact over the last 256 samples, not lifetime.",
+      "network": {
+        "title": "Network throughput",
+        "uplink": "Host NIC",
+        "uplinkNote": "The default-route interface ({iface}). Uplink includes the metering proxy egress to model providers, repo sync and backups — this is the box total uplink, not just our users traffic. History is process memory and clears on restart.",
+        "api": "This process, HTTP",
+        "apiNote": "HTTP request-body bytes in and response-body bytes out of this backend process."
+      }
     },
     "usage": {
       "tokens": "Tokens · window",
@@ -194,6 +202,8 @@
     },
     "people": {
       "total": "Accounts",
+      "humans": "Humans",
+      "agents": "Agents",
       "new": "New · 7d",
       "admins": "Platform admins",
       "chart": "New accounts per day"
@@ -410,6 +420,11 @@
     "error": {
       "title": "Couldn't load feedback",
       "desc": "Check your connection and try again."
+    },
+    "filtered": {
+      "title": "No feedback matches",
+      "desc": "Try another filter, or clear them to see everything.",
+      "clear": "Clear filters"
     },
     "search": {
       "title": "No matching feedback",

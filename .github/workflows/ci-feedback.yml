@@ -1,8 +1,8 @@
-name: Required CI feedback measurement
+name: CI feedback measurement
 
 on:
   schedule:
-    # Four bounded cohorts stay below the per-repository GITHUB_TOKEN API budget.
+    # Bounded cohorts limit requests against the per-repository API budget.
     # Each run observes a six-hour block only after a further six hours to settle.
     - cron: '23 0,6,12,18 * * *'
   workflow_dispatch:
@@ -43,13 +43,15 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
           --parameters logs/ci-feedback/window.json
 
-      - name: Collect Required CI attempts and job timings
+      - name: Collect CI attempts, timings, and test evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           python3 .github/scripts/ci-feedback-report.py
           --repo "${{ github.repository }}"
           --workflow required-ci.yml
+          --workflow remote-execution.yml
+          --event pull_request --event merge_group --event push --event workflow_dispatch
           --since "${{ steps.window.outputs.since }}"
           --until "${{ steps.window.outputs.until }}"
           --output-dir logs/ci-feedback
@@ -59,11 +61,11 @@ jobs:
         if: ${{ success() }}
         run: |
           {
-            echo '## Required CI feedback measurement'
+            echo '## CI feedback measurement'
             echo
             echo 'This is one mixed-scope observation window, not a long-term stability claim.'
-            echo 'PR and merge-group cohorts, attempts, and latest-run outcomes remain separate.'
-            echo 'This measurement does not activate the 20-green acceptance gate. Actions metadata cannot show Playwright retries, so the clean-run criterion still needs artifact evidence.'
+            echo 'Workflows and events, first attempts, reruns, and test-evidence outcomes remain separate.'
+            echo 'Clean streaks require versioned test receipts. Missing artifacts are unknown, never clean. Streaks cover this window only and do not activate the 20-clean-run acceptance gate.'
             echo
             echo '```json'
             cat logs/ci-feedback/collector-result.json

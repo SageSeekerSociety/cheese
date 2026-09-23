@@ -455,6 +455,36 @@
   font-feature-settings: 'tnum';
 }
 
+/* 密集读数：13 / 19 / 600。**此前它被 5 个模板引用、却在 style.css 里没有任何
+   定义** —— 于是每个引用它的组件都拿到了继承来的字重和字号，两块本该同规格的
+   读数在屏幕上并不一样。这一档取自设计系统 §3.2 的字号阶梯里「密集正文」那一档
+   （字号只允许 12/13/14/15/18/23，13 就是那一档），行高用成对的 `--lh-13`。
+   用途：KPI 卡的短读数、导轨上的短值、表格里的计数 —— 比 `.t-meta` 重一档，
+   比 `.t-body` 紧一档。 */
+.t-dense {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 数字显示契约（设计系统 §3.2 的补充）：
+   1. 数字叶子 nowrap + tabular-nums（`.t-num` 已经给了 tnum，这里补 nowrap）。
+   2. 数字叶子**和它的 flex/grid 父层**都要 `min-width: 0` —— 否则一个 nowrap 的
+      数字会把格子顶宽，把邻居挤没，而不是自己被裁。
+   3. 值的轨道用 `auto` / `minmax(Nch, max-content)`，不用裸 `NNpx`。
+   4. **数字叶子上绝不写 `text-overflow: ellipsis`** —— 省略号是给标签/标题的，
+      数字被省略掉尾巴就不再是那个数了。要省就先把数简写（`fmtSI` / `fmtCompact`），
+      并把完整值放进 `title`。
+   5. 任何简写形式都必须带 `title` 指向完整的分组数字。
+   这两条是 `e2e/tests/number-display.spec.ts` 在屏幕上量的那两条。 */
+.num-leaf {
+  min-width: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
 /* Generic helpers for color application without inventing per-component CSS. */
 .c-ink {
   color: var(--ink);
