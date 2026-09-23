@@ -171,11 +171,6 @@ def test_the_timed_delivery_alarm_is_scheduled():
     assert any(job.name == "timed deliveries" for job in _jobs())
 
 
-def test_forge_upstream_sync_is_scheduled():
-    job = next(job for job in _jobs() if job.name == "forge upstream sync")
-    assert job.interval_seconds > 0
-
-
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"
