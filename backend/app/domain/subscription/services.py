@@ -35,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.crypto import decrypt_text, encrypt_text
+from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
@@ -264,9 +264,17 @@ class SubscriptionService:
         sub.account_email = claims.get("email")
         sub.chatgpt_account_id = account_id
         sub.id_token_subject = claims["sub"]
-        sub.access_token_enc = encrypt_text(tokens.access_token)
-        sub.refresh_token_enc = encrypt_text(tokens.refresh_token)
-        sub.id_token_enc = encrypt_text(tokens.id_token) if tokens.id_token else None
+        sub.access_token_enc = seal_subscription_token(
+            sub.id, "access_token_enc", tokens.access_token
+        )
+        sub.refresh_token_enc = seal_subscription_token(
+            sub.id, "refresh_token_enc", tokens.refresh_token
+        )
+        sub.id_token_enc = (
+            seal_subscription_token(sub.id, "id_token_enc", tokens.id_token)
+            if tokens.id_token
+            else None
+        )
         sub.token_expires_at = (
             now + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
         )
@@ -428,7 +436,7 @@ class SubscriptionService:
         """
         now = _utcnow()
         was_expired = sub.token_expires_at is None or sub.token_expires_at <= now
-        stored_refresh = _decrypt(sub.refresh_token_enc, sub_id=sub.id)
+        stored_refresh = _decrypt(sub, "refresh_token_enc")
         if not stored_refresh:
             sub.status = "reauth_required"
             sub.last_refresh_error = "凭据无法解密（密钥可能已轮换），需要重新授权"
@@ -479,11 +487,17 @@ class SubscriptionService:
             )
             if value
         }
-        sub.access_token_enc = encrypt_text(tokens.access_token)
+        sub.access_token_enc = seal_subscription_token(
+            sub.id, "access_token_enc", tokens.access_token
+        )
         if tokens.refresh_token:
-            sub.refresh_token_enc = encrypt_text(tokens.refresh_token)
+            sub.refresh_token_enc = seal_subscription_token(
+                sub.id, "refresh_token_enc", tokens.refresh_token
+            )
         if tokens.id_token:
-            sub.id_token_enc = encrypt_text(tokens.id_token)
+            sub.id_token_enc = seal_subscription_token(
+                sub.id, "id_token_enc", tokens.id_token
+            )
         if tokens.expires_in:
             sub.token_expires_at = now + timedelta(seconds=tokens.expires_in)
         sub.last_refresh_at = now
@@ -557,7 +571,7 @@ class SubscriptionService:
             )
             raise SubscriptionTokenInvalid("凭据已失效，需要重新授权")
 
-        access = _decrypt(sub.access_token_enc, sub_id=sub.id)
+        access = _decrypt(sub, "access_token_enc")
         if not access:
             await self._mark_reauth(sub, "凭据无法解密（密钥可能已轮换），需要重新授权")
             raise SubscriptionTokenInvalid("凭据已失效，需要重新授权")
@@ -814,22 +828,39 @@ def _clear_flow(sub: LlmSubscription) -> None:
     sub.flow_last_poll_at = None
 
 
-def _decrypt(stored: str | None, *, sub_id: uuid.UUID) -> str | None:
+def seal_subscription_token(sub_id: uuid.UUID, field: str, value: str) -> str:
+    """加密一列凭据，绑定到这条订阅和这一列。"""
+    return encrypt(
+        Purpose.LLM_SUBSCRIPTION_TOKEN,
+        value,
+        bound_to=f"llm-subscription:{sub_id}:{field}",
+    )
+
+
+def open_subscription_token(sub: LlmSubscription, field: str) -> str:
+    return decrypt(
+        Purpose.LLM_SUBSCRIPTION_TOKEN,
+        getattr(sub, field),
+        bound_to=f"llm-subscription:{sub.id}:{field}",
+    )
+
+
+def _decrypt(sub: LlmSubscription, field: str) -> str | None:
     """解一列密文；解不开记日志、降级 None（oauth/services.py 同规）。
 
-    绝不抛给调用方、绝不返回密文：轮换后的旧密文解不开是**预期内**的事，
-    调用方按「凭据不可用 → reauth_required」的路径走。
+    绝不抛给调用方、绝不返回密文：写它的密钥已不在 DATA_ENCRYPTION_KEY 里时
+    解不开是**预期内**的事，调用方按「凭据不可用 → reauth_required」的路径走。
     """
-    if not stored:
+    if not getattr(sub, field):
         return None
     try:
-        return decrypt_text(stored)
+        return open_subscription_token(sub, field)
     except Exception:
         logger.exception(
             "llm subscription %s: stored token could not be decrypted "
-            "(key rotated, or a legacy plaintext row?) — treating the "
+            "(was its key removed from DATA_ENCRYPTION_KEY?) — treating the "
             "credential as unavailable",
-            sub_id,
+            sub.id,
         )
         return None
 

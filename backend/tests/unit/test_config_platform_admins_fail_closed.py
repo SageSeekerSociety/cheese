@@ -91,6 +91,7 @@ def test_deployment_with_named_admins_boots() -> None:
         environment="production",
         jwt_secret=_REAL_SECRET,
         platform_admin_handles=["alice", "bob"],
+        data_encryption_key="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=",
     )
     assert settings.platform_admin_handles == ["alice", "bob"]
 

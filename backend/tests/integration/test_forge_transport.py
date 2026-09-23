@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.core.crypto import encrypt_text
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.forgejo_tokens import seal_forge_token
 from app.domain.project.models import ForgeToken
 
 
@@ -34,7 +34,9 @@ def relay(client, monkeypatch):
                     project_id=project_id,
                     api_url=binding.api_url,
                     username="project",
-                    value=encrypt_text("project-token"),
+                    value=seal_forge_token(
+                        project_id, binding.api_url, "project", "project-token"
+                    ),
                     expires_at=datetime.now(UTC) + timedelta(minutes=10),
                 )
             )

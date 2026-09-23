@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.core.crypto import encrypt_text
+from app.domain.agent.forgejo_tokens import seal_forge_password
 from app.domain.project.forge import ensure_repository_webhook
 
 
@@ -18,12 +18,13 @@ def binding(monkeypatch):
         settings, "forge_webhook_url", "https://relay.invalid/events/dev"
     )
     monkeypatch.setattr(settings, "forge_event_secret", "deployment-secret")
+    project_id = uuid.uuid4()
     return SimpleNamespace(
         kind="forgejo",
-        project_id=uuid.uuid4(),
+        project_id=project_id,
         api_url="https://forge.invalid/api/v1",
         repo="owner/project",
-        account_password=encrypt_text("account-password"),
+        account_password=seal_forge_password(project_id, "account-password"),
     )
 
 
