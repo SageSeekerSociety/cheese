@@ -769,7 +769,7 @@ async def test_scoped_execution_does_not_hold_admission_connection_during_remote
 )
 @pytest.mark.anyio
 async def test_owner_execution_route_preserves_scope_and_reaches_device(
-    client, room, monkeypatch, recorded, dialled
+    db_factory, room, monkeypatch, recorded, dialled
 ):
     """The owner dials where the placement says, not where it would install.
 
@@ -781,7 +781,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     failed against a path that was correct in the other half.
     """
     project, topic = room
-    async with client.test_factory() as db:
+    async with db_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
         await place_session(
@@ -798,7 +798,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
         await db.commit()
 
     async def owner_db():
-        async with client.test_factory() as db:
+        async with db_factory() as db:
             yield db
 
     monkeypatch.setattr(settings, "device_connection_owner", True)

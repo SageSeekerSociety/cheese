@@ -850,8 +850,8 @@ async def _seed_thread(
     return ids
 
 
-async def test_eight_likes_at_once_leave_exactly_one_row(client):
-    factory = client.test_factory
+async def test_eight_likes_at_once_leave_exactly_one_row(db_factory):
+    factory = db_factory
     _, comment_id = await _seed_thread(factory)
 
     async def like(handle: str) -> bool:
@@ -870,13 +870,13 @@ async def test_eight_likes_at_once_leave_exactly_one_row(client):
         assert await FeedbackRepository(session).comment_like_count(comment_id) == 1
 
 
-async def test_supporting_twice_at_once_leaves_exactly_one_row(client):
+async def test_supporting_twice_at_once_leaves_exactly_one_row(db_factory):
     """反馈级的那个支持按钮，同一个毛病，同一副药。
 
     这条是修 `add_support` 时补的：评论点赞是新的，所以从第一天就用对的写法；支持
     是早就有的，改之前它一直在这个竞态里，而且从外面看和「按钮坏了」一模一样。
     """
-    factory = client.test_factory
+    factory = db_factory
     feedback_id, _ = await _seed_thread(factory)
 
     async def support() -> bool:
@@ -1085,7 +1085,9 @@ async def _seed_comments(
     return ids
 
 
-async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(client):
+async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(
+    db_factory,
+):
     """翻页不漏不重 —— 包括 `created_at` 全撞在一起的时候。
 
     同一时间戳不是硬造出来的角落：`NOW()` 在一条语句里对每一行是同一个值，批量导入
@@ -1093,7 +1095,7 @@ async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(cl
     查询里的先后可以不一样，翻页于是漏行、或者把同一行发两遍；把 `id` 并进游标才是
     全序。这个用例把所有顶层评论的时间戳**钉成同一个值**，再一页一页翻到底。
     """
-    factory = client.test_factory
+    factory = db_factory
     feedback_id, top_ids, _ = await _seed_comments(factory, tops=7)
     same_instant = datetime(2026, 1, 1, tzinfo=UTC)
     async with factory() as session:
@@ -1121,7 +1123,9 @@ async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(cl
     assert sorted(seen) == sorted(top_ids)
 
 
-async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(client):
+async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(
+    db_factory,
+):
     """楼内回复自己一页，而**一页带了几条**和**这栋楼一共有几条**是两件事。
 
     `reply_counts` 是后者，`reply_cursors` 是「还有的话从哪儿接着取」。两个都对着
@@ -1129,7 +1133,7 @@ async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(cl
     少了那一条，一栋正好 2 条的楼会被判成还有下一页，客户端于是发一次必然取到空页
     的请求。
     """
-    factory = client.test_factory
+    factory = db_factory
     feedback_id, top_ids, reply_ids = await _seed_comments(factory, tops=1, replies=5)
     async with factory() as session:
         repo = FeedbackRepository(session)
@@ -1266,7 +1270,9 @@ def test_replies_cannot_be_pulled_across_reports(client):
     assert r.json()["data"]["items"] == []
 
 
-async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeypatch):
+async def test_chunked_in_queries_answer_the_same_as_one_big_one(
+    db_factory, monkeypatch
+):
     """分批之后**合起来**的答案和一次问完一样。
 
     `_IN_BATCH` 的由来是 asyncpg 把参数个数编进 int16，超过 32767 条直接抛
@@ -1274,7 +1280,7 @@ async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeyp
     条回路：切、逐批查、合并。合并写错（覆盖而不是并集）在真实规模下只会表现为
     「一大片评论的点赞数突然都是 0」，很难从现象倒回来。
     """
-    factory = client.test_factory
+    factory = db_factory
     feedback_id, top_ids, _ = await _seed_comments(factory, tops=5)
     monkeypatch.setattr(feedback_repo, "_IN_BATCH", 2)
     async with factory() as session:
@@ -3163,7 +3169,7 @@ def test_an_agent_on_the_admin_list_is_no_admin_on_the_public_surface(
     assert client.get(f"/feedback/{private['id']}", headers=mine).status_code == 200
 
 
-async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client):
+async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(db_factory):
     """首读游标是 upsert，不是先读后插。
 
     `FeedbackReadState` 上有 `uq_feedback_read_state_user`，而同一个人的两条请求真的
@@ -3176,7 +3182,7 @@ async def test_bumping_the_read_cursor_eight_times_at_once_leaves_one_row(client
     `RETURNING` 在冲突那一侧也要有行返回，写成 `do_nothing` 的话败者拿空结果、
     当场 `scalar_one()` 抛 `NoResultFound` —— 那是另一个 500。
     """
-    factory = client.test_factory
+    factory = db_factory
     at = datetime.now(UTC)
 
     async def bump() -> str:

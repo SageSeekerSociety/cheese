@@ -20,8 +20,8 @@ from app.domain.topic.services import TopicService
 
 
 @pytest.mark.anyio
-async def test_last_block_at_reports_the_newest_block_per_topic(client):
-    factory = client.test_factory
+async def test_last_block_at_reports_the_newest_block_per_topic(db_factory):
+    factory = db_factory
 
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
@@ -63,9 +63,9 @@ async def test_last_block_at_reports_the_newest_block_per_topic(client):
 
 
 @pytest.mark.anyio
-async def test_last_block_at_is_empty_for_no_topics(client):
+async def test_last_block_at_is_empty_for_no_topics(db_factory):
     """The sweep calls this with whatever is in `_live`, which is usually
     nothing — that must not turn into a `WHERE topic_id IN ()` round trip."""
-    factory = client.test_factory
+    factory = db_factory
     assert await last_block_at(factory, set()) == {}
     assert await last_block_at(factory, {uuid.uuid4()}) == {}

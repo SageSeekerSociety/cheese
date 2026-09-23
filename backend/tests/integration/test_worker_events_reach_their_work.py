@@ -164,10 +164,10 @@ async def _settle(factory, room_id, *eids: str) -> None:
 
 
 async def test_a_labelled_workers_tool_call_lands_in_its_thread(
-    client, tmp_path
+    db_factory, tmp_path
 ) -> None:
     """归流: the room ran the session, but this piece of work owns the event."""
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -197,7 +197,7 @@ async def test_a_labelled_workers_tool_call_lands_in_its_thread(
 
 
 async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
-    client, tmp_path
+    db_factory, tmp_path
 ) -> None:
     """一个子 agent 的三类事件全部归到同一张卡，而全程没有一次认领调用。
 
@@ -205,7 +205,7 @@ async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
     prompt，从此**平台不问任何人**这条子线程在做哪张卡 —— 开工、工具调用、交回
     结果，一条也不用报。
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -282,9 +282,9 @@ async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
     await provider._close_topic(room_id)
 
 
-async def test_two_workers_in_one_room_do_not_mix(client, tmp_path) -> None:
+async def test_two_workers_in_one_room_do_not_mix(db_factory, tmp_path) -> None:
     """两条活并行时，时间线不是一条谁也认不出的混合流。"""
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     first = await _dispatch(factory, project_id, room_id, "活一")
     second = await _dispatch(factory, project_id, room_id, "活二")
@@ -317,9 +317,9 @@ async def test_two_workers_in_one_room_do_not_mix(client, tmp_path) -> None:
     await provider._close_topic(room_id)
 
 
-async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> None:
+async def test_a_workers_closing_message_is_kept_in_full(db_factory, tmp_path) -> None:
     """分身的收尾话只有这一份：它自己的对话记录跟着容器一起没。"""
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -349,7 +349,7 @@ async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> No
 
 
 async def test_a_stop_records_a_conclusion_without_ending_the_work(
-    client, tmp_path
+    db_factory, tmp_path
 ) -> None:
     """完成通知 ≠ 活干完了。
 
@@ -359,7 +359,7 @@ async def test_a_stop_records_a_conclusion_without_ending_the_work(
     later one over the earlier; none of them closes the thread. The room decides
     that, after reading what came back.
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -398,13 +398,13 @@ async def test_a_stop_records_a_conclusion_without_ending_the_work(
 
 
 async def test_an_unlabelled_workers_tool_call_still_reaches_the_room(
-    client, tmp_path
+    db_factory, tmp_path
 ) -> None:
     """没人给过标识的分身不会消失——它只是记在房间头上，跟以前一样。
 
     骨架自己起的内部分身就是这样：平台没见过谁派它，也就没有卡可归。
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
@@ -428,13 +428,15 @@ async def test_an_unlabelled_workers_tool_call_still_reaches_the_room(
     await provider._close_topic(room_id)
 
 
-async def test_a_label_from_another_room_catches_nothing_here(client, tmp_path) -> None:
+async def test_a_label_from_another_room_catches_nothing_here(
+    db_factory, tmp_path
+) -> None:
     """别的房间那张卡的标识，在这个房间里什么也抓不到。
 
     不是整洁问题：认了，一条活的事件会落进一个没人在看的房间的卡里，而它本该
     落在出事的这个房间的流水上。
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     _, elsewhere = await _seed_room(factory)
     theirs = await _dispatch(factory, project_id, elsewhere, "别人房间的活")
@@ -462,7 +464,7 @@ async def test_a_label_from_another_room_catches_nothing_here(client, tmp_path) 
 
 
 async def test_an_unknown_workers_stop_is_not_written_anywhere(
-    client, tmp_path
+    db_factory, tmp_path
 ) -> None:
     """来路不明的 SubagentStop 一个字都不落。
 
@@ -472,7 +474,7 @@ async def test_an_unknown_workers_stop_is_not_written_anywhere(
     for. Writing it would put a stranger's half-sentence in the room under
     芝士's name.
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
@@ -495,9 +497,11 @@ async def test_an_unknown_workers_stop_is_not_written_anywhere(
     await provider._close_topic(room_id)
 
 
-async def test_a_finished_threads_label_stops_catching_events(client, tmp_path) -> None:
+async def test_a_finished_threads_label_stops_catching_events(
+    db_factory, tmp_path
+) -> None:
     """收了的活不再吸走事件——它的标识要是还认，后来的东西会被它吞掉。"""
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "已经收了的活")
     async with factory() as session:
@@ -530,9 +534,9 @@ async def test_a_finished_threads_label_stops_catching_events(client, tmp_path) 
     await provider._close_topic(room_id)
 
 
-async def test_the_rooms_own_events_are_untouched(client, tmp_path) -> None:
+async def test_the_rooms_own_events_are_untouched(db_factory, tmp_path) -> None:
     """房间自己干的事没有线程标识，一切照旧。"""
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     await _dispatch(factory, project_id, room_id, "并行的一条活")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -558,14 +562,14 @@ async def test_the_rooms_own_events_are_untouched(client, tmp_path) -> None:
     await provider._close_topic(room_id)
 
 
-async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
+async def test_a_workers_checklist_is_its_own(db_factory, tmp_path) -> None:
     """分身的清单归它做的那条活，不进房间的清单。
 
     不是整洁问题：Claude Code 的任务编号**每个 agent 各数各的**，都从 1 开始。混进
     一份 list 里，一个分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条 —— 房间的
     计划被别人的进度改写，而且谁也看不出是怎么改的。
     """
-    factory = client.test_factory
+    factory = db_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)

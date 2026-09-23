@@ -46,8 +46,8 @@ async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
 
 
 @pytest.mark.anyio
-async def test_two_writers_of_one_event_land_a_single_message(client, tmp_path):
-    factory = client.test_factory  # type: ignore[attr-defined]
+async def test_two_writers_of_one_event_land_a_single_message(db_factory, tmp_path):
+    factory = db_factory  # type: ignore[attr-defined]
     service = ChatService(
         session_factory=factory,
         base_system_prompt="你是芝士。",
@@ -80,10 +80,10 @@ async def test_two_writers_of_one_event_land_a_single_message(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_a_genuinely_new_event_still_lands(client, tmp_path):
+async def test_a_genuinely_new_event_still_lands(db_factory, tmp_path):
     """The guard must not swallow the next message just because it looks like
     the last one — 「好的」 twice in one turn is two messages."""
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = db_factory  # type: ignore[attr-defined]
     service = ChatService(
         session_factory=factory,
         base_system_prompt="你是芝士。",

@@ -213,8 +213,8 @@ async def test_oauth_create_for_a_linked_identity_leaves_no_second_account(clien
     assert await _count_users(client.test_factory, username="linked_second") == 0
 
 
-async def test_a_linked_provider_identity_cannot_be_linked_again(client):
-    async with client.test_factory() as session:
+async def test_a_linked_provider_identity_cannot_be_linked_again(db_factory):
+    async with db_factory() as session:
         users = [
             User(
                 username=f"oauth-dup-{i}",
@@ -241,7 +241,7 @@ async def test_a_linked_provider_identity_cannot_be_linked_again(client):
         assert await service.get_connection_by_provider("ruc", "dup-uid")
 
 
-async def test_a_passkey_credential_is_registered_once(client, monkeypatch):
+async def test_a_passkey_credential_is_registered_once(db_factory, monkeypatch):
     # Stand in for the authenticator: every attestation names one credential.
     monkeypatch.setattr(
         passkey_services,
@@ -253,7 +253,7 @@ async def test_a_passkey_credential_is_registered_once(client, monkeypatch):
         ),
     )
 
-    async with client.test_factory() as session:
+    async with db_factory() as session:
         service = PasskeyService(repo=PasskeyRepository(session))
         await service.verify_registration(
             user_id=1, challenge="AAAA", credential={"response": {}}

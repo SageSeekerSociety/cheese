@@ -73,13 +73,13 @@ async def _seed_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
 
 @pytest.mark.anyio
 async def test_settle_lands_parked_stop_and_finishes_the_turn(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """MessageDisplay + Stop parked while nobody listened: the settle lands the
     final reply once and retains its execution log, saves the
     finished session pointer, and empties the spool."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = client.test_factory
+    factory = db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -129,11 +129,13 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
 
 @pytest.mark.anyio
-async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypatch):
+async def test_settle_lands_a_stop_only_final_message(
+    db_factory, tmp_path, monkeypatch
+):
     """A Stop whose MessageDisplay never made it anywhere still lands its
     last_assistant_message — the turn's ending must not be lost with it."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = client.test_factory
+    factory = db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -169,7 +171,7 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
 
 @pytest.mark.anyio
 async def test_orphan_with_parked_stop_is_settled_not_reprompted(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """The full chain of the incident fix: a turn the transport had accepted,
     whose screen is gone by the time the sweep runs (the container went with the
@@ -178,7 +180,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     sweep schedules finishes the turn out of the Stop the dead screen parked,
     saying nothing, because from the room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = client.test_factory
+    factory = db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -238,12 +240,12 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 
 @pytest.mark.anyio
 async def test_zero_evidence_orphan_resends_the_original_text(
-    client, tmp_path, monkeypatch
+    db_factory, tmp_path, monkeypatch
 ):
     """No block, no spool trace → the sweep re-sends, and the turn's prompt is
     the pending HUMAN message verbatim — not a continuation nudge."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = client.test_factory
+    factory = db_factory
     _pid, tid = await _seed_topic(factory)
     agent = _RecordingScreen()
     svc = ChatService(
