@@ -1,13 +1,25 @@
 {
+  "agreeAndContinue": "同意并继续",
+  "agreeAndSignUp": "同意并注册",
   "and": "和",
   "backToSignIn": "返回登录",
+  "cancel": "取消",
+  "consentFailed": "提交失败，请重试",
+  "consentPrompt": "请阅读并同意以下条款",
+  "disagreeAndSignOut": "不同意并退出登录",
   "enterAnInvitationCode": "请输入邀请码",
   "iAgreeToThe": "同意",
   "invitationCode": "邀请码",
-  "pleaseAcceptTheTermsOfServiceAnd": "请同意用户协议和隐私政策",
-  "privacyPolicy": "隐私政策",
+  "legalDocumentsUnavailable": "暂时无法获取协议，请刷新页面重试",
+  "legalEffectiveDate": "生效日期 {date}",
+  "legalLoadFailed": "暂时无法加载，请刷新页面重试",
+  "legalVersion": "版本 {version}",
+  "privacyPolicy": "《隐私政策》",
   "registrationSettingsCouldNotBeLoadedRefresh": "暂时无法获取注册配置，请刷新页面重试",
-  "termsOfService": "用户协议",
+  "rulesUpdated": "协议已更新",
+  "rulesUpdatedBody": "我们更新了以下条款。请阅读后选择是否同意；同意后可继续使用，不同意将退出登录。",
+  "signInMeansYouAgreeTo": "登录即表示你同意",
+  "termsOfService": "《用户协议》",
   "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
   "layout": {
     "home": "知是首页"
@@ -53,8 +65,9 @@
   "signUp": {
     "title": "创建账号",
     "submit": "创建账号",
-    "haveAccount": "已有账号",
-    "failed": "注册失败，请重试"
+    "haveAccount": "已有账号？",
+    "failed": "注册失败，请重试",
+    "signIn": "登录"
   },
   "verifyEmail": {
     "title": "验证邮箱",
@@ -129,7 +142,8 @@
       "unknown": "登录未能完成，请重试",
       "usernameReserved": "该用户名为平台保留，请换一个",
       "usernameTaken": "该用户名已被使用",
-      "verificationFailed": "身份验证失败，请重试"
+      "verificationFailed": "身份验证失败，请重试",
+      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号"
     },
     "success": {
       "processing": "正在登录",

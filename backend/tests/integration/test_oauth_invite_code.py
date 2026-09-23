@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.domain.invite.models import InviteCode
 from app.domain.invite.services import InviteCodeService
 from app.domain.user.repositories import UserRepository
+from tests.support.consent import OAUTH_CONSENT_FORM
 
 
 def _create(api_client: TestClient, _portal, uid: str, username: str, **extra: str):
@@ -30,6 +31,7 @@ def _create(api_client: TestClient, _portal, uid: str, username: str, **extra: s
     resp = api_client.post(
         "/users/oauth/create",
         data={
+            **OAUTH_CONSENT_FORM,
             "stateToken": token,
             "username": username,
             "nickname": "invited",

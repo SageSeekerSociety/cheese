@@ -8,12 +8,6 @@ name: MCP serve contract
 # here instead of being discovered during an upgrade.
 
 on:
-  # Seed caches on main so later PRs and merge groups can restore them.
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/remote_execution/package-lock.json'
-      - '.github/workflows/mcp-contract.yml'
   workflow_call:
   schedule:
     # Anthropic publishes most days; a morning report is soon enough to learn
@@ -25,8 +19,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: mcp-contract-${{ github.ref }}
-  cancel-in-progress: true
+  group: mcp-contract-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pinned:

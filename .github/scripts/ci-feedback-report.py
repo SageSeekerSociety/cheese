@@ -23,6 +23,8 @@ FAILURES = {"failure", "timed_out", "action_required", "startup_failure"}
 
 
 def evidence_suites(record: dict) -> list[str]:
+    if record["workflow"] == "e2e.yml":
+        return ["e2e"]
     if record["workflow"] == "remote-execution.yml":
         return ["remote-acceptance", "private-chat"]
     if (
@@ -280,6 +282,7 @@ def analyse_attempt(
             "latest_attempt", attempt_run.get("run_attempt")
         ),
         "head_sha": attempt_run.get("head_sha"),
+        "head_branch": attempt_run.get("head_branch"),
         "run_created_at": created,
         "outcome": outcome(attempt_run, jobs),
         "final_job_completed_at": final,
@@ -294,11 +297,18 @@ def analyse_attempt(
 
 
 def summarize(records: list[dict]) -> dict:
-    groups: dict[tuple[str, str], list[dict]] = {}
+    groups: dict[tuple[str, str, str], list[dict]] = {}
     for record in records:
-        groups.setdefault((record["workflow"], record["event"]), []).append(record)
+        # PR heads form one feedback cohort; push/manual stability belongs to
+        # the branch actually exercised, particularly the main acceptance gate.
+        branch = ""
+        if record["event"] in ("push", "workflow_dispatch"):
+            branch = record.get("head_branch") or "(unknown)"
+        groups.setdefault((record["workflow"], record["event"], branch), []).append(
+            record
+        )
     result = {}
-    for (workflow, event), attempts in sorted(groups.items()):
+    for (workflow, event, branch), attempts in sorted(groups.items()):
         latest = [
             item for item in attempts if item["attempt"] == item["latest_attempt"]
         ]
@@ -354,7 +364,8 @@ def summarize(records: list[dict]) -> dict:
         for item in latest:
             signature = " | ".join(item["executed_job_names"]) or "(no executed jobs)"
             selection_groups.setdefault(signature, []).append(item)
-        result[f"{workflow}:{event}"] = {
+        cohort = f"{workflow}:{event}" + (f":{branch}" if branch else "")
+        result[cohort] = {
             "unique_run_count": len(latest),
             "attempt_count": len(attempts),
             "cohort_tail_consecutive_clean_first_attempts": clean_streak,

@@ -16,6 +16,18 @@ import { useSignupStore } from '@/stores/signup'
 vi.mock('@/network/api/users', () => ({
   UserApi: { register: vi.fn(), sendEmailCode: vi.fn() },
 }))
+vi.mock('@/network/api/legal', () => ({
+  LegalApi: {
+    listDocuments: vi.fn().mockResolvedValue({
+      data: {
+        documents: [
+          { document: 'terms', version: '1.0' },
+          { document: 'privacy', version: '1.0' },
+        ],
+      },
+    }),
+  },
+}))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false, login: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -43,6 +55,8 @@ async function open() {
       { path: '/account/signup', name: 'SignUpStart', component: blank },
       { path: '/account/signup/verify-email', component: VerifyEmail },
       { path: '/account/signin', name: 'SignIn', component: blank },
+      { path: '/legal/terms', name: 'LegalTerms', component: blank },
+      { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
     ],
   })
   await router.push('/account/signup/verify-email')
@@ -69,8 +83,11 @@ async function startSignup() {
     nickname: 'DisplayName',
     email: 'user@example.com',
     password: 'Secret#123',
+    consent: ticked,
   })
 }
+
+const ticked = { documents: { terms: '1.0', privacy: '1.0' }, method: 'checkbox' as const }
 
 describe('verifying the email', () => {
   it('lands signed in once the account is created', async () => {
@@ -100,7 +117,12 @@ describe('verifying the email', () => {
 
     await waitFor(() => expect(AccountService.login).toHaveBeenCalledWith('fresh-token', user))
     expect(UserApi.register).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'login-handle', emailCode: '123456', password: 'Secret#123' })
+      expect.objectContaining({
+        username: 'login-handle',
+        emailCode: '123456',
+        password: 'Secret#123',
+        consent: ticked,
+      })
     )
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
   })
@@ -118,7 +140,34 @@ describe('verifying the email', () => {
 
     await waitFor(() =>
       expect(UserApi.register).toHaveBeenCalledWith(
-        expect.objectContaining({ username: 'login-handle', email: 'user@example.com', password: 'Secret#123' })
+        expect.objectContaining({
+          username: 'login-handle',
+          email: 'user@example.com',
+          password: 'Secret#123',
+          consent: ticked,
+        })
+      )
+    )
+  })
+
+  it('asks for consent again when it did not survive the refresh, and never assumes it', async () => {
+    await startSignup()
+    const saved = JSON.parse(sessionStorage.getItem('cheese:signup')!)
+    sessionStorage.setItem('cheese:signup', JSON.stringify({ ...saved, consent: null }))
+    vi.mocked(UserApi.register).mockResolvedValue({ data: { user: {}, accessToken: 't' } } as never)
+
+    const { view } = await open()
+    await fireEvent.update(view.getByLabelText('Password'), 'Secret#123')
+    await typeCode(view.container)
+
+    // Submitting without the tick opens the prompt; nothing is sent until it is answered.
+    const agree = await view.findByRole('button', { name: 'Agree and sign up' })
+    expect(UserApi.register).not.toHaveBeenCalled()
+    await fireEvent.click(agree)
+
+    await waitFor(() =>
+      expect(UserApi.register).toHaveBeenCalledWith(
+        expect.objectContaining({ consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' } })
       )
     )
   })

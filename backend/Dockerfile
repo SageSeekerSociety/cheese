@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Runtime base ----
-# Only what the SERVER needs at runtime. The compilers live in build-base below:
+# Only what the SERVER needs at runtime. The build tools live in build-base below:
 # `production` starts from this stage, so anything added here ships to prod.
 FROM python:3.11-slim AS runtime-base
 
@@ -41,19 +41,9 @@ RUN addgroup --system --gid 1000 python \
 WORKDIR /app
 
 # ---- Build toolchain ----
-# Compilers and package managers, needed to BUILD the venv (srp_rs is a pyo3
-# extension compiled from source) and never after. Kept out of runtime-base so
-# production does not carry ~1.5GB of rustup + build-essential it cannot use.
+# What BUILDS the venv and is never needed after. Kept out of runtime-base so
+# production carries only what the server runs.
 FROM runtime-base AS build-base
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends build-essential
-
-# 安装 Rust 工具链（如果下载慢可加国内镜像，这里保留原样）
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install uv for fast Python package management. Pinned to the version the CI
 # workflows install (astral-sh/setup-uv `version:`), so a resolver change cannot
@@ -68,8 +58,8 @@ WORKDIR /app
 # Install Python before dependency inputs so a lockfile edit does not download it again.
 COPY .python-version ./
 
-# Belt-and-braces: even if .python-version is ever dropped, hold uv on 3.13 so
-# the srp_rs / pyo3 native build can't silently break on a newer interpreter.
+# Belt-and-braces: even if .python-version is ever dropped, hold uv on 3.13, the
+# interpreter CI tests against.
 ENV UV_PYTHON=3.13
 
 # uv downloads a managed CPython and the venv's bin/python SYMLINKS to it. The
@@ -84,17 +74,10 @@ RUN uv python install
 
 # README is not a dependency input for this non-packaged project.
 COPY pyproject.toml uv.lock ./
-COPY srp_rs/ ./srp_rs/
 
-# Install dependencies using uv (includes building srp_rs from source).
-# The cache mounts keep uv's wheel downloads and Cargo's registry/build output
-# across builds, so a lockfile edit recompiles only what changed. Cargo's mount
-# points at the sub-directories, NOT at /root/.cargo — rustup put the `cargo`
-# binary there and a mount over it would hide the toolchain from this very step.
+# The cache mount keeps uv's wheel downloads across builds, so a lockfile edit
+# downloads only what changed.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/srp_rs/target,sharing=locked \
     uv sync --frozen --no-dev
 
 # ---- Development ----
@@ -109,9 +92,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Install dev dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/srp_rs/target,sharing=locked \
     uv sync --frozen
 
 # Copy source code

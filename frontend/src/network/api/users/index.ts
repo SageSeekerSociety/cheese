@@ -1,4 +1,5 @@
 import type { User } from '@/types'
+import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
   AuthMethodsResponse,
   FollowUserResponse,
@@ -10,7 +11,6 @@ import type {
   GetQuestionListResponse,
   GetRealNameInfoResponse,
   GetUserInfoResponse,
-  InitOAuthBindingResponse,
   OAuthBindUserRequest,
   OAuthBindUserResponse,
   OAuthCreateUserRequest,
@@ -49,6 +49,7 @@ export namespace UserApi {
     email: string
     emailCode: string
     inviteCode?: string
+    consent?: { documents: AcceptedDocuments; method: ConsentMethod }
   }) =>
     ApiInstance.request<RegisterResponseDataType>({
       url: '/users',
@@ -496,17 +497,6 @@ export namespace UserApi {
     document.body.appendChild(form)
     form.submit()
   }
-
-  // 初始化 OAuth 绑定 (已登录用户)
-  export const initOAuthBinding = (userId: number, providerId: string, state?: string, accessType?: string) =>
-    ApiInstance.request<InitOAuthBindingResponse>({
-      url: `/users/${userId}/oauth/bind/${providerId}`,
-      method: 'POST',
-      data: {
-        state,
-        accessType,
-      },
-    })
 
   // 获取用户 OAuth 连接列表
   export const getOAuthConnections = (userId: number) =>

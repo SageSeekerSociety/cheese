@@ -63,6 +63,8 @@ const errorDescription = computed(() => {
       return t('account.oauth.error.alreadyLinked')
     case 'BINDING_FAILED':
       return t('account.oauth.error.bindingFailed')
+    case 'CONSENT_REQUIRED':
+      return t('account.oauth.error.consentRequired')
     case 'CREATION_FAILED':
       return t('account.oauth.error.creationFailed')
     case 'EMAIL_TAKEN':

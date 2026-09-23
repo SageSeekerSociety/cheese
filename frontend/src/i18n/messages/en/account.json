@@ -1,12 +1,24 @@
 {
+  "agreeAndContinue": "Agree and continue",
+  "agreeAndSignUp": "Agree and sign up",
   "and": "and",
   "backToSignIn": "Back to sign in",
+  "cancel": "Cancel",
+  "consentFailed": "Could not submit, please try again",
+  "consentPrompt": "Please read and agree to the following",
+  "disagreeAndSignOut": "Disagree and sign out",
   "enterAnInvitationCode": "Enter an invitation code",
   "iAgreeToThe": "I agree to the",
   "invitationCode": "Invitation code",
-  "pleaseAcceptTheTermsOfServiceAnd": "Please accept the Terms of Service and Privacy Policy",
+  "legalDocumentsUnavailable": "The terms could not be loaded. Refresh the page and try again",
+  "legalEffectiveDate": "Effective {date}",
+  "legalLoadFailed": "This page could not be loaded. Refresh and try again",
+  "legalVersion": "Version {version}",
   "privacyPolicy": "Privacy Policy",
   "registrationSettingsCouldNotBeLoadedRefresh": "Registration settings could not be loaded. Refresh the page to try again.",
+  "rulesUpdated": "Our terms have changed",
+  "rulesUpdatedBody": "We have updated the documents below. Agree to keep using the platform, or disagree to sign out.",
+  "signInMeansYouAgreeTo": "By signing in you agree to the",
   "termsOfService": "Terms of Service",
   "yourPasswordMustContainALetterA": "Your password must contain a letter, a number, and a special character",
   "layout": {
@@ -53,8 +65,9 @@
   "signUp": {
     "title": "Create account",
     "submit": "Create account",
-    "haveAccount": "I have an account",
-    "failed": "Couldn't create the account. Please try again."
+    "haveAccount": "Already have an account?",
+    "failed": "Couldn't create the account. Please try again.",
+    "signIn": "Sign in"
   },
   "verifyEmail": {
     "title": "Verify your email",
@@ -129,7 +142,8 @@
       "unknown": "Sign-in did not finish. Please try again.",
       "usernameReserved": "This username is reserved. Please choose another.",
       "usernameTaken": "This username is taken",
-      "verificationFailed": "Verification failed. Please try again."
+      "verificationFailed": "Verification failed. Please try again.",
+      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account"
     },
     "success": {
       "processing": "Signing in",

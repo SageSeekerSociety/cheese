@@ -70,12 +70,6 @@ export default {
           meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/DataSharing.vue'),
         },
-        {
-          path: 'privacy-policy',
-          name: 'PrivacyCenterPolicy',
-          meta: { backTo: 'PrivacyCenter' },
-          component: () => import('@/views/user/privacy/PrivacyPolicy.vue'),
-        },
       ],
     },
     {

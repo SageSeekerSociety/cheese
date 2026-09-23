@@ -42,6 +42,9 @@ describe('password sign-in', () => {
       routes: [
         { path: '/account/signin', component: SignIn },
         { path: '/', component: { template: '<div />' } },
+        // The page links to both legal documents by name (#1486).
+        { path: '/legal/terms', name: 'LegalTerms', component: { template: '<div />' } },
+        { path: '/legal/privacy', name: 'LegalPrivacy', component: { template: '<div />' } },
       ],
     })
     await router.push('/account/signin')
@@ -52,9 +55,6 @@ describe('password sign-in', () => {
 
     await fireEvent.update(view.getByLabelText('Username'), 'existing-user')
     await fireEvent.update(view.getByLabelText('Password'), 'correct horse!1')
-    const agree = view.getByRole('checkbox') as HTMLInputElement
-    agree.checked = true
-    await fireEvent.input(agree)
     await fireEvent.submit(view.container.querySelector('form')!)
 
     await waitFor(() => expect(AccountService.login).toHaveBeenCalledWith('token', user))

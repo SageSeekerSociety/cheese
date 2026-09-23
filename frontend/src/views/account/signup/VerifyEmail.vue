@@ -33,6 +33,8 @@
         @update:model-value="handleOtpInput"
       />
 
+      <LegalConsent v-if="needsConsent" ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
+
       <v-btn
         block
         color="primary"
@@ -88,6 +90,7 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -103,6 +106,10 @@ const signupStore = useSignupStore()
 // A refresh keeps the form (sessionStorage) but not the password, which is only
 // ever held in memory; ask for it again rather than store it.
 const needsPassword = !signupStore.password
+// The consent chosen on the form is kept across a refresh; if it did not come
+// back intact, it is asked for here instead of being assumed.
+const needsConsent = !signupStore.consent
+const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: computed(() =>
@@ -124,6 +131,11 @@ const error = ref('')
 
 const submit = handleSubmit(async (value) => {
   error.value = ''
+  if (needsConsent) {
+    const consent = await consentRef.value?.confirm()
+    if (!consent) return
+    signupStore.consent = consent
+  }
   if (needsPassword && value.password) signupStore.password = value.password
   try {
     const { data } = await signupStore.signup(value.otp)

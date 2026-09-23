@@ -67,26 +67,7 @@
         v-bind="inviteCodeProps"
       />
 
-      <div class="d-flex justify-space-between align-center mb-6">
-        <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
-          <template #label>
-            <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-              {{ t('account.iAgreeToThe') }}
-              <a href="#" class="text-primary text-decoration-none">{{ t('account.termsOfService') }}</a>
-              {{ t('account.and') }}
-              <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
-            </span>
-          </template>
-        </v-checkbox>
-        <v-btn
-          variant="text"
-          color="primary"
-          to="/account/signin"
-          style="text-transform: none; padding: 0; min-width: auto"
-        >
-          {{ t('account.signUp.haveAccount') }}
-        </v-btn>
-      </div>
+      <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-6" />
 
       <v-btn
         block
@@ -96,9 +77,22 @@
         :loading="isSubmitting"
         :disabled="!registrationConfigReady"
         style="text-transform: none; font-weight: 500; height: 48px"
+        class="mb-4"
       >
         {{ t('account.signUp.submit') }}
       </v-btn>
+
+      <p class="text-body-2" style="color: var(--muted)">
+        {{ t('account.signUp.haveAccount') }}
+        <v-btn
+          variant="text"
+          color="primary"
+          to="/account/signin"
+          style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
+          class="text-decoration-none"
+          >{{ t('account.signUp.signIn') }}</v-btn
+        >
+      </p>
     </v-form>
   </div>
 </template>
@@ -113,6 +107,7 @@ import { z } from 'zod'
 import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
+import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
@@ -140,7 +135,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
           confirmPassword: z.string().min(1),
           email: z.string().email(),
           inviteCode: z.string().optional(),
-          agree: z.boolean().refine((v) => v, { message: t('account.pleaseAcceptTheTermsOfServiceAnd') }),
         })
         .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
           if (password !== confirmPassword) {
@@ -168,7 +162,7 @@ const [password, passwordProps] = defineField('password', vuetifyConfig)
 const [confirmPassword, confirmPasswordProps] = defineField('confirmPassword', vuetifyConfig)
 const [email, emailProps] = defineField('email', vuetifyConfig)
 const [inviteCode, inviteCodeProps] = defineField('inviteCode', vuetifyConfig)
-const [agree, agreeProps] = defineField('agree', vuetifyConfig)
+const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 
 const signupStore = useSignupStore()
 const router = useRouter()
@@ -185,10 +179,13 @@ onMounted(async () => {
 
 const submit = handleSubmit(async (value) => {
   error.value = ''
+  const consent = await consentRef.value?.confirm()
+  if (!consent) return
   try {
     await signupStore.startSignup({
       ...value,
       inviteCode: requireInviteCode.value ? value.inviteCode?.trim() : undefined,
+      consent,
     })
 
     router.push('/account/signup/verify-email')

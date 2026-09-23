@@ -1,6 +1,8 @@
 name: Required CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   merge_group:
@@ -10,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: required-ci-${{ github.event_name }}-${{ github.ref }}
+  group: required-ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -33,7 +35,7 @@ jobs:
       - name: Select suites for the complete merge diff
         id: scope
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           python3 .github/scripts/required-ci.py scope "$BASE_SHA"

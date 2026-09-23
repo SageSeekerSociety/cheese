@@ -27,7 +27,11 @@ afterEach(() => {
 async function openSignIn(query: Record<string, string>) {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/account/signin', component: SignIn }],
+    routes: [
+      { path: '/account/signin', component: SignIn },
+      { path: '/legal/terms', name: 'LegalTerms', component: SignIn },
+      { path: '/legal/privacy', name: 'LegalPrivacy', component: SignIn },
+    ],
   })
   await router.push({ path: '/account/signin', query })
   await router.isReady()

@@ -27,7 +27,6 @@ from app.domain.user.login_security import (
 )
 from app.domain.user.models import User
 from tests.integration.conftest import CreatedUser, UserCreator
-from tests.support import srp_vectors
 
 
 @dataclass(frozen=True)
@@ -89,10 +88,19 @@ LONG = SrpRecord(
     ),
 )
 VECTOR = SrpRecord(
-    username=srp_vectors.USERNAME,
-    password=srp_vectors.PASSWORD,
-    salt=srp_vectors.SALT,
-    verifier=srp_vectors.VERIFIER,
+    username="srp_vector",
+    password="密码:Abc!😀",
+    salt="00a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+    verifier=(
+        "4de103f1ba7535099fc8db57da22f0f33e0c41206d4359a5d5d94c7cdecd595f"
+        "d3b3aebac557bd52b326341529f49574d1823bf78a60676e592b7bfa40878153"
+        "8199971f231aaa808ba496c284ba6f019b9495b5ad5d90c9b80f2e550e1a737d"
+        "7dac94b5ceff6aeb253eabb42b0dd334fbadd9339c803785b6755376669ad7e4"
+        "387aa008fa1ac713f6b8a3eb2e08e22d3b15eeea22c4a4f2c2e92dc1bd9a09e1"
+        "2a3399acaf3aa2c548755875192981e9dddec750367f41e3602c4349d3989242"
+        "8314f96a8cbdf4256f11d98a1c5ddb6447233daa4d28aec6106bdab34c672bc4"
+        "f8e2e5da4ccb9d2f78fe9aa25ce8a97c88d44d772f67fe1e00fdb21b7d684785"
+    ),
 )
 UNKNOWN_USERNAME = "srp_nobody_here"
 
@@ -165,10 +173,6 @@ class TestPasswordLogin:
         assert first.json()["data"]["user"]["id"] == user.user_id
 
         assert _stored(db_session, _portal, user.user_id).startswith("$2")
-        srp_init = api_client.post(
-            "/users/auth/srp/init", json={"username": record.username}
-        )
-        assert srp_init.status_code == 401
 
         second = _login(api_client, record.username, record.password)
         assert second.status_code == 200, second.text
@@ -303,21 +307,18 @@ class TestOAuth:
         )
         assert _q(wrong)["error_code"] == _q(unknown)["error_code"]
 
-    def _seed_srp_pending(self, _portal, session_id: str, user: CreatedUser) -> None:
+    def _seed_pending(self, _portal, session_id: str, user: CreatedUser) -> None:
         # What the callback stores when the provider's email belongs to an
-        # SRP account.
+        # existing account.
         _portal.call(
             _store_oauth_pending,
             session_id,
             {
-                "type": "srp",
+                "type": "password",
                 "providerId": "ruc",
                 "userInfo": {"id": f"uid-{session_id}"},
                 "userId": user.user_id,
                 "username": user.username,
-                "salt": UNICODE.salt,
-                "verifier": UNICODE.verifier,
-                "serverSecret": "7a" * 32,
             },
         )
 
@@ -332,7 +333,7 @@ class TestOAuth:
         self, api_client: TestClient, srp_account, db_session, _portal
     ):
         user = srp_account(UNICODE)
-        self._seed_srp_pending(_portal, "oauth_srp_plain_ok", user)
+        self._seed_pending(_portal, "oauth_srp_plain_ok", user)
 
         resp = self._verify(api_client, "oauth_srp_plain_ok", UNICODE.password)
         assert _q(resp)["linked"] == "true"
@@ -342,7 +343,7 @@ class TestOAuth:
         self, api_client: TestClient, srp_account, db_session, _portal
     ):
         user = srp_account(UNICODE)
-        self._seed_srp_pending(_portal, "oauth_srp_plain_bad", user)
+        self._seed_pending(_portal, "oauth_srp_plain_bad", user)
 
         resp = self._verify(api_client, "oauth_srp_plain_bad", "wrong")
         assert _q(resp)["error_code"] == "INVALID_PASSWORD"
