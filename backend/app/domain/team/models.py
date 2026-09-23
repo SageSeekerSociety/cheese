@@ -3,6 +3,7 @@ from enum import Enum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +21,18 @@ from app.db.base_class import Base
 team_seq = Sequence("team_seq")
 team_user_relation_seq = Sequence("team_user_relation_seq")
 team_membership_application_seq = Sequence("team_membership_application_seq")
+
+
+class TeamVisibility(str, Enum):
+    """Who can find a team without being in it.
+
+    PUBLIC teams show up in search and open by id; STEALTH teams do neither and
+    are reached only through the team's join link. How joining then works is
+    the team's ``join_approval`` — the same switch a project has.
+    """
+
+    PUBLIC = "public"
+    STEALTH = "stealth"
 
 
 class Team(Base):
@@ -36,6 +50,22 @@ class Team(Base):
     # any team — so 为自己注册设备 is just 注册给个人团队.
     personal_owner_user_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=TeamVisibility.PUBLIC.value,
+        server_default=TeamVisibility.PUBLIC.value,
+    )
+    # The team's join link (``/team-invites/<token>``): permanent until an owner
+    # or admin resets it. NULL until first asked for.
+    join_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    # Whether joining — by link or from the profile — waits for an owner or
+    # admin. Off, the person is in the moment they confirm.
+    join_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

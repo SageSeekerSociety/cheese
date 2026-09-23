@@ -733,53 +733,61 @@ class TestTeamServiceTransferOwner:
 _PUBLISH_PATH = "app.domain.team.membership_services._notify"
 
 
-class TestCreateJoinRequest:
+class TestJoin:
     @pytest.mark.anyio
     @patch(_PUBLISH_PATH, new_callable=AsyncMock)
-    async def test_creates_join_request(self, mock_publish):
+    async def test_asks_the_admins_when_approval_is_on(self, mock_publish):
         svc, team_repo, app_repo = _build_membership_service()
-        team_repo.get_by_id.return_value = _make_team(id=1)
         team_repo.is_team_member.return_value = False
         app_repo.exists_pending_for_user_and_team.return_value = False
         team_repo.list_admin_and_owner_ids.return_value = {10, 11}
+        app_repo.save.return_value = _make_application(id=300)
 
-        saved_app = _make_application(id=300)
-        app_repo.save.return_value = saved_app
-
-        result = await svc.create_team_join_request(
-            user_id=42, team_id=1, message="Please add me"
+        status = await svc.join(
+            user_id=42, team=_make_team(id=1, join_approval=True), message="hi"
         )
 
-        assert result is saved_app
+        assert status == "pending"
         app_repo.save.assert_awaited_once()
+        team_repo.add_member.assert_not_awaited()
         mock_publish.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_raises_not_found_for_missing_team(self):
+    @patch("app.domain.team.services.check_team_locking_status", new_callable=AsyncMock)
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_lets_them_straight_in_when_approval_is_off(
+        self, mock_publish, _locking
+    ):
         svc, team_repo, app_repo = _build_membership_service()
-        team_repo.get_by_id.return_value = None
-
-        with pytest.raises(NotFoundError, match="team not found"):
-            await svc.create_team_join_request(user_id=42, team_id=999, message=None)
-
-    @pytest.mark.anyio
-    async def test_raises_conflict_if_already_member(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.get_by_id.return_value = _make_team(id=1)
-        team_repo.is_team_member.return_value = True
-
-        with pytest.raises(ConflictError, match="already a member"):
-            await svc.create_team_join_request(user_id=42, team_id=1, message=None)
-
-    @pytest.mark.anyio
-    async def test_raises_conflict_if_pending_application_exists(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.get_by_id.return_value = _make_team(id=1)
         team_repo.is_team_member.return_value = False
-        app_repo.exists_pending_for_user_and_team.return_value = True
+        app_repo.exists_pending_for_user_and_team.return_value = False
 
-        with pytest.raises(ConflictError, match="pending application"):
-            await svc.create_team_join_request(user_id=42, team_id=1, message=None)
+        status = await svc.join(
+            user_id=42, team=_make_team(id=1, join_approval=False), message=None
+        )
+
+        assert status == "member"
+        team_repo.add_member.assert_awaited_once()
+        app_repo.save.assert_not_awaited()
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("member", "pending", "expected"),
+        [(True, False, "member"), (False, True, "pending")],
+    )
+    async def test_asking_again_changes_nothing(self, member, pending, expected):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = member
+        app_repo.exists_pending_for_user_and_team.return_value = pending
+
+        status = await svc.join(
+            user_id=42, team=_make_team(id=1, join_approval=True), message=None
+        )
+
+        assert status == expected
+        app_repo.save.assert_not_awaited()
+        team_repo.add_member.assert_not_awaited()
 
 
 class TestCancelJoinRequest:

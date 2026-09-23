@@ -16,6 +16,7 @@ const busy = ref(false)
 const error = ref('')
 const needsLogin = ref(!authToken())
 const invalid = ref(false)
+const reason = ref('')
 let loadSequence = 0
 
 function signIn() {
@@ -48,14 +49,25 @@ async function load() {
   }
 }
 
+async function open(projectId: string) {
+  await store.refreshProjects()
+  await router.push({ name: 'workspace-project', params: { projectId } })
+}
+
+// 同一颗按钮三种意思：已经是成员就进去；链接不要审批就直接加入并进去；要审批就
+// 递上申请，停在这一页显示「等待审批」——那时候项目还进不去。
 async function enter() {
   if (!preview.value) return
   busy.value = true
   error.value = ''
   try {
-    const result = await joinProjectByLink(String(route.params.token))
-    await store.refreshProjects()
-    await router.push({ name: 'workspace-project', params: { projectId: result.project_id } })
+    if (preview.value.join_status === 'member') {
+      await open(preview.value.project_id)
+      return
+    }
+    const result = await joinProjectByLink(String(route.params.token), reason.value.trim() || undefined)
+    if (result.join_status === 'member') await open(result.project_id)
+    else preview.value = result
   } catch (e) {
     failure(e)
   } finally {
@@ -79,12 +91,32 @@ watch(() => route.params.token, load, { immediate: true })
         <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
         <template v-if="preview && !invalid">
           <h2 class="t-title mb-3">{{ preview.project_name }}</h2>
-          <p class="t-body c-muted mb-6">
-            {{ preview.already_member ? t('work.joinLink.alreadyMember') : t('work.joinLink.joinHint') }}
-          </p>
-          <v-btn color="primary" variant="flat" :loading="busy" @click="enter">
-            {{ preview.already_member ? t('work.joinLink.enter') : t('work.joinLink.join') }}
-          </v-btn>
+          <template v-if="preview.join_status === 'pending'">
+            <p class="t-body mb-2">{{ t('work.joinLink.pending') }}</p>
+            <p class="t-body c-muted">{{ t('work.joinLink.pendingHint') }}</p>
+          </template>
+          <template v-else-if="preview.join_status === 'member'">
+            <p class="t-body c-muted mb-6">{{ t('work.joinLink.alreadyMember') }}</p>
+            <v-btn color="primary" variant="flat" :loading="busy" @click="enter">{{ t('work.joinLink.enter') }}</v-btn>
+          </template>
+          <template v-else-if="preview.approval">
+            <p class="t-body c-muted mb-4">{{ t('work.joinLink.applyHint') }}</p>
+            <v-textarea
+              v-model="reason"
+              autocomplete="off"
+              :label="t('work.joinLink.reason')"
+              variant="outlined"
+              rows="3"
+              auto-grow
+              hide-details
+              class="mb-4"
+            />
+            <v-btn color="primary" variant="flat" :loading="busy" @click="enter">{{ t('work.joinLink.apply') }}</v-btn>
+          </template>
+          <template v-else>
+            <p class="t-body c-muted mb-6">{{ t('work.joinLink.joinHint') }}</p>
+            <v-btn color="primary" variant="flat" :loading="busy" @click="enter">{{ t('work.joinLink.join') }}</v-btn>
+          </template>
         </template>
         <v-progress-linear v-else-if="busy" indeterminate :aria-label="t('work.joinLink.loading')" />
         <v-btn v-else-if="error && !invalid" variant="text" @click="load">{{ t('work.joinLink.retry') }}</v-btn>

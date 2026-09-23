@@ -6,6 +6,7 @@ import type {
   TeamJoinRequestCreate,
   TeamMember,
   TeamMembershipApplication,
+  TeamVisibility,
 } from '@/types'
 
 import { NewApiInstance } from '../index'
@@ -22,6 +23,7 @@ export namespace TeamsApi {
     name?: string
     intro?: string
     avatarId?: number
+    visibility?: TeamVisibility
   }
 
   export type PostTeamMemberRequestData = {
@@ -72,6 +74,50 @@ export namespace TeamsApi {
       method: 'GET',
     })
 
+  // 小队链接：长期有效，重置后旧链接失效。approval 开着，拿到链接只能申请，要 owner/admin
+  // 批准；关着就直接加入。
+  export type TeamJoinLink = { token: string; approval: boolean }
+
+  export const getJoinLink = (teamId: number) =>
+    NewApiInstance.request<TeamJoinLink>({
+      url: `/teams/${teamId}/join-link`,
+      method: 'GET',
+    })
+
+  export const updateJoinLink = (teamId: number, data: { approval: boolean }) =>
+    NewApiInstance.request<TeamJoinLink>({
+      url: `/teams/${teamId}/join-link`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const resetJoinLink = (teamId: number) =>
+    NewApiInstance.request<TeamJoinLink>({
+      url: `/teams/${teamId}/join-link/reset`,
+      method: 'POST',
+    })
+
+  export const detailByJoinLink = (token: string) =>
+    NewApiInstance.request<{ team: Team }>({
+      url: `/team-invites/${encodeURIComponent(token)}`,
+      method: 'GET',
+    })
+
+  // 加入（或在需要审批时提交申请）；返回的 team.joinStatus 说明结果是 member 还是 pending。
+  export const joinByJoinLink = (token: string, data?: TeamJoinRequestCreate) =>
+    NewApiInstance.request<{ team: Team }>({
+      url: `/team-invites/${encodeURIComponent(token)}/join`,
+      method: 'POST',
+      data,
+    })
+
+  export const join = (teamId: number, data?: TeamJoinRequestCreate) =>
+    NewApiInstance.request<{ team: Team }>({
+      url: `/teams/${teamId}/join`,
+      method: 'POST',
+      data,
+    })
+
   export const getMyTeams = () =>
     NewApiInstance.request<{ teams: Team[] }>({
       url: '/teams/my-teams',
@@ -112,13 +158,6 @@ export namespace TeamsApi {
     })
 
   // 团队申请加入请求相关API
-  export const createJoinRequest = (teamId: number, data?: TeamJoinRequestCreate) =>
-    NewApiInstance.request<{ application: TeamMembershipApplication }>({
-      url: `/teams/${teamId}/requests`,
-      method: 'POST',
-      data,
-    })
-
   export const listTeamJoinRequests = (
     teamId: number,
     params?: { status?: ApplicationStatus; pageStart?: number; pageSize?: number }

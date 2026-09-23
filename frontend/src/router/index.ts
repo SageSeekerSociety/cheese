@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ProjectJoinView.vue'),
     meta: { titleKey: 'work.joinLink.joinTitle', isFullPage: true },
   },
+  {
+    name: 'team-join',
+    path: '/team-invites/:token',
+    component: () => import('@/views/TeamInviteView.vue'),
+    meta: { titleKey: 'work.teamProfile.joinTitle', isFullPage: true },
+  },
   AccountRoutes,
   ...LegalRoutes,
   HomeRoutes,

@@ -13,6 +13,7 @@ from app.domain.team.models import (
     TeamMemberRole,
     TeamMembershipApplication,
     TeamUserRelation,
+    TeamVisibility,
 )
 
 _HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
@@ -63,7 +64,13 @@ class TeamRepository:
         limit: int,
         offset: int = 0,
     ) -> Sequence[Team]:
-        stmt: Select[tuple[Team]] = select(Team).where(Team.deleted_at.is_(None))
+        # Search finds only what anyone may find: public, shared teams. A personal
+        # team is one person's, and a stealth team is found through its link.
+        stmt: Select[tuple[Team]] = select(Team).where(
+            Team.deleted_at.is_(None),
+            Team.personal_owner_user_id.is_(None),
+            Team.visibility == TeamVisibility.PUBLIC.value,
+        )
         if query:
             try:
                 query_id = int(query)
@@ -75,6 +82,13 @@ class TeamRepository:
         stmt = stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_by_join_token(self, token: str) -> Team | None:
+        stmt: Select[tuple[Team]] = select(Team).where(
+            and_(Team.join_token == token, Team.deleted_at.is_(None))
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         if not ids:

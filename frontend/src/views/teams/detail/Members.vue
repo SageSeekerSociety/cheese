@@ -61,6 +61,12 @@
       </v-dialog>
     </div>
 
+    <TeamJoinLinkCard
+      v-if="teamData && isSelfAdmin && !teamData.personal"
+      :team="teamData"
+      @updated="(team: Team) => (teamData = team)"
+    />
+
     <!-- 标签页 -->
     <v-tabs v-model="activeTab" color="primary" class="mb-4">
       <v-tab value="members">成员列表</v-tab>
@@ -280,13 +286,15 @@
 </template>
 
 <script setup lang="ts">
-import type { TeamMember, TeamMembershipApplication } from '@/types'
+import type { Team, TeamMember, TeamMembershipApplication } from '@/types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
@@ -307,19 +315,8 @@ const isSelfOwner = computed(() => {
   return AccountService.user?.id === teamData.value.owner.id
 })
 
-const isSelfAdmin = computed(() => {
-  if (!teamData.value || !AccountService.user) {
-    return false
-  }
-
-  if (teamData.value.owner.id === AccountService.user.id) {
-    return true
-  }
-
-  const isAdmin = teamData.value.admins.examples?.some((admin) => admin.id === AccountService.user?.id)
-
-  return !!isAdmin
-})
+// 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
+const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
 
 const updateActiveTabFromRoute = () => {
   if (route.query.tab && ['members', 'requests', 'invitations'].includes(route.query.tab as string)) {

@@ -20,6 +20,7 @@ from app.domain.team.models import (
     Team,
     TeamMemberRole,
     TeamUserRelation,
+    TeamVisibility,
 )
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
@@ -53,6 +54,11 @@ class PatchTeamRequest(BaseModel):
     intro: str | None = None
     description: str | None = None
     avatar_id: int | None = Field(default=None, alias="avatarId")
+    visibility: TeamVisibility | None = None
+
+
+class JoinLinkSettings(BaseModel):
+    approval: bool
 
 
 class PatchTeamMemberRoleRequest(BaseModel):
@@ -76,13 +82,14 @@ class CreateTeamInvitationRequest(BaseModel):
     message: str | None = None
 
 
-class CreateTeamJoinRequestBody(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    message: str | None = None
+class JoinTeamBody(BaseModel):
+    message: str | None = Field(default=None, max_length=500)
 
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
+# The join link's own door: ``/team-invites/<token>`` reads the team and joins it
+# for anyone holding the link, whether or not the team can be found by id.
+invites_router = APIRouter(prefix="/team-invites", tags=["Teams"])
 
 
 async def get_team_service(db=Depends(get_db)) -> TeamService:
@@ -199,6 +206,8 @@ def _team_to_api_model(
         "avatarId": team.avatar_id,
         # 个人 = 单人真团队 (v4): the frontend labels/orders the personal team.
         "personal": team.personal_owner_user_id is not None,
+        "visibility": team.visibility,
+        "joinApproval": team.join_approval,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -217,6 +226,10 @@ def _team_to_api_model(
     if current_user_id is not None:
         result["joined"] = joined
         result["role"] = user_role
+        if joined:
+            # The same answer ``_team_profile`` gives; it alone also works out
+            # ``pending`` / ``none``, which only a non-member can be.
+            result["joinStatus"] = "member"
 
     return result
 
@@ -388,9 +401,12 @@ async def get_teams(
     query: str = Query(default="", description="ID or Search Term"),
     page_start: str | None = Query(default=None, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
+    # Signed in only: a result names each team's owner and admins.
+    _ = auth_user
     offset = int(page_start) if page_start and page_start.isdigit() else 0
     teams = await service.enumerate_teams(
         query=query or None, limit=page_size + 1, offset=offset
@@ -460,6 +476,27 @@ async def get_my_teams(
     }
 
 
+async def _team_profile(
+    team: Team,
+    user_id: int,
+    service: TeamService,
+    membership_service: TeamMembershipService,
+    db,
+) -> dict:
+    """One team shape, whether it was reached by id or by its join link."""
+    members = list(await service.get_team_members(team_id=team.id))
+    users_map, profiles_map = await _load_team_user_maps(db, members)
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+    )
+    data["joinStatus"] = await membership_service.join_status(team.id, user_id)
+    return {"code": 200, "message": "OK", "data": {"team": data}}
+
+
 @router.get(
     "/{teamId}",
     summary="Query Team",
@@ -467,31 +504,103 @@ async def get_my_teams(
 async def get_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
+    membership_service: TeamMembershipService = Depends(get_team_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    team = await service.get_team(team_id=team_id)
-    if team is None:
-        raise NotFoundError(
-            "Resource team not found", data={"type": "team", "id": team_id}
-        )
+    team = await service.visible_team(team_id, auth_user.user_id)
+    return await _team_profile(team, auth_user.user_id, service, membership_service, db)
 
-    members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map = await _load_team_user_maps(db, members)
-    current_user_id = auth_user.user_id if auth_user.user_id > 0 else None
+
+@router.post("/{teamId}/join", summary="Join Team, or ask to")
+async def join_team(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    payload: JoinTeamBody | None = None,
+    service: TeamService = Depends(get_team_service),
+    membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    team = await service.visible_team(team_id, auth_user.user_id)
+    await membership_service.join(
+        user_id=auth_user.user_id,
+        team=team,
+        message=payload.message if payload else None,
+    )
+    return await _team_profile(team, auth_user.user_id, service, membership_service, db)
+
+
+def _join_link_payload(team: Team) -> dict:
     return {
         "code": 200,
         "message": "OK",
-        "data": {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=current_user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-            )
-        },
+        "data": {"token": team.join_token, "approval": team.join_approval},
     }
+
+
+@router.get("/{teamId}/join-link", summary="Get Team Join Link")
+async def get_team_join_link(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    team = await service.join_link(team_id=team_id, actor_user_id=auth_user.user_id)
+    return _join_link_payload(team)
+
+
+@router.patch("/{teamId}/join-link", summary="Update Team Join Link")
+async def update_team_join_link(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    payload: JoinLinkSettings,
+    service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    team = await service.join_link(
+        team_id=team_id, actor_user_id=auth_user.user_id, approval=payload.approval
+    )
+    return _join_link_payload(team)
+
+
+@router.post("/{teamId}/join-link/reset", summary="Reset Team Join Link")
+async def reset_team_join_link(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    team = await service.join_link(
+        team_id=team_id, actor_user_id=auth_user.user_id, reset=True
+    )
+    return _join_link_payload(team)
+
+
+@invites_router.get("/{token}", summary="Read Team Through Its Join Link")
+async def get_team_by_join_link(
+    token: str,
+    service: TeamService = Depends(get_team_service),
+    membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    team = await service.team_for_join_token(token)
+    return await _team_profile(team, auth_user.user_id, service, membership_service, db)
+
+
+@invites_router.post("/{token}/join", summary="Join Team Through Its Join Link")
+async def join_team_by_join_link(
+    token: str,
+    payload: JoinTeamBody | None = None,
+    service: TeamService = Depends(get_team_service),
+    membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    team = await service.team_for_join_token(token)
+    await membership_service.join(
+        user_id=auth_user.user_id,
+        team=team,
+        message=payload.message if payload else None,
+    )
+    return await _team_profile(team, auth_user.user_id, service, membership_service, db)
 
 
 @router.get("/{teamId}/resource-quotas", summary="Query Team Resource Quotas")
@@ -647,6 +756,7 @@ async def patch_team(
         intro=payload.intro,
         description=payload.description,
         avatar_id=payload.avatar_id,
+        visibility=payload.visibility,
     )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
@@ -977,56 +1087,6 @@ async def cancel_team_invitation(
         invitation_id=invitation_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/{teamId}/join-requests",
-    summary="Create Team Join Request",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_team_join_request_via_team(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: CreateTeamJoinRequestBody,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-    db=Depends(get_db),
-) -> dict:
-    app = await membership_service.create_team_join_request(
-        user_id=auth_user.user_id,
-        team_id=team_id,
-        message=payload.message,
-    )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
-    return {
-        "code": 201,
-        "message": "Join request created",
-        "data": {
-            "application": _application_to_api_model(
-                app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
-            )
-        },
-    }
-
-
-@router.post(
-    "/{teamId}/requests",
-    summary="Create Team Request",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_team_request_alias(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: CreateTeamJoinRequestBody,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-    db=Depends(get_db),
-) -> dict:
-    return await create_team_join_request_via_team(
-        team_id=team_id,
-        payload=payload,
-        auth_user=auth_user,
-        membership_service=membership_service,
-        db=db,
-    )
 
 
 @router.post(

@@ -257,6 +257,15 @@ class ProjectRepository:
             )
         return members
 
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for one handle, by the same rules as a roster row
+        in :meth:`people` — for someone who is not on the roster yet."""
+        name, avatar_id, avatar_type = await self._profile_of(handle)
+        return {
+            "name": name or handle,
+            "avatar_id": None if avatar_type == "default" else avatar_id,
+        }
+
     async def _profile_of(
         self, handle: str
     ) -> tuple[str | None, int | None, str | None]:

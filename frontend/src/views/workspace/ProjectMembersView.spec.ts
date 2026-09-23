@@ -22,6 +22,8 @@ const leaveProject = vi.fn()
 const listProjectAgents = vi.fn()
 const setProjectOwner = vi.fn()
 const listProjectMembers = vi.fn()
+const listProjectJoinRequests = vi.fn()
+const decideProjectJoinRequest = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -36,6 +38,8 @@ vi.mock('@/api', async () => {
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
     setProjectOwner: (...a: unknown[]) => setProjectOwner(...a),
     listProjectMembers: (...a: unknown[]) => listProjectMembers(...a),
+    listProjectJoinRequests: (...a: unknown[]) => listProjectJoinRequests(...a),
+    decideProjectJoinRequest: (...a: unknown[]) => decideProjectJoinRequest(...a),
   }
 })
 
@@ -117,6 +121,8 @@ beforeEach(() => {
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
   setProjectOwner.mockReset().mockResolvedValue({})
   listProjectMembers.mockReset().mockResolvedValue({ data: [], total: 0 })
+  listProjectJoinRequests.mockReset().mockResolvedValue([])
+  decideProjectJoinRequest.mockReset().mockResolvedValue({ ok: true })
   refreshProjects.mockReset().mockResolvedValue(undefined)
   projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }]
   listProjectAgents.mockReset().mockResolvedValue({
@@ -460,6 +466,52 @@ describe('成员页：等待接受', () => {
     const { container } = mount()
     await waitFor(() => expect(groupTitles(container)).toContain('等待接受 · 1'))
     expect(container.textContent).not.toContain('撤回')
+  })
+})
+
+describe('成员页：申请加入', () => {
+  const request = {
+    id: 'req-1',
+    requester_handle: 'newbie',
+    name: '新人',
+    avatar_id: null,
+    message: '想一起做实验',
+    created_at: '2026-09-23T00:00:00Z',
+  }
+
+  it('链接递进来的申请单独一段，带着申请理由，不混进名册', async () => {
+    listProjectJoinRequests.mockResolvedValue([request])
+    const { container } = mount()
+    await waitFor(() => expect(groupTitles(container)).toContain('申请加入 · 1'))
+    expect(container.textContent).toContain('想一起做实验')
+    expect(() => rowFor(container, 'newbie')).toThrow()
+  })
+
+  it('批准之后这条申请消失，名册重新拉一遍——人这时才进来', async () => {
+    listProjectJoinRequests.mockResolvedValueOnce([request]).mockResolvedValue([])
+    const { container } = mount()
+    await fireEvent.click(await screen.findByRole('button', { name: '批准' }))
+    await waitFor(() => expect(decideProjectJoinRequest).toHaveBeenCalledWith('p1', 'req-1', 'approve'))
+    await waitFor(() => expect(groupTitles(container)).not.toContain('申请加入 · 1'))
+    expect(refreshMembers).toHaveBeenCalled()
+  })
+
+  it('拒绝不动名册', async () => {
+    listProjectJoinRequests.mockResolvedValueOnce([request]).mockResolvedValue([])
+    const { container } = mount()
+    await fireEvent.click(await screen.findByRole('button', { name: '拒绝' }))
+    await waitFor(() => expect(decideProjectJoinRequest).toHaveBeenCalledWith('p1', 'req-1', 'reject'))
+    await waitFor(() => expect(groupTitles(container)).not.toContain('申请加入 · 1'))
+    expect(refreshMembers).not.toHaveBeenCalled()
+  })
+
+  it('普通成员拉不到申请，也就没有这一段', async () => {
+    meHandle = 'ligan'
+    listProjectJoinRequests.mockResolvedValue([request])
+    const { container } = mount()
+    await waitFor(() => expect(listProjectInvitations).toHaveBeenCalled())
+    expect(listProjectJoinRequests).not.toHaveBeenCalled()
+    expect(groupTitles(container)).not.toContain('申请加入 · 1')
   })
 })
 

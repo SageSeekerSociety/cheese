@@ -219,8 +219,8 @@ async def test_a_join_request_is_recorded_before_it_is_sent(db_factory):
         )
         await session.flush()
 
-        await _service(session).create_team_join_request(
-            user_id=requester, team_id=team_id, message="让我进来"
+        await _service(session).join(
+            user_id=requester, team=await session.get(Team, team_id), message="让我进来"
         )
         await session.commit()
 
@@ -253,9 +253,7 @@ async def test_a_request_to_a_team_with_no_admins_notifies_nobody(db_factory):
         session.add(team)
         await session.flush()
 
-        await _service(session).create_team_join_request(
-            user_id=requester, team_id=team.id, message=None
-        )
+        await _service(session).join(user_id=requester, team=team, message=None)
         await session.commit()
 
         assert await _ledger_rows(session) == []

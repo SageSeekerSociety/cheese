@@ -84,36 +84,67 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // namespace that separated them has nothing left to separate.
 export const BASE = '/api'
 
+// A project's join link. Permanent until a manager resets it; `approval` says
+// whether joining through it waits for a manager or happens on confirmation.
 export interface ProjectJoinLink {
   token: string
-  expires_at: string
+  approval: boolean
 }
+
+export type ProjectJoinStatus = 'member' | 'pending' | 'none'
 
 export interface ProjectJoinPreview {
   project_id: string
   project_name: string
-  already_member: boolean
-  expires_at: string
+  approval: boolean
+  join_status: ProjectJoinStatus
+}
+
+export interface ProjectJoinRequest {
+  id: string
+  requester_handle: string
+  name: string
+  avatar_id: number | null
+  message: string
+  created_at: string
+}
+
+function joinLinkPath(projectId: string) {
+  return `/projects/${encodeURIComponent(projectId)}/join-link`
 }
 
 export function getProjectJoinLink(projectId: string) {
-  return request<ProjectJoinLink | null>(`/projects/${encodeURIComponent(projectId)}/join-link`)
+  return request<ProjectJoinLink>(joinLinkPath(projectId))
 }
 
-export function createProjectJoinLink(projectId: string) {
-  return request<ProjectJoinLink>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'POST' })
+export function setProjectJoinApproval(projectId: string, approval: boolean) {
+  return request<ProjectJoinLink>(joinLinkPath(projectId), { method: 'PATCH', body: JSON.stringify({ approval }) })
 }
 
-export function revokeProjectJoinLink(projectId: string) {
-  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'DELETE' })
+export function resetProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink>(`${joinLinkPath(projectId)}/reset`, { method: 'POST' })
 }
 
 export function previewProjectJoinLink(token: string) {
   return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}`)
 }
 
-export function joinProjectByLink(token: string) {
-  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, { method: 'POST' })
+export function joinProjectByLink(token: string, message?: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, {
+    method: 'POST',
+    body: JSON.stringify(message ? { message } : {}),
+  })
+}
+
+export function listProjectJoinRequests(projectId: string) {
+  return request<ProjectJoinRequest[]>(`/projects/${encodeURIComponent(projectId)}/join-requests`)
+}
+
+export function decideProjectJoinRequest(projectId: string, requestId: string, decision: 'approve' | 'reject') {
+  return request<{ ok: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/join-requests/${encodeURIComponent(requestId)}/${decision}`,
+    { method: 'POST' }
+  )
 }
 
 // Chat requests use the same access token as AccountService.

@@ -2,6 +2,12 @@ import type { User } from '.'
 
 export type TeamMemberRoleType = 'OWNER' | 'ADMIN' | 'MEMBER'
 
+// 公开 = 能在「发现小队」里搜到；隐身 = 搜不到，只有拿到小队链接的人能找到并申请。
+export type TeamVisibility = 'public' | 'stealth'
+
+// 当前登录者和这个小队的关系：已加入 / 申请审批中 / 都不是。
+export type TeamJoinStatus = 'member' | 'pending' | 'none'
+
 export interface TeamMember {
   role: TeamMemberRoleType
   user: User
@@ -17,6 +23,11 @@ export interface Team {
   personal?: boolean
   // Present on authenticated detail/my-team responses.
   role?: TeamMemberRoleType
+  visibility?: TeamVisibility
+  // Present on a team read by id or through its join link.
+  joinStatus?: TeamJoinStatus
+  // true = 加入要 owner/admin 批准（申请）；false = 确认即加入。
+  joinApproval?: boolean
   owner: User
   admins: {
     total: number

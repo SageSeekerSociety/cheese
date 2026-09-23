@@ -1,3 +1,4 @@
+import secrets
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
@@ -9,7 +10,12 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+from app.domain.team.models import (
+    Team,
+    TeamMemberRole,
+    TeamUserRelation,
+    TeamVisibility,
+)
 from app.domain.team.repositories import TeamRepository
 
 
@@ -57,6 +63,59 @@ class TeamService:
 
     async def get_team(self, team_id: int) -> Team | None:
         return await self._repo.get_by_id(team_id)
+
+    async def visible_team(self, team_id: int, user_id: int) -> Team:
+        """The team as ``user_id`` may see it by id, or 404.
+
+        A member sees their team. Anyone else sees it only when it is a public,
+        shared team; a stealth or personal team answers exactly like a missing
+        one, so probing ids tells nobody which exist. The join link is the other
+        way in (:meth:`team_for_join_token`).
+        """
+        team = await self._repo.get_by_id(team_id)
+        if team is not None and (
+            await self._repo.is_team_member(team_id, user_id)
+            or (
+                team.personal_owner_user_id is None
+                and team.visibility == TeamVisibility.PUBLIC.value
+            )
+        ):
+            return team
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
+
+    async def team_for_join_token(self, token: str) -> Team:
+        team = await self._repo.get_by_join_token(token)
+        if team is None:
+            raise NotFoundError("Invitation link is invalid or has been reset")
+        return team
+
+    async def _managed_team(self, team_id: int, actor_user_id: int) -> Team:
+        team = await self._get_team_or_error(team_id)
+        if not await self._repo.is_team_at_least_admin(team_id, actor_user_id):
+            raise ForbiddenError("Only team owner or admins can manage the join link")
+        if team.personal_owner_user_id is not None:
+            raise BadRequestError("A personal team has no join link")
+        return team
+
+    async def join_link(
+        self,
+        *,
+        team_id: int,
+        actor_user_id: int,
+        reset: bool = False,
+        approval: bool | None = None,
+    ) -> Team:
+        """The team's join link, created on first ask; ``reset`` replaces it."""
+        team = await self._managed_team(team_id, actor_user_id)
+        if reset or team.join_token is None:
+            team.join_token = secrets.token_urlsafe(32)
+        if approval is not None:
+            team.join_approval = approval
+        team.updated_at = datetime.now(UTC)
+        await self._repo._session.flush()
+        return team
 
     async def enumerate_teams(
         self,
@@ -152,6 +211,7 @@ class TeamService:
         intro: str | None = None,
         description: str | None = None,
         avatar_id: int | None = None,
+        visibility: TeamVisibility | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
         actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
@@ -181,6 +241,10 @@ class TeamService:
             if not isinstance(avatar_id, int) or avatar_id <= 0:
                 raise BadRequestError("avatarId must be positive integer")
             team.avatar_id = avatar_id
+        if visibility is not None:
+            if team.personal_owner_user_id is not None:
+                raise BadRequestError("A personal team is never listed")
+            team.visibility = visibility.value
 
         team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()

@@ -269,6 +269,11 @@ class MemberService:
             await self._repo.delete(member)
 
 
+# The two answers on an invitee's decision card, affirmative first. Choosing one
+# on the card is the answer itself (``routes/alerts.resolve_notification``).
+INVITATION_OPTIONS = ("接受", "拒绝")
+
+
 class InvitationService:
     """邀请 —— 加人这件事的另一半。
 
@@ -354,7 +359,7 @@ class InvitationService:
                 "invitation_id": str(invitation.id),
                 "project_name": project.name,
                 "role": role.value,
-                "options": ["接受", "拒绝"],
+                "options": list(INVITATION_OPTIONS),
             },
         )
         return invitation
