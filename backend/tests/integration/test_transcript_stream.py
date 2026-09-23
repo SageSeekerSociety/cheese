@@ -13,10 +13,10 @@ from app.core.storage import LocalStorageBackend
 from app.domain.topic import transcript_stream as stream
 from app.domain.topic.models import RawTranscript
 
-pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("stub_project_forge")]
+pytestmark = pytest.mark.anyio
 
 
-async def test_a_blocked_upload_times_out_and_can_retry(db_factory, tmp_path):
+async def test_a_blocked_upload_times_out_and_can_retry(business_db_factory, tmp_path):
     args = dict(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
@@ -24,7 +24,7 @@ async def test_a_blocked_upload_times_out_and_can_retry(db_factory, tmp_path):
         source=".claude/projects/p/session.jsonl",
         storage=LocalStorageBackend(str(tmp_path), "/unused"),
     )
-    async with db_factory() as writer, db_factory() as blocker:
+    async with business_db_factory() as writer, business_db_factory() as blocker:
         await stream.append(writer, **args, offset=0, content=b"a")
         await blocker.scalar(
             select(RawTranscript)
@@ -45,9 +45,9 @@ async def test_a_blocked_upload_times_out_and_can_retry(db_factory, tmp_path):
 
 
 async def test_confirmation_releases_database_before_reading_storage(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
-    async with db_factory() as db:
+    async with business_db_factory() as db:
 
         class CheckingStorage(LocalStorageBackend):
             async def download(self, key):
@@ -69,7 +69,7 @@ async def test_confirmation_releases_database_before_reading_storage(
 
 
 async def test_raw_files_reassemble_exactly_and_retries_do_not_duplicate(
-    db_factory, tmp_path
+    business_db_factory, tmp_path
 ):
     storage = LocalStorageBackend(str(tmp_path), "/unused")
     project, topic, file_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -81,7 +81,7 @@ async def test_raw_files_reassemble_exactly_and_retries_do_not_duplicate(
         source=".claude/projects/p/session.jsonl",
         storage=storage,
     )
-    async with db_factory() as db:
+    async with business_db_factory() as db:
         first = await stream.append(db, **args, offset=0, content=parts[0])
         assert await stream.append(db, **args, offset=0, content=parts[0]) == first
         await stream.append(db, **args, offset=len(parts[0]), content=parts[1])
@@ -91,7 +91,9 @@ async def test_raw_files_reassemble_exactly_and_retries_do_not_duplicate(
         assert len([path for path in tmp_path.rglob("*") if path.is_file()]) == 3
 
 
-async def test_failed_storage_is_not_acknowledged_and_can_retry(db_factory, tmp_path):
+async def test_failed_storage_is_not_acknowledged_and_can_retry(
+    business_db_factory, tmp_path
+):
     class FailingStorage(LocalStorageBackend):
         async def upload(self, file, key, content_type):
             raise OSError("offline")
@@ -104,7 +106,7 @@ async def test_failed_storage_is_not_acknowledged_and_can_retry(db_factory, tmp_
         offset=0,
         content=b"original\n",
     )
-    async with db_factory() as db:
+    async with business_db_factory() as db:
         with pytest.raises(OSError, match="offline"):
             await stream.append(
                 db, **ids, storage=FailingStorage(str(tmp_path), "/unused")
@@ -117,7 +119,9 @@ async def test_failed_storage_is_not_acknowledged_and_can_retry(db_factory, tmp_
         assert receipt["size"] == len(ids["content"])
 
 
-async def test_gaps_changed_retries_and_path_escape_are_rejected(db_factory, tmp_path):
+async def test_gaps_changed_retries_and_path_escape_are_rejected(
+    business_db_factory, tmp_path
+):
     storage = LocalStorageBackend(str(tmp_path), "/unused")
     args = dict(
         project_id=uuid.uuid4(),
@@ -126,7 +130,7 @@ async def test_gaps_changed_retries_and_path_escape_are_rejected(db_factory, tmp
         source=".claude/projects/p/s.jsonl",
         storage=storage,
     )
-    async with db_factory() as db:
+    async with business_db_factory() as db:
         await stream.append(db, **args, offset=0, content=b"abc\n")
         for offset, content in [(0, b"xyz\n"), (10, b"gap\n")]:
             with pytest.raises(ConflictError):
@@ -137,7 +141,9 @@ async def test_gaps_changed_retries_and_path_escape_are_rejected(db_factory, tmp
             await stream.append(db, **args, offset=4, content=b"bad\n")
 
 
-async def test_final_confirmation_checks_objects_and_empty_files(db_factory, tmp_path):
+async def test_final_confirmation_checks_objects_and_empty_files(
+    business_db_factory, tmp_path
+):
     storage = LocalStorageBackend(str(tmp_path), "/unused")
     args = dict(
         project_id=uuid.uuid4(),
@@ -146,7 +152,7 @@ async def test_final_confirmation_checks_objects_and_empty_files(db_factory, tmp
         source=".claude/projects/p/s.jsonl",
         storage=storage,
     )
-    async with db_factory() as db:
+    async with business_db_factory() as db:
         with pytest.raises(NotFoundError):
             await stream.confirm(
                 db, **args, size=3, sha256=hashlib.sha256(b"abc").hexdigest()
@@ -232,7 +238,7 @@ async def test_http_ingress_and_readable_download_enforce_room_scope(
     )
 
 
-async def test_a_stalled_upload_holds_no_row_lock(db_factory, tmp_path):
+async def test_a_stalled_upload_holds_no_row_lock(business_db_factory, tmp_path):
     """The dev outage of 2026-09-18: one upload that never returned held the
     file's row lock, and every later upload of that file queued behind it
     with a pool connection each. Now a second delivery of the same bytes
@@ -253,7 +259,7 @@ async def test_a_stalled_upload_holds_no_row_lock(db_factory, tmp_path):
         offset=0,
         content=b"abc\n",
     )
-    async with db_factory() as stuck, db_factory() as db:
+    async with business_db_factory() as stuck, business_db_factory() as db:
         first = asyncio.create_task(
             stream.append(stuck, **args, storage=StalledStorage(str(tmp_path), "/u"))
         )
@@ -271,14 +277,14 @@ async def test_a_stalled_upload_holds_no_row_lock(db_factory, tmp_path):
 
 
 async def test_a_transfer_that_never_returns_fails_in_bounded_time(
-    db_factory, monkeypatch, tmp_path
+    business_db_factory, monkeypatch, tmp_path
 ):
     class HangingStorage(LocalStorageBackend):
         async def upload(self, file, key, content_type):
             await asyncio.Event().wait()
 
     monkeypatch.setattr(stream, "TRANSFER_SECONDS", 0.2)
-    async with db_factory() as db:
+    async with business_db_factory() as db:
         with pytest.raises(TimeoutError):
             await stream.append(
                 db,

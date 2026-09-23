@@ -40,56 +40,63 @@ class PrivateScreen(StubChannel):
 
 @pytest.mark.parametrize("private", [True, False])
 async def test_chat_runs_through_a_session(client, tmp_path, private):
-    factory = client.test_factory
-    central, project_machine = PrivateScreen("device"), PrivateScreen("cloud")
-    # 房间选了哪条通道，私聊也走哪条——房间的选择是房间的，不因为私聊而改写。
-    screen = project_machine
-    svc = ChatService(
-        session_factory=factory,
-        compute=ComputePool([central.runtime, project_machine.runtime], "cloud"),
-        base_system_prompt="You are Cheese.",
-        workspace_root=str(tmp_path / "ws"),
-    )
-    async with factory() as session:
-        project = await ProjectService(session).create(name="P", owner_handle="u")
-        if private:
-            topic = await TopicService(session).get_or_create_private(
-                project_id=project.id, user_handle="u"
-            )
-        else:
-            topic = await TopicService(session).create(
-                project_id=project.id, title="Work", created_by="u"
-            )
-        topic_id = topic.id
-        topic.compute_profile = "cloud"
-        await session.commit()
-    async for _ in svc.converse(
-        topic_id=topic_id, author="u", content="Prepare a document draft", summon=True
-    ):
-        pass
-    await settle_turn(svc, topic_id)
-    assert len(screen.prompts) == 1
-    # 一条发布路径 (结论 19): the private chat is told what a room is told, and
-    # its terminal reply lands in activity exactly as a room's does.
-    assert "final responses are not published to chat" in screen.prompts[0]
-    # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
-    # prompt like any room, and still told what is particular to a private chat.
-    assert "chat_send" in screen.last_system_prompt
-    assert ("cheese remember" in screen.last_system_prompt) is private
-    assert not central.prompts
-    assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
-    async with factory() as session:
-        blocks = await BlockRepository(session).list_for_topic(topic_id)
-    assert any(
-        looks_like_agent_handle(b.author)
-        and b.kind == BlockKind.event
-        and b.content == "Draft saved."
-        for b in blocks
-    )
-    assert not any(
-        looks_like_agent_handle(b.author) and b.kind == BlockKind.message
-        for b in blocks
-    )
+    async def run():
+        factory = client.test_request_factory
+        central, project_machine = PrivateScreen("device"), PrivateScreen("cloud")
+        # 房间选了哪条通道，私聊也走哪条——房间的选择是房间的，不因为私聊而改写。
+        screen = project_machine
+        svc = ChatService(
+            session_factory=factory,
+            compute=ComputePool([central.runtime, project_machine.runtime], "cloud"),
+            base_system_prompt="You are Cheese.",
+            workspace_root=str(tmp_path / "ws"),
+        )
+        async with factory() as session:
+            project = await ProjectService(session).create(name="P", owner_handle="u")
+            if private:
+                topic = await TopicService(session).get_or_create_private(
+                    project_id=project.id, user_handle="u"
+                )
+            else:
+                topic = await TopicService(session).create(
+                    project_id=project.id, title="Work", created_by="u"
+                )
+            topic_id = topic.id
+            topic.compute_profile = "cloud"
+            await session.commit()
+        async for _ in svc.converse(
+            topic_id=topic_id,
+            author="u",
+            content="Prepare a document draft",
+            summon=True,
+        ):
+            pass
+        await settle_turn(svc, topic_id)
+        assert len(screen.prompts) == 1
+        # 一条发布路径 (结论 19): the private chat is told what a room is told, and
+        # its terminal reply lands in activity exactly as a room's does.
+        assert "final responses are not published to chat" in screen.prompts[0]
+        # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
+        # prompt like any room, and still told what is particular to a private chat.
+        assert "chat_send" in screen.last_system_prompt
+        assert ("cheese remember" in screen.last_system_prompt) is private
+        assert not central.prompts
+        assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
+        async with factory() as session:
+            blocks = await BlockRepository(session).list_for_topic(topic_id)
+        assert any(
+            looks_like_agent_handle(b.author)
+            and b.kind == BlockKind.event
+            and b.content == "Draft saved."
+            for b in blocks
+        )
+        assert not any(
+            looks_like_agent_handle(b.author) and b.kind == BlockKind.message
+            for b in blocks
+        )
+        return screen, topic_id, blocks
+
+    screen, topic_id, blocks = client.portal.call(run)
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture.

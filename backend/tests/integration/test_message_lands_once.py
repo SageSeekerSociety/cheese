@@ -21,8 +21,6 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import stub_compute
 
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
-
 
 async def _topic(factory) -> uuid.UUID:
     async with factory() as session:
@@ -48,8 +46,10 @@ async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
 
 
 @pytest.mark.anyio
-async def test_two_writers_of_one_event_land_a_single_message(db_factory, tmp_path):
-    factory = db_factory  # type: ignore[attr-defined]
+async def test_two_writers_of_one_event_land_a_single_message(
+    business_db_factory, tmp_path
+):
+    factory = business_db_factory  # type: ignore[attr-defined]
     service = ChatService(
         session_factory=factory,
         base_system_prompt="你是芝士。",
@@ -82,10 +82,10 @@ async def test_two_writers_of_one_event_land_a_single_message(db_factory, tmp_pa
 
 
 @pytest.mark.anyio
-async def test_a_genuinely_new_event_still_lands(db_factory, tmp_path):
+async def test_a_genuinely_new_event_still_lands(business_db_factory, tmp_path):
     """The guard must not swallow the next message just because it looks like
     the last one — 「好的」 twice in one turn is two messages."""
-    factory = db_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     service = ChatService(
         session_factory=factory,
         base_system_prompt="你是芝士。",

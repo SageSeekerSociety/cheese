@@ -24,11 +24,9 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
-
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
 
 
 def _spool_event(spool, eid: str, payload: dict) -> None:
@@ -75,13 +73,13 @@ async def _seed_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
 
 @pytest.mark.anyio
 async def test_settle_lands_parked_stop_and_finishes_the_turn(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """MessageDisplay + Stop parked while nobody listened: the settle lands the
     final reply once and retains its execution log, saves the
     finished session pointer, and empties the spool."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -132,12 +130,12 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
 @pytest.mark.anyio
 async def test_settle_lands_a_stop_only_final_message(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A Stop whose MessageDisplay never made it anywhere still lands its
     last_assistant_message — the turn's ending must not be lost with it."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -173,7 +171,7 @@ async def test_settle_lands_a_stop_only_final_message(
 
 @pytest.mark.anyio
 async def test_orphan_with_parked_stop_is_settled_not_reprompted(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """The full chain of the incident fix: a turn the transport had accepted,
     whose screen is gone by the time the sweep runs (the container went with the
@@ -182,7 +180,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     sweep schedules finishes the turn out of the Stop the dead screen parked,
     saying nothing, because from the room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
@@ -242,12 +240,12 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 
 @pytest.mark.anyio
 async def test_zero_evidence_orphan_resends_the_original_text(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """No block, no spool trace → the sweep re-sends, and the turn's prompt is
     the pending HUMAN message verbatim — not a continuation nudge."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     _pid, tid = await _seed_topic(factory)
     agent = _RecordingScreen()
     svc = ChatService(
@@ -287,6 +285,8 @@ async def test_zero_evidence_orphan_resends_the_original_text(
         await asyncio.sleep(0.01)
     assert len(agent.prompts) == 1
     assert "[u]: 修一下登录页" in agent.prompts[0]  # the original text, verbatim
+    await runner.drain()
+    await settle_turn(svc, tid)
 
 
 def test_parked_hook_schedules_a_settle(client, tmp_path, monkeypatch):

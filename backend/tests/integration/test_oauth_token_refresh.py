@@ -116,12 +116,12 @@ def _decrypted(value: str | None) -> str:
 
 
 @pytest.mark.anyio
-async def test_refresh_survives_outer_transaction_rollback(db_factory):
+async def test_refresh_survives_outer_transaction_rollback(business_db_factory):
     """The key regression assertion: refresh succeeds, then a LATER step in
     the SAME caller transaction fails and the whole thing rolls back — the
     refreshed token must still be the one sitting in the database afterward,
     not the stale value GitHub has already invalidated."""
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(factory, user_id=user_id)
 
@@ -152,8 +152,8 @@ async def test_refresh_survives_outer_transaction_rollback(db_factory):
 
 
 @pytest.mark.anyio
-async def test_refresh_http_failure_leaves_stale_token_untouched(db_factory):
-    factory = db_factory
+async def test_refresh_http_failure_leaves_stale_token_untouched(business_db_factory):
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(factory, user_id=user_id)
 
@@ -170,11 +170,13 @@ async def test_refresh_http_failure_leaves_stale_token_untouched(db_factory):
 
 
 @pytest.mark.anyio
-async def test_undecryptable_stored_refresh_token_degrades_without_writing(db_factory):
+async def test_undecryptable_stored_refresh_token_degrades_without_writing(
+    business_db_factory,
+):
     """A refresh_token column that isn't valid Fernet ciphertext (key
     rotated, or a stray legacy row) must degrade to None, not raise — and
     must not touch the row it can't safely act on."""
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     async with factory() as session:
         conn = UserOAuthConnection(
@@ -205,9 +207,9 @@ async def test_undecryptable_stored_refresh_token_degrades_without_writing(db_fa
 
 
 @pytest.mark.anyio
-async def test_within_margin_token_is_refreshed_early(db_factory):
+async def test_within_margin_token_is_refreshed_early(business_db_factory):
     """Inside the refresh margin counts as expired, not just past expiry."""
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(
         factory, user_id=user_id, expires_in=timedelta(minutes=1)
@@ -227,11 +229,11 @@ async def test_within_margin_token_is_refreshed_early(db_factory):
 
 
 @pytest.mark.anyio
-async def test_concurrent_refresh_serializes_and_calls_github_once(db_factory):
+async def test_concurrent_refresh_serializes_and_calls_github_once(business_db_factory):
     """Two callers racing to refresh the SAME about-to-expire connection:
     only ONE actually calls GitHub — the loser waits, then reuses the
     winner's fresh token."""
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(factory, user_id=user_id)
 
@@ -264,13 +266,13 @@ async def test_concurrent_refresh_serializes_and_calls_github_once(db_factory):
 
 
 @pytest.mark.anyio
-async def test_refresh_holds_no_row_lock_while_github_is_in_flight(db_factory):
+async def test_refresh_holds_no_row_lock_while_github_is_in_flight(business_db_factory):
     """While the GitHub call is in flight, the connection row stays free: a
     writer elsewhere locks it at once instead of queueing behind the refresh
     (dev outage of 2026-09-18, same shape on another table)."""
     from sqlalchemy import text
 
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(factory, user_id=user_id)
     in_flight = asyncio.Event()
@@ -308,11 +310,13 @@ async def test_refresh_holds_no_row_lock_while_github_is_in_flight(db_factory):
 
 
 @pytest.mark.anyio
-async def test_refresh_that_lands_second_keeps_the_first_writers_tokens(db_factory):
+async def test_refresh_that_lands_second_keeps_the_first_writers_tokens(
+    business_db_factory,
+):
     """A refresher in another process rotates the tokens while ours is
     waiting on GitHub. Ours must not overwrite them with a result GitHub
     has since invalidated; the caller gets the live token instead."""
-    factory = db_factory
+    factory = business_db_factory
     user_id = _next_user_id()
     connection_id = await _seed_connection(factory, user_id=user_id)
     in_flight = asyncio.Event()

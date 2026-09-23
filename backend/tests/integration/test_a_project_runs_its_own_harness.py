@@ -22,19 +22,17 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, stub_compute
 
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
-
 
 @pytest.mark.anyio
 async def test_a_project_that_asks_for_a_harness_nobody_deployed_does_not_run(
-    db_factory, tmp_path, monkeypatch, stub_project_forge
+    business_db_factory, tmp_path, monkeypatch
 ):
     """这台机器上没有 codex，那这一轮就不开始——不改用 claude-code 跑。
 
     换成 claude-code 跑的那一版没有任何地方会红：屏幕照常答，房间照常收到回复，
     只有会话行悄悄落在 codex 那一行上，而说那句话的是 claude-code。
     """
-    factory = db_factory
+    factory = business_db_factory
     screen = StubChannel()
     service = ChatService(
         session_factory=factory,

@@ -17,8 +17,6 @@ from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
 
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
-
 
 async def _seed(factory, credits: float | None = 100.0):
     async with factory() as session:
@@ -57,20 +55,22 @@ def _row(pid, tid, *, inp=100, out=50, cache_read=0, cache_write=0):
 
 
 @pytest.mark.anyio
-async def test_rows_land_once_with_route_and_credits(db_factory, tmp_path, monkeypatch):
+async def test_rows_land_once_with_route_and_credits(
+    business_db_factory, tmp_path, monkeypatch
+):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "compute_credit_tokens", 10_000)
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=100, out=50, cache_read=9850))
 
-    first = await ingest_once(db_factory, log)
-    again = await ingest_once(db_factory, log)
+    first = await ingest_once(business_db_factory, log)
+    again = await ingest_once(business_db_factory, log)
 
     assert first == {"landed": 1, "skipped": 0}
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
         balance = await ComputeGrantRepository(session).summary(pid)
     # Cache reads fold into input; credits burn the full 10k tokens = 1 credit.
@@ -80,51 +80,53 @@ async def test_rows_land_once_with_route_and_credits(db_factory, tmp_path, monke
 
 
 @pytest.mark.anyio
-async def test_appended_lines_ingest_incrementally(db_factory, tmp_path):
-    pid, tid = await _seed(db_factory)
+async def test_appended_lines_ingest_incrementally(business_db_factory, tmp_path):
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid))
-    await ingest_once(db_factory, log)
+    await ingest_once(business_db_factory, log)
 
     with log.open("a") as fh:
         fh.write(_row(pid, tid, inp=7, out=3))
-    result = await ingest_once(db_factory, log)
+    result = await ingest_once(business_db_factory, log)
 
     assert result["landed"] == 1
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 2
 
 
 @pytest.mark.anyio
-async def test_rotated_file_is_a_new_generation(db_factory, tmp_path):
-    pid, tid = await _seed(db_factory)
+async def test_rotated_file_is_a_new_generation(business_db_factory, tmp_path):
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=11, out=0))
-    await ingest_once(db_factory, log)
+    await ingest_once(business_db_factory, log)
 
     # Replace the file wholesale (rotation): its rows are NEW spend.
     log.write_text(_row(pid, tid, inp=13, out=0))
-    result = await ingest_once(db_factory, log)
+    result = await ingest_once(business_db_factory, log)
 
     assert result["landed"] == 1
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["input_tokens"] == 24  # 11 + 13, nothing skipped or doubled
 
 
 @pytest.mark.anyio
-async def test_unattributable_rows_are_skipped_not_wedged_on(db_factory, tmp_path):
-    pid, tid = await _seed(db_factory)
+async def test_unattributable_rows_are_skipped_not_wedged_on(
+    business_db_factory, tmp_path
+):
+    pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     orphan = json.dumps({"project_id": None, "total_tokens": 5}) + "\n"
     ghost = _row("00000000-0000-0000-0000-000000000000", tid)
     log.write_text(orphan + ghost + _row(pid, tid))
 
-    result = await ingest_once(db_factory, log)
+    result = await ingest_once(business_db_factory, log)
 
     assert result == {"landed": 1, "skipped": 2}
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 1
 
@@ -132,22 +134,22 @@ async def test_unattributable_rows_are_skipped_not_wedged_on(db_factory, tmp_pat
 @pytest.mark.anyio
 @pytest.mark.parametrize("missing", [True, False])
 async def test_invalid_topic_keeps_project_usage_and_advances_once(
-    db_factory, tmp_path, missing
+    business_db_factory, tmp_path, missing
 ):
     from sqlalchemy import select
 
-    pid, tid = await _seed(db_factory)
+    pid, tid = await _seed(business_db_factory)
     if missing:
         invalid_topic = uuid.uuid4()
     else:
-        _, invalid_topic = await _seed(db_factory)
+        _, invalid_topic = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     original = _row(pid, invalid_topic, inp=17, out=3) + _row(pid, tid, inp=7, out=2)
     log.write_text(original)
-    assert await ingest_once(db_factory, log) == {"landed": 2, "skipped": 0}
-    assert await ingest_once(db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await ingest_once(business_db_factory, log) == {"landed": 2, "skipped": 0}
+    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
     assert log.read_text() == original
-    async with db_factory() as session:
+    async with business_db_factory() as session:
         rows = list(
             await session.scalars(
                 select(ResourceUsage).where(ResourceUsage.project_id == pid)

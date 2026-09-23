@@ -26,8 +26,6 @@ from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
-pytestmark = pytest.mark.usefixtures("stub_project_forge")
-
 
 class QuietScreen(StubChannel):
     """A turn that produces no events of its own — so the only 现场 event under
@@ -79,10 +77,10 @@ def _event_blocks_for(rows, eid: str):
 
 @pytest.mark.anyio
 async def test_slow_spool_retention_does_not_block_other_requests(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(QuietScreen()),
@@ -128,12 +126,12 @@ async def test_slow_spool_retention_does_not_block_other_requests(
 
 @pytest.mark.anyio
 async def test_spooled_event_is_backfilled_then_deduped(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     # The backend reader (ws.spool_dir) and the container writer both key off
     # settings.workspace_root, so point it at the test's tmp dir.
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(QuietScreen()),
@@ -187,10 +185,12 @@ async def test_spooled_event_is_backfilled_then_deduped(
 
 
 @pytest.mark.anyio
-async def test_spooled_chat_message_is_backfilled(db_factory, tmp_path, monkeypatch):
+async def test_spooled_chat_message_is_backfilled(
+    business_db_factory, tmp_path, monkeypatch
+):
     """Lost execution text is backfilled into activity history, deduped by eid."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(QuietScreen()),
@@ -265,14 +265,14 @@ class _DupToolScreen(StubChannel):
 
 @pytest.mark.anyio
 async def test_backfilled_events_are_broadcast_not_just_persisted(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A spooled event/message the live hook path missed must reach the
     frontend when the next turn backfills it — not just land silently in the
     DB (bug: the WS frame stream never carried it, so a turn's own author saw
     nothing while the DB quietly gained a row nobody's client displayed)."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(QuietScreen()),
@@ -299,6 +299,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
             topic_id=tid, author="u", content="继续", summon=True
         )
     ]
+    await settle_turn(svc, tid)
 
     event_frames = [
         f
@@ -347,7 +348,7 @@ class _LateSpoolScreen(StubChannel):
 
 @pytest.mark.anyio
 async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """The fallback path (no discrete AgentMessage this turn) must not leave a
     same-text duplicate once the spool catches up: an eid-less fallback block
@@ -355,7 +356,7 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
     same event (bug — traced from production: 46 messages, exactly one with
     empty meta, with a duplicate eid+backfilled copy of the same text)."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
@@ -389,8 +390,10 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
 
 
 @pytest.mark.anyio
-async def test_duplicate_tool_event_is_deduped_by_event_id(db_factory, tmp_path):
-    factory = db_factory
+async def test_duplicate_tool_event_is_deduped_by_event_id(
+    business_db_factory, tmp_path
+):
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(_DupToolScreen()),
@@ -418,13 +421,13 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(db_factory, tmp_path)
 
 @pytest.mark.anyio
 async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """The sweep's dedup compared the STORED content (mention-expanded, never
     stripped) against the raw result text — an @ or a trailing newline in the
     message defeated the comparison and re-persisted the same text eid-less."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     pid, tid = await _project_topic(factory)
 
     text = "@u 交给你了\n"
@@ -535,14 +538,14 @@ def _progress(rows) -> list:
 
 @pytest.mark.anyio
 async def test_spooled_message_flushes_land_as_one_block(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A lost turn's reply reached the spool as line-batch flushes plus the
     Stop. The backfill must land ONE whole message — not one block per flush
     plus a full-text copy from the Stop, which is exactly the reported
     '断成好几条' + '存两次' shape."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = _quiet_service(factory, tmp_path)
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
@@ -579,12 +582,12 @@ async def test_spooled_message_flushes_land_as_one_block(
 
 @pytest.mark.anyio
 async def test_incomplete_flushes_wait_for_the_missing_one(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A message whose final flush has not reached the spool yet must NOT land
     as a fragment: its files stay for the pass where the message completes."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = _quiet_service(factory, tmp_path)
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
@@ -641,14 +644,14 @@ class _FlushedMessageScreen(StubChannel):
 
 @pytest.mark.anyio
 async def test_live_coalesced_message_is_not_backfilled_again(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """The live path persisted the whole message with every flush id; the
     spool still holds the per-flush files. The next reconcile must recognize
     EACH flush id as already materialized — matching only the first one left
     the rest to land again as fragments."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(_FlushedMessageScreen()),
@@ -669,6 +672,7 @@ async def test_live_coalesced_message_is_not_backfilled_again(
         topic_id=tid, author="u", content="继续", summon=True
     ):
         pass
+    await settle_turn(quiet, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
@@ -679,13 +683,13 @@ async def test_live_coalesced_message_is_not_backfilled_again(
 
 @pytest.mark.anyio
 async def test_abandoned_partial_lands_joined_after_grace(
-    db_factory, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """Flushes whose message never completed (the screen died mid-message, no
     Stop ever spooled) must still land once they are stale — joined into one
     block, not one per flush."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     svc = _quiet_service(factory, tmp_path)
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
@@ -737,7 +741,7 @@ def _spool_stop(spool: Path, eid: str, last_message: str) -> None:
 @pytest.mark.parametrize("text", ["我改完了", "@u 交给你了"])
 @pytest.mark.anyio
 async def test_stop_does_not_duplicate_a_message_that_landed_live(
-    db_factory, tmp_path, monkeypatch, text
+    business_db_factory, tmp_path, monkeypatch, text
 ):
     """A Stop's `last_assistant_message` is a copy of a message already in the
     room, so it must not land again — whether or not that message mentions
@@ -746,7 +750,7 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
     while the hook payload still holds the friendly form: comparing the two
     raw put an identical-looking second copy in the room."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    factory = db_factory
+    factory = business_db_factory
     pid, tid = await _project_topic(factory)
     async with factory() as session:
         session.add(ProjectMember(project_id=pid, user_handle="u"))
@@ -762,12 +766,15 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(live, tid)
 
     _spool_stop(ws.spool_dir(pid, tid), "stop-1", text)
-    async for _ in _quiet_service(factory, tmp_path).converse(
+    quiet = _quiet_service(factory, tmp_path)
+    async for _ in quiet.converse(
         topic_id=tid, author="u", content="再来", summon=True
     ):
         pass
+    await settle_turn(quiet, tid)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
