@@ -1,6 +1,7 @@
 """Registration codes, password limits and the login budget, through the API."""
 
 import re
+import time
 import uuid
 
 import pyotp
@@ -17,11 +18,29 @@ class _Outbox:
     def __init__(self, *, delivers: bool = True) -> None:
         self.is_configured = True
         self.delivers = delivers
+        self.held = False
         self.sent: list[dict] = []
 
     async def send(self, **kwargs) -> bool:
+        import asyncio
+
+        while self.held:
+            await asyncio.sleep(0.01)
         self.sent.append(kwargs)
         return self.delivers
+
+    def wait_for(self, count: int, timeout: float = 5.0) -> None:
+        """Recovery mail leaves after the response, so wait for it to land."""
+        deadline = time.monotonic() + timeout
+        while len(self.sent) < count:
+            assert time.monotonic() < deadline, f"{len(self.sent)} of {count} sent"
+            time.sleep(0.01)
+
+    def settle(self, count: int) -> None:
+        """Wait for ``count`` mails, then make sure no further one follows."""
+        self.wait_for(count)
+        time.sleep(0.2)
+        assert len(self.sent) == count, self.sent
 
 
 @pytest.fixture
@@ -161,6 +180,142 @@ class TestRegistrationEmailCode:
         accepted = api_client.post("/users", json=_registration(email, code))
         assert accepted.status_code == 200, accepted.text
 
+    def test_the_sixth_code_within_an_hour_is_refused(
+        self, api_client: TestClient, outbox: _Outbox, monkeypatch
+    ):
+        import app.domain.user.mail_quota as mail_quota
+
+        monkeypatch.setattr(mail_quota, "MAIL_COOLDOWN_SECONDS", 0)
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+
+        for _ in range(5):
+            resp = api_client.post("/users/verify/email", json={"email": email})
+            assert resp.status_code == 200, resp.text
+
+        refused = api_client.post("/users/verify/email", json={"email": email})
+        assert refused.status_code == 400, refused.text
+        assert len(outbox.sent) == 5
+
+
+RECOVER = "/users/recover/password/request"
+
+
+def _recover(client: TestClient, email: str):
+    return client.post(RECOVER, json={"email": email})
+
+
+def _unknown_email() -> str:
+    return f"nobody-{uuid.uuid4().hex[:12]}@example.com"
+
+
+class TestRecoveryMail:
+    def test_a_second_request_within_a_minute_sends_nothing(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+
+        assert _recover(api_client, user.email).status_code == 200
+        outbox.wait_for(1)
+        assert _recover(api_client, user.email).status_code == 200
+
+        outbox.settle(1)
+        assert outbox.sent[0]["to"] == user.email
+
+    def test_the_sixth_request_within_an_hour_sends_nothing(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        outbox: _Outbox,
+        monkeypatch,
+    ):
+        import app.domain.user.mail_quota as mail_quota
+
+        monkeypatch.setattr(mail_quota, "MAIL_COOLDOWN_SECONDS", 0)
+        user = user_client.create_user()
+
+        for sent in range(1, 6):
+            assert _recover(api_client, user.email).status_code == 200
+            outbox.wait_for(sent)
+        assert _recover(api_client, user.email).status_code == 200
+
+        outbox.settle(5)
+
+    def test_addresses_have_separate_limits(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        first = user_client.create_user()
+        second = user_client.create_user()
+
+        _recover(api_client, first.email)
+        outbox.wait_for(1)
+        _recover(api_client, second.email)
+
+        outbox.settle(2)
+        assert {m["to"] for m in outbox.sent} == {first.email, second.email}
+
+    def test_case_and_whitespace_variants_share_the_limit(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+        _recover(api_client, user.email)
+        outbox.wait_for(1)
+
+        for variant in (user.email.upper(), f"  {user.email}  "):
+            assert _recover(api_client, variant).status_code == 200
+
+        outbox.settle(1)
+
+    def test_known_and_unknown_addresses_get_the_same_answer(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+        unknown = _unknown_email()
+
+        known_first = _recover(api_client, user.email)
+        unknown_first = _recover(api_client, unknown)
+        known_limited = _recover(api_client, user.email)
+        unknown_limited = _recover(api_client, unknown)
+
+        answers = {
+            (r.status_code, r.content)
+            for r in (known_first, unknown_first, known_limited, unknown_limited)
+        }
+        assert len(answers) == 1, answers
+        assert known_first.status_code == 200
+        outbox.settle(1)
+        assert outbox.sent[0]["to"] == user.email
+
+    def test_the_answer_does_not_wait_for_the_mail(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+        outbox.held = True
+        try:
+            resp = _recover(api_client, user.email)
+            assert resp.status_code == 200, resp.text
+            assert outbox.sent == []
+        finally:
+            outbox.held = False
+
+        outbox.wait_for(1)
+        match = re.search(r"token=([\w.-]+)", outbox.sent[0]["body_text"])
+        assert match, outbox.sent[0]
+
+    def test_a_failed_send_still_answers_the_same(
+        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+    ):
+        user = user_client.create_user()
+        outbox.delivers = False
+
+        failed = _recover(api_client, user.email)
+        outbox.wait_for(1)
+        unknown = _recover(api_client, _unknown_email())
+
+        assert (failed.status_code, failed.content) == (
+            unknown.status_code,
+            unknown.content,
+        )
+
 
 class TestOverlongPasswords:
     def test_logging_in_with_one_is_a_wrong_password_that_counts(
@@ -207,6 +362,7 @@ class TestOverlongPasswords:
             "/users/recover/password/request", json={"email": user.email}
         )
         assert requested.status_code == 200, requested.text
+        outbox.wait_for(1)
         match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
         assert match, outbox.sent[-1]
         token = match.group(1)
@@ -236,6 +392,7 @@ class TestRecoveryPasswordRule:
         user = user_client.create_user()
         forget_redis_state(user)
         api_client.post("/users/recover/password/request", json={"email": user.email})
+        outbox.wait_for(1)
         match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
         assert match, outbox.sent[-1]
         path = "/users/recover/password/verify"

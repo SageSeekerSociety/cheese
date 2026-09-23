@@ -702,7 +702,7 @@ def _resolve_compute_id(
     return topic_compute_profile or project_configs(project_settings).default.profile
 
 
-def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
+def _model_policy_call(project, agent=None) -> gate.Call:
     """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
 
     两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
@@ -716,12 +716,8 @@ def _model_policy_call(project, agent=None, *, subagent=False) -> gate.Call:
     bound = binding.resolve(
         None,
         choices,
-        agent_model=agent.configuration.get("model")
-        if agent and not subagent
-        else None,
-        default_model=(project.settings or {}).get("default_subagent_model")
-        if subagent
-        else None,
+        agent_model=agent.configuration.get("model") if agent else None,
+        default_model=(project.settings or {}).get("default_model"),
     )
     return gate.Call(
         resource=gate.Resource.model,
@@ -1382,6 +1378,8 @@ class ChatService:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -1525,7 +1523,16 @@ class ChatService:
             if fallback is not None:
                 yield {"type": "event_block", "block": fallback}
 
-        async with self._prompt_lock(topic_id, turn_id):
+        recipient_handle = None
+        if recipient_instance_id is not None:
+            from app.domain.agent_instance.models import AgentInstance
+
+            async with self._sessions() as session:
+                instance = await session.get(AgentInstance, recipient_instance_id)
+                if instance is None or not instance.is_active:
+                    raise ValidationError("The addressed agent is unavailable")
+                recipient_handle = instance.handle
+        async with self._prompt_lock(topic_id, turn_id, recipient_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1535,6 +1542,8 @@ class ChatService:
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
                 platform_turn=platform_turn,
+                delivery_id=delivery_id,
+                recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
 
@@ -1769,6 +1778,7 @@ class ChatService:
         notice: str,
         *,
         blocks: Sequence[uuid.UUID] = (),
+        recipient_seat: str | None = None,
     ) -> bool:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
@@ -1797,6 +1807,10 @@ class ChatService:
         consuming_turn_id = self._active_turn_ids.get(topic_id)
         if consuming_turn_id is None:
             return False
+        if recipient_seat is not None:
+            state = self._hook_work.get((topic_id, consuming_turn_id))
+            if state is None or state.acting_agent != recipient_seat:
+                return False
         line = platform_prompt(strip_platform_notice(notice))
         if blocks:
             # Registered BEFORE the write, for the reason the human-message path
@@ -1812,7 +1826,11 @@ class ChatService:
             )
             del pending[:-16]  # a dead session must not grow this forever
         try:
-            return bool(await self._compute.deliver(topic_id, line))
+            return bool(
+                await self._compute.deliver(
+                    topic_id, line, expected_work_id=consuming_turn_id
+                )
+            )
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
@@ -1860,6 +1878,11 @@ class ChatService:
                     async with self._sessions() as session:
                         await BlockRepository(session).mark_consumed(
                             block_ids, consuming_turn_id
+                        )
+                        from app.domain.delivery.agent import receive_attempt
+
+                        await receive_attempt(
+                            session, consuming_turn_id, datetime.now(UTC)
                         )
                         await session.commit()
                     logger.info(
@@ -3703,7 +3726,13 @@ class ChatService:
             # 谁在做这张卡，是平台看见它开工的时候记下来的 —— 这条事件是第一个说
             # 出这个分身 id 的东西（id 在容器里才诞生，派活的时候没有任何东西能提
             # 前说出它）。卡上从此有一个分身在做，看板也就能问它还活着没有。
-            await self._note_worker(task_id, event.agent_id)
+            await self._note_worker(
+                task_id,
+                event.agent_id,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                parent_session_id=event.session_id,
+            )
             # The platform's own sentence about a worker, not anybody's words —
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
@@ -3743,15 +3772,43 @@ class ChatService:
             in_room=True,
         )
 
-    async def _note_worker(self, task_id: uuid.UUID, subagent_id: str) -> None:
+    async def _note_worker(
+        self,
+        task_id: uuid.UUID,
+        subagent_id: str,
+        *,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        parent_session_id: str | None,
+    ) -> None:
         """把做这条活的分身记在卡上。"""
+        from app.domain.delivery.agent import instance_for_seat
+        from app.domain.room_task.models import Task
         from app.domain.room_task.services import TaskService
 
+        if turn_id is None or not parent_session_id:
+            return
         async with self._sessions() as session:
             tasks = TaskService(session)
-            task = await tasks.get(task_id)
-            if task is None:
+            task = await session.get(Task, task_id, with_for_update=True)
+            state = self._hook_work.get((topic_id, turn_id))
+            if (
+                task is None
+                or task.room_id != topic_id
+                or state is None
+                or not parent_session_id
+            ):
                 return
+            instance = await instance_for_seat(
+                session, task.project_id, state.acting_agent
+            )
+            # A delayed start from a replaced parent may remain historical
+            # evidence, but cannot acquire control of the task's current worker.
+            if self._active_turn_ids.get(topic_id) != turn_id or instance is None:
+                return
+            task.execution_agent_instance_id = instance.id
+            task.execution_parent_session_id = parent_session_id
+            task.execution_turn_id = turn_id
             await tasks.note_worker(task, subagent_id)
             await session.commit()
 
@@ -4280,6 +4337,7 @@ class ChatService:
             None,
             binding.catalog(project.settings),
             agent_model=agent.configuration.get("model"),
+            default_model=(project.settings or {}).get("default_model"),
         )
         # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
         # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
@@ -4289,23 +4347,29 @@ class ChatService:
         # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
         # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
         async with self._sessions() as session:
-            calls = [_model_policy_call(project, agent)]
-            child_call = _model_policy_call(project, subagent=True)
-            if child_call.subject != calls[0].subject:
-                calls.append(child_call)
-            for call in calls:
-                proposed = await self._pass_policy_gate(
-                    session,
-                    topic_id,
-                    call,
-                    gate.policy_of(project.settings),
-                    actor=acting_agent or agent.handle,
-                )
-                if proposed is not None:
-                    await session.commit()
-                    raise gate.OverTier(proposed.proposal.content)
+            proposed = await self._pass_policy_gate(
+                session,
+                topic_id,
+                _model_policy_call(project, agent),
+                gate.policy_of(project.settings),
+                actor=acting_agent or agent.handle,
+            )
+            if proposed is not None:
+                await session.commit()
+                raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
         model = bound.wire_model
+        child_default = (project.settings or {}).get("default_subagent_model") or (
+            project.settings or {}
+        ).get("default_model")
+        child_choices = binding.catalog(project.settings)
+        # An unused invalid child default must not block a valid main override.
+        # Preserve it for the child request's admission refusal, never replace it.
+        child_model = child_default
+        if not child_default or child_default in child_choices:
+            child_model = binding.resolve(
+                None, child_choices, default_model=child_default
+            ).wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
@@ -4335,7 +4399,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v3-native-skills"
+                + ":explicit-chat-v4-native-model-choice"
                 # A room already holding a screen keeps the argv it was started
                 # with, and nothing here compares argv — so a launch flag that
                 # changes is a change no live room adopts and nothing reports.
@@ -4351,6 +4415,7 @@ class ChatService:
             "env": {
                 "CHEESE_AGENT_CONFIG": config_hash,
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
             },
             # Which conversation the turn belongs to, and so which session's
             # machines it runs on. Separate from `agent_handle` below, which is
@@ -4681,6 +4746,7 @@ class ChatService:
         user_block_id: uuid.UUID | None,
         provision_actor: Actor | None,
         platform_turn: bool = False,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
         """Everything a turn needs before anything runs it, read in one
         transaction: who is here, what was said, what is remembered, which
@@ -4733,6 +4799,14 @@ class ChatService:
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
+            if recipient_instance_id is not None:
+                recipient = {"instance_id": str(recipient_instance_id)}
+                if agent_instance_handle(
+                    recipient_instance_id
+                ) not in await TopicMemberService(session).agent_handles(place.room_id):
+                    raise ValidationError(
+                        "The addressed agent is no longer seated in this room"
+                    )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
@@ -4930,6 +5004,27 @@ class ChatService:
             # 房间从没打开过算力选择器也照样过闸门：决定一个房间占谁的机器的是这
             # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
             # 少数情形，它和这里问的是同一个闸门。
+            if provider.deferred_work and project is not None and needs_place:
+                from app.domain.agent.compute_configs import room_choice
+
+                conversation = await AgentSessionService(session).ensure(
+                    topic_id, agent.handle, harness=wanted_harness
+                )
+                if conversation.execution_request is None:
+                    conversation.execution_request = {
+                        "generation": str(uuid.uuid4()),
+                        "choice": room_choice(topic, project.settings).model_dump(),
+                        "authorized_by": None,
+                    }
+                if provision_actor is not None and provision_actor.via == "token":
+                    conversation.execution_request = {
+                        **conversation.execution_request,
+                        "authorized_by": {
+                            "handle": provision_actor.handle,
+                            "user_id": provision_actor.user_id,
+                            "via": provision_actor.via,
+                        },
+                    }
             if project is not None:
                 actor_handle = acting_agent or agent.handle
                 policy = gate.policy_of(project.settings)
@@ -4937,7 +5032,11 @@ class ChatService:
                 # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
                 # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
                 # 上也得透明，这是每一轮都走的路。
-                if needs_place and not policy.lets_everything_through:
+                if (
+                    needs_place
+                    and not provider.deferred_work
+                    and not policy.lets_everything_through
+                ):
                     from app.domain.agent.compute_configs import (
                         machine_policy_call,
                         room_choice,
@@ -4968,7 +5067,12 @@ class ChatService:
                 if proposed is not None:
                     await session.commit()
                     return _TurnBail(_proposal_frames(proposed.landed))
-            if needs_place and compute_id == "device" and topic.compute_config is None:
+            if (
+                needs_place
+                and not provider.deferred_work
+                and compute_id == "device"
+                and topic.compute_config is None
+            ):
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,
                 )
@@ -5144,6 +5248,8 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         platform_turn: bool = False,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -5159,6 +5265,7 @@ class ChatService:
             user_block_id=user_block_id,
             provision_actor=provision_actor,
             platform_turn=platform_turn,
+            recipient_instance_id=recipient_instance_id,
         )
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=assembled "
@@ -5399,6 +5506,20 @@ class ChatService:
                 harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
+            if delivery_id is not None:
+                from app.domain.delivery.agent import begin_send
+
+                await begin_send(
+                    self._sessions,
+                    delivery_id,
+                    turn_id,
+                    parent_session_id=resume_session_id,
+                )
+                # Staging a prompt on a booting machine is not receiver input.
+                # Register before send so a fast native receipt cannot race it.
+                self._pending_receipts.setdefault(topic_id, []).append(
+                    (prompt_text, [], turn_id, time.monotonic())
+                )
             ready = await runtime.send(
                 session_ref,
                 prompt_text,

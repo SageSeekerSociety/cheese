@@ -742,6 +742,34 @@ def test_the_feedback_tool_says_when_to_use_it():
         assert "中途" in description
 
 
+def test_machine_reports_its_session_choice(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "machine", "device", "--device-id", "workstation"]
+    )
+    monkeypatch.setattr(
+        cli,
+        "_planned_call",
+        lambda *_: {
+            "data": {
+                "session": {
+                    "choice": {
+                        "name": "Workstation",
+                        "profile": "device",
+                        "device_id": "workstation",
+                    }
+                }
+            }
+        },
+    )
+    cli.main()
+    output = capsys.readouterr().out
+    assert "Workstation" in output
+    assert "文件不会自动迁移" in output
+    assert "None" not in output
+    assert "点头" not in output
+
+
 def test_sync_agents_writes_and_prunes_teammate_definitions(monkeypatch, tmp_path):
     """活跃队友各得一份 mate-<handle>.md（名字、一句话描述、model）；退休的
     被清掉；不是它写的 agent 文件一个不动。"""

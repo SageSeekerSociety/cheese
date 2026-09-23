@@ -95,4 +95,6 @@ async def test_reconnect_leaves_database_connections_available(
         needs_place=needs_place,
     )
     assert result.agent_handle == "reviewer"
-    assert result.machine == ("executor" if needs_place else "chosen-host")
+    assert result.machine == "chosen-host"
+    assert result.deferred is needs_place
+    device.precheck.assert_not_awaited()

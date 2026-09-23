@@ -180,14 +180,15 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
 
-def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(
+def test_the_table_is_exactly_the_six_plus_the_four_the_transport_owns(
     machine_is_gone,
 ):
     """表上只有六样（结论 21）。
 
-    另外三个不是产品动作，是这条传输自己的三个口子：`invoke` 是项目工具（文件、命
+    另外四个不是产品动作，是这条传输自己的四个口子：`invoke` 是项目工具（文件、命
     令）过河的那一程，`platform_request` 是没有对应工具时的原始 API 入口，
-    `send_user_file` 是 SendUserFile 把文件递进本房间的那一程。
+    `send_user_file` 是 SendUserFile 把文件递进本房间的那一程；
+    `project_tools` 在调用时发现并转发工作机上的项目 MCP。
     """
     process, _, _ = machine_is_gone
     assert set(_listing(process)) == {
@@ -195,6 +196,7 @@ def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(
         "invoke",
         "platform_request",
         "send_user_file",
+        "project_tools",
     }
 
 

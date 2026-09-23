@@ -103,9 +103,12 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     assert resolved.machine == "center"
     assert resolved.agent_user_id and looks_like_agent_handle(resolved.agent_handle)
 
-    # 同一条会话、同一台离线的工作机，要手的一轮照旧被挡下来。
-    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
-        client.portal.call(lambda: central.precheck(session, needs_place=True))
+    # The same ordinary room can receive input while work tools are unavailable.
+    offline = client.portal.call(lambda: central.precheck(session, needs_place=True))
+    assert offline.machine == "center"
+    assert offline.rented is False
+    assert offline.deferred is True
+    central.executor.precheck.assert_not_awaited()
 
 
 async def test_a_channel_nobody_wraps_answers_the_question_too(
@@ -155,6 +158,30 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     assert target["kind"] == "private"
     assert target["device_id"] == "center"
     # 装执行器要在工作机上跑一段脚本。一轮不租手，那段脚本就一次也不该跑。
+    central._hub.exec.assert_not_awaited()
+
+
+async def test_ordinary_room_opens_without_executing_on_the_session_host(
+    client, room, monkeypatch
+):
+    project, topic = room
+    central = central_over_offline_hands(client, monkeypatch)
+    ref = SessionRef(project, topic, "cheese", harness="claude-code")
+
+    async def open_room():
+        await central.ensure_ready(
+            session=ref,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref, needs_place=True),
+        )
+
+    client.portal.call(open_room)
+    opened = central._ensure_screen.await_args.kwargs
+    target = json.loads(opened["env"]["CHEESE_EXECUTION_TARGET"])
+    assert opened["device_id"] == "center"
+    assert target["kind"] == "deferred"
     central._hub.exec.assert_not_awaited()
 
 
@@ -236,7 +263,7 @@ class _Tracked:
         return await self._session.__aexit__(*exc)
 
 
-async def test_the_session_machine_check_lets_go_before_asking_for_hands(
+async def test_session_host_check_releases_connection_without_acquiring_hands(
     business_db_factory, room, monkeypatch
 ):
     """要手的一轮不持着一条连接去要第二条 (#1312)。
@@ -264,8 +291,10 @@ async def test_the_session_machine_check_lets_go_before_asking_for_hands(
         needs_place=True,
     )
 
-    assert resolved.rented is True
-    assert held_when_asked == [0], "问执行机的时候手里不该还攥着一条连接"
+    assert resolved.rented is False
+    assert resolved.deferred is True
+    assert held_when_asked == [], "Opening a conversation must not acquire hands"
+    assert counter.open == 0
     assert counter.peak == 1
 
 

@@ -1,16 +1,17 @@
-"""对着一条活说话，说给的是它的房间。
+"""Card instructions reach the observed native parent, without a card session.
 
-一条活没有自己的会话：做它的分身活在房间的会话里，人够不着它。所以每一条通往活的
-话都只有一条路——落在活的时间线上（人看的是那儿），把房间叫醒去转达（能动手的只有
-它）。这个文件钉住那条路的两个方向：人从界面上留言，以及房间用 `cheese tell` 回话。
-
-留言走的是房间的地址（`POST /topics/{room}/tasks/{card}/messages`）——活没有自己的
-地址，也没有为它签的 token。
-
-反过来的证据一样重要：**没有任何一条路会拿活的 id 去开一轮**。开一轮就是起一块屏幕，
-起屏幕就是起一整个容器——正是「一条活 = 房间会话里的一个分身」拆掉的东西。
+An unknown parent leaves committed intent waiting. A known parent receives the
+specific child identity; delayed hooks and replacement workers cannot retarget
+an existing instruction. The hook transport is substituted, not the database,
+HTTP route, hook translator, runner or runtime admission path.
 """
 
+import asyncio
+import uuid
+
+from sqlalchemy import select
+
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import chat_ws_url
@@ -82,6 +83,23 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     thread = _thread(client, room["id"])
     _wait_work_idle()
 
+    # The real hook translator and persistence observe which native parent
+    # owns this worker before a human addresses it.
+    emit = stub_hooks.emit_turn
+
+    def start_child(topic_id, prompt, reply):
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        stub_hooks.spawns(topic_id, thread_label=thread["thread_label"])
+        stub_hooks.stops(topic_id, reply)
+
+    stub_hooks.emit_turn = start_child
+    with client.websocket_connect(chat_ws_url(room["id"], "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 start child"})
+        _drain_until_done(ws)
+    _wait_work_idle()
+    stub_hooks.emit_turn = emit
+
     screens = _record_screens(stub_hooks)
     before = len(_card_blocks(client, room["id"], thread["id"]))
     r = _say_on_card(client, room["id"], thread["id"], "这条先别做了")
@@ -99,7 +117,81 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     prompt = stub_hooks.last_prompt or ""
     assert thread["id"] in prompt, "不说是哪条活，房间不知道该找哪个分身"
     assert "这条先别做了" in prompt, "人说的话没带过去"
-    assert "子活" in prompt
+    assert "native child=worker-1" in prompt
+    assert stub_hooks.last_resume_session_id == "sess-test-1"
+
+    async def assert_replaced_worker_is_fenced():
+        from datetime import UTC, datetime
+
+        import pytest
+
+        from app.api.deps import get_chat_service
+        from app.core.errors import ValidationError
+        from app.domain.delivery.agent import (
+            begin_send,
+            dispatch_pending,
+            record_task_instruction,
+        )
+        from app.domain.delivery.ledger import DeliveryEvent
+        from app.domain.notification.models import NotificationType
+        from app.domain.room_task.models import Task
+        from app.main import app
+
+        chat = app.dependency_overrides[get_chat_service]()
+        task_id = uuid.UUID(thread["id"])
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            original_turn = task.execution_turn_id
+        # The original turn is over. A delayed native start cannot steal the card.
+        await chat._note_worker(
+            task_id,
+            "late-child",
+            topic_id=uuid.UUID(room["id"]),
+            turn_id=original_turn,
+            parent_session_id="late-parent",
+        )
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            assert task.subagent_id == "worker-1"
+            assert task.execution_parent_session_id == "sess-test-1"
+            await record_task_instruction(
+                session,
+                DeliveryEvent(
+                    id=uuid.uuid4(),
+                    type=NotificationType.ROOM_NOTICE,
+                    payload={},
+                    occurred_at=datetime.now(UTC),
+                ),
+                task=task,
+                content="stop worker-1",
+            )
+            await session.commit()
+        attempts = []
+
+        class Recorder:
+            def submit(self, *args, **kwargs):
+                attempts.append(kwargs)
+
+        await dispatch_pending(client.test_factory, chat=chat, runner=Recorder())
+        assert len(attempts) == 1
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            task.subagent_id = "replacement-child"
+            await session.commit()
+        attempt = attempts[0]
+        with pytest.raises(ValidationError):
+            await begin_send(
+                client.test_factory,
+                attempt["delivery_id"],
+                attempt["turn_id"],
+                parent_session_id="sess-test-1",
+            )
+        async with client.test_factory() as session:
+            assert (
+                await session.get(Delivery, attempt["delivery_id"])
+            ).state == "failed"
+
+    client.portal.call(assert_replaced_worker_is_fenced)
 
 
 def test_a_card_has_no_chat_socket_of_its_own(client, stub_hooks):
@@ -134,3 +226,26 @@ def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
     assert screens == [room["id"]]
     authors = [b["author"] for b in _blocks(client, room["id"])]
     assert any(looks_like_agent_handle(a) for a in authors), "房间没答话"
+
+
+def test_a_card_without_observed_parent_waits_without_waking_the_default(
+    client, stub_hooks
+):
+    room = _room(client, _project(client)["id"])
+    task = _thread(client, room["id"])
+    screens = _record_screens(stub_hooks)
+    response = _say_on_card(client, room["id"], task["id"], "stop this child")
+    assert response.status_code == 200
+    _wait_work_idle()
+    assert screens == []
+
+    async def check():
+        async with client.test_factory() as session:
+            row = await session.scalar(
+                select(Delivery).where(Delivery.task_id == uuid.UUID(task["id"]))
+            )
+            assert row.state == "pending"
+            assert row.agent_instance_id is None
+            assert row.payload["content"].find("stop this child") >= 0
+
+    asyncio.run(check())

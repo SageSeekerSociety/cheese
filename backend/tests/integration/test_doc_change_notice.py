@@ -70,7 +70,9 @@ class _Screen:
     def __init__(self) -> None:
         self.pushed: list[str] = []
 
-    async def deliver(self, topic_id, text, images=None) -> bool:
+    async def deliver(
+        self, topic_id, text, images=None, *, expected_work_id=None
+    ) -> bool:
         self.pushed.append(text)
         return True
 

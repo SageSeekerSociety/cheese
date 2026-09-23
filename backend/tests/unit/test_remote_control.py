@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from starlette.requests import Request
 
 from app.api.routes.remote_control import bootstrap_session, launch_claims
@@ -632,3 +633,59 @@ async def test_a_retried_event_is_journalled_once_and_forgotten_within_an_hour(r
     assert markers
     for marker in markers:
         assert 0 < await service.redis.ttl(marker) <= 3600
+
+
+async def test_worker_stream_retries_one_redis_timeout_without_losing_command(
+    rc, monkeypatch
+):
+    service, create = rc
+    session = await create()
+    bridge = await service.bridge(session)
+    session = await service.get(session["id"])
+    await service.enqueue(
+        session["id"],
+        {
+            "type": "control_request",
+            "request_id": "after-timeout",
+            "request": {"subtype": "interrupt"},
+        },
+        "alice",
+    )
+    original = service.redis.xread
+    reads = 0
+
+    async def timeout_once(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise RedisTimeoutError("transient read timeout")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(service.redis, "xread", timeout_once)
+    stream = service.worker_stream(session, bridge["worker_jwt"], "0-0")
+    assert await anext(stream) == ": connected\n\n"
+    event = await asyncio.wait_for(anext(stream), 2)
+    assert '"request_id": "after-timeout"' in event
+    assert reads == 2
+    await stream.aclose()
+
+
+async def test_worker_stream_reports_repeated_redis_timeouts(rc, monkeypatch):
+    service, create = rc
+    session = await create()
+    bridge = await service.bridge(session)
+    session = await service.get(session["id"])
+    reads = 0
+
+    async def timeout_read(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        raise RedisTimeoutError("persistent read timeout")
+
+    monkeypatch.setattr(service.redis, "xread", timeout_read)
+    stream = service.worker_stream(session, bridge["worker_jwt"], "0-0")
+    assert await anext(stream) == ": connected\n\n"
+    with pytest.raises(RedisTimeoutError):
+        await anext(stream)
+    assert reads == 2
+    await stream.aclose()

@@ -6,6 +6,7 @@ from redis.asyncio import Redis
 
 from app.core.email import get_email_sender
 from app.core.errors import BadRequestError, SystemBusyError
+from app.domain.user.mail_quota import MailQuota
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ class EmailVerificationService:
         code = generate_verification_code()
         key = f"{VERIFICATION_CODE_PREFIX}{email}"
 
-        if await self._redis.ttl(key) > VERIFICATION_CODE_TTL - 60:
+        quota = MailQuota(self._redis, "email_verification")
+        if not await quota.take(email):
             raise BadRequestError("Please wait before requesting a new code")
 
         pipe = self._redis.pipeline(transaction=True)
@@ -90,9 +92,10 @@ class EmailVerificationService:
             body_text=body_text,
         )
         if not sent:
-            # Nobody received this code, so it must not hold the resend
-            # cooldown either.
+            # Nobody received this code, so it must not count against the
+            # resend quota either.
             await self._redis.delete(key)
+            await quota.give_back(email)
             raise SystemBusyError(
                 "Failed to send the verification email. Please try again"
             )

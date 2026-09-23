@@ -61,7 +61,8 @@ async def test_invited_teammate_is_the_startup_identity(
     )
     assert placement.agent_handle == seat
     assert placement.agent_user_id != default_id
-    assert placement.rented is needs_place
+    assert placement.rented is (needs_place and harness == "pi")
+    assert placement.deferred is (needs_place and harness != "pi")
 
     ref = SessionRef(project_id, room_id, "reviewer", harness=harness)
     opening = Opening(system_prompt="Trial", agent_handle=seat, needs_place=needs_place)

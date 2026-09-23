@@ -330,6 +330,7 @@ class StubChannel(Channel):
         self.hook(
             topic_id,
             hook_event_name="SubagentStart",
+            session_id="sess-test-1",
             agent_id=agent_id,
             agent_type="general-purpose",
         )

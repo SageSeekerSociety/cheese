@@ -135,9 +135,9 @@ async def test_email_differing_only_in_case_is_taken(client):
     )
     assert first.status_code == 200, first.text
 
-    second = client.post(
-        "/users", json=await _registration("mailer2", "mix@example.com")
-    )
+    # A case variant of a taken address is turned away when it asks for a
+    # code, before a code could be sent to it.
+    second = client.post("/users/verify/email", json={"email": "mix@example.com"})
 
     assert second.status_code == 409, second.text
 

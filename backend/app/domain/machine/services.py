@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -26,7 +26,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
-from app.domain.agent.compute_configs import room_choice
+from app.domain.agent.compute_configs import ComputeChoice, room_choice
 from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
@@ -162,16 +162,22 @@ class MachineService:
         to the team's machines as anyone else on it. What is still required is an
         id to check that membership against.
         """
-        if actor.via != "token" or actor.user_id is None:
+        user_id = actor.user_id
+        if actor.via == "cheese":
+            from app.domain.user.services import user_by_handle
+
+            user = await user_by_handle(self._session, actor.handle)
+            user_id = user.id if user else None
+        elif actor.via != "token":
+            raise AuthenticationRequiredError("Login required to use cloud compute")
+        if user_id is None:
             raise AuthenticationRequiredError("Login required to use cloud compute")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
         team_id = await self._projects.team_for_project(project_id)
         if team_id is not None:
-            if not await team_service(self._session).is_team_member(
-                team_id, actor.user_id
-            ):
+            if not await team_service(self._session).is_team_member(team_id, user_id):
                 raise ForbiddenError("只有团队成员可以使用团队云额度")
         else:
             await MemberService(self._session).require_manager(project_id, actor)
@@ -216,6 +222,7 @@ class MachineService:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID | None = None,
+        session_id: uuid.UUID | None = None,
         requested_by: str | None,
         ssh_pubkey: str | None = None,
         owner_user_id: int | None = None,
@@ -299,6 +306,7 @@ class MachineService:
                 body=body,
                 project_id=project_id,
                 topic_id=topic_id,
+                session_id=session_id,
                 requested_by=requested_by,
                 owner_user_id=owner_user_id,
             )
@@ -326,6 +334,7 @@ class MachineService:
         machine = await self._repo.add(
             project_id=project_id,
             topic_id=topic_id,
+            session_id=session_id,
             machine_id=None,
             customer_id=customer_id,
             account_id=account_id,
@@ -344,7 +353,7 @@ class MachineService:
             bootstrap_key=bootstrap_private,
         )
         creating = (
-            _create_locks.setdefault(topic_id, asyncio.Lock())
+            _create_locks.setdefault(session_id or topic_id, asyncio.Lock())
             if topic_id is not None
             else asyncio.Lock()
         )
@@ -489,6 +498,101 @@ class MachineService:
             memory_mb=choice.memory_mb,
             disk_gb=choice.disk_gb,
         )
+
+    async def ensure_session_machine(
+        self, session_id: uuid.UUID, *, actor: Actor, choice: ComputeChoice
+    ) -> ProjectMachine:
+        """Reserve compute for one session after the caller authorized its choice."""
+        from app.domain.agent_instance.models import AgentInstance
+        from app.domain.agent_session.models import AgentSession
+        from app.domain.topic.services import TopicService
+
+        agent_session = await self._session.get(AgentSession, session_id)
+        if agent_session is None:
+            raise NotFoundError("agent session not found")
+        topic_id = agent_session.topic_id
+        topic = await TopicService(self._session).lock_for_execution(topic_id)
+        # Shared with archive and legacy allocation; the reservation commits
+        # before external I/O, so another session can start its own allocation.
+        await self._repo.lock_topic(topic_id)
+        await self._session.refresh(topic)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("archived topic cannot provision cloud compute")
+        await self.require_use_authority(topic.project_id, actor)
+        if choice.profile != "cloud":
+            raise ValidationError("session has not selected cloud compute")
+
+        existing = await self._repo.get_active_for_session(session_id)
+        if existing is not None:
+            if existing.warm_claim_pending:
+                await self._warm_pool.finish_claim(existing)
+            elif existing.machine_id is None:
+                await self._session.commit()
+                async with _create_locks.setdefault(session_id, asyncio.Lock()):
+                    pass
+            topic = await TopicService(self._session).lock_for_execution(topic_id)
+            await self._repo.lock_topic(topic_id)
+            await self._session.refresh(topic)
+            await self._session.refresh(existing)
+            if topic.status == TopicStatus.archived:
+                raise ValidationError("archived topic cannot provision cloud compute")
+            if existing.released_at is not None or existing.superseded_at is not None:
+                raise ConflictError("session cloud allocation was released")
+            if _still_moving(existing) or _stale(existing):
+                await self.refresh(existing)
+            if existing.status == MachineStatus.suspended:
+                await self.resume(existing)
+            if existing.status not in GONE:
+                return existing
+            await self.forget(existing)
+
+        instance = await self._session.scalar(
+            select(AgentInstance).where(
+                AgentInstance.project_id == topic.project_id,
+                AgentInstance.handle == agent_session.agent_handle,
+            )
+        )
+        if instance is None or not instance.is_active:
+            raise ValidationError("session agent is not active in this project")
+        agent = await IdentityService(self._session).ensure_instance_agent_user(
+            instance.id, instance.display_name
+        )
+        return await self.provision(
+            project_id=topic.project_id,
+            topic_id=topic_id,
+            session_id=session_id,
+            requested_by=actor.handle,
+            owner_user_id=agent.id,
+            cores=choice.cores,
+            memory_mb=choice.memory_mb,
+            disk_gb=choice.disk_gb,
+        )
+
+    async def supersede_session_machine(
+        self, session_id: uuid.UUID, *, actor: Actor
+    ) -> None:
+        """Retain the replaced VM and its quota while releasing the session.
+
+        Pending allocation stays attached until its provider outcome is known.
+        """
+        from app.domain.agent_session.models import AgentSession
+        from app.domain.topic.services import TopicService
+
+        agent_session = await self._session.get(AgentSession, session_id)
+        if agent_session is None:
+            raise NotFoundError("agent session not found")
+        topic = await TopicService(self._session).lock_for_execution(
+            agent_session.topic_id
+        )
+        await self._repo.lock_topic(topic.id)
+        machine = await self._repo.get_active_for_session(session_id)
+        if machine is None:
+            return
+        await self.require_use_authority(topic.project_id, actor)
+        if machine.warm_claim_pending or machine.machine_id is None:
+            raise ConflictError("cloud allocation is still pending")
+        machine.superseded_at = datetime.now(UTC)
+        await self._session.flush()
 
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         return await self._repo.list_active_for_topic(topic_id)

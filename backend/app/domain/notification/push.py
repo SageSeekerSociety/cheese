@@ -22,18 +22,14 @@ Web Push 的内容由**浏览器的**密钥加密（`p256dh` / `auth`），服�
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from redis.asyncio import Redis
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push_models import PushSubscription
 
@@ -131,59 +127,3 @@ def push_text(type_: NotificationType, payload: dict[str, Any]) -> tuple[str, st
         return (question or "芝士有一个待确认问题", where or "待你回答")
     content = str(payload.get("content") or "").strip()
     return (content or "平台有一条提示", where)
-
-
-class RedisPushQueueNotificationHandler:
-    """把该推的那几条排进 Redis，由 `drain_push_queue` 真的发出去。
-
-    和邮件同一个形状，理由也同一个：一次推送要打推送服务商的 HTTP 接口，一个人有
-    几个浏览器就是几次；让它跑在产生通知的那个请求里，等于把一次采纳点击的响应时间
-    绑在 FCM 的可用性上。
-    """
-
-    name = "redis-push-queue"
-
-    def __init__(
-        self, redis_client: Redis | None, *, queue_key: str, batch_size: int = 100
-    ) -> None:
-        self._redis = redis_client
-        self._queue_key = queue_key
-        self._batch_size = max(1, batch_size)
-
-    async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None:
-        if not deliveries or self._redis is None:
-            return
-        items: list[str] = []
-        for delivery in deliveries:
-            if delivery.type not in PUSHABLE:
-                continue
-            title, body = push_text(delivery.type, delivery.payload)
-            items.append(
-                json.dumps(
-                    {
-                        "recipientId": delivery.recipient_id,
-                        "type": delivery.type.value,
-                        "title": title,
-                        "body": body,
-                        "projectId": delivery.payload.get("projectId"),
-                        "topicId": delivery.payload.get("topicId"),
-                    },
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                )
-            )
-            if len(items) >= self._batch_size:
-                await self._flush(items)
-                items = []
-        if items:
-            await self._flush(items)
-
-    async def _flush(self, items: list[str]) -> None:
-        if not items or self._redis is None:
-            return
-        try:
-            await self._redis.rpush(self._queue_key, *items)  # type: ignore[misc]
-        except Exception:
-            # 推送是三个渠道里最不重要的那个：站内通知已经写进库了，邮件也已经排
-            # 上队。推送排队失败不该把产生通知的那次请求带下去。
-            logger.exception("failed to enqueue push batch into %s", self._queue_key)
