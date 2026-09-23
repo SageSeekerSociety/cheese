@@ -92,6 +92,11 @@ Set one without the other and every launch logs an error naming the missing one.
 
 ## Release on the dev box
 
+The dev application deployment releases the metering image after updating the
+application, using the same full commit SHA and requiring its image build and
+Required CI to succeed. A healthy proxy already running that digest is left
+running, so an unchanged image does not interrupt active streams.
+
 Use the **Release metering proxy** GitHub Actions workflow from `main`, with the
 full merged commit SHA. Its image build and Required CI must both have succeeded
 for that exact SHA. Acknowledge the interruption only when ready to recreate the
