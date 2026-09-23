@@ -95,6 +95,42 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
     """)
 
 
+def test_a_platform_receipt_never_becomes_an_empty_text_block():
+    """`platform_request`'s receipt is always `{"stdout": body, "stderr": ""}`,
+    and the plugin used to turn BOTH halves into a `text` block unconditionally.
+    The empty one is not harmless padding: a provider that validates text
+    content rejects the whole request over it (Moonshot's Anthropic endpoint
+    answers 400 "Invalid request: text content is empty"), and the block then
+    stays in the conversation — so one platform call wedges every later turn in
+    that room. Nothing else about the receipt changes."""
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const body = '{"code":200,"message":"ok","data":null}';
+        const receipt = {result: {stdout: body, stderr: ''}};
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async () => ({
+            content: [{type: 'text', text: JSON.stringify(receipt)}],
+          })},
+        };
+        const call = {tool: 'mcp__native__platform_request', tool_use_id: 'req',
+                      method: 'GET', path: '/topics/x/doc'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [{type: 'text', text: '{"code":200,"message":"ok","data":null}'}],
+        });
+        receipt.result = {stdout: '', stderr: ''};
+        assert.deepEqual(await handlers['tool.call'](api, call), {result: []});
+        receipt.result = {stdout: 'out', stderr: 'err'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [{type: 'text', text: 'out'}, {type: 'text', text: 'err'}],
+        });
+    """)
+
+
 def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
     _run_proxy("""
         import assert from 'node:assert/strict';
