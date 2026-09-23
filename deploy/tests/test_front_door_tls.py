@@ -3,7 +3,8 @@
 
 A request that arrives the way the Hong Kong relay forwards it — a PROXY
 protocol header, then TLS — reaches the application with the client address
-from that header, and a box without a certificate gets no TLS listener at all.
+from that header, a request for an alias name is sent to the canonical one,
+and a box without a certificate gets no TLS listener at all.
 """
 
 import json
@@ -48,21 +49,19 @@ def configure(active: Path, plain_port: int) -> str:
     return (active / "sites-frontend.conf").read_text()
 
 
-def request_through_relay(port: int) -> dict:
+def request_through_relay(port: int, host: str = "okcheese.com", path: str = "/") -> tuple[bytes, bytes]:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
         raw.sendall(f"PROXY TCP4 {CLIENT} 127.0.0.1 40000 443\r\n".encode())
-        with context.wrap_socket(raw, server_hostname="okcheese.com") as tls:
-            tls.sendall(b"GET / HTTP/1.1\r\nHost: okcheese.com\r\nConnection: close\r\n\r\n")
+        with context.wrap_socket(raw, server_hostname=host) as tls:
+            tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
             response = b""
             while chunk := tls.recv(65536):
                 response += chunk
     head, _, body = response.partition(b"\r\n\r\n")
-    assert head.startswith(b"HTTP/1.1 200"), head
-    assert b"strict-transport-security" in head.lower(), head
-    return json.loads(body)
+    return head, body
 
 
 def main() -> None:
@@ -103,10 +102,18 @@ def main() -> None:
         subprocess.run([*command, "-t"], check=True)
         subprocess.run(command, check=True)
         try:
-            headers = {k.lower(): v for k, v in request_through_relay(tls).items()}
+            head, body = request_through_relay(tls)
+            assert head.startswith(b"HTTP/1.1 200"), head
+            assert b"strict-transport-security" in head.lower(), head
+            headers = {k.lower(): v for k, v in json.loads(body).items()}
             forwarded = [part.strip() for part in headers["x-forwarded-for"].split(",")]
             assert forwarded[0] == CLIENT, headers
             assert headers["host"] == "okcheese.com", headers
+
+            for alias in ("www.okcheese.com", "hk.okcheese.com", "WWW.okcheese.com"):
+                head, _ = request_through_relay(tls, alias, "/projects/1?tab=site")
+                assert head.startswith(b"HTTP/1.1 301"), head
+                assert b"\r\nlocation: https://okcheese.com/projects/1?tab=site" in head.lower(), head
         finally:
             subprocess.run([*command, "-s", "stop"], check=False)
             app.shutdown()
