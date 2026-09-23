@@ -143,12 +143,13 @@ const y = (v: number): number => PAD_TOP + PLOT_H - (v / maxValue.value) * PLOT_
 
 const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)} ${y(v)}`).join('')
 
-/** x 轴抽稀：标 `ceil(n/6)` 的倍数位与最后一天。7 天全标（step=1），30 天标 6+1 个，
- *  90 天标 7 个 —— 轴上永远读得出两端和走向，中间的交给 hover。 */
+/** x 轴抽稀：标 `ceil((n-1)/6)` 的倍数位与最后一天 —— 7 天全标（stride=1），
+ *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
+ *  走向，中间的交给 hover。 */
 const xTicks = computed(() => {
   const n = props.xLabels.length
   if (n === 0) return []
-  const stride = Math.ceil(n / 6)
+  const stride = Math.max(1, Math.ceil((n - 1) / 6))
   const out: { i: number; anchor: 'start' | 'middle' | 'end' }[] = []
   for (let i = 0; i < n; i += stride) {
     out.push({ i, anchor: i === 0 ? 'start' : 'middle' })
