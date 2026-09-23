@@ -1432,14 +1432,29 @@ class FeedbackRepository:
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def bump_read_state(self, handle: str, at: datetime) -> FeedbackReadState:
-        row = await self.get_read_state(handle)
-        if row is None:
-            row = FeedbackReadState(user_handle=handle, last_read_at=at)
-            self._session.add(row)
-        else:
-            row.last_read_at = at
-        await self._session.flush()
-        return row
+        """推游标 —— 一跳 upsert。
+
+        先读后插在这个形状上会 500，和 `add_support` / `add_comment_like` /
+        `add_admin` 是同一个：`FeedbackReadState` 上有 `uq_feedback_read_state_user`，
+        而同一个人的两条请求真的会同时到（手动 `markRead()` 没有 in-flight 守卫，
+        它和 `markReadOnce()` 的去重表是每个标签页各自一份的）。两边都读到「还没有
+        这一行」、都插，败者在 flush 抛 `IntegrityError`，没有 handler 认它，于是
+        「把游标推到此刻」这个**幂等**动作回了 500。首读之前没有别的地方建这一行
+        （没有登录时预置、没有 trigger），所以每个用户第一次推游标都在这条路上。
+
+        要 `do_update` 而不是 `do_nothing`：这一跳既建冷游标也推进已有游标。撞车时
+        两条请求要的是同一件事（游标 → 此刻），所以后来者覆盖先到者是对的。
+        """
+        stmt = (
+            pg_insert(FeedbackReadState)
+            .values(user_handle=handle, last_read_at=at)
+            .on_conflict_do_update(
+                index_elements=["user_handle"],
+                set_={"last_read_at": at},
+            )
+            .returning(FeedbackReadState)
+        )
+        return (await self._session.execute(stmt)).scalar_one()
 
     async def count_activity_since(
         self,
@@ -1481,7 +1496,13 @@ class FeedbackRepository:
             .where(
                 mine,
                 Feedback.deleted_at.is_(None),
-                FeedbackComment.deleted_at.is_(None),
+                # `live_comment_clause()`, not `deleted_at IS NULL`: a reply whose
+                # parent was soft-deleted is not visible in the thread, so counting
+                # it here is the one thing this number must not do — the bell would
+                # say 1 and the thread would show nothing new. It is also what
+                # `live_comment_clause`'s own docstring promises every reader here
+                # shares, and this was the one that did not.
+                live_comment_clause(),
                 # My own words are not news to me.
                 FeedbackComment.author_handle.notin_(who),
             )
@@ -1516,7 +1537,9 @@ class FeedbackRepository:
             select(FeedbackComment.feedback_id, func.max(FeedbackComment.created_at))
             .where(
                 FeedbackComment.feedback_id.in_(list(ids)),
-                FeedbackComment.deleted_at.is_(None),
+                # Same clause as the counts and the thread: a reply nobody can see
+                # must not be what this row reports as its latest activity either.
+                live_comment_clause(),
             )
             .group_by(FeedbackComment.feedback_id)
         )

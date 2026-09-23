@@ -411,6 +411,11 @@
       "title": "Couldn't load feedback",
       "desc": "Check your connection and try again."
     },
+    "filtered": {
+      "title": "No feedback matches",
+      "desc": "Try another filter, or clear them to see everything.",
+      "clear": "Clear filters"
+    },
     "search": {
       "title": "No matching feedback",
       "desc": "Try another keyword. Search covers titles, summaries, bodies and submitters."
