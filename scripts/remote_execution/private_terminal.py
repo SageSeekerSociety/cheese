@@ -401,6 +401,36 @@ def main():
         checkout = None
         if room:
             checkout = checkout_after_the_round(room)
+            assert room.snapshots, "room turns did not upload a task snapshot"
+            snapshot = next(reversed(room.snapshots.values()))
+            recovered = folder / "snapshot-recovered"
+            subprocess.run(
+                ["git", "clone", "-q", room.remote, str(recovered)], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(recovered),
+                    "fetch",
+                    snapshot["bundle"],
+                    f"refs/cheese/snapshots/{room.task}",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            restored = subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(recovered),
+                    "show",
+                    "FETCH_HEAD:backend/startup-result",
+                ],
+                text=True,
+            )
+            assert restored == "executor-env", restored
+            dump(folder / "snapshot-receipts.json", list(room.snapshots.values()))
         server.assert_healthy()
         dump(folder / "provider-requests.json", requests)
         terminal()

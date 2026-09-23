@@ -1,6 +1,7 @@
 """Ordinary project executor behind the production HTTP and connector transport."""
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ class RoomExecutor:
         self.project = str(project)
         self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
+        self.snapshots = {}
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
         self.work = self.home / place.CHECKOUT_DIR
         self.state = self.home / ".cheese/executor"
@@ -153,6 +155,47 @@ class RoomExecutor:
         executor = self
 
         class Handler(base):
+            def do_PUT(self):
+                prefix = (
+                    f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
+                )
+                if not self.path.startswith(prefix):
+                    return super().do_PUT()
+                assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                assert self.headers.get("Content-Type") == "application/x-git-bundle"
+                content = self.rfile.read(int(self.headers["Content-Length"]))
+                digest = hashlib.sha256(content).hexdigest()
+                assert digest == self.headers["X-Content-SHA256"]
+                assert content.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n"))
+                snapshot_sha = self.path.removeprefix(prefix)
+                assert len(snapshot_sha) == 40 and all(
+                    c in "0123456789abcdef" for c in snapshot_sha
+                )
+                head_sha = self.headers["X-Cheese-Head"]
+                assert len(head_sha) == 40 and all(
+                    c in "0123456789abcdef" for c in head_sha
+                )
+                if digest not in executor.snapshots:
+                    directory = executor.owner / "snapshots"
+                    directory.mkdir(exist_ok=True)
+                    bundle = directory / f"{digest}.bundle"
+                    bundle.write_bytes(content)
+                    executor.snapshots[digest] = {
+                        "id": str(uuid.uuid4()),
+                        "snapshot_sha": snapshot_sha,
+                        "head_sha": head_sha,
+                        "digest": digest,
+                        "bundle": str(bundle),
+                    }
+                row = executor.snapshots[digest]
+                return self.reply(
+                    {
+                        "data": {
+                            key: row[key] for key in ("id", "snapshot_sha", "digest")
+                        }
+                    }
+                )
+
             def do_GET(self):
                 if (
                     self.path
@@ -175,7 +218,10 @@ class RoomExecutor:
                 return super().do_GET()
 
             def do_POST(self):
-                if self.path == f"/projects/{executor.project}/git/tasks/{executor.task}":
+                if (
+                    self.path
+                    == f"/projects/{executor.project}/git/tasks/{executor.task}"
+                ):
                     self.rfile.read(int(self.headers.get("Content-Length", "0")))
                     return self.do_GET()
                 if self.path != "/execution":
