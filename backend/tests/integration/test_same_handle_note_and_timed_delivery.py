@@ -305,9 +305,9 @@ def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
 
     async def run():
         runner = AgentWorkRunner(InProcessBroker())
-        await deliver_due(client.test_factory, chat=chat, runner=runner)
+        await deliver_due(client.test_request_factory, chat=chat, runner=runner)
         await asyncio.gather(*runner._tasks)
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             timer = await session.get(
                 TimedDelivery, uuid.UUID(response.json()["data"]["id"])
             )
@@ -325,11 +325,13 @@ def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
             def submit(self, chat, topic_id, **kwargs):
                 submitted.append(kwargs)
 
-        result = await deliver_due(client.test_factory, chat=chat, runner=Recorder())
+        result = await deliver_due(
+            client.test_request_factory, chat=chat, runner=Recorder()
+        )
         assert result == {"materialized": 0, "dispatched": 1}
         assert submitted[0]["content"] == "keep this exact instruction"
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
 
 
 def test_crash_after_possible_send_is_not_permission_to_reinject(client):
