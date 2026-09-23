@@ -51,6 +51,8 @@ def test_remote_execution_keeps_every_main_push():
     assert "github.run_id" in concurrency["group"]
     assert "refs/heads/main" in concurrency["group"]
     assert "refs/heads/main" in concurrency["cancel-in-progress"]
+    assert "github.event_name == 'merge_group'" in concurrency["group"]
+    assert "github.event_name != 'merge_group'" in concurrency["cancel-in-progress"]
 
 
 def test_backend_lint_is_a_separate_hosted_job():

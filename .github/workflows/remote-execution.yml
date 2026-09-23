@@ -18,8 +18,8 @@ permissions:
 
 concurrency:
   # Keep each main and merge-group result, including runs still pending.
-  group: remote-execution-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: remote-execution-${{ (github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'merge_group' }}
 
 jobs:
   private-chat:
