@@ -1005,11 +1005,20 @@ function onSelectDay(index: number) {
 onMounted(() => {
   // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
   // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
-  if (store.statsKind === 'feedback') selectKind('pipeline')
+  //
+  // 两条分支必须互斥，而且都要**由自己那一支**去拉：`selectKind` 会顺手拉一次，
+  // 所以这里不能再补一句「分类的切片还是 null 就拉」。`loadStats` 只写
+  // `statsBusy`、不在完成前写 `stats`，于是那一句在首次挂载时**必然**成立，
+  // 变成同一分类两个并发请求，而 store 里的序号守卫（feedback.ts 的 `statsSeq`）
+  // 会把先回来的那个响应丢掉 —— 白拉一趟，首屏还多等一个来回。
+  if (store.statsKind === 'feedback') {
+    selectKind('pipeline')
+  } else if (store.stats[store.statsKind] === null) {
+    void store.loadStats(store.statsKind, DAYS)
+  }
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
   // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
-  if (store.stats[store.statsKind] === null) void store.loadStats(store.statsKind, DAYS)
 })
 </script>
 

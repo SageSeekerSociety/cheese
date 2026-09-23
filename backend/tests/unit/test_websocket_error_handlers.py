@@ -10,6 +10,9 @@ machine whose link died between `accept` and the welcome frame.
 
 import asyncio
 import socket
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import uvicorn
@@ -19,6 +22,7 @@ from starlette.types import Message
 from websockets.asyncio.client import connect
 
 from app.core.errors import ForbiddenError, register_exception_handlers
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import DeviceOffline
 
 
@@ -85,6 +89,44 @@ def test_the_same_failure_over_http_keeps_its_answer() -> None:
     response = client.get("/http")
     assert response.status_code == 409
     assert response.headers["X-Device-Id"] == "machine-7"
+
+
+@pytest.mark.anyio
+async def test_forge_tunnel_cleanup_accepts_an_already_disconnected_peer(monkeypatch):
+    from app.api.routes.forge_token import forge_tunnel
+
+    project_id = uuid.uuid4()
+    binding = SimpleNamespace(
+        kind="github_app",
+        url="https://github.com/team/repo",
+        api_url="https://api.github.com",
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project", AsyncMock(return_value=binding)
+    )
+    inbox = iter(
+        [
+            {"type": "websocket.connect"},
+            {"type": "websocket.disconnect", "code": 1006},
+        ]
+    )
+    sent = []
+
+    async def receive():
+        return next(inbox)
+
+    async def send(message):
+        sent.append(message["type"])
+        if message["type"] == "websocket.close":
+            raise OSError("peer already disconnected")
+
+    websocket = WebSocket({"type": "websocket"}, receive, send)
+    db = AsyncMock()
+    await forge_tunnel(
+        project_id, websocket, mint_scoped_token(project_id=str(project_id)), db
+    )
+    db.rollback.assert_awaited_once()
+    assert sent == ["websocket.accept", "websocket.close"]
 
 
 @pytest.mark.anyio

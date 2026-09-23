@@ -10,6 +10,7 @@ out」 on page loads and background jobs (2026-09-19).
 """
 
 import asyncio
+from collections import Counter
 
 import pytest
 
@@ -34,6 +35,7 @@ async def test_the_whole_fleet_attaching_recovers_a_few_at_a_time(
     running = 0
     high_water = 0
     release = asyncio.Event()
+    recovered: list[str] = []
 
     class Chat:
         async def recover_sessions(self, device_id: str) -> int:
@@ -41,6 +43,7 @@ async def test_the_whole_fleet_attaching_recovers_a_few_at_a_time(
             running += 1
             high_water = max(high_water, running)
             await release.wait()
+            recovered.append(device_id)
             running -= 1
             return 0
 
@@ -56,6 +59,7 @@ async def test_the_whole_fleet_attaching_recovers_a_few_at_a_time(
     await asyncio.wait_for(asyncio.gather(*fleet), 5)
     # Queued, never dropped: every machine is recovered.
     assert high_water == connector._RECOVERY_AT_ONCE
+    assert Counter(recovered) == Counter(f"machine-{i}" for i in range(71))
 
 
 @pytest.mark.anyio

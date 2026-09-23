@@ -71,6 +71,61 @@ class FeedbackReportTest(unittest.TestCase):
             1,
         )
 
+    def test_first_attempt_streak_is_not_repaired_by_a_successful_rerun(self):
+        first = report.analyse_attempt(
+            run(1), 1, [job("scope")], "required-ci.yml", "pull_request"
+        )
+        failed = report.analyse_attempt(
+            run(2, latest=2, conclusion="failure"),
+            1,
+            [job("scope", "failure")],
+            "required-ci.yml",
+            "pull_request",
+        )
+        rerun = report.analyse_attempt(
+            run(2, latest=2),
+            2,
+            [job("scope")],
+            "required-ci.yml",
+            "pull_request",
+        )
+        summary = report.summarize([first, failed, rerun])["required-ci.yml:pull_request"]
+        self.assertEqual(summary["cohort_tail_consecutive_first_attempt_successes"], 0)
+        self.assertEqual(summary["first_attempt_outcomes"]["success"], 1)
+        self.assertEqual(summary["first_attempt_outcomes"]["failure"], 1)
+        self.assertEqual(summary["latest_attempt_outcomes"]["success"], 2)
+
+    def test_missing_creation_time_makes_first_attempt_streak_unknown(self):
+        attempt = report.analyse_attempt(
+            run(), 1, [job("scope")], "required-ci.yml", "pull_request"
+        )
+        attempt["run_created_at"] = None
+        summary = report.summarize([attempt])["required-ci.yml:pull_request"]
+        self.assertIsNone(summary["cohort_tail_consecutive_first_attempt_successes"])
+
+    def test_latest_runs_are_grouped_by_executed_job_selection(self):
+        light = report.analyse_attempt(
+            run(1), 1, [job("scope"), job("guards")], "required-ci.yml", "pull_request"
+        )
+        full = report.analyse_attempt(
+            run(2),
+            1,
+            [job("scope"), job("integration")],
+            "required-ci.yml",
+            "pull_request",
+        )
+        cohorts = report.summarize([light, full])["required-ci.yml:pull_request"][
+            "latest_attempt_selection_cohorts"
+        ]
+        self.assertEqual(cohorts["guards | scope"]["run_count"], 1)
+        self.assertEqual(cohorts["integration | scope"]["run_count"], 1)
+        self.assertEqual(
+            cohorts["integration | scope"][
+                "successful_run_created_to_all_jobs_complete_api_proxy"
+            ]["count"],
+            1,
+        )
+
     def test_cancelled_and_pending_are_not_failures_or_successes(self):
         cancelled = report.analyse_attempt(
             run(1, conclusion="cancelled"),
@@ -94,6 +149,9 @@ class FeedbackReportTest(unittest.TestCase):
                 "count"
             ],
             0,
+        )
+        self.assertEqual(
+            summary["cohort_tail_consecutive_first_attempt_successes"], 0
         )
 
     def test_parallel_jobs_use_final_completion_instead_of_added_durations(self):

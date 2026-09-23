@@ -79,9 +79,7 @@ const getProviderName = (providerId: string) => {
 // 重试 OAuth 登录
 const retryOAuth = () => {
   if (providerId.value) {
-    const state = crypto.randomUUID()
-    localStorage.setItem('oauth_state', state)
-    UserApi.redirectToOAuthLogin(providerId.value, state)
+    UserApi.redirectToOAuthLogin(providerId.value)
   }
 }
 
@@ -115,8 +113,5 @@ onMounted(() => {
 
   providerId.value = provider || ''
   providerName.value = getProviderName(provider)
-
-  // 清理可能存在的 state
-  localStorage.removeItem('oauth_state')
 })
 </script>

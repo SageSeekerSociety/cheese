@@ -131,12 +131,16 @@ class SudoPurpose(StrEnum):
     the one that gets performed. So the purpose is asked for at mint time,
     signed into the ticket, and checked at the entrance that redeems it.
 
-    Only the operations whose gate the server actually enforces belong here.
-    The rest are still gated in the client alone and ask for no ticket: a
-    credential with no lock to fit is not a protection, it is a spare key.
+    Only the operations whose gate the server actually enforces belong here:
+    a credential with no lock to fit is not a protection, it is a spare key.
     """
 
+    TWO_FA_ENABLE = "2fa:enable"
     TWO_FA_DISABLE = "2fa:disable"
+    TWO_FA_BACKUP_CODES = "2fa:backup-codes"
+    TWO_FA_SETTINGS = "2fa:settings"
+    PASSKEY_ADD = "passkey:add"
+    PASSKEY_DELETE = "passkey:delete"
 
 
 class MintedSudoTicket(NamedTuple):
@@ -234,7 +238,9 @@ async def get_current_user_id(
     """Resolve current user ID from Authorization bearer token or X-User-Id header.
 
     - Preferred: `Authorization: Bearer <accessToken>` issued by Python auth flow.
-    - Fallback: `X-User-Id` header (used in tests / transitional environments).
+    - Fallback: `X-User-Id` header, a local-development convenience. Refused on
+      any deployment: one started by the deploy compose file, whatever
+      `environment` reads, and any whose `environment` is not development/test.
     """
     if authorization:
         token = authorization.strip()
@@ -256,9 +262,12 @@ async def get_current_user_id(
     if x_user_id is not None:
         from app.core.config import settings
 
-        if settings.environment not in ("development", "test"):
+        if settings.deployed_via_compose or settings.environment not in (
+            "development",
+            "test",
+        ):
             raise AuthenticationRequiredError(
-                "X-User-Id header is not allowed in production"
+                "X-User-Id header is not allowed on a deployment"
             )
         return x_user_id
 
