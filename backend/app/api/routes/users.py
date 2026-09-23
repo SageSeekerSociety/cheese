@@ -4337,6 +4337,7 @@ async def oauth_create_user(
     username: str = Form(...),
     nickname: str = Form(...),
     passwordMode: str = Form(default="none"),
+    password: str | None = Form(default=None),
     srpSalt: str | None = Form(default=None),
     srpVerifier: str | None = Form(default=None),
     inviteCode: str | None = Form(default=None),
@@ -4355,8 +4356,13 @@ async def oauth_create_user(
         nickname = normalize_nickname(nickname)
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
-    if passwordMode not in ("none", "srp"):
+    if passwordMode not in ("none", "password", "srp"):
         return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
+    if passwordMode == "password":
+        try:
+            _require_new_password(password or "")
+        except (BadRequestError, UnprocessableEntityError) as exc:
+            return _oauth_error_redirect("WEAK_PASSWORD", str(exc))
     if passwordMode == "srp" and not (srpSalt and srpVerifier):
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
@@ -4412,6 +4418,7 @@ async def oauth_create_user(
                 email=email,
                 username=username,
                 nickname=nickname,
+                password=password if passwordMode == "password" else None,
                 srp_salt=srpSalt if passwordMode == "srp" else None,
                 srp_verifier=srpVerifier if passwordMode == "srp" else None,
             )

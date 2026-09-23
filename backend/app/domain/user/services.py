@@ -391,15 +391,21 @@ class UserAuthService:
         email: str,
         username: str,
         nickname: str,
+        password: str | None = None,
         srp_salt: str | None = None,
         srp_verifier: str | None = None,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
         """Create the account chosen on the OAuth decision page. The user picked
-        the username/nickname and optionally set a password (SRP credentials);
-        without one the account authenticates solely through the provider."""
+        the username/nickname and optionally set a password (plaintext or SRP
+        credentials); without one the account authenticates solely through the
+        provider."""
         self._reject_reserved(username)
-        hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
+        hashed: str | None = None
+        if password:
+            hashed = await hash_password(password)
+        elif srp_salt and srp_verifier:
+            hashed = f"SRP:{srp_salt}:{srp_verifier}"
         return await self._create_account(
             username=username,
             email=email,
