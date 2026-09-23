@@ -51,9 +51,7 @@ class UsageService:
         grants_repo = repo.ComputeGrantRepository(self._session)
         teams = await ProjectService(self._session).teams_for_projects(projects)
         team_ids = sorted({t for t in teams.values() if t is not None})
-        grants = await grants_repo.list_for_scope(
-            [p.id for p in projects], team_ids
-        )
+        grants = await grants_repo.list_for_scope([p.id for p in projects], team_ids)
         by_project: dict[uuid.UUID, list] = {p.id: [] for p in projects}
         for grant in grants:
             if grant.project_id is not None:

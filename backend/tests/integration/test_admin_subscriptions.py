@@ -73,9 +73,7 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     return ADMIN
 
 
-def _openai_transport(
-    calls: list[httpx.Request], state: dict
-) -> httpx.MockTransport:
+def _openai_transport(calls: list[httpx.Request], state: dict) -> httpx.MockTransport:
     """一台够订阅导入用的假 OpenAI：device flow 四步 + 刷新 + 额度。
 
     行为由 ``state`` 驱动，用例可以在两次请求之间改它（比如先 pending 后

@@ -81,9 +81,7 @@ class ProjectRepository:
             rows = await self._session.execute(
                 select(User.username, Team.id)
                 .join(User, User.id == Team.personal_owner_user_id)
-                .where(
-                    User.username.in_(orphan_handles), Team.deleted_at.is_(None)
-                )
+                .where(User.username.in_(orphan_handles), Team.deleted_at.is_(None))
             )
             for username, team_id in rows.all():
                 for project_id in orphan_ids.get(username, []):

@@ -429,9 +429,7 @@ class FeedbackService:
         self, *, since: datetime, until: datetime
     ) -> int:
         """窗口内「到过 resolved」的反馈总数（`reached_series` 的合计版）。"""
-        return await self._repo.count_reached_resolved_between(
-            since=since, until=until
-        )
+        return await self._repo.count_reached_resolved_between(since=since, until=until)
 
     async def support_counts(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         return await self._repo.supports_counts(ids)

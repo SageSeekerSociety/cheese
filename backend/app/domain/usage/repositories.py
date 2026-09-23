@@ -448,10 +448,14 @@ class ComputeGrantRepository:
             )
         if not conditions:
             return []
-        stmt = select(ComputeGrant).where(or_(*conditions)).order_by(
-            ComputeGrant.project_id.is_(None),
-            ComputeGrant.created_at,
-            ComputeGrant.id,
+        stmt = (
+            select(ComputeGrant)
+            .where(or_(*conditions))
+            .order_by(
+                ComputeGrant.project_id.is_(None),
+                ComputeGrant.created_at,
+                ComputeGrant.id,
+            )
         )
         return list((await self._session.execute(stmt)).scalars())
 

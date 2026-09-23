@@ -218,6 +218,7 @@ async def test_refresh_dead_error_codes_mean_reauth(code):
 async def test_refresh_server_error_is_connectivity_not_reauth():
     """5xx 是「过会儿再试」，不是「重新授权」—— 判错方向会把一条好端端
     的订阅在一次上游抖动时打进 reauth_required。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={})
 

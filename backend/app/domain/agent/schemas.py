@@ -67,9 +67,7 @@ class _ModelBodyBase(BaseModel):
 
     @field_validator("extra_headers")
     @classmethod
-    def _headers_bounded(
-        cls, value: dict[str, str] | None
-    ) -> dict[str, str] | None:
+    def _headers_bounded(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         if value is None:
             return None
         for key, item in value.items():
