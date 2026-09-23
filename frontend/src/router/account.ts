@@ -90,7 +90,8 @@ export default {
       name: 'OAuthVerify',
       component: () => import('@/views/account/OAuthVerify.vue'),
       meta: {
-        title: 'OAuth 验证',
+        title: '关联账号',
+        titleKey: 'account.oauth.verify.title',
       },
     },
     {
@@ -107,8 +108,8 @@ export default {
       name: 'OAuthError',
       component: () => import('@/views/account/OAuthError.vue'),
       meta: {
-        title: 'OAuth 登录失败',
-        titleKey: 'account.thirdpartySigninFailed',
+        title: '登录失败',
+        titleKey: 'account.oauth.error.title',
       },
     },
   ],

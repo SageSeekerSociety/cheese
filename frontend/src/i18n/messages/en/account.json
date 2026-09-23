@@ -8,7 +8,6 @@
   "privacyPolicy": "Privacy Policy",
   "registrationSettingsCouldNotBeLoadedRefresh": "Registration settings could not be loaded. Refresh the page to try again.",
   "termsOfService": "Terms of Service",
-  "thirdpartySigninFailed": "Third-party sign-in failed",
   "yourPasswordMustContainALetterA": "Your password must contain a letter, a number, and a special character",
   "layout": {
     "home": "Cheese home"
@@ -105,5 +104,51 @@
     "backupUsedBody": "Each backup code works only once. Consider generating a new set now.",
     "later": "Later",
     "regenerate": "Generate new codes"
+  },
+  "oauth": {
+    "provider": {
+      "wechat": "WeChat",
+      "weibo": "Weibo"
+    },
+    "error": {
+      "title": "Couldn't sign in",
+      "lede": "Signing in with {provider} did not finish",
+      "ledeUnknownProvider": "Third-party sign-in did not finish",
+      "retry": "Try {provider} again",
+      "alreadyLinked": "This account is already linked to another user",
+      "bindingFailed": "Couldn't link the account. Please try again.",
+      "creationFailed": "Couldn't create the account. Please try again.",
+      "emailTaken": "This email is already registered",
+      "invalidCredentials": "Wrong username or password",
+      "invalidInviteCode": "This invitation code is invalid or no longer active",
+      "invalidNickname": "This display name is not allowed",
+      "invalidPassword": "Wrong password",
+      "inviteCodeRequired": "Enter an invitation code",
+      "sessionExpired": "The sign-in session expired. Please start again.",
+      "tooManyAttempts": "Too many attempts. Please try again later.",
+      "unknown": "Sign-in did not finish. Please try again.",
+      "usernameReserved": "This username is reserved. Please choose another.",
+      "usernameTaken": "This username is taken",
+      "verificationFailed": "Verification failed. Please try again."
+    },
+    "success": {
+      "processing": "Signing in",
+      "processingLede": "Finishing sign-in with {provider}",
+      "done": "Signed in",
+      "doneLede": "Redirecting",
+      "failed": "Couldn't sign in. Please try again.",
+      "missingToken": "Sign-in details are incomplete. Please sign in again.",
+      "signedIn": "Signed in with {provider}",
+      "linked": "{provider} account linked"
+    },
+    "verify": {
+      "title": "Link account",
+      "lede": "Enter the password for the account with {email} to link it",
+      "submit": "Verify and link",
+      "passwordRequired": "Enter your password",
+      "wrongPassword": "Wrong password. Please try again.",
+      "failed": "Couldn't verify. Please try again.",
+      "incomplete": "Verification details are incomplete. Please sign in again."
+    }
   }
 }
