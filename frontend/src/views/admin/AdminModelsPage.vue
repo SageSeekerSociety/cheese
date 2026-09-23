@@ -19,7 +19,7 @@ import AdminModelDetailDrawer from '@/components/admin/AdminModelDetailDrawer.vu
 import AdminModelFormDialog, { type ModelFormPayload } from '@/components/admin/AdminModelFormDialog.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import { relTime } from '@/lib/relTime'
-import { fmtCost, fmtNum } from '@/lib/usageFormat'
+import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
 // 管理后台的「模型管理」（`/admin/models`）。它管的是**网关那一侧的模型台账**，不是
 // 平台自己声明的东西 —— 页面上的每一行都来自 `GET /model/info`，每一处改动都落回网关。
@@ -174,6 +174,10 @@ const kpis = computed(() => [
   { key: 'models', label: t('models.kpi.models'), value: num(models.value?.models.length) },
   { key: 'offered', label: t('models.kpi.offered'), value: num(models.value?.models ? offeredCount.value : null) },
   { key: 'spend', label: t('models.kpi.spend'), value: totals.value ? fmtCost(totals.value.spend_usd) : '' },
+  // token 与调用数是这一页的主指标之一：钱是结果，token 才是「模型被用了多少」。
+  // 缩写走 fmtSI（和后台看板同一个台阶），精确值在表格那一列上。
+  { key: 'tokens', label: t('models.kpi.tokens'), value: totals.value ? fmtSI(totals.value.total_tokens) : '' },
+  { key: 'requests', label: t('models.kpi.requests'), value: totals.value ? fmtNum(totals.value.requests) : '' },
   { key: 'failed', label: t('models.kpi.failed'), value: totals.value ? fmtNum(totals.value.failed_requests) : '' },
 ])
 
@@ -539,6 +543,10 @@ onMounted(load)
               <span class="amd__usage">
                 <span class="t-num amd__usageMain">{{ fmtCost(row.usage.spend_usd) }}</span>
                 <span class="t-meta-read amd__dim">{{ fmtNum(row.usage.requests) }} {{ t('models.table.calls') }}</span>
+                <!-- 缩写是给人一眼看的，精确值挂在 title 上 —— 这是 fmtSI 那一条约定。 -->
+                <span class="t-meta-read amd__dim" :title="fmtNum(row.usage.total_tokens)"
+                  >{{ fmtSI(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+                >
               </span>
             </td>
             <td class="amd__cell">
@@ -818,8 +826,16 @@ onMounted(load)
 
 .amd__kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* 六张卡，每档都**整除**：6 / 3 / 2。auto-fit 那类写法会在某些宽度上留下最后
+     一张孤零零独占一行，而这几张是并列读的指标，不是排队的东西。 */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .amd__kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 /* 窄屏 KPI 退成两列（同看板）：一排四张在手机上每张不到 150px，字会被压破。 */

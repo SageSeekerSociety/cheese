@@ -25,6 +25,8 @@
     "models": "Models",
     "offered": "Offered",
     "spend": "Spend in window",
+    "tokens": "Tokens in window",
+    "requests": "Calls in window",
     "failed": "Failed requests"
   },
   "table": {

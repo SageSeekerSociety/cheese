@@ -25,6 +25,8 @@
     "models": "模型",
     "offered": "已上架",
     "spend": "窗口内花费",
+    "tokens": "窗口内 token",
+    "requests": "窗口内调用",
     "failed": "失败请求"
   },
   "table": {
