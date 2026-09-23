@@ -148,10 +148,12 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
     assert result["reason_kind"] == "binding"
 
 
-# --- 开分身时指定模型（范围 = 项目 AI 队友） ------------------------------
+# --- 开分身时指定模型（范围 = 项目模型目录，与队友身份无关） ------------------
 # CC 把主 agent 给分身指定的模型写进分身请求体的顶层 model 成员，计量代理解
-# 析出来随 admission 带上来（X-Cheese-Requested-Model）。指定了就要么绑它、
-# 要么明说为什么不行 —— 静默改写回分身默认正是「指定了却不生效」那个旧行为。
+# 析出来随 admission 带上来（X-Cheese-Requested-Model）。可指定的集合是项目模
+# 型目录（本池 + 项目显式配置的两个默认），不是任何参与者的配置（2026-09-23
+# 拍板）。指定了就要么绑它、要么明说为什么不行 —— 静默改写回分身默认正是
+# 「指定了却不生效」那个旧行为。
 
 
 def _subagent_headers(pid, topic_id, requested=None):
@@ -163,33 +165,38 @@ def _subagent_headers(pid, topic_id, requested=None):
 
 
 @pytest.mark.anyio
-async def test_a_subagent_may_ask_for_a_teammates_model(client):
+async def test_a_subagent_may_ask_for_a_catalog_model(client, monkeypatch):
+    """指定目录内（本池）的模型：与任何队友都无关，目录有就能绑。"""
+    from app.domain.agent.gateway_catalog import GatewayModel
+
+    monkeypatch.setattr(
+        gateway_catalog,
+        "offerable",
+        lambda: [
+            GatewayModel(
+                id="deepseek-flash",
+                label="deepseek-flash",
+                selectable=True,
+                priced=True,
+            ),
+            GatewayModel(id="kimi-k3", label="kimi-k3", selectable=True, priced=True),
+        ],
+    )
     project = create(client)
     pid = project["id"]
-    response = client.post(
-        f"/projects/{pid}/agents",
-        json={
-            "handle": "spark",
-            "display_name": "Spark",
-            "configuration": {"model": "sonnet"},
-        },
-    )
-    assert response.status_code == 200, response.text
-    # CC 在写请求体前就把别名翻成全名,所以准入收到的是 wire 名;
-    # 目录是唯一能把它翻回 id 的地方。
     body = client.post(
         "/llm/admission",
-        headers=_subagent_headers(pid, project["root_topic_id"], "claude-sonnet-5"),
+        headers=_subagent_headers(pid, project["root_topic_id"], "kimi-k3"),
     ).json()["data"]
     assert body["allow"] is True
-    assert "sonnet" in body["supply"]["model"]
-    assert body["supply"]["pool"] == "subscription"
+    assert body["supply"]["model"] == "kimi-k3"
+    assert body["supply"]["pool"] == "gateway"
 
 
 @pytest.mark.anyio
 async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client):
     """fork 分身继承父模型：体里的名字翻译回来等于父会话绑定的,按「未指
-    定」退回分身默认 —— 继承名不会被推进队友白名单校验。"""
+    定」退回分身默认 —— 继承名不会被推进目录校验。"""
     project = create(client)
     pid = project["id"]
     body = client.post(
@@ -225,7 +232,7 @@ async def test_an_inherited_subagent_keeps_the_projects_subagent_default(client)
 @pytest.mark.anyio
 async def test_a_fork_of_a_teammate_session_also_reads_as_inherit(client):
     """父会话是队友也一样:队友会话 fork 出来的分身,体里写的是队友绑的那
-    个模型 —— 同样按继承退回分身默认,不吃白名单。"""
+    个模型 —— 同样按继承退回分身默认,不吃目录校验。"""
     project = create(client)
     pid = project["id"]
     teammate = agents(client, pid)[0]
@@ -255,26 +262,21 @@ async def test_a_fork_of_a_teammate_session_also_reads_as_inherit(client):
 
 
 @pytest.mark.anyio
-async def test_a_subagent_asking_outside_the_teammates_is_refused_by_name(client):
+async def test_a_subagent_asking_outside_the_projects_pool_is_refused_by_name(
+    client,
+):
+    """目录里有、但不在本项目池里的模型：可指定范围按池算，跨池吃拒绝。"""
     project = create(client)
     pid = project["id"]
-    client.post(
-        f"/projects/{pid}/agents",
-        json={
-            "handle": "spark",
-            "display_name": "Spark",
-            "configuration": {"model": "sonnet"},
-        },
-    )
     body = client.post(
         "/llm/admission",
         headers=_subagent_headers(pid, project["root_topic_id"], "opus"),
     ).json()["data"]
     assert body["allow"] is False
     assert body["reason_kind"] == "binding"
-    assert "不在项目 AI 队友的范围内" in body["reason"]
+    assert "不在当前项目可用的模型范围内" in body["reason"]
     # 拒绝要给出可指定的范围,不然就是一句没法行动的「不行」。
-    assert "sonnet" in body["reason"]
+    assert "deepseek-flash" in body["reason"]
 
 
 @pytest.mark.anyio

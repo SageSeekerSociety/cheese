@@ -90,11 +90,11 @@ def hooks_settings(
     cmd = {"type": "command", "command": "cheese-hook"}
     tool_matched = [{"matcher": "*", "hooks": [cmd]}]
     plain = [{"hooks": [cmd]}]
-    # 发现层：把项目的活跃 AI 队友写成本会话的 CC 分身定义文件（名字、一句话
-    # 描述、model=队友绑的模型），主 agent 于是在 Agent 工具的可用清单里直接
-    # 读到可指定谁。闸在准入（/llm/admission）——指定了队友范围外的模型会被
-    # 拒并列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不
-    # 着后端时这一轮一切照旧。
+    # 发现层：把项目的模型目录写成本会话的 CC 分身定义文件（名字、一句话描
+    # 述、model=目录 id），主 agent 于是在 Agent 工具的可用清单里直接读到可
+    # 指定哪个模型。闸在准入（/llm/admission）——指定了目录外的模型会被拒并
+    # 列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不着后
+    # 端时这一轮一切照旧。
     sync_agents = [
         {"hooks": [{"type": "command", "command": "cheese sync-agents", "timeout": 15}]}
     ]

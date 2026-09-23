@@ -94,7 +94,9 @@ ARTIFACT_KIND_BY_SUFFIX = {
     ".webp": "webp",
 }
 ARTIFACT_KINDS = frozenset(ARTIFACT_KIND_BY_SUFFIX.values())
-BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"})
+BINARY_ARTIFACT_KINDS = frozenset(
+    {"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"}
+)
 
 
 def artifact_kind_for(path: str) -> str:
@@ -1843,8 +1845,7 @@ def build_parser() -> argparse.ArgumentParser:
     pn.add_argument(
         "--to",
         default=None,
-        help="收件人 handle;不填=发给这个房间名册上的人(不含芝士),"
-        "名册上没有人会报错",
+        help="收件人 handle;不填=发给这个房间名册上的人(不含芝士),名册上没有人会报错",
     )
     pn.add_argument(
         "--options",
@@ -1932,8 +1933,7 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument(
         "--deliver",
         help=(
-            "这次交出去的那一份文件（工作目录里的路径），"
-            "平台留一份快照；单份最大 80MB"
+            "这次交出去的那一份文件（工作目录里的路径），平台留一份快照；单份最大 80MB"
         ),
     )
     pa.add_argument(
@@ -2003,12 +2003,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "sync-agents",
-        help="把项目 AI 队友写成本会话的分身定义(钩子自动调,一般不用手跑)",
+        help="把项目模型目录写成本会话的分身定义(钩子自动调,一般不用手跑)",
         description=(
-            "从项目 agents 接口读出活跃 AI 队友,在 $CLAUDE_CONFIG_DIR/agents/ 下"
-            "给每个队友写一份 mate-<handle>.md(名字、一句话描述、model=队友绑的模型),"
-            "退休队友对应的 mate-*.md 一并清掉。写在 SessionStart/UserPromptSubmit"
-            " 钩子上自动跑;它只是发现层,任何失败都不打断会话(恒退出 0)。"
+            "从项目 default-model 接口读出模型目录,在 $CLAUDE_CONFIG_DIR/agents/ 下"
+            "给每个可指定模型写一份 model-<id>.md(名字、一句话描述、model=目录 id),"
+            "不再可指定的对应 model-*.md 一并清掉(旧版按队友生成的 mate-*.md 也清)。"
+            "写在 SessionStart/UserPromptSubmit 钩子上自动跑;它只是发现层,任何失败"
+            "都不打断会话(恒退出 0)。"
         ),
     )
 
@@ -2167,12 +2168,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _sync_agents() -> None:
-    """把项目的活跃 AI 队友写成本会话的 Claude Code 分身定义文件。
+    """把项目的模型目录写成本会话的 Claude Code 分身定义文件。
 
     挂在 SessionStart / UserPromptSubmit 钩子上跑：主 agent 用 Agent 工具按名
-    起队友分身（模型=队友绑的那一个）靠的就是这批文件。它只是发现层 —— 真正
-    的闸在准入（指定了范围外的模型会被拒绝并列出可选）—— 所以任何失败都不
+    起分身（模型=目录里的那一个）靠的就是这批文件。它只是发现层 —— 真正的
+    闸在准入（指定了目录外的模型会被拒绝并列出可选）—— 所以任何失败都不
     许打断会话：`_call` 自己打印原因，这里恒退出 0。
+
+    分身是骨架原生机制，没有平台语义（无身份/席位/记忆）：文件按模型起，
+    不按队友起（2026-09-23 拍板）。
     """
     try:
         _sync_agents_core()
@@ -2186,46 +2190,65 @@ def _sync_agents_core() -> None:
     if not PROJECT:
         return
     res = _call(
-        "GET", f"/projects/{PROJECT}/agents", tolerate=(401, 403, 404), timeout=8
+        "GET",
+        f"/projects/{PROJECT}/default-model",
+        tolerate=(401, 403, 404),
+        timeout=8,
     )
     if res.get("ok") is False:
         return
-    items = (res.get("data") or {}).get("data") or []
+    state = res.get("data") or {}
+    choices = state.get("choices") or []
+    # 项目自己的池：后端直接给（与准入的 resolve_pool 同源）；旧后端没有这个
+    # 字段时退回「默认那一项的供给」。池外的模型主 agent 指定了也跑不起来,
+    # 所以知道池就按池列。实在推不出池（零默认的旧响应）就全列——准入兜底
+    # 会拒掉错池并给出正确的可选清单,比整个发现层空转强。
+    pool = state.get("pool")
+    if not isinstance(pool, str) or not pool:
+        pool = next(
+            (c.get("supply") for c in choices if c.get("default") and c.get("supply")),
+            None,
+        )
     agents_dir = (
         Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "agents"
     )
+    marker = "由 cheese sync-agents 按项目模型目录生成，别手改。"
     wanted: dict[str, str] = {}
-    for item in items:
-        if not item.get("is_active", True):
+    for item in choices:
+        model = item.get("id") or ""
+        if pool is not None and item.get("supply") != pool:
             continue
-        handle = item.get("handle") or ""
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", handle):
+        # CC 的分身名比模型 id 严格：清洗出名字,真 id 由 frontmatter 的
+        # model 带过去,准入认的是它。
+        name = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
             continue
-        conf = item.get("configuration") or {}
-        model = conf.get("model") or ""
-        display = item.get("display_name") or handle
+        label = item.get("label") or model
         # description 就是主 agent 在 Agent 工具的可用清单里读到的那一行 ——
-        # 发现队友、知道它跑哪个模型，全在这一行里,所以要短。
-        desc = f"{display}（模型 {model or '继承主对话'}）"
-        if item.get("type_name"):
-            desc += f" · {item['type_name']}"
+        # 发现模型、知道起哪个分身跑它，全在这一行里,所以要短。
+        desc = f"平台模型目录 · {label}（{model}）"
         content = (
             "---\n"
-            f"name: {handle}\n"
+            f"name: {name}\n"
             f"description: {json.dumps(desc, ensure_ascii=False)}\n"
-            f"model: {model or 'inherit'}\n"
-            "---\n\n" + (conf.get("body") or "").strip() + "\n"
+            f"model: {model}\n"
+            "---\n\n" + marker + "\n"
         )
-        wanted[f"mate-{handle}.md"] = content
+        wanted[f"model-{name}.md"] = content
     agents_dir.mkdir(parents=True, exist_ok=True)
     for name, content in wanted.items():
         path = agents_dir / name
         if not path.exists() or path.read_text(encoding="utf-8") != content:
             path.write_text(content, encoding="utf-8")
-    # 只收自己写出去的那批（前缀是记号），别人放的 agent 文件一个不动。
-    for stale in agents_dir.glob("mate-*.md"):
-        if stale.name not in wanted:
+    # model-*.md 只收带自己记号的（别人手写的同名前缀文件不动）；
+    # mate-*.md 是上一版按队友生成的，全是我们的陈迹，无条件清。
+    for stale in agents_dir.glob("model-*.md"):
+        if stale.name in wanted:
+            continue
+        if marker in stale.read_text(encoding="utf-8", errors="replace"):
             stale.unlink()
+    for stale in agents_dir.glob("mate-*.md"):
+        stale.unlink()
 
 
 def main() -> None:

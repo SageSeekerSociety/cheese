@@ -1360,6 +1360,7 @@ async def save_forge_attribution(
 
 
 def _default_model_state(project_settings: dict | None) -> dict:
+    from app.domain.agent.supply import resolve_pool
     from app.domain.agent_instance.configuration import model_choices
 
     choices = model_choices(project_settings)
@@ -1378,6 +1379,9 @@ def _default_model_state(project_settings: dict | None) -> dict:
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
+        # 发现层（sync-agents）按池过滤目录：与准入的 resolve_pool 同源,别让
+        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
+        "pool": resolve_pool(project_settings),
         "can_manage": False,  # 由路由层按权限填
     }
 
