@@ -8,8 +8,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import PanelCard from '../components/PanelCard.vue'
 import TrendChart from '../components/TrendChart.vue'
-import { CLAIM_LABEL, DAY_LABELS, deadlineText, isOpen, STATE_LABEL } from '../fixtures'
-import { alreadyClaimed, canManageTask, claimTask, myClaim, tasks } from '../store'
+import { bilibiliBvid, CLAIM_LABEL, DAY_LABELS, deadlineText, isOpen, STATE_LABEL, videoEmbedUrl } from '../fixtures'
+import { alreadyClaimed, canManageTask, claimTask, myClaim, reviewWork, submitWork, tasks } from '../store'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +37,24 @@ function doClaim() {
   if (!claimTask(task.value.id)) claimBlocked.value = true
 }
 
+/** 交作业：领取之后才出现。真平台是往这道题上递一份提交（交什么由题目的
+ *  submissionSchema 定），这里把状态从「进行中」推到「已提交」。 */
+function doSubmit() {
+  if (task.value) submitWork(task.value.id)
+}
+
+/** 判作业：出题人本人或管理员都能判（真平台 `may_teach_task`）。 */
+function doReview(handle: string, accepted: boolean) {
+  if (task.value) reviewWork(task.value.id, handle, accepted)
+}
+
+/** 只有 B 站链接能在详情页里播；其它域名存得下、播不了，这里要说清是哪一种。 */
+const video = computed(() => {
+  const url = task.value?.videoUrl
+  if (!url) return null
+  return { url, bvid: bilibiliBvid(url), embed: videoEmbedUrl(url) }
+})
+
 const claimLabel = computed(() => {
   const t = task.value
   if (!t) return ''
@@ -63,6 +81,10 @@ const claimLabel = computed(() => {
               {{ task.state === 'PUBLISHED' && !open ? '已截止' : STATE_LABEL[task.state] }}
             </v-chip>
             <v-chip size="x-small" label variant="text">{{ task.category }}</v-chip>
+            <!-- 从 PDF 生成的那批题会带着出处，方便出题人回头对原文件。 -->
+            <v-chip v-if="task.origin" size="x-small" label variant="tonal" color="info">
+              {{ task.origin }}
+            </v-chip>
             <v-spacer />
             <span class="td__by">{{ task.publisher.name }} 出题</span>
           </div>
@@ -80,6 +102,22 @@ const claimLabel = computed(() => {
             </div>
           </div>
 
+          <!-- 讲解视频。只把 B 站链接嵌成播放器（真平台 `videoEmbedUrl` 就认这一个域名），
+               其它链接存得下、播不了 —— 那就把这件事直接说出来，而不是给一个空框。 -->
+          <div v-if="video" class="td__video">
+            <div v-if="video.embed" class="td__player">
+              <span class="td__player-badge">Bilibili 播放器</span>
+              <v-icon icon="mdi-play-circle" size="54" />
+              <span class="td__player-bv">{{ video.bvid }}</span>
+              <span class="td__player-note">真平台这里嵌的是 player.bilibili.com 的播放器</span>
+            </div>
+            <div v-else class="td__video-plain">
+              <v-icon icon="mdi-link-variant" size="16" />
+              这道题挂了视频链接，但<b>不是 B 站链接</b>，所以放不出来：
+              <span class="td__video-url">{{ video.url }}</span>
+            </div>
+          </div>
+
           <div class="td__claim">
             <v-btn
               color="primary"
@@ -91,9 +129,21 @@ const claimLabel = computed(() => {
             >
               {{ claimLabel }}
             </v-btn>
+            <!-- 领过之后才有「交作业」这一步；交完就等判。 -->
+            <v-btn
+              v-if="mine && mine.status === 'IN_PROGRESS'"
+              variant="tonal"
+              size="large"
+              prepend-icon="mdi-upload-outline"
+              @click="doSubmit"
+            >
+              提交作业
+            </v-btn>
             <div v-if="mine" class="td__mine-state">
               你的状态：<b>{{ CLAIM_LABEL[mine.status] }}</b>
               <span v-if="mine.team"> · {{ mine.team }}</span>
+              <template v-if="mine.status === 'IN_PROGRESS'"> · 做完点「提交作业」</template>
+              <template v-else-if="mine.status === 'SUBMITTED'"> · 出题人判完会通知你</template>
             </div>
             <div v-else-if="full" class="td__mine-state td__mine-state--warn">
               领取人数已经到上限（{{ task.claims.length }} / {{ task.participantLimit }}），这道题不再接受新的领取。
@@ -103,14 +153,19 @@ const claimLabel = computed(() => {
         </PanelCard>
 
         <!-- 出题人/管理员才看得到名单明细。普通领取者只看到进度条。 -->
-        <PanelCard v-if="canSeeRoster" title="领取者" :subtitle="`${task.claims.length} 人已领`">
+        <PanelCard v-if="canSeeRoster" title="领取者" :subtitle="`${task.claims.length} 人已领 · 判作业在这里`">
           <ul v-if="task.claims.length" class="roster">
             <li v-for="c in task.claims" :key="c.handle">
               <v-avatar size="24" class="roster__avatar">{{ c.name.slice(0, 1) }}</v-avatar>
               <span class="roster__name">{{ c.name }}</span>
               <span v-if="c.team" class="roster__team">{{ c.team }}</span>
               <v-spacer />
-              <v-chip size="x-small" label variant="tonal" :class="`claim-${c.status.toLowerCase()}`">
+              <!-- 交上来的才需要判；判完的不再给按钮，免得重复点。 -->
+              <template v-if="c.status === 'SUBMITTED'">
+                <v-btn size="x-small" variant="text" color="error" @click="doReview(c.handle, false)">不通过</v-btn>
+                <v-btn size="x-small" variant="tonal" color="success" @click="doReview(c.handle, true)">通过</v-btn>
+              </template>
+              <v-chip v-else size="x-small" label variant="tonal" :class="`claim-${c.status.toLowerCase()}`">
                 {{ CLAIM_LABEL[c.status] }}
               </v-chip>
             </li>
@@ -387,5 +442,64 @@ const claimLabel = computed(() => {
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.79rem;
   line-height: 1.7;
+}
+
+/* ---- 讲解视频 ---- */
+
+.td__video {
+  margin-top: 14px;
+}
+
+.td__player {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  color: rgb(var(--v-theme-on-surface));
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: var(--radius-md);
+}
+
+.td__player-badge {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  padding: 2px 8px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  background: rgba(var(--v-theme-surface), 0.7);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+}
+
+.td__player-bv {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.td__player-note {
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.72rem;
+}
+
+.td__video-plain {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 12px;
+  color: rgba(var(--v-theme-on-surface), 0.75);
+  background: rgba(var(--v-theme-warning), 0.1);
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+}
+
+.td__video-url {
+  overflow: hidden;
+  font-family: var(--font-mono, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

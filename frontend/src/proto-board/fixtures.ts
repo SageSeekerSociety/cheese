@@ -59,6 +59,10 @@ export interface BoardTask {
   /** 小队规模限制。`1/1` 就是「只能单人领」。 */
   minTeamSize: number
   maxTeamSize: number
+  /** 讲解视频。真库 `Task.video_url`；详情页只把 B 站链接转成内嵌播放器。 */
+  videoUrl?: string | null
+  /** 这道题是怎么来的。从 PDF 生成的那批会写「PDF · 第 2 页」，手写的没有这一项。 */
+  origin?: string
   claims: Claimant[]
   /** 最近 12 天的累计领取。派生自 `claims`，见 `finalize()`。 */
   claimTrend: number[]
@@ -242,6 +246,7 @@ const CURATED: BoardTask[] = [
     participantLimit: 30,
     minTeamSize: 1,
     maxTeamSize: 1,
+    videoUrl: 'https://www.bilibili.com/video/BV1xx411c7mD',
     claims: makeRoster({
       named: [
         ['pengwenbo', 10, 'PASSED'],
@@ -711,6 +716,8 @@ function makeBulkTasks(): BoardTask[] {
         participantLimit: rand() < 0.3 ? null : claims.length + 5 + Math.floor(rand() * 25),
         minTeamSize: team,
         maxTeamSize: team,
+        // 每 9 道里有一道带讲解视频，让「带视频的题」在列表里也看得见。
+        videoUrl: i % 9 === 0 ? 'https://www.bilibili.com/video/BV1Q5411T7YB' : null,
         claims,
       })
     )
@@ -835,6 +842,63 @@ export const STATE_LABEL: Record<TaskState, string> = {
   PUBLISHED: '已上板',
   REJECTED: '已驳回',
   CLOSED: '已截止',
+}
+
+/** B 站链接 → 内嵌播放器地址。判据与真平台 `views/tasks/detail/Overview.vue` 的
+ *  `videoEmbedUrl` 一致：只认 `bilibili.com/video/BV…`，其它域名一律 null（能存、不能播）。 */
+export function videoEmbedUrl(url: string | null | undefined): string | null {
+  const bv = url?.match(/bilibili\.com\/video\/(BV[\w]+)/)
+  return bv ? `//player.bilibili.com/player.html?bvid=${bv[1]}&autoplay=0` : null
+}
+
+export function bilibiliBvid(url: string | null | undefined): string | null {
+  const bv = url?.match(/bilibili\.com\/video\/(BV[\w]+)/)
+  return bv ? bv[1] : null
+}
+
+/** 「从 PDF 生成题目」的假解析结果 —— 形状照着真接口
+ *  `POST /tasks/publish/from-pdf/preview` 的返回捏（drafts + templateUsed + tokenUsed），
+ *  另外把「抽出几张图」「原文件多少页」也摆出来：这两件事决定人要不要逐条改。 */
+export const PDF_PREVIEW = {
+  fileName: '计算机系统基础-第五次作业.pdf',
+  pages: 14,
+  templateUsed: '计算机系统基础 · 标准题模板',
+  tokenUsed: 18742,
+  imageCount: 3,
+  drafts: [
+    {
+      key: 'd1',
+      title: '用 gdb 定位一次段错误',
+      summary: '给定一段会崩的程序，用 gdb 找出崩在哪一行并说明寄存器状态。截图与命令都要交。',
+      category: '系统与网络',
+      images: 1,
+      sourcePage: 2,
+    },
+    {
+      key: 'd2',
+      title: '手写一个最简内存分配器',
+      summary: '实现 malloc / free 的最简版本，说明碎片是怎么产生的、你的策略付出了什么代价。',
+      category: '系统与网络',
+      images: 0,
+      sourcePage: 5,
+    },
+    {
+      key: 'd3',
+      title: '论证「缓存行对齐」能带来多少加速',
+      summary: '在两种访问模式下测同一段代码，给出数据、解释差异，并说明测量里哪些噪声没排掉。',
+      category: '算法与数据结构',
+      images: 2,
+      sourcePage: 9,
+    },
+    {
+      key: 'd4',
+      title: '把给出的程序改成并发安全',
+      summary: '题目附的代码有竞态，请修好并给出你判断它安全的依据。',
+      category: '系统与网络',
+      images: 0,
+      sourcePage: 12,
+    },
+  ],
 }
 
 export const CLAIM_LABEL: Record<Claimant['status'], string> = {

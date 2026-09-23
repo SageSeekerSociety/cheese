@@ -68,6 +68,11 @@ const claimed = computed(() => alreadyClaimed(props.task))
     <p class="tcard__summary">{{ task.summary }}</p>
 
     <div class="tcard__tags">
+      <!-- 带讲解视频的题在列表里也看得出来，不用点进去才发现。 -->
+      <v-chip v-if="task.videoUrl" size="x-small" label variant="tonal" class="tcard__video">
+        <v-icon icon="mdi-play-circle-outline" size="13" start />
+        视频
+      </v-chip>
       <v-chip v-for="tag in task.tags" :key="tag" size="x-small" label variant="text" class="tcard__tag"
         >#{{ tag }}</v-chip
       >

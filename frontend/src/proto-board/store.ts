@@ -73,9 +73,12 @@ export function publishTask(draft: {
   minTeamSize: number
   maxTeamSize: number
   deadlineDays: number
+  videoUrl?: string | null
+  /** 从 PDF 批量发时写「PDF · 第 2 页」，手写的题没有这一项。 */
+  origin?: string
 }): BoardTask {
   const task: BoardTask = {
-    id: `new-${Date.now()}`,
+    id: `new-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     title: draft.title,
     summary: draft.summary,
     category: draft.category,
@@ -87,6 +90,8 @@ export function publishTask(draft: {
     participantLimit: draft.participantLimit,
     minTeamSize: draft.minTeamSize,
     maxTeamSize: draft.maxTeamSize,
+    videoUrl: draft.videoUrl ?? null,
+    origin: draft.origin,
     submitted: 0,
     passed: 0,
     claimTrend: [],
@@ -94,6 +99,26 @@ export function publishTask(draft: {
   }
   tasks.value = [task, ...tasks.value]
   return task
+}
+
+/** 从 PDF 生成的那批草稿，勾选确认之后落到这里 —— 和手写一样进待审队列。
+ *  真平台是 `POST /tasks/publish/from-pdf/confirm`：预览归预览，不确认不落库。 */
+export function publishFromPdf(
+  drafts: { title: string; summary: string; category: string; sourcePage: number }[]
+): BoardTask[] {
+  return drafts.map((d) =>
+    publishTask({
+      title: d.title,
+      summary: d.summary,
+      category: d.category,
+      tags: ['来自 PDF'],
+      participantLimit: null,
+      minTeamSize: 1,
+      maxTeamSize: 1,
+      deadlineDays: 14,
+      origin: `PDF · 第 ${d.sourcePage} 页`,
+    })
+  )
 }
 
 /** 领取一道题。上限满了就什么都不做，返回 false —— 界面要把「满了」这件事说出来。 */
@@ -118,6 +143,38 @@ export function alreadyClaimed(task: BoardTask): boolean {
 
 export function myClaim(task: BoardTask): Claimant | undefined {
   return task.claims.find((c) => c.handle === me.value.handle)
+}
+
+/** 名单一动，提交数与通过数就得跟着重算 —— 假数据里这两个数是 `finalize()` 从名单
+ *  派生出来的，派生关系不能在「界面能改名单」之后断掉。 */
+function recompute(task: BoardTask) {
+  task.submitted = task.claims.filter((c) => c.status !== 'IN_PROGRESS').length
+  task.passed = task.claims.filter((c) => c.status === 'PASSED').length
+}
+
+/** 交作业：把我的领取记录从「进行中」推到「已提交」。真平台是
+ *  `POST /tasks/{id}/participants/{pid}/submissions`，交什么由题目的 submissionSchema 定。 */
+export function submitWork(id: string): boolean {
+  const task = tasks.value.find((t) => t.id === id)
+  if (!task) return false
+  const mine = myClaim(task)
+  if (!mine || mine.status !== 'IN_PROGRESS') return false
+  mine.status = 'SUBMITTED'
+  recompute(task)
+  return true
+}
+
+/** 判作业：**出题人本人或这块板的管理员**都能判（真平台 `may_teach_task`）——
+ *  这与「题目上板审核只有管理员能做」不是同一条判据。真接口是
+ *  `POST .../submissions/{sid}/review`，带 accepted / score / comment。 */
+export function reviewWork(id: string, handle: string, accepted: boolean): boolean {
+  const task = tasks.value.find((t) => t.id === id)
+  if (!task || !canManageTask(task)) return false
+  const claim = task.claims.find((c) => c.handle === handle)
+  if (!claim || claim.status !== 'SUBMITTED') return false
+  claim.status = accepted ? 'PASSED' : 'REJECTED'
+  recompute(task)
+  return true
 }
 
 // --- 邀请码 ------------------------------------------------------------------
