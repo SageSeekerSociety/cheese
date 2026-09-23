@@ -184,8 +184,8 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
         def submit(self, chat, topic_id, **kwargs):
             submitted.append((str(topic_id), kwargs))
 
-    first = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    first = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert first == {"delivered": 1}
 
@@ -201,8 +201,8 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
     assert kwargs["nudge_meta"]["detail"] == "回来看一眼那条 PR"
 
     # 递过的那一行不再递第二遍 —— 重启、重跑、两台机器同时扫都一样。
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert again == {"delivered": 0}
 
@@ -229,24 +229,28 @@ def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
             submitted.append(str(topic_id))
 
     async def _while_another_scanner_holds_it():
-        async with client.test_factory() as holder:
+        async with client.test_request_factory() as holder:
             await holder.scalars(
                 select(TimedDelivery)
                 .where(TimedDelivery.delivered_at.is_(None))
                 .with_for_update()
             )
             skipped = await asyncio.wait_for(
-                deliver_due(client.test_factory, chat=object(), runner=Runner()),
+                deliver_due(
+                    client.test_request_factory, chat=object(), runner=Runner()
+                ),
                 timeout=20,
             )
             await holder.rollback()
         return skipped
 
-    assert asyncio.run(_while_another_scanner_holds_it()) == {"delivered": 0}
+    assert client.portal.call(lambda: _while_another_scanner_holds_it()) == {
+        "delivered": 0
+    }
     assert submitted == [], "同一条被递了第二遍"
 
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert again == {"delivered": 1}
     assert submitted == [room]

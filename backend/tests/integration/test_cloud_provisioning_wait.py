@@ -45,7 +45,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
 
     def override() -> ChatService:
         return ChatService(
-            session_factory=client.test_factory,
+            session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "workspace"),
             compute=ComputePool([ClaudeCodeRuntime(cloud)], "cloud"),
@@ -86,11 +86,11 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
 
     from app.domain.machine import progress
 
-    monkeypatch.setattr(progress, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(progress, "async_session_factory", client.test_request_factory)
 
     async def observe_startup():
         await progress.startup_progress(uuid.UUID(topic_id), "正在下载连接器")
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
             assert any(block.content == "正在下载连接器" for block in blocks)
         # Progress must not clear the watermark that resumes the held message.
@@ -98,4 +98,4 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
             uuid.UUID(topic_id)
         ]
 
-    asyncio.run(observe_startup())
+    client.portal.call(observe_startup)

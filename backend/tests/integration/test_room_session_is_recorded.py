@@ -62,7 +62,7 @@ def _dispatched(client, room_id: str, title: str = "一件活") -> str:
 
 def _service(client, tmp_path, screen: _Screen) -> ChatService:
     return ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),

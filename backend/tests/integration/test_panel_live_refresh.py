@@ -33,7 +33,7 @@ class _RunsCheese(StubChannel):
 def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     """One summoned turn on `channel`, as the room sees it."""
     service = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([channel.runtime], channel.name),
