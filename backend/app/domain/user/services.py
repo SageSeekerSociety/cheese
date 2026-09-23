@@ -38,6 +38,25 @@ async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
 
 
+async def users_by_handle(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, User]:
+    """handle -> 活着的 User 行；平台上没有（或已注销）的不在映射里。
+
+    `faces_by_handle` 答「这个人叫什么、长什么样」，这里答「这个账号存不存在、
+    什么时候注册的」——成员管理那份名单要把「死权限」（配置里写了、平台上没
+    这个人）画出来。批量一条查询（`UserRepository.get_by_handles`，自带
+    `deleted_at IS NULL`），不按 handle N+1。
+
+    放在 user 域而不是调用方，和 ``faces_by_handle`` 是同一个理由：「账号存不
+    存在」是 `User` 的事实，而判据（删掉的算不算）只写一份才不会两处各答一次。
+    """
+    wanted = {h for h in handles if h}
+    if not wanted:
+        return {}
+    return await UserRepository(session).get_by_handles(sorted(wanted))
+
+
 async def handles_by_ids(
     session: AsyncSession, user_ids: Iterable[int]
 ) -> tuple[str, ...]:
@@ -201,6 +220,10 @@ class AccountService:
     ) -> dict[str, dict[date, int]]:
         """同 `accounts_series`，但真人 / agent 各一条。"""
         return await self._repo.accounts_series_by_kind(since=since, until=until)
+
+    async def count_accounts_between(self, *, since: datetime, until: datetime) -> int:
+        """窗口内新增的账号总数（`accounts_series` 的合计版，看板环比用）。"""
+        return await self._repo.count_accounts_between(since=since, until=until)
 
 
 class UserProfileService:

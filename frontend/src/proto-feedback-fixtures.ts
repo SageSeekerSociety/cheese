@@ -1432,6 +1432,12 @@ function readDays(days: number): string[] {
   return Array.from({ length: days }, (_, i) => dayKey(since + i * 86_400_000))
 }
 
+/** 上一个等长窗口的日子（`[since-days, since)`）—— 各分类 `prev` 合计的那一份，
+ *  和后端 `services.py` 的 prev 窗口同一把尺子。 */
+function prevDays(days: number): string[] {
+  return readDays(days * 2).slice(0, days)
+}
+
 /** 把一个 `日期 → 数` 的稀疏表铺成 `days` 行，缺的那天写 0。列名由调用方点名（和
  *  `dense_series` 一样，不猜）：猜错的表现是一栏全是 0，而没有任何一处会报错。
  *
@@ -1521,6 +1527,8 @@ function feedbackStats(url: URL): Record<string, unknown> {
     resolved: live.filter((i) => i.status === 'resolved').length,
     deployed: live.filter((i) => i.status === 'deployed').length,
   }
+  const created = createdDays()
+  const resolved = reachedDays('resolved')
   return {
     days,
     total,
@@ -1528,10 +1536,15 @@ function feedbackStats(url: URL): Record<string, unknown> {
     status,
     unread: counts().unread,
     series: dense(days, {
-      created: createdDays(),
-      resolved: reachedDays('resolved'),
+      created,
+      resolved,
       deployed: reachedDays('deployed'),
     }),
+    // 上一等长窗口的合计（`[since-days, since)`）—— KPI 卡的环比差从这里出。
+    prev: {
+      created: prevDays(days).reduce((acc, day) => acc + (created.get(day) ?? 0), 0),
+      resolved: prevDays(days).reduce((acc, day) => acc + (resolved.get(day) ?? 0), 0),
+    },
   }
 }
 
@@ -1661,6 +1674,10 @@ function topProjects(tokens: number, unpriced: number): Record<string, unknown>[
 function usageStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
   const bucket = usageWindow(days)
+  // 上一等长窗口（`[since-days, since)`）的同一口径合计 —— KPI 环比的数据源。
+  // 同一天的数字只由日期决定（`hashDay`），所以 prev 和当前窗口一样可复现。
+  const prevRows = prevDays(days).map((date) => usageOfDay(date))
+  const prevSum = (key: 'tokens' | 'calls' | 'cost_usd'): number => prevRows.reduce((acc, row) => acc + row[key], 0)
   return {
     days,
     // 上面那三列的和，就是这一份 totals —— 这一块没有第二个读法。
@@ -1677,6 +1694,11 @@ function usageStats(url: URL): Record<string, unknown> {
     // 项目记忆里的智谱/小米端点），通路那三条是 `ResourceUsage.route` 的全部取值。
     by_model: byModel(bucket),
     by_route: byRoute(bucket),
+    prev: {
+      tokens: prevSum('tokens'),
+      calls: prevSum('calls'),
+      cost_usd: Number(prevSum('cost_usd').toFixed(4)),
+    },
   }
 }
 
@@ -1746,6 +1768,10 @@ const MACHINE_STOCK = {
   project_machines: 2,
 }
 
+/** 存量里 agent 账号的个数（真人 = `ACCOUNT_TOTAL` 减去它）。判据是 `agent_bindings`
+ *  —— 预览没有那张表，这里记一个常量，量级落在「两位数」上够看图了。 */
+const AGENT_ACCOUNTS = 12
+
 function signupsOfDay(day: string): number {
   return weekdayOf(day) === 0 ? 0 : hashDay(`s${day}`) % 4
 }
@@ -1789,15 +1815,32 @@ function creditsBurnout(): Record<string, unknown> {
 function platformStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
   const created = new Map<string, number>()
-  for (const day of readDays(days)) created.set(day, signupsOfDay(day))
+  const humanCreated = new Map<string, number>()
+  const agentCreated = new Map<string, number>()
+  for (const day of readDays(days)) {
+    const total = signupsOfDay(day)
+    // 真人 / Agent 的拆分：一天 0–2 个 agent 账号，只由日期决定（和 `usageOfDay` 同
+    // 一条纪律 —— 假数据也得能对着一张截图复现）。
+    const agents = Math.min(total, hashDay(`a${day}`) % 3)
+    created.set(day, total)
+    humanCreated.set(day, total - agents)
+    agentCreated.set(day, agents)
+  }
+  const sum = (table: Map<string, number>): number => [...table.values()].reduce((acc, n) => acc + n, 0)
+  const prevNew = prevDays(days).reduce((acc, day) => acc + signupsOfDay(day), 0)
   return {
     days,
     people: {
       total: ACCOUNT_TOTAL,
-      new: [...created.values()].reduce((acc, n) => acc + n, 0),
+      new: sum(created),
+      prev_new: prevNew,
       // 名单是**活的**：成员管理页加了人，这里下一次就是新数。
       admins: ROOT_ADMINS.length + ADDED_ADMINS.filter((row) => !ROOT_ADMINS.includes(row.handle)).length,
-      series: dense(days, { created }),
+      humans: ACCOUNT_TOTAL - AGENT_ACCOUNTS,
+      agents: AGENT_ACCOUNTS,
+      new_humans: sum(humanCreated),
+      new_agents: sum(agentCreated),
+      series: dense(days, { created, human_created: humanCreated, agent_created: agentCreated }),
     },
     machines: { ...MACHINE_STOCK },
     // **这一刻**的健康度（和上面两组的存量/窗口不是一回事）。判据与 `/health/detailed`
@@ -2042,11 +2085,11 @@ function routes(url: URL, method: string, body: unknown): MockReply {
    *  `revoked` + `note_code=voided`）；`unavailable` 里的两条带着理由而不是 0；
    *  `pr_open` 在 `by_status` 里是 0 —— 死写入的档位也要在，缺档和 0 在屏幕上必须
    *  长得不一样。 */
-  function pipelineStats(): Record<string, unknown> {
+  function pipelineStats(url: URL): Record<string, unknown> {
     const now = new Date()
     const ago = (minutes: number) => new Date(now.getTime() - minutes * 60000).toISOString()
     return {
-      days: 7,
+      days: windowDays(url),
       backlog: {
         by_status: {
           pending: 4,
@@ -2154,6 +2197,8 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       days: windowDays(url),
       north_star: {
         total: 38,
+        // 上一等长窗口的同一口径合计（环比用）。
+        prev_total: 31,
         series: days.map((date, i) => ({ date, accepted: accepted[i] ?? 0 })),
         note_key: 'product.northStarNote',
       },
@@ -2249,7 +2294,7 @@ function routes(url: URL, method: string, body: unknown): MockReply {
 
   const stats = /^\/admin\/stats\/([a-z]+)$/.exec(path)
   if (stats && method === 'GET') {
-    if (stats[1] === 'pipeline') return { data: pipelineStats() }
+    if (stats[1] === 'pipeline') return { data: pipelineStats(url) }
     if (stats[1] === 'product') return { data: productStats() }
     if (stats[1] === 'integrations') return { data: integrationsStats() }
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
@@ -2279,7 +2324,9 @@ function routes(url: URL, method: string, body: unknown): MockReply {
           warm_by_state: { ready: 2, preparing: 1 },
           warm_error: 0,
           project_total: 2,
-          project_by_status: { ready: 2 },
+          // 状态分布的两格：样例走 `PROJECT_STATUS_KEY` 键表里的词（表外的新状态
+          // 在页面上兜底显示原名 —— 和 `HEALTH_KEY` 同一模式）。
+          project_by_status: { leased: 1, released: 1 },
           project_leased: 1,
           project_enroll_error: 0,
           note_key: 'platform.machinesNote',

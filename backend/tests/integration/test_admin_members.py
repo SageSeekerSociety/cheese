@@ -39,6 +39,12 @@ STRANGER = "am-stranger"
 PICKED = "am-picked"
 PLAIN = "am-plain"
 
+#: 「这行权限是不是死的」那一条用例里的三种人：有账号的普通人、有账号的 agent、
+#: 平台上根本没账号的（根配置里写错了一个名字）。
+HUMAN = "am-human"
+BOT = "am-bot"
+GHOST = "am-ghost"
+
 
 @pytest.fixture
 def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -138,6 +144,60 @@ def _seed_profiles(client, picks: dict[str, str]) -> dict[str, int]:
     return ids
 
 
+def _seed_agent_binding(client, handle: str) -> None:
+    """把一个已有账号的人变成 agent：落一条 platform 绑定。
+
+    名单里的 agent 行走不了页面那一关（`AdminService.add_admin` 拒 agent），所以
+    测试里用仓储手插 —— 和生产里「从根配置混进来」是同一种来历：绕过了服务层那道
+    拒绝，而这一行仍然要被名单画出来。
+    """
+    from app.domain.identity.repositories import AgentBindingRepository
+    from app.domain.user.repositories import UserRepository
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            user = await UserRepository(s).get_by_username(handle)
+            assert user is not None, f"先造账号再绑 agent：{handle}"
+            await AgentBindingRepository(s).add(user_id=user.id)
+            await s.commit()
+
+    asyncio.run(_seed())
+
+
+def _add_roster_row(client, handle: str, *, by: str) -> None:
+    """绕过路由直接往 `platform_admins` 写一行 —— 见 `_seed_agent_binding`：agent
+    行走不了 POST 那一关，而「两组同一个行形状」要在 added 这半也钉一遍。"""
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            assert await AdminRepository(s).add_admin(handle, added_by=by)
+            await s.commit()
+
+    asyncio.run(_add())
+
+
+def _seed_bare_account(client, handle: str) -> None:
+    """只落一个 `User` 行、**故意不造 profile**：昵称和头像保持 null，于是下一次
+    GET 里这一行变的只有 `has_account` / `registered_at` —— ETag 翻了，功劳就赖
+    不到既有字段头上，证明增强字段进了 ETag 输入。"""
+    from app.domain.user.models import User
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            s.add(
+                User(
+                    username=handle,
+                    email=f"{handle}@example.com",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+
 @contextmanager
 def _counting_sql() -> Iterator[list[str]]:
     """这个块里发出的每一条 SQL，按顺序。
@@ -201,7 +261,73 @@ def test_a_root_handle_with_no_account_is_still_a_row_not_an_error(client, monke
     _roots(monkeypatch, ADMIN, "am-ghost")
 
     row = next(r for r in _list(client, ADMIN)["root"] if r["handle"] == "am-ghost")
-    assert row == {"handle": "am-ghost", "nickname": None, "avatar_id": None}
+    assert row == {
+        "handle": "am-ghost",
+        "nickname": None,
+        "avatar_id": None,
+        # 平台上没有这个账号：三件事全空 —— 没账号、谈不上注册时间、也不是 agent。
+        "has_account": False,
+        "registered_at": None,
+        "is_agent": False,
+    }
+
+
+# --- 每行的账号状态、注册时间与 agent 标记 -------------------------------------
+
+
+def test_roster_rows_carry_account_state_registration_and_agent_flag(
+    client, monkeypatch
+):
+    """每行多说三件事：平台上有没有这个账号、什么时候注册的、是不是 agent。
+
+    三件事是同一句追问的三个答案：「这行权限是不是死的」。没账号（或已注销）的
+    行、是 agent 的行，都是配置里写了但永远用不上的权限 —— 页面要把它们和「没设
+    昵称」区分开，靠的是这三个显式字段，而不是猜 `nickname` 是不是 null（没账号、
+    没设昵称、agent 的昵称都可以是 null，只有这三格分得开）。
+    """
+    _roots(monkeypatch, ADMIN, GHOST)
+    _seed_profiles(client, {HUMAN: "default", BOT: "default"})
+    _add(client, ADMIN, HUMAN)
+    _seed_agent_binding(client, BOT)
+    _add_roster_row(client, BOT, by=ADMIN)
+
+    data = _list(client, ADMIN)
+    root_rows = {row["handle"]: row for row in data["root"]}
+    added_rows = {row["handle"]: row for row in data["added"]}
+
+    # 平台上没有这个账号：三件事全空 —— 没账号、谈不上注册时间、也不是 agent。
+    assert root_rows[GHOST]["has_account"] is False
+    assert root_rows[GHOST]["registered_at"] is None
+    assert root_rows[GHOST]["is_agent"] is False
+
+    # 普通行：有账号、注册时间是一个可解析的 ISO 串、不是 agent。
+    assert added_rows[HUMAN]["has_account"] is True
+    assert datetime.fromisoformat(added_rows[HUMAN]["registered_at"])
+    assert added_rows[HUMAN]["is_agent"] is False
+
+    # agent 行：账号是真的（has_account 照答 True），但权限用不上 —— 「这行是死
+    # 权限」的那一格是 is_agent，has_account 答不出这句话。
+    assert added_rows[BOT]["has_account"] is True
+    assert datetime.fromisoformat(added_rows[BOT]["registered_at"])
+    assert added_rows[BOT]["is_agent"] is True
+
+    # 增强字段进了 ETag 输入：给 GHOST 补一个**裸账号**（不造 profile，昵称和头像
+    # 保持 null —— 对照断言在下面），变的只有 has_account / registered_at 两格，
+    # tag 必须翻。不翻的话，一个人「从没有账号变成有账号」会被 304 永远盖住。
+    before = client.get("/admin/admins", headers=session_auth_headers(ADMIN)).headers[
+        "ETag"
+    ]
+    _seed_bare_account(client, GHOST)
+    r = client.get("/admin/admins", headers=session_auth_headers(ADMIN))
+    assert r.headers["ETag"] != before
+
+    ghost = next(row for row in r.json()["data"]["root"] if row["handle"] == GHOST)
+    # 对照组：既有字段一个都没变 —— 上面那次翻转只能记在增强字段头上。
+    assert ghost["nickname"] is None
+    assert ghost["avatar_id"] is None
+    assert ghost["is_agent"] is False
+    assert ghost["has_account"] is True
+    assert datetime.fromisoformat(ghost["registered_at"])
 
 
 # --- 加 / 删 -----------------------------------------------------------------

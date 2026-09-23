@@ -233,6 +233,18 @@ class UserRepository:
         rows = (await self._session.execute(stmt)).all()
         return {row[0].date(): int(row[1]) for row in rows}
 
+    async def count_accounts_between(self, *, since: datetime, until: datetime) -> int:
+        """窗口内新增的账号总数 —— `accounts_series` 的合计版（看板环比用）。
+
+        和 `accounts_series` 同一个 WHERE（未删 + 半开窗口），只是不分桶。
+        """
+        stmt = select(func.count(User.id)).where(
+            User.deleted_at.is_(None),
+            User.created_at >= since,
+            User.created_at < until,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
 
 class UserProfileRepository:
     def __init__(self, session: AsyncSession) -> None:
