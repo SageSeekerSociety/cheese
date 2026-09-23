@@ -26,6 +26,10 @@ const props = withDefaults(
       count: number
       /** 这一站的停留时长（秒），没有读数给 null（画破折号，不画 0）。 */
       dwellSeconds: number | null
+      /** 分位数明细（秒）。给了就挂到停留行的 `title` 上 —— 站面只摆 p50，
+       *  屏幕不被分位数淹；想知道尾巴有多长的人鼠标停一下就有。 */
+      p90Seconds?: number | null
+      maxSeconds?: number | null
     }[]
     /** 只在有东西卡住时出现的徽章行。 */
     stuck?: { label: string; count: number }[]
@@ -51,6 +55,16 @@ function dwellText(seconds: number | null | undefined): string {
   const days = Math.floor(hours / 24)
   return `${days} ${t('feedback.dashboard.dwell.days')}`
 }
+
+/** 停留行的 `title` 明细：p90 与最长。两个都给空就返回 undefined（不挂 title）。 */
+function dwellDetail(stage: { p90Seconds?: number | null; maxSeconds?: number | null }): string | undefined {
+  if (stage.p90Seconds === null || stage.p90Seconds === undefined) return undefined
+  if (stage.maxSeconds === null || stage.maxSeconds === undefined) return undefined
+  return t('feedback.dashboard.spine.dwellDetail', {
+    p90: dwellText(stage.p90Seconds),
+    max: dwellText(stage.maxSeconds),
+  })
+}
 </script>
 
 <template>
@@ -70,7 +84,7 @@ function dwellText(seconds: number | null | undefined): string {
             <span class="als__ribbon" :style="{ width: ribbonWidth(stage.count) }" />
           </span>
           <span class="als__count t-console-title t-num">{{ stage.count }}</span>
-          <span class="als__dwell t-meta-read t-num">{{ dwellText(stage.dwellSeconds) }}</span>
+          <span class="als__dwell t-meta-read t-num" :title="dwellDetail(stage)">{{ dwellText(stage.dwellSeconds) }}</span>
         </li>
       </ol>
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+
 // 「值对上限」的一根条：额度燃尽、磁盘占用、覆盖率都用它。
 //
 // **`limit` 为空 = 不限量**，画的是**空心虚线槽 + 「不限量」**，不是一根满条：
@@ -20,6 +22,8 @@ const props = withDefaults(
     /** 右侧那句「不限量 / 12%」。 */
     hint?: string
     loading?: boolean
+    /** 口径注。给了就在 label 旁画 info tip（磁盘/预览的口径注脚走这里，见 §8 收编）。 */
+    note?: string
   }>(),
   { ratio: 0, tone: 'ink', loading: false }
 )
@@ -32,6 +36,7 @@ const widthText = computed(() => `${Math.max(2, Math.min(100, (props.ratio ?? 0)
   <div class="amb">
     <div class="amb__row">
       <span class="amb__label t-eyebrow-read">{{ label }}</span>
+      <AdminNoteTip v-if="note" :text="note" />
       <span class="amb__value t-num t-dense">{{ valueText }}</span>
       <span v-if="hint" class="amb__hint t-meta-read">{{ hint }}</span>
     </div>
@@ -64,8 +69,10 @@ const widthText = computed(() => `${Math.max(2, Math.min(100, (props.ratio ?? 0)
   min-width: 0;
 }
 
+/* label 不吃满整行（`flex: 0 1 auto`）：口径 tip 要紧挨着它，而不是被推到右端；
+   右对齐交给 value 的 `margin-left: auto` —— 没有 tip 时布局与原来逐像素相同。 */
 .amb__label {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -73,6 +80,7 @@ const widthText = computed(() => `${Math.max(2, Math.min(100, (props.ratio ?? 0)
 }
 
 .amb__value {
+  margin-left: auto;
   color: var(--ink);
 }
 
