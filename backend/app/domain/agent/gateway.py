@@ -39,7 +39,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 8.0
+# /spend/logs has no useful index and full-scans LiteLLM's spend table —
+# measured 24-102 s on 2026-09-23. The old 8 s timed out every drain, which
+# silently billed zeros (a caught exception returns None, and the caller
+# writes an unmetered row).
+_TIMEOUT = 60.0
 
 
 @dataclass(frozen=True)
