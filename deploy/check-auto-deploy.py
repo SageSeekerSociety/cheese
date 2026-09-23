@@ -7,10 +7,32 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 def command(*args: str) -> str:
     return subprocess.check_output(args, text=True, timeout=30).strip()
+
+
+def github_api(path: str, params: dict[str, str] | None = None) -> dict:
+    """Read the GitHub API with the workflow token; runners need no gh binary."""
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("GH_TOKEN or GITHUB_TOKEN is required to query GitHub")
+    url = f"https://api.github.com/{path.lstrip('/')}"
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        return json.load(response)
 
 
 def ci_ready(candidate: str) -> bool:
@@ -21,12 +43,19 @@ def ci_ready(candidate: str) -> bool:
     ready = True
     for workflow, events in (("build.yml", {"push", "workflow_dispatch"}),
                              ("required-ci.yml", {"push"})):
-        pages = json.loads(command(
-            "gh", "api", "--paginate", "--slurp",
-            f"repos/{repository}/actions/workflows/{workflow}/runs"
-            f"?head_sha={candidate}&branch=main&per_page=100",
-        ))
-        runs = [run for page in pages for run in page["workflow_runs"]
+        runs = []
+        page = 1
+        while True:
+            result = github_api(
+                f"repos/{repository}/actions/workflows/{workflow}/runs",
+                {"head_sha": candidate, "branch": "main", "per_page": "100", "page": str(page)},
+            )
+            batch = result.get("workflow_runs", [])
+            runs.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        runs = [run for run in runs
                 if run["head_sha"] == candidate and run["head_branch"] == "main"
                 and run["event"] in events
                 and run["head_repository"]["full_name"] == repository]
@@ -70,9 +99,7 @@ def should_skip(candidate: str) -> bool:
         print("No running application containers; allowing bootstrap.")
     all_identical = bool(versions)
     for version in sorted(versions):
-        status = command(
-            "gh", "api", f"repos/{repository}/compare/{version}...{candidate}", "--jq", ".status",
-        )
+        status = github_api(f"repos/{repository}/compare/{version}...{candidate}").get("status")
         if status == "behind":
             print(f"Skipping automatic release {candidate}: running release {version} is newer.")
             return True
