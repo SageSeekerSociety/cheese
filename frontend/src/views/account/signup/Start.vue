@@ -183,7 +183,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
-import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -298,17 +297,9 @@ onMounted(async () => {
 
 const submit = handleSubmit(async (value) => {
   try {
-    // 生成 SRP 盐值和验证器
-    const srpSalt = srp.generateSalt()
-    const privateKey = srp.derivePrivateKey(srpSalt, value.username, value.password)
-    const srpVerifier = srp.deriveVerifier(privateKey)
-
-    // 将 SRP 参数保存到 store 中，供后续注册使用
     await signupStore.startSignup({
       ...value,
       inviteCode: requireInviteCode.value ? value.inviteCode?.trim() : undefined,
-      srpSalt,
-      srpVerifier,
     })
 
     router.push('/account/signup/verify-email')

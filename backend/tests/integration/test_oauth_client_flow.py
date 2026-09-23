@@ -242,6 +242,58 @@ class TestOAuthCreate:
         assert methods.status_code == 200
         assert methods.json()["data"]["supports_srp"] is True
 
+    def test_create_with_plaintext_password(
+        self, api_client: TestClient, state_token: StateToken
+    ):
+        resp = api_client.post(
+            "/users/oauth/create",
+            data={
+                "stateToken": state_token(id="uid-create-plain"),
+                "username": "oauth_created_plain",
+                "nickname": "plain_user",
+                "passwordMode": "password",
+                "password": "oauth-pass~1",
+            },
+            follow_redirects=False,
+        )
+        assert _q(_loc(resp))["created"] == "true"
+
+        login = api_client.post(
+            "/users/auth/login",
+            json={"username": "oauth_created_plain", "password": "oauth-pass~1"},
+        )
+        assert login.status_code == 200, login.text
+        assert login.json()["data"]["accessToken"]
+
+    @pytest.mark.parametrize(
+        "password",
+        ["", "lettersonly", "x!" * 40],
+        ids=["missing", "no-symbol", "over-72-bytes"],
+    )
+    def test_create_refuses_a_password_before_spending_the_state_token(
+        self, api_client: TestClient, state_token: StateToken, password: str
+    ):
+        token = state_token(id="uid-create-weak")
+        form = {
+            "stateToken": token,
+            "username": "oauth_created_weak",
+            "nickname": "weak_user",
+            "passwordMode": "password",
+            "password": password,
+        }
+        refused = api_client.post(
+            "/users/oauth/create", data=form, follow_redirects=False
+        )
+        assert _q(_loc(refused))["error_code"] == "WEAK_PASSWORD"
+
+        # Neither the token nor the username was spent on the refusal.
+        retried = api_client.post(
+            "/users/oauth/create",
+            data={**form, "password": "a-valid-password"},
+            follow_redirects=False,
+        )
+        assert _q(_loc(retried))["created"] == "true"
+
     def test_create_rejects_taken_username(
         self,
         api_client: TestClient,

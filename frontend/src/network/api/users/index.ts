@@ -15,13 +15,8 @@ import type {
   OAuthBindUserResponse,
   OAuthCreateUserRequest,
   OAuthCreateUserResponse,
-  OAuthSrpBindInitRequest,
-  OAuthSrpBindInitResponse,
-  OAuthSrpBindVerifyRequest,
   Page,
   RealNameInfo,
-  SrpInitResponse,
-  SrpVerifyResponse,
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
   UserList,
@@ -49,8 +44,7 @@ export namespace UserApi {
   export const register = (data: {
     username: string
     nickname: string
-    srpSalt: string
-    srpVerifier: string
+    password: string
     email: string
     emailCode: string
     inviteCode?: string
@@ -97,7 +91,7 @@ export namespace UserApi {
       data: { email },
     })
 
-  export const recoverPasswordVerify = (data: { token: string; srpSalt: string; srpVerifier: string }) =>
+  export const recoverPasswordVerify = (data: { token: string; password: string }) =>
     ApiInstance.request({
       url: '/users/recover/password/verify',
       method: 'POST',
@@ -250,7 +244,7 @@ export namespace UserApi {
     | 'oauth:unbind'
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
-    ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
+    ApiInstance.request<VerifySudoResponse>({
       url: '/users/auth/sudo',
       method: 'POST',
       data: {
@@ -377,29 +371,10 @@ export namespace UserApi {
       method: 'GET',
     })
 
-  // SRP 初始化
-  export const srpInit = (data: { username: string; clientPublicEphemeral?: string }) =>
-    ApiInstance.request<SrpInitResponse>({
-      url: '/users/auth/srp/init',
-      method: 'POST',
-      data,
-      withCredentials: true,
-    })
-
-  // SRP 验证
-  export const srpVerify = (data: { username: string; clientPublicEphemeral: string; clientProof: string }) =>
-    ApiInstance.request<SrpVerifyResponse>({
-      url: '/users/auth/srp/verify',
-      method: 'POST',
-      data,
-      withCredentials: true,
-    })
-
   export const changePassword = (
     userId: number,
     data: {
-      srpSalt: string
-      srpVerifier: string
+      password: string
       sudoTicket: string
     }
   ) =>
@@ -407,35 +382,6 @@ export namespace UserApi {
       url: `/users/${userId}/password`,
       method: 'PATCH',
       data,
-    })
-
-  export const verifySudoSrpInit = () =>
-    ApiInstance.request<{
-      salt: string
-      serverPublicEphemeral: string
-    }>({
-      url: '/users/auth/sudo',
-      method: 'POST',
-      data: {
-        method: 'srp',
-        credentials: {},
-      },
-      withCredentials: true,
-    })
-
-  export const verifySudoSrpVerify = (
-    data: { clientPublicEphemeral: string; clientProof: string },
-    purpose?: SudoPurpose
-  ) =>
-    ApiInstance.request<VerifySudoResponse & { serverProof: string }>({
-      url: '/users/auth/sudo',
-      method: 'POST',
-      data: {
-        method: 'srp',
-        credentials: data,
-        purpose,
-      },
-      withCredentials: true,
     })
 
   // 实名信息 API
@@ -496,12 +442,7 @@ export namespace UserApi {
   }
 
   // OAuth 验证 API
-  export const verifyOAuth = (data: {
-    sessionId: string
-    password?: string
-    clientPublicEphemeral?: string
-    clientProof?: string
-  }) =>
+  export const verifyOAuth = (data: { sessionId: string; password?: string }) =>
     ApiInstance.request({
       url: '/users/auth/oauth/verify',
       method: 'POST',
@@ -539,35 +480,6 @@ export namespace UserApi {
     const form = document.createElement('form')
     form.method = 'POST'
     form.action = `${API_BASE_URL}/users/oauth/bind`
-    form.style.display = 'none'
-
-    Object.entries(data).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        const input = document.createElement('input')
-        input.type = 'hidden'
-        input.name = key
-        input.value = value
-        form.appendChild(input)
-      }
-    })
-
-    document.body.appendChild(form)
-    form.submit()
-  }
-
-  // SRP 绑定初始化
-  export const initOAuthSrpBinding = (data: OAuthSrpBindInitRequest) =>
-    ApiInstance.request<OAuthSrpBindInitResponse>({
-      url: '/users/oauth/bind/srp/init',
-      method: 'POST',
-      data,
-    })
-
-  // SRP 绑定验证 (通过表单提交，会重定向)
-  export const verifyOAuthSrpBinding = (data: OAuthSrpBindVerifyRequest) => {
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = `${API_BASE_URL}/users/oauth/bind/srp/verify`
     form.style.display = 'none'
 
     Object.entries(data).forEach(([key, value]) => {

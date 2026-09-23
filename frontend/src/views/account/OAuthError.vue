@@ -95,9 +95,6 @@ onMounted(() => {
       case 'INVALID_PASSWORD':
         errorDescription.value = '密码验证失败，请检查您的密码是否正确'
         break
-      case 'INVALID_SRP_PROOF':
-        errorDescription.value = 'SRP 安全验证失败，请重新尝试'
-        break
       case 'SESSION_EXPIRED':
         errorDescription.value = '验证会话已过期，请重新开始登录流程'
         break

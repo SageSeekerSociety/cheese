@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
@@ -150,9 +151,12 @@ _SRP_HEX = r"^[0-9a-fA-F]+$"
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    srp_salt: str = Field(..., alias="srpSalt", pattern=_SRP_HEX, max_length=1024)
-    srp_verifier: str = Field(
-        ..., alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
+    password: str | None = None
+    srp_salt: str | None = Field(
+        default=None, alias="srpSalt", pattern=_SRP_HEX, max_length=1024
+    )
+    srp_verifier: str | None = Field(
+        default=None, alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
     )
     sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
@@ -482,6 +486,23 @@ def _reject_overlong_password(password: str) -> None:
 
     if password_too_long(password):
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
+
+
+# At least 8 characters, a letter and an ASCII symbol. The symbol class is the
+# web client's (REGEX_PASSWORD), so the form and the server agree on it.
+_NEW_PASSWORD_PATTERN = re.compile(
+    r"^(?=.*[a-zA-Z])(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
+)
+
+
+def _require_new_password(password: str) -> None:
+    """The rule a password chosen for an account must meet, and the length
+    bcrypt can hold. Checked before anything single-use is spent."""
+    if not _NEW_PASSWORD_PATTERN.match(password):
+        raise UnprocessableEntityError(
+            "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
+        )
+    _reject_overlong_password(password)
 
 
 def _normalize_registration_invite_code(
@@ -1331,8 +1352,6 @@ async def register_user(
     - Legacy password-based auth (isLegacyAuth=True, password required)
     - SRP auth (srpSalt/srpVerifier required)
     """
-    import re
-
     from redis.asyncio import Redis as AsyncRedis
 
     from app.domain.user.verification_service import EmailVerificationService
@@ -1383,14 +1402,7 @@ async def register_user(
         _require_srp_hex(srp_salt, srp_verifier)
 
     if has_password:
-        password_pattern = (
-            r'^(?=.*[a-zA-Z])(?=.*[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]).{8,}$'
-        )
-        if not re.match(password_pattern, password):
-            raise UnprocessableEntityError(
-                "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
-            )
-        _reject_overlong_password(password)
+        _require_new_password(password)
 
     # Always verify email code, regardless of invite code
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
@@ -2851,7 +2863,8 @@ async def change_password(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    """Replace the account's password with new SRP credentials.
+    """Replace the account's password, given in plaintext or as SRP
+    credentials.
 
     Other sessions stay signed in: the session layer cannot yet revoke them
     (#1481).
@@ -2859,14 +2872,23 @@ async def change_password(
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can change their password.")
 
+    password = payload.password
+    srp_salt = payload.srp_salt
+    srp_verifier = payload.srp_verifier
+    if password:
+        _require_new_password(password)
+    elif not (srp_salt and srp_verifier):
+        raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+
     await _spend_sudo_ticket(
         payload.sudo_ticket,
         user_id=auth_user.user_id,
         purpose=SudoPurpose.PASSWORD_CHANGE,
     )
-    await auth_service.set_srp_credentials(
-        user_id, payload.srp_salt, payload.srp_verifier
-    )
+    if password:
+        await auth_service.update_password(user_id, password)
+    elif srp_salt and srp_verifier:
+        await auth_service.set_srp_credentials(user_id, srp_salt, srp_verifier)
 
     return {"code": 200, "message": "Password changed successfully"}
 
@@ -4317,6 +4339,7 @@ async def oauth_create_user(
     username: str = Form(...),
     nickname: str = Form(...),
     passwordMode: str = Form(default="none"),
+    password: str | None = Form(default=None),
     srpSalt: str | None = Form(default=None),
     srpVerifier: str | None = Form(default=None),
     inviteCode: str | None = Form(default=None),
@@ -4335,8 +4358,13 @@ async def oauth_create_user(
         nickname = normalize_nickname(nickname)
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
-    if passwordMode not in ("none", "srp"):
+    if passwordMode not in ("none", "password", "srp"):
         return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
+    if passwordMode == "password":
+        try:
+            _require_new_password(password or "")
+        except (BadRequestError, UnprocessableEntityError) as exc:
+            return _oauth_error_redirect("WEAK_PASSWORD", str(exc))
     if passwordMode == "srp" and not (srpSalt and srpVerifier):
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
@@ -4392,6 +4420,7 @@ async def oauth_create_user(
                 email=email,
                 username=username,
                 nickname=nickname,
+                password=password if passwordMode == "password" else None,
                 srp_salt=srpSalt if passwordMode == "srp" else None,
                 srp_verifier=srpVerifier if passwordMode == "srp" else None,
             )

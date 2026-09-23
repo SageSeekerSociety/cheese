@@ -28,8 +28,7 @@ describe('signup store invite-code flow', () => {
       nickname: '芝士用户',
       email: 'user@example.com',
       inviteCode: '  invite-once  ',
-      srpSalt: 'salt',
-      srpVerifier: 'verifier',
+      password: 'Secret#123',
     })
 
     expect(UserApi.sendEmailCode).toHaveBeenCalledWith('user@example.com', 'invite-once')
@@ -40,6 +39,7 @@ describe('signup store invite-code flow', () => {
       expect.objectContaining({
         emailCode: '123456',
         inviteCode: 'invite-once',
+        password: 'Secret#123',
       })
     )
   })

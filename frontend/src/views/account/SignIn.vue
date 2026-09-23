@@ -169,7 +169,6 @@ import { toast } from 'vuetify-sonner'
 import { startAuthentication } from '@simplewebauthn/browser'
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser'
 import { toTypedSchema } from '@vee-validate/zod'
-import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -216,69 +215,17 @@ if (route.query.username) {
 
 const login = handleSubmit(async (value) => {
   try {
-    // 1. 首先检查用户支持的认证方法
-    const authMethodsResponse = await UserApi.getAuthMethods(value.username)
-    const authMethods = authMethodsResponse.data
-
-    if (authMethods.supports_srp) {
-      // 使用 SRP 流程
-      // 1. 生成客户端临时值对
-      const clientEphemeral = srp.generateEphemeral()
-
-      // 2. 发送用户名和客户端公开临时值到服务器
-      const srpInitResponse = await UserApi.srpInit({
-        username: value.username,
-        clientPublicEphemeral: clientEphemeral.public,
+    const { data } = await UserApi.login(value)
+    if (data.requires2FA) {
+      router.push({
+        name: 'Verify2FA',
+        query: { token: data.tempToken, redirect: route.query.redirect },
       })
-      const { salt, serverPublicEphemeral } = srpInitResponse.data
-
-      // 3. 使用服务器返回的盐值和临时值生成会话密钥和证明
-      const privateKey = srp.derivePrivateKey(salt, value.username, value.password)
-      const clientSession = srp.deriveSession(
-        clientEphemeral.secret,
-        serverPublicEphemeral,
-        salt,
-        value.username,
-        privateKey
-      )
-
-      // 4. 发送客户端证明到服务器
-      const srpVerifyResponse = await UserApi.srpVerify({
-        username: value.username,
-        clientPublicEphemeral: clientEphemeral.public,
-        clientProof: clientSession.proof,
-      })
-      const { serverProof, accessToken, requires2FA, tempToken, user } = srpVerifyResponse.data
-
-      // 5. 验证服务器证明
-      srp.verifySession(clientEphemeral.public, clientSession, serverProof)
-
-      // 处理登录结果
-      if (requires2FA) {
-        router.push({
-          name: 'Verify2FA',
-          query: { token: tempToken, redirect: route.query.redirect },
-        })
-        return
-      }
-
-      AccountService.login(accessToken!, user!)
-      toast.success(t('account.signedIn'))
-      router.replace(postLoginTarget(route.query))
-    } else {
-      // 使用传统登录流程
-      const { data } = await UserApi.login(value)
-      if (data.requires2FA) {
-        router.push({
-          name: 'Verify2FA',
-          query: { token: data.tempToken, redirect: route.query.redirect },
-        })
-        return
-      }
-      AccountService.login(data.accessToken!, data.user!)
-      toast.success(t('account.signedIn'))
-      router.replace(postLoginTarget(route.query))
+      return
     }
+    AccountService.login(data.accessToken!, data.user!)
+    toast.success(t('account.signedIn'))
+    router.replace(postLoginTarget(route.query))
   } catch (e) {
     console.error('登录失败:', e)
     toast.error(requestErrorMessage(e, t('account.signinFailedPleaseTryAgain')))
