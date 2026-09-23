@@ -190,7 +190,10 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
         )
         interrupted = asyncio.create_task(
             backend.call_executor(
-                "machine", "/room/executor", "invoke", {"tool": "Bash"},
+                "machine",
+                "/room/executor",
+                "invoke",
+                {"tool": "Bash"},
                 trace_id="before-reconnect",
             )
         )
@@ -208,7 +211,10 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
 
         answered = asyncio.create_task(
             backend.call_executor(
-                "machine", "/room/executor", "invoke", {"tool": "Bash"},
+                "machine",
+                "/room/executor",
+                "invoke",
+                {"tool": "Bash"},
                 trace_id="after-reconnect",
             )
         )
