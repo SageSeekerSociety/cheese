@@ -52,7 +52,6 @@ Cheese `{code, data, message}` envelope.
 | `GET /control/{request_id}?session_id=…` | Delivery status and native result |
 | `POST /answer` | Answer a pending native permission request or question |
 | `POST /message` | Send human text through RC when explicitly requested by a controller |
-| `GET /events?session_id=…&cursor=0-0` | Read up to 200 worker events with resumable cursors |
 
 For example, after reading the current `id` from `GET /control`, post this body
 to `POST /control` to perform the same background action as Ctrl+B:
@@ -85,7 +84,7 @@ RC `/v1/code/…` requests go to the backend that already serves `/llm/admission
 Worker bootstrap returns a session-scoped, one-hour JWT and the backend's
 `connector_public_base`. Renewing the bridge replaces the worker epoch.
 
-Redis stores sessions, pending questions, command results and event journals for
+Redis stores sessions, pending questions, queued commands and their results for
 seven days of inactivity. Worker mutations check their epoch in the same Redis
 transaction that updates state. Old workers cannot write into a renewed session.
 A backend restart retains outstanding questions while Redis remains available.

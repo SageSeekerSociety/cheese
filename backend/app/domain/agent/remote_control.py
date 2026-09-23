@@ -1,8 +1,9 @@
 """Claude's RC v2 transport, scoped to a Cheese place.
 
-Redis holds sessions and both event journals so a backend restart does not lose
-an outstanding permission request. Worker credentials grant access to one
-session and epoch; they cannot call the human control API.
+Redis holds sessions, the command queue and the state derived from worker events
+so a backend restart does not lose an outstanding permission request. Worker
+credentials grant access to one session and epoch; they cannot call the human
+control API.
 """
 
 import asyncio
@@ -339,8 +340,8 @@ class RemoteControl:
             kind = payload.get("type")
             if kind == "system" and payload.get("subtype") == "thinking_tokens":
                 # A running token count, re-sent many times a second while the
-                # model thinks, which nothing reads back. Journalled, it filled
-                # the capped `out` stream and pushed the real messages out.
+                # model thinks. Nothing is derived from it, so all it would
+                # leave behind is a dedup marker per tick.
                 continue
             if kind == "control_response":
                 response = payload.get("response", {})
@@ -397,8 +398,6 @@ for _, event in ipairs(cjson.decode(ARGV[4])) do
     local p = event.payload
     if redis.call('SET', prefix..'seen:'..event.id, '1', 'NX', 'EX', seen_ttl) then
         local encoded = event.encoded
-        redis.call('XADD', prefix..'out', 'MAXLEN', '~', 4096, '*', 'event', encoded)
-        redis.call('EXPIRE', prefix..'out', ttl)
         if p.type == 'control_response' then
             local response = p.response or {}
             local rid = response.request_id
@@ -453,8 +452,9 @@ return 1
             json.dumps(prepared),
             time.time(),
             # A duplicate is a worker retrying a batch, which it can only do
-            # while its credential lives. Kept for RETENTION instead, one
-            # marker per event added up to millions of keys.
+            # while its credential lives; the marker stops a replayed batch
+            # from bringing back a cancelled question or an older task state.
+            # Kept for RETENTION instead, one per event added up to millions.
             WORKER_TTL,
         )
         if not committed:
@@ -525,15 +525,6 @@ return 1
             "controls": CONTROLS,
             **groups,
         }
-
-    async def journal(self, sid: str, cursor: str) -> list[dict]:
-        rows = cast(
-            list[tuple[bytes, dict[bytes, bytes]]],
-            await self.redis.xrange(key(sid, "out"), min="(" + cursor, count=200),
-        )
-        return [
-            {"cursor": text(i), "payload": json.loads(v[b"event"])} for i, v in rows
-        ]
 
     async def worker_stream(self, session: dict, token: str, cursor: str):
         sid = session["id"]

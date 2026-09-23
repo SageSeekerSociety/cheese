@@ -631,16 +631,3 @@ async def answer(
     said = {"allow": "同意了", "deny": "拒绝了"}.get(behavior, "回答了")
     await chat.post_system_event(topic_id, f"{actor.handle} {said}芝士的请求")
     return ok({"status": command["status"]})
-
-
-@router.get("/topics/{topic_id}/agent/events", operation_id="agent-events")
-async def control_events(
-    topic_id: uuid.UUID,
-    session_id: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    cursor: str = Query(default="0-0", pattern=r"^\d+-\d+$"),
-) -> dict:
-    await controller(topic_id, db, resolver)
-    await selected_session(topic_id, session_id)
-    return ok({"events": await store().journal(session_id, cursor)})
