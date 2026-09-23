@@ -92,12 +92,10 @@ function startResize(e: MouseEvent) {
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
-// 「退出项目」在项目头上是**看得见的一颗**（#6）：它本来只长在成员页右上角，而
-// 成员页刚被壳收进 ⋯ 菜单——按钮跟着一起藏了两层深，没注意到那个 ⋯ 的人连怎么
-// 退出都找不到。所以项目头这一层（「我和这个项目的关系」的落点）直接给一颗，不再
-// 只活在菜单里；⋯ 菜单里那一行留着，多一个入口没有坏处。确认之后做什么在
-// LeaveProjectDialog，几处共用一份。所有者那颗换成「转让项目」：他退不掉（后端会
-// 拒，得先把手交出去），TransferProjectDialog 就是那条路。
+// 「退出项目 / 转让项目」在项目头的 ⋯ 菜单里各一行：项目头那一行只放「回首页的名字」
+// 和「项目菜单」两个按钮。同一件事不给第二个入口——多一个，人就得猜哪个才算数。
+// 确认之后做什么在 LeaveProjectDialog，几处共用一份。所有者那一行是「转让项目」：他
+// 退不掉（后端会拒，得先把手交出去），TransferProjectDialog 就是那条路。
 const router = useRouter()
 const route = useRoute()
 
@@ -497,7 +495,7 @@ const onDocs = computed(() => !!props.activeDocs)
 // 类更特化，话题行本来也是这么压住它的。
 const ROW_INDENT = { paddingInlineStart: '8px' }
 
-// ---- 退出项目 / 转让项目（项目头可见入口 + ⋯ 菜单各一份）----
+// ---- 退出项目 / 转让项目（都在项目头的 ⋯ 菜单里各一行）----
 const leaveOpen = ref(false)
 const transferOpen = ref(false)
 
@@ -562,30 +560,8 @@ const canTransferProject = computed(() => {
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
                它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
           <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
-          <!-- 「退出 / 转让」在项目头上有一颗**看得见**的（不是菜单里的一项）：把
-               这件事收进 ⋯ 正是那条反馈的原话——没注意到 ⋯ 的人连名册都进不去，
-               更看不到退出。非所有者是退出；所有者是转让（他退不掉，把手交出去才
-               是他那条路）。两颗互斥，行没到货时两颗都不长。 -->
-          <button
-            v-if="canLeaveProject"
-            type="button"
-            class="rail-header__more"
-            title="退出项目"
-            aria-label="退出项目"
-            @click="leaveOpen = true"
-          >
-            <v-icon class="rail-header__caret" size="18" icon="mdi-exit-to-app" />
-          </button>
-          <button
-            v-else-if="canTransferProject"
-            type="button"
-            class="rail-header__more"
-            title="转让项目"
-            aria-label="转让项目"
-            @click="transferOpen = true"
-          >
-            <v-icon class="rail-header__caret" size="18" icon="mdi-account-arrow-right-outline" />
-          </button>
+          <!-- 「退出 / 转让」只在 ⋯ 菜单里（下面那两行），项目头这一行不再单独给一颗：
+               同一件事两个入口，只会让人猜哪个才算数。 -->
           <v-menu location="bottom end">
             <template #activator="{ isActive, props: menuProps }">
               <button

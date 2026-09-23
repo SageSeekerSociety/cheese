@@ -17,7 +17,7 @@ reauth_required）行，终态行（flow_expired/superseded/revoked）不占位�
 事后收拾。
 
 Revision ID: eeebfb49d703
-Revises: d4c1a7f83b96
+Revises: 514d7c9cb013
 """
 
 from collections.abc import Sequence
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "eeebfb49d703"
-down_revision: str | Sequence[str] | None = "d4c1a7f83b96"
+down_revision: str | Sequence[str] | None = "514d7c9cb013"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

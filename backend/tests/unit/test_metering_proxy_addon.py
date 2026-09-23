@@ -137,12 +137,15 @@ def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
 
 
 def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_path):
+    """分身的 /v1/messages 推迟到 `request` 钩子才准入：主 agent 指定的模型
+    在请求体里，头部时刻体还没到。准入拿到的指定随调用带上去，绑定用缓冲
+    改写写回。指定的名字本身是 haiku 时的「不算指定」另有一条用例。"""
     mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
-    def admit(project, topic, bearer, *, subagent=False):
-        calls.append(subagent)
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
         return _verdict(model="claude-opus-5" if subagent else "claude-sonnet-5")
 
     mod.ADMISSION = SimpleNamespace(check=admit)
@@ -151,13 +154,41 @@ def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_p
         {
             "x-cheese-attr": "p/t",
             "x-claude-code-request-class": "subagent",
+            "content-length": "34",
         }
     )
     asyncio.run(mod.requestheaders(flow))
-    assert calls == [True]
+    # 头部时刻不做准入、不开流式：等请求体到齐。
+    assert calls == []
+    assert flow.request.stream is False
     assert flow.response is None
+    flow.request.content = b'{"model":"glm-4.6","messages":[]}'
+    asyncio.run(mod.request(flow))
+    assert calls == [(True, "glm-4.6")]
+    assert flow.response is None
+    assert json.loads(flow.request.content)["model"] == "claude-opus-5"
+
+
+def test_the_main_conversation_keeps_streaming_its_body(monkeypatch, tmp_path):
+    """缓冲只落在分身头上：主对话的 turn 是长会话反复重 POST 的大体（#654
+    OOM 的教训），它必须还在头部时刻准入、流式改写。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(flow))
+    assert calls == [(False, "")]
+    assert callable(flow.request.stream)
+    # keep_haiku:主对话里 CLI 自己发给小快家族的请求留在 haiku。
     body = flow.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
-    assert json.loads(body)["model"] == "claude-opus-5"
+    assert json.loads(body)["model"] == "claude-haiku-4-5"
 
 
 def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
@@ -1374,3 +1405,58 @@ def test_a_turn_whose_body_never_names_a_model_is_refused_not_run_as_it_came(
     said = json.loads(flow.response.content)["error"]["message"]
     assert "claude-opus-5" in said, said
     assert "cheese" in said, said
+
+
+def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_path):
+    """分身发出的 haiku 类请求（CLI 自己的后台类）照旧：准入按未指定问，
+    绑定改写盖成分身默认 —— 与改动前逐字节一致,不吃队友白名单。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": "42",
+        }
+    )
+    asyncio.run(mod.requestheaders(flow))
+    flow.request.content = b'{"model":"claude-haiku-4-5","messages":[]}'
+    asyncio.run(mod.request(flow))
+    assert calls == [(True, "")]
+    assert flow.response is None
+    assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
+
+
+def test_an_oversize_subagent_body_keeps_the_old_streamed_road(monkeypatch, tmp_path):
+    """缓冲有上限：超过上限(或没说多大)的分身请求退回旧路 —— 头部时刻准入、
+    流式放行、绑分身默认。上限是发现层的成本,不是资格,更不是拒绝的理由。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": str(mod.DEFER_BODY_LIMIT + 1),
+        }
+    )
+    asyncio.run(mod.requestheaders(flow))
+    assert calls == [(True, "")]
+    assert callable(flow.request.stream)
+    body = flow.request.stream(b'{"model":"glm-4.6","messages":[]}')
+    assert json.loads(body)["model"] == "claude-sonnet-5"

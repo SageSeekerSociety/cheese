@@ -187,7 +187,7 @@ import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
-import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
+import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
@@ -207,14 +207,14 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
             .string()
             .min(4)
             .max(32)
-            .regex(/^[a-zA-Z0-9_-]{4,32}$/, {
+            .regex(REGEX_USERNAME, {
               message: t('account.useLettersNumbersUnderscoresOrHyphensFor'),
             }),
           nickname: z
             .string()
             .min(1)
-            .max(16)
-            .regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]{1,16}$/, {
+            .max(50)
+            .regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]{1,50}$/, {
               message: t('account.useLettersNumbersUnderscoresOrChineseCharacters'),
             }),
 

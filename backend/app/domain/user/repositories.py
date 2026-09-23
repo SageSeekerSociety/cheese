@@ -88,14 +88,18 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def is_username_taken(self, username: str) -> bool:
+        """Case-insensitive, matching ``uq_user_username_lower``."""
         stmt = select(User.id).where(
-            User.username == username, User.deleted_at.is_(None)
+            func.lower(User.username) == username.lower(), User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
     async def is_email_taken(self, email: str) -> bool:
-        stmt = select(User.id).where(User.email == email, User.deleted_at.is_(None))
+        """Case-insensitive, matching ``uq_user_email_lower``."""
+        stmt = select(User.id).where(
+            func.lower(User.email) == email.lower(), User.deleted_at.is_(None)
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -123,8 +127,12 @@ class UserRepository:
             created_at=now,
             updated_at=now,
         )
-        self._session.add(user)
-        await self._session.flush()
+        # A savepoint, so a unique violation leaves the session usable for the
+        # caller to find out which value was taken. The add goes inside it:
+        # begin_nested() flushes pending objects first.
+        async with self._session.begin_nested():
+            self._session.add(user)
+            await self._session.flush()
         return user
 
     async def update_password(self, user_id: int, hashed_password: str) -> None:
@@ -354,8 +362,11 @@ class UserProfileRepository:
             created_at=now,
             updated_at=now,
         )
-        self._session.add(profile)
-        await self._session.flush()
+        # Added inside the savepoint: begin_nested() flushes pending objects
+        # first, which would put the INSERT outside it.
+        async with self._session.begin_nested():
+            self._session.add(profile)
+            await self._session.flush()
         return profile
 
     async def list_profiles(self, *, limit: int, offset: int) -> list[UserProfile]:

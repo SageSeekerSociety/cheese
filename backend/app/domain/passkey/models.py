@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, LargeBinary, Text
+from sqlalchemy import Boolean, DateTime, Index, Integer, LargeBinary, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -8,6 +8,7 @@ from app.db.base_class import Base
 
 class PasskeyCredential(Base):
     __tablename__ = "passkey"
+    __table_args__ = (Index("uq_passkey_credential_id", "credential_id", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)

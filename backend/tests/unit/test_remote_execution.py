@@ -1883,5 +1883,23 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertFalse((self.workspace / "forbidden.txt").exists())
 
 
+def test_prepare_adds_the_teammate_sync_hook_exactly_once():
+    """seed 的 settings.json 可能来自任一架构、任何年代：中央会话这条路的
+    发现层在这里确定性地补一份，而且重开多少次都只有一份。"""
+    from app.domain.agent.harness.claude_code.remote_execution import client
+
+    hooks = {
+        "SessionStart": [{"hooks": [{"type": "command", "command": "cheese-hook"}]}]
+    }
+    client._ensure_sync_agents_hook(hooks)
+    client._ensure_sync_agents_hook(hooks)
+    for event in ("SessionStart", "UserPromptSubmit"):
+        commands = [
+            hook["command"] for group in hooks[event] for hook in group["hooks"]
+        ]
+        assert commands.count("cheese sync-agents") == 1
+    assert hooks["SessionStart"][0]["hooks"][0]["command"] == "cheese-hook"
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

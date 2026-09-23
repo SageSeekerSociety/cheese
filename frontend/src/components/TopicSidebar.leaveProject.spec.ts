@@ -1,11 +1,12 @@
-// 「退出项目」的入口：项目头上一颗看得见的，和项目名旁边那个 ⋯ 菜单里的一行。
+// 「退出项目 / 转让项目」的入口：项目名旁边那个 ⋯ 菜单里各一行。
 //
-// 这一份守的是 #6 的回归——那颗按钮本来只长在成员页右上角，而成员页刚被壳收进
-// 同一个菜单（catalog.py 的 hidden），按钮跟着一起藏了两层深，项目 lead 都找不到。
-// 所以「不用注意到 ⋯ 也够得着」这件事本身必须钉住：名册在侧栏上、退出在项目头上。
-// 顺带钉住：所有者那颗是「转让」不是「退出」（后端会拒他退，交出手才是他那条路）；
-// 项目行还没到货时两颗都不长（没行 ≠ 不是所有者，那正是递 403 的那条缝）；点下去
-// 是先确认，确认之后退出、刷新、回首页——不会直接退出去，也不会退完停在原地。
+// 这一份守两件事。一是**只有菜单这一个入口**：项目头那一行只放「回首页的名字」和
+// 「项目菜单」两个按钮，退出和转让都不在那一行上——同一件事两个入口，只会让人猜
+// 哪个才算数。
+// 二是菜单里那两行的规矩：所有者是「转让」不是「退出」（后端会拒他退，交出手才是
+// 他那条路）；项目行还没到货时两行都不长（没行 ≠ 不是所有者，那正是递 403 的那条
+// 缝）；点下去是先确认，确认之后退出、刷新、回首页——不会直接退出去，也不会退完
+// 停在原地。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -128,6 +129,13 @@ function headerBtn(container: Element, label: string): Element | null {
   return container.querySelector(`.rail-header [aria-label="${label}"]`)
 }
 
+/** 项目头那一行除了名字和菜单按钮，不该再有别的按钮。 */
+function headerButtons(container: Element): string[] {
+  return Array.from(container.querySelectorAll('.rail-header button')).map(
+    (el) => el.getAttribute('aria-label') ?? el.textContent?.replace(/\s+/g, '') ?? ''
+  )
+}
+
 function pinnedTitles(container: Element): string[] {
   return Array.from(container.querySelectorAll('.pinned-row')).map((el) => el.textContent?.replace(/\s+/g, '') ?? '')
 }
@@ -178,50 +186,38 @@ beforeEach(() => {
   meHandle = 'ligan'
 })
 
-describe('退出项目的可发现性', () => {
-  it('没注意到 ⋯ 也找得到：名册在侧栏上，退出在项目头上', () => {
-    meHandle = 'ligan'
-    const { container } = mount()
-    // 名册页是置顶行之一——不用开任何菜单就看得见（壳把它从 hidden 里放了出来，
-    // 因为「退出项目」长在它上面）。
-    expect(pinnedTitles(container).some((t) => t.includes('成员'))).toBe(true)
-    // 项目头上一颗看得见的退出（不是菜单里的一项）。
-    expect(headerBtn(container, '退出项目')).toBeTruthy()
-  })
-
-  it('项目头那颗不是菜单项——点它直接开确认框', async () => {
-    meHandle = 'ligan'
-    const { container } = mount()
-    await fireEvent.click(headerBtn(container, '退出项目') as Element)
-    expect(leaveProject).not.toHaveBeenCalled()
-    expect(await screen.findByRole('button', { name: '退出' })).toBeTruthy()
-  })
-
-  it('非所有者在项目头那个菜单里也看得到退出项目——不用先进成员页', async () => {
+describe('退出项目的入口只有 ⋯ 菜单一个', () => {
+  it('非所有者：项目头上没有退出那颗，菜单里有一行', async () => {
     meHandle = 'ligan'
     const { container, baseElement } = mount()
+    // 项目头这一行只有「回首页的名字」和「项目菜单」两个按钮。
+    expect(headerButtons(container)).toEqual(['知是', '项目菜单'])
+    expect(headerBtn(container, '退出项目')).toBeNull()
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('退出项目'))).toBe(true)
+    // 多余的一行也不要：非所有者菜单里没有转让。
+    expect(rows.some((r) => r.includes('转让项目'))).toBe(false)
+  })
+
+  it('名册仍然在侧栏上——它是置顶行之一，不用开菜单就看得见', () => {
+    meHandle = 'ligan'
+    const { container } = mount()
+    expect(pinnedTitles(container).some((t) => t.includes('成员'))).toBe(true)
   })
 })
 
 describe('所有者的路是转让，不是退出', () => {
-  it('项目头上那颗对所有者是转让，不是退出', () => {
-    meHandle = 'alice'
-    const { container } = mount()
-    expect(headerBtn(container, '退出项目')).toBeNull()
-    expect(headerBtn(container, '转让项目')).toBeTruthy()
-  })
-
-  it('菜单里也一样：有转让项目，没有退出项目', async () => {
+  it('所有者：项目头上没有转让那颗（那行只有名字和菜单），菜单里有转让一行', async () => {
     meHandle = 'alice'
     const { container, baseElement } = mount()
+    expect(headerButtons(container)).toEqual(['知是', '项目菜单'])
+    expect(headerBtn(container, '转让项目')).toBeNull()
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('转让项目'))).toBe(true)
     expect(rows.some((r) => r.includes('退出项目'))).toBe(false)
   })
 
-  it('点转让打开选人弹窗，确认之后走 PUT /projects/{id}/owner 并刷新', async () => {
+  it('点菜单里的转让打开选人弹窗，确认之后走 PUT /projects/{id}/owner 并刷新', async () => {
     meHandle = 'alice'
     listProjectMembers.mockResolvedValue({
       data: [
@@ -231,8 +227,9 @@ describe('所有者的路是转让，不是退出', () => {
       ],
       total: 3,
     })
-    const { container } = mount()
-    await fireEvent.click(headerBtn(container, '转让项目') as Element)
+    const { container, baseElement } = mount()
+    await openProjectMenu(container, baseElement)
+    await fireEvent.click(menuItem(baseElement, '转让项目') as Element)
     // 可接手的人列出来；自己、所有者补的那行、AI 队友都不列。
     await fireEvent.click(await screen.findByText('李干'))
     await fireEvent.click(await screen.findByRole('button', { name: '转让' }))
@@ -242,8 +239,8 @@ describe('所有者的路是转让，不是退出', () => {
   })
 })
 
-describe('项目行没到货时不递 403 的按钮', () => {
-  it('清单里没有这个项目 → 退出和转让都不长', async () => {
+describe('项目行没到货时不递 403 的入口', () => {
+  it('清单里没有这个项目 → 菜单里退出和转让都不长', async () => {
     // 所有者一旦行到货就不该看到退出——而行没到货时更不能先按「不是所有者」给他
     // 退出：那一下点下去是必定 403。
     meHandle = 'alice'
@@ -257,12 +254,15 @@ describe('项目行没到货时不递 403 的按钮', () => {
 
   it('行到货了才按行上的 owner 说话', async () => {
     meHandle = 'alice'
+    // 行没到货：菜单里谁都不给。
     const { container, baseElement } = mount({ projects: [], selectedProjectId: 'p1' })
-    expect(headerBtn(container, '退出项目')).toBeNull()
-    // 行一到货，所有者看到的就是转让那一颗。
+    const none = await openProjectMenu(container, baseElement)
+    expect(none.some((r) => r.includes('退出项目'))).toBe(false)
+    expect(none.some((r) => r.includes('转让项目'))).toBe(false)
+    // 行一到货，所有者那一行就是「转让项目」，不是退出。
     const { container: c2, baseElement: b2 } = mount()
-    expect(headerBtn(c2, '转让项目')).toBeTruthy()
     const rows = await openProjectMenu(c2, b2)
+    expect(rows.some((r) => r.includes('转让项目'))).toBe(true)
     expect(rows.some((r) => r.includes('退出项目'))).toBe(false)
   })
 })
@@ -296,7 +296,8 @@ describe('退出：先确认，确认之后退出、刷新、回首页', () => {
     const two = [...projects, { id: 'p2', name: '第二', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bob' }]
     const { container, baseElement, router } = mount({ projects: two, selectedProjectId: 'p2' })
     vi.spyOn(router, 'push').mockResolvedValue(undefined)
-    await fireEvent.click(headerBtn(container, '退出项目') as Element)
+    await openProjectMenu(container, baseElement)
+    await fireEvent.click(menuItem(baseElement, '退出项目') as Element)
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p2'))
     expect(leaveProject).not.toHaveBeenCalledWith('p1')
@@ -343,22 +344,27 @@ describe('转让之后：刷新 → 重判，不重挂', () => {
     }
     const vuetify = createVuetify({ components, directives })
     const router = makeRouter()
-    const { container } = render(HostArc, {
+    const { container, baseElement } = render(HostArc, {
       global: { plugins: [vuetify, router, createPinia()] },
     })
 
-    expect(headerBtn(container, '转让项目')).toBeTruthy()
-    expect(headerBtn(container, '退出项目')).toBeNull()
+    let rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes('转让项目'))).toBe(true)
+    expect(rows.some((r) => r.includes('退出项目'))).toBe(false)
 
-    await fireEvent.click(headerBtn(container, '转让项目') as Element)
+    await fireEvent.click(menuItem(baseElement, '转让项目') as Element)
     await fireEvent.click(await screen.findByText('鲍比'))
     await fireEvent.click(await screen.findByRole('button', { name: '转让' }))
     await waitFor(() => expect(setProjectOwner).toHaveBeenCalledWith('p1', 'bobby'))
     await waitFor(() => expect(refreshProjects).toHaveBeenCalled())
     await waitFor(() => expect(storeProjects.value[0].owner_handle).toBe('bobby'))
 
-    // 同一棵树，没有重挂：转让那颗消失，退出那颗出现。
-    await waitFor(() => expect(headerBtn(container, '退出项目')).toBeTruthy())
-    expect(headerBtn(container, '转让项目')).toBeNull()
+    // 同一棵树，没有重挂：菜单里那一行从「转让」换成「退出」——靠的就是这一层跟着
+    // host 换进去的新行自己重判。
+    await waitFor(async () => {
+      rows = await openProjectMenu(container, baseElement)
+      expect(rows.some((r) => r.includes('退出项目'))).toBe(true)
+    })
+    expect(rows.some((r) => r.includes('转让项目'))).toBe(false)
   })
 })

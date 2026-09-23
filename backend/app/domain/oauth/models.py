@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import DateTime, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,6 +9,14 @@ from app.db.base_class import Base
 
 class UserOAuthConnection(Base):
     __tablename__ = "user_o_auth_connection"
+    __table_args__ = (
+        Index(
+            "uq_user_o_auth_connection_provider",
+            "provider_id",
+            "provider_user_id",
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
