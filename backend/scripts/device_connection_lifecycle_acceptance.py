@@ -229,6 +229,14 @@ def image_acceptance(options, root: Path) -> int:
     log_dir.mkdir(exist_ok=True)
     log_path = log_dir / f"device-connection-acceptance-image-{stamp}.jsonl"
     network = f"cheese-owner-{stamp.lower()}"
+    resource_label = "cheese.owner-acceptance=" + "-".join(
+        os.environ.get(key, fallback)
+        for key, fallback in (
+            ("GITHUB_RUN_ID", network),
+            ("GITHUB_RUN_ATTEMPT", "local"),
+            ("GITHUB_JOB", "acceptance"),
+        )
+    )
     database, owner_name, migration = (
         f"{network}-{suffix}" for suffix in ("db", "owner", "migrate")
     )
@@ -278,6 +286,7 @@ def image_acceptance(options, root: Path) -> int:
                 owner_image=options.owner_image,
                 owner_revision=options.owner_revision,
                 port=options.port,
+                resource_label=resource_label,
             )
             started = time.monotonic()
             record(
@@ -298,12 +307,14 @@ def image_acceptance(options, root: Path) -> int:
                 "pull", "--platform", "linux/amd64", options.owner_image, timeout=300
             )
             record(log, "image_pull_finished", elapsed_s=time.monotonic() - started)
-            docker("network", "create", network)
+            docker("network", "create", "--label", resource_label, network)
             docker(
                 "run",
                 "-d",
                 "--name",
                 database,
+                "--label",
+                resource_label,
                 "--network",
                 network,
                 "-p",
@@ -330,6 +341,8 @@ def image_acceptance(options, root: Path) -> int:
                 "run",
                 "--name",
                 migration,
+                "--label",
+                resource_label,
                 "--network",
                 network,
                 *env_args,
@@ -435,6 +448,8 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
                 "--init",
                 "--name",
                 owner_name,
+                "--label",
+                resource_label,
                 "--network",
                 network,
                 "-p",

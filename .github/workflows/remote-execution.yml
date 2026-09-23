@@ -257,6 +257,19 @@ jobs:
             --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144 \
             --claude scripts/remote_execution/node_modules/.bin/claude \
             --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
+      - name: Clean up this job's owner compatibility resources
+        id: owner_cleanup
+        if: always()
+        # Cancellation can stop Python before its finally block runs.
+        run: |
+          set -euo pipefail
+          label="cheese.owner-acceptance=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          docker ps --all --quiet --filter "label=$label" | while read -r container; do
+            docker rm --force "$container"
+          done
+          docker network ls --quiet --filter "label=$label" | while read -r network; do
+            docker network rm "$network"
+          done
       - name: Verify ordinary room turns through the connector
         id: ordinary_terminal
         run: >-
@@ -300,6 +313,7 @@ jobs:
           --steps-json "$CI_STEPS_JSON"
           --require-step run_acceptance
           --require-step owner_compat
+          --require-step owner_cleanup
           --require-step ordinary_terminal
       - name: Upload remote-acceptance CLEAN evidence
         if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
