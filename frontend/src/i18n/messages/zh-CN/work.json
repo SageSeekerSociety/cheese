@@ -109,7 +109,14 @@
     "stealth": "隐身",
     "stealthHint": "搜不到，只有拿到团队链接的人能找到并加入",
     "approval": "加入需要审批",
-    "approvalHint": "开启后，想加入的人要先申请，由团队所有者或管理员批准"
+    "approvalHint": "开启后，想加入的人要先申请，由团队所有者或管理员批准",
+    "cardTitle": "团队地址与加入",
+    "address": "团队地址",
+    "addressHint": "4–32 位英文字母、数字、_ 或 -。修改后旧地址立即失效",
+    "save": "保存",
+    "handleTaken": "这个地址已被占用",
+    "handleInvalid": "只能使用 4–32 位英文字母、数字、_ 或 -，且不能是保留名称",
+    "createAddressHint": "4–32 位英文字母、数字、_ 或 -。留空将自动分配，之后可以修改"
   },
   "teamProfile": {
     "eyebrow": "团队",

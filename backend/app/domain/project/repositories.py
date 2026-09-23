@@ -241,6 +241,8 @@ class ProjectRepository:
                 )
             )
         ).all()
+        team = await self._session.get(Team, project.team_id)
+        team_handle = team.handle if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
             if handle in explicit:
                 continue
@@ -252,6 +254,7 @@ class ProjectRepository:
                     "avatar_id": None if avatar_type == "default" else avatar_id,
                     "source": "team",
                     "team_id": project.team_id,
+                    "team_handle": team_handle,
                     "created_at": created_at.isoformat(),
                 }
             )

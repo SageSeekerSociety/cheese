@@ -14,6 +14,8 @@ import { NewApiInstance } from '../index'
 export namespace TeamsApi {
   export type PostTeamRequestData = {
     name: string
+    // Blank lets the server name it `team-<id>` until the owner picks one.
+    handle?: string
     description: string
     intro: string
     avatarId: number
@@ -24,6 +26,7 @@ export namespace TeamsApi {
     intro?: string
     avatarId?: number
     visibility?: TeamVisibility
+    handle?: string
   }
 
   export type PostTeamMemberRequestData = {
@@ -116,6 +119,12 @@ export namespace TeamsApi {
       url: `/teams/${teamId}/join`,
       method: 'POST',
       data,
+    })
+
+  export const detailByHandle = (handle: string) =>
+    NewApiInstance.request<{ team: Team }>({
+      url: `/teams/by-handle/${encodeURIComponent(handle)}`,
+      method: 'GET',
     })
 
   export const getMyTeams = () =>

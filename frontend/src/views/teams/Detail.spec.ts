@@ -1,25 +1,25 @@
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
+import { nextTick, reactive } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const detail = vi.fn()
+const detailByHandle = vi.fn()
 const getMembers = vi.fn()
 const join = vi.fn()
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {
-    detail: (...args: unknown[]) => detail(...args),
+    detailByHandle: (...args: unknown[]) => detailByHandle(...args),
     getMembers: (...args: unknown[]) => getMembers(...args),
     join: (...args: unknown[]) => join(...args),
   },
 }))
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { teamId: '7' }, name: 'TeamsDetailDefault' }),
-}))
+const route = reactive({ params: { handle: 'crew' } as Record<string, string>, name: 'TeamsDetailDefault' })
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 import Detail from './Detail.vue'
 
@@ -29,6 +29,7 @@ import { BusinessError } from '@/network/types/error'
 function team(overrides: Partial<Team> = {}): Team {
   return {
     id: 7,
+    handle: 'crew',
     name: '公开小队',
     intro: '欢迎来玩',
     avatarId: 1,
@@ -56,13 +57,33 @@ function mount() {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  detail.mockReset().mockResolvedValue({ data: { team: team() } })
+  route.params = { handle: 'crew' }
+  detailByHandle.mockReset().mockResolvedValue({ data: { team: team() } })
   getMembers.mockReset().mockResolvedValue({ data: { members: [] } })
   join.mockReset().mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
 })
 afterEach(cleanup)
 
 describe('a team page', () => {
+  it('loads the team its address names', async () => {
+    mount()
+    await screen.findByText('公开小队')
+    expect(detailByHandle).toHaveBeenCalledWith('crew')
+  })
+
+  it('stays put when the team is renamed, and loads another team when the address changes', async () => {
+    detailByHandle.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    mount()
+    await screen.findByText('成员工作区内容')
+    // The page itself renamed the team and replaced the address with the new handle.
+    detailByHandle.mockClear()
+    route.params = { handle: 'CREW' }
+    await nextTick()
+    expect(detailByHandle).not.toHaveBeenCalled()
+    route.params = { handle: 'other-crew' }
+    await waitFor(() => expect(detailByHandle).toHaveBeenCalledWith('other-crew'))
+  })
+
   it('shows an outsider the profile and reads nothing only members may read', async () => {
     mount()
     await screen.findByText('公开小队')
@@ -79,7 +100,7 @@ describe('a team page', () => {
   })
 
   it('keeps an applicant on the profile until someone approves', async () => {
-    detail.mockResolvedValue({ data: { team: team({ joinApproval: true }) } })
+    detailByHandle.mockResolvedValue({ data: { team: team({ joinApproval: true }) } })
     join.mockResolvedValue({ data: { team: team({ joinApproval: true, joinStatus: 'pending' }) } })
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '申请加入' }))
@@ -89,14 +110,14 @@ describe('a team page', () => {
   })
 
   it('gives members the workspace', async () => {
-    detail.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    detailByHandle.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
     mount()
     await screen.findByText('成员工作区内容')
     expect(getMembers).toHaveBeenCalledWith(7)
   })
 
   it('answers a hidden team the same way as a missing one', async () => {
-    detail.mockRejectedValue(new BusinessError('not found', 404))
+    detailByHandle.mockRejectedValue(new BusinessError('not found', 404))
     mount()
     await screen.findByText('找不到这个团队，它可能已解散或不对你公开')
     expect(getMembers).not.toHaveBeenCalled()

@@ -15,6 +15,8 @@ export interface TeamMember {
 
 export interface Team {
   id: number
+  // The team's address: `/teams/<handle>`. A personal team's is its owner's username.
+  handle: string
   intro: string
   name: string
   avatarId: number
@@ -51,6 +53,7 @@ export interface TeamMemberRealNameStatus {
 
 export interface TeamSummary {
   id: number
+  handle: string
   name: string
   intro: string
   avatarId: number

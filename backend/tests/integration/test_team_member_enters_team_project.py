@@ -22,6 +22,7 @@ the owner) all stay outside.
 """
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
 from tests.conftest import seed_user
@@ -50,6 +51,7 @@ def _team(client, *, owner: str, members: tuple[str, ...]) -> int:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             team = Team(
                 name=f"team-of-{owner}",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
                 intro="",
                 description="",
                 avatar_id=1,
@@ -136,3 +138,38 @@ def test_a_project_without_a_team_admits_nobody_else(client):
     pid, root = _team_project(client, owner="alice", team_id=None)
     assert _can_enter(client, "alice", pid, root) == (200, 200)
     assert _can_enter(client, "bob", pid, root) == (403, 403)
+
+
+def test_a_teammate_on_the_roster_links_to_the_team_by_handle(client):
+    """Someone who joins the team after the project exists is on its roster
+    through the team, and that row names the team the way its page is addressed."""
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    team_id = _team(client, owner="alice", members=())
+    pid, _ = _team_project(client, owner="alice", team_id=team_id)
+    seed_user(client, "carol")
+
+    async def _join_team() -> None:
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            carol = await UserRepository(session).get_by_username("carol")
+            assert carol is not None
+            session.add(
+                TeamUserRelation(
+                    team_id=team_id,
+                    user_id=carol.id,
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_join_team())
+    rows = client.get(
+        f"/projects/{pid}/members", headers=_bearer(seed_user(client, "carol"))
+    ).json()["data"]["data"]
+    carol = next(r for r in rows if r["user_handle"] == "carol")
+    assert carol["source"] == "team"
+    assert carol["team_handle"].startswith("t-")

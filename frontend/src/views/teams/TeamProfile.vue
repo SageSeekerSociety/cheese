@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 小队的对外一面：没加入的人看到的就是这一页。按 id 打开（/teams/:teamId）和按小队链接
+// 小队的对外一面：没加入的人看到的就是这一页。按地址打开（/teams/:handle）和按小队链接
 // 打开（/team-invites/:token）是同一个组件，只有「加入」走哪条接口不同，由调用方传进来。
 // 小队开着审批时，「加入」提交的是申请（带理由），结果是 pending；关着就直接成为成员。
 import type { Team } from '@/types'
@@ -47,6 +47,7 @@ async function submit() {
       </v-avatar>
       <div class="ml-4">
         <h1 class="t-page-title">{{ team.name }}</h1>
+        <p class="t-meta c-muted">@{{ team.handle }}</p>
         <div class="t-meta c-muted mt-1">
           <span v-if="team.owner">{{ t('work.teamProfile.owner', { name: team.owner.nickname }) }} · </span>
           {{ t('work.teamProfile.memberCount', { count: memberCount }) }}
@@ -59,7 +60,7 @@ async function submit() {
 
     <template v-if="team.joinStatus === 'member'">
       <p class="t-body c-muted mb-4">{{ t('work.teamProfile.member') }}</p>
-      <v-btn color="primary" variant="flat" :to="{ name: 'TeamsDetailDefault', params: { teamId: team.id } }">
+      <v-btn color="primary" variant="flat" :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }">
         {{ t('work.teamProfile.enter') }}
       </v-btn>
     </template>

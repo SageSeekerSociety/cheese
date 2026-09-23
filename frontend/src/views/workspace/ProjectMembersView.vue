@@ -429,7 +429,10 @@ async function submitInvite() {
                 <span v-else-if="m.user_handle === me" class="chip-neutral">我</span>
               </div>
               <div class="t-meta c-muted">@{{ m.user_handle }}</div>
-              <router-link v-if="m.source === 'team'" :to="`/teams/${m.team_id}`" class="t-meta"
+              <router-link
+                v-if="m.source === 'team' && m.team_handle"
+                :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
+                class="t-meta"
                 >来自小队 · 在小队中管理</router-link
               >
             </div>

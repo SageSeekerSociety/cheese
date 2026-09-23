@@ -1,5 +1,11 @@
 """join links: one shape for teams and projects
 
+Teams get a ``handle``: a username's alphabet in the users' namespace, so a
+handle names one user or one team. A personal team is named by its owner and
+stores none. Every existing shared team is given ``team-<id>`` for its owner to
+rename; the upgrade stops, changing nothing, if any of those is already a
+username.
+
 Teams and projects both get ``join_token`` (the link, permanent until reset)
 and ``join_approval`` (whether joining through it waits for a manager, on by
 default). Teams also get ``visibility``; every existing team stays public, which
@@ -42,6 +48,34 @@ def _join_columns(table: str) -> None:
 
 
 def upgrade() -> None:
+    taken = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+                SELECT u.username FROM "user" u JOIN team t
+                  ON lower(u.username) = 'team-' || t.id
+                WHERE t.personal_owner_user_id IS NULL
+                """
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if taken:
+        raise RuntimeError(f"placeholder team handles already usernames: {taken}")
+    op.add_column("team", sa.Column("handle", sa.String(32), nullable=True))
+    op.execute(
+        "UPDATE team SET handle = 'team-' || id WHERE personal_owner_user_id IS NULL"
+    )
+    op.create_index(
+        "uq_team_handle_lower", "team", [sa.text("lower(handle)")], unique=True
+    )
+    op.create_check_constraint(
+        "ck_team_handle_iff_shared",
+        "team",
+        "(personal_owner_user_id IS NULL) = (handle IS NOT NULL)",
+    )
     op.add_column(
         "team",
         sa.Column("visibility", sa.String(16), nullable=False, server_default="public"),
@@ -112,3 +146,6 @@ def downgrade() -> None:
         op.drop_column(table, "join_approval")
         op.drop_column(table, "join_token")
     op.drop_column("team", "visibility")
+    op.drop_constraint("ck_team_handle_iff_shared", "team", type_="check")
+    op.drop_index("uq_team_handle_lower", table_name="team")
+    op.drop_column("team", "handle")

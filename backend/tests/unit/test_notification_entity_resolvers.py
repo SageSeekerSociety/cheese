@@ -48,7 +48,7 @@ class TestTeamEntityResolver:
 
     @pytest.mark.anyio
     async def test_resolve_found(self):
-        team = SimpleNamespace(id=1, name="Team Alpha", avatar_id=42)
+        team = SimpleNamespace(id=1, handle="alpha", name="Team Alpha", avatar_id=42)
         resolver = self._make_resolver(teams_by_id={1: team})
 
         result = await resolver.resolve(["1"])
@@ -57,12 +57,12 @@ class TestTeamEntityResolver:
         assert isinstance(dto, ResolvedEntityInfoDTO)
         assert dto.name == "Team Alpha"
         assert dto.type == "team"
-        assert dto.url == "/teams/1"
+        assert dto.url == "/teams/alpha"
         assert dto.avatarUrl == "https://cdn.example.com/avatars/42"
 
     @pytest.mark.anyio
     async def test_resolve_no_avatar(self):
-        team = SimpleNamespace(id=1, name="Team Alpha", avatar_id=None)
+        team = SimpleNamespace(id=1, handle="alpha", name="Team Alpha", avatar_id=None)
         resolver = self._make_resolver(teams_by_id={1: team})
 
         result = await resolver.resolve(["1"])
@@ -77,7 +77,7 @@ class TestTeamEntityResolver:
 
     @pytest.mark.anyio
     async def test_resolve_mixed(self):
-        team = SimpleNamespace(id=1, name="Alpha", avatar_id=None)
+        team = SimpleNamespace(id=1, handle="alpha", name="Alpha", avatar_id=None)
         resolver = self._make_resolver(teams_by_id={1: team})
 
         result = await resolver.resolve(["1", "2", "abc"])

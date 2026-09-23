@@ -55,6 +55,20 @@
                   rounded="md"
                 ></v-text-field>
 
+                <v-text-field
+                  v-model="teamHandle"
+                  autocomplete="off"
+                  :label="t('work.teamLink.address')"
+                  :prefix="addressPrefix"
+                  :hint="t('work.teamLink.createAddressHint')"
+                  :error-messages="teamHandleError"
+                  persistent-hint
+                  variant="outlined"
+                  color="primary"
+                  class="mb-4"
+                  rounded="md"
+                ></v-text-field>
+
                 <p class="text-body-2 text-medium-emphasis mb-2">小队描述</p>
                 <tip-tap-editor
                   ref="teamDescriptionEditor"
@@ -91,13 +105,18 @@ import { toast } from 'vuetify-sonner'
 
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
 import { TeamsApi } from '@/network/api/teams'
+import { BusinessError } from '@/network/types/error'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 
 const createTeamDialog = ref(false)
 const teamName = ref('')
+const teamHandle = ref('')
+const teamHandleError = ref('')
+const addressPrefix = `${window.location.host}/teams/`
 const teamDescription = ref<JSONContent>({ type: 'doc', content: [] })
 const teamDescriptionEditor = ref<InstanceType<typeof TipTapEditor>>()
 const teamAvatar = ref<File | undefined>()
@@ -115,6 +134,7 @@ const createTeam = async () => {
     return
   }
 
+  teamHandleError.value = ''
   try {
     creatingTeam.value = true
     let intro = teamDescriptionEditor.value?.editor?.getText() ?? ''
@@ -133,11 +153,16 @@ const createTeam = async () => {
       description: JSON.stringify(teamDescription.value),
       intro,
       avatarId: avatarId ?? 1,
+      handle: teamHandle.value.trim() || undefined,
     })
 
     toast.success('创建小队成功')
-    router.push(`/teams/${team.id}`)
+    router.push({ name: 'TeamsDetailDefault', params: { handle: team.handle } })
   } catch (error) {
+    if (error instanceof BusinessError && error.error?.data?.field === 'handle') {
+      teamHandleError.value = error.code === 409 ? t('work.teamLink.handleTaken') : t('work.teamLink.handleInvalid')
+      return
+    }
     toast.error('创建小队失败，请稍后重试')
     console.error(error)
   } finally {

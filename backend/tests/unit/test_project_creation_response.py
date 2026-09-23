@@ -47,6 +47,13 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
         created_at=datetime.now(UTC),
     )
     monkeypatch.setattr(db, "async_session_factory", lambda: session)
+    # The payload names the owning team by handle; this fake session answers
+    # nothing but commit and rollback, so the lookup is answered here.
+    monkeypatch.setattr(
+        projects,
+        "team_service",
+        lambda _: SimpleNamespace(handles_of=AsyncMock(return_value={1: "crew"})),
+    )
     monkeypatch.setattr(
         projects,
         "ProjectService",

@@ -7,16 +7,18 @@ import { ref } from 'vue'
 // route, so the team page opens it through this module-level state instead
 // of owning a copy that would drift.
 const open = ref(false)
-const presetTeamId = ref<number | null>(null)
+// The team to offer first: its id from a team's own page, or its handle when all
+// the caller has is the address it is standing on.
+const presetTeam = ref<number | string | null>(null)
 const sourceTask = ref<{ id: number; name: string } | null>(null)
 
 export function useNewProjectDialog() {
-  function show(teamId: number | null = null, task: { id: number; name: string } | null = null) {
-    presetTeamId.value = teamId
+  function show(team: number | string | null = null, task: { id: number; name: string } | null = null) {
+    presetTeam.value = team
     sourceTask.value = task
     open.value = true
   }
-  return { open, presetTeamId, sourceTask, show }
+  return { open, presetTeam, sourceTask, show }
 }
 
 /**
@@ -28,13 +30,17 @@ export function useNewProjectDialog() {
  * made on the team page could not be named. Teammates then saw nothing, or
  * saw 「未命名项目」.
  */
-export function defaultTeamFor(presetTeamId: number | null, teams: Team[]): number | null {
-  if (presetTeamId !== null && teams.some((t) => t.id === presetTeamId)) return presetTeamId
+export function defaultTeamFor(preset: number | string | null, teams: Team[]): number | null {
+  const named =
+    typeof preset === 'string'
+      ? teams.find((t) => t.handle.toLowerCase() === preset.toLowerCase())
+      : teams.find((t) => t.id === preset)
+  if (named) return named.id
   return teams.find((t) => t.personal)?.id ?? teams[0]?.id ?? null
 }
 
-/** The team a page belongs to, read off its path: `/teams/:teamId/...`. */
-export function teamIdInPath(path: string): number | null {
-  const m = /^\/teams\/(\d+)(?:\/|$)/.exec(path)
-  return m ? Number(m[1]) : null
+/** The team a page belongs to, read off its path: `/teams/:handle/...`. */
+export function teamHandleInPath(path: string): string | null {
+  const m = /^\/teams\/([A-Za-z0-9_-]+)(?:\/|$)/.exec(path)
+  return m ? decodeURIComponent(m[1]) : null
 }

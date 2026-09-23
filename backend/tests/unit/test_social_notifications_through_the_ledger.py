@@ -61,6 +61,7 @@ async def _team(session, *, owner_id: int) -> int:
     now = datetime.now(UTC)
     team = Team(
         name=f"team-{uuid.uuid4().hex[:8]}",
+        handle=f"t-{uuid.uuid4().hex[:12]}",
         intro="intro",
         description="description",
         avatar_id=1,
@@ -244,6 +245,7 @@ async def test_a_request_to_a_team_with_no_admins_notifies_nobody(db_factory):
         now = datetime.now(UTC)
         team = Team(
             name=f"team-{uuid.uuid4().hex[:8]}",
+            handle=f"t-{uuid.uuid4().hex[:12]}",
             intro="intro",
             description="description",
             avatar_id=1,

@@ -109,7 +109,14 @@
     "stealth": "Stealth",
     "stealthHint": "Hidden from search; only people with the team link can find it and join",
     "approval": "Require approval to join",
-    "approvalHint": "When on, people ask to join, and become members once the team owner or an admin approves"
+    "approvalHint": "When on, people ask to join, and become members once the team owner or an admin approves",
+    "cardTitle": "Team address and joining",
+    "address": "Team address",
+    "addressHint": "4–32 letters, digits, _ or -. The old address stops working once you change it",
+    "save": "Save",
+    "handleTaken": "This address is already taken",
+    "handleInvalid": "Use 4–32 letters, digits, _ or -, and not a reserved name",
+    "createAddressHint": "4–32 letters, digits, _ or -. Leave blank to get one assigned; you can change it later"
   },
   "teamProfile": {
     "eyebrow": "Team",

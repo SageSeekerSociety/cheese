@@ -62,12 +62,12 @@ const headerIcon = computed(() =>
   route.name === 'TeamsDetailMembers' ? 'mdi-account-group' : 'mdi-book-open-page-variant'
 )
 
-const fetchTeamData = async (teamId: number) => {
+const fetchTeamData = async (handle: string) => {
   notFound.value = false
   try {
     const {
       data: { team },
-    } = await TeamsApi.detail(teamId)
+    } = await TeamsApi.detailByHandle(handle)
     teamData.value = team
   } catch (error) {
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
@@ -94,10 +94,12 @@ const join = async (message: string) => {
 }
 
 watch(
-  () => route.params.teamId,
-  async (id) => {
+  () => route.params.handle,
+  async (handle) => {
+    // Same team under a new handle (just renamed): keep the page, no reload.
+    if (typeof handle !== 'string' || handle.toLowerCase() === teamData.value?.handle.toLowerCase()) return
     teamData.value = undefined
-    await fetchTeamData(Number(id))
+    await fetchTeamData(handle)
   },
   { immediate: true }
 )

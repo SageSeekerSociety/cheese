@@ -333,7 +333,7 @@ const updateActiveTabFromRoute = () => {
 }
 
 onMounted(() => {
-  const teamId = Number(route.params.teamId)
+  const teamId = teamData.value!.id
   fetchTeamMembers(teamId)
 
   updateActiveTabFromRoute()
@@ -344,7 +344,7 @@ watch(
   ([newTeamData, newTab]) => {
     if (!newTeamData || !isSelfAdmin.value) return
 
-    const teamId = Number(route.params.teamId)
+    const teamId = teamData.value!.id
 
     if (newTab === 'requests') {
       fetchJoinRequests(teamId)
@@ -434,7 +434,7 @@ const confirmInvite = async () => {
     inviteRoleInput.value = 'MEMBER'
     inviteMessageInput.value = ''
     isInviteDialogActive.value = false
-    await fetchTeamInvitations(Number(route.params.teamId))
+    await fetchTeamInvitations(teamData.value!.id)
   }
 }
 
@@ -452,7 +452,7 @@ const promoteToAdmin = async (userId: number) => {
 
   if (result) {
     toast.success('提升为管理员成功')
-    await fetchTeamMembers(Number(route.params.teamId))
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 
@@ -470,7 +470,7 @@ const demoteToMember = async (userId: number) => {
 
   if (result) {
     toast.success('降级为成员成功')
-    await fetchTeamMembers(Number(route.params.teamId))
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 
@@ -488,7 +488,7 @@ const removeMember = async (userId: number) => {
 
   if (result) {
     toast.success('移除成员成功')
-    await fetchTeamMembers(Number(route.params.teamId))
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 

@@ -15,8 +15,15 @@ from app.domain.team.models import (
     TeamMemberRole,
     TeamUserRelation,
     TeamVisibility,
+    team_seq,
 )
 from app.domain.team.repositories import TeamRepository
+from app.domain.user.services import (
+    handle_is_available_shape,
+    handle_is_taken,
+    user_by_handle,
+    usernames_by_ids,
+)
 
 
 async def check_team_locking_status(session, team_id: int) -> None:
@@ -64,6 +71,24 @@ class TeamService:
     async def get_team(self, team_id: int) -> Team | None:
         return await self._repo.get_by_id(team_id)
 
+    async def handles_of(self, team_ids: set[int]) -> dict[int, str]:
+        """team id -> handle, a personal team going by its owner's username."""
+        teams = await self._repo.get_by_ids(list(team_ids))
+        names = await usernames_by_ids(
+            self._repo._session,
+            {
+                t.personal_owner_user_id
+                for t in teams.values()
+                if t.personal_owner_user_id is not None
+            },
+        )
+        out: dict[int, str] = {}
+        for tid, team in teams.items():
+            handle = team.handle or names.get(team.personal_owner_user_id or 0)
+            if handle:
+                out[tid] = handle
+        return out
+
     async def visible_team(self, team_id: int, user_id: int) -> Team:
         """The team as ``user_id`` may see it by id, or 404.
 
@@ -84,6 +109,34 @@ class TeamService:
         raise NotFoundError(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
+
+    async def _require_free_handle(self, handle: str) -> None:
+        if not handle_is_available_shape(handle):
+            raise BadRequestError(
+                "handle must be 4-32 letters, digits, '_' or '-', and not reserved",
+                data={"field": "handle", "value": handle},
+            )
+        if await handle_is_taken(self._repo._session, handle):
+            raise ConflictError(
+                "Handle already taken", data={"field": "handle", "value": handle}
+            )
+
+    async def visible_team_by_handle(self, handle: str, user_id: int) -> Team:
+        """The team a handle names, as ``user_id`` may see it, or 404.
+
+        A shared team is its own handle. A user's handle names their personal
+        team, which only they can open — so ``/teams/<your username>`` is yours.
+        """
+        team = await self._repo.get_by_handle(handle)
+        if team is None:
+            owner = await user_by_handle(self._repo._session, handle)
+            personal = await self._repo.get_personal_team(owner.id) if owner else None
+            if personal is not None and owner is not None and owner.id == user_id:
+                return personal
+            raise NotFoundError(
+                "Resource team not found", data={"type": "team", "handle": handle}
+            )
+        return await self.visible_team(team.id, user_id)
 
     async def team_for_join_token(self, token: str) -> Team:
         team = await self._repo.get_by_join_token(token)
@@ -164,7 +217,10 @@ class TeamService:
         description: str,
         avatar_id: int,
         owner_id: int,
+        handle: str | None = None,
     ) -> Team:
+        if handle is not None:
+            await self._require_free_handle(handle)
         if not name.strip():
             raise BadRequestError("Team name cannot be empty")
         if await self._repo.exists_by_name(name.strip()):
@@ -177,8 +233,14 @@ class TeamService:
             )
 
         now = datetime.now(UTC)
+        # Without a chosen handle the team gets ``team-<id>``, the same
+        # placeholder every team had before handles existed, for its owner to
+        # rename. The id is drawn first so the row is inserted already named.
+        team_id = int(await self._repo._session.scalar(team_seq.next_value()))
         team = Team(
+            id=team_id,
             name=name.strip(),
+            handle=handle or f"team-{team_id}",
             intro=intro or "",
             description=description or "",
             avatar_id=avatar_id,
@@ -212,6 +274,7 @@ class TeamService:
         description: str | None = None,
         avatar_id: int | None = None,
         visibility: TeamVisibility | None = None,
+        handle: str | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
         actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
@@ -245,6 +308,12 @@ class TeamService:
             if team.personal_owner_user_id is not None:
                 raise BadRequestError("A personal team is never listed")
             team.visibility = visibility.value
+        if handle is not None and handle != team.handle:
+            if team.personal_owner_user_id is not None:
+                raise BadRequestError("A personal team is named by its owner")
+            if handle.lower() != (team.handle or "").lower():
+                await self._require_free_handle(handle)
+            team.handle = handle
 
         team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()

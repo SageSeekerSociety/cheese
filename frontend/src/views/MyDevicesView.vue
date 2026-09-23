@@ -35,6 +35,11 @@ const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
   return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
 }
+// The team page lives at its handle; a team you are not in has no page for you.
+function teamRoute(id: number) {
+  const handle = myTeams.value.find((t) => t.id === id)?.handle
+  return handle ? { name: 'TeamsDetailCompute', params: { handle } } : undefined
+}
 
 // The screen whose 现场 is open in the viewer dialog.
 const liveScreen = ref<DeviceScreen | null>(null)
@@ -236,7 +241,7 @@ onMounted(load)
                 size="small"
                 variant="tonal"
                 color="primary"
-                :to="{ name: 'TeamsDetailCompute', params: { teamId: tid } }"
+                :to="teamRoute(tid)"
               >
                 <v-icon start size="14">mdi-account-group</v-icon>
                 {{ teamName(tid) }}

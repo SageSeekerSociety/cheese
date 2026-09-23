@@ -10,6 +10,7 @@ from app.domain.identity.models import AgentBinding
 from app.domain.knowledge.models import Knowledge
 from app.domain.platform_stats.windows import utc_day
 from app.domain.questions.models import Question
+from app.domain.team.models import Team
 from app.domain.user.models import (
     User,
     UserFollowingRelationship,
@@ -88,12 +89,16 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def is_username_taken(self, username: str) -> bool:
-        """Case-insensitive, matching ``uq_user_username_lower``."""
-        stmt = select(User.id).where(
-            func.lower(User.username) == username.lower(), User.deleted_at.is_(None)
+        """Case-insensitive, matching ``uq_user_username_lower`` — and a team's
+        handle takes the name too: users and teams share one namespace."""
+        lowered = username.lower()
+        user = select(User.id).where(
+            func.lower(User.username) == lowered, User.deleted_at.is_(None)
         )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        team = select(Team.id).where(
+            func.lower(Team.handle) == lowered, Team.deleted_at.is_(None)
+        )
+        return bool(await self._session.scalar(select(exists(user) | exists(team))))
 
     async def is_email_taken(self, email: str) -> bool:
         """Case-insensitive, matching ``uq_user_email_lower``."""

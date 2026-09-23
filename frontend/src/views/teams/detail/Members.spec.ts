@@ -10,7 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
-  useRoute: () => ({ params: { teamId: '7' }, query: {} }),
+  useRoute: () => ({ params: { handle: 'crew' }, query: {} }),
 }))
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {

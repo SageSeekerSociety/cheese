@@ -10,7 +10,9 @@ export default {
   },
   children: [
     {
-      path: ':teamId',
+      // A team is addressed by its handle (`/teams/zhishi`); a personal team by
+      // its owner's username.
+      path: ':handle',
       name: 'TeamsDetail',
       component: () => import('@/views/teams/Detail.vue'),
       // Detail.vue 自己挂着 DetailSidebar，手机上它是抽屉，所以顶栏给汉堡。

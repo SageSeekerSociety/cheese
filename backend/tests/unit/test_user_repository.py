@@ -148,7 +148,7 @@ class TestUserRepository:
     @pytest.mark.anyio
     async def test_is_username_taken_true(self):
         session = _mock_session()
-        session.execute.return_value = _mock_scalar(1)
+        session.scalar.return_value = True
         repo = UserRepository(session)
 
         assert await repo.is_username_taken("alice") is True
@@ -156,7 +156,7 @@ class TestUserRepository:
     @pytest.mark.anyio
     async def test_is_username_taken_false(self):
         session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
+        session.scalar.return_value = False
         repo = UserRepository(session)
 
         assert await repo.is_username_taken("nobody") is False

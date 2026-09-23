@@ -153,7 +153,7 @@
                     variant="tonal"
                     size="small"
                     class="mt-2"
-                    :to="{ name: 'TeamsDetailMembers', params: { teamId: teamEligibility.team.id } }"
+                    :to="{ name: 'TeamsDetailMembers', params: { handle: teamEligibility.team.handle } }"
                   >
                     管理此小队
                     <v-icon end>mdi-arrow-right</v-icon>

@@ -67,7 +67,7 @@
                     :title="team.name"
                     :subtitle="team.intro"
                     :prepend-avatar="getAvatarUrl(team.avatarId)"
-                    :to="{ name: 'TeamsDetailDefault', params: { teamId: team.id } }"
+                    :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                     rounded="md"
                     class="team-list-item mb-3"
                   >

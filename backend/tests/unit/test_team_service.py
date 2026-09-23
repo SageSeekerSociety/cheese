@@ -91,6 +91,8 @@ def _team_repo_mock() -> AsyncMock:
     repo._session = MagicMock()
     repo._session.add = MagicMock()
     repo._session.flush = AsyncMock()
+    # create_team draws the new team's id from team_seq before inserting.
+    repo._session.scalar = AsyncMock(return_value=77)
     return repo
 
 
@@ -262,6 +264,7 @@ class TestTeamServiceCreateTeam:
         assert result.intro == "Hello"
         assert result.description == "A description"
         assert result.avatar_id == 5
+        assert result.handle == "team-77"
         assert result.deleted_at is None
         # session.add called twice: once for team, once for owner relation
         assert repo._session.add.call_count == 2

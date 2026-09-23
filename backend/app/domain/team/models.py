@@ -4,6 +4,7 @@ from enum import Enum
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -37,10 +39,22 @@ class TeamVisibility(str, Enum):
 
 class Team(Base):
     __tablename__ = "team"
-    __table_args__ = (Index("ix_team_name", "name"),)
+    __table_args__ = (
+        Index("ix_team_name", "name"),
+        Index("uq_team_handle_lower", func.lower(text("handle")), unique=True),
+        # A shared team is named by its own handle; a personal team is named by
+        # its owner's username (see ``team_handle``), so it stores none.
+        CheckConstraint(
+            "(personal_owner_user_id IS NULL) = (handle IS NOT NULL)",
+            name="ck_team_handle_iff_shared",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, team_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    # The team's name in URLs and mentions: the same alphabet as a username and
+    # the same namespace, so one handle names one user or one team, never both.
+    handle: Mapped[str | None] = mapped_column(String(32), nullable=True)
     intro: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
     avatar_id: Mapped[int] = mapped_column(Integer, nullable=False)

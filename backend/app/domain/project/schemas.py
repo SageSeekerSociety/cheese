@@ -34,6 +34,9 @@ class ProjectOut(BaseModel):
     name: str
     owner_handle: str | None
     team_id: int | None = None
+    #: The owning team's handle, which links to the team go by. Filled by the
+    #: route, like ``shell``: it lives on the team, not on the project row.
+    team_handle: str | None = None
     external_task_id: int | None = None
     ai_mode: AiMode
     summary: str

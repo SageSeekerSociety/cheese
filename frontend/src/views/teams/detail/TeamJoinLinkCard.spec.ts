@@ -12,6 +12,11 @@ const resetJoinLink = vi.fn()
 const updateJoinLink = vi.fn()
 const update = vi.fn()
 const copy = vi.fn()
+const replace = vi.fn()
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ name: 'TeamsDetailMembers', params: { handle: 'cheese-core' }, query: { tab: 'members' } }),
+  useRouter: () => ({ replace }),
+}))
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {
     getJoinLink: (...args: unknown[]) => getJoinLink(...args),
@@ -24,9 +29,11 @@ vi.mock('@/network/api/teams', () => ({
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import { setLocale } from '@/i18n'
+import { BusinessError } from '@/network/types/error'
 
 const team = {
   id: 7,
+  handle: 'cheese-core',
   name: 'Cheese 核心组',
   intro: '',
   avatarId: 1,
@@ -48,6 +55,7 @@ beforeEach(() => {
   updateJoinLink.mockReset().mockResolvedValue({ data: { token: 'first', approval: false } })
   update.mockReset().mockResolvedValue({ data: { team: { ...team, visibility: 'stealth' } } })
   copy.mockReset().mockResolvedValue(undefined)
+  replace.mockReset().mockResolvedValue(undefined)
 })
 afterEach(cleanup)
 
@@ -59,7 +67,7 @@ function mount() {
 }
 
 function linkValue() {
-  return (screen.getAllByRole('textbox')[0] as HTMLInputElement).value
+  return (screen.getByLabelText('团队链接') as HTMLInputElement).value
 }
 
 describe('managing how people get into a team', () => {
@@ -103,5 +111,35 @@ describe('managing how people get into a team', () => {
     mount()
     await screen.findByText('操作失败，请重试')
     expect(screen.queryByRole('button', { name: '复制链接' })).toBeNull()
+  })
+})
+
+describe('the team address', () => {
+  it('moves the page to the new address once the team is renamed', async () => {
+    update.mockResolvedValue({ data: { team: { ...team, handle: 'zhishi' } } })
+    const view = mount()
+    const field = await screen.findByLabelText('团队地址')
+    await fireEvent.update(field, ' zhishi ')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({
+        name: 'TeamsDetailMembers',
+        params: { handle: 'zhishi' },
+        query: { tab: 'members' },
+      })
+    )
+    expect(update).toHaveBeenCalledWith(7, { handle: 'zhishi' })
+    expect(view.emitted('updated')).toEqual([[{ ...team, handle: 'zhishi' }]])
+  })
+
+  it('says so when another team or a person already holds the address', async () => {
+    update.mockRejectedValue(
+      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'handle' } })
+    )
+    mount()
+    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('这个地址已被占用')
+    expect(replace).not.toHaveBeenCalled()
   })
 })

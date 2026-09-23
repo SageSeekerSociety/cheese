@@ -34,6 +34,7 @@ import { BusinessError } from '@/network/types/error'
 function team(overrides: Partial<Team> = {}): Team {
   return {
     id: 7,
+    handle: 'cheese-core',
     name: 'Cheese 核心组',
     intro: '做 Cheese 的人',
     avatarId: 1,

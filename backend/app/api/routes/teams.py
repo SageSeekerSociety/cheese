@@ -27,6 +27,7 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
+from app.domain.team.summary import team_summary
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -42,6 +43,7 @@ class CreateTeamRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., min_length=1)
+    handle: str | None = None
     intro: str = ""
     description: str = ""
     avatar_id: int = Field(default=1, alias="avatarId", gt=0)
@@ -55,6 +57,7 @@ class PatchTeamRequest(BaseModel):
     description: str | None = None
     avatar_id: int | None = Field(default=None, alias="avatarId")
     visibility: TeamVisibility | None = None
+    handle: str | None = None
 
 
 class JoinLinkSettings(BaseModel):
@@ -139,6 +142,14 @@ def _user_payload(user, profile, *, fallback_id: int) -> dict:
     }
 
 
+def _team_handle(team: Team, users_map: dict) -> str | None:
+    """A shared team's own handle; a personal team goes by its owner's."""
+    if team.personal_owner_user_id is None:
+        return team.handle
+    owner = users_map.get(team.personal_owner_user_id)
+    return owner.username if owner is not None else None
+
+
 def _team_to_api_model(
     team: Team,
     *,
@@ -200,6 +211,7 @@ def _team_to_api_model(
 
     result = {
         "id": team.id,
+        "handle": _team_handle(team, users_map),
         "name": team.name,
         "intro": team.intro,
         "description": team.description,
@@ -284,18 +296,6 @@ async def _load_team_user_maps(
     return users_map, profiles_map
 
 
-def _team_summary_payload(team: Team | None, *, fallback_id: int) -> dict:
-    """TeamSummary as expected by the frontend (id/name/intro/avatarId)."""
-    if team is None:
-        return {"id": fallback_id, "name": "", "intro": "", "avatarId": None}
-    return {
-        "id": team.id,
-        "name": team.name,
-        "intro": team.intro,
-        "avatarId": team.avatar_id,
-    }
-
-
 def _application_to_api_model(
     app,
     *,
@@ -324,9 +324,7 @@ def _application_to_api_model(
             profiles_map.get(app.user_id),
             fallback_id=app.user_id,
         ),
-        "team": _team_summary_payload(
-            teams_map.get(app.team_id), fallback_id=app.team_id
-        ),
+        "team": team_summary(teams_map.get(app.team_id), fallback_id=app.team_id),
         "initiator": _user_payload(
             users_map.get(app.initiator_id),
             profiles_map.get(app.initiator_id),
@@ -509,6 +507,18 @@ async def get_team(
     db=Depends(get_db),
 ) -> dict:
     team = await service.visible_team(team_id, auth_user.user_id)
+    return await _team_profile(team, auth_user.user_id, service, membership_service, db)
+
+
+@router.get("/by-handle/{handle}", summary="Query Team by Handle")
+async def get_team_by_handle(
+    handle: str,
+    service: TeamService = Depends(get_team_service),
+    membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    team = await service.visible_team_by_handle(handle, auth_user.user_id)
     return await _team_profile(team, auth_user.user_id, service, membership_service, db)
 
 
@@ -718,6 +728,7 @@ async def create_team(
         description=payload.description,
         avatar_id=payload.avatar_id,
         owner_id=auth_user.user_id,
+        handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team.id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
@@ -757,6 +768,7 @@ async def patch_team(
         description=payload.description,
         avatar_id=payload.avatar_id,
         visibility=payload.visibility,
+        handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
