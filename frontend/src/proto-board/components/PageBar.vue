@@ -99,7 +99,7 @@ function submitJump() {
         @keyup.enter="submitJump"
       />
       <span>页</span>
-      <v-btn size="small" variant="tonal" @click="submitJump">跳转</v-btn>
+      <v-btn size="small" variant="outlined" @click="submitJump">跳转</v-btn>
     </div>
   </nav>
 </template>
@@ -142,7 +142,9 @@ function submitJump() {
   display: flex;
   gap: 6px;
   align-items: center;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  /* 「跳至 __ 页 / 跳转」整块用正文字色，而不是灰色：它是给操作的人读的，
+     灰到 0.55 在一排页码里像是禁用状态。 */
+  color: var(--text);
   font-size: 0.78rem;
 }
 
@@ -154,5 +156,11 @@ function submitJump() {
 .pb__input :deep(input) {
   appearance: textfield;
   text-align: center;
+}
+
+/* 占位符里放的是当前页码，所以它也得是正文字色 —— 灰色的默认值看着像「这里还没填」。 */
+.pb__input :deep(input)::placeholder {
+  color: var(--text);
+  opacity: 1;
 }
 </style>

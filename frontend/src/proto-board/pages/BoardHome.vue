@@ -104,16 +104,6 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
         <template v-else>审过之后题才会上板，作者在等。</template>
       </span>
     </v-alert>
-    <v-alert
-      v-else-if="!isManager && pendingTasks.some((t) => t.publisher.handle === me.handle)"
-      class="home__todo"
-      variant="tonal"
-      color="info"
-      density="comfortable"
-      title="你的题目正在排队等审核"
-    >
-      <span class="home__todo-text">审核通过后会自己出现在下面这张列表里。</span>
-    </v-alert>
 
     <div class="home__stats">
       <span
