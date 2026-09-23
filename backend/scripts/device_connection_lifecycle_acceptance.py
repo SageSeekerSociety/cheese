@@ -155,7 +155,10 @@ def backend_waiter(
                 else:
                     raise AssertionError("owner accepted an unknown RPC method")
                 assert backend.is_online("acceptance-machine")
-                assert backend.screen("surviving-screen") is screen
+                retained = backend.screen("surviving-screen")
+                assert retained is not None
+                assert retained.agent_handle == screen.agent_handle
+                assert retained.execution_target == screen.execution_target
             return await backend.call_executor(
                 "acceptance-machine",
                 state,
