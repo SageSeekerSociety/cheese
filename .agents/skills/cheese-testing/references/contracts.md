@@ -16,7 +16,7 @@ assertions and workflow selection when using an entry.
 | Transaction / external I/O | While storage or device I/O is blocked, another connection can access the relevant row and another caller can make progress. Exercise business calls with a bounded real pool when testing saturation. | `backend/tests/integration/test_transcript_stream.py`; `backend/tests/integration/test_project_environment.py`; `backend/tests/integration/test_central_room_sessions.py`; `backend/tests/integration/test_db_pool_gauge.py`; `backend/tests/unit/test_db_pool_fits_the_server.py` |
 | Reconnect / shared resources | Concurrent recovery stays bounded; failure releases capacity; all eligible devices are accounted for. Include completion identities/counts when claiming full-fleet recovery, not just the maximum concurrency. | `backend/tests/unit/test_recovery_burst_is_bounded.py`; `backend/tests/isolation.py` |
 | Forge / acceptance | Read the forge's result; pending/unknown is not merged. Cover rejection, queue removal, and actual merge completion through the owning acceptance path. | `backend/tests/support/ledger_forge.py`; `backend/tests/contract/test_forge_contract.py`; search acceptance callers when changing queue semantics |
-| Release / running execution | Supported backend/owner/connector versions interoperate; schema changes preserve the supported rollout sequence; an in-flight call and established connection survive the business-backend release. | `backend/tests/integration/test_owner_reads_survive_a_column_drop.py`; `backend/tests/unit/test_owner_recreate_connect_retry.py`; `scripts/remote_execution/acceptance.py`; `.github/workflows/release-device-connection.yml` |
+| Release / running execution | Supported backend/owner/connector versions interoperate; schema changes preserve the supported rollout sequence; an in-flight call and established connection survive the business-backend release. | `backend/tests/integration/test_owner_reads_survive_a_column_drop.py`; `backend/tests/unit/test_owner_recreate_connect_retry.py`; `backend/scripts/device_connection_lifecycle_acceptance.py` (`image_owner`, `image_acceptance`); `scripts/remote_execution/owner_fixture.py` (`WireOwner`); `.github/workflows/remote-execution.yml`; `.github/workflows/release-device-connection.yml` |
 | Frontend / API / rendered page | Identity-scoped data, authenticated resources, event propagation, visible completion, scrollability and layout across relevant viewports. Use browser geometry for layout promises. | `frontend/src/` adjacent `*.spec.ts`; `e2e/tests/layout-invariants.spec.ts`; `e2e/tests/`; `.claude/rules/frontend.md`; `.claude/rules/e2e.md` |
 | CI selection / suite result | Every selected required job actually runs; missing reports, a collapsed selection, and unavailable required dependencies do not count as tested behavior. | `.github/scripts/test_required_ci.py`; `backend/scripts/assert_suite_ran.py`; `backend/tests/unit/test_assert_suite_ran.py`; `.github/workflows/required-ci.yml` |
 
@@ -35,9 +35,14 @@ assertions and workflow selection when using an entry.
 
 ## Limits to check before claiming coverage
 
-- In remote acceptance, inspect `LocalDeviceHub` and every substituted hop.
-  Local subprocess success does not prove the connection-owner/Go transport,
-  previous-release compatibility, or behavior during a deployment.
+- In terminal acceptance, inspect `WireOwner` in
+  `scripts/remote_execution/owner_fixture.py` and its shared `image_owner`
+  lifecycle in `backend/scripts/device_connection_lifecycle_acceptance.py`.
+  The image case upgrades an isolated database before the released owner serves
+  current-backend calls. Use the connector packaged with that image: the owner
+  automatically replaces a connector whose binary digest differs. The
+  source-only smoke substitutes device authentication and uses a Python
+  connector harness; it does not verify the released-image boundary.
 - General backend fixtures may use `NullPool` for event-loop isolation. Keep
   that lifecycle constraint visible when adding bounded-pool coverage; changing
   every fixture to a pooled engine requires its own lifecycle design.

@@ -854,7 +854,8 @@ def image_acceptance(options, root: Path) -> int:
                         assert exc.response.status_code == 409
                         assert "X-Device-Id" not in exc.response.headers
                         assert (
-                            exc.response.json()["detail"] == "device calls are active"
+                            exc.response.json()["error"]["message"]
+                            == "device calls are active"
                         )
                     else:
                         raise AssertionError(
