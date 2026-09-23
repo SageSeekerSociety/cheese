@@ -9,11 +9,13 @@ COPY patch_stream_timing.py test_stream_timing.py test_provider_http_timing.py t
 COPY provider_http_timing.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/provider_http_timing.py
 COPY retry_stream.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/retry_stream.py
 COPY test_retry_stream.py /opt/cheese-gateway/
-COPY patch_deepseek_images.py test_deepseek_images.py check_config.py config.yaml /opt/cheese-gateway/
+COPY patch_deepseek_images.py test_deepseek_images.py patch_empty_system_text.py test_empty_system_text.py check_config.py config.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
+    && /app/.venv/bin/python /opt/cheese-gateway/patch_empty_system_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/check_config.py /opt/cheese-gateway/config.yaml \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_images.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_empty_system_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_http_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_retry_stream.py \
