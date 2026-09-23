@@ -433,6 +433,15 @@ class ProjectMachineRepository:
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         if located:
+            # Enrolled project machines keep their ccproxy identity on the
+            # machine row; their DeviceRow is only the connector registration.
+            machine = await self._session.scalar(
+                select(ProjectMachine).where(
+                    ProjectMachine.device_id == located["device_id"]
+                )
+            )
+            if machine is not None:
+                return machine.ccproxy_upstream
             return await self._session.scalar(
                 select(DeviceRow.ccproxy_upstream).where(
                     DeviceRow.device_id == located["device_id"]
