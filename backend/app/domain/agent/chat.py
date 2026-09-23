@@ -41,8 +41,10 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
+    OVERVIEW_DOC_CHAR_BUDGET,
     attachment_prompt_line,
     build_system_prompt,
+    fit_doc_to_budget,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -146,8 +148,8 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
-ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
-HEARTBEAT_SKILLS = ["heartbeat", "chat"]
+ACTIVITY_SKILLS = ["chat", "chat-detail", "activity-digestion", "doc-form"]
+HEARTBEAT_SKILLS = ["heartbeat", "chat", "chat-detail"]
 PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
@@ -5729,7 +5731,16 @@ class ChatService:
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            f"## 项目总览的实况文档\n{overview_doc.strip() or '（暂无）'}"
+            "## 项目总览的实况文档\n"
+            + (
+                fit_doc_to_budget(
+                    overview_doc.strip(),
+                    OVERVIEW_DOC_CHAR_BUDGET,
+                    full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+                )
+                if overview_doc.strip()
+                else "（暂无）"
+            )
         )
         system_prompt = build_system_prompt(
             self._base_prompt,
