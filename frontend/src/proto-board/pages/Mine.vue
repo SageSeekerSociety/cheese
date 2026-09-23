@@ -4,14 +4,31 @@
 // 这一页是**要求 4 里「出题人要看得到自己这道题的情况」的主入口** —— 但入口只是
 // 概览，真要看细的走每道题自己的看板（/insights/:id）。把两者分开是有原因的：
 // 概览回答「我出的题整体怎么样」，单题看板回答「这一道卡在哪儿」，塞进一页会都不清楚。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import MetricCard from '../components/MetricCard.vue'
+import PageBar from '../components/PageBar.vue'
 import PanelCard from '../components/PanelCard.vue'
 import { CLAIM_LABEL, deadlineText } from '../fixtures'
 import { isManager, me, myClaim, myClaimed, myPublished } from '../store'
 
+/** 一页 20 条，与题目板同口径。出题多的人（比如所有者）这里会翻好几页。 */
+const PAGE_SIZE = 20
+
 const tab = ref<'published' | 'claimed'>(myPublished.value.length ? 'published' : 'claimed')
+const page = ref(1)
+
+const pagedPublished = computed(() => myPublished.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+const pagedClaimed = computed(() => myClaimed.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+
+// 两个页签共用一套页码：切页签时回到第 1 页，否则会落在另一份列表的空页上。
+watch(tab, () => (page.value = 1))
+watch(
+  () => Math.max(1, Math.ceil((tab.value === 'published' ? myPublished.value : myClaimed.value).length / PAGE_SIZE)),
+  (last) => {
+    if (page.value > last) page.value = last
+  }
+)
 
 const pubStats = computed(() => {
   const list = myPublished.value
@@ -77,7 +94,7 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
       </div>
 
       <ul v-if="myPublished.length" class="pub-list">
-        <li v-for="task in myPublished" :key="task.id" class="pub-row">
+        <li v-for="task in pagedPublished" :key="task.id" class="pub-row">
           <div class="pub-row__main">
             <div class="pub-row__titleline">
               <router-link :to="`/task/${task.id}`" class="pub-row__title">{{ task.title }}</router-link>
@@ -125,13 +142,15 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
           <v-btn color="primary" variant="flat" to="/publish">出第一道题</v-btn>
         </template>
       </v-empty-state>
+
+      <PageBar :page="page" :page-size="PAGE_SIZE" :total="myPublished.length" @update:page="page = $event" />
     </div>
 
     <!-- 我领取的 -->
     <div v-else class="mine__pane">
       <PanelCard v-if="myClaimed.length" title="我领取的题">
         <ul class="claim-list">
-          <li v-for="task in myClaimed" :key="task.id">
+          <li v-for="task in pagedClaimed" :key="task.id">
             <router-link :to="`/task/${task.id}`" class="claim-list__title">{{ task.title }}</router-link>
             <span class="claim-list__by">{{ task.publisher.name }}</span>
             <v-spacer />
@@ -148,6 +167,8 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
           <v-btn color="primary" variant="flat" to="/">去题目板</v-btn>
         </template>
       </v-empty-state>
+
+      <PageBar :page="page" :page-size="PAGE_SIZE" :total="myClaimed.length" @update:page="page = $event" />
     </div>
 
     <p v-if="!isManager" class="mine__foot">

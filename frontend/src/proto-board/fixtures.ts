@@ -227,7 +227,7 @@ function finalize(task: Omit<BoardTask, 'claimTrend' | 'submitted' | 'passed'>):
   return { ...task, submitted, passed, claimTrend }
 }
 
-export const TASKS: BoardTask[] = [
+const CURATED: BoardTask[] = [
   finalize({
     id: 't1',
     title: '给题目板写一个「领取人数」的并发安全实现',
@@ -524,6 +524,247 @@ export const TASKS: BoardTask[] = [
     }),
   }),
 ]
+
+// --- 批量造的题：页码条要真的能翻起来 -----------------------------------------
+//
+// 上面那 12 道是手写的，题名有意挑成「讲这块板自己的问题」（并发领取、能被重复
+// 兑换的邀请码…），评审时一眼能认出。但一页 20 条、页码条要人点得动，12 道连一页
+// 都填不满 —— 于是这里再批量造一批**形状相同、内容平淡**的题把板填厚：上板 52 道、
+// 待审 24 道、驳回 6 道。
+//
+// 「待审 24 道」是刻意造的：开放发题之后审核队列积压，正是这次重设计要讲的场景，
+// 所以审核页的页码条也得有东西可翻。驳回那 6 道写的是反例（自动通过、不分页、
+// 广告位…），驳回理由顺手把「为什么不这么做」讲在界面上。
+//
+// 随机数用固定种子的 LCG，不用 Math.random —— 每次构建出来的必须是同一块板，
+// 否则页码、看板数字每刷一次都变，截图和评审都没法对着看。
+
+const seeded = (seed: number) => {
+  let s = seed >>> 0
+  return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4_294_967_296
+}
+
+const BULK_TAGS: Record<string, string[]> = {
+  算法与数据结构: ['算法', '复杂度', '数据结构', '动态规划', '图论'],
+  系统与网络: ['并发', '网络', '存储', '协议', '操作系统'],
+  前端与体验: ['交互', '可视化', '响应式', '无障碍', '动效'],
+  数据与分析: ['统计', '指标', '数据清洗', '报表', '可视化'],
+  安全: ['权限', '加密', '越权', '审计', '注入'],
+  其他: ['产品', '治理', '文档', '协作', '流程'],
+}
+
+const BULK_SUMMARIES = [
+  '按题目要求给出实现或方案，说清取舍，并交代你是怎么验证的。',
+  '交付要能跑起来，同时给出你判断它正确的依据。',
+  '先把口径和边界写清楚再动手；交付里要能看出为什么这么做。',
+  '方案里请分开写「验证过的场景」和「没验证的部分」。',
+  '给出一版能用的实现，附上你踩到的坑和绕过它的办法。',
+  '结论一句话，依据要有可复核的证据。',
+]
+
+const PUB_TITLES = [
+  '给题目列表加一个「即将截止」的提醒',
+  '写一份题目板的使用手册',
+  '把「领取」按钮做成有状态的',
+  '给题目详情页加「相关题目」',
+  '统计每道题的平均完成时间',
+  '把板内搜索换成支持标签组合的',
+  '给题目加「难度」并说明怎么定档',
+  '设计一套题目模板，减少出题时的重复劳动',
+  '截止前自动提醒还没提交的小队',
+  '给「我的」页加一个进度条',
+  '写个脚本把散落的题目描述统一格式',
+  '领取时校验小队人数是否满足限制',
+  '给审核加一条「批量通过」',
+  '讨论区支持 @ 提及',
+  '把题目导出成 Markdown',
+  '题目附件支持拖拽上传',
+  '给题目加草稿自动保存',
+  '做一个题目标题查重',
+  '领取记录支持限时撤销',
+  '给每道题一个唯一的短链',
+  '统计「领了但一直没动」的人并提醒',
+  '把看板的 KPI 做成可点击的钻取',
+  '给小队加队内讨论区',
+  '题目通过后自动通知领取者',
+  '支持给题目打星级评分',
+  '把题目板接入日历订阅',
+  '给题目加「先修要求」',
+  '支持题目按学期归档',
+  '做一个题目质量自检清单',
+  '领取人数上限支持动态调整',
+  '给题目加多语言描述',
+  '支持从表格批量导入题目',
+  '给审核队列加处理时长统计',
+  '把题目详情页做成可分享的卡片',
+  '支持给题目配一个示例提交',
+  '统计每个分类的平均领取率',
+  '给题目加「已满员」时的候补队列',
+  '支持按出题人筛选题目',
+  '记住用户自己的排序偏好',
+  '题目描述里的链接做成可预览的',
+  '支持给题目加参考实现',
+  '做一个「本周新题」的订阅摘要',
+  '给题目加结束后的复盘入口',
+  '把题目关联到具体的课程章节',
+  '给板内成员加技能标签',
+  '支持把题目转成一份作业单',
+  '给题目加领取冷却期',
+  '统计题目之间的先后依赖',
+  '给题目板加一个「紧急」标记',
+  '按小队规模自动分组展示题目',
+  '把题目描述的编辑器换成 Markdown',
+  '给题目加一个版本历史',
+]
+
+const PENDING_TITLES = [
+  '给题目列表加虚拟滚动',
+  '做一个按历史领取的题目推荐',
+  '支持题目跨板复制',
+  '给审核加一个「需要补充材料」的状态',
+  '把领取上限改成按小队计',
+  '支持题目定时上板',
+  '给题目加一个匿名反馈入口',
+  '题目板的移动端手势操作',
+  '支持把题目导出成 PDF 讲义',
+  '给题目加一个「已解决」标记',
+  '统计发布到第一次领取的延迟',
+  '支持给题目配一套自动评测用例',
+  '给题目加一个公开的讨论热榜',
+  '做一个题目板的数据大屏',
+  '支持按标签订阅题目',
+  '给题目加一个延期申请流程',
+  '支持被驳回的题一键重提',
+  '给题目板加操作审计日志',
+  '支持给题目配一个视频讲解',
+  '做一个题目板的开放 API',
+  '支持题目描述里的公式渲染',
+  '给题目加一个「同类题」对比视图',
+  '支持题目板之间的题目引用',
+  '做一个题目的领取者名片视图',
+]
+
+const REJECTED: [string, string][] = [
+  ['把题目板首页换成一屏大图', '首页是导航入口，一屏大图会把列表和筛选项藏起来，先不动。'],
+  ['支持把题目转发到聊天工具', '转发会把题目带出板外，权限、截止和领取状态都会失真。'],
+  ['给题目加一个「付费解锁」按钮', '题目必须对板内成员等价开放，不引入付费。'],
+  ['支持题目自动通过（不审核）', '审核正是这次重设计要立的规则，不能自动通过。'],
+  ['把全部题目一次性展开（不分页）', '题目会到几百道，不分页首页会先垮掉。'],
+  ['给题目加一个全屏广告位', '板内不做广告位。'],
+]
+
+/** 批量题的领取名单：只写形状（多少人、什么状态分布），人数从名单数出来。 */
+function bulkRoster(rand: () => number): Claimant[] {
+  const fill = 2 + Math.floor(rand() * 22)
+  const passed = Math.floor(fill * (0.25 + rand() * 0.35))
+  const submitted = Math.floor((fill - passed) * (0.3 + rand() * 0.4))
+  const working = fill - passed - submitted
+  const teamSize = rand() < 0.35 ? 2 + Math.floor(rand() * 2) : undefined
+  return makeRoster({
+    named: [],
+    fill,
+    mix: [
+      ['PASSED', passed],
+      ['SUBMITTED', submitted],
+      ['IN_PROGRESS', working + 3],
+      ['REJECTED', 2],
+    ],
+    teamSize,
+  })
+}
+
+function makeBulkTasks(): BoardTask[] {
+  const rand = seeded(20260923)
+  const publishers = [...Object.values(PEOPLE), ...FILLER]
+  const out: BoardTask[] = []
+
+  const pick = <T>(list: T[]) => list[Math.floor(rand() * list.length)]
+  const tagsFor = (category: string) => {
+    const pool = BULK_TAGS[category] ?? BULK_TAGS['其他']
+    return [pool[Math.floor(rand() * pool.length)], pool[Math.floor(rand() * pool.length)]].filter(
+      (t, i, a) => a.indexOf(t) === i
+    )
+  }
+  /** 每 3 道里有 1 道挂在所有者名下 —— 让「我发布的」也有多页可翻（每页 20）。 */
+  const publisherAt = (i: number) => (i % 3 === 0 ? PEOPLE.caisongyang : pick(publishers))
+
+  PUB_TITLES.forEach((title, i) => {
+    const category = CATEGORIES[i % CATEGORIES.length]
+    const claims = bulkRoster(rand)
+    const publishedDaysAgo = 1 + Math.floor(rand() * 26)
+    // 五分之一左右已经截止（PUBLISHED + 过期 = 界面上那个「已截止」）。
+    const overdue = rand() < 0.2
+    const team = claims.some((c) => c.team) ? 2 + Math.floor(rand() * 3) : 1
+    out.push(
+      finalize({
+        id: `b-pub-${i + 1}`,
+        title,
+        summary: BULK_SUMMARIES[i % BULK_SUMMARIES.length],
+        category,
+        tags: tagsFor(category),
+        publisher: publisherAt(i),
+        state: 'PUBLISHED',
+        createdAt: daysBefore(publishedDaysAgo + 2),
+        publishedAt: daysBefore(publishedDaysAgo),
+        deadline: overdue ? daysBefore(1 + Math.floor(rand() * 5)) : daysAfter(1 + Math.floor(rand() * 30)),
+        // 上限总比已领的多，否则卡片上会出现「已领 21 / 20」这种不可能的数。
+        participantLimit: rand() < 0.3 ? null : claims.length + 5 + Math.floor(rand() * 25),
+        minTeamSize: team,
+        maxTeamSize: team,
+        claims,
+      })
+    )
+  })
+
+  PENDING_TITLES.forEach((title, i) => {
+    const category = CATEGORIES[i % CATEGORIES.length]
+    // 待审的题还没有领取名单：它们没上板。
+    out.push(
+      finalize({
+        id: `b-pend-${i + 1}`,
+        title,
+        summary: BULK_SUMMARIES[(i + 2) % BULK_SUMMARIES.length],
+        category,
+        tags: tagsFor(category),
+        publisher: publisherAt(i + 3),
+        state: 'PENDING',
+        createdAt: daysBefore(Math.floor(rand() * 7)),
+        deadline: daysAfter(3 + Math.floor(rand() * 30)),
+        participantLimit: rand() < 0.5 ? null : 10 + Math.floor(rand() * 30),
+        minTeamSize: 1,
+        maxTeamSize: rand() < 0.5 ? 1 : 3,
+        claims: [],
+      })
+    )
+  })
+
+  REJECTED.forEach(([title, reason], i) => {
+    const category = CATEGORIES[(i + 4) % CATEGORIES.length]
+    out.push(
+      finalize({
+        id: `b-rej-${i + 1}`,
+        title,
+        summary: BULK_SUMMARIES[(i + 4) % BULK_SUMMARIES.length],
+        category,
+        tags: tagsFor(category),
+        publisher: pick([PEOPLE.maxiaoyu, PEOPLE.pengwenbo, PEOPLE.chiruotong]),
+        state: 'REJECTED',
+        rejectReason: reason,
+        reviewedBy: i % 2 === 0 ? PEOPLE.caisongyang : PEOPLE.maxiaoyu,
+        createdAt: daysBefore(6 + i),
+        deadline: daysAfter(10 + i),
+        participantLimit: null,
+        minTeamSize: 1,
+        maxTeamSize: 1,
+        claims: [],
+      })
+    )
+  })
+
+  return out
+}
+
+export const TASKS: BoardTask[] = [...CURATED, ...makeBulkTasks()]
 
 export const INITIAL_CODES: InviteCode[] = [
   {

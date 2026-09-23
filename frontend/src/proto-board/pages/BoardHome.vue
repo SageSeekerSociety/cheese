@@ -4,18 +4,23 @@
 // 设计上刻意**不**按角色切列表内容：板上的题谁能看是「可见性」问题（已经在
 // `TaskVisibilityService` 里），不是角色问题。角色只决定**能做什么**（发题、审题、
 // 看汇总），不决定**能看什么**。把这个分清楚，界面就不会长出一堆按角色复制的列表。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
+import PageBar from '../components/PageBar.vue'
 import TaskCard from '../components/TaskCard.vue'
 import { CATEGORIES, isOpen } from '../fixtures'
 import { boardTasks, isManager, kpis, me, pendingTasks } from '../store'
 
 type SortKey = 'hot' | 'new' | 'deadline'
 
+/** 一页 20 道。3 列网格下 20 张是满满 7 行，再多就滚不到底了。 */
+const PAGE_SIZE = 20
+
 const keyword = ref('')
 const category = ref<string | null>(null)
 const sort = ref<SortKey>('hot')
 const onlyOpen = ref(false)
+const page = ref(1)
 
 const visible = computed(() => {
   let list = [...boardTasks.value]
@@ -38,6 +43,24 @@ const visible = computed(() => {
   if (sort.value === 'deadline') list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
   return list
 })
+
+// 翻页只切一刀，筛选与排序口径一个字都不改：页码是**视图**上的东西，不是查询条件。
+const paged = computed(() => visible.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+
+// 换关键词、分类、排序、只看还能领的 —— 都要回到第 1 页，否则会停在一个空的第 4 页上。
+watch([keyword, category, sort, onlyOpen], () => (page.value = 1))
+// 题目被审掉/删掉之后总页数会缩，落在界外的页码要收回来。
+watch(
+  () => Math.max(1, Math.ceil(visible.value.length / PAGE_SIZE)),
+  (last) => {
+    if (page.value > last) page.value = last
+  }
+)
+
+function setPage(next: number) {
+  page.value = next
+  document.querySelector('.home__grid')?.scrollIntoView({ block: 'start' })
+}
 
 const closingSoon = computed(() =>
   boardTasks.value.filter((t) => {
@@ -136,7 +159,7 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
     </div>
 
     <div v-if="visible.length" class="home__grid">
-      <TaskCard v-for="task in visible" :key="task.id" :task="task" show-publisher />
+      <TaskCard v-for="task in paged" :key="task.id" :task="task" show-publisher />
     </div>
     <v-empty-state
       v-else
@@ -144,6 +167,8 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
       title="没有符合条件的题目"
       text="换个关键词或清掉筛选再看看。"
     />
+
+    <PageBar :page="page" :page-size="PAGE_SIZE" :total="visible.length" @update:page="setPage" />
 
     <p v-if="!isManager" class="home__foot">
       「审核」「成员」「数据看板」是所有者和管理员才有的入口，所以你这个身份看不到。

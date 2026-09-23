@@ -5,14 +5,19 @@
 //   也只能找另一个管理员 —— 而板上一共可能就一个管理员，题就卡住了。
 // - 新规则是**所有者与管理员都能审任何一道待审题**，包括自己出的。于是这一屏要
 //   显眼地说出「这道题是你自己出的，你可以直接过」，而不是把它藏起来。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
+import PageBar from '../components/PageBar.vue'
 import PanelCard from '../components/PanelCard.vue'
 import { deadlineText } from '../fixtures'
 import { approveTask, me, pendingTasks, rejectTask, tasks } from '../store'
 
+/** 一页 20 道，与题目板同一口径。队列积压时（开放发题之后就一定会积压）才翻页。 */
+const PAGE_SIZE = 20
+
 const rejectFor = ref<string | null>(null)
 const reason = ref('')
+const page = ref(1)
 
 const queue = computed(() =>
   [...pendingTasks.value].sort((a, b) => {
@@ -23,6 +28,21 @@ const queue = computed(() =>
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   })
 )
+
+const pagedQueue = computed(() => queue.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+
+// 审掉一页里的题之后队列会变短：页数缩了就收回到最后一页，不要停在空页上。
+watch(
+  () => Math.max(1, Math.ceil(queue.value.length / PAGE_SIZE)),
+  (last) => {
+    if (page.value > last) page.value = last
+  }
+)
+
+function setPage(next: number) {
+  page.value = next
+  document.querySelector('.queue')?.scrollIntoView({ block: 'start' })
+}
 
 const recentlyHandled = computed(() => tasks.value.filter((t) => t.reviewedBy && t.state !== 'PENDING').slice(0, 4))
 
@@ -56,7 +76,7 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
 
     <PanelCard v-if="queue.length" title="待审核" :subtitle="`按「先审自己的、再按提交时间」排`">
       <ul class="queue">
-        <li v-for="task in queue" :key="task.id" class="queue__row">
+        <li v-for="task in pagedQueue" :key="task.id" class="queue__row">
           <div class="queue__main">
             <div class="queue__titleline">
               <router-link :to="`/task/${task.id}`" class="queue__title">{{ task.title }}</router-link>
@@ -92,6 +112,8 @@ const nowHandling = computed(() => tasks.value.find((t) => t.id === rejectFor.va
           </div>
         </li>
       </ul>
+
+      <PageBar :page="page" :page-size="PAGE_SIZE" :total="queue.length" @update:page="setPage" />
     </PanelCard>
 
     <v-empty-state v-else icon="mdi-check-all" title="队列是空的" text="没有待审的题。有新题提交时会出现在这里。" />
