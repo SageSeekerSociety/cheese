@@ -270,7 +270,6 @@ async def test_pending_question_and_result_survive_restart_and_upload_retry(rc):
     recovered = RemoteControl(service.redis)
     snapshot = await recovered.snapshot(await recovered.get(session["id"]))
     assert snapshot["pending"]["question"] == pending
-    assert len(await recovered.journal(session["id"], "0-0")) == 1
     response = {
         "type": "control_response",
         "uuid": "response-event",
@@ -480,7 +479,6 @@ async def test_stale_epoch_cannot_commit_events_or_acknowledge_answer(rc):
         await service.update(
             sid, {"worker": {"external_metadata": {"stale": True}}}, epoch=0
         )
-    assert len(await service.journal(sid, "0-0")) == 1
     assert await service.result(sid, "stop") is None
     assert "question" in (await service.snapshot(session))["pending"]
     assert "worker" not in await service.get(sid)
@@ -522,7 +520,8 @@ async def test_interrupted_upload_response_leaves_all_state_recoverable(
     assert (await recovered.snapshot(session))["pending"]["q"] == pending
     assert await recovered.result(sid, "r") == response
     await recovered.receive(sid, events, epoch=0)
-    assert len(await recovered.journal(sid, "0-0")) == 2
+    assert (await recovered.snapshot(session))["pending"]["q"] == pending
+    assert await recovered.result(sid, "r") == response
 
 
 async def test_invalid_batch_cannot_partially_commit(rc):
@@ -541,7 +540,6 @@ async def test_invalid_batch_cannot_partially_commit(rc):
     ]
     with pytest.raises(ValueError):
         await service.receive(session["id"], events, epoch=0)
-    assert not await service.journal(session["id"], "0-0")
     assert not (await service.snapshot(session))["pending"]
 
 
@@ -600,11 +598,18 @@ async def test_worker_stream_closes_cleanly_when_epoch_changes_while_reading(
     assert (await service.command(session["id"], "stop"))["status"] == "queued"
 
 
-async def test_thinking_progress_does_not_crowd_messages_out_of_the_journal(rc):
+async def test_events_that_change_no_state_leave_nothing_behind_in_redis(rc):
     service, create = rc
     session = await create()
-    message = {"type": "assistant", "uuid": "answer", "message": {"content": []}}
-    await service.receive(session["id"], [{"payload": message}], epoch=0)
+    before = {k async for k in service.redis.scan_iter(key(session["id"], "*"))}
+    chatter = [
+        {"type": "assistant", "uuid": "said", "message": {"content": []}},
+        {"type": "user", "uuid": "tool-result", "message": {"content": []}},
+        {"type": "system", "subtype": "compact_boundary", "uuid": "compacted"},
+    ]
+    await service.receive(
+        session["id"], [{"payload": payload} for payload in chatter], epoch=0
+    )
     for batch in range(5):
         progress = [
             {
@@ -618,17 +623,34 @@ async def test_thinking_progress_does_not_crowd_messages_out_of_the_journal(rc):
             for i in range(1000)
         ]
         await service.receive(session["id"], progress, epoch=0)
-    journal = await service.journal(session["id"], "0-0")
-    assert [event["payload"] for event in journal] == [message]
+    after = {k async for k in service.redis.scan_iter(key(session["id"], "*"))}
+    assert after == before
 
 
-async def test_a_retried_event_is_journalled_once_and_forgotten_within_an_hour(rc):
+async def test_a_replayed_question_stays_cancelled_and_is_forgotten_within_an_hour(
+    rc,
+):
     service, create = rc
     session = await create()
-    message = {"type": "assistant", "uuid": "retried", "message": {"content": []}}
-    await service.receive(session["id"], [{"payload": message}], epoch=0)
-    await service.receive(session["id"], [{"payload": message}], epoch=0)
-    assert len(await service.journal(session["id"], "0-0")) == 1
+    asked = {
+        "payload": {
+            "type": "control_request",
+            "uuid": "asked",
+            "request_id": "q",
+            "request": {"input": {"questions": []}},
+        }
+    }
+    cancelled = {
+        "payload": {
+            "type": "control_cancel_request",
+            "uuid": "cancelled",
+            "request_id": "q",
+        }
+    }
+    await service.receive(session["id"], [asked], epoch=0)
+    await service.receive(session["id"], [cancelled], epoch=0)
+    await service.receive(session["id"], [asked], epoch=0)
+    assert not (await service.snapshot(session))["pending"]
     markers = [k async for k in service.redis.scan_iter(key(session["id"], "seen:*"))]
     assert markers
     for marker in markers:

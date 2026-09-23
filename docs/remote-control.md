@@ -5,11 +5,11 @@ for controls. Ordinary chat input still uses the existing RV socket. The control
 bar sits above the terminal; permission requests and questions also appear above
 the chat composer.
 
-Subscription-backed device launches enable `--remote-control Cheese`. API-key
-launches keep their existing behavior: the native CLI does not enable RC in that
-mode. Controls remain unavailable until a worker connects. Existing terminals
-adopt the new launch contract at the next task boundary, with the existing
-session-resume path.
+Every Claude Code launch on a machine, whether an enrolled device or a Cloud
+machine, runs with `--remote-control Cheese`, whichever model pool serves it.
+The machine holds only a placeholder login and the metering proxy supplies the
+credential per request, so API-backed sessions get RC as well. Controls remain
+unavailable until a worker connects.
 
 ## Available operations
 
@@ -52,7 +52,6 @@ Cheese `{code, data, message}` envelope.
 | `GET /control/{request_id}?session_id=…` | Delivery status and native result |
 | `POST /answer` | Answer a pending native permission request or question |
 | `POST /message` | Send human text through RC when explicitly requested by a controller |
-| `GET /events?session_id=…&cursor=0-0` | Read up to 200 worker events with resumable cursors |
 
 For example, after reading the current `id` from `GET /control`, post this body
 to `POST /control` to perform the same background action as Ctrl+B:
@@ -85,7 +84,7 @@ RC `/v1/code/…` requests go to the backend that already serves `/llm/admission
 Worker bootstrap returns a session-scoped, one-hour JWT and the backend's
 `connector_public_base`. Renewing the bridge replaces the worker epoch.
 
-Redis stores sessions, pending questions, command results and event journals for
+Redis stores sessions, pending questions, queued commands and their results for
 seven days of inactivity. Worker mutations check their epoch in the same Redis
 transaction that updates state. Old workers cannot write into a renewed session.
 A backend restart retains outstanding questions while Redis remains available.
