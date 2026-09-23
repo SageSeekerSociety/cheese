@@ -338,11 +338,6 @@ class RemoteControl:
             if not isinstance(event_id, str) or not event_id:
                 raise ValueError("Worker events require a uuid")
             kind = payload.get("type")
-            if kind == "system" and payload.get("subtype") == "thinking_tokens":
-                # A running token count, re-sent many times a second while the
-                # model thinks. Nothing is derived from it, so all it would
-                # leave behind is a dedup marker per tick.
-                continue
             if kind == "control_response":
                 response = payload.get("response", {})
                 if not isinstance(response, dict):
@@ -368,6 +363,16 @@ class RemoteControl:
                 payload["task_id"], str
             ):
                 raise ValueError("Invalid task id")
+            if not (
+                kind
+                in ("control_response", "control_request", "control_cancel_request")
+                or (kind == "system" and payload.get("subtype") in ("init", "status"))
+                or (kind == "system" and payload.get("task_id") is not None)
+            ):
+                # Nothing below would change for it — messages, tool events, the
+                # thinking-token count — so it is accepted and dropped, without
+                # a dedup marker of its own.
+                continue
             item: dict = {
                 "id": event_id,
                 "payload": payload,

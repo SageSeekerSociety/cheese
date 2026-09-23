@@ -598,10 +598,18 @@ async def test_worker_stream_closes_cleanly_when_epoch_changes_while_reading(
     assert (await service.command(session["id"], "stop"))["status"] == "queued"
 
 
-async def test_thinking_progress_leaves_nothing_behind_in_redis(rc):
+async def test_events_that_change_no_state_leave_nothing_behind_in_redis(rc):
     service, create = rc
     session = await create()
     before = {k async for k in service.redis.scan_iter(key(session["id"], "*"))}
+    chatter = [
+        {"type": "assistant", "uuid": "said", "message": {"content": []}},
+        {"type": "user", "uuid": "tool-result", "message": {"content": []}},
+        {"type": "system", "subtype": "compact_boundary", "uuid": "compacted"},
+    ]
+    await service.receive(
+        session["id"], [{"payload": payload} for payload in chatter], epoch=0
+    )
     for batch in range(5):
         progress = [
             {

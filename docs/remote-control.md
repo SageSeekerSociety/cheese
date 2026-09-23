@@ -5,11 +5,11 @@ for controls. Ordinary chat input still uses the existing RV socket. The control
 bar sits above the terminal; permission requests and questions also appear above
 the chat composer.
 
-Subscription-backed device launches enable `--remote-control Cheese`. API-key
-launches keep their existing behavior: the native CLI does not enable RC in that
-mode. Controls remain unavailable until a worker connects. Existing terminals
-adopt the new launch contract at the next task boundary, with the existing
-session-resume path.
+Every Claude Code launch on a machine, whether an enrolled device or a Cloud
+machine, runs with `--remote-control Cheese`, whichever model pool serves it.
+The machine holds only a placeholder login and the metering proxy supplies the
+credential per request, so API-backed sessions get RC as well. Controls remain
+unavailable until a worker connects.
 
 ## Available operations
 
