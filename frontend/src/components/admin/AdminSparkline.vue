@@ -28,8 +28,7 @@ const path = computed(() => {
   const span = Math.max(...nums) - min
   const innerH = props.height - PAD * 2
   const x = (i: number) => (pts.length < 2 ? 0 : (i / (pts.length - 1)) * 100)
-  const y = (v: number) =>
-    PAD + (span === 0 ? innerH / 2 : innerH - ((v - min) / span) * innerH)
+  const y = (v: number) => PAD + (span === 0 ? innerH / 2 : innerH - ((v - min) / span) * innerH)
   let d = ''
   let pen = false
   for (let i = 0; i < pts.length; i++) {
@@ -46,13 +45,7 @@ const path = computed(() => {
 </script>
 
 <template>
-  <svg
-    class="aspark"
-    :viewBox="`0 0 100 ${height}`"
-    :height="height"
-    preserveAspectRatio="none"
-    aria-hidden="true"
-  >
+  <svg class="aspark" :viewBox="`0 0 100 ${height}`" :height="height" preserveAspectRatio="none" aria-hidden="true">
     <path v-if="path" :d="path" vector-effect="non-scaling-stroke" />
   </svg>
 </template>
