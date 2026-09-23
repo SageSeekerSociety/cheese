@@ -851,7 +851,12 @@ class ClaudeCodeRuntime:
         self._activity_consumer = consumer
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         """Inject ``text`` into the topic's active screen.
 
@@ -875,6 +880,10 @@ class ClaudeCodeRuntime:
                 screen is None
                 or subscription is None
                 or subscription.current_work is None
+                or (
+                    expected_work_id is not None
+                    and subscription.current_work.work_id != expected_work_id
+                )
             ):
                 logger.info(
                     "mid-turn delivery skipped (topic=%s): no live screen here "
@@ -887,6 +896,14 @@ class ClaudeCodeRuntime:
                 )
                 return False
             staged, lost = await self._stage(screen, images)
+            # Image staging yields. A replaced turn must not receive this input.
+            if expected_work_id is not None and (
+                self._live.get(topic_id) is not screen
+                or self._subscriptions.get(topic_id) is not subscription
+                or subscription.current_work is None
+                or subscription.current_work.work_id != expected_work_id
+            ):
+                return False
             delivered_text = _prompt_with_native_images(text, staged, lost)
             try:
                 await self._channel.send_prompt(screen, delivered_text)

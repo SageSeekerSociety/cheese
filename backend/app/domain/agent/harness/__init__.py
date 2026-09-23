@@ -331,7 +331,12 @@ class AgentRuntime(Protocol):
         ...
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         """Put text into a session that is already working, with no turn opened
         for it. True = it landed; False = there is no live session here.

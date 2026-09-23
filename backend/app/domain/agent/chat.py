@@ -1350,6 +1350,8 @@ class ChatService:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -1493,7 +1495,16 @@ class ChatService:
             if fallback is not None:
                 yield {"type": "event_block", "block": fallback}
 
-        async with self._prompt_lock(topic_id, turn_id):
+        recipient_handle = None
+        if recipient_instance_id is not None:
+            from app.domain.agent_instance.models import AgentInstance
+
+            async with self._sessions() as session:
+                instance = await session.get(AgentInstance, recipient_instance_id)
+                if instance is None or not instance.is_active:
+                    raise ValidationError("The addressed agent is unavailable")
+                recipient_handle = instance.handle
+        async with self._prompt_lock(topic_id, turn_id, recipient_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1503,6 +1514,8 @@ class ChatService:
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
                 platform_turn=platform_turn,
+                delivery_id=delivery_id,
+                recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
 
@@ -1737,6 +1750,7 @@ class ChatService:
         notice: str,
         *,
         blocks: Sequence[uuid.UUID] = (),
+        recipient_seat: str | None = None,
     ) -> bool:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
@@ -1765,6 +1779,10 @@ class ChatService:
         consuming_turn_id = self._active_turn_ids.get(topic_id)
         if consuming_turn_id is None:
             return False
+        if recipient_seat is not None:
+            state = self._hook_work.get((topic_id, consuming_turn_id))
+            if state is None or state.acting_agent != recipient_seat:
+                return False
         line = platform_prompt(strip_platform_notice(notice))
         if blocks:
             # Registered BEFORE the write, for the reason the human-message path
@@ -1780,7 +1798,11 @@ class ChatService:
             )
             del pending[:-16]  # a dead session must not grow this forever
         try:
-            return bool(await self._compute.deliver(topic_id, line))
+            return bool(
+                await self._compute.deliver(
+                    topic_id, line, expected_work_id=consuming_turn_id
+                )
+            )
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
@@ -1828,6 +1850,11 @@ class ChatService:
                     async with self._sessions() as session:
                         await BlockRepository(session).mark_consumed(
                             block_ids, consuming_turn_id
+                        )
+                        from app.domain.delivery.agent import receive_attempt
+
+                        await receive_attempt(
+                            session, consuming_turn_id, datetime.now(UTC)
                         )
                         await session.commit()
                     logger.info(
@@ -3660,7 +3687,13 @@ class ChatService:
             # 谁在做这张卡，是平台看见它开工的时候记下来的 —— 这条事件是第一个说
             # 出这个分身 id 的东西（id 在容器里才诞生，派活的时候没有任何东西能提
             # 前说出它）。卡上从此有一个分身在做，看板也就能问它还活着没有。
-            await self._note_worker(task_id, event.agent_id)
+            await self._note_worker(
+                task_id,
+                event.agent_id,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                parent_session_id=event.session_id,
+            )
             # The platform's own sentence about a worker, not anybody's words —
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
@@ -3700,15 +3733,43 @@ class ChatService:
             in_room=True,
         )
 
-    async def _note_worker(self, task_id: uuid.UUID, subagent_id: str) -> None:
+    async def _note_worker(
+        self,
+        task_id: uuid.UUID,
+        subagent_id: str,
+        *,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        parent_session_id: str | None,
+    ) -> None:
         """把做这条活的分身记在卡上。"""
+        from app.domain.delivery.agent import instance_for_seat
+        from app.domain.room_task.models import Task
         from app.domain.room_task.services import TaskService
 
+        if turn_id is None or not parent_session_id:
+            return
         async with self._sessions() as session:
             tasks = TaskService(session)
-            task = await tasks.get(task_id)
-            if task is None:
+            task = await session.get(Task, task_id, with_for_update=True)
+            state = self._hook_work.get((topic_id, turn_id))
+            if (
+                task is None
+                or task.room_id != topic_id
+                or state is None
+                or not parent_session_id
+            ):
                 return
+            instance = await instance_for_seat(
+                session, task.project_id, state.acting_agent
+            )
+            # A delayed start from a replaced parent may remain historical
+            # evidence, but cannot acquire control of the task's current worker.
+            if self._active_turn_ids.get(topic_id) != turn_id or instance is None:
+                return
+            task.execution_agent_instance_id = instance.id
+            task.execution_parent_session_id = parent_session_id
+            task.execution_turn_id = turn_id
             await tasks.note_worker(task, subagent_id)
             await session.commit()
 
@@ -4626,6 +4687,7 @@ class ChatService:
         user_block_id: uuid.UUID | None,
         provision_actor: Actor | None,
         platform_turn: bool = False,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
         """Everything a turn needs before anything runs it, read in one
         transaction: who is here, what was said, what is remembered, which
@@ -4678,6 +4740,14 @@ class ChatService:
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
+            if recipient_instance_id is not None:
+                recipient = {"instance_id": str(recipient_instance_id)}
+                if agent_instance_handle(
+                    recipient_instance_id
+                ) not in await TopicMemberService(session).agent_handles(place.room_id):
+                    raise ValidationError(
+                        "The addressed agent is no longer seated in this room"
+                    )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
@@ -5089,6 +5159,8 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         platform_turn: bool = False,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -5104,6 +5176,7 @@ class ChatService:
             user_block_id=user_block_id,
             provision_actor=provision_actor,
             platform_turn=platform_turn,
+            recipient_instance_id=recipient_instance_id,
         )
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=assembled "
@@ -5344,6 +5417,20 @@ class ChatService:
                 harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
+            if delivery_id is not None:
+                from app.domain.delivery.agent import begin_send
+
+                await begin_send(
+                    self._sessions,
+                    delivery_id,
+                    turn_id,
+                    parent_session_id=resume_session_id,
+                )
+                # Staging a prompt on a booting machine is not receiver input.
+                # Register before send so a fast native receipt cannot race it.
+                self._pending_receipts.setdefault(topic_id, []).append(
+                    (prompt_text, [], turn_id, time.monotonic())
+                )
             ready = await runtime.send(
                 session_ref,
                 prompt_text,

@@ -9,13 +9,8 @@
   十条推送，人会直接关掉这个渠道，之后真正要他动手的那一条也收不到了。
 """
 
-import pytest
-
-from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import (
-    PUSHABLE,
-    RedisPushQueueNotificationHandler,
     push_text,
 )
 from app.domain.notification.push_models import PushSubscription
@@ -114,49 +109,6 @@ def test_a_deployment_with_keys_hands_out_the_public_one(client, monkeypatch):
 
     data = client.get("/push/key").json()["data"]
     assert data == {"available": True, "key": "public-key"}
-
-
-class _FakeRedis:
-    def __init__(self) -> None:
-        self.pushed: list[str] = []
-
-    async def rpush(self, _key: str, *items: str) -> int:
-        self.pushed.extend(items)
-        return len(self.pushed)
-
-
-@pytest.mark.anyio
-async def test_only_a_notice_that_needs_a_person_is_worth_a_push():
-    """芝士运行过程中的输出一条都不推 —— 那是人关掉这个渠道的头号原因。"""
-    redis = _FakeRedis()
-    handler = RedisPushQueueNotificationHandler(
-        redis,  # type: ignore[arg-type]
-        queue_key="q",
-    )
-
-    await handler.send_batch(
-        [
-            NotificationDelivery(
-                recipient_id=1,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "content": "验收卡已提交，待 alice 验收",
-                    "topicTitle": "预算复核",
-                },
-                delivery_key="notice-1:alice",
-            ),
-            NotificationDelivery(
-                recipient_id=1,
-                type=NotificationType.MENTION,
-                payload={"content": "有人提到你"},
-                delivery_key="mention-1:alice",
-            ),
-        ]
-    )
-
-    assert len(redis.pushed) == 1
-    assert "验收卡已提交" in redis.pushed[0]
-    assert NotificationType.MENTION not in PUSHABLE
 
 
 def test_the_push_says_the_same_sentence_the_room_says():

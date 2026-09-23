@@ -19,13 +19,14 @@ from sqlalchemy import select
 from app.domain.delivery import ledger as ledger_module
 from app.domain.delivery.addressing import REASON_REVIEWER, Addressed, Recipient
 from app.domain.delivery.ledger import MAX_ATTEMPTS, DeliveryEvent, Ledger
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import ChannelDelivery, Delivery
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
-    NotificationDelivery,
     NotificationEventHandler,
 )
 from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.outbox import ChannelIntentHandler
+from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.models import User
 from tests.support.failing_channels import (
     FakeClock,
@@ -77,22 +78,6 @@ async def _inbox(session, receiver_id: int) -> list[Notification]:
     return list(rows)
 
 
-class _RecordingChannel:
-    """数自己被交了几次的渠道 —— 邮件队列和推送队列的替身。
-
-    那两个真渠道都是往 Redis 里 rpush，队列里没有去重键：交第二遍就是真的多一封
-    信、多一条推送。所以「交了几次」正是这里要数的东西。
-    """
-
-    name = "recording"
-
-    def __init__(self) -> None:
-        self.handed: list[str | None] = []
-
-    async def send_batch(self, deliveries: list[NotificationDelivery]) -> None:
-        self.handed.extend(d.delivery_key for d in deliveries)
-
-
 async def _ledger_rows(session) -> list[Delivery]:
     rows = await session.scalars(select(Delivery).order_by(Delivery.recorded_at))
     return list(rows)
@@ -120,6 +105,11 @@ async def test_a_delivery_no_channel_took_is_resent_once(db_factory, monkeypatch
         assert row.sent_at is None  # 记下来了，没送到
         assert row.attempts == 1  # 首发这一次也算一次尝试
 
+    monkeypatch.setattr(
+        ledger_module,
+        "build_notification_event_handler",
+        build_notification_event_handler,
+    )
     clock.advance(seconds=3600)
     async with db_factory() as session:  # 下一轮补发
         assert await Ledger(session, now=clock).resend_unsent() == 1
@@ -156,6 +146,11 @@ async def test_a_delivery_the_mailbox_took_is_not_sent_twice(db_factory, monkeyp
         (row,) = await _ledger_rows(session)
         assert row.sent_at is None
 
+    monkeypatch.setattr(
+        ledger_module,
+        "build_notification_event_handler",
+        build_notification_event_handler,
+    )
     clock.advance(seconds=3600)
     async with db_factory() as session:  # 下一轮补发
         await Ledger(session, now=clock).resend_unsent()
@@ -240,6 +235,11 @@ async def test_a_resend_uses_the_roster_from_when_the_event_happened(
         alice_now = await _user(session, "alice")
         await session.commit()
 
+    monkeypatch.setattr(
+        ledger_module,
+        "build_notification_event_handler",
+        build_notification_event_handler,
+    )
     clock.advance(seconds=3600)
     async with db_factory() as session:
         await Ledger(session, now=clock).resend_unsent()
@@ -254,48 +254,36 @@ async def test_a_resend_uses_the_roster_from_when_the_event_happened(
         assert landed.created_at > EVENT_AT
 
 
-async def test_a_resend_does_not_queue_the_email_and_push_again(
+async def test_a_resend_does_not_duplicate_external_channel_intents(
     db_factory, monkeypatch
 ):
-    """⑥补发只重投站内信：邮件和推送不会因为补发再排一遍队。
-
-    账本的「恰好一次」只有站内信担得起 —— 去重键落在 `notification.delivery_key`
-    的唯一约束上。队列渠道没有这个键，账本替它们重投一次就是收件人真的多收一份，
-    而一行发不出去的投递每分钟被扫一次。
-    """
+    """A partial batch retry reaches SQL intents again without duplicating them."""
     clock = FakeClock(EVENT_AT)
     event = _event()
-    queue = _RecordingChannel()
 
-    def _all_channels(session) -> NotificationEventHandler:
-        # 最后那个渠道收不下，于是这一批没算送到 —— 补发一定会再来一次。
+    def partial(session):
         return NotificationEventHandler(
             session=session,
             channel_handlers=[
                 InAppNotificationHandler(session=session),
-                queue,
+                ChannelIntentHandler(session, push_enabled=True),
                 RefusingChannel(),
             ],
         )
 
-    monkeypatch.setattr(
-        ledger_module, "build_notification_event_handler", _all_channels
-    )
-
+    monkeypatch.setattr(ledger_module, "build_notification_event_handler", partial)
     async with db_factory() as session:
         alice = await _user(session, "alice")
         await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
-
-    assert len(queue.handed) == 1
-
     clock.advance(seconds=60)
     async with db_factory() as session:
         await Ledger(session, now=clock).resend_unsent()
         await session.commit()
         assert len(await _inbox(session, alice)) == 1
-
-    assert len(queue.handed) == 1  # 队列这边没有第二份
+        channels = list(await session.scalars(select(ChannelDelivery)))
+        assert sorted(row.channel for row in channels) == ["email", "push"]
+        assert all(row.delivery_key == f"{event.id}:alice" for row in channels)
 
 
 async def test_a_delivery_that_never_goes_out_stops_being_retried(
@@ -318,9 +306,6 @@ async def test_a_delivery_that_never_goes_out_stops_being_retried(
         await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
-    monkeypatch.setattr(
-        ledger_module, "InAppNotificationHandler", lambda *, session: RefusingChannel()
-    )
     for _ in range(MAX_ATTEMPTS - 1):
         clock.advance(seconds=60)
         async with db_factory() as session:
@@ -336,3 +321,40 @@ async def test_a_delivery_that_never_goes_out_stops_being_retried(
         (row,) = await _ledger_rows(session)
         assert row.sent_at is None
         assert row.attempts == MAX_ATTEMPTS
+
+
+async def test_rolling_old_producer_uses_mailbox_retry_without_rebuilding_redis_sends(
+    db_factory,
+):
+    from sqlalchemy import text
+
+    async with db_factory() as session:
+        alice = await _user(session, "alice")
+        old_event = uuid.uuid4()
+        # The prior release's INSERT omits every newly introduced column.
+        await session.execute(
+            text("""
+            INSERT INTO deliveries (id, event_id, recipient_handle, receiver_id,
+              dedup_key, type, payload, event_at, recorded_at, attempts)
+            VALUES (:id, :event, 'alice', :receiver, :key, 'ROOM_NOTICE', '{}',
+                    :at, :at, 0)
+        """),
+            {
+                "id": uuid.uuid4(),
+                "event": old_event,
+                "receiver": alice,
+                "key": f"{old_event}:alice",
+                "at": EVENT_AT,
+            },
+        )
+        await session.commit()
+    async with db_factory() as session:
+        row = await session.scalar(select(Delivery))
+        assert row.external_channels is False
+        assert await Ledger(session).resend_unsent() == 1
+        await Ledger(session).deliver(_event(), _addressed("alice"))
+        await session.commit()
+        channels = list(await session.scalars(select(ChannelDelivery)))
+        assert channels
+        assert all(row.delivery_key != f"{old_event}:alice" for row in channels)
+        assert len(await _inbox(session, alice)) == 2

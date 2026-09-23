@@ -43,7 +43,29 @@ app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    from sqlalchemy import select
+
+    from app.domain.block.models import Block
+
+    async def task_events():
+        async with client.test_factory() as session:
+            rows = list(
+                await session.scalars(
+                    select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+                )
+            )
+            return [
+                {
+                    "id": str(row.id),
+                    "kind": row.kind.value,
+                    "content": row.content,
+                    "meta": row.meta,
+                    "task_id": row.task_id,
+                }
+                for row in rows
+            ]
+
+    return asyncio.run(task_events())
 
 
 def _nudges(client, topic_id: str, event_type: str) -> list[dict]:
@@ -135,6 +157,28 @@ def test_a_red_ci_never_swallows_the_review_and_the_conflict(client, app_world):
     assert len(_nudges(client, tid, "ci_failed")) == 1
     assert len(_nudges(client, tid, "pr_review")) == 1
     assert len(_nudges(client, tid, "pr_conflict")) == 1
+
+    async def check_task_delivery():
+        from sqlalchemy import select
+
+        from app.domain.block.models import Block
+        from app.domain.delivery.models import Delivery
+        from app.domain.review.models import AcceptCard
+
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, uuid.UUID(cid))
+            rows = list(
+                await session.scalars(
+                    select(Delivery).where(Delivery.task_id == card.task_id)
+                )
+            )
+            assert len(rows) == 3
+            for row in rows:
+                block = await session.get(Block, row.event_id)
+                assert block.task_id == card.task_id
+                assert row.state == "pending"  # no observed native parent yet
+
+    asyncio.run(check_task_delivery())
 
 
 def test_the_card_shows_the_loudest_one_but_still_sends_them_all(client, app_world):
@@ -419,4 +463,26 @@ def test_the_reviews_api_failing_does_not_take_the_ci_failure_down_with_it(
     _poll(client)
     wait_work_idle()
 
+    assert len(_nudges(client, tid, "ci_failed")) == 1
+
+
+def test_poll_rollback_retries_event_intent_and_signature_together(
+    client, app_world, monkeypatch
+):
+    from app.domain.review.services import AcceptService
+
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    app_world["fake"].check_state_by_sha[head_sha] = ("failure", "Atomic CI failure")
+    original = AcceptService._dispatch_nudges
+
+    async def fail_after_record(self, **kwargs):
+        await original(self, **kwargs)
+        raise RuntimeError("test interruption before source transaction commit")
+
+    monkeypatch.setattr(AcceptService, "_dispatch_nudges", fail_after_record)
+    _poll(client)
+    assert _nudges(client, tid, "ci_failed") == []
+    monkeypatch.setattr(AcceptService, "_dispatch_nudges", original)
+    _poll(client)
+    _poll(client)
     assert len(_nudges(client, tid, "ci_failed")) == 1

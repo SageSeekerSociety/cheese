@@ -1,13 +1,7 @@
-"""驳回验收卡要叫醒芝士 (`POST /accept-cards/{id}/reject`).
+"""Rejection commits its task event and preserves the reason for the native parent."""
 
-`AcceptService.reject` only writes the row — no message, no summon. So a rejected
-topic sat there until a human came back and poked it, while a CI failure on the
-same card DOES summon (`_dispatch_nudges`): same "去改代码" verdict, opposite
-behaviour, and from the room the difference was invisible.
-
-The reason has to travel too. "被退了" without "退在哪" leaves 芝士 guessing, and
-the guess is usually "redo it".
-"""
+import asyncio
+import uuid
 
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
@@ -45,10 +39,30 @@ def _reject(client, card_id: str, reviewer: str = "alice", note: str = ""):
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}"
+    ).json()["data"]["blocks"]
 
 
-def test_reject_wakes_the_topic_with_the_reason(client, stub_hooks):
+def _instruction(client, card_id):
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+    from app.domain.review.models import AcceptCard
+
+    async def read():
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, uuid.UUID(card_id))
+            row = await session.scalar(
+                select(Delivery).where(Delivery.task_id == card.task_id)
+            )
+            assert row.state == "pending" and row.agent_instance_id is None
+            return row.payload["content"]
+
+    return asyncio.run(read())
+
+
+def test_reject_retains_the_reason_until_its_native_parent_is_known(client, stub_hooks):
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -58,16 +72,14 @@ def test_reject_wakes_the_topic_with_the_reason(client, stub_hooks):
     assert r.json()["data"]["status"] == "rejected"
     wait_work_idle()
 
-    # 叫醒: a turn ran, and the reviewer's reason reached the agent verbatim.
-    assert stub_hooks.last_prompt is not None
-    assert "迁移没加索引，列表页会全表扫" in stub_hooks.last_prompt
-    assert "alice" in stub_hooks.last_prompt
-    assert "【平台】" in stub_hooks.last_prompt
-    # 重递不被阻塞 —— saying so matters: the agent must not think it is stuck.
-    assert "重新递卡" in stub_hooks.last_prompt
+    instruction = _instruction(client, cid)
+    assert stub_hooks.last_prompt is None
+    assert "迁移没加索引，列表页会全表扫" in instruction
+    assert "alice" in instruction
+    assert "重新递卡" in instruction
 
 
-def test_reject_leaves_a_room_visible_line_with_the_reason_in_meta(client):
+def test_reject_leaves_a_task_visible_line_with_the_reason_in_meta(client):
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -88,9 +100,8 @@ def test_reject_leaves_a_room_visible_line_with_the_reason_in_meta(client):
     assert meta["severity"] == "warn"
 
 
-def test_reject_without_a_reason_still_wakes_and_says_there_is_none(client, stub_hooks):
-    """A reviewer who writes nothing is common. The turn must still happen, and
-    must not invent a reason."""
+def test_reject_without_a_reason_records_that_no_reason_was_given(client, stub_hooks):
+    """An empty reason must not be replaced with an invented one."""
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -98,7 +109,7 @@ def test_reject_without_a_reason_still_wakes_and_says_there_is_none(client, stub
     _reject(client, cid, note="")
     wait_work_idle()
 
-    assert "没写理由" in (stub_hooks.last_prompt or "")
+    assert "没写理由" in _instruction(client, cid)
 
 
 def test_rejected_topic_stays_active(client):

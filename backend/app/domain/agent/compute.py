@@ -86,7 +86,12 @@ class ComputeProvider(Protocol):
         ...
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         """Inject text into the session already running on this topic, if this
         backend has one. False = "nothing live here" — the caller queues instead.
@@ -158,7 +163,12 @@ class ComputePool:
         return {name for name, _ in self._backends}
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         """Deliver to the owner selected when starting or recovering the work."""
         owner = self._owners.get(topic_id)
@@ -170,11 +180,12 @@ class ComputePool:
         if len(candidates) > 1:
             raise RuntimeError("Room has multiple live harnesses without a work owner")
         for backend in candidates:
-            delivered = (
-                await backend.deliver(topic_id, text, images=images)
-                if images
-                else await backend.deliver(topic_id, text)
-            )
+            kwargs = {}
+            if images:
+                kwargs["images"] = images
+            if expected_work_id is not None:
+                kwargs["expected_work_id"] = expected_work_id
+            delivered = await backend.deliver(topic_id, text, **kwargs)
             if delivered:
                 return True
         return False

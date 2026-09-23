@@ -1645,8 +1645,9 @@ so check there and not in the menu, the contract or the doc**」。
 - **自托管的「可见的等待」**：`list_ready_topic_devices` 只服务 Cloud。
 - **跨项目的个人资料**（结论 10，1.12）：今天不存在。最接近的是 `MemoryScope.user` 那个跨项目池，
   但它是 agent 的观察、由 agent 写；判据是**任何项目的芝士读到的是同一份，写它的路径只有本人一条**。
-- **项目级的导出与备份**（结论 27，I19b）：今天不存在。I19 那三张收据只管一台机器回收之前的取回，
-  管不到项目、源仓库、资料库和文档。
+- **Scheduled project backups** (decision 27, I19b) remain separate work.
+  [Project export](../project-export.md) provides an HTTP archive of caller-visible
+  persisted content, with repository HEAD and file checksums.
 
 ### 9.3 三层分层今天在哪破
 

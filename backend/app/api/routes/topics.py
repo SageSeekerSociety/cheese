@@ -737,6 +737,32 @@ async def say_on_task(
         kind=BlockKind.message,
     )
     payload = BlockOut.model_validate(block).model_dump(mode="json")
+    members = TopicMemberService(db)
+    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
+    if relay_to_parent:
+        from app.domain.delivery.agent import record_task_instruction
+        from app.domain.delivery.ledger import DeliveryEvent
+        from app.domain.notification.models import NotificationType
+
+        await record_task_instruction(
+            db,
+            DeliveryEvent(
+                id=block.id,
+                type=NotificationType.ROOM_NOTICE,
+                payload={
+                    "projectId": str(place.project_id),
+                    "topicId": str(place.room_id),
+                },
+                occurred_at=block.created_at,
+            ),
+            task=task,
+            content=thread_relay_prompt(
+                task_id=task.id,
+                task_title=task.title,
+                author=actor.handle,
+                message=f"说：{content}",
+            ),
+        )
     # Visible before the turn that reads it — same ordering as the doc comment.
     await db.commit()
     # 卡下的实时帧走这条活自己的频道，因为块落在这条活上：发给房间的话，看着房间
@@ -744,26 +770,10 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    members = TopicMemberService(db)
-    if not await members.holds_an_agent_seat(place.room, actor.handle):
-        # 人在一条活上说了话，下一步在这个房间的芝士手上 —— 转达是它的事。点名的是
-        # 说话的那个人，平台只是把这条事件送到它席位上（I12）。
-        runner.submit(
-            chat,
-            place.room_id,
-            author="system",
-            content=thread_relay_prompt(
-                task_id=task.id,
-                task_title=task.title,
-                author=actor.handle,
-                message=f"说：{content}",
-            ),
-            addressed=addressed_to_agent(
-                await members.addressable_agent_handle(place.room_id)
-            ),
-            nudge_event=f"{actor.handle} 在一条活上说话了，芝士来转达",
-            provision_actor=actor,
-        )
+    if relay_to_parent:
+        from app.domain.delivery.agent import dispatch_pending
+
+        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(payload)
 
 

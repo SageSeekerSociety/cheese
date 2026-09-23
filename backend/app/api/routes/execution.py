@@ -46,6 +46,9 @@ class ExecutionRequest(BaseModel):
 
 
 @router.post("/topics/{topic_id}/execution/{resource_id}", include_in_schema=False)
+@router.post(
+    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+)
 async def execute(
     topic_id: uuid.UUID,
     resource_id: uuid.UUID,

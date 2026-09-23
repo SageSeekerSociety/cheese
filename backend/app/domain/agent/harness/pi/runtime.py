@@ -336,7 +336,9 @@ class PiRuntime:
             self._listen(session.topic_id)
         return True
 
-    async def deliver(self, topic_id, text, images=None) -> bool:
+    async def deliver(
+        self, topic_id, text, images=None, *, expected_work_id=None
+    ) -> bool:
         """A person talking to a session that is already working: ``steer``.
 
         pi delivers it after the current tool calls finish and before the next
@@ -347,8 +349,12 @@ class PiRuntime:
         work = self.work.get(topic_id)
         if handle is None or work is None:
             return False
+        if expected_work_id is not None and work != expected_work_id:
+            return False
         status = await self.channel.call(handle, "ping", {})
         if not status.get("working"):
+            return False
+        if self.live.get(topic_id) is not handle or self.work.get(topic_id) != work:
             return False
         await self.channel.call(
             handle,
