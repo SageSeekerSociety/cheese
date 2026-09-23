@@ -115,13 +115,13 @@ services:
       # The pi builds, cached for exactly the same reason and thrown away by
       # exactly the same deploy — and this archive is ~40MB per platform too.
       - ${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}:/app/connector-dist/pi-cache
-    # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
-    # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
-    # and the frontend on :8080 — a localhost-only bind would be unreachable from
-    # it. Safe here because dev/prod are on the private ghg net with no public
-    # inbound. (etrip is public and uses its OWN compose, not this one.)
+    # Loopback only. A box using this file fronts :8081 with api-front
+    # (deploy/llm-tunnel/up.sh), and nothing reaches the backend except through
+    # it, on the host's loopback. A request that skipped the proxies would
+    # arrive from docker's bridge gateway, which FORWARDED_ALLOW_IPS trusts, and
+    # could claim any client address it liked.
     ports:
-      - "0.0.0.0:${BACKEND_PORT:-8081}:8081"
+      - "127.0.0.1:${BACKEND_PORT:-8081}:8081"
     # tini as PID 1, so orphans get reaped. The git the backend runs is waited on,
     # but git's own children outlive it and reparent to PID 1 — and uvicorn never
     # waits on a process it did not start. Without this they pile up as zombies:

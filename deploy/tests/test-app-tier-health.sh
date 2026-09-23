@@ -744,7 +744,7 @@ test_rollout_keeps_a_backend_serving() {
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
-  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 127.0.0.1:18082:8081 backend')"
   flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
   flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
