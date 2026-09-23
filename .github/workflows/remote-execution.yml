@@ -219,6 +219,7 @@ jobs:
           --owner-source tmp/owner-compat-baseline
           --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144
           --claude scripts/remote_execution/node_modules/.bin/claude
+          --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
       - name: Verify ordinary room turns through the connector
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py

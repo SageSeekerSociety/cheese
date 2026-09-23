@@ -31,12 +31,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # all of them (backend/tests/fixtures/wire pins that place against the Go side).
 from tests.support import wire  # noqa: E402
 
-PORT = 18783
 SECRET = "lifecycle-acceptance-secret"
 TRACE_ID = "execution-lifecycle-acceptance"
 
 
-def owner(source: str) -> None:
+def owner(source: str, port: int) -> None:
     sys.path.insert(0, str(Path(source) / "backend"))
     os.environ["DEVICE_CONNECTION_URL"] = ""
     os.environ["DEVICE_CONNECTION_SECRET"] = SECRET
@@ -60,10 +59,12 @@ def owner(source: str) -> None:
 
     owner_reads.device_for_token = device_for_token
     app.dependency_overrides[get_db] = session
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
-async def connector(events: multiprocessing.Queue, task_root: str, claude: str) -> None:
+async def connector(
+    events: multiprocessing.Queue, task_root: str, claude: str, port: int
+) -> None:
     from app.domain.agent.harness.claude_code.remote_execution import runtime
 
     workspace = Path(task_root)
@@ -83,7 +84,7 @@ async def connector(events: multiprocessing.Queue, task_root: str, claude: str) 
         capture_output=True,
     )
     async with websockets.connect(
-        f"ws://127.0.0.1:{PORT}/connector/agent?token=acceptance"
+        f"ws://127.0.0.1:{port}/connector/agent?token=acceptance"
     ) as socket:
         welcome = json.loads(await socket.recv())
         events.put({"event": "connected", "welcome": welcome})
@@ -113,16 +114,16 @@ async def connector(events: multiprocessing.Queue, task_root: str, claude: str) 
 
 
 def connector_process(
-    events: multiprocessing.Queue, task_root: str, claude: str
+    events: multiprocessing.Queue, task_root: str, claude: str, port: int
 ) -> None:
-    asyncio.run(connector(events, task_root, claude))
+    asyncio.run(connector(events, task_root, claude, port))
 
 
-def backend_waiter(results: multiprocessing.Queue, generation: int) -> None:
+def backend_waiter(results: multiprocessing.Queue, generation: int, port: int) -> None:
     from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
     async def collect():
-        backend = RemoteDeviceHub(f"http://127.0.0.1:{PORT}", SECRET)
+        backend = RemoteDeviceHub(f"http://127.0.0.1:{port}", SECRET)
         try:
             await backend.start()
             assert backend.is_online("acceptance-machine")
@@ -169,11 +170,11 @@ def backend_waiter(results: multiprocessing.Queue, generation: int) -> None:
     )
 
 
-def wait_for_owner() -> None:
+def wait_for_owner(port: int) -> None:
     for _ in range(100):
         try:
             if (
-                httpx.get(f"http://127.0.0.1:{PORT}/healthz", timeout=0.2).status_code
+                httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=0.2).status_code
                 == 200
             ):
                 return
@@ -201,6 +202,7 @@ def main() -> int:
     parser.add_argument("--owner-source", type=Path, default=root)
     parser.add_argument("--owner-revision")
     parser.add_argument("--claude", type=Path, required=True)
+    parser.add_argument("--port", type=int, default=18783)
     options = parser.parse_args()
     owner_source = options.owner_source.resolve()
     owner_revision = subprocess.check_output(
@@ -219,18 +221,22 @@ def main() -> int:
     task_root = root / "tmp" / f"device-connection-acceptance-{stamp}"
     task_root.mkdir(parents=True)
     owner_process = multiprocessing.Process(
-        target=owner, args=(str(owner_source),), name="connection-owner"
+        target=owner, args=(str(owner_source), options.port), name="connection-owner"
     )
     connector_worker = multiprocessing.Process(
         target=connector_process,
-        args=(events, str(task_root), str(options.claude.resolve())),
+        args=(events, str(task_root), str(options.claude.resolve()), options.port),
         name="device-connector",
     )
     first_backend = multiprocessing.Process(
-        target=backend_waiter, args=(results, 1), name="backend-generation-1"
+        target=backend_waiter,
+        args=(results, 1, options.port),
+        name="backend-generation-1",
     )
     second_backend = multiprocessing.Process(
-        target=backend_waiter, args=(results, 2), name="backend-generation-2"
+        target=backend_waiter,
+        args=(results, 2, options.port),
+        name="backend-generation-2",
     )
     with log_path.open("x", encoding="utf-8") as log:
         try:
@@ -239,24 +245,25 @@ def main() -> int:
                 "inputs",
                 owner_revision=owner_revision,
                 owner_source=str(owner_source),
+                port=options.port,
             )
             owner_process.start()
-            wait_for_owner()
+            wait_for_owner(options.port)
             refused = httpx.get(
-                f"http://127.0.0.1:{PORT}/internal/device-connection/snapshot",
+                f"http://127.0.0.1:{options.port}/internal/device-connection/snapshot",
                 headers={"X-Device-Connection-Secret": "wrong-secret"},
                 timeout=5,
             )
             assert refused.status_code == 403
             unknown = httpx.post(
-                f"http://127.0.0.1:{PORT}/internal/device-connection/call/unrecognised-method",
+                f"http://127.0.0.1:{options.port}/internal/device-connection/call/unrecognised-method",
                 headers={"X-Device-Connection-Secret": SECRET},
                 json={},
                 timeout=5,
             )
             assert unknown.status_code == 404
             owner_pid = owner_process.pid
-            record(log, "owner_ready", owner_pid=owner_pid, port=PORT)
+            record(log, "owner_ready", owner_pid=owner_pid, port=options.port)
 
             connector_worker.start()
             connected = events.get(timeout=10)
