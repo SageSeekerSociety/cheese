@@ -51,6 +51,15 @@
     "backend/uv.lock",
     ".github/workflows/harness-contract.yml"
   ],
+  "remote": [
+    "backend/**",
+    "cli/**",
+    "scripts/remote_execution/**",
+    ".dockerignore",
+    ".github/scripts/ensure-apt.sh",
+    ".github/scripts/ci-test-evidence.py",
+    ".github/workflows/remote-execution.yml"
+  ],
   "mcp": [
     "scripts/remote_execution/package-lock.json",
     "scripts/remote_execution/mcp_contract.py",
