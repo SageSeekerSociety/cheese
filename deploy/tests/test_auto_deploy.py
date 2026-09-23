@@ -4,9 +4,11 @@
 import importlib.util
 import json
 import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -174,10 +176,10 @@ class CandidateCI(unittest.TestCase):
                 "status": "completed", "conclusion": "success", **changes}
 
     def ready(self, build, ci):
-        def command(*args):
-            records = build if "/build.yml/" in args[-1] else ci
-            return json.dumps([{"workflow_runs": records}])
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=command):
+        def pages(path):
+            records = build if "/build.yml/" in path else ci
+            return [{"workflow_runs": records}]
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_pages", side_effect=pages):
             return GUARD.ci_ready(self.candidate)
 
     def test_both_completion_orders_require_both_successes(self):
@@ -215,9 +217,55 @@ class CandidateCI(unittest.TestCase):
         self.assertFalse(self.ready([self.run_record(), pending], [self.run_record()]))
 
     def test_api_failure_stops_eligibility(self):
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=subprocess.CalledProcessError(1, "gh")):
-            with self.assertRaises(subprocess.CalledProcessError):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_pages", side_effect=OSError("API unavailable")):
+            with self.assertRaises(OSError):
                 GUARD.ci_ready(self.candidate)
+
+    def test_http_eligibility_without_gh_reads_later_pages_and_fails_closed(self):
+        calls = []
+        failure = []
+        pending = [True]
+        record = self.run_record()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                calls.append((handler.path, handler.headers.get("Authorization")))
+                if failure:
+                    handler.send_error(503)
+                    return
+                later = "page=2" in handler.path
+                rows = [record] if not later or not pending else [
+                    {**record, "id": 11, "status": "in_progress", "conclusion": None}
+                ]
+                handler.send_response(200)
+                if "/required-ci.yml/" in handler.path and not later:
+                    handler.send_header("Link", f'<http://127.0.0.1:{server.server_port}/page=2>; rel="next"')
+                handler.end_headers()
+                handler.wfile.write(json.dumps({"workflow_runs": rows}).encode())
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            with patch.dict(os.environ, {
+                "GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "fixture-token",
+                "GITHUB_API_URL": f"http://127.0.0.1:{server.server_port}",
+            }), patch.object(GUARD, "command", side_effect=FileNotFoundError("gh")):
+                self.assertFalse(GUARD.ci_ready(self.candidate))
+                self.assertEqual(len(calls), 3)
+                self.assertTrue(all(auth == "Bearer fixture-token" for _, auth in calls))
+                pending.clear()
+                self.assertTrue(GUARD.ci_ready(self.candidate))
+                failure.append(True)
+                with self.assertRaises(OSError):
+                    GUARD.ci_ready(self.candidate)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())

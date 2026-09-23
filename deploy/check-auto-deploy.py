@@ -7,10 +7,29 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.request import Request, urlopen
 
 
 def command(*args: str) -> str:
     return subprocess.check_output(args, text=True, timeout=30).strip()
+
+
+def workflow_pages(path: str) -> list[dict]:
+    # Eligibility also runs on CI workers, where the GitHub CLI is not installed.
+    url = f"{os.environ.get('GITHUB_API_URL', 'https://api.github.com')}/{path}"
+    pages = []
+    while url:
+        request = Request(url, headers={
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        with urlopen(request, timeout=30) as response:
+            pages.append(json.load(response))
+            link = response.headers.get("Link", "")
+        next_page = re.search(r'<([^>]+)>; rel="next"', link)
+        url = next_page.group(1) if next_page else ""
+    return pages
 
 
 def ci_ready(candidate: str) -> bool:
@@ -21,11 +40,10 @@ def ci_ready(candidate: str) -> bool:
     ready = True
     for workflow, events in (("build.yml", {"push", "workflow_dispatch"}),
                              ("required-ci.yml", {"push"})):
-        pages = json.loads(command(
-            "gh", "api", "--paginate", "--slurp",
+        pages = workflow_pages(
             f"repos/{repository}/actions/workflows/{workflow}/runs"
             f"?head_sha={candidate}&branch=main&per_page=100",
-        ))
+        )
         runs = [run for page in pages for run in page["workflow_runs"]
                 if run["head_sha"] == candidate and run["head_branch"] == "main"
                 and run["event"] in events
