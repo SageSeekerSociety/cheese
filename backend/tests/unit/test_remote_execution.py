@@ -1690,12 +1690,14 @@ class RemoteExecutionTests(unittest.TestCase):
     def test_project_workflow_save_reaches_executor_and_other_paths_stay_read_only(
         self,
     ):
-        from app.domain.agent.harness.claude_code.remote_execution.forwarded_fs import (
-            ForwardedProject,
+        spec = importlib.util.spec_from_file_location(
+            "forwarded_fs", RUNTIME.with_name("forwarded_fs.py")
         )
+        forwarded_fs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(forwarded_fs)
 
         workflows = self.workspace / ".claude/workflows"
-        view = ForwardedProject(
+        view = forwarded_fs.ForwardedProject(
             lambda method, params: runtime.request(self.state, method, params)
         )
         view.refresh()
