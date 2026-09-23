@@ -2782,6 +2782,13 @@ export interface PlatformAdminRow {
   handle: string
   nickname: string | null
   avatar_id: number | null
+  /** false = 平台上没有（或已注销）这个账号 —— 这行是死权限，页面要明画，
+   *  不许靠 nickname=null 隐式猜。 */
+  has_account: boolean
+  /** User.created_at；has_account=false 时为 null。 */
+  registered_at: string | null
+  /** agent 不能做管理动作，所以这行权限用不上 —— 只会从根配置混进来。 */
+  is_agent: boolean
 }
 
 /** 页面上加进名单的一行：在「这个人是谁」之上多两格出处。`added_by_handle` 是快照：
