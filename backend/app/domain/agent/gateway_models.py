@@ -7,7 +7,7 @@
 - **模型与按模型用量一律取网关**（`/model/info` 加 `daily/activity` 的
   `breakdown.model_groups`）。平台的 `resource_usage` 在排干网关流量时把 `model`
   写成部署默认模型（契约 §0），按它做模型归因是错的；本模块不拿它当模型用量。
-- **项目额度取平台自己的算力账**（`ComputeGrantRepository.summary`）——那才是
+- **项目额度取平台自己的算力账**（`UsageService.project_credits`）——那才是
   「这个项目还能花多少」的定义处。
 
 网关侧答案缓存 15 秒（`_TTL_SECONDS`）：`/model/info` 与一周的用量响应都是百 KB
@@ -55,8 +55,8 @@ from app.domain.agent.gateway_admin import (
 )
 from app.domain.agent.models import GatewayAdminAudit
 from app.domain.agent.schemas import ModelCreate, ModelUpdate
-from app.domain.project.repositories import ProjectRepository
-from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.project.services import ProjectService
+from app.domain.usage.services import UsageService
 
 # 网关侧答案的存活时间。15 秒是「同一个人连点两下」和「页面自己在轮询」之间的那
 # 个位置：短到不会让人看到过期的上线状态，长到一次页面加载只问网关一遍。
@@ -66,7 +66,7 @@ _TTL_SECONDS = 15.0
 # 的默认窗口，好让「刚写完看到的这一项」和「列表里那一项」是同一个口径。
 _DEFAULT_DAYS = 7
 
-# 查「这个模型在平台自己账上用了多少」时，`UsageRepository.by_model` 是一次
+# 查「这个模型在平台自己账上用了多少」时，`UsageService.by_model` 是一次
 # top-N 聚合（模型是低基数维度）。给一个比任何真实部署的模型数都大的上界，就能把
 # 目标那一行稳定地捞出来；真正的目的是**复用既有 SQL**，不在这里另写一份按模型的
 # 聚合（契约 §6 明确不要拿 `resource_usage` 做模型用量，这里只作为带脚注的对照）。
@@ -334,7 +334,7 @@ class GatewayModelsService:
         §0），所以这个数常常是 0 而网关那边有真用量。页面上它带着 `note` 出现，读
         的人该看网关那一列 —— 这一句就是那个提醒，不是装饰。
         """
-        rows = await UsageRepository(self._db).by_model(
+        rows = await UsageService(self._db).by_model(
             since=since, until=until, limit=_PLATFORM_MODEL_SCAN
         )
         row = next((r for r in rows if r["model"] == name), None)
@@ -374,21 +374,22 @@ class GatewayModelsService:
     ) -> list[dict]:
         by_alias = {k.alias: k for k in keys}
         by_user = {k.user_id: k for k in keys if k.user_id}
-        credits = ComputeGrantRepository(self._db)
+        credits = UsageService(self._db)
+        projects, _total = await ProjectService(self._db).list_all()
         items = []
-        for project in await ProjectRepository(self._db).list_all():
+        for project in projects:
             items.append(
                 await self._project_item(project, by_alias, by_user, usage, credits)
             )
         return items
 
     async def _project_item(
-        self, project, by_alias, by_user, usage: UsageWindow, credits
+        self, project, by_alias, by_user, usage: UsageWindow, credits: UsageService
     ) -> dict:
         key = by_alias.get(f"project-{project.id}") or by_user.get(
             f"project:{project.id}"
         )
-        summary = await credits.summary(project.id)
+        summary = await credits.project_credits(project.id)
         # 刹车值的「应有」值是算力换算来的；unlimited（没有发放记录）时没有这个数，
         # 此时 key 上任何 max_budget 都是一次显式的覆盖。
         derived = None
@@ -631,7 +632,7 @@ class GatewayModelsService:
     async def _set_budget(
         self, project_id: uuid.UUID, max_budget_usd: float | None
     ) -> dict:
-        project = await ProjectRepository(self._db).get(project_id)
+        project = await ProjectService(self._db).get(project_id)
         if project is None:
             raise NotFoundError(f"项目 {project_id} 不存在")
         await self._gateway_up()
@@ -653,7 +654,7 @@ class GatewayModelsService:
         by_alias = {k.alias: k for k in keys}
         by_user = {k.user_id: k for k in keys if k.user_id}
         return await self._project_item(
-            project, by_alias, by_user, usage, ComputeGrantRepository(self._db)
+            project, by_alias, by_user, usage, UsageService(self._db)
         )
 
     # ------------------------------------------------------------------

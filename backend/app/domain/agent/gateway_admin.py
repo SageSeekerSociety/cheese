@@ -448,7 +448,7 @@ def _error_message(response: httpx.Response) -> str:
 
     LiteLLM 有两种失败体,都要认:
 
-    * ``{"detail": {"error": "..."}}``——老式 HTTPException 的拒绝(config 模型那条
+    * ``{"detail": {"error": "..."}}``——老式 FastAPI 拒绝的形状(config 模型那条
       就是这个形状);普通错误则是 ``{"detail": "..."}``。
     * ``{"error": {"message": "...", "type": "auth_error", ...}}``——真正的
       ``ProxyException`` 走这条路(见 ``proxy_server.py`` 的 handler,它把
