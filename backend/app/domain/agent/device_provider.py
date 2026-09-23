@@ -44,7 +44,7 @@ from app.domain.agent.device_hub import (
     HubScreen,
     device_hub,
 )
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import (
     Channel,
     Placement,
@@ -1476,6 +1476,24 @@ class DeviceChannel(Channel):
         if existing is not None and existing.agent_configuration != configuration:
             # Called between turns, and only now: what a session was started
             # with is not fully known until the harness has been asked.
+            # Claude Code's local workflows continue after the parent turn. Its
+            # control journal retains their latest state, so closing the screen
+            # while one is running would discard work the room cannot resume.
+            if launch.harness == CLAUDE_CODE:
+                from app.domain.agent.remote_control import store
+
+                control = store()
+                session = await control.current(str(topic_id), agent_handle)
+                if session is not None:
+                    snapshot = await control.snapshot(session)
+                    if any(
+                        task.get("task_type") == "local_workflow"
+                        and task.get("status") not in {"completed", "failed", "stopped"}
+                        for task in snapshot["tasks"].values()
+                    ):
+                        raise ScreenSetupError(
+                            "后台工作流仍在运行；当前会话已保留，工作流结束后请重试。"
+                        )
             await self._retire_screen(
                 existing, topic_id=topic_id, reason="agent_configuration_changed"
             )
