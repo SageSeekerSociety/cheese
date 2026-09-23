@@ -73,20 +73,22 @@ def _ensure_sync_agents_hook(hooks: dict) -> None:
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
+    command = "cheese sync-agents || true"
     for event in ("SessionStart", "UserPromptSubmit"):
         groups = hooks.setdefault(event, [])
-        if any(
-            hook.get("command") == "cheese sync-agents"
+        existing = [
+            hook
             for group in groups
             for hook in group.get("hooks", [])
-        ):
+            if hook.get("command") in ("cheese sync-agents", command)
+        ]
+        if existing:
+            # Older seed settings can still contain the prompt-blocking form.
+            for hook in existing:
+                hook["command"] = command
             continue
         groups.append(
-            {
-                "hooks": [
-                    {"type": "command", "command": "cheese sync-agents", "timeout": 15}
-                ]
-            }
+            {"hooks": [{"type": "command", "command": command, "timeout": 15}]}
         )
 
 
