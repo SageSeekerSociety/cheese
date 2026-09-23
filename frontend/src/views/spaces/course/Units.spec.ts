@@ -72,6 +72,12 @@ async function mountPage() {
         name: 'SpacesCourseUnits',
         component: { template: '<div />' },
       },
+      // 每一行还有一个进这一周小测的入口（`v-btn :to`），路由得存在。
+      {
+        path: '/spaces/:spaceId/course/quiz',
+        name: 'SpacesCourseQuiz',
+        component: { template: '<div />' },
+      },
     ],
   })
   await router.push('/spaces/7/course/units')

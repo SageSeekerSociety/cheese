@@ -1,24 +1,43 @@
 <script setup lang="ts">
+import type * as Monaco from 'monaco-editor'
+
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as monaco from 'monaco-editor'
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 
 import { useAppTheme } from '../theme'
 
-// The actual VS Code editor (Monaco). Vite bundles each language service as a web
-// worker; wire them once so IntelliSense/validation run off the main thread.
-;(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
-  getWorker(_id: string, label: string) {
-    if (label === 'json') return new jsonWorker()
-    if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker()
-    if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker()
-    if (label === 'typescript' || label === 'javascript') return new tsWorker()
-    return new editorWorker()
-  },
+// The actual VS Code editor (Monaco) — loaded the first time an editor mounts,
+// not when this file is imported. Monaco is 4MB (1MB gzipped), and the panels
+// that hold an editor sit on the room page: importing it statically made every
+// room download it before showing anything, for a file editor and a source mode
+// most visits never open.
+let monaco: typeof Monaco | null = null
+let loading: Promise<typeof Monaco> | null = null
+
+function loadMonaco(): Promise<typeof Monaco> {
+  loading ??= (async () => {
+    const [mod, editorWorker, cssWorker, htmlWorker, jsonWorker, tsWorker] = await Promise.all([
+      import('monaco-editor'),
+      import('monaco-editor/esm/vs/editor/editor.worker?worker'),
+      import('monaco-editor/esm/vs/language/css/css.worker?worker'),
+      import('monaco-editor/esm/vs/language/html/html.worker?worker'),
+      import('monaco-editor/esm/vs/language/json/json.worker?worker'),
+      import('monaco-editor/esm/vs/language/typescript/ts.worker?worker'),
+    ])
+    // Vite bundles each language service as a web worker; wire them once so
+    // IntelliSense/validation run off the main thread.
+    ;(self as unknown as { MonacoEnvironment: Monaco.Environment }).MonacoEnvironment = {
+      getWorker(_id: string, label: string) {
+        if (label === 'json') return new jsonWorker.default()
+        if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker.default()
+        if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker.default()
+        if (label === 'typescript' || label === 'javascript') return new tsWorker.default()
+        return new editorWorker.default()
+      },
+    }
+    monaco = mod
+    return mod
+  })()
+  return loading
 }
 
 // Resolve a CSS color expression (a var, an rgb triplet, hex, …) to #rrggbb by
@@ -61,7 +80,7 @@ function tokenColor(name: string, fallback: string): string {
 // how the editor follows a theme switch. `base` still has to flip — it supplies
 // the colours we do not name here (widgets, find-match, bracket pairs), and a
 // 'vs' base under a dark background leaves those unreadable.
-function defineCheesexTheme(dark: boolean) {
+function defineCheesexTheme(monaco: typeof Monaco, dark: boolean) {
   const bg = resolveColor('var(--surface)', dark ? '#1b1d20' : '#ffffff')
   const fg = resolveColor('var(--text)', dark ? '#d3d6db' : '#2c2c2c')
   const accent = resolveColor('rgb(var(--v-theme-primary))', dark ? '#ffa733' : '#e08a34')
@@ -118,7 +137,8 @@ const emit = defineEmits<{
 }>()
 
 const host = ref<HTMLElement | null>(null)
-let editor: monaco.editor.IStandaloneCodeEditor | null = null
+let editor: Monaco.editor.IStandaloneCodeEditor | null = null
+let unmounted = false
 let applying = false // guard so programmatic setValue doesn't echo back as an edit
 
 function langFor(name: string): string {
@@ -160,9 +180,11 @@ function langFor(name: string): string {
   return map[ext] ?? 'plaintext'
 }
 
-onMounted(() => {
-  if (!host.value) return
-  defineCheesexTheme(isDark.value) // resolve from live CSS vars now that the DOM/styles exist
+onMounted(async () => {
+  const monaco = await loadMonaco()
+  // Gone while Monaco was on its way (the reader switched file or tab).
+  if (unmounted || !host.value) return
+  defineCheesexTheme(monaco, isDark.value) // resolve from live CSS vars now that the DOM/styles exist
   editor = monaco.editor.create(host.value, {
     value: props.modelValue,
     language: langFor(props.filename),
@@ -191,7 +213,8 @@ onMounted(() => {
 // and setTheme is required as well, because defineTheme on the ACTIVE name does
 // not repaint an editor that is already using it.
 watch(isDark, (dark) => {
-  defineCheesexTheme(dark)
+  if (!monaco) return
+  defineCheesexTheme(monaco, dark)
   monaco.editor.setTheme(THEME_NAME)
 })
 
@@ -199,7 +222,7 @@ watch(isDark, (dark) => {
 watch(
   () => props.filename,
   () => {
-    if (!editor) return
+    if (!editor || !monaco) return
     applying = true
     editor.setValue(props.modelValue)
     const model = editor.getModel()
@@ -223,7 +246,10 @@ watch(
     }
   }
 )
-onBeforeUnmount(() => editor?.dispose())
+onBeforeUnmount(() => {
+  unmounted = true
+  editor?.dispose()
+})
 </script>
 
 <template>

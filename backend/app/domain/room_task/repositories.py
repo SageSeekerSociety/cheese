@@ -12,8 +12,9 @@ from app.domain.room_task.models import Task
 
 
 class TaskRepository:
-    # Same exclusions the topic timeline uses: doc nodes, inline comments and
-    # artifacts belong to the document view, not to the conversation.
+    # Doc nodes and inline comments belong to the document view. Artifacts are in
+    # the room's timeline, but a card's timeline has no way to show one yet, so
+    # it leaves them out rather than send rows nothing renders.
     _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
 
     def __init__(self, session: AsyncSession):

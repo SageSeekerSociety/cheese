@@ -2,6 +2,7 @@
 
 import time
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -113,8 +114,9 @@ def test_a_machine_that_is_off_does_not_break_the_state_the_page_polls(
         client.portal.call(cleanup)
 
 
+@pytest.mark.parametrize("failure", ["timeout", "reset", "connect"])
 def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_polls(
-    client, place, monkeypatch
+    client, place, monkeypatch, failure
 ):
     """The machine answering slowly, or the connection owner being replaced
     under the call, is the same situation as the machine being off: only the
@@ -143,6 +145,12 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         return row["id"]
 
     async def never_answers(_target, _request):
+        if failure == "reset":
+            raise httpx.RemoteProtocolError(
+                "Server disconnected without sending a response."
+            )
+        if failure == "connect":
+            raise httpx.ConnectError("Connection refused")
         await asyncio.sleep(60)
 
     monkeypatch.setattr(remote_control, "TASK_LIST_BUDGET_S", 0.05)

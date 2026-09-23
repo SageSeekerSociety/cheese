@@ -20,11 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.membership.join_links import JoinLinkService
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
     InvitationCreate,
     InvitationOut,
     InvitationRespond,
+    JoinLinkOut,
     MemberCreate,
     MemberOut,
     MemberRoleUpdate,
@@ -34,6 +36,56 @@ from app.domain.membership.services import InvitationService, MemberService
 router = APIRouter(prefix="", tags=["members"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+@router.get("/projects/{project_id}/join-link")
+async def get_join_link(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    link = await JoinLinkService(db).current(project_id, actor)
+    return ok(
+        JoinLinkOut.model_validate(link).model_dump(mode="json") if link else None
+    )
+
+
+@router.post("/projects/{project_id}/join-link")
+async def create_join_link(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    link = await JoinLinkService(db).create(project_id, actor)
+    result = JoinLinkOut.model_validate(link).model_dump(mode="json")
+    await db.commit()
+    return ok(result)
+
+
+@router.delete("/projects/{project_id}/join-link")
+async def revoke_join_link(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    await JoinLinkService(db).revoke(project_id, actor)
+    await db.commit()
+    return ok({"deleted": True})
+
+
+@router.get("/project-invites/{token}")
+async def preview_join_link(
+    token: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    return ok(await JoinLinkService(db).describe(token, actor))
+
+
+@router.post("/project-invites/{token}/join")
+async def accept_join_link(
+    token: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    result = await JoinLinkService(db).describe(token, actor, join=True)
+    await db.commit()
+    return ok(result)
 
 
 @router.post("/projects/{project_id}/members")

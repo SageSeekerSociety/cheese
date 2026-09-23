@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -272,11 +271,8 @@ LINK_ONLY_PROVIDERS = frozenset({"github_app"})
 
 
 class OAuthService:
-    def __init__(
-        self, repo: OAuthConnectionRepository, redis: Any | None = None
-    ) -> None:
+    def __init__(self, repo: OAuthConnectionRepository) -> None:
         self._repo = repo
-        self._redis = redis
         self._providers: dict[str, OAuthProvider] = {}
         self._initialized = False
 
@@ -382,16 +378,11 @@ class OAuthService:
             raise NotFoundError(f"OAuth provider '{provider_id}' not found")
         return provider
 
-    def generate_authorization_url(
-        self, provider_id: str, state: str | None = None
-    ) -> str:
-        provider = self.get_provider(provider_id)
-        if not state:
-            state = secrets.token_urlsafe(32)
-        return provider.get_authorization_url(state)
+    def generate_authorization_url(self, provider_id: str, state: str) -> str:
+        return self.get_provider(provider_id).get_authorization_url(state)
 
     async def handle_callback(
-        self, provider_id: str, code: str, state: str | None = None
+        self, provider_id: str, code: str
     ) -> tuple[str, OAuthUserInfo]:
         provider = self.get_provider(provider_id)
 
@@ -679,26 +670,6 @@ class OAuthService:
             "providerUserId": conn.provider_user_id,
             "createdAt": conn.created_at.isoformat() if conn.created_at else None,
         }
-
-    async def store_oauth_state(self, state_token: str, data: dict) -> None:
-        import json
-
-        if self._redis is None:
-            return
-        key = f"oauth_state:{state_token}"
-        await self._redis.set(key, json.dumps(data), ex=600)
-
-    async def get_oauth_state(self, state_token: str) -> dict | None:
-        import json
-
-        if self._redis is None:
-            return None
-        key = f"oauth_state:{state_token}"
-        raw = await self._redis.get(key)
-        if raw is None:
-            return None
-        await self._redis.delete(key)
-        return json.loads(raw)
 
 
 async def get_github_user_token_for_handle(
