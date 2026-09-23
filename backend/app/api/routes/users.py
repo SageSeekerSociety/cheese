@@ -648,41 +648,6 @@ async def follow_user(
     }
 
 
-@router.post(
-    "/me/team-requests",
-    summary="Create team join request",
-)
-async def create_team_join_request(
-    body: dict,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-) -> dict:
-    team_id = body.get("teamId")
-    if not isinstance(team_id, int) or team_id <= 0:
-        raise BadRequestError("teamId must be a positive integer")
-    message = body.get("message")
-    app = await membership_service.create_team_join_request(
-        user_id=auth_user.user_id,
-        team_id=team_id,
-        message=message,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "application": {
-                "id": app.id,
-                "userId": app.user_id,
-                "teamId": app.team_id,
-                "type": app.type,
-                "status": app.status,
-                "role": app.role,
-                "message": app.message,
-            },
-        },
-    }
-
-
 @router.delete(
     "/me/team-requests/{requestId}",
     summary="Cancel my pending join request",

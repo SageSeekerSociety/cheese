@@ -3,7 +3,7 @@ import type { ProjectJoinLink } from '@/api'
 
 import { computed, ref, watch } from 'vue'
 
-import { createProjectJoinLink, getProjectJoinLink, revokeProjectJoinLink } from '@/api'
+import { getProjectJoinLink, resetProjectJoinLink, setProjectJoinApproval } from '@/api'
 import { t } from '@/i18n'
 
 const props = defineProps<{ modelValue: boolean; projectId: string }>()
@@ -12,6 +12,8 @@ const link = ref<ProjectJoinLink | null>(null)
 const busy = ref(false)
 const error = ref('')
 const copied = ref(false)
+// 重置要点两下：旧链接一重置就死，发出去的那些全都作废，不该一次误点就做掉。
+const confirmingReset = ref(false)
 const url = computed(() => (link.value ? `${window.location.origin}/project-invites/${link.value.token}` : ''))
 
 watch(
@@ -19,38 +21,40 @@ watch(
   async ([open, pid]) => {
     link.value = null
     copied.value = false
+    confirmingReset.value = false
     error.value = ''
     if (!open) return
-    busy.value = true
-    try {
-      const result = await getProjectJoinLink(pid)
-      if (props.projectId === pid) link.value = result
-    } catch {
-      error.value = t('work.joinLink.failed')
-    } finally {
-      busy.value = false
-    }
+    await change(pid, () => getProjectJoinLink(pid))
   }
 )
 
-async function changeLink(revoke: boolean) {
+async function change(pid: string, run: () => Promise<ProjectJoinLink>) {
   busy.value = true
   error.value = ''
-  copied.value = false
-  const pid = props.projectId
   try {
-    if (revoke) {
-      await revokeProjectJoinLink(pid)
-      if (props.projectId === pid) link.value = null
-    } else {
-      const result = await createProjectJoinLink(pid)
-      if (props.projectId === pid) link.value = result
-    }
+    const result = await run()
+    if (props.projectId === pid) link.value = result
   } catch {
     error.value = t('work.joinLink.failed')
   } finally {
     busy.value = false
   }
+}
+
+async function setApproval(approval: boolean | null) {
+  const pid = props.projectId
+  await change(pid, () => setProjectJoinApproval(pid, !!approval))
+}
+
+async function reset() {
+  if (!confirmingReset.value) {
+    confirmingReset.value = true
+    return
+  }
+  confirmingReset.value = false
+  copied.value = false
+  const pid = props.projectId
+  await change(pid, () => resetProjectJoinLink(pid))
 }
 
 async function copy() {
@@ -81,25 +85,37 @@ async function copy() {
             hide-details
             variant="outlined"
           />
-          <p class="t-meta c-muted mt-3">
-            {{ t('work.joinLink.expires', { date: new Date(link.expires_at).toLocaleString() }) }}
+          <v-switch
+            :model-value="link.approval"
+            :label="t('work.joinLink.approval')"
+            :disabled="busy"
+            color="primary"
+            inset
+            hide-details
+            class="mt-3"
+            @update:model-value="setApproval"
+          />
+          <p class="t-meta c-muted">
+            {{ link.approval ? t('work.joinLink.approvalOn') : t('work.joinLink.approvalOff') }}
           </p>
-          <p class="t-body c-muted mt-3">{{ t('work.joinLink.revokeHint') }}</p>
+          <p class="t-body c-muted mt-4">{{ t('work.joinLink.resetHint') }}</p>
         </template>
-        <p v-else-if="!busy" class="t-body c-muted">{{ t('work.joinLink.empty') }}</p>
       </v-card-text>
       <v-card-actions class="pa-4 flex-wrap ga-2">
         <v-btn variant="text" @click="emit('update:modelValue', false)">{{ t('work.joinLink.close') }}</v-btn>
         <v-spacer />
-        <v-btn v-if="link" variant="text" :disabled="busy" @click="changeLink(true)">{{
-          t('work.joinLink.revoke')
-        }}</v-btn>
+        <v-btn
+          v-if="link"
+          variant="text"
+          :color="confirmingReset ? 'error' : undefined"
+          :disabled="busy"
+          @click="reset"
+        >
+          {{ confirmingReset ? t('work.joinLink.resetConfirm') : t('work.joinLink.reset') }}
+        </v-btn>
         <v-btn v-if="link" color="primary" variant="flat" :disabled="busy" @click="copy">
           {{ copied ? t('work.joinLink.copied') : t('work.joinLink.copy') }}
         </v-btn>
-        <v-btn v-else color="primary" variant="flat" :loading="busy" @click="changeLink(false)">{{
-          t('work.joinLink.create')
-        }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

@@ -15,7 +15,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getEntity, getStringMetadata } from './NotificationRenderUtils'
+import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()
@@ -44,7 +44,7 @@ const routerLink = computed(() => {
   if (team.value) {
     return {
       name: 'TeamsDetailMembers',
-      params: { teamId: team.value.id },
+      params: { handle: teamHandle(team.value) },
       query: { tab: 'invitations' },
     }
   }

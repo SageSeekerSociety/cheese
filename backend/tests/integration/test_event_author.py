@@ -19,6 +19,7 @@ import time
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 # A valid 1x1 transparent PNG — small but real image bytes.
@@ -101,6 +102,9 @@ def test_what_an_agent_says_in_the_room_is_read_once(client, stub_hooks):
     assert r.json()["data"]["started"] is True, "队友说的话同样是没人读过的输入"
     first = _wait_for_prompt(stub_hooks, "接口我已经改完了")
     assert first.count("接口我已经改完了") == 1
+    # The prompt is observable before the asynchronous Stop hook closes the turn.
+    # Wait for all owned work so the next summon is actually a new turn.
+    wait_work_idle()
 
     _say(client, topic_id, "那就继续", summon=True)
     second = _wait_for_prompt(stub_hooks, "那就继续")

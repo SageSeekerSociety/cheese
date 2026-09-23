@@ -11,11 +11,13 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.db import apply_migration_timeouts, engine
+from app.core.db import apply_migration_timeouts
 
 
 @pytest.mark.anyio
-async def test_show_returns_the_configured_timeouts(_pg_schema, monkeypatch) -> None:
+async def test_show_returns_the_configured_timeouts(
+    production_app_engine, monkeypatch
+) -> None:
     monkeypatch.setattr(settings, "migration_lock_timeout", "7s")
     monkeypatch.setattr(settings, "migration_statement_timeout", "250ms")
 
@@ -28,7 +30,7 @@ async def test_show_returns_the_configured_timeouts(_pg_schema, monkeypatch) -> 
             stmt = sync_conn.execute(text("SHOW statement_timeout")).scalar_one()
         return lock, stmt
 
-    async with engine.connect() as conn:
+    async with production_app_engine.connect() as conn:
         lock, stmt = await conn.run_sync(_apply_and_read)
 
     assert lock == "7s"
@@ -36,7 +38,7 @@ async def test_show_returns_the_configured_timeouts(_pg_schema, monkeypatch) -> 
 
 
 @pytest.mark.anyio
-async def test_default_lock_timeout_is_bounded(_pg_schema) -> None:
+async def test_default_lock_timeout_is_bounded(production_app_engine) -> None:
     """With shipped defaults the lock wait is a few seconds, not unbounded — the
     difference between a fast-failing deploy and the #356 30-minute brownout."""
 
@@ -45,7 +47,7 @@ async def test_default_lock_timeout_is_bounded(_pg_schema) -> None:
             apply_migration_timeouts(sync_conn)
             return sync_conn.execute(text("SHOW lock_timeout")).scalar_one()
 
-    async with engine.connect() as conn:
+    async with production_app_engine.connect() as conn:
         lock = await conn.run_sync(_apply_and_read)
 
     # PostgreSQL normalises "10s" → "10s"; the point is it is a small, finite bound.

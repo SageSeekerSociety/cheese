@@ -3,7 +3,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.conftest import (
+    UserCreator,
+    ask_to_join,
+    create_approved_space,
+    unique_int,
+)
 
 
 class TestTaskSubmissionIntegration:
@@ -1105,13 +1110,9 @@ class TestTaskSubmissionIntegration:
         assert team_resp.status_code == 201
         team_id = team_resp.json()["data"]["team"]["id"]
 
-        req_resp = api_client.post(
-            f"/teams/{team_id}/requests",
-            json={"message": "Please let me join"},
-            headers={"Authorization": f"Bearer {team_member.token}"},
+        request_id = ask_to_join(
+            api_client, team_id, team_member.token, "Please let me join"
         )
-        assert req_resp.status_code == 201
-        request_id = req_resp.json()["data"]["application"]["id"]
 
         api_client.post(
             f"/teams/{team_id}/requests/{request_id}/approve",

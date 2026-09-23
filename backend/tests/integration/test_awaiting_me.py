@@ -105,7 +105,7 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
     project = _project(client, "alice")
     room = _room(client, project, "alice")
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="alice")
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
     )
 
     _ask(client, room, "alice")
@@ -130,7 +130,9 @@ def test_the_newest_open_turn_decides_who_the_question_is_waiting_on(client):
         )
     )
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="alice", age_s=5)
+        lambda: open_turn(
+            client.test_request_factory, uuid.UUID(room), author="alice", age_s=5
+        )
     )
 
     _ask(client, room, "alice")
@@ -144,7 +146,7 @@ def test_a_question_in_a_platform_turn_is_on_nobody_s_list(client):
     project = _project(client, "alice")
     room = _room(client, project, "alice")
     client.portal.call(
-        lambda: open_turn(client.test_factory, uuid.UUID(room), author="system")
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="system")
     )
 
     _ask(client, room, "alice")

@@ -25,7 +25,7 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 
 
 class SlowScreen(StubChannel):
@@ -77,11 +77,11 @@ class InstantScreen(StubChannel):
     ],
 )
 async def test_retried_client_delivery_is_persisted_and_submitted_once(
-    client, tmp_path, content, attachments, expected_blocks
+    business_db_factory, tmp_path, content, attachments, expected_blocks
 ):
     from app.domain.agent.runtime import InProcessBroker
 
-    factory = client.test_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -139,11 +139,11 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
 @pytest.mark.anyio
 async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     from app.domain.agent.runtime import InProcessBroker
 
-    factory = client.test_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -195,7 +195,7 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
 
 
 @pytest.mark.anyio
-async def test_receiving_a_message_mints_no_second_agent(client, tmp_path):
+async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tmp_path):
     """收下一条消息，收件人是项目建出来时就有的那个芝士，不多长一个队友。
 
     「读一条消息」不该建参与者。以前这条守的是反面——项目可以一个 agent 都没有，
@@ -203,7 +203,7 @@ async def test_receiving_a_message_mints_no_second_agent(client, tmp_path):
     """
     from app.domain.agent_instance.repositories import AgentInstanceRepository
 
-    factory = client.test_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -257,10 +257,10 @@ class ProcessNotesScreen(StubChannel):
 
 
 @pytest.mark.anyio
-async def test_queued_message_retains_selected_teammate(client, tmp_path):
+async def test_queued_message_retains_selected_teammate(business_db_factory, tmp_path):
     from app.domain.agent_instance.services import AgentInstanceService
 
-    factory = client.test_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -313,8 +313,10 @@ async def test_queued_message_retains_selected_teammate(client, tmp_path):
     "text,mentioned",
     [("@芝士 hello", True), ("芝士 hello", False), ("<@all> hello", False)],
 )
-async def test_backend_resolves_room_agent_mention(client, tmp_path, text, mentioned):
-    factory = client.test_factory
+async def test_backend_resolves_room_agent_mention(
+    business_db_factory, tmp_path, text, mentioned
+):
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -335,7 +337,9 @@ async def test_backend_resolves_room_agent_mention(client, tmp_path, text, menti
 
 
 @pytest.mark.anyio
-async def test_backend_resolves_a_legacy_shared_seat_mention(client, tmp_path):
+async def test_backend_resolves_a_legacy_shared_seat_mention(
+    business_db_factory, tmp_path
+):
     """一间还挂着共用 ``cheese`` 席位的老房间，「@芝士」照样召得动坐在里面的那一位。
 
     共用席位是惰性迁走的（``migrate_shared_agent_seat``，等这间房的 agent 下次动手
@@ -344,7 +348,7 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(client, tmp_path):
     里的队友，这一轮起不来，通知反而发给了它。上面那条参数化用例覆盖的是新房间
     （席位就是实例的 handle），老席位这一支在这里。
     """
-    factory = client.test_factory
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -377,10 +381,12 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_path):
+async def test_backend_mention_starts_when_browser_did_not_summon(
+    business_db_factory, tmp_path
+):
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
-    factory = client.test_factory
+    factory = business_db_factory
     screen = InstantScreen()
     svc = ChatService(
         session_factory=factory,
@@ -400,18 +406,18 @@ async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_pa
     runner.subscribe_messages()
     await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
 
 
 @pytest.mark.anyio
 async def test_other_teammate_message_waits_for_live_turn(
-    client, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.agent_instance.services import AgentInstanceService
 
-    factory = client.test_factory
+    factory = business_db_factory
     screen = SlowScreen()
     svc = ChatService(
         session_factory=factory,
@@ -461,14 +467,16 @@ async def test_other_teammate_message_waits_for_live_turn(
     assert screen.runs == 1
     screen.release.set()
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     assert "Second task" in screen.last_prompt
     assert screen.runs == 2
 
 
 @pytest.mark.anyio
-async def test_execution_notes_are_retained_outside_public_replies(client, tmp_path):
-    factory = client.test_factory
+async def test_execution_notes_are_retained_outside_public_replies(
+    business_db_factory, tmp_path
+):
+    factory = business_db_factory
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(ProcessNotesScreen()),
@@ -486,7 +494,7 @@ async def test_execution_notes_are_retained_outside_public_replies(client, tmp_p
         topic_id=tid, author="u", content="Write a plan", summon=True
     ):
         pass
-    await settle_turn(svc, tid)
+    await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     replies = [
@@ -502,10 +510,10 @@ async def test_execution_notes_are_retained_outside_public_replies(client, tmp_p
 
 @pytest.mark.anyio
 async def test_first_turn_materializes_inherited_compute_before_running(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """Changing a later default must never move an existing topic session."""
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -526,7 +534,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         topic_id=topic_id, author="u", content="start", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     async with factory() as session:
         topic = await TopicRepository(session).get(topic_id)
@@ -539,10 +547,10 @@ async def test_first_turn_materializes_inherited_compute_before_running(
 
 
 @pytest.mark.anyio
-async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
+async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_path):
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
 
     agent = SlowScreen()
     svc = ChatService(
@@ -589,7 +597,7 @@ async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
     # The parked turn finishes normally afterwards.
     agent.release.set()
     await asyncio.wait_for(turn, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
@@ -613,7 +621,7 @@ class FailingScreen(StubChannel):
 
 @pytest.mark.anyio
 async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """本卡修的那个根因：`classify_platform_failure()` 没命中就**一个结构化字段
     都没有**，于是最常见的几条（AI 接口错误 / 余额用尽 / 座位限流）全都退化成
@@ -626,7 +634,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     而且它是一条系统事件，不是芝士说的话：把机器的报错顶着芝士的名字发出去，
     读的人会以为那是它的判断。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
         session_factory=factory,
         # 座位限流不在任何一条分类规则里 —— 这正是要测的"没命中"。
@@ -648,7 +656,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -690,8 +698,10 @@ class StorageFullScreen(StubChannel):
 
 
 @pytest.mark.anyio
-async def test_storage_exhaustion_is_a_persistent_platform_event(client, tmp_path):
-    factory = client.test_factory  # type: ignore[attr-defined]
+async def test_storage_exhaustion_is_a_persistent_platform_event(
+    business_db_factory, tmp_path
+):
+    factory = business_db_factory  # type: ignore[attr-defined]
     agent = StorageFullScreen()
     svc = ChatService(
         session_factory=factory,
@@ -711,7 +721,7 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(client, tmp_pat
         topic_id=topic_id, author="u", content="做点事", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert agent.calls == 1
     async with factory() as session:
@@ -747,7 +757,7 @@ class _SlowLiveScreen(SlowScreen):
 
 @pytest.mark.anyio
 async def test_summon_during_active_work_is_injected_without_a_second_done(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """The platform used to be stricter than the tool it drives: an interactive
     Claude Code takes input while it works, but we serialized work on top, so a
@@ -756,7 +766,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     from app.domain.agent.compute import ComputePool
     from app.domain.block.models import consumed_turn
 
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     provider = _SlowLiveScreen()
     svc = ChatService(
         session_factory=factory,
@@ -811,6 +821,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
     provider.release.set()
     await asyncio.wait_for(run, 5)
+    await finish_turn(svc, topic_id)
 
     # Finishing the original run preserves that marker; later work will not
     # say the injected message all over again.
@@ -822,11 +833,13 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
 
 @pytest.mark.anyio
-async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_path):
+async def test_failed_live_delivery_reports_error_then_queues_work(
+    business_db_factory, tmp_path
+):
     """A failed live handoff is visible before the message runs from the queue."""
     from app.domain.agent.compute import ComputePool
 
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
 
     class _NoScreen(_SlowLiveScreen):
         """The live handoff fails at the transport: the second write does not
@@ -914,10 +927,13 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
         if (block.meta or {}).get("event_type") == "delivery_fallback"
     ]
     assert len(persisted) == 1
+    await finish_turn(svc, topic_id)
 
 
 @pytest.mark.anyio
-async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatch):
+async def test_midturn_delivery_holds_no_topic_lock(
+    business_db_factory, tmp_path, monkeypatch
+):
     """While the message is being handed to the machine, the topic row stays
     free for other writers (dev outage of 2026-09-18: a row lock held across a
     device call queued every writer of the row with a pool connection each)."""
@@ -925,7 +941,7 @@ async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatc
 
     from sqlalchemy import text
 
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
@@ -970,7 +986,7 @@ async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatc
 
 @pytest.mark.anyio
 async def test_midturn_message_stays_pending_until_its_receipt(
-    client, tmp_path, monkeypatch
+    business_db_factory, tmp_path, monkeypatch
 ):
     """#539 decision A: deliver() trusts the transport's write-accept, so the
     consumed stamp moves to the UserPromptSubmit receipt. Before the receipt
@@ -978,7 +994,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     only a receipt carrying the SAME injected text stamps it."""
     from app.domain.block.models import consumed_turn
 
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
         session_factory=factory,
         compute=stub_compute(InstantScreen()),

@@ -32,11 +32,12 @@ class InvitationCreate(BaseModel):
     role: ProjectRole = ProjectRole.member
 
 
-class JoinLinkOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class JoinLinkSettings(BaseModel):
+    approval: bool
 
-    token: str
-    expires_at: datetime
+
+class JoinThroughLink(BaseModel):
+    message: str = Field(default="", max_length=500)
 
 
 class InvitationRespond(BaseModel):

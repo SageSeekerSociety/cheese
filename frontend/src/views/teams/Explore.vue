@@ -67,23 +67,10 @@
                     :title="team.name"
                     :subtitle="team.intro"
                     :prepend-avatar="getAvatarUrl(team.avatarId)"
-                    :to="{ name: 'TeamsDetailDefault', params: { teamId: team.id } }"
+                    :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                     rounded="md"
                     class="team-list-item mb-3"
                   >
-                    <template #append>
-                      <v-btn
-                        variant="tonal"
-                        color="primary"
-                        rounded="md"
-                        density="comfortable"
-                        class="join-btn"
-                        @click.stop.prevent="joinTeam(team.id)"
-                      >
-                        <v-icon icon="mdi-account-plus" size="small" class="mr-1"></v-icon>
-                        申请加入
-                      </v-btn>
-                    </template>
                   </v-list-item>
                 </v-list>
               </div>
@@ -124,47 +111,6 @@
       </v-col>
     </v-row>
   </v-container>
-
-  <!-- 申请加入对话框 -->
-  <v-dialog v-model="joinRequestDialogOpen" max-width="500" transition="dialog-bottom-transition">
-    <v-card rounded="lg" class="join-request-dialog elevation-0 border">
-      <v-toolbar color="transparent" flat>
-        <v-toolbar-title class="text-h6">申请加入小队</v-toolbar-title>
-        <v-spacer></v-spacer>
-        <v-btn icon @click="joinRequestDialogOpen = false">
-          <v-icon>mdi-close</v-icon>
-        </v-btn>
-      </v-toolbar>
-
-      <v-divider></v-divider>
-
-      <v-card-text class="py-5">
-        <v-form @submit.prevent="submitJoinRequest">
-          <p class="text-body-2 text-medium-emphasis mb-4">请输入申请理由，帮助管理员了解你加入小队的目的</p>
-          <v-textarea
-            v-model="joinRequestMessage"
-            autocomplete="off"
-            label="申请理由"
-            variant="outlined"
-            color="primary"
-            placeholder="请简要介绍自己，说明为什么想加入这个小队..."
-            rows="4"
-            auto-grow
-            class="mb-4"
-            rounded="md"
-          ></v-textarea>
-        </v-form>
-      </v-card-text>
-
-      <v-divider></v-divider>
-
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <v-btn variant="text" class="mr-2" @click="joinRequestDialogOpen = false">取消</v-btn>
-        <v-btn color="primary" variant="elevated" rounded="md" @click="submitJoinRequest"> 提交申请 </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -177,16 +123,11 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { TeamsApi } from '@/network/api/teams'
-import AccountService from '@/services/account'
 
 const { mdAndUp } = useDisplay()
 const searchQuery = ref('')
 const searchTeamsData = ref<Team[]>([])
 const hasSearched = ref(false)
-
-const joinRequestDialogOpen = ref(false)
-const joinRequestMessage = ref('')
-const targetTeamId = ref<number | null>(null)
 
 const fetchSearchResults = async (query: string) => {
   if (!query) {
@@ -203,33 +144,6 @@ const fetchSearchResults = async (query: string) => {
     searchTeamsData.value = teams
   } catch (error) {
     toast.error('搜索失败，请稍后重试')
-    console.error(error)
-  }
-}
-
-const joinTeam = async (teamId: number) => {
-  if (!AccountService.user) {
-    toast.error('请先登录')
-    return
-  }
-
-  targetTeamId.value = teamId
-  joinRequestDialogOpen.value = true
-}
-
-const submitJoinRequest = async () => {
-  if (!targetTeamId.value) return
-
-  try {
-    await TeamsApi.createJoinRequest(targetTeamId.value, {
-      message: joinRequestMessage.value || undefined,
-    })
-    toast.success('申请已提交，请等待管理员审核')
-    joinRequestDialogOpen.value = false
-    joinRequestMessage.value = ''
-    targetTeamId.value = null
-  } catch (error) {
-    toast.error('申请提交失败，请稍后重试')
     console.error(error)
   }
 }
@@ -268,14 +182,6 @@ const submitJoinRequest = async () => {
   border-color: rgba(var(--v-theme-primary), 0.1);
 }
 
-.join-btn {
-  transition: transform 0.2s ease;
-}
-
-.join-btn:hover {
-  transform: scale(1.05);
-}
-
 .primary-gradient {
   background: linear-gradient(135deg, var(--v-theme-primary), var(--v-theme-primary-darken-1));
 }
@@ -309,10 +215,6 @@ const submitJoinRequest = async () => {
 
 .create-team-dialog:deep(.v-card-text) {
   scrollbar-width: thin;
-}
-
-.join-request-dialog {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .teams-explore-header-container {

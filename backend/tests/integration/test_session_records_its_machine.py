@@ -90,7 +90,7 @@ def channel(client, monkeypatch, executors=("executor",)):
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INSTALLED)}),
     )
-    executor = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     executor._device_api_base = AsyncMock(return_value="http://execution-api")
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
@@ -101,35 +101,41 @@ def channel(client, monkeypatch, executors=("executor",)):
     return central
 
 
-async def _open(central, project, topic, agent, executor, *, resume=None):
+def _open(central, project, topic, agent, executor, *, resume=None):
     """Admit a real session, then acquire its hands through the tool endpoint."""
     client = central.test_client
-    ref = SessionRef(project, topic, agent, harness="claude-code")
-    precheck = await central.precheck(ref, needs_place=True)
-    async with client.test_factory() as db:
-        row = await AgentSessionService(db).ensure(topic, agent, harness="claude-code")
-        if row.execution_request is None:
-            row.execution_request = {
-                "generation": str(uuid.uuid4()),
-                "choice": {
-                    "name": executor,
-                    "profile": "device",
-                    "device_id": client.session_test_devices[executor],
-                },
-            }
-        await db.commit()
-    await central.ensure_ready(
-        session=ref,
-        token=mint_scoped_token(
-            project_id=str(project),
-            topic_id=str(topic),
-            agent_handle=precheck.agent_handle,
-        ),
-        env={},
-        launch=ClaudeLaunch("System", resume_session_id=resume),
-        precheck=precheck,
-    )
-    opening = central._ensure_screen.await_args.kwargs
+
+    async def prepare():
+        ref = SessionRef(project, topic, agent, harness="claude-code")
+        precheck = await central.precheck(ref, needs_place=True)
+        async with client.test_request_factory() as db:
+            row = await AgentSessionService(db).ensure(
+                topic, agent, harness="claude-code"
+            )
+            if row.execution_request is None:
+                row.execution_request = {
+                    "generation": str(uuid.uuid4()),
+                    "choice": {
+                        "name": executor,
+                        "profile": "device",
+                        "device_id": client.session_test_devices[executor],
+                    },
+                }
+            await db.commit()
+        await central.ensure_ready(
+            session=ref,
+            token=mint_scoped_token(
+                project_id=str(project),
+                topic_id=str(topic),
+                agent_handle=precheck.agent_handle,
+            ),
+            env={},
+            launch=ClaudeLaunch("System", resume_session_id=resume),
+            precheck=precheck,
+        )
+        return central._ensure_screen.await_args.kwargs
+
+    opening = client.portal.call(prepare)
     target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
     assert target["kind"] == "deferred"
     response = client.post(
@@ -149,8 +155,8 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
     project, topic = room
     central = channel(client, monkeypatch, executors=("hands-a", "hands-b"))
 
-    await _open(central, project, topic, "ada", "hands-a")
-    await _open(central, project, topic, "linus", "hands-b")
+    _open(central, project, topic, "ada", "hands-a")
+    _open(central, project, topic, "linus", "hands-b")
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
@@ -168,7 +174,7 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
         "capabilities": ["prepare"],
         "context_tree": {"generation": "fixture", "entries": {}},
     }
-    await _open(central, project, topic, "ada", "hands-a")
+    _open(central, project, topic, "ada", "hands-a")
     async with client.test_factory() as db:
         again = await AgentSessionService(db).place(
             topic, "ada", harness=deployment_harness()
@@ -190,7 +196,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
     project, topic = room
     central = channel(client, monkeypatch, executors=("hands-a",))
 
-    await _open(central, project, topic, "ada", "hands-a")
+    _open(central, project, topic, "ada", "hands-a")
     # 骨架交回一个可续的 token——写侧和真正跑完一轮时走的是同一个入口。
     async with client.test_factory() as db:
         await AgentSessionService(db).remember(
@@ -234,7 +240,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         resumes_by = await AgentSessionService(db).resume_token(
             topic, "ada", harness=deployment_harness()
         )
-    target = await _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
+    target = _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
     assert target["device_id"] == client.session_test_devices["hands-b"]
     assert target["resource_id"] != before_resource
 
@@ -262,9 +268,8 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         resumes_by = await sessions.resume_token(
             topic, "ada", harness=deployment_harness()
         )
-    on_new_host = await _open(
-        central, project, topic, "ada", "hands-b", resume=resumes_by
-    )
+    on_new_host = _open(central, project, topic, "ada", "hands-b", resume=resumes_by)
+
     opened = central._ensure_screen.await_args.kwargs
     assert opened["device_id"] == "center-two"
     assert opened["launch"].resume_session_id == "conversation-1"
@@ -272,11 +277,11 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
 
 
 @pytest.mark.anyio
-async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
+async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, room):
     """租到机器还不算跑过——算力设置要到这条会话说出第一句才冻住。"""
     project, topic = room
     del project
-    async with client.test_factory() as db:
+    async with business_db_factory() as db:
         sessions = AgentSessionService(db)
         await sessions.remember_place(
             topic_id=topic,
@@ -345,6 +350,6 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     )
     central.executor.discover = AsyncMock(return_value=[])
 
-    assert [found[3] for found in await central.discover()] == ["pi"]
+    assert [found[3] for found in client.portal.call(central.discover)] == ["pi"]
     # 这块屏是 pi 开的，所以 Claude Code 那一侧一条都不认领。
-    assert await ClaudeCodeRuntime(central).recover() == []
+    assert client.portal.call(lambda: ClaudeCodeRuntime(central).recover()) == []

@@ -392,7 +392,9 @@ def test_deleting_a_row_that_is_not_there_is_a_no_op_at_the_route(client, as_adm
     assert r.json()["data"]["removed"] is False
 
 
-async def test_two_deletes_of_one_row_at_once_leave_one_winner_and_no_error(client):
+async def test_two_deletes_of_one_row_at_once_leave_one_winner_and_no_error(
+    business_db_factory,
+):
     """两个连接同时删同一个 handle：一个删掉，另一个平静地拿到 false，谁都不炸。
 
     跑的是路由会走的那条语句（`AdminRepository.remove_admin`）—— 路由自己没有第二
@@ -406,12 +408,12 @@ async def test_two_deletes_of_one_row_at_once_leave_one_winner_and_no_error(clie
     态）。一个先拿到行锁、另一个在数据库里等着，赢的那次拿到 id、输的那次拿到空结果。
     """
     handle = "am-race"
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         assert await AdminRepository(session).add_admin(handle, added_by=ADMIN)
         await session.commit()
 
     async def remove() -> bool:
-        async with client.test_factory() as session:
+        async with business_db_factory() as session:
             done = await AdminRepository(session).remove_admin(handle)
             await session.commit()
             return done
@@ -420,7 +422,7 @@ async def test_two_deletes_of_one_row_at_once_leave_one_winner_and_no_error(clie
     assert sorted(results) == [False, True], results
 
     # 行确实没了：第三次删同样只是 false，没有一行还挂在那儿。
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         assert await AdminRepository(session).remove_admin(handle) is False
 
 

@@ -76,7 +76,9 @@ def test_migration_leaves_pending_github_choice_unprovisioned(
     )
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
-    monkeypatch.setattr(migrate_forge, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(
+        migrate_forge, "async_session_factory", client.test_request_factory
+    )
 
     async def migrate():
         assert (

@@ -53,7 +53,7 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     )
 
     service = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/replay-ws",
         compute=stub_compute(screen),

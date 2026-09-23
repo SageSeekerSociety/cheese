@@ -3,6 +3,8 @@ from enum import Enum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -11,6 +13,8 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,12 +25,36 @@ team_user_relation_seq = Sequence("team_user_relation_seq")
 team_membership_application_seq = Sequence("team_membership_application_seq")
 
 
+class TeamVisibility(str, Enum):
+    """Who can find a team without being in it.
+
+    PUBLIC teams show up in search and open by id; STEALTH teams do neither and
+    are reached only through the team's join link. How joining then works is
+    the team's ``join_approval`` — the same switch a project has.
+    """
+
+    PUBLIC = "public"
+    STEALTH = "stealth"
+
+
 class Team(Base):
     __tablename__ = "team"
-    __table_args__ = (Index("ix_team_name", "name"),)
+    __table_args__ = (
+        Index("ix_team_name", "name"),
+        Index("uq_team_handle_lower", func.lower(text("handle")), unique=True),
+        # A shared team is named by its own handle; a personal team is named by
+        # its owner's username (see ``team_handle``), so it stores none.
+        CheckConstraint(
+            "(personal_owner_user_id IS NULL) = (handle IS NOT NULL)",
+            name="ck_team_handle_iff_shared",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, team_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    # The team's name in URLs and mentions: the same alphabet as a username and
+    # the same namespace, so one handle names one user or one team, never both.
+    handle: Mapped[str | None] = mapped_column(String(32), nullable=True)
     intro: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
     avatar_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -36,6 +64,22 @@ class Team(Base):
     # any team — so 为自己注册设备 is just 注册给个人团队.
     personal_owner_user_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=TeamVisibility.PUBLIC.value,
+        server_default=TeamVisibility.PUBLIC.value,
+    )
+    # The team's join link (``/team-invites/<token>``): permanent until an owner
+    # or admin resets it. NULL until first asked for.
+    join_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    # Whether joining — by link or from the profile — waits for an owner or
+    # admin. Off, the person is in the moment they confirm.
+    join_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

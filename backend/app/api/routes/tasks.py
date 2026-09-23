@@ -54,6 +54,7 @@ from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
+from app.domain.team.summary import team_summary
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
@@ -624,15 +625,7 @@ async def _enrich_task_user_state(
     )
 
     def _team_summary(team_id: int) -> dict:
-        team = teams_map.get(team_id)
-        if team is None:
-            return {"id": team_id, "name": "", "intro": "", "avatarId": None}
-        return {
-            "id": team.id,
-            "name": team.name,
-            "intro": team.intro,
-            "avatarId": team.avatar_id,
-        }
+        return team_summary(teams_map.get(team_id), fallback_id=team_id)
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -700,13 +693,9 @@ def _build_participant_user_info(
     profile_map = profile_map or {}
     team_map = team_map or {}
     if membership.is_team and membership.member_id in team_map:
-        team = team_map[membership.member_id]
-        return {
-            "id": team.id,
-            "name": team.name,
-            "avatarId": team.avatar_id,
-            "intro": team.intro,
-        }
+        return team_summary(
+            team_map[membership.member_id], fallback_id=membership.member_id
+        )
     if not membership.is_team and membership.member_id in user_map:
         user = user_map[membership.member_id]
         profile = profile_map.get(membership.member_id)
@@ -1734,15 +1723,7 @@ async def get_task(
         )
 
         def _team_summary(team_id: int) -> dict:
-            team = teams_map.get(team_id)
-            if team is None:
-                return {"id": team_id, "name": "", "intro": "", "avatarId": None}
-            return {
-                "id": team.id,
-                "name": team.name,
-                "intro": team.intro,
-                "avatarId": team.avatar_id,
-            }
+            return team_summary(teams_map.get(team_id), fallback_id=team_id)
 
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
 

@@ -50,8 +50,8 @@ const entry = computed(() => {
 const owningTeam = computed(() => {
   const projectId = projectFrameOf(route)
   if (!projectId || !atProjectRoot.value || entry.value) return null
-  const teamId = workspace.projects.find((p) => p.id === projectId)?.team_id
-  return typeof teamId === 'number' ? { name: 'TeamsDetail', params: { teamId: String(teamId) }, label: '小队' } : null
+  const handle = workspace.projects.find((p) => p.id === projectId)?.team_handle
+  return handle ? { name: 'TeamsDetail', params: { handle }, label: '团队' } : null
 })
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）——那些本来就是对的。 */

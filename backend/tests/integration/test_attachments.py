@@ -342,7 +342,7 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
     and hand back the screen the prompt will actually reach."""
     screen = _NoEmbedScreen()
     service = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([screen.runtime], screen.name),

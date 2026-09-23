@@ -243,6 +243,11 @@ class ProjectService:
         """
         return await self._repo.people(project_id)
 
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for someone not on the roster yet, by the same
+        rules a roster row follows."""
+        return await self._repo.person(handle)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:
