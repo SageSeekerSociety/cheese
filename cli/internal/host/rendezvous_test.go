@@ -276,6 +276,7 @@ func hostOnAFakeServer(t *testing.T, sessions map[string]*sess) *fakeServer {
 		conn:     link.New("ws"+strings.TrimPrefix(srv.URL, "http"), "", "", ""),
 		ctx:      ctx,
 		sessions: sessions,
+		execs:    map[string]context.CancelFunc{},
 	}
 	go func() { _ = h.conn.Run(ctx, h.onMsg) }()
 	return f
