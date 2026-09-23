@@ -13,6 +13,7 @@ import os
 import re
 import statistics
 import subprocess
+import time
 import sys
 import tempfile
 import zipfile
@@ -439,7 +440,21 @@ def gh_pages(endpoint: str, fields: dict[str, str] | None = None) -> list[dict]:
     command = ["gh", "api", "--method", "GET", "--paginate", "--slurp", endpoint]
     for key, value in (fields or {}).items():
         command.extend(["-f", f"{key}={value}"])
-    return json.loads(subprocess.check_output(command, text=True))
+    for attempt in range(1, 4):
+        try:
+            return json.loads(
+                subprocess.check_output(command, text=True, stderr=subprocess.PIPE)
+            )
+        except subprocess.CalledProcessError as error:
+            detail = error.stderr or ""
+            print(
+                f"{utc_now()} API attempt={attempt} {endpoint}: {detail}",
+                file=sys.stderr,
+            )
+            if attempt == 3 or not re.search(r"\(HTTP 50[0234]\)", detail):
+                raise
+            # Only retry idempotent reads after a transient GitHub server error.
+            time.sleep(attempt)
 
 
 def atomic_new(path: Path, value: object) -> None:
