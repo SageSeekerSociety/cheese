@@ -6,7 +6,7 @@ visible at each level (话题→项目→机构).
 
 import uuid
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Float, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -66,9 +66,9 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # cannot be attributed; each such row remains one unit in aggregate reports.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(64), default="")
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     kind: Mapped[str] = mapped_column(String(24), default="chat")
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),

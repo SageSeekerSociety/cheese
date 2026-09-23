@@ -281,6 +281,41 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
 
 
 @pytest.mark.anyio
+async def test_gateway_daily_delta_larger_than_int32_is_recorded(
+    client, tmp_path, monkeypatch
+):
+    async def _no_sleep(_s):
+        return None
+
+    _replace_chat_sleep(monkeypatch, _no_sleep)
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = {"deepseek/deepseek-flash": (2_147_483_648, 20, 0.02)}
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    async with factory() as session:
+        rows = list(
+            (
+                await session.scalars(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            ).all()
+        )
+    assert len(rows) == 1
+    assert rows[0].input_tokens == 2_147_483_648
+    assert rows[0].total_tokens == 2_147_483_668
+
+
+@pytest.mark.anyio
 async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
     client, tmp_path, monkeypatch
 ):
