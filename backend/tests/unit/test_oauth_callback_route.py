@@ -21,6 +21,16 @@ from app.core.errors import NotFoundError
 from app.domain.oauth.services import OAuthUserInfo
 
 
+@pytest.fixture(autouse=True)
+def _no_redis(monkeypatch):
+    """These handlers touch Redis for 2FA and single-use state; stand it in."""
+    monkeypatch.setattr("app.core.single_use_state.reserve", AsyncMock())
+    monkeypatch.setattr(
+        "app.domain.user.login_security.TOTPService.is_2fa_enabled",
+        AsyncMock(return_value=False),
+    )
+
+
 def _fake_user(user_id: int, email: str, *, hashed_password: str | None = "$2b$fake"):
     return SimpleNamespace(
         id=user_id,
@@ -209,7 +219,7 @@ class TestOAuthCallback:
         from urllib.parse import parse_qs, urlparse
 
         token = parse_qs(urlparse(loc).query)["stateToken"][0]
-        provider_id, user_info = _decode_oauth_state_token(token)
+        provider_id, user_info, _jti = _decode_oauth_state_token(token)
         assert provider_id == "ruc"
         assert user_info["id"] == "uid-3"
         assert user_info["email"] == "c@ruc.edu.cn"
