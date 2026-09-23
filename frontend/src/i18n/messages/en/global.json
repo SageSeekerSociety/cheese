@@ -21,5 +21,8 @@
   "formValidation": {
     "maxLength": "Must be at most {max} characters",
     "required": "This field is required"
-  }
+  },
+  "close": "Close",
+  "loadFailed": "Couldn't load",
+  "updateFailed": "Couldn't update"
 }

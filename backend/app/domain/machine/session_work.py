@@ -23,10 +23,8 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
-from app.domain.agent.dispatch_log import DispatchRow
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_TIERS
-from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, has_runnable_transport
@@ -34,7 +32,6 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
-from app.domain.policy.proposals import propose
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.services import TopicService
@@ -54,7 +51,6 @@ def presentation(row):
         }
         if row.work_lease
         else None,
-        "pending": request.get("pending"),
     }
 
 
@@ -74,55 +70,22 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
         choice.device_id = selected.device_id
     call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
     verdict = gate.check(call, gate.policy_of(project.settings), actor.handle)
-    if isinstance(verdict, gate.Allowed):
-        verdict = gate.Proposal(
-            call,
-            actor.handle,
-            f"{actor.handle} 提议给 {row.agent_handle} 换用「{call.label}」。"
-            f"原工作区会保留，新机器在下一次工具调用时准备；等 @{call.approver} 确认。",
-        )
-    request = row.execution_request or {
-        "generation": str(uuid.uuid4()),
-        "choice": room_choice(topic, project.settings).model_dump(),
-        "authorized_by": None,
-    }
-    pending = {
-        "id": str(uuid.uuid4()),
-        "choice": choice.model_dump(),
-        "approver": call.approver,
-        "source_generation": (row.work_lease or {}).get("generation"),
-    }
-    row.execution_request = {**request, "pending": pending}
-    await propose(db, verdict, place_id=topic_id, proposal_id=uuid.UUID(pending["id"]))
-    await db.commit()
-    return presentation(row)
-
-
-async def approve_choice(
-    db, *, topic_id, session_id, actor, proposal_id, acknowledge_unreachable_work=False
-):
-    topic = await TopicService(db).lock_for_execution(topic_id)
-    row = await AgentSessionService(db).by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
-        raise NotFoundError("Session not found")
+    if isinstance(verdict, gate.Proposal):
+        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
+    if choice.profile == "cloud":
+        await MachineService(db).require_use_authority(topic.project_id, actor)
     request = row.execution_request or {}
-    pending = request.get("pending")
-    if not pending or pending["id"] != str(proposal_id):
-        raise ConflictError("这条换机提议已变更")
-    if (
-        actor.via != "token"
-        or actor.user_id is None
-        or actor.handle != pending["approver"]
-    ):
-        raise ForbiddenError("请由提议中指定的人登录确认")
-    if pending["source_generation"] != (row.work_lease or {}).get("generation"):
-        raise ConflictError("工作机器已变更，请重新提出换机")
-    if await db.scalar(
-        select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
-        .limit(1)
-    ):
-        raise ConflictError("请等当前轮次结束后再确认换机")
+    old = row.work_lease
+    previous = request.get("choice")
+    if previous and ComputeChoice.model_validate(previous).model_dump(
+        exclude={"name"}
+    ) == choice.model_dump(exclude={"name"}):
+        if choice.profile == "cloud" and not request.get("authorized_by"):
+            row.execution_request = {**request, "authorized_by": asdict(actor)}
+            await db.commit()
+        return presentation(row)
+    if old and old.get("status", "ready") != "ready":
+        raise ConflictError("机器分配仍在进行，请稍后再换机")
     instance_id = (
         select(AgentInstance.id)
         .where(
@@ -157,60 +120,26 @@ async def approve_choice(
         .limit(1)
     ):
         raise ConflictError("请先核实并结束尚未交回结论的子任务")
-    unknown = (
-        select(DispatchRow.id)
-        .where(
-            DispatchRow.place_id == topic_id,
-            or_(DispatchRow.session_id == session_id, DispatchRow.session_id.is_(None)),
-            or_(DispatchRow.outcome.is_(None), DispatchRow.outcome == "unknown"),
-            DispatchRow.confirmed_at.is_(None),
+    if old and device_hub.is_online(old["device_id"]):
+        # Existing calls finish on the retained lease. Only long-running
+        # background work needs to finish before selecting another machine.
+        background = await execution.call(
+            old,
+            "control",
+            {"subtype": "background_tasks"},
+            hub=device_hub,
+            timeout=10,
         )
-        .limit(1)
-    )
-    if await db.scalar(unknown):
-        raise ConflictError("仍有结果未知的操作，请核实并确认后再换机")
-    project = await ProjectService(db).get_or_404(topic.project_id)
-    choice = ComputeChoice.model_validate(pending["choice"])
-    await validate_choice(db, topic.project_id, choice)
-    call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
-    if call.approver != actor.handle:
-        raise ConflictError("机器所有者已变化，请重新提出换机")
-    gate.check(call, gate.policy_of(project.settings), actor.handle)
-    if choice.profile == "cloud":
-        await MachineService(db).require_use_authority(topic.project_id, actor)
-    old = row.work_lease
-    if old:
-        if not device_hub.is_online(old["device_id"]):
-            if not acknowledge_unreachable_work:
-                raise ConflictError(
-                    "旧机器未连接，请核实旧机器上的未完成工作后明确确认"
-                )
-        else:
-            background = await execution.call(
-                old,
-                "control",
-                {"subtype": "background_tasks"},
-                hub=device_hub,
-                timeout=10,
-            )
-            if not isinstance(background.get("tasks"), list):
-                raise ConflictError("无法核实旧机器的后台工作，请稍后重试")
-            if any(task.get("status") == "running" for task in background["tasks"]):
-                raise ConflictError("旧机器还有后台工作，请先结束后再确认换机")
-    if old and (old.get("status", "ready") != "ready"):
-        raise ConflictError("机器分配仍在进行，请等分配结果明确后再换机")
-    if old and (request.get("choice") or {}).get("profile") == "cloud":
+        if not isinstance(background.get("tasks"), list):
+            raise ConflictError("无法核实旧机器的后台工作，请稍后重试")
+        if any(task.get("status") == "running" for task in background["tasks"]):
+            raise ConflictError("旧机器还有后台工作，请先结束后再换机")
+    if (request.get("choice") or {}).get("profile") == "cloud":
         await MachineService(db).supersede_session_machine(session_id, actor=actor)
     row.execution_request = {
         "generation": str(uuid.uuid4()),
         "choice": choice.model_dump(),
         "authorized_by": asdict(actor),
-        "approved_call": asdict(call),
-        "approval": {
-            "proposal_id": str(proposal_id),
-            "at": datetime.now(UTC).isoformat(),
-            "acknowledge_unreachable_work": acknowledge_unreachable_work,
-        },
         "retained_leases": [
             *request.get("retained_leases", []),
             *([old] if old else []),
@@ -305,48 +234,17 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, api, hub=None)
     )
     verdict = gate.check(call, gate.policy_of(project.settings), claims.get("a", ""))
     authorized = request.get("authorized_by")
-    if (
-        choice.profile == "cloud"
-        and not ready
-        and not authorized
-        and isinstance(verdict, gate.Allowed)
-    ):
-        verdict = gate.because_the_room_is_running(call, claims.get("a", ""))
-    if isinstance(verdict, gate.Proposal) and request.get("approved_call") != asdict(
-        call
-    ):
-        pending = request.get("pending") or {
-            "id": str(uuid.uuid4()),
-            "choice": choice.model_dump(),
-            "approver": verdict.approver,
-            "source_generation": (lease or {}).get("generation"),
-        }
-        proposal_id = uuid.UUID(pending["id"])
-        row.execution_request = {
-            **request,
-            "pending": pending,
-        }
-        await propose(db, verdict, place_id=topic_id, proposal_id=proposal_id)
-        await db.commit()
-        return {
-            "unavailable": verdict.content,
-            "proposal_id": str(proposal_id),
-            "approve_path": (
-                f"/topics/{topic_id}/sessions/{session_id}/work-choice/approve"
-            ),
-        }
+    if isinstance(verdict, gate.Proposal):
+        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
     if choice.profile == "cloud":
-        if not isinstance(authorized, dict):
-            raise ForbiddenError(
-                "Cloud allocation requires an authenticated authorization"
-            )
+        allocation_actor = (
+            Actor(**authorized)
+            if isinstance(authorized, dict)
+            else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
+        )
         machine = await MachineService(db).ensure_session_machine(
             session_id,
-            actor=Actor(
-                handle=authorized["handle"],
-                user_id=authorized["user_id"],
-                via=authorized["via"],
-            ),
+            actor=allocation_actor,
             choice=choice,
         )
         if not machine.device_id or not hub.is_online(machine.device_id):

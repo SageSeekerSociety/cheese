@@ -24,7 +24,10 @@ from tests.integration.conftest import session_auth_headers
 pytestmark = pytest.mark.anyio
 
 
-async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeypatch):
+@pytest.mark.parametrize("old_online", [True, False])
+async def test_first_tool_acquires_the_addressed_sessions_device(
+    client, monkeypatch, old_online
+):
     project = client.post(
         "/projects", json={"name": "Session hands", "owner_handle": "alice"}
     ).json()["data"]
@@ -190,36 +193,21 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
     first_id, first_device, first_token = identities[0]
     second_id, second_device, _ = identities[1]
     choice_path = f"/topics/{topic_id}/sessions/{first_id}/work-choice"
-    response = client.put(
-        choice_path,
-        headers=owner_headers,
-        json={
-            "choice": {
-                "name": "Second machine",
-                "profile": "device",
-                "device_id": second_device,
-            }
-        },
-    )
-    assert response.status_code == 200, response.text
-    pending = response.json()["data"]["session"]["pending"]
-    assert pending["approver"] == "alice"
-    assert response.json()["data"]["session"]["lease"]["device_id"] == first_device
-    superseded_proposal = pending["id"]
-    response = client.put(
-        f"/topics/{topic_id}/compute-profile",
-        headers={"X-Cheese-Token": first_token},
-        json={"profile": "device", "device_id": second_device},
-    )
-    assert response.status_code == 200, response.text
-    pending = response.json()["data"]["session"]["pending"]
+    selection = {
+        "choice": {
+            "name": "Second machine",
+            "profile": "device",
+            "device_id": second_device,
+        }
+    }
+    # A session credential cannot change its roommate's destination.
     assert (
-        client.post(
-            choice_path + "/approve",
-            headers=owner_headers,
-            json={"proposal_id": superseded_proposal},
+        client.put(
+            f"/topics/{topic_id}/sessions/{second_id}/work-choice",
+            headers={"X-Cheese-Token": first_token},
+            json=selection,
         ).status_code
-        == 409
+        == 403
     )
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.room_task.models import Task
@@ -246,32 +234,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
         await db.flush()
         child_id = child.id
         await db.commit()
-    blocked = client.post(
-        choice_path + "/approve",
-        headers=owner_headers,
-        json={"proposal_id": pending["id"]},
-    )
+    blocked = client.put(choice_path, headers=owner_headers, json=selection)
     assert blocked.status_code == 409
     assert "子任务" in blocked.json()["message"]
     bob_path = f"/topics/{topic_id}/sessions/{second_id}/work-choice"
-    bob_proposal = client.put(
-        bob_path,
-        headers=owner_headers,
-        json={
-            "choice": {
-                "name": "Bob's replacement",
-                "profile": "device",
-                "device_id": second_device,
-            }
-        },
-    )
-    assert bob_proposal.status_code == 200, bob_proposal.text
-    bob_approval = client.post(
-        bob_path + "/approve",
-        headers=owner_headers,
-        json={"proposal_id": bob_proposal.json()["data"]["session"]["pending"]["id"]},
-    )
-    assert bob_approval.status_code == 200, bob_approval.text
+    bob_change = client.put(bob_path, headers=owner_headers, json=selection)
+    assert bob_change.status_code == 200, bob_change.text
+    assert "pending" not in bob_change.json()["data"]["session"]
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
         headers={"X-Cheese-Token": identities[1][2]},
@@ -295,72 +264,40 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
             )
         )
         await db.commit()
-    dispatch_id = uuid.uuid4()
+    # A real execution timeout leaves NULL in the dispatch log. It is unknown,
+    # not proof of an active call and must not permanently lock machine choice.
+    remote.side_effect = TimeoutError("lost response")
+    timed_out = client.post(
+        f"/topics/{topic_id}/execution/{resource}",
+        headers={"X-Cheese-Token": tokens[0]},
+        json={"method": "invoke", "params": {"id": "lost-write", "tool": "Write"}},
+    )
+    assert timed_out.status_code == 504, timed_out.text
     async with client.test_factory() as db:
-        db.add(
-            DispatchRow(
-                id=dispatch_id,
-                key="lost-write",
-                tool="Write",
-                place_id=topic_id,
-                session_id=first_id,
-                lease_generation=uuid.UUID(pending["source_generation"]),
-                outcome="unknown",
-            )
+        dispatch = await db.scalar(
+            select(DispatchRow).where(DispatchRow.key == "lost-write")
         )
-        await db.commit()
-    approval = {"proposal_id": pending["id"]}
-    assert (
-        client.post(
-            choice_path + "/approve", headers=owner_headers, json=approval
-        ).status_code
-        == 409
-    )
-    confirmation_path = (
-        f"/topics/{topic_id}/sessions/{first_id}/dispatches/{dispatch_id}/confirm"
-    )
-    assert (
-        client.post(
-            confirmation_path,
-            headers={"X-Cheese-Token": first_token},
-            json={"note": "Checked"},
-        ).status_code
-        == 403
-    )
-    response = client.post(
-        confirmation_path,
-        headers=owner_headers,
-        json={"note": "Inspected the destination: write occurred once."},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["outcome"] == "unknown"
+        dispatch_id = dispatch.id
+        assert dispatch.outcome is None
     remote.side_effect = lambda target, *args, **kwargs: (
         {"tasks": [{"status": "running"}]}
         if args[0] == "control"
         else {"device": target["device_id"]}
     )
     assert (
-        client.post(
-            choice_path + "/approve", headers=owner_headers, json=approval
-        ).status_code
+        client.put(choice_path, headers=owner_headers, json=selection).status_code
         == 409
     )
     remote.side_effect = lambda target, *args, **kwargs: (
         {"tasks": []} if args[0] == "control" else {"device": target["device_id"]}
     )
-    hub.is_online = lambda device: device != first_device
-    assert (
-        client.post(
-            choice_path + "/approve", headers=owner_headers, json=approval
-        ).status_code
-        == 409
-    )
+    hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
         f"/topics/{topic_id}/sessions/work-leases", headers=owner_headers
     ).json()["data"]["sessions"]
     assert (
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
-        is False
+        is old_online
     )
     from app.domain.room_task.models import Task, TaskStatus
 
@@ -384,12 +321,67 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
             )
         )
         await db.commit()
-    response = client.post(
-        choice_path + "/approve",
-        headers=owner_headers,
-        json={**approval, "acknowledge_unreachable_work": True},
-    )
-    assert response.status_code == 200, response.text
+    # An agent may change its own work destination, including away from an
+    # offline machine. No human approver or extra acknowledgement is required.
+    from app.domain.agent.models import AgentTurn
+
+    async with client.test_factory() as db:
+        turn = AgentTurn(
+            id=uuid.uuid4(),
+            continuation_id=uuid.uuid4(),
+            topic_id=topic_id,
+            author=actor_handle,
+            started_at=datetime.now(UTC),
+        )
+        db.add(turn)
+        await db.commit()
+    # An admitted synchronous call can finish on its retained old machine
+    # while future tools move to the selected destination.
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    admitted, release = Event(), Event()
+
+    async def finishing_call(target, method, params, **kwargs):
+        if params.get("id") == "in-flight-read":
+            admitted.set()
+            await asyncio.to_thread(release.wait, 10)
+        return {"tasks": []} if method == "control" else {"device": target["device_id"]}
+
+    remote.side_effect = finishing_call
+    with ThreadPoolExecutor(max_workers=1) as requests:
+        pending_call = requests.submit(
+            client.post,
+            f"/topics/{topic_id}/execution/{resource}",
+            headers={"X-Cheese-Token": tokens[0]},
+            json={
+                "method": "invoke",
+                "params": {"id": "in-flight-read", "tool": "Read"},
+            },
+        )
+        try:
+            assert admitted.wait(5)
+            async with client.test_factory() as db:
+                first = await AgentSessionService(db).by_id(first_id)
+                # A legacy recorded lease need not have a generation field.
+                first.work_lease = {
+                    key: value
+                    for key, value in first.work_lease.items()
+                    if key != "generation"
+                }
+                await db.commit()
+            response = client.put(
+                f"/topics/{topic_id}/compute-profile",
+                headers={"X-Cheese-Token": first_token},
+                json={"profile": "device", "device_id": second_device},
+            )
+            assert response.status_code == 200, response.text
+        finally:
+            release.set()
+        finished = pending_call.result(timeout=10)
+    assert finished.status_code == 200, finished.text
+    assert finished.json()["device"] == first_device
     assert response.json()["data"]["session"]["lease"] is None
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",
@@ -405,6 +397,23 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
     assert response.status_code == 200, response.text
     assert response.json()["data"]["target"]["device_id"] == second_device
     current_token = response.json()["data"]["token"]
+    current_target = response.json()["data"]["target"]
+    repeated = client.put(
+        choice_path,
+        headers={"X-Cheese-Token": first_token},
+        json={
+            "choice": {
+                "name": "Renamed but same computer",
+                "profile": "device",
+                "device_id": second_device,
+            }
+        },
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert (
+        repeated.json()["data"]["session"]["lease"]["generation"]
+        == current_target["generation"]
+    )
     assert (
         client.post(
             f"/topics/{topic_id}/execution/{resource}",
@@ -423,7 +432,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
         assert (
             first.execution_request["retained_leases"][0]["device_id"] == first_device
         )
-        assert (await db.get(DispatchRow, dispatch_id)).outcome == "unknown"
+        assert (await db.get(DispatchRow, dispatch_id)).outcome is None
 
     async with client.test_factory() as db:
         await sql_device_service(db).unassign_from_project(
@@ -437,8 +446,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
     )
     assert revoked.status_code == 403
 
-    # A proposal before the first tool preserves the initial selection and
-    # initializes its generation; pending approval is not a partial request.
+    # Choosing before the first tool records the destination without allocating.
     async with client.test_factory() as db:
         fresh = await AgentSessionService(db).ensure(
             topic_id, "first-tool-later", harness="claude-code"
@@ -461,7 +469,8 @@ async def test_first_tool_acquires_the_addressed_sessions_device(client, monkeyp
         fresh = await AgentSessionService(db).by_id(fresh_id)
         assert fresh.execution_request["generation"]
         assert fresh.execution_request["choice"]
-        assert fresh.execution_request["pending"]["choice"]["device_id"] == first_device
+        assert fresh.execution_request["choice"]["device_id"] == first_device
+        assert "pending" not in fresh.execution_request
     fresh_token = bind_resource_token(
         mint_scoped_token(
             project_id=str(project_id),
@@ -690,3 +699,162 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     async with client.test_factory() as db:
         current = await AgentSessionService(db).by_id(session_id)
         assert current.work_lease["resource_id"] == resource_id
+
+
+async def test_agent_cloud_choice_requires_its_own_team_membership(client, monkeypatch):
+    from app.domain.agent import compute_configs
+    from app.domain.project.models import Project
+    from app.domain.team.models import Team, TeamMemberRole
+    from app.domain.team.repositories import TeamRepository
+
+    project = client.post(
+        "/projects", json={"name": "Cloud authority", "owner_handle": "alice"}
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={
+            "project_id": project["id"],
+            "title": "Cloud room",
+            "created_by": "alice",
+        },
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        actor_handle, actor_id = agent.username, agent.id
+        row = await AgentSessionService(db).ensure(
+            topic_id, actor_handle, harness="claude-code"
+        )
+        session_id = row.id
+        topic = await db.get(Topic, topic_id)
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=actor_handle,
+            ),
+            str(topic.resource_id or topic_id),
+            session_id=str(session_id),
+        )
+        team = Team(
+            name="Compute team",
+            intro="",
+            description="",
+            avatar_id=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db.add(team)
+        await db.flush()
+        team_id = team.id
+        (await db.get(Project, project_id)).team_id = team_id
+        await db.commit()
+    monkeypatch.setattr(compute_configs, "cloud_provisionable", lambda settings: True)
+    path = f"/topics/{topic_id}/sessions/{session_id}/work-choice"
+    body = {"choice": {"name": "Cloud", "profile": "cloud"}}
+    headers = {"X-Cheese-Token": token}
+    denied = client.put(path, headers=headers, json=body)
+    assert denied.status_code == 403, denied.text
+    async with client.test_factory() as db:
+        await TeamRepository(db).add_member(team_id, actor_id, TeamMemberRole.MEMBER)
+        await db.commit()
+    selected = client.put(path, headers=headers, json=body)
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["data"]["session"]["choice"]["profile"] == "cloud"
+    assert selected.json()["data"]["session"]["lease"] is None
+    async with client.test_factory() as db:
+        row = await AgentSessionService(db).by_id(session_id)
+        assert row.execution_request["authorized_by"]["via"] == "cheese"
+        assert row.execution_request["authorized_by"]["handle"] == actor_handle
+
+    # Cloud provisioning may already own a VM while work_lease is still empty.
+    # Changing its specification must retire that allocation rather than reuse it.
+    from app.domain.machine.models import MachineStatus
+    from app.domain.machine.repositories import ProjectMachineRepository
+
+    async with client.test_factory() as db:
+        repo = ProjectMachineRepository(db)
+        old_machine = await repo.add(
+            project_id=project_id,
+            topic_id=topic_id,
+            session_id=session_id,
+            machine_id=71,
+            customer_id=7,
+            account_id=9,
+            offering_id=1,
+            hostname="first-cloud",
+            login_user="cheese",
+            cores=2,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.running,
+            ip=None,
+            requested_by=actor_handle,
+        )
+        old_machine_id = old_machine.id
+        await db.commit()
+    changed = client.put(
+        path,
+        headers=headers,
+        json={"choice": {"name": "Larger cloud", "profile": "cloud", "cores": 4}},
+    )
+    assert changed.status_code == 200, changed.text
+    async with client.test_factory() as db:
+        repo = ProjectMachineRepository(db)
+        assert (await repo.get(old_machine_id)).superseded_at is not None
+        pending = await repo.add(
+            project_id=project_id,
+            topic_id=topic_id,
+            session_id=session_id,
+            machine_id=None,
+            customer_id=7,
+            account_id=9,
+            offering_id=1,
+            hostname="pending-cloud",
+            login_user="cheese",
+            cores=4,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.running,
+            ip=None,
+            requested_by=actor_handle,
+        )
+        pending_id = pending.id
+        devices = sql_device_service(db)
+        code = await devices.start("Available work computer")
+        device = await devices.approve(
+            code,
+            owner_user_id=actor_id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        await devices.assign_to_project(
+            device.device_id,
+            project_id,
+            actor_user_id=actor_id,
+        )
+        device_id = device.device_id
+        await db.commit()
+    replacement = {
+        "choice": {
+            "name": "Work computer",
+            "profile": "device",
+            "device_id": device_id,
+        }
+    }
+    blocked = client.put(path, headers=headers, json=replacement)
+    assert blocked.status_code == 409, blocked.text
+    async with client.test_factory() as db:
+        repo = ProjectMachineRepository(db)
+        pending = await repo.get(pending_id)
+        assert pending.superseded_at is None
+        pending.machine_id = 72
+        await db.commit()
+    switched = client.put(path, headers=headers, json=replacement)
+    assert switched.status_code == 200, switched.text
+    async with client.test_factory() as db:
+        repo = ProjectMachineRepository(db)
+        assert (await repo.get(pending_id)).superseded_at is not None
+        row = await AgentSessionService(db).by_id(session_id)
+        assert row.work_lease is None
+        assert row.execution_request["choice"]["device_id"] == device_id

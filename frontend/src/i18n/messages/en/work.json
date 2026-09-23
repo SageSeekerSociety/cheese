@@ -46,7 +46,14 @@
     "next": "Next",
     "back": "Back",
     "create": "Create project",
-    "names": { "moss": "Moss", "spark": "Spark", "milo": "Milo", "bean": "Bean", "nova": "Nova", "cedar": "Cedar" }
+    "names": {
+      "moss": "Moss",
+      "spark": "Spark",
+      "milo": "Milo",
+      "bean": "Bean",
+      "nova": "Nova",
+      "cedar": "Cedar"
+    }
   },
   "allSpaces": "All spaces",
   "awaiting": "{count} waiting for you",
@@ -64,5 +71,19 @@
   "loading": "Looking at your projects…",
   "mySpaces": "Spaces I'm in",
   "quiet": "Nothing lately",
-  "running": "{count} running"
+  "running": "{count} running",
+  "sessionMachine": {
+    "title": "Change work computer",
+    "teammate": "Teammate",
+    "machine": "Work computer",
+    "empty": "No teammate sessions yet",
+    "current": "Current computer: {name}",
+    "retained": "The old computer is kept. Files are not copied to the new computer.",
+    "confirm": "Confirm change",
+    "saved": "Changed. The next operation will use the new computer.",
+    "cloud": "Cloud · Standard configuration",
+    "unavailable": "{name} · Unavailable",
+    "initial": "Initial room configuration",
+    "numberedSession": "{name} (Session {number})"
+  }
 }

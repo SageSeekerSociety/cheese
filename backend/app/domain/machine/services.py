@@ -162,16 +162,22 @@ class MachineService:
         to the team's machines as anyone else on it. What is still required is an
         id to check that membership against.
         """
-        if actor.via != "token" or actor.user_id is None:
+        user_id = actor.user_id
+        if actor.via == "cheese":
+            from app.domain.user.services import user_by_handle
+
+            user = await user_by_handle(self._session, actor.handle)
+            user_id = user.id if user else None
+        elif actor.via != "token":
+            raise AuthenticationRequiredError("Login required to use cloud compute")
+        if user_id is None:
             raise AuthenticationRequiredError("Login required to use cloud compute")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
         team_id = await self._projects.team_for_project(project_id)
         if team_id is not None:
-            if not await team_service(self._session).is_team_member(
-                team_id, actor.user_id
-            ):
+            if not await team_service(self._session).is_team_member(team_id, user_id):
                 raise ForbiddenError("只有团队成员可以使用团队云额度")
         else:
             await MemberService(self._session).require_manager(project_id, actor)
@@ -565,10 +571,9 @@ class MachineService:
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor
     ) -> None:
-        """Detach an approved migration's old VM without deleting files or quota.
+        """Retain the replaced VM and its quota while releasing the session.
 
-        The execution service must drain the session's dispatches first. Pending
-        allocation cannot be detached while its provider outcome is unresolved.
+        Pending allocation stays attached until its provider outcome is known.
         """
         from app.domain.agent_session.models import AgentSession
         from app.domain.topic.services import TopicService
@@ -580,10 +585,10 @@ class MachineService:
             agent_session.topic_id
         )
         await self._repo.lock_topic(topic.id)
-        await self.require_use_authority(topic.project_id, actor)
         machine = await self._repo.get_active_for_session(session_id)
         if machine is None:
             return
+        await self.require_use_authority(topic.project_id, actor)
         if machine.warm_claim_pending or machine.machine_id is None:
             raise ConflictError("cloud allocation is still pending")
         machine.superseded_at = datetime.now(UTC)

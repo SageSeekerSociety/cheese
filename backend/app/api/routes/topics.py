@@ -1435,165 +1435,6 @@ async def request_session_work_choice(
     )
 
 
-class WorkChoiceApproval(BaseModel):
-    proposal_id: uuid.UUID
-    acknowledge_unreachable_work: bool = False
-
-
-@router.post("/{topic_id}/sessions/{session_id}/work-choice/approve")
-async def approve_session_work_choice(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    body: WorkChoiceApproval,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    from app.domain.machine import session_work as work_lease
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    return ok(
-        {
-            "session": await work_lease.approve_choice(
-                db,
-                topic_id=topic_id,
-                session_id=session_id,
-                actor=actor,
-                proposal_id=body.proposal_id,
-                acknowledge_unreachable_work=body.acknowledge_unreachable_work,
-            )
-        }
-    )
-
-
-@router.get("/{topic_id}/sessions/{session_id}/dispatches")
-async def session_dispatches(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    from sqlalchemy import or_, select
-
-    from app.domain.agent.dispatch_log import DispatchRow
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    row = await AgentSessionService(db).by_id(session_id)
-    if row is None or row.topic_id != topic_id:
-        raise NotFoundError("Session not found")
-    rows = await db.scalars(
-        select(DispatchRow)
-        .where(
-            DispatchRow.place_id == topic_id,
-            or_(DispatchRow.session_id == session_id, DispatchRow.session_id.is_(None)),
-            or_(DispatchRow.outcome.is_(None), DispatchRow.outcome == "unknown"),
-        )
-        .order_by(DispatchRow.dispatched_at)
-    )
-    from app.domain.membership.services import MemberService
-
-    can_confirm = False
-    if actor.via == "token" and actor.user_id is not None:
-        try:
-            await MemberService(db).require_manager(topic.project_id, actor)
-        except ForbiddenError:
-            pass
-        else:
-            can_confirm = True
-    return ok(
-        {
-            "can_confirm": can_confirm,
-            "dispatches": [
-                {
-                    "id": str(item.id),
-                    "key": item.key,
-                    "tool": item.tool,
-                    "outcome": item.outcome or "unknown",
-                    "dispatched_at": item.dispatched_at.isoformat(),
-                    "confirmed_at": item.confirmed_at.isoformat()
-                    if item.confirmed_at
-                    else None,
-                }
-                for item in rows
-            ],
-        }
-    )
-
-
-class DispatchConfirmation(BaseModel):
-    note: str = Field(min_length=1, max_length=2000)
-
-
-@router.post("/{topic_id}/sessions/{session_id}/dispatches/{dispatch_id}/confirm")
-async def confirm_session_dispatch(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    dispatch_id: uuid.UUID,
-    body: DispatchConfirmation,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    from sqlalchemy import select
-
-    from app.domain.agent.dispatch_log import DispatchRow
-    from app.domain.agent.models import AgentTurn
-    from app.domain.membership.services import MemberService
-
-    topic = await TopicService(db).lock_for_execution(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    if actor.via != "token" or actor.user_id is None:
-        raise ForbiddenError("请项目管理者登录确认")
-    await MemberService(db).require_manager(topic.project_id, actor)
-    row = await AgentSessionService(db).by_id(session_id)
-    item = await db.scalar(
-        select(DispatchRow).where(DispatchRow.id == dispatch_id).with_for_update()
-    )
-    if (
-        row is None
-        or row.topic_id != topic_id
-        or item is None
-        or item.place_id != topic_id
-        or item.session_id not in (None, session_id)
-    ):
-        raise NotFoundError("Dispatch not found")
-    if item.outcome not in (None, "unknown"):
-        raise ConflictError("这次调用已有确定结果")
-    if await db.scalar(
-        select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
-        .limit(1)
-    ):
-        raise ConflictError("当前轮次仍在运行，请等它结束后再核实")
-    if item.confirmed_at is None:
-        item.confirmed_at = datetime.now(UTC)
-        item.confirmed_by = actor.handle
-        item.confirmation_note = body.note
-    await db.commit()
-    return ok(
-        {
-            "id": str(item.id),
-            "outcome": item.outcome or "unknown",
-            "confirmed_at": item.confirmed_at.isoformat(),
-        }
-    )
-
-
 @router.post("/{topic_id}/sessions/{session_id}/work-lease")
 async def acquire_session_work_lease(
     topic_id: uuid.UUID,
@@ -1657,18 +1498,8 @@ async def set_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     await ProjectMachineRepository(db).lock_topic(topic_id)
-    # 「开跑即锁定」锁的是**界面上那个人**：房间跑起来之后他再换一档，扔掉的是正在
-    # 跑的那条会话和它的工作区，而他从那个下拉框里看不见那边在干什么。
-    #
-    # 正在这个房间里跑的那一轮说的不是那件事。它说的是结论 23 的那一句——「这台机器
-    # 够不着了，我要另一台」——而那句话只可能在房间跑起来之后说出口。按开跑锁死，
-    # 这个工具在生产里一次也调不通，agent 收到的是一句「新建话题可另选算力」，而它
-    # 连新建话题都做不到。**但它换不成**：换成什么由下面那一段答（结论 23），这里
-    # 放它过的只是「说得出口」。
-    #
-    # 认的是**这个房间这一轮的那张令牌**，不是「说话的是个 agent」：项目级 agent
-    # 凭据也是 `via == "cheese"`，而它够得着这个项目里的每一个房间（`app/main.py`
-    # 上那句话），拿它当判据等于任何一张项目凭据都能动别人正跑着的房间。
+    # A signed session selects only its own work destination. Project-wide
+    # credentials cannot name a running session through this room-default API.
     from app.core.sandbox_auth import scoped_token_claims
 
     claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
@@ -1709,7 +1540,7 @@ async def set_topic_compute_profile(
             actor=actor,
             choice=choice,
         )
-        return ok({"session": result, "proposal": result["pending"]})
+        return ok({"session": result})
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")

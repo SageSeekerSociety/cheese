@@ -740,3 +740,31 @@ def test_the_feedback_tool_says_when_to_use_it():
         assert "用户的使用方式" in description
         # 不要打断：这条卡是提案，不是发布。
         assert "中途" in description
+
+
+def test_machine_reports_its_session_choice(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "machine", "device", "--device-id", "workstation"]
+    )
+    monkeypatch.setattr(
+        cli,
+        "_planned_call",
+        lambda *_: {
+            "data": {
+                "session": {
+                    "choice": {
+                        "name": "Workstation",
+                        "profile": "device",
+                        "device_id": "workstation",
+                    }
+                }
+            }
+        },
+    )
+    cli.main()
+    output = capsys.readouterr().out
+    assert "Workstation" in output
+    assert "文件不会自动迁移" in output
+    assert "None" not in output
+    assert "点头" not in output

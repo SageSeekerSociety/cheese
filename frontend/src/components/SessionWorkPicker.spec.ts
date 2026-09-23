@@ -9,12 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({
   getSessionWorkLeases: vi.fn(),
   setSessionWorkChoice: vi.fn(),
-  approveSessionWorkChoice: vi.fn(),
-  getSessionDispatches: vi.fn(),
-  confirmSessionDispatch: vi.fn(),
 }))
 vi.mock('../api', () => api)
-vi.mock('../services/account', async () => ({ currentUserName: (await import('vue')).ref('manager') }))
+import { setLocale } from '../i18n'
 
 import SessionWorkPicker from './SessionWorkPicker.vue'
 
@@ -46,17 +43,16 @@ function session(overrides: Partial<SessionWorkLease> = {}): SessionWorkLease {
     harness: 'test-harness',
     choice: cloud,
     lease: { device_id: 'old-cloud', generation: 1, status: 'ready', online: true },
-    pending: { id: 'proposal-a', choice: device, approver: 'manager', source_generation: 1 },
     ...overrides,
   }
 }
-async function open() {
+async function open(computeProfile = profile) {
   render(SessionWorkPicker, {
-    props: { topicId: 'room-a', profile },
+    props: { topicId: 'room-a', profile: computeProfile },
     global: { plugins: [createVuetify({ components, directives })] },
   })
-  await fireEvent.click(screen.getByRole('button', { name: '会话执行机器' }))
-  await screen.findByText('当前配置：云端')
+  await fireEvent.click(screen.getByRole('button', { name: '更换工作电脑' }))
+  await screen.findByText('当前电脑：云端')
 }
 
 beforeEach(() => {
@@ -86,135 +82,134 @@ beforeEach(() => {
     }
   )
   api.getSessionWorkLeases.mockResolvedValue({ sessions: [session()] })
-  api.getSessionDispatches.mockResolvedValue({ dispatches: [] })
+  setLocale('zh-CN')
 })
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
 
-describe('session work machine approval', () => {
-  it('requires an explicit acknowledgement for an unreachable old machine', async () => {
+async function chooseMachine() {
+  await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+  await fireEvent.click(await screen.findByRole('option', { name: '测试工作站' }))
+}
+
+describe('session work machine selection', () => {
+  it('changes the selected teammate only after explicit confirmation', async () => {
+    api.getSessionWorkLeases.mockResolvedValue({
+      sessions: [session(), session({ id: 'session-b', agent_handle: 'builder' })],
+    })
+    await open()
+    expect(screen.getByRole('button', { name: '确认更换' }).hasAttribute('disabled')).toBe(true)
+    await fireEvent.mouseDown(screen.getByLabelText('队友'))
+    await fireEvent.click(await screen.findByRole('option', { name: 'builder' }))
+    await chooseMachine()
+    expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
+    api.setSessionWorkChoice.mockResolvedValue({
+      session: session({ id: 'session-b', agent_handle: 'builder', choice: device, lease: null }),
+    })
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-b', device))
+    expect(await screen.findByText('当前电脑：测试工作站')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('已更换')
+    expect(api.setSessionWorkChoice).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not offer extra approval or investigation steps when the old machine is offline', async () => {
     api.getSessionWorkLeases.mockResolvedValue({
       sessions: [session({ lease: { ...session().lease!, online: false } })],
     })
     await open()
-    const approve = screen.getByRole('button', { name: '批准变更' })
-    expect(approve.hasAttribute('disabled')).toBe(true)
-    await fireEvent.input(screen.getByRole('checkbox', { name: '我已核实旧机器上的未完成工作，确认换机' }), {
-      target: { checked: true },
-    })
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('checkbox', { name: '我已核实旧机器上的未完成工作，确认换机' }) as HTMLInputElement).checked
-      ).toBe(true)
-    )
-    await waitFor(() => expect(approve.hasAttribute('disabled')).toBe(false))
-    api.approveSessionWorkChoice.mockResolvedValue({ session: session({ pending: null }) })
-    await fireEvent.click(approve)
-    await waitFor(() =>
-      expect(api.approveSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', 'proposal-a', true)
-    )
+    expect(screen.queryByLabelText('队友')).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByText(/批准|待核实/)).toBeNull()
+    await chooseMachine()
+    api.setSessionWorkChoice.mockResolvedValue({ session: session({ choice: device, lease: null }) })
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledTimes(1))
   })
-  it('shows an unknown operation without offering confirmation to a non-manager', async () => {
+
+  it('keeps the current machine and allows retry when changing fails', async () => {
     await open()
-    api.getSessionDispatches.mockResolvedValue({
-      can_confirm: false,
-      dispatches: [
-        { id: 'dispatch-a', key: 'operation-a', tool: 'Bash', outcome: null, dispatched_at: null, confirmed_at: null },
-      ],
-    })
-    await fireEvent.click(screen.getByRole('button', { name: '查看待核实操作' }))
-    expect(await screen.findByText(/Bash · 发送时间未知/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '已核实，保存记录' })).toBeNull()
+    await chooseMachine()
+    api.setSessionWorkChoice.mockRejectedValue(new Error('设备已离线'))
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    expect((await screen.findByText('设备已离线')).getAttribute('role')).toBe('alert')
+    expect(screen.getByText('当前电脑：云端')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '确认更换' }).hasAttribute('disabled')).toBe(false)
   })
-  it('targets the selected teammate session instead of the room default', async () => {
+
+  it('clears an unconfirmed selection when changing teammates', async () => {
     api.getSessionWorkLeases.mockResolvedValue({
-      sessions: [
-        session(),
-        session({ id: 'session-b', agent_handle: 'builder', pending: { ...session().pending!, id: 'proposal-b' } }),
-      ],
+      sessions: [session(), session({ id: 'session-b', agent_handle: 'builder' })],
     })
     await open()
-    await fireEvent.mouseDown(screen.getByLabelText('队友会话'))
-    await fireEvent.click(await screen.findByRole('option', { name: 'builder · session-' }))
+    await chooseMachine()
+    await fireEvent.mouseDown(screen.getByLabelText('队友'))
+    await fireEvent.click(await screen.findByRole('option', { name: 'builder' }))
+    expect(screen.getByRole('button', { name: '确认更换' }).hasAttribute('disabled')).toBe(true)
+    expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
+  })
+
+  it('prevents duplicate changes while the request is in flight', async () => {
+    await open()
+    await chooseMachine()
+    let finish!: (value: { session: SessionWorkLease }) => void
+    api.setSessionWorkChoice.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    expect(screen.getByRole('button', { name: '确认更换' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('工作电脑').hasAttribute('disabled')).toBe(true)
+    finish({ session: session({ choice: device, lease: null }) })
+    expect(await screen.findByText('当前电脑：测试工作站')).toBeTruthy()
+  })
+})
+
+describe('existing machine choices', () => {
+  it('distinguishes same-name sessions by number without exposing runtime names', async () => {
+    api.getSessionWorkLeases.mockResolvedValue({
+      sessions: [session({ harness: 'test-runtime-a' }), session({ id: 'session-b', harness: 'test-runtime-b' })],
+    })
+    await open()
+    await fireEvent.mouseDown(screen.getByLabelText('队友'))
+    expect(await screen.findByRole('option', { name: 'analyst（会话 1）' })).toBeTruthy()
+    expect(screen.queryByText(/test-runtime/)).toBeNull()
+    await fireEvent.click(await screen.findByRole('option', { name: 'analyst（会话 2）' }))
+    await chooseMachine()
     api.setSessionWorkChoice.mockResolvedValue({
-      session: session({
-        id: 'session-b',
-        agent_handle: 'builder',
-        pending: { ...session().pending!, id: 'proposal-b' },
-      }),
+      session: session({ id: 'session-b', harness: 'test-runtime-b', choice: device, lease: null }),
     })
-    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
     await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-b', device))
-    api.approveSessionWorkChoice.mockResolvedValue({ session: session({ id: 'session-b', pending: null }) })
-    await fireEvent.click(screen.getByRole('button', { name: '批准变更' }))
-    await waitFor(() =>
-      expect(api.approveSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-b', 'proposal-b', false)
-    )
   })
-  it('approves the displayed session and exact proposal, then reloads the authoritative choice', async () => {
-    await open()
-    api.approveSessionWorkChoice.mockResolvedValue({ session: session({ choice: device, pending: null, lease: null }) })
-    api.getSessionWorkLeases.mockResolvedValue({ sessions: [session({ choice: device, pending: null, lease: null })] })
-    await fireEvent.click(screen.getByRole('button', { name: '批准变更' }))
-    await waitFor(() =>
-      expect(api.approveSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', 'proposal-a', false)
-    )
-    expect(await screen.findByText('当前配置：测试工作站')).toBeTruthy()
-    expect(screen.getByText('首次执行操作时准备机器')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '批准变更' })).toBeNull()
+
+  it('preserves the project default that selects a team device automatically', async () => {
+    const automatic = { ...device, name: '自动选择团队设备', device_id: null }
+    await open({ ...profile, project_default: automatic })
+    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    await fireEvent.click(await screen.findByRole('option', { name: automatic.name }))
+    expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
+    api.setSessionWorkChoice.mockResolvedValue({ session: session({ choice: automatic, lease: null }) })
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', automatic))
   })
-  it('keeps the current machine visible when a choice becomes a proposal', async () => {
-    await open()
-    api.setSessionWorkChoice.mockResolvedValue({ session: session() })
-    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
-    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', device))
-    expect(screen.getByText('当前配置：云端')).toBeTruthy()
-    expect(screen.getByText('待批准：测试工作站')).toBeTruthy()
-  })
-  it('shows who must approve without offering another user an approval button', async () => {
-    api.getSessionWorkLeases.mockResolvedValue({
-      sessions: [session({ pending: { ...session().pending!, approver: 'owner' } })],
+
+  it('keeps a current custom choice even when it is not in the project presets', async () => {
+    const custom = { ...device, name: '专用工作站', device_id: 'custom-machine' }
+    api.getSessionWorkLeases.mockResolvedValue({ sessions: [session({ choice: custom })] })
+    render(SessionWorkPicker, {
+      props: { topicId: 'room-a', profile },
+      global: { plugins: [createVuetify({ components, directives })] },
     })
-    await open()
-    expect(screen.getByText('批准人：owner')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '批准变更' })).toBeNull()
-  })
-  it('preserves the pending proposal after a rejected approval and records a deliberate unknown-operation confirmation', async () => {
-    await open()
-    api.approveSessionWorkChoice.mockRejectedValue(new Error('仍有结果未知的操作'))
-    await fireEvent.click(screen.getByRole('button', { name: '批准变更' }))
-    expect((await screen.findByText('仍有结果未知的操作')).getAttribute('role')).toBe('alert')
-    expect(screen.getByText('当前配置：云端')).toBeTruthy()
-    api.getSessionDispatches.mockResolvedValue({
-      can_confirm: true,
-      dispatches: [
-        {
-          id: 'dispatch-a',
-          key: 'operation-a',
-          tool: 'Bash',
-          outcome: null,
-          dispatched_at: '2026-09-22T10:00:00Z',
-          confirmed_at: null,
-        },
-      ],
-    })
-    await fireEvent.click(screen.getByRole('button', { name: '查看待核实操作' }))
-    const confirmation = await screen.findByRole('button', { name: '已核实，保存记录' })
-    expect(confirmation.hasAttribute('disabled')).toBe(true)
-    await fireEvent.update(screen.getByLabelText('核实情况'), '已检查旧机器，命令已结束且输出已保存。')
-    api.confirmSessionDispatch.mockResolvedValue({})
-    api.getSessionDispatches.mockResolvedValue({ dispatches: [] })
-    await fireEvent.click(confirmation)
-    await waitFor(() =>
-      expect(api.confirmSessionDispatch).toHaveBeenCalledWith(
-        'room-a',
-        'session-a',
-        'dispatch-a',
-        '已检查旧机器，命令已结束且输出已保存。'
-      )
-    )
-    expect(api.approveSessionWorkChoice).toHaveBeenCalledTimes(1)
+    await fireEvent.click(screen.getByRole('button', { name: '更换工作电脑' }))
+    expect(await screen.findByText('当前电脑：专用工作站')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '确认更换' }).hasAttribute('disabled')).toBe(true)
+    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    expect(await screen.findByRole('option', { name: '专用工作站 · 不可用' })).toBeTruthy()
+    expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
   })
 })

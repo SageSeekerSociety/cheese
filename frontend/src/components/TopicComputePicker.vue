@@ -4,6 +4,7 @@ import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { getTopicComputeProfile, setTopicComputeChoice } from '../api'
+import { t } from '../i18n'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
@@ -94,7 +95,7 @@ watch(
       <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
         <span class="status-dot status-dot--warn" /> 整台机器
       </span>
-      <span v-if="state.locked" class="cp-chip" title="房间初始配置；具体会话可在“会话执行机器”中申请变更">
+      <span v-if="state.locked" class="cp-chip" :title="t('work.sessionMachine.initial')">
         <v-icon size="13">mdi-lock-outline</v-icon> {{ state.choice.name }}
       </span>
       <v-menu v-else v-model="menuOpen" location="top start" :close-on-content-click="false">

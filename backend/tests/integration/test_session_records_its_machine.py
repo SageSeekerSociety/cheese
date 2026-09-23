@@ -201,7 +201,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         )
         await db.commit()
 
-    # Hands change through the authenticated proposal/approval API. The native
+    # Hands change through the authenticated selection API. The native
     # session host and its files stay in place; this is not host-loss recovery.
     async with client.test_factory() as db:
         row = await AgentSessionService(db).ensure(
@@ -223,13 +223,6 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
         },
     )
     assert proposal.status_code == 200, proposal.text
-    approved = client.post(
-        path + "/approve",
-        headers=headers,
-        json={"proposal_id": proposal.json()["data"]["session"]["pending"]["id"]},
-    )
-    assert approved.status_code == 200, approved.text
-
     central._hub.call_executor.return_value = {
         **INSTALLED,
         "pid": 123,
