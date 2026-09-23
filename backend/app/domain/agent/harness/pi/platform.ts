@@ -152,30 +152,108 @@ function registerPlatformTools(pi: any, spec: Manifest) {
 // it needs — the other harness reads one, and a pi room that did not would be
 // the same repository being told different things by two teammates.
 
-const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md"];
+const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
 
 // Big enough for any of these written to be read by a person, small enough that
 // a generated file checked in under one of these names cannot displace the room.
 const CONTEXT_LIMIT = 64 * 1024;
 
-function repositoryContext(cwd: string): string {
-  const parts: string[] = [];
-  const seen = new Set<string>();
-  for (const name of CONTEXT_FILES) {
+// `@relative/path.md` inside one of these files is how a repository splits its
+// rules across files; expanded the way the claude-code harness's include()
+// does, so both harnesses read the same repository the same way. Relative
+// markdown only — anything else stays written as it was, unguessed at.
+const IMPORT_LIMIT = 5;
+
+function expandImports(text: string, base: string, depth: number): string {
+  return text.replace(/(?<![\w`])@([^\s`]+)/g, (whole, ref: string) => {
+    if (depth >= IMPORT_LIMIT || path.isAbsolute(ref) || !ref.endsWith(".md")) {
+      return whole;
+    }
+    const target = path.resolve(base, ref);
     let body: string;
     try {
-      body = fs.readFileSync(path.join(cwd, name), "utf8");
+      body = fs.readFileSync(target, "utf8");
+    } catch {
+      return whole;
+    }
+    return expandImports(body, path.dirname(target), depth + 1);
+  });
+}
+
+// Conventions live at the repo root and in two places below it: .claude/rules,
+// and nested CLAUDE.md files that scope themselves to a subdirectory. Walked
+// with sorted names so an unchanged tree produces the identical string, and
+// stopping at .git on the way. settings.json is deliberately not in this set —
+// it is configuration, some of it executable, and reading it into a prompt
+// would hand whoever can open a PR the room's hook runner.
+function conventionFiles(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name === ".git") continue;
+      const full = path.join(dir, name);
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walk(full);
+      } else if (stat.isFile()) {
+        const relative = path.relative(root, full).split(path.sep);
+        const isRule =
+          relative[0] === ".claude" && relative[1] === "rules" && relative.length >= 3;
+        const isNestedConvention =
+          dir !== root && (name === "CLAUDE.md" || name === "CLAUDE.local.md");
+        if (isRule || isNestedConvention || (dir === root && CONTEXT_FILES.includes(name))) {
+          found.push(full);
+        }
+      }
+    }
+  };
+  walk(root);
+  return found;
+}
+
+function repositoryContext(cwd: string): string {
+  const root = path.resolve(cwd);
+  const parts: string[] = [];
+  const seenBodies = new Set<string>();
+  const seenPaths = new Set<string>();
+  // Root-level names lead in their documented order, then the walk's find.
+  const ordered = [
+    ...CONTEXT_FILES.map((name) => path.join(root, name)),
+    ...conventionFiles(root),
+  ];
+  for (const file of ordered) {
+    const resolved = path.resolve(file);
+    if (seenPaths.has(resolved)) continue;
+    seenPaths.add(resolved);
+    let body: string;
+    try {
+      body = fs.readFileSync(resolved, "utf8");
     } catch {
       continue;
     }
+    if (!body.trim()) continue;
     // The two names are often one file: a repository that keeps CLAUDE.md and
     // symlinks AGENTS.md at it should not have it read into the turn twice.
-    if (!body.trim() || seen.has(body)) continue;
-    seen.add(body);
+    const expanded = expandImports(body, path.dirname(resolved), 0);
+    if (seenBodies.has(expanded)) continue;
+    seenBodies.add(expanded);
+    const name = path.relative(root, resolved);
     const kept =
-      body.length > CONTEXT_LIMIT
-        ? body.slice(0, CONTEXT_LIMIT) + `\n\n[truncated at ${CONTEXT_LIMIT} bytes]`
-        : body;
+      expanded.length > CONTEXT_LIMIT
+        ? expanded.slice(0, CONTEXT_LIMIT) +
+          `\n\n[${name} truncated at ${CONTEXT_LIMIT} bytes]`
+        : expanded;
     parts.push(`## ${name}\n\n${kept}`);
   }
   if (!parts.length) return "";

@@ -41,8 +41,10 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
+    OVERVIEW_DOC_CHAR_BUDGET,
     attachment_prompt_line,
     build_system_prompt,
+    fit_doc_to_budget,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -146,8 +148,8 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
-ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
-HEARTBEAT_SKILLS = ["heartbeat", "chat"]
+ACTIVITY_SKILLS = ["chat", "chat-detail", "activity-digestion", "doc-form"]
+HEARTBEAT_SKILLS = ["heartbeat", "chat", "chat-detail"]
 PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
@@ -409,15 +411,41 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 #: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
 #: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
 #: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
-_PLATFORM_PREFIXES = ("mcp__cheese__", "cheese_")
-_PLATFORM_ALIASES = frozenset({"chat_send"})
+#: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
+#: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
+#: `servers = {"native": ...}`），所以真实名字长这样：
+#: `mcp__native__cheese_feedback_propose`；
+#: `mcp__cheese__` 是这套东西还叫 cheese 时的拼法，仍然认（历史行还躺在库里）。
+#: 只认后者会让整件事**静默失效**：前缀认不出来 → 这一格既不算平台动作、中文标签也
+#: 查不到，于是时间线上原样渲染 `mcp__native__…` 配一个中性点，而它看着完全正常。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
+#: ……但 `mcp__native__` 底下**不都是平台动作**：`invoke` 是这个 harness 搬运读写与
+#: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
+#: 色的点 —— 而那只是读了一个文件。
+_NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
+#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+
+#: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
+#: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
+_MCP_PREFIX = re.compile(r"^mcp__[a-z0-9_]+__")
+
+
+def _short_tool_name(raw_name: str) -> str:
+    """把 MCP 工具名归一成模型看到的那个（`mcp__native__chat_send` → `chat_send`）。"""
+    return _MCP_PREFIX.sub("", raw_name)
 
 
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese tool under any of
     the names a harness publishes it as, or a shell command that invokes the
     machine's `cheese` CLI."""
-    if raw_name.startswith(_PLATFORM_PREFIXES) or raw_name in _PLATFORM_ALIASES:
+    if raw_name in _NOT_A_PLATFORM_TOOL:
+        return False
+    if raw_name.startswith(_PLATFORM_PREFIXES):
+        return True
+    if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))
@@ -2517,7 +2545,7 @@ class ChatService:
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
-            name = event.name.replace("mcp__cheese__", "")
+            name = _short_tool_name(event.name)
             args = event.input or {}
             if state is not None and name in _TASK_TOOLS:
                 # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
@@ -2718,7 +2746,9 @@ class ChatService:
         # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
         usages: list[AgentUsage] = []
         if self._gateway is not None and state.route == "gateway":
-            drained = await self._drain_gateway_usage(state.project_id)
+            drained = await self._drain_gateway_usage(
+                state.project_id, state.topic_id, state.work_id
+            )
             if drained:
                 usages = drained
             else:
@@ -2749,7 +2779,7 @@ class ChatService:
                     route=state.route,
                     turn_id=state.work_id,
                 )
-            else:
+            elif state.route != "gateway" or self._gateway is None:
                 for u in usages:
                     await UsageRepository(session).add(
                         project_id=state.project_id,
@@ -4089,7 +4119,7 @@ class ChatService:
                         continue
                     if not isinstance(event, AgentToolUse):
                         continue  # SessionStart has no historical counterpart
-                    name = event.name.replace("mcp__cheese__", "")
+                    name = _short_tool_name(event.name)
                     if name in _TASK_TOOLS:
                         continue  # task todos are process state, not persisted 现场
                     args = event.input or {}
@@ -4453,27 +4483,9 @@ class ChatService:
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
-            usages = await self._drain_gateway_usage(project_id)
+            usages = await self._drain_gateway_usage(project_id, topic_id, turn_id)
             if not usages:
                 return  # still nothing — the next turn's drain picks it up
-            async with self._sessions() as session:
-                for usage in usages:
-                    await UsageRepository(session).add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        model=usage.model or settings.agent_model,
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                        cost_usd=usage.cost_usd,
-                        route="gateway",
-                        # Same turn as the row tx2 already wrote — this is the
-                        # late half of ONE turn's spend, not a second turn.
-                        turn_id=turn_id,
-                    )
-                    await ComputeGrantRepository(session).consume(
-                        project_id, usage_to_credits(usage, spend_priced=True)
-                    )
-                await session.commit()
             logger.info(
                 "deferred usage drain landed for turn %s (%s)",
                 turn_id,
@@ -4490,7 +4502,7 @@ class ChatService:
         )
 
     async def _drain_gateway_usage(
-        self, project_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> list[AgentUsage] | None:
         """L1: real usage for gateway-routed turns, **one entry per model**.
 
@@ -4498,7 +4510,8 @@ class ChatService:
         Code reports none → usage=0), so read the project's NEW spend from the
         gateway's log instead — an exactly-once daily cumulative delta per
         model (see gateway.drain_new_usage), so late-logged rows surface in a
-        later drain instead of being lost. ``None`` covers both "nothing to
+        later drain instead of being lost. Usage rows, credits and the checkpoint
+        commit together. ``None`` covers both "nothing to
         land yet" and "could not ask the gateway" — the callers treat them the
         same (retry now / settle later) and only differ on whether the
         checkpoint was advanced, which this function already did or did not
@@ -4545,9 +4558,36 @@ class ChatService:
                         project = await ProjectRepository(session).get(project_id)
                         if project is None:
                             return None
+                        # Another backend process can drain during a rollout.
+                        # Lock and refresh the row before comparing checkpoints.
+                        await session.refresh(project, with_for_update=True)
                         s = dict(project.settings or {})
                         if s.get(self._GW_CKPT) != ckpt:
                             return None
+                        usages = [
+                            AgentUsage(
+                                model=row.model,
+                                input_tokens=row.prompt_tokens,
+                                output_tokens=row.completion_tokens,
+                                cost_usd=row.spend_usd,
+                            )
+                            for row in rows
+                        ]
+                        for usage in usages:
+                            await UsageRepository(session).add(
+                                project_id=project_id,
+                                topic_id=topic_id,
+                                model=usage.model or settings.agent_model,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                                cost_usd=usage.cost_usd,
+                                route="gateway",
+                                turn_id=turn_id,
+                            )
+                            await ComputeGrantRepository(session).consume(
+                                project_id,
+                                usage_to_credits(usage, spend_priced=True),
+                            )
                         s[self._GW_CKPT] = next_ckpt
                         project.settings = s
                         await session.commit()
@@ -4555,15 +4595,6 @@ class ChatService:
                 # gateway.drain_new_usage): it is real spend we can only state
                 # as a total. Stamp the default name so it is still visible,
                 # exactly as before the split — do NOT invent a model.
-                usages = [
-                    AgentUsage(
-                        model=row.model,
-                        input_tokens=row.prompt_tokens,
-                        output_tokens=row.completion_tokens,
-                        cost_usd=row.spend_usd,
-                    )
-                    for row in rows
-                ]
                 # None, not []: "no rows" and "gateway unreachable" both mean
                 # there is nothing to land this pass (see the docstring).
                 return usages or None
@@ -5703,7 +5734,16 @@ class ChatService:
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            f"## 项目总览的实况文档\n{overview_doc.strip() or '（暂无）'}"
+            "## 项目总览的实况文档\n"
+            + (
+                fit_doc_to_budget(
+                    overview_doc.strip(),
+                    OVERVIEW_DOC_CHAR_BUDGET,
+                    full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+                )
+                if overview_doc.strip()
+                else "（暂无）"
+            )
         )
         system_prompt = build_system_prompt(
             self._base_prompt,

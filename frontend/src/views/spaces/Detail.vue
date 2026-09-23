@@ -120,6 +120,19 @@
             </v-row>
           </v-container>
         </v-form>
+
+        <!-- 危险区只对创建者可见：后端 delete_space 走的是 allow_admin=False 那道闸，
+             管理员点下去只会拿到 403，摆一颗必然失败的按钮比不摆更糟。 -->
+        <template v-if="isCurrentUserOwner">
+          <v-divider class="my-4" />
+          <div class="edit-space-danger">
+            <h3 class="t-title c-danger">{{ t('spaces.detail.dangerZone') }}</h3>
+            <p class="t-body c-muted mt-2 mb-4">{{ t('spaces.detail.deleteSpaceHint') }}</p>
+            <v-btn color="error" variant="flat" :loading="isDeletingSpace" @click="confirmDeleteSpace">
+              {{ t('spaces.detail.deleteSpace') }}
+            </v-btn>
+          </div>
+        </template>
       </v-card-text>
       <v-card-actions>
         <v-btn color="primary" @click="closeUpdating">{{ t('spaces.detail.cancel') }}</v-btn>
@@ -132,7 +145,7 @@
 <script lang="tsx" setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { onBeforeRouteUpdate, useRoute } from 'vue-router'
+import { onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { storeToRefs } from 'pinia'
@@ -156,6 +169,7 @@ const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Edit
 const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
 
 const route = useRoute()
+const router = useRouter()
 const dialog = useDialog()
 const { t } = useI18n()
 const { setDynamicTitle } = usePageTitle()
@@ -328,6 +342,37 @@ const submitUpdate = handleSubmit(async (data) => {
   }
 })
 
+const isDeletingSpace = ref(false)
+
+const confirmDeleteSpace = async () => {
+  if (!space.value?.id) {
+    return
+  }
+  const confirmed = await dialog
+    .confirm(t('spaces.detail.confirmDeleteSpace', { name: space.value.name ?? '' }), {
+      title: t('spaces.detail.deleteSpace'),
+    })
+    .wait()
+  if (!confirmed) {
+    return
+  }
+
+  isDeletingSpace.value = true
+  try {
+    await SpacesApi.del(space.value.id)
+  } catch (error) {
+    console.error('删除题目板失败:', error)
+    toast.error(t('spaces.detail.deleteSpaceFailed'))
+    isDeletingSpace.value = false
+    return
+  }
+  toast.success(t('spaces.detail.deleteSpaceSuccess'))
+  closeEditProfile()
+  // replace 而不是 push：这一页刚才还在的题目板已经没了，「返回」不该把人送回它。
+  void router.replace({ name: 'HomeSpaces' })
+  isDeletingSpace.value = false
+}
+
 const parseVisibleTaskLimit = () => {
   visibleTaskLimitError.value = ''
   if (visibleLimitMode.value === 'unlimited') {
@@ -431,6 +476,14 @@ const confirmRemoveAdmin = async (userId: number, nickname: string) => {
 </script>
 
 <style scoped lang="scss">
+/* 编辑弹窗底部的危险区：红框红底，一眼看出这里跟上面几栏不是同一类操作 */
+.edit-space-danger {
+  border: 1px solid var(--danger);
+  padding: 16px;
+  background: var(--danger-wash);
+  border-radius: 8px;
+}
+
 .admin-info-container {
   display: flex;
   align-items: center;

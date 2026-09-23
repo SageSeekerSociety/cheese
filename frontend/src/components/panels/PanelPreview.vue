@@ -15,9 +15,9 @@ import {
 } from '../../api'
 import { t } from '../../i18n'
 import { useDocumentBytes } from '../../lib/documentBytes'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
-import { postPreviewSession } from '../../lib/previewSession'
+import { postPreviewSession, roomFileDestination } from '../../lib/previewSession'
 import AttachmentImage from '../AttachmentImage.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
@@ -69,8 +69,14 @@ const previewReadError = ref<string | null>(null)
 let loadedArtifact: string | null = null
 let generation = 0
 
-function openPreviewInNewTab() {
-  if (props.topicId) window.open(`/previews/${encodeURIComponent(props.topicId)}`, '_blank', 'noopener')
+/** 在新标签页打开这一格看着的东西。
+ *
+ *  给了 `path` 就是房间里的某一份文件（自由区的一个页签）——它不跟着当前预览走，
+ *  所以要把它自己的地址带过去；不给就是当前预览，那一条路本来就落在预览域根上。 */
+function openPreviewInNewTab(path?: string | null) {
+  if (!props.topicId) return
+  const query = path ? `?path=${encodeURIComponent(roomFileDestination(path))}` : ''
+  window.open(`/previews/${encodeURIComponent(props.topicId)}${query}`, '_blank', 'noopener')
 }
 
 // 文档类交付物: a report, a deck or a budget is what the room was asked for, and
@@ -215,6 +221,7 @@ async function loadFile(path: string, opts: { silent?: boolean } = {}) {
     previewMime.value = ''
     loadedArtifact = null
     previewFile.value = content
+    if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
   } catch (e) {
     if (current !== generation || props.topicId !== tid) return
     previewFile.value = null
@@ -225,6 +232,44 @@ async function loadFile(path: string, opts: { silent?: boolean } = {}) {
       refreshing.value = false
     }
   }
+}
+
+// 房间里的一份网页：它和「当前预览」走的是同一条路——内容域 + 沙箱 iframe——只是
+// destination 指这一份文件，不指房间当前产出的那一样。内容域按路径服务它，所以页面
+// 里的相对资源（`./style.css`）正好落在文件自己旁边。
+//
+// 网页不由本组件渲染：`readPreviewFile` 拿回来的只有那几行源码，挂上去读者看到的是
+// 标签本身。字节交给 iframe。
+const webMountedVersion = ref<string | null>(null)
+
+async function mountWebPage(
+  tid: string,
+  path: string,
+  content: FileContent,
+  current: number,
+  opts: { silent?: boolean }
+) {
+  // 已经画着这一份、而它没变（一轮收工的重读）：不动它。重新 POST 一次是让 iframe
+  // 整个重新导航，读者在这个页面里的状态会没掉。
+  if (opts.silent && previewUrl.value && webMountedVersion.value === (content.version ?? null)) return
+  let session: Awaited<ReturnType<typeof requestPreviewSession>>
+  try {
+    session = await requestPreviewSession(tid)
+  } catch (e) {
+    // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
+    if (current !== generation || props.topicId !== tid) return
+    previewError.value = e instanceof Error ? e.message : '预览授权失败'
+    return
+  }
+  if (current !== generation || props.topicId !== tid) return
+  previewMime.value = webMimeOf(suffixOf(path))
+  previewUrl.value = session.url
+  webMountedVersion.value = content.version ?? null
+  // Mount the named frame before POSTing: a missing target opens a new tab.
+  loading.value = false
+  await nextTick()
+  if (current !== generation || props.topicId !== tid) return
+  postPreviewSession(session, { target: frameName, path: roomFileDestination(path) })
 }
 
 async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
@@ -386,6 +431,7 @@ watch(
     previewReadError.value = null
     previewNamed.value = false
     loadedArtifact = null
+    webMountedVersion.value = null
     if (props.active) void load()
   }
 )
@@ -394,7 +440,8 @@ watch(
 <template>
   <div ref="panelElement" class="panel-preview">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
-         格没有这些——文件自己的名字和下载在它的文档条上。 -->
+         格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
+         条上（见下面）。 -->
     <div v-if="!path" class="preview-head">
       <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
            想把它发出去，这是唯一要跳出去的一下。 -->
@@ -415,7 +462,7 @@ watch(
           variant="text"
           color="medium-emphasis"
           title="在新标签页打开"
-          @click="openPreviewInNewTab"
+          @click="openPreviewInNewTab()"
         />
         <v-btn
           v-if="fullscreenSupported && previewUrl"
@@ -449,6 +496,27 @@ watch(
         <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
         <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
         <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
+        <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
+             页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
+        <template v-if="path">
+          <v-spacer />
+          <v-btn
+            icon="mdi-open-in-new"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="在新标签页打开"
+            @click="openPreviewInNewTab(path)"
+          />
+          <v-btn
+            icon="mdi-download"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="下载"
+            @click="downloadArtifact"
+          />
+        </template>
       </div>
       <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
       <iframe
@@ -584,8 +652,8 @@ watch(
         </div>
       </Transition>
     </div>
-    <!-- 指定的一张图：iframe 那条路只给当前预览（内容域只认它），这里按路径取字节，
-         和聊天里的图是同一个组件。 -->
+    <!-- 指定的一张图：图片不在 iframe 那条路上（那一条是给网页和跑着的应用的），
+         这里按路径取字节，和聊天里的图是同一个组件。 -->
     <div v-else-if="path && previewFile && isImageArtifact" class="file-image">
       <AttachmentImage :topic-id="topicId" :path="path" />
     </div>
@@ -593,13 +661,14 @@ watch(
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>这个文件不是文本</div>
       <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
+      <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
+           一句话在这一格同样成立——它带着文件自己的地址过去。 -->
       <v-btn
-        v-if="!path"
         class="mt-3"
         size="small"
         variant="tonal"
         prepend-icon="mdi-open-in-new"
-        @click="openPreviewInNewTab"
+        @click="openPreviewInNewTab(path)"
       >
         在新窗口打开
       </v-btn>

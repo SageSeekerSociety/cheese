@@ -52,17 +52,7 @@
 
             <!-- 功能选项行 -->
             <div class="mb-6">
-              <div class="d-flex justify-space-between align-center">
-                <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
-                  <template #label>
-                    <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                      {{ t('account.iAgreeToThe') }}
-                      <a href="#" class="text-primary text-decoration-none ml-1">{{ t('account.termsOfService') }}</a>
-                      {{ t('account.and') }}
-                      <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
-                    </span>
-                  </template>
-                </v-checkbox>
+              <div class="d-flex justify-end align-center">
                 <v-btn variant="text" color="primary" to="recover/password" size="small" style="text-transform: none">
                   {{ t('account.forgotPassword') }}
                 </v-btn>
@@ -154,6 +144,14 @@
               </v-btn>
             </div>
           </div>
+
+          <!-- 登录不建号（建号都在注册页和第三方首次建号页，那两处各有明确的
+               同意），所以这里是告知，不是复选框（#1486）。放在所有登录方式
+               下面，对哪一种都成立。 -->
+          <p class="text-body-2 mt-8" style="color: var(--muted)">
+            {{ t('account.signInMeansYouAgreeTo') }}
+            <LegalLinks />
+          </p>
         </div>
       </div>
     </v-fade-transition>
@@ -169,28 +167,20 @@ import { toast } from 'vuetify-sonner'
 import { startAuthentication } from '@simplewebauthn/browser'
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser'
 import { toTypedSchema } from '@vee-validate/zod'
-import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import LegalLinks from '@/components/account/LegalLinks.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
+import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const router = useRouter()
 const route = useRoute()
-
-// Where to land after login. Honour a ?redirect=… (e.g. the device-approval page
-// sends the human here and wants them back), but only an internal path — never an
-// absolute/external URL — so login can't be used as an open redirect.
-function postLoginTarget(): string {
-  const r = route.query.redirect
-  const path = Array.isArray(r) ? r[0] : r
-  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//') ? path : '/'
-}
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: computed(() =>
@@ -198,9 +188,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       z.object({
         username: z.string().min(4).max(30),
         password: z.string().min(8),
-        agree: z.boolean().refine((v) => v, {
-          message: t('account.pleaseAcceptTheTermsOfServiceAnd'),
-        }),
       })
     )
   ),
@@ -208,7 +195,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
 
 const [username, usernameProps] = defineField('username', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
-const [agree, agreeProps] = defineField('agree', vuetifyConfig)
 
 const errorMessage = ref('')
 const showPassword = ref(false)
@@ -224,69 +210,17 @@ if (route.query.username) {
 
 const login = handleSubmit(async (value) => {
   try {
-    // 1. 首先检查用户支持的认证方法
-    const authMethodsResponse = await UserApi.getAuthMethods(value.username)
-    const authMethods = authMethodsResponse.data
-
-    if (authMethods.supports_srp) {
-      // 使用 SRP 流程
-      // 1. 生成客户端临时值对
-      const clientEphemeral = srp.generateEphemeral()
-
-      // 2. 发送用户名和客户端公开临时值到服务器
-      const srpInitResponse = await UserApi.srpInit({
-        username: value.username,
-        clientPublicEphemeral: clientEphemeral.public,
+    const { data } = await UserApi.login(value)
+    if (data.requires2FA) {
+      router.push({
+        name: 'Verify2FA',
+        query: { token: data.tempToken, redirect: route.query.redirect },
       })
-      const { salt, serverPublicEphemeral } = srpInitResponse.data
-
-      // 3. 使用服务器返回的盐值和临时值生成会话密钥和证明
-      const privateKey = srp.derivePrivateKey(salt, value.username, value.password)
-      const clientSession = srp.deriveSession(
-        clientEphemeral.secret,
-        serverPublicEphemeral,
-        salt,
-        value.username,
-        privateKey
-      )
-
-      // 4. 发送客户端证明到服务器
-      const srpVerifyResponse = await UserApi.srpVerify({
-        username: value.username,
-        clientPublicEphemeral: clientEphemeral.public,
-        clientProof: clientSession.proof,
-      })
-      const { serverProof, accessToken, requires2FA, tempToken, user } = srpVerifyResponse.data
-
-      // 5. 验证服务器证明
-      srp.verifySession(clientEphemeral.public, clientSession, serverProof)
-
-      // 处理登录结果
-      if (requires2FA) {
-        router.push({
-          name: 'Verify2FA',
-          query: { token: tempToken },
-        })
-        return
-      }
-
-      AccountService.login(accessToken!, user!)
-      toast.success(t('account.signedIn'))
-      router.replace(postLoginTarget())
-    } else {
-      // 使用传统登录流程
-      const { data } = await UserApi.login(value)
-      if (data.requires2FA) {
-        router.push({
-          name: 'Verify2FA',
-          query: { token: data.tempToken },
-        })
-        return
-      }
-      AccountService.login(data.accessToken!, data.user!)
-      toast.success(t('account.signedIn'))
-      router.replace(postLoginTarget())
+      return
     }
+    AccountService.login(data.accessToken!, data.user!)
+    toast.success(t('account.signedIn'))
+    router.replace(postLoginTarget(route.query))
   } catch (e) {
     console.error('登录失败:', e)
     toast.error(requestErrorMessage(e, t('account.signinFailedPleaseTryAgain')))
@@ -315,7 +249,7 @@ const handlePasskeyLogin = async () => {
     // 4. 处理登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signedIn'))
-    router.replace('/')
+    router.replace(postLoginTarget(route.query))
   } catch (error: any) {
     console.error('通行密钥登录失败:', error)
 
@@ -350,6 +284,7 @@ const handleOAuthLogin = async (providerId: string) => {
 
     // 将 state 存储到 localStorage，用于后续验证
     localStorage.setItem('oauth_state', state)
+    stashOAuthRedirect(postLoginTarget(route.query))
 
     // 跳转到 OAuth 登录页面
     UserApi.redirectToOAuthLogin(providerId, state)
@@ -374,6 +309,7 @@ const getProviderIcon = (providerId: string) => {
 }
 
 onMounted(() => {
+  forgetOAuthRedirect()
   fetchOAuthProviders()
 })
 </script>

@@ -111,10 +111,21 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/network/api/users'
+import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
 const router = useRouter()
+
 const route = useRoute()
+
+// 密码登录把来路放在 ?redirect= 里带过来；OAuth 登录开了 2FA 时是后端直接
+// 跳到这里，URL 上没有来路，用出站前存下的那一个。
+function afterSignIn(): string {
+  return route.query.redirect !== undefined ? postLoginTarget(route.query) : takeOAuthRedirect()
+}
+
+// 退回登录页时，来路跟着走。
+const backToSignIn = () => ({ name: 'SignIn', query: { redirect: route.query.redirect } })
 
 const codeType = ref<'totp' | 'backup'>('totp')
 const totpCode = ref('')
@@ -124,6 +135,8 @@ const errorMessage = ref('')
 const showBackupCodeDialog = ref(false)
 
 const handleVerify = async () => {
+  // 填满最后一位就自动提交，再按回车会带着同一张一次性票再交一次。
+  if (loading.value) return
   const code = codeType.value === 'totp' ? totpCode.value : backupCode.value
 
   if (!validateCode(code)) {
@@ -133,7 +146,7 @@ const handleVerify = async () => {
 
   const token = route.query.token as string
   if (!token) {
-    router.replace({ name: 'SignIn' })
+    router.replace(backToSignIn())
     return
   }
 
@@ -154,7 +167,7 @@ const handleVerify = async () => {
     if (data.usedBackupCode) {
       showBackupCodeDialog.value = true
     } else {
-      router.replace('/')
+      router.replace(afterSignIn())
     }
   } catch (error: any) {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
@@ -167,7 +180,7 @@ const handleVerify = async () => {
     if (detail.reason === 'invalid_code' && detail.tempToken) {
       // 换上新票继续留在本页。旧票已经作废，不换的话下一次必然撞上
       // “验证会话已失效”，看起来像是系统坏了。
-      router.replace({ name: 'Verify2FA', query: { token: detail.tempToken } })
+      router.replace({ name: 'Verify2FA', query: { ...route.query, token: detail.tempToken } })
       errorMessage.value =
         typeof detail.attemptsRemaining === 'number'
           ? `验证码不正确，还可以再试 ${detail.attemptsRemaining} 次`
@@ -181,7 +194,7 @@ const handleVerify = async () => {
     } else {
       toast.error('验证会话已失效，请重新登录')
     }
-    router.replace({ name: 'SignIn' })
+    router.replace(backToSignIn())
   } finally {
     loading.value = false
   }
@@ -222,12 +235,12 @@ const handleGoToSecurity = () => {
 
 const handleLater = () => {
   showBackupCodeDialog.value = false
-  router.replace('/')
+  router.replace(afterSignIn())
 }
 
 onMounted(() => {
   if (!route.query.token) {
-    router.replace({ name: 'SignIn' })
+    router.replace(backToSignIn())
   }
 })
 </script>

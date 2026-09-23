@@ -2001,6 +2001,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    sub.add_parser(
+        "sync-agents",
+        help="把项目 AI 队友写成本会话的分身定义(钩子自动调,一般不用手跑)",
+        description=(
+            "从项目 agents 接口读出活跃 AI 队友,在 $CLAUDE_CONFIG_DIR/agents/ 下"
+            "给每个队友写一份 mate-<handle>.md(名字、一句话描述、model=队友绑的模型),"
+            "退休队友对应的 mate-*.md 一并清掉。写在 SessionStart/UserPromptSubmit"
+            " 钩子上自动跑;它只是发现层,任何失败都不打断会话(恒退出 0)。"
+        ),
+    )
+
     psv = sub.add_parser(
         "serve",
         help="把这台机器上跑起来的应用设为当前预览(先起服务,再报端口)",
@@ -2153,6 +2164,68 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return p
+
+
+def _sync_agents() -> None:
+    """把项目的活跃 AI 队友写成本会话的 Claude Code 分身定义文件。
+
+    挂在 SessionStart / UserPromptSubmit 钩子上跑：主 agent 用 Agent 工具按名
+    起队友分身（模型=队友绑的那一个）靠的就是这批文件。它只是发现层 —— 真正
+    的闸在准入（指定了范围外的模型会被拒绝并列出可选）—— 所以任何失败都不
+    许打断会话：`_call` 自己打印原因，这里恒退出 0。
+    """
+    try:
+        _sync_agents_core()
+    except SystemExit:
+        pass  # `_call` 已经说过为什么了
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cheese] sync-agents 跳过: {exc}", file=sys.stderr)
+
+
+def _sync_agents_core() -> None:
+    if not PROJECT:
+        return
+    res = _call(
+        "GET", f"/projects/{PROJECT}/agents", tolerate=(401, 403, 404), timeout=8
+    )
+    if res.get("ok") is False:
+        return
+    items = (res.get("data") or {}).get("data") or []
+    agents_dir = (
+        Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "agents"
+    )
+    wanted: dict[str, str] = {}
+    for item in items:
+        if not item.get("is_active", True):
+            continue
+        handle = item.get("handle") or ""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", handle):
+            continue
+        conf = item.get("configuration") or {}
+        model = conf.get("model") or ""
+        display = item.get("display_name") or handle
+        # description 就是主 agent 在 Agent 工具的可用清单里读到的那一行 ——
+        # 发现队友、知道它跑哪个模型，全在这一行里,所以要短。
+        desc = f"{display}（模型 {model or '继承主对话'}）"
+        if item.get("type_name"):
+            desc += f" · {item['type_name']}"
+        content = (
+            "---\n"
+            f"name: {handle}\n"
+            f"description: {json.dumps(desc, ensure_ascii=False)}\n"
+            f"model: {model or 'inherit'}\n"
+            "---\n\n" + (conf.get("body") or "").strip() + "\n"
+        )
+        wanted[f"mate-{handle}.md"] = content
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in wanted.items():
+        path = agents_dir / name
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
+            path.write_text(content, encoding="utf-8")
+    # 只收自己写出去的那批（前缀是记号），别人放的 agent 文件一个不动。
+    for stale in agents_dir.glob("mate-*.md"):
+        if stale.name not in wanted:
+            stale.unlink()
 
 
 def main() -> None:
@@ -2493,6 +2566,8 @@ def main() -> None:
     elif a.cmd == "status":
         d = _planned_call("cheese_status", a).get("data") or {}
         print(_format_status(d))
+    elif a.cmd == "sync-agents":
+        _sync_agents()
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if not (1 <= a.port <= 65535):

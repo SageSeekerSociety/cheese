@@ -13,19 +13,6 @@ name: Deploy Scripts Test
 # refused before it starts); the pool is separate capacity from the dev box's
 # single deploy slot, so it never queues behind a deploy. Under a minute.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'deploy/**'
-      - '.github/workflows/deploy-scripts-test.yml'
-      - '.github/workflows/deploy-dev.yml'
-      - '.github/workflows/deploy-drift.yml'
-      - '.github/workflows/build.yml'
-      - '.github/scripts/plan-image-builds.sh'
-      - '.github/scripts/ensure-apt.sh'
-      - '.github/scripts/test-plan-image-builds.sh'
-      - 'backend/scripts/gateway_supply_probe.py'
-      - 'backend/scripts/test_gateway_supply_probe.py'
   workflow_call:
 permissions:
   contents: read
@@ -76,6 +63,7 @@ jobs:
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
           python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/tests/test_front_door_tls.py
           python3 deploy/llm-tunnel/verify-sites.py
 
       - name: Gateway release and image planning

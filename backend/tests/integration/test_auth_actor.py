@@ -10,7 +10,7 @@ from tests.integration.conftest import session_token
 
 def _login(client, handle: str) -> str:
     # The cheesex Phase-0 handle-login endpoint (POST /api/users/login) was retired
-    # in the fusion merge (unify P3: auth unified to main's SRP login). The actor
+    # in the fusion merge (unify P3: auth unified to main's login). The actor
     # here is identified purely by the token's ``handle`` claim, so mint a session
     # token directly to exercise the (still-present) token-actor resolution.
     return session_token(handle)

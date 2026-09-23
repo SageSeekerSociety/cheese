@@ -14,6 +14,7 @@
     "backend/**",
     "frontend/**",
     "e2e/**",
+    ".github/scripts/ci-test-evidence.py",
     ".github/workflows/e2e.yml"
   ],
   "cli": [
@@ -36,6 +37,8 @@
     ".github/workflows/deploy-drift.yml",
     ".github/workflows/deploy-scripts-test.yml",
     ".github/workflows/deploy-dev.yml",
+    ".github/workflows/deploy.yml",
+    ".github/workflows/deploy-prod.yml",
     ".github/workflows/build.yml",
     ".github/scripts/plan-image-builds.sh",
     ".github/scripts/test-plan-image-builds.sh"
@@ -49,6 +52,7 @@
     ".github/workflows/harness-contract.yml"
   ],
   "mcp": [
+    "scripts/remote_execution/package-lock.json",
     "scripts/remote_execution/mcp_contract.py",
     "scripts/remote_execution/package.json",
     "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",

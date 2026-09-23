@@ -314,14 +314,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
-import * as srp from 'secure-remote-password/client'
 
 import { REGEX_PASSWORD } from '@/utils/form'
 import { withSudo } from '@/utils/sudo'
 
 import { UserApi } from '@/network/api/users'
 import { useDialog } from '@/plugins/dialog'
-import { currentUserId, currentUserName } from '@/services/account'
+import { currentUserId } from '@/services/account'
 import { useSudoStore } from '@/stores/sudo'
 
 const router = useRouter()
@@ -750,16 +749,10 @@ const handleChangePassword = async () => {
 const submitNewPassword = async (newPwd: string) => {
   await withSudo(
     async (sudoTicket) => {
-      if (!currentUserId.value || !currentUserName.value) return
-
-      // 生成新的 SRP 盐值和验证器
-      const srpSalt = srp.generateSalt()
-      const privateKey = srp.derivePrivateKey(srpSalt, currentUserName.value, newPwd)
-      const srpVerifier = srp.deriveVerifier(privateKey)
+      if (!currentUserId.value) return
 
       await UserApi.changePassword(currentUserId.value, {
-        srpSalt,
-        srpVerifier,
+        password: newPwd,
         sudoTicket,
       })
 

@@ -359,7 +359,7 @@ export default defineConfig({
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
       // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
-      // (e.g. SRP login GET /users/auth/methods/:username): reach the backend directly.
+      // (e.g. GET /users/auth/methods/:username): reach the backend directly.
       '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
     },
   },

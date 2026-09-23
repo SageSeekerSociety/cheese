@@ -101,3 +101,19 @@ def test_hooks_settings_deny_unreachable_prompt_ui_and_allow_webfetch():
     denied = hooks_settings()["permissions"]["deny"]
     assert "AskUserQuestion" in denied
     assert "WebFetch" not in denied
+
+
+def test_hooks_settings_sync_teammate_definitions_on_start_and_prompt():
+    """发现层：会话启动和每个提示都刷新一次队友分身定义文件 —— 主 agent 在
+    Agent 工具的可用清单里读到可指定谁（模型范围 = 项目 AI 队友，闸在准入）。"""
+    hooks = hooks_settings()["hooks"]
+    for event in ("SessionStart", "UserPromptSubmit"):
+        commands = [
+            hook["command"]
+            for group in hooks[event]
+            for hook in group["hooks"]
+            if hook["type"] == "command"
+        ]
+        assert "cheese sync-agents" in commands
+    # 转发器仍然排在最前 —— 感知一个不能少。
+    assert hooks["SessionStart"][0]["hooks"][0]["command"] == "cheese-hook"

@@ -142,6 +142,7 @@ class SudoPurpose(StrEnum):
     PASSKEY_ADD = "passkey:add"
     PASSKEY_DELETE = "passkey:delete"
     PASSWORD_CHANGE = "password:change"
+    OAUTH_UNBIND = "oauth:unbind"
 
 
 class MintedSudoTicket(NamedTuple):

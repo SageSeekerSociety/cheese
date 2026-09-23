@@ -59,6 +59,15 @@ const sourceMenu = ref(false)
 const overviewDiffs = ref<Record<string, FileDiff[]>>({})
 const overviewErrors = ref<Record<string, string>>({})
 const requestedPath = ref<string | null>(null)
+// 房间改动这一页上，哪些任务的文件清单铺开了。装的是「铺开的」，所以默认空集合
+// 就是默认全收起——三十个任务各铺一屏文件，验收的人要找的那个任务反而找不着。
+const expandedTasks = ref(new Set<string>())
+function toggleTaskFiles(taskId: string) {
+  const next = new Set(expandedTasks.value)
+  if (next.has(taskId)) next.delete(taskId)
+  else next.add(taskId)
+  expandedTasks.value = next
+}
 let sourceEpoch = 0
 let fileRequest = 0
 let taskRequest = 0
@@ -76,24 +85,26 @@ const fileSource = computed<FileSource>(() =>
   selectedTask.value && currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
 )
 
-async function loadOverview() {
+async function loadOverview(openOnly = false) {
   const room = props.topicId
   const project = props.projectId
   const epoch = sourceEpoch
   if (!room || !project || !overview.value) return
   await Promise.all(
-    taskOptions.value.map(async (task) => {
-      try {
-        const result = await getGitDiff(project, room, task.id)
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
-        delete overviewErrors.value[task.id]
-      } catch (error) {
-        if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
-        delete overviewDiffs.value[task.id]
-      }
-    })
+    taskOptions.value
+      .filter((task) => !openOnly || task.status === 'open')
+      .map(async (task) => {
+        try {
+          const result = await getGitDiff(project, room, task.id)
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
+          delete overviewErrors.value[task.id]
+        } catch (error) {
+          if (props.topicId !== room || sourceEpoch !== epoch) return
+          overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
+          delete overviewDiffs.value[task.id]
+        }
+      })
   )
 }
 
@@ -673,7 +684,9 @@ watch(
       // Commits and the diff only. The listing changes when a turn writes
       // files, which the turn-boundary tick already covers — putting it on the
       // timer would be a third request every 20 seconds buying nothing.
-      if (overview.value) void loadOverview()
+      // Closed tasks remain visible from the full load; polling their PR diffs
+      // every 20 seconds spends the forge quota on completed work.
+      if (overview.value) void loadOverview(true)
       else void loadGit({ silent: true })
     }, REFRESH_MS)
   },
@@ -736,6 +749,7 @@ watch(
     tasksLoaded.value = false
     overviewDiffs.value = {}
     overviewErrors.value = {}
+    expandedTasks.value = new Set()
     requestedPath.value = null
     selectedTask.value = props.taskId ?? null
     overview.value = !props.taskId
@@ -949,28 +963,52 @@ defineExpose({ openFile })
       <p v-if="!tasksLoaded && !taskLoadError" class="source-note">正在加载任务</p>
       <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">暂无任务改动</p>
       <article v-for="task in taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
-        <button type="button" class="task-change-heading" @click="navigateSource(task.id, requestedPath ?? undefined)">
-          <span class="t-title">{{ task.title }}</span>
-          <span class="source-status">{{ task.presentation.display_status }}</span>
-          <span v-if="overviewDiffs[task.id]" class="task-file-count">{{ overviewDiffs[task.id].length }} 个文件</span>
-          <v-icon size="18">mdi-chevron-right</v-icon>
-        </button>
+        <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
+             那个箭头才在当前页展开它自己的改动清单。 -->
+        <div class="task-change-head">
+          <button
+            type="button"
+            class="task-change-heading"
+            @click="navigateSource(task.id, requestedPath ?? undefined)"
+          >
+            <span class="t-title">{{ task.title }}</span>
+            <span class="source-status">{{ task.presentation.display_status }}</span>
+            <span v-if="overviewDiffs[task.id]" class="task-file-count"
+              >{{ overviewDiffs[task.id].length }} 个文件</span
+            >
+          </button>
+          <button
+            type="button"
+            class="task-change-toggle"
+            :aria-expanded="expandedTasks.has(task.id)"
+            :aria-controls="`task-files-${task.id}`"
+            :title="expandedTasks.has(task.id) ? '收起改动文件' : '展开改动文件'"
+            :aria-label="`${expandedTasks.has(task.id) ? '收起' : '展开'}「${task.title}」的改动文件`"
+            @click="toggleTaskFiles(task.id)"
+          >
+            <v-icon size="18">{{ expandedTasks.has(task.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+          </button>
+        </div>
+        <!-- 改动没加载出来是这一行自己的错，折叠着也得看得见——否则这一行静默地少了
+             一句话，读者只会以为它没有改动。 -->
         <p v-if="overviewErrors[task.id]" class="source-note" role="alert">{{ overviewErrors[task.id] }}</p>
-        <p v-else-if="!overviewDiffs[task.id]" class="source-note">正在加载改动</p>
-        <p v-else-if="!overviewDiffs[task.id].length" class="source-note">暂无改动</p>
-        <button
-          v-for="file in overviewDiffs[task.id] ?? []"
-          :key="file.path"
-          type="button"
-          class="task-change-file"
-          @click="openFile(file.path, task.id)"
-        >
-          <v-icon size="18">mdi-file-document-outline</v-icon>
-          <span class="task-file-path">{{ file.path }}</span>
-          <span v-if="file.added" class="file-mark file-mark--add">+{{ file.added }}</span>
-          <span v-if="file.removed" class="file-mark file-mark--del">−{{ file.removed }}</span>
-          <v-icon size="18">mdi-chevron-right</v-icon>
-        </button>
+        <div v-if="expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
+          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">正在加载改动</p>
+          <p v-else-if="overviewDiffs[task.id]?.length === 0" class="source-note">暂无改动</p>
+          <button
+            v-for="file in overviewDiffs[task.id] ?? []"
+            :key="file.path"
+            type="button"
+            class="task-change-file"
+            @click="openFile(file.path, task.id)"
+          >
+            <v-icon size="18">mdi-file-document-outline</v-icon>
+            <span class="task-file-path">{{ file.path }}</span>
+            <span v-if="file.added" class="file-mark file-mark--add">+{{ file.added }}</span>
+            <span v-if="file.removed" class="file-mark file-mark--del">−{{ file.removed }}</span>
+            <v-icon size="18">mdi-chevron-right</v-icon>
+          </button>
+        </div>
       </article>
       <button type="button" class="task-change-heading project-code" @click="navigateSource(null)">
         <span class="t-title">项目当前代码</span>
@@ -1239,8 +1277,32 @@ defineExpose({ openFile })
   color: var(--text);
   font-size: 13px;
 }
+.task-change-head {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
 .task-change-heading {
+  flex: 1 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
+}
+/* 箭头是这一行上唯一「就地展开」的控件，所以它得看得出是自己的一个按钮：和标题
+   之间一条竖线，悬停也只罩住自己那一格。 */
+.task-change-toggle {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.task-change-toggle:hover {
+  background: var(--fill);
+  color: var(--ink);
 }
 .task-change-file {
   border-top: 1px solid var(--line);
