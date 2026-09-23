@@ -8,6 +8,7 @@ import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
 import { carryLoginRedirect } from './loginRedirect'
+import LegalRoutes from './legal'
 import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
@@ -27,6 +28,7 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'work.joinLink.joinTitle', isFullPage: true },
   },
   AccountRoutes,
+  ...LegalRoutes,
   HomeRoutes,
   UserRoutes,
   ProjectsRoutes,

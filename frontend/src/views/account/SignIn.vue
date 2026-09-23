@@ -52,17 +52,7 @@
 
             <!-- 功能选项行 -->
             <div class="mb-6">
-              <div class="d-flex justify-space-between align-center">
-                <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
-                  <template #label>
-                    <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                      {{ t('account.iAgreeToThe') }}
-                      <a href="#" class="text-primary text-decoration-none ml-1">{{ t('account.termsOfService') }}</a>
-                      {{ t('account.and') }}
-                      <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
-                    </span>
-                  </template>
-                </v-checkbox>
+              <div class="d-flex justify-end align-center">
                 <v-btn variant="text" color="primary" to="recover/password" size="small" style="text-transform: none">
                   {{ t('account.forgotPassword') }}
                 </v-btn>
@@ -154,6 +144,14 @@
               </v-btn>
             </div>
           </div>
+
+          <!-- 登录不建号（建号都在注册页和第三方首次建号页，那两处各有明确的
+               同意），所以这里是告知，不是复选框（#1486）。放在所有登录方式
+               下面，对哪一种都成立。 -->
+          <p class="text-body-2 mt-8" style="color: var(--muted)">
+            {{ t('account.signInMeansYouAgreeTo') }}
+            <LegalLinks />
+          </p>
         </div>
       </div>
     </v-fade-transition>
@@ -174,6 +172,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import LegalLinks from '@/components/account/LegalLinks.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -189,9 +188,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       z.object({
         username: z.string().min(4).max(30),
         password: z.string().min(8),
-        agree: z.boolean().refine((v) => v, {
-          message: t('account.pleaseAcceptTheTermsOfServiceAnd'),
-        }),
       })
     )
   ),
@@ -199,7 +195,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
 
 const [username, usernameProps] = defineField('username', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
-const [agree, agreeProps] = defineField('agree', vuetifyConfig)
 
 const errorMessage = ref('')
 const showPassword = ref(false)

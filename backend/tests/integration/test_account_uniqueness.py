@@ -25,6 +25,7 @@ from app.domain.passkey import services as passkey_services
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.user.models import User
+from tests.support.consent import OAUTH_CONSENT_FORM
 
 pytestmark = pytest.mark.anyio
 
@@ -96,6 +97,7 @@ def _oauth_create(client, *, provider_uid: str, username: str, nickname="Prov"):
     resp = client.post(
         "/users/oauth/create",
         data={
+            **OAUTH_CONSENT_FORM,
             "stateToken": token,
             "username": username,
             "nickname": nickname,

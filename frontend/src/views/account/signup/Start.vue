@@ -132,16 +132,7 @@
           />
 
           <div class="d-flex justify-space-between align-center mb-6">
-            <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
-              <template #label>
-                <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
-                  {{ t('account.iAgreeToThe') }}
-                  <a href="#" class="text-primary text-decoration-none">{{ t('account.termsOfService') }}</a>
-                  {{ t('account.and') }}
-                  <a href="#" class="text-primary text-decoration-none">{{ t('account.privacyPolicy') }}</a>
-                </span>
-              </template>
-            </v-checkbox>
+            <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" />
             <v-btn variant="text" color="primary" to="/account/signin" size="small" style="text-transform: none">
               {{ t('account.iHaveAnAccount') }}
             </v-btn>
@@ -188,6 +179,7 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
+import LegalConsent from '@/components/account/LegalConsent.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -232,7 +224,6 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
             }),
           email: z.string().email(),
           inviteCode: z.string().optional(),
-          agree: z.boolean().refine((v) => v, { message: t('account.pleaseAcceptTheTermsOfServiceAnd') }),
         })
         .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
           if (password !== confirmPassword) {
@@ -260,7 +251,7 @@ const [password, passwordProps] = defineField('password', vuetifyConfig)
 const [confirmPassword, confirmPasswordProps] = defineField('confirmPassword', vuetifyConfig)
 const [email, emailProps] = defineField('email', vuetifyConfig)
 const [inviteCode, inviteCodeProps] = defineField('inviteCode', vuetifyConfig)
-const [agree, agreeProps] = defineField('agree', vuetifyConfig)
+const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 
 const signupStore = useSignupStore()
 const router = useRouter()
@@ -296,10 +287,13 @@ onMounted(async () => {
 })
 
 const submit = handleSubmit(async (value) => {
+  const consent = await consentRef.value?.confirm()
+  if (!consent) return
   try {
     await signupStore.startSignup({
       ...value,
       inviteCode: requireInviteCode.value ? value.inviteCode?.trim() : undefined,
+      consent,
     })
 
     router.push('/account/signup/verify-email')

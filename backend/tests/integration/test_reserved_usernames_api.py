@@ -11,6 +11,7 @@
 import pytest
 
 from app.domain.identity.handles import CHEESE_HANDLE
+from tests.support.consent import SIGNUP_CONSENT
 
 pytestmark = pytest.mark.anyio
 
@@ -22,6 +23,7 @@ def _payload(username: str) -> dict:
         "email": f"{username}-reserved-test@example.com",
         "emailCode": "123456",
         "password": "TestPassword123!",
+        "consent": SIGNUP_CONSENT,
     }
 
 

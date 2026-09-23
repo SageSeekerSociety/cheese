@@ -148,6 +148,8 @@
             </div>
           </div>
 
+          <LegalConsent ref="consentRef" action-label="同意并创建账号" class="mb-4" />
+
           <v-btn
             type="submit"
             block
@@ -244,6 +246,7 @@ import { useRoute } from 'vue-router'
 import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
 
 import { t } from '@/i18n'
+import LegalConsent from '@/components/account/LegalConsent.vue'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
@@ -272,6 +275,7 @@ const bindPassword = ref('')
 
 // Form refs
 const createFormRef = ref()
+const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 const bindFormRef = ref()
 
 // Validation rules
@@ -328,6 +332,8 @@ const handleCreateAccount = async () => {
   if (!createFormRef.value) return
   const { valid } = await createFormRef.value.validate()
   if (!valid || !oauthState.value) return
+  const consent = await consentRef.value?.confirm()
+  if (!consent) return
 
   creating.value = true
   error.value = ''
@@ -339,6 +345,9 @@ const handleCreateAccount = async () => {
       username: createUsername.value,
       nickname: createNickname.value,
       passwordMode: setPassword.value ? 'password' : 'none',
+      consentTerms: consent.documents.terms,
+      consentPrivacy: consent.documents.privacy,
+      consentMethod: consent.method,
     }
     if (requireInviteCode.value) {
       requestData.inviteCode = createInviteCode.value.trim()

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.users import _issue_oauth_state_token
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
+from tests.support.consent import OAUTH_CONSENT_FORM
 
 StateToken = Callable[..., str]
 
@@ -184,6 +185,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": token,
                 "username": "oauth_created_1",
                 "nickname": "created",
@@ -211,6 +213,7 @@ class TestOAuthCreate:
         replay = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": token,
                 "username": "oauth_created_replay",
                 "nickname": "again",
@@ -226,6 +229,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": state_token(id="uid-create-plain"),
                 "username": "oauth_created_plain",
                 "nickname": "plain_user",
@@ -281,6 +285,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": state_token(id="uid-create-2"),
                 "username": authenticated_user.username,
                 "nickname": "x",
@@ -295,6 +300,7 @@ class TestOAuthCreate:
         resp = api_client.post(
             "/users/oauth/create",
             data={
+                **OAUTH_CONSENT_FORM,
                 "stateToken": state_token(id="uid-create-3"),
                 "username": "ab",  # too short
                 "nickname": "x",

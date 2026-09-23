@@ -159,6 +159,10 @@ export interface OAuthCreateUserRequest {
   passwordMode: 'none' | 'password'
   password?: string
   inviteCode?: string
+  // 建号时的同意（#1486）：两份文档各自的版本，和同意的方式
+  consentTerms?: string
+  consentPrivacy?: string
+  consentMethod?: 'checkbox' | 'dialog'
 }
 
 export type OAuthCreateUserResponse = {
