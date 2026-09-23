@@ -69,6 +69,7 @@ import type {
 
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
+import { SudoRequiredError } from './network/types/error'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -468,7 +469,10 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, transportFailureMessage(method, res.status))
   }
   if (!res.ok) {
-    const said = body as { message?: string; error?: { message?: string } }
+    const said = body as { message?: string; error?: { name?: string; message?: string } }
+    // The one refusal the caller answers differently: withSudo sends the user
+    // through re-authentication and retries, so it must see the typed error.
+    if (said.error?.name === 'SudoRequiredError') throw new SudoRequiredError(said.message)
     const serverSaid = said.message || said.error?.message || ''
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
@@ -1146,9 +1150,11 @@ export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: 
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
   return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
 }
-export function deleteOAuthConnection(userId: string, connectionId: number): Promise<void> {
+// Spends a sudo ticket minted for 'oauth:unbind' (see utils/sudo.ts).
+export function deleteOAuthConnection(userId: string, connectionId: number, sudoTicket: string): Promise<void> {
   return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections/${connectionId}`, {
     method: 'DELETE',
+    body: JSON.stringify({ sudoTicket }),
   })
 }
 

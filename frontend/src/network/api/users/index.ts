@@ -22,7 +22,6 @@ import type {
   RealNameInfo,
   SrpInitResponse,
   SrpVerifyResponse,
-  UnbindOAuthConnectionResponse,
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
   UserList,
@@ -248,6 +247,7 @@ export namespace UserApi {
     | 'passkey:add'
     | 'passkey:delete'
     | 'password:change'
+    | 'oauth:unbind'
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
@@ -600,12 +600,5 @@ export namespace UserApi {
     ApiInstance.request<GetOAuthConnectionsResponse>({
       url: `/users/${userId}/oauth/connections`,
       method: 'GET',
-    })
-
-  // 解除 OAuth 绑定
-  export const unbindOAuthConnection = (userId: number, connectionId: number) =>
-    ApiInstance.request<UnbindOAuthConnectionResponse>({
-      url: `/users/${userId}/oauth/connections/${connectionId}`,
-      method: 'DELETE',
     })
 }

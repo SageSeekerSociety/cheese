@@ -1,23 +1,40 @@
+import type { Pinia } from 'pinia'
+
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
+import { SudoRequiredError } from '../network/types/error'
+import { useSudoStore } from '../stores/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
+
+const me = vi.hoisted(() => ({ id: null as string | null }))
+const router = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  currentRoute: { value: { fullPath: '/projects/project/settings' } },
+}))
 
 vi.mock('../api')
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
-vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => null }))
+vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
-  useRouter: () => ({ replace: vi.fn() }),
+  useRouter: () => router,
 }))
+
+let pinia: Pinia
 
 beforeEach(() => {
   vi.resetAllMocks()
+  me.id = null
+  pinia = createPinia()
+  setActivePinia(pinia)
   vi.mocked(api.getProject).mockResolvedValue({ name: 'Example' } as Awaited<ReturnType<typeof api.getProject>>)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
@@ -35,6 +52,7 @@ async function openSettings() {
   const element = document.createElement('div')
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
+  app.use(pinia)
   app.mount(element)
   await vi.waitFor(() => expect(element.querySelector('.t-eyebrow')?.textContent).toContain('Example'))
   return { element, unmount: () => app.unmount() }
@@ -110,6 +128,63 @@ describe('project settings', () => {
     } finally {
       wrapper.unmount()
     }
+  })
+
+  describe('disconnecting the GitHub account', () => {
+    const connection = {
+      id: 5,
+      providerId: 'github_app',
+      providerName: 'GitHub',
+      providerUserId: '42',
+      connectedAt: null,
+      login: 'octocat',
+      tokenExpires: null,
+      hasRefreshToken: false,
+    }
+
+    beforeEach(() => {
+      me.id = '7'
+      vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [connection] })
+    })
+
+    it('asks the user to re-authenticate when the server requires it', async () => {
+      vi.mocked(api.deleteOAuthConnection).mockRejectedValue(new SudoRequiredError())
+      const wrapper = await openSettings()
+      try {
+        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
+        const button = Array.from(wrapper.element.querySelectorAll('button')).find(
+          (b) => b.textContent?.trim() === '断开'
+        )
+        button!.click()
+
+        await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith('/account/sudo-verify'))
+        expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, '')
+      } finally {
+        wrapper.unmount()
+      }
+    })
+
+    it('finishes the disconnect with the ticket once the user has re-authenticated', async () => {
+      const sudo = useSudoStore()
+      sudo.setRetryOperation({
+        opKey: 'unbindOAuthConnection',
+        opData: { connectionId: 5 },
+        returnPath: '/projects/project/settings',
+      })
+      sudo.setVerified('ticket-1')
+      vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
+      vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [] })
+
+      const wrapper = await openSettings()
+      try {
+        await vi.waitFor(() => expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, 'ticket-1'))
+        expect(api.deleteOAuthConnection).toHaveBeenCalledTimes(1)
+        expect(sudo.retryOperation).toBeNull()
+        expect(router.push).not.toHaveBeenCalled()
+      } finally {
+        wrapper.unmount()
+      }
+    })
   })
 
   it('does not offer project-wide model or role controls', async () => {
