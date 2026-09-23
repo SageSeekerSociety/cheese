@@ -171,16 +171,25 @@ class PlatformStatsService:
             "extras": await self._gaps.platform_extras(),
         }
 
-    async def performance(self, *, routes_registered: int | None = None) -> dict:
+    async def performance(
+        self, *, routes_registered: list[tuple[str, str]] | int | None = None
+    ) -> dict:
         """性能那一块：**这一刻**的接口耗时 + 投递与事件积压。
 
         前半在 `performance_snapshot()`（进程内存，重启即清零，只有这一个进程）。
         后半是新加的：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。
         """
+        from app.core.metrics import registry
         from app.domain.platform_stats.performance import performance_snapshot
 
         snap = performance_snapshot(routes_registered=routes_registered)
         snap["reliability"] = await self._gaps.reliability()
+        # 这两个是活的读数，快照自己不碰（它只看路由指标和网络速率环）。
+        # `active_requests` 减 1：读它的这一次请求自己就在里面。
+        snap["active_requests"] = max(
+            0, registry.gauge("http_requests_active").value - 1
+        )
+        snap["uptime_seconds"] = registry.export()["uptime_seconds"]
         return snap
 
     async def pipeline(self, *, days: int) -> dict:

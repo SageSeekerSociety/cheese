@@ -105,13 +105,24 @@ async def performance_stats(
     「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
     毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
     """
-    # 「有多少条路由」是 FastAPI 路由表的事，不在指标注册表里 —— 注册表只记得
-    # **被访问过**的那些。所以分母从 app 上数，和 `performance_snapshot` 的分子
-    # （有样本的）一起给，页面上写「有样本 X / 共 Y」。
+    # 「有哪些路由」是 FastAPI 路由表的事，不在指标注册表里 —— 注册表只记得
+    # **被访问过**的那些。看板要列出**每一条**端点（没样本的也占一行，分位数是
+    # `None`），所以把整张表递下去，不是一个计数。
+    #
+    # 跳过 `HEAD`（它和 GET 是同一个处理器，两行说的是同一件事），跳过 Mount /
+    # WebSocketRoute（不是 HTTP 端点）。FastAPI 自带的 `/openapi.json`、`/docs`
+    # 也列出来 —— 又一个「悄悄少报几条」的过滤器，而这一页的全部意义就是不漏。
     from fastapi.routing import APIRoute
 
-    registered = sum(1 for r in request.app.routes if isinstance(r, APIRoute))
-    return ok(await service.performance(routes_registered=registered))
+    routes: list[tuple[str, str]] = []
+    for r in request.app.routes:
+        if not isinstance(r, APIRoute):
+            continue
+        for method in r.methods or ():
+            if method in ("HEAD", "OPTIONS"):
+                continue
+            routes.append((method, r.path))
+    return ok(await service.performance(routes_registered=routes))
 
 
 @router.get("/pipeline")

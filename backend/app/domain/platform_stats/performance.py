@@ -15,64 +15,93 @@
 """
 
 from app.core.loop_lag import lag_status
-from app.core.metrics import registry
 
 #: 看板上列几条。按 p95 从大到小排，取前这么多个 —— 这一类的读法是「哪一条最慢」，
 #: 不是「一共有多少条路由」。
 ROUTES_SHOWN = 12
 
 
-def performance_snapshot(*, routes_registered: int | None = None) -> dict:
-    """这一刻的接口耗时：按路由的 p50 / p95 / p99，加两个全局数。
+def performance_snapshot(
+    *, routes_registered: list[tuple[str, str]] | int | None = None
+) -> dict:
+    """这一刻的接口耗时 + 网络吞吐。
 
     **`None` 不是 0**：一条样本都没有的路由，分位数是 `None`，页面画成「—」。
     画成 0 的话，一条从没人访问过的路由会以「0ms」排在最前面，读起来像它快得惊人。
+
+    `routes_registered` 现在是**路由表本身**（`(method, path)` 列表），不是一个数：
+    看板要列出**每一条**注册过的端点，没有样本的那些也占一行（`count: 0`、分位数
+    `None`）。老调用点仍可传 `int`，那一种只报 `routes_registered` 的计数、不生成
+    空行 —— 「有样本的路」和「画出来几条」也因此不再需要两个字段。
     """
+    from app.core import net_io
+    from app.core import route_metrics as rm
+
+    observed = {(r["method"].upper(), r["route"]): r for r in rm.snapshot()}
+
     rows: list[dict] = []
-    for hist in registry.histograms_named("http_request_duration_seconds"):
-        if hist.count == 0:
-            continue
-        labels = hist.labels
-        rows.append(
-            {
-                "method": labels.get("method", ""),
-                "route": labels.get("route", ""),
-                "status": labels.get("status", ""),
-                "count": hist.count,
-                # 秒 → 毫秒，在服务端换一次：客户端拿到的单位只有一种。
-                **{
-                    q: (None if v is None else round(v * 1000, 1))
-                    for q, v in (
-                        ("p50", hist.quantile(0.5)),
-                        ("p95", hist.quantile(0.95)),
-                        ("p99", hist.quantile(0.99)),
-                    )
-                },
-            }
+    if isinstance(routes_registered, list):
+        for method, route in routes_registered:
+            key = (method.upper(), route)
+            hit = observed.get(key)
+            if hit is not None:
+                rows.append(hit)
+            else:
+                # 未命中的端点也占一行。**分位数是 None 不是 0** —— 0 读起来是
+                # 「快得惊人」，而事实是「没有数据」。
+                rows.append(
+                    {
+                        "method": method.upper(),
+                        "route": route,
+                        "count": 0,
+                        "error_count": 0,
+                        "status": {"2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0},
+                        "p50": None,
+                        "p95": None,
+                        "p99": None,
+                        "spark": [],
+                    }
+                )
+        registered = len(routes_registered)
+    else:
+        rows.extend(observed.values())
+        registered = (
+            routes_registered if isinstance(routes_registered, int) else len(observed)
         )
 
-    rows.sort(key=lambda r: r["p95"] if r["p95"] is not None else -1, reverse=True)
-    shown = rows[:ROUTES_SHOWN]
-    return {
-        # 「被看过多少条路」和「画出来几条」是两个数：截断要说出来，否则读者会以为
-        # 这就是全部（`ROUTES_SHOWN` 之外的慢路由就静默消失了）。
-        #
-        # **`routes_total` 是「有样本的路」，不是「这个 app 有多少条路由」**：没有
-        # 被访问过的路由在这里根本不出现（`hist.count == 0` 的那条被 `continue` 掉
-        # 了）。所以它天然是「重启后到现在的累计」，看起来少不代表路由少 ——
-        # `routes_registered` 把分母补上，页面上写「有样本 X / 共 Y」，两个数一起
-        # 读才答得了「是不是太少了」。
-        "routes_total": len(rows),
-        "routes_shown": len(shown),
-        "routes_registered": routes_registered,
-        "routes": shown,
-        # 进程内存里的东西，所以这两个数必须写清口径，不然会被当成「平台的」数。
-        # **读这个数的那一条请求自己也在里面**：中间件在 `call_next` 外面一进一出，
-        # 而这个快照只能从请求里画出来，读到它的时候它正好被算进了那个 +1。不扣掉的
-        # 话平台空着的时候这一格也写 1，读起来像「有一条请求一直没处理完」。
-        "active_requests": max(0, registry.gauge("http_requests_active").value - 1),
-        "uptime_seconds": registry.export()["uptime_seconds"],
-        # 事件循环的滞后（`core/loop_lag.py` 一直在测）：接口慢而 p95 不高时，答案
-        # 常常在这里 —— 循环被什么东西占住了，谁都得排队。
+    rows.sort(
+        key=lambda r: (
+            r["p95"] is not None,
+            r["p95"] if r["p95"] is not None else -1,
+        ),
+        reverse=True,
+    )
+    # 线上护栏：路由表真长到几千条时截断并**说出来**（静默截断读起来像「就这些」）。
+    omitted = 0
+    if len(rows) > 2000:
+        omitted = len(rows) - 2000
+        rows = rows[:2000]
+
+
+    snap = {
+        "routes": rows,
+        "routes_registered": registered,
+        "routes_with_samples": sum(1 for r in rows if r["count"] > 0),
+        "routes_omitted": omitted,
+        "dropped_series": rm.dropped_series(),
+        "active_requests": None,  # filled by the caller (needs the live counter)
+        "uptime_seconds": None,
         "loop_lag": lag_status(),
+        # 两面都要：上行是**这台机器的网卡**（含计量代理到 LLM 的出向流量），
+        # api 是**本进程**的 HTTP 载荷。口径写在 `core/net_io.py` 的模块 docstring。
+        "network": {
+            "uplink": net_io.net_io_status(),
+            "api": net_io.api_io_status(),
+        },
     }
+    return snap
+
+
+def performance_snapshot_legacy() -> dict:
+    """Back-compat shim for the pre-split shape (status was part of the key)."""
+    return performance_snapshot()
