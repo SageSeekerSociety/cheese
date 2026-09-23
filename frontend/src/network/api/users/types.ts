@@ -178,6 +178,7 @@ export interface OAuthCreateUserRequest {
   // SRP 模式下的可选参数
   srpSalt?: string
   srpVerifier?: string
+  inviteCode?: string
 }
 
 export type OAuthCreateUserResponse = {

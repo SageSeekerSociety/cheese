@@ -1,0 +1,82 @@
+name: CI feedback measurement
+
+on:
+  schedule:
+    # Bounded cohorts limit requests against the per-repository API budget.
+    # Each run observes a six-hour block only after a further six hours to settle.
+    - cron: '23 0,6,12,18 * * *'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Inclusive UTC run-created bound; supply both bounds or neither'
+        required: false
+        type: string
+      until:
+        description: 'Inclusive UTC run-created bound; supply both bounds or neither'
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: required-ci-feedback-measurement
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select a fixed cohort window
+        id: window
+        env:
+          REQUESTED_SINCE: ${{ inputs.since || '' }}
+          REQUESTED_UNTIL: ${{ inputs.until || '' }}
+        run: >-
+          python3 .github/scripts/ci-feedback-window.py
+          --since "$REQUESTED_SINCE"
+          --until "$REQUESTED_UNTIL"
+          --github-output "$GITHUB_OUTPUT"
+          --parameters logs/ci-feedback/window.json
+
+      - name: Collect CI attempts, timings, and test evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/ci-feedback-report.py
+          --repo "${{ github.repository }}"
+          --workflow required-ci.yml
+          --workflow remote-execution.yml
+          --event pull_request --event merge_group --event push --event workflow_dispatch
+          --since "${{ steps.window.outputs.since }}"
+          --until "${{ steps.window.outputs.until }}"
+          --output-dir logs/ci-feedback
+          > logs/ci-feedback/collector-result.json
+
+      - name: Publish cohort summary
+        if: ${{ success() }}
+        run: |
+          {
+            echo '## CI feedback measurement'
+            echo
+            echo 'This is one mixed-scope observation window, not a long-term stability claim.'
+            echo 'Workflows and events, first attempts, reruns, and test-evidence outcomes remain separate.'
+            echo 'Clean streaks require versioned test receipts. Missing artifacts are unknown, never clean. Streaks cover this window only and do not activate the 20-clean-run acceptance gate.'
+            echo
+            echo '```json'
+            cat logs/ci-feedback/collector-result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain report, raw API responses, and progress
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: required-ci-feedback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/ci-feedback/
+          if-no-files-found: error
+          retention-days: 90

@@ -28,10 +28,21 @@ that always equals ``started_at`` is a second answer to one question.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.domain.common import Timestamps, UuidPk
 
 
 class AgentTurn(Base):
@@ -98,3 +109,42 @@ class AgentTurn(Base):
     credits_refused_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+
+
+class GatewayAdminAudit(UuidPk, Timestamps, Base):
+    """后台对网关做过的每一次写动作 —— 成功的和失败的都留。
+
+    这个后台能动的是别人真金白银在用的路由：删一个模型、停一个模型、给一个项目
+    改预算，哪一件错了都不是重启能挽回的，而网关那边只留最后一次的现状，不记谁在
+    什么时候把它改成这样。所以「谁在什么时候对哪个对象做了什么」只能由平台自己记。
+
+    **失败也落一行**，而且必须落 —— 页面上的「最近操作」要能回答「我点了停用，为
+    什么没生效」，一条失败的记录（外加网关给的那句原因）就是答案；只记成功的话，
+    失败在界面上和在库里都等同于「什么都没发生」，人只会反复点。
+
+    ``before``/``after`` 存操作前后的快照（JSON），是为了回答「原来是怎样的」——
+    没有它，一条 `model.update` 只能证明有人动过，证明不了动了什么。两个字段都
+    **绝不包含任何上游凭据**：``api_key`` 由服务层在写入前一律剔除，它属于网关，
+    进审计表就等于把一把真实密钥复制进了另一处可读的地方。
+
+    ``created_at`` 上那条**倒序**索引服务这一个读法：后台按时间倒序取最近 N 条。
+    Postgres 的 btree 两个方向都能扫，但把这个唯一的用法写进索引，读的人不必再推。
+    """
+
+    __tablename__ = "gateway_admin_audit"
+    __table_args__ = (
+        Index("ix_gateway_admin_audit_created_at", text("created_at DESC")),
+    )
+
+    # 操作者。后台每个 handler 都带 `PlatformAdminDep`，这个 handle 直接来自它。
+    actor_handle: Mapped[str] = mapped_column(String(64))
+    # 动作对象：模型名、或项目 uuid 的字符串形式。
+    target: Mapped[str] = mapped_column(String(128))
+    # 固定的一组动作名，页面按它分组显示（见 `gateway_models` 里的调用点）。
+    action: Mapped[str] = mapped_column(String(32))
+    # "ok" / "failed"。字符串而不是布尔，是为了以后能加「已回滚」这类第三态。
+    result: Mapped[str] = mapped_column(String(16))
+    # 失败原因（网关或不变式给的中文原话）；成功时为 None。
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)

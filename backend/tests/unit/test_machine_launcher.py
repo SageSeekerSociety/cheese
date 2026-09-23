@@ -12,6 +12,7 @@ harness. What a harness puts IN the holes is that harness's own test.
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -61,12 +62,12 @@ def _harness(tmp_path, script: str) -> str:
     return f'AGENT="{agent}"\n'
 
 
-def _run(tmp_path, env, **holes):
+def _run(tmp_path, env, *, timeout=30, **holes):
     """Write the launcher to a file and run it, the way a device does."""
     launcher = tmp_path / "launch.sh"
     launcher.write_text(machine_launcher.launch_script(**holes))
     return subprocess.run(
-        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
+        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=timeout
     )
 
 
@@ -140,6 +141,53 @@ def test_the_agents_exit_status_is_the_launchers(tmp_path):
         command="$AGENT",
     )
     assert result.returncode == 17, result.stderr
+
+
+def test_a_slow_drainer_cannot_delay_the_agents_exit(tmp_path):
+    _home, _work, env = _machine(tmp_path)
+    drain = tmp_path / "drain.pid"
+    prepare = (
+        _harness(
+            tmp_path,
+            f'i=0\nwhile [ ! -s "{drain}" ] && [ "$i" -lt 100 ]; do '
+            "sleep 0.01; i=$((i + 1)); done\n"
+            f'[ -s "{drain}" ] || exit 99\nexit 17\n',
+        )
+        + f"""cat > "$HOME/.cheese/cheese-drain" <<'SH'
+trap '' TERM
+printf '%s' "$$" > "{drain}"
+while kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null; do sleep 0.05; done
+SH
+"""
+    )
+
+    drain_pid = None
+    drain_gone = False
+    try:
+        result = _run(tmp_path, env, prepare=prepare, command="$AGENT", timeout=2)
+
+        assert result.returncode == 17, result.stderr
+        drain_pid = int(drain.read_text())
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(drain_pid, 0)
+            except ProcessLookupError:
+                drain_gone = True
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("the tethered drainer outlived its launcher")
+    finally:
+        if drain_pid is None and drain.exists():
+            drain_pid = int(drain.read_text())
+        if drain_pid is not None and not drain_gone:
+            try:
+                os.kill(drain_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                os.kill(drain_pid, signal.SIGKILL)
 
 
 def test_the_environment_runner_wraps_whichever_harness_was_asked_for(tmp_path):

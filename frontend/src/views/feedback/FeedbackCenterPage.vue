@@ -109,16 +109,22 @@ onMounted(() => {
   void store.loadList()
 })
 
-/** 空列表有三种，说的话不一样：「一条都没有」「筛选之后没有」「没拉到」。
- *  把它们合成一句「暂无反馈」的话，最后一种会看着像平台真的没有反馈。 */
-const hasFilter = computed(() => !!store.query.trim() || store.tab !== 'all')
+/** 空列表有四种，说的话不一样：「没拉到」「搜索没结果」「筛选之后没有」「一条都没有」。
+ *  把它们合成一句「暂无反馈」的话，前三种都会看着像平台真的没有反馈 —— 而「没有」正是
+ *  这条渠道最不该说错的一句话。 */
+const hasQuery = computed(() => !!store.query.trim())
+/** 栏位或那四个筛选收窄了。**问 store 的 `hasFilters()`，不在这里再数一遍** ——
+ *  那四个筛选的定义在 store 里（就是发请求的那一份），在这里重写一份等于同一件事有
+ *  两个答案，而漂开的样子是「筛选明明生效了、空态却说平台一条反馈都没有」。 */
+const hasNarrowing = computed(() => store.tab !== 'all' || store.hasFilters())
 
-/** 三选一。文案本身在 i18n 目录里（两种语言逐条对齐），这里只做**选择** ——
+/** 四选一。文案本身在 i18n 目录里（两种语言逐条对齐），这里只做**选择** ——
  *  判据是「为什么会空」，不是「有没有筛选」：拉挂了的时候筛选是一个还不成立的前提，
  *  所以失败排在最前。
- *  ⚠️ 搜索无结果和一条都没有**必须是两句**（§9.4）：搜索只覆盖标题、摘要、正文、
- *  提交人四个字段，用户在标签里找一条查不到时，缺的正是「我搜的东西本来就不在里面」
- *  这句话 —— 合成一句「暂无反馈」，他会以为那条反馈被删了。 */
+ *  ⚠️ 三句「没有」**必须分开**（§9.4）：搜索只覆盖标题、摘要、正文、提交人四个字段，
+ *  用户在标签里找一条查不到时，缺的正是「我搜的东西本来就不在里面」这句话；而按类型
+ *  筛空的人需要的是「换一个筛选条件」，不是「换一个关键词」—— 搜索无果那句 desc 说的
+ *  是搜索覆盖哪几个字段，对着筛选条念它等于答非所问。 */
 const emptyState = computed(() => {
   if (store.error) {
     return {
@@ -127,11 +133,18 @@ const emptyState = computed(() => {
       desc: t('feedback.center.error.desc'),
     }
   }
-  if (hasFilter.value) {
+  if (hasQuery.value) {
     return {
       icon: 'mdi-comment-search-outline',
       title: t('feedback.center.search.title'),
       desc: t('feedback.center.search.desc'),
+    }
+  }
+  if (hasNarrowing.value) {
+    return {
+      icon: 'mdi-filter-variant-remove',
+      title: t('feedback.center.filtered.title'),
+      desc: t('feedback.center.filtered.desc'),
     }
   }
   return {
@@ -340,14 +353,14 @@ function clearFilters() {
             重试
           </v-btn>
           <v-btn
-            v-else-if="hasFilter"
+            v-else-if="hasQuery || hasNarrowing"
             variant="text"
             color="secondary"
             size="small"
             class="fb-empty__action"
             @click="clearFilters"
           >
-            清除筛选
+            {{ t('feedback.center.filtered.clear') }}
           </v-btn>
         </div>
 

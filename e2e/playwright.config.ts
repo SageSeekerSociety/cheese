@@ -25,8 +25,15 @@ export default defineConfig({
   // parallel (dev servers are usually already warm via reuseExistingServer).
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  reporter: process.env.CI ? [
+    ['github'],
+    ['json', { outputFile: 'test-results/playwright-results.json' }],
+  ] : 'list',
   use: {
+    connectOptions: process.env.E2E_BROWSER_WS_ENDPOINT ? {
+      wsEndpoint: process.env.E2E_BROWSER_WS_ENDPOINT,
+      exposeNetwork: '<loopback>',
+    } : undefined,
     // Existing workspace scenarios assert Chinese UI labels explicitly.
     locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,

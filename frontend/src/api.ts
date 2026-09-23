@@ -2434,7 +2434,18 @@ export interface StatsUsage {
  *  里，库里没有可以查的那一列。 */
 export interface StatsPlatform {
   days: number
-  people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
+  people: {
+    total: number
+    new: number
+    admins: number
+    /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。
+     *  `total`/`new`/`series[].created` 仍是和，拆分是附加列。 */
+    humans: number
+    agents: number
+    new_humans: number
+    new_agents: number
+    series: { date: string; created: number; human_created: number; agent_created: number }[]
+  }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
   health: {
@@ -2470,6 +2481,18 @@ export interface StatsPlatform {
   }
 }
 
+/** 一个网络平面的速率读数。见 `core/net_io.py` 的模块 docstring。 */
+export interface NetIoBlock {
+  available: boolean
+  iface: string | null
+  scope: 'host' | 'container' | 'process' | null
+  /** 字节/秒。读不到是 `null`，**绝不为 0**。 */
+  rx_bps: number | null
+  tx_bps: number | null
+  samples: { rx_bps: number | null; tx_bps: number | null }[]
+  note_key: string
+}
+
 /** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
  *
  *  所以它**没有 `days`**（没有窗口）、重启即清零，而且只覆盖这一个进程 —— 生产上
@@ -2479,22 +2502,35 @@ export interface StatsPlatform {
  *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
  *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
 export interface StatsPerformance {
-  /** 采集到耗时的路由**总数**（不是画出来的条数）。**是「有样本的」，不是注册的全部** ——
-   *  没被访问过的路由在这里不出现。分母见 `routes_registered`。 */
-  routes_total: number
-  routes_shown: number
-  /** 这个 app 注册的全部路由。和 `routes_total` 一起读才答得了「是不是太少了」。 */
+  /** 这个 app 注册的全部路由（**每一条端点都在 `routes` 里有一行**，没样本的也在）。 */
   routes_registered?: number | null
+  /** 有样本的路由数。和 `routes_registered` 一起读才答得了「是不是太少了」。 */
+  routes_with_samples: number
+  /** 线上护栏截断掉的条数。**非 0 就必须在页面上说出来** —— 静默截断读起来像「就这些」。 */
+  routes_omitted?: number
+  /** 溢出桶丢掉的样本（`core/route_metrics.py` 的 `MAX_ROUTE_SERIES`）。 */
+  dropped_series?: number
   routes: {
     method: string
     /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */
     route: string
-    status: string
     count: number
+    error_count: number
+    status: { '2xx': number; '3xx': number; '4xx': number; '5xx': number }
+    /** 毫秒。**最近 256 个样本窗口上的精确分位**，不是全生命期；没有样本是 `null` 不是 0。 */
     p50: number | null
     p95: number | null
     p99: number | null
+    /** 每分钟平均耗时，最多 24 点；空槽是 `null` 不是 0。 */
+    spark: (number | null)[]
   }[]
+  /** 平台网络：两面都给，各自有口径（见 `core/net_io.py`）。
+   *  `uplink` 是**这台机器的网卡**（含计量代理到 LLM 的出向流量），`api` 是本进程的
+   *  HTTP 载荷。**读不到是 `null` 不是 0** —— 0 说「网是闲的」，null 说「看不见」。 */
+  network?: {
+    uplink: NetIoBlock
+    api: NetIoBlock
+  }
   /** 这一刻正在处理的请求数。**探针（`/health`、`/metrics`）不算**，否则读它的那一次
    *  自己就在里面、这个数恒 ≥1。 */
   active_requests: number
@@ -2734,18 +2770,31 @@ export type { FeedbackNote }
  * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
  * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
 
-/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
- *  仍然要说得出是谁加的。 */
+/** 名单里的一行「这个人是谁」。**两组同一个形状**：`root` 不再是一串裸 handle ——
+ *  「这一行是谁」在两组里是同一个问题，两份形状就得让人自己把两处对起来。
+ *
+ *  两格都可能为 null，而 null 各有各的意思，界面**不许回退**：`nickname` 为 null =
+ *  这个人没有 profile 行（或平台上根本没有这个账号），回退成 handle 之后界面就分不清
+ *  「没设昵称」和「他叫这个 handle」；`avatar_id` 为 null = 他从没自己挑过头像
+ *  （判据在服务端 `UserProfileRepository.chosen_avatar_ids`，不是硬比 id），界面这时
+ *  画彩色首字母 —— `getAvatarUrl` 对空值回的那张默认图是所有人共用的一张脸。 */
 export interface PlatformAdminRow {
   handle: string
+  nickname: string | null
+  avatar_id: number | null
+}
+
+/** 页面上加进名单的一行：在「这个人是谁」之上多两格出处。`added_by_handle` 是快照：
+ *  加人的那个人注销之后，这一行仍然要说得出是谁加的。 */
+export interface PlatformAdminAddedRow extends PlatformAdminRow {
   added_by_handle: string
   created_at: string
 }
 
 export interface PlatformAdminsPayload {
   /** 部署配置里那份。列得出来，删不掉。 */
-  root: string[]
-  added: PlatformAdminRow[]
+  root: PlatformAdminRow[]
+  added: PlatformAdminAddedRow[]
 }
 
 export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
@@ -2786,6 +2835,241 @@ export function removePlatformAdmin(handle: string): Promise<PlatformAdminsPaylo
   return request<PlatformAdminsPayload & { removed: boolean }>(`/admin/admins/${encodeURIComponent(handle)}`, {
     method: 'DELETE',
   })
+}
+
+/* ---- 管理端（网关模型）----
+ *
+ * 后台「模型管理」那一页的九条接口（`backend/app/api/routes/admin_models.py`）。全是平台
+ * 管理员的接口，网关侧的失败在服务端已经折成 503（不可达）/ 502（被拒），原因放在
+ * `detail` 里 —— `request` 会把 `error.message` 原样带出来，页面要显示的正是服务端那句
+ * 中文原因，所以这里不改写、不吞异常。
+ *
+ * 和看板那几条同一条纪律：`days` 是**页面**问的问题（窗口由人选的），由调用方给，不写死这里。
+ */
+
+/** 网关这一刻的状态。`admin_configured` 为 false 是「这个部署没配管理密钥」，不是
+ *  「网关挂了」—— 页面上这两句话得分开说。 */
+export interface GatewayStatus {
+  reachable: boolean
+  readiness: string | null
+  admin_configured: boolean
+  detail: string | null
+  fetched_at: string | null
+}
+
+/** 用量窗口。`end_date` 当天**含**在内（闭区间，实测见契约 §0）。 */
+export interface GatewayWindow {
+  days: number
+  start_date: string
+  end_date: string
+}
+
+/** 一个模型在一个窗口里的用量。`/model/info` 里找不到它时**全 0**，不是 null。 */
+export interface GatewayUsageNumbers {
+  spend_usd: number
+  requests: number
+  failed_requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read_tokens: number
+  total_tokens: number
+}
+
+/** 单价，单位是**每 token**（网关就是这么记的，页面负责 ×1e6 那类换算）。
+ *  缺的键不出现 —— 「没价」和「0 价」在页面上是两回事。 */
+export interface GatewayPrices {
+  input?: number | null
+  output?: number | null
+  cache_read?: number | null
+  cache_creation?: number | null
+}
+
+export interface GatewayCapabilities {
+  reasoning?: boolean
+  vision?: boolean
+  adaptive_thinking?: boolean
+}
+
+export interface GatewayUpstream {
+  model: string
+  host: string
+  provider: string
+}
+
+/** 清单里的一个模型（契约 §3.1）。
+ *
+ *  `origin` 决定它是只读还是可改：`config` 来自 config.yaml、页面上只读；`runtime` 是
+ *  网关里新增的，可改可删可停用。`offered = selectable && priced && !blocked`，是选择器
+ *  真正会给出的那些；`blocked_reason` / `unpriced_reason` 在它没上架时给出人话。 */
+export interface GatewayModelInfo {
+  name: string
+  model_id: string
+  label: string
+  origin: 'config' | 'runtime'
+  blocked: boolean
+  selectable: boolean
+  priced: boolean
+  offered: boolean
+  blocked_reason: string | null
+  unpriced_reason: string | null
+  upstream: GatewayUpstream
+  prices: GatewayPrices
+  capabilities: GatewayCapabilities
+  usage: GatewayUsageNumbers
+  /** 仅 origin=config 时给出：可复制的 config.yaml 片段（页面「怎么改」那一段）。 */
+  config_yaml?: string
+}
+
+export interface GatewayModelsPayload {
+  gateway: GatewayStatus
+  window: GatewayWindow
+  totals: GatewayUsageNumbers
+  models: GatewayModelInfo[]
+}
+
+/** 详情（契约 §3.2）。`series` 是这条模型每天的花费；`platform_usage` 是平台侧归因的
+ *  读数，**以网关账本为准**（`resource_usage.by_model` 对网关流量不可信，见契约 §0）。 */
+export interface GatewayModelDetail {
+  model: GatewayModelInfo
+  series: { date: string; spend_usd: number; requests: number; tokens: number }[]
+  platform_usage: {
+    calls: number
+    tokens: number
+    cost_usd: number
+    unpriced_tokens: number
+    note: string
+  }
+}
+
+/** 新增一个运行时模型（契约 §3.3）。`api_key` 只在请求体里出现，**绝不回显**。 */
+export interface GatewayModelCreateInput {
+  name: string
+  upstream_model: string
+  api_base?: string | null
+  api_key?: string | null
+  label?: string
+  selectable?: boolean
+  prices?: GatewayPrices
+  capabilities?: GatewayCapabilities
+}
+
+/** 改一个运行时模型（契约 §3.3）。PATCH 语义：只传要改的字段，缺的表示「别动它」。
+ *
+ *  `api_key_unchanged` 是「编辑界面不回显、也不拿空串覆盖上游凭据」那条路：界面不知道
+ *  现在的 key，所以它要么给一个新的 `api_key`，要么声明「不改动」—— 不能发一个空串，
+ *  那会把已存的凭据抹掉。 */
+export interface GatewayModelUpdateInput {
+  upstream_model?: string
+  api_base?: string | null
+  api_key?: string | null
+  api_key_unchanged?: boolean
+  label?: string
+  selectable?: boolean
+  prices?: GatewayPrices
+  capabilities?: GatewayCapabilities
+}
+
+export interface GatewayProjectCredits {
+  total: number
+  used: number
+  remaining: number
+  unlimited: boolean
+}
+
+/** 额度段里的一个项目（契约 §3.4）。
+ *
+ *  `budget_derived_usd` 是按算力额度折出的刹车值（unlimited 时为 null）；
+ *  `budget_override_usd` 是网关 key 上实际设的、与 derived 不一致的那个值 —— 两个都在，
+ *  才看得出「这个项目的额度是不是被人手动改过」。 */
+export interface GatewayProject {
+  project_id: string
+  name: string
+  key_alias: string
+  has_key: boolean
+  gateway_spend_usd: number
+  max_budget_usd: number | null
+  budget_derived_usd: number | null
+  budget_override_usd: number | null
+  credits: GatewayProjectCredits
+  usage: GatewayUsageNumbers
+}
+
+export interface GatewayProjectsPayload {
+  window: GatewayWindow
+  projects: GatewayProject[]
+  totals: { projects: number; with_key: number; over_budget: number; unlimited: number }
+}
+
+/** 最近操作里的一行（契约 §3.5）。**失败的写操作也落行**（`result="failed"`），所以这段
+ *  同时是「谁改了什么」和「哪一次没成」—— 少了失败那半，页面对「改不动」是无痕的。 */
+export interface GatewayAuditEntry {
+  created_at: string
+  actor_handle: string
+  action: string
+  target: string
+  result: 'ok' | 'failed'
+  detail: string | null
+}
+
+export interface GatewayAuditPayload {
+  items: GatewayAuditEntry[]
+}
+
+/** 这一节的查询串：`days` / `limit` 都是数字，统一走 URLSearchParams 编码。 */
+function gatewayQuery(params: Record<string, number>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) search.set(key, String(value))
+  return `?${search.toString()}`
+}
+
+export function getGatewayModels(days: number): Promise<GatewayModelsPayload> {
+  return request<GatewayModelsPayload>(`/admin/gateway/models${gatewayQuery({ days })}`)
+}
+
+export function getGatewayModel(name: string, days: number): Promise<GatewayModelDetail> {
+  return request<GatewayModelDetail>(`/admin/gateway/models/${encodeURIComponent(name)}${gatewayQuery({ days })}`)
+}
+
+export function createGatewayModel(body: GatewayModelCreateInput): Promise<{ model: GatewayModelInfo }> {
+  return request<{ model: GatewayModelInfo }>('/admin/gateway/models', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateGatewayModel(name: string, body: GatewayModelUpdateInput): Promise<{ model: GatewayModelInfo }> {
+  return request<{ model: GatewayModelInfo }>(`/admin/gateway/models/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteGatewayModel(name: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/admin/gateway/models/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function setGatewayModelBlocked(name: string, blocked: boolean): Promise<{ blocked: boolean }> {
+  return request<{ blocked: boolean }>(`/admin/gateway/models/${encodeURIComponent(name)}/blocked`, {
+    method: 'POST',
+    body: JSON.stringify({ blocked }),
+  })
+}
+
+export function getGatewayProjects(days: number): Promise<GatewayProjectsPayload> {
+  return request<GatewayProjectsPayload>(`/admin/gateway/projects${gatewayQuery({ days })}`)
+}
+
+/** 设或清一个项目的额度上限（`null` = 清除覆盖）。服务端立刻落到网关，回来的是**同一项**
+ *  更新后的样子，页面拿它替换那一行即可。 */
+export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number | null): Promise<GatewayProject> {
+  return request<GatewayProject>(`/admin/gateway/projects/${encodeURIComponent(projectId)}/budget`, {
+    method: 'PUT',
+    body: JSON.stringify({ max_budget_usd: maxBudgetUsd }),
+  })
+}
+
+export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
+  return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
 }
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */

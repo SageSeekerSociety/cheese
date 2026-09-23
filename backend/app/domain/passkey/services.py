@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn import (
     generate_authentication_options,
     generate_registration_options,
@@ -33,6 +34,13 @@ class PasskeyService:
         self._rp_id = getattr(settings, "webauthn_rp_id", "localhost")
         self._rp_name = getattr(settings, "webauthn_rp_name", "Cheese Community")
         self._origin = getattr(settings, "webauthn_origin", "http://localhost:5173")
+
+    @classmethod
+    def for_session(cls, session: AsyncSession) -> "PasskeyService":
+        return cls(PasskeyRepository(session=session))
+
+    async def has_passkey(self, user_id: int) -> bool:
+        return bool(await self._repo.list_by_user(user_id))
 
     async def generate_registration_options(
         self,

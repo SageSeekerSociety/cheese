@@ -409,15 +409,41 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
 #: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
 #: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
 #: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
-_PLATFORM_PREFIXES = ("mcp__cheese__", "cheese_")
-_PLATFORM_ALIASES = frozenset({"chat_send"})
+#: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
+#: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
+#: `servers = {"native": ...}`），所以真实名字长这样：
+#: `mcp__native__cheese_feedback_propose`；
+#: `mcp__cheese__` 是这套东西还叫 cheese 时的拼法，仍然认（历史行还躺在库里）。
+#: 只认后者会让整件事**静默失效**：前缀认不出来 → 这一格既不算平台动作、中文标签也
+#: 查不到，于是时间线上原样渲染 `mcp__native__…` 配一个中性点，而它看着完全正常。
+_PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
+#: ……但 `mcp__native__` 底下**不都是平台动作**：`invoke` 是这个 harness 搬运读写与
+#: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
+#: 色的点 —— 而那只是读了一个文件。
+_NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
+#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+
+#: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
+#: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
+_MCP_PREFIX = re.compile(r"^mcp__[a-z0-9_]+__")
+
+
+def _short_tool_name(raw_name: str) -> str:
+    """把 MCP 工具名归一成模型看到的那个（`mcp__native__chat_send` → `chat_send`）。"""
+    return _MCP_PREFIX.sub("", raw_name)
 
 
 def _is_platform_tool(raw_name: str, args: dict) -> bool:
     """True when the tool call is a platform action: a cheese tool under any of
     the names a harness publishes it as, or a shell command that invokes the
     machine's `cheese` CLI."""
-    if raw_name.startswith(_PLATFORM_PREFIXES) or raw_name in _PLATFORM_ALIASES:
+    if raw_name in _NOT_A_PLATFORM_TOOL:
+        return False
+    if raw_name.startswith(_PLATFORM_PREFIXES):
+        return True
+    if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))
@@ -2517,7 +2543,7 @@ class ChatService:
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentToolUse):
-            name = event.name.replace("mcp__cheese__", "")
+            name = _short_tool_name(event.name)
             args = event.input or {}
             if state is not None and name in _TASK_TOOLS:
                 # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
@@ -2713,9 +2739,15 @@ class ChatService:
             usage.input_tokens or usage.output_tokens or usage.cost_usd
         ):
             usage = None
+        # One row PER MODEL, never one lump: a gateway-routed turn's spend can
+        # cover several models in one drain, and collapsing them under
+        # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
+        usages: list[AgentUsage] = []
         if self._gateway is not None and state.route == "gateway":
-            usage = await self._drain_gateway_usage(state.project_id)
-            if usage is None:
+            drained = await self._drain_gateway_usage(state.project_id)
+            if drained:
+                usages = drained
+            else:
                 # Both the turn-end drain and its settle retry saw nothing.
                 # LiteLLM batch-writes spend logs, so "nothing yet" is not
                 # "nothing" — land it in the background rather than hold the
@@ -2725,11 +2757,13 @@ class ChatService:
                 self._schedule_deferred_drain(
                     state.project_id, state.topic_id, state.work_id
                 )
+        elif usage is not None:
+            usages = [usage]
 
         action_frames: list[dict] = []
         async with self._sessions() as session:
             blocks = BlockRepository(session)
-            if usage is None:
+            if not usages:
                 await UsageRepository(session).add(
                     project_id=state.project_id,
                     topic_id=state.topic_id,
@@ -2742,20 +2776,21 @@ class ChatService:
                     turn_id=state.work_id,
                 )
             else:
-                await UsageRepository(session).add(
-                    project_id=state.project_id,
-                    topic_id=state.topic_id,
-                    model=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cost_usd=usage.cost_usd,
-                    route=state.route,
-                    turn_id=state.work_id,
-                )
-                await ComputeGrantRepository(session).consume(
-                    state.project_id,
-                    usage_to_credits(usage, spend_priced=state.route == "gateway"),
-                )
+                for u in usages:
+                    await UsageRepository(session).add(
+                        project_id=state.project_id,
+                        topic_id=state.topic_id,
+                        model=u.model or settings.agent_model,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
+                        cost_usd=u.cost_usd,
+                        route=state.route,
+                        turn_id=state.work_id,
+                    )
+                    await ComputeGrantRepository(session).consume(
+                        state.project_id,
+                        usage_to_credits(u, spend_priced=state.route == "gateway"),
+                    )
             landed = landing(
                 EventAbout.room,
                 project_id=state.project_id,
@@ -4080,7 +4115,7 @@ class ChatService:
                         continue
                     if not isinstance(event, AgentToolUse):
                         continue  # SessionStart has no historical counterpart
-                    name = event.name.replace("mcp__cheese__", "")
+                    name = _short_tool_name(event.name)
                     if name in _TASK_TOOLS:
                         continue  # task todos are process state, not persisted 现场
                     args = event.input or {}
@@ -4362,12 +4397,55 @@ class ChatService:
         env = await self._gateway_project_env(project_id)
         return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
+    async def _gateway_budget_target(
+        self, session: AsyncSession, project_id: uuid.UUID
+    ) -> float | None:
+        """The L2 max_budget this project's key should carry, or None when the
+        gateway must not be told one at all (no price knob, or the project is
+        unmetered). Reading it belongs to the READ path: a caller that finds the
+        key's budget already in step has nothing to write and nothing to lock."""
+        if not settings.llm_gateway_credit_usd:
+            return None
+        summary = await ComputeGrantRepository(session).summary(project_id)
+        if summary["unlimited"]:
+            return None
+        return round(summary["credits_total"] * settings.llm_gateway_credit_usd, 6)
+
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
         project's grants. Returns None on any gateway/admin failure; the caller
-        must refuse the turn rather than expose default pool credentials."""
+        must refuse the turn rather than expose default pool credentials.
+
+        **Answering a project that needs nothing written takes no lock at all.**
+        `_gateway_lock` serialises the settings read-modify-write, but this
+        method used to hold it across the whole body — including the two gateway
+        HTTP calls — so one project minting a key, or one drain asking the
+        gateway for spend, stalled every admission on the box behind it. These
+        calls are on the hot path of every model request (routes/llm_proxy.py
+        asks once per turn, and the metering proxy asks per request), and the
+        queued wait is what the /llm/admission p95 is made of. Measured on dev,
+        2026-09-23: 20 concurrent admissions for ONE project — key long since
+        minted, no budget drift to apply — still fanned out into a 5.8 s tail.
+        Nothing about answering that request is exclusive, so it is answered
+        before the lock is reached.
+        """
         try:
+            # Read path: the key exists and is in step → nothing to write.
+            async with self._sessions() as session:
+                project = await ProjectRepository(session).get(project_id)
+                if project is None or self._gateway is None:
+                    return None
+                s = dict(project.settings or {})
+                key = s.get(self._GW_KEY)
+                if isinstance(key, str) and key:
+                    target = await self._gateway_budget_target(session, project_id)
+                    if target is None or s.get(self._GW_BUDGET) == target:
+                        return {"ANTHROPIC_AUTH_TOKEN": key}
+
+            # Write path: something must be minted or re-priced. Serialised, and
+            # the settings row is re-read here so a mint that landed while this
+            # call waited on the lock is the one that gets used.
             async with self._gateway_lock:
                 async with self._sessions() as session:
                     project = await ProjectRepository(session).get(project_id)
@@ -4380,22 +4458,10 @@ class ChatService:
                         if not key:
                             return None
                         s[self._GW_KEY] = key
-                    # L2: budget = total granted credits, in USD. Only when the
-                    # price knob is set AND the project is metered at all.
-                    if settings.llm_gateway_credit_usd:
-                        summary = await ComputeGrantRepository(session).summary(
-                            project_id
-                        )
-                        if not summary["unlimited"]:
-                            budget = round(
-                                summary["credits_total"]
-                                * settings.llm_gateway_credit_usd,
-                                6,
-                            )
-                            if s.get(self._GW_BUDGET) != budget and (
-                                await self._gateway.set_key_budget(key, budget)
-                            ):
-                                s[self._GW_BUDGET] = budget
+                    target = await self._gateway_budget_target(session, project_id)
+                    if target is not None and s.get(self._GW_BUDGET) != target:
+                        if await self._gateway.set_key_budget(key, target):
+                            s[self._GW_BUDGET] = target
                     if s != (project.settings or {}):
                         project.settings = s
                         await session.commit()
@@ -4413,31 +4479,34 @@ class ChatService:
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
-            usage = await self._drain_gateway_usage(project_id)
-            if usage is None:
+            usages = await self._drain_gateway_usage(project_id)
+            if not usages:
                 return  # still nothing — the next turn's drain picks it up
             async with self._sessions() as session:
-                await UsageRepository(session).add(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    model=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cost_usd=usage.cost_usd,
-                    route="gateway",
-                    # Same turn as the row tx2 already wrote — this is the late
-                    # half of ONE turn's spend, not a second turn.
-                    turn_id=turn_id,
-                )
-                await ComputeGrantRepository(session).consume(
-                    project_id, usage_to_credits(usage, spend_priced=True)
-                )
+                for usage in usages:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=usage.model or settings.agent_model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cost_usd=usage.cost_usd,
+                        route="gateway",
+                        # Same turn as the row tx2 already wrote — this is the
+                        # late half of ONE turn's spend, not a second turn.
+                        turn_id=turn_id,
+                    )
+                    await ComputeGrantRepository(session).consume(
+                        project_id, usage_to_credits(usage, spend_priced=True)
+                    )
                 await session.commit()
             logger.info(
-                "deferred usage drain landed for turn %s (%d+%d tokens)",
+                "deferred usage drain landed for turn %s (%s)",
                 turn_id,
-                usage.input_tokens,
-                usage.output_tokens,
+                ", ".join(
+                    f"{u.model or '?'}:{u.input_tokens}+{u.output_tokens}"
+                    for u in usages
+                ),
             )
 
         hold(
@@ -4446,12 +4515,20 @@ class ChatService:
             name=f"deferred-usage-drain-{turn_id}",
         )
 
-    async def _drain_gateway_usage(self, project_id: uuid.UUID) -> AgentUsage | None:
-        """L1: real usage for gateway-routed turns. The hooks backends can't see
-        token usage locally (interactive Claude Code reports none → usage=0), so
-        read the project's NEW spend from the gateway's log instead — an
-        exactly-once daily cumulative delta (see gateway.drain_new_usage), so
-        late-logged rows surface in a later drain instead of being lost."""
+    async def _drain_gateway_usage(
+        self, project_id: uuid.UUID
+    ) -> list[AgentUsage] | None:
+        """L1: real usage for gateway-routed turns, **one entry per model**.
+
+        The hooks backends can't see token usage locally (interactive Claude
+        Code reports none → usage=0), so read the project's NEW spend from the
+        gateway's log instead — an exactly-once daily cumulative delta per
+        model (see gateway.drain_new_usage), so late-logged rows surface in a
+        later drain instead of being lost. ``None`` covers both "nothing to
+        land yet" and "could not ask the gateway" — the callers treat them the
+        same (retry now / settle later) and only differ on whether the
+        checkpoint was advanced, which this function already did or did not
+        do."""
         if self._gateway is None:
             return None
         try:
@@ -4460,36 +4537,62 @@ class ChatService:
                     # Spend rows can arrive late. Wait without holding the lock
                     # needed by new model requests, then read the current checkpoint.
                     await asyncio.sleep(3.0)
+                # Read the checkpoint and ASK THE GATEWAY outside the lock. The
+                # ask is an HTTP round trip to LiteLLM (`/spend/logs`), and
+                # `_gateway_lock` is the box-wide lock that `/llm/admission`
+                # takes per request — holding it across a slow spend read queued
+                # every admission on the platform behind it (measured on dev,
+                # 2026-09-23: 25 admissions in one second, 1.1–6.1 s each, with a
+                # drain in flight). Only the checkpoint read-modify-write below
+                # needs to be exclusive.
+                async with self._sessions() as session:
+                    project = await ProjectRepository(session).get(project_id)
+                    if project is None:
+                        return None
+                    s = dict(project.settings or {})
+                    key = s.get(self._GW_KEY)
+                    if not isinstance(key, str) or not key:
+                        return None  # nothing ever routed → nothing to meter
+                    ckpt = s.get(self._GW_CKPT)
+                    ckpt = ckpt if isinstance(ckpt, dict) else None
+                drained = await drain_new_usage(self._gateway, key, ckpt)
+                if not attempt and (drained is None or not drained[0]):
+                    continue
+                if drained is None:
+                    return None
+                rows, next_ckpt = drained
+                # Exactly-once, and two drains can now be in flight at once: the
+                # checkpoint must still be the one we read before this drain is
+                # allowed to bill its delta. A drain that finds it already
+                # advanced has had its window taken by the other one and must
+                # land nothing — otherwise the same spend rows are billed twice.
                 async with self._gateway_lock:
                     async with self._sessions() as session:
                         project = await ProjectRepository(session).get(project_id)
                         if project is None:
                             return None
                         s = dict(project.settings or {})
-                        key = s.get(self._GW_KEY)
-                        if not isinstance(key, str) or not key:
-                            return None  # nothing ever routed → nothing to meter
-                        ckpt = s.get(self._GW_CKPT)
-                        ckpt = ckpt if isinstance(ckpt, dict) else None
-                        drained = await drain_new_usage(self._gateway, key, ckpt)
-                        if not attempt and (
-                            drained is None or drained[0] + drained[1] <= 0
-                        ):
-                            continue
-                        if drained is None:
+                        if s.get(self._GW_CKPT) != ckpt:
                             return None
-                        prompt, completion, usd, next_ckpt = drained
                         s[self._GW_CKPT] = next_ckpt
                         project.settings = s
                         await session.commit()
-                if prompt + completion <= 0:
-                    return None
-                return AgentUsage(
-                    model=settings.agent_model,
-                    input_tokens=prompt,
-                    output_tokens=completion,
-                    cost_usd=usd,
-                )
+                # `model=""` is the one pre-split migration row (see
+                # gateway.drain_new_usage): it is real spend we can only state
+                # as a total. Stamp the default name so it is still visible,
+                # exactly as before the split — do NOT invent a model.
+                usages = [
+                    AgentUsage(
+                        model=row.model,
+                        input_tokens=row.prompt_tokens,
+                        output_tokens=row.completion_tokens,
+                        cost_usd=row.spend_usd,
+                    )
+                    for row in rows
+                ]
+                # None, not []: "no rows" and "gateway unreachable" both mean
+                # there is nothing to land this pass (see the docstring).
+                return usages or None
         except Exception:  # noqa: BLE001 — metering must never fail a turn
             logger.exception("gateway usage drain failed for %s", project_id)
             return None

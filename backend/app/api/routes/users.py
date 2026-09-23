@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -29,15 +28,9 @@ from app.common.auth import (
     create_refresh_token,
     decode_token,
 )
-
-# srp re-exports from the compiled Rust extension srp_rs, which pyright can't
-# introspect; the symbols exist at runtime (see app/common/srp.py).
-from app.common.srp import (
-    generate_server_ephemeral as _srp_generate_ephemeral,  # type: ignore[attr-defined]
-)
-from app.common.srp import (
-    verify_session as _srp_verify_session,  # type: ignore[attr-defined]
-)
+from app.common.srp import generate_server_ephemeral as _srp_generate_ephemeral
+from app.common.srp import is_srp_hex
+from app.common.srp import verify_session as _srp_verify_session
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -52,6 +45,7 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.identity.handles import is_reserved_username
+from app.domain.invite.services import InviteCodeService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -86,6 +80,8 @@ from app.domain.user.services import (
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+
+    from app.domain.user.login_security import LoginRateLimiter
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -146,7 +142,25 @@ class SudoAuthRequest(BaseModel):
     purpose: SudoPurpose | None = None
 
 
-class DisableTwoFactorRequest(BaseModel):
+# SRP values are hex on the wire and are handed to the SRP math as hex, so
+# anything else is refused before it is stored as a login credential.
+_SRP_HEX = r"^[0-9a-fA-F]+$"
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    srp_salt: str = Field(..., alias="srpSalt", pattern=_SRP_HEX, max_length=1024)
+    srp_verifier: str = Field(
+        ..., alias="srpVerifier", pattern=_SRP_HEX, max_length=1024
+    )
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
+
+
+class SudoTicketRequest(BaseModel):
+    """The body of an operation that redeems a sudo ticket and needs nothing
+    else."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
@@ -187,14 +201,6 @@ class ResetPasswordRequest(BaseModel):
     password: str | None = None
     srp_salt: str | None = Field(default=None, alias="srpSalt")
     srp_verifier: str | None = Field(default=None, alias="srpVerifier")
-
-
-class LinkOAuthRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    provider_id: str = Field(..., alias="providerId", min_length=1)
-    provider_user_id: str = Field(..., alias="providerUserId", min_length=1)
-    profile: dict | None = None
 
 
 class CreateInviteCodeRequest(BaseModel):
@@ -357,6 +363,12 @@ async def _spend_2fa_attempt(
         await limiter.clear_attempts(subject)
 
 
+def _require_srp_hex(salt: str | None, verifier: str | None) -> None:
+    """Refuse SRP credentials that login could never read back."""
+    if not (is_srp_hex(salt or "") and is_srp_hex(verifier or "")):
+        raise BadRequestError("srpSalt and srpVerifier must be hex")
+
+
 async def _spend_sudo_password_attempt(
     redis: "Redis",
     user_id: int,
@@ -434,7 +446,7 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
 
 
 async def _spend_sudo_ticket(
-    ticket: str | None, *, user_id: int, purpose: SudoPurpose
+    ticket: object, *, user_id: int, purpose: SudoPurpose
 ) -> None:
     """Redeem a sudo ticket for exactly this user and this operation, once.
 
@@ -450,7 +462,7 @@ async def _spend_sudo_ticket(
     from app.common.auth import verify_sudo_ticket
     from app.core.single_use_state import SingleUseUnavailableError, claim
 
-    claims = verify_sudo_ticket(ticket) if ticket else None
+    claims = verify_sudo_ticket(ticket) if isinstance(ticket, str) and ticket else None
     if claims is None or claims.user_id != user_id or claims.purpose != purpose:
         raise SudoRequiredError("Re-authentication required for this operation")
 
@@ -461,6 +473,15 @@ async def _spend_sudo_ticket(
         raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
     if not spent:
         raise SudoRequiredError("Re-authentication required for this operation")
+
+
+def _reject_overlong_password(password: str) -> None:
+    """Refused before anything is consumed: bcrypt cannot hash it, and failing
+    after the email code or reset token is spent would cost the user both."""
+    from app.domain.user.passwords import MAX_PASSWORD_BYTES, password_too_long
+
+    if password_too_long(password):
+        raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
 def _normalize_registration_invite_code(
@@ -540,17 +561,8 @@ async def get_passkey_service(
 
 async def get_oauth_service(
     db=Depends(get_db),
-):
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-
-    repo = OAuthConnectionRepository(session=db)
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
-    try:
-        yield OAuthService(repo=repo, redis=redis)
-    finally:
-        await redis.aclose()
+) -> OAuthService:
+    return OAuthService(repo=OAuthConnectionRepository(session=db))
 
 
 @router.post(
@@ -1239,7 +1251,8 @@ async def send_register_email_code(
     """Send email verification code for registration.
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
-    Falls back to success response if email not configured (for dev).
+    Answers success without sending if email is not configured (for dev); a
+    configured sender that fails is a 503 and leaves no code behind.
     Any valid email address is accepted.
     """
     import re
@@ -1366,6 +1379,8 @@ async def register_user(
 
     if not has_srp and not has_password:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_srp:
+        _require_srp_hex(srp_salt, srp_verifier)
 
     if has_password:
         password_pattern = (
@@ -1375,6 +1390,7 @@ async def register_user(
             raise UnprocessableEntityError(
                 "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
             )
+        _reject_overlong_password(password)
 
     # Always verify email code, regardless of invite code
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
@@ -1623,6 +1639,20 @@ async def get_auth_methods(
     }
 
 
+async def _spend_login_attempt(limiter: "LoginRateLimiter", username: str) -> int:
+    """Spend one slot of the username's login budget before the credential is
+    checked, and return how many remain; see ``consume_attempt`` for why the
+    slot goes first. The caller clears the budget once the credential holds."""
+    if await limiter.is_locked_out(username):
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    budget = await limiter.consume_attempt(username)
+    if budget is None:
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    return budget
+
+
 @router.post(
     "/auth/login",
     summary="User Login",
@@ -1650,23 +1680,23 @@ async def user_login(
     try:
         rate_limiter = LoginRateLimiter(redis)
 
-        if await rate_limiter.is_locked_out(username):
-            remaining = await rate_limiter.get_remaining_lockout_seconds(username)
-            raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+        budget = await _spend_login_attempt(rate_limiter, username)
 
         auth_result = await auth_service.authenticate(
             username=username, password=password
         )
         if auth_result is None:
-            attempts = await rate_limiter.record_failed_attempt(username)
-            remaining_attempts = max(0, 5 - attempts)
-            if remaining_attempts == 0:
+            if budget == 0:
                 raise ForbiddenError("Account locked due to too many failed attempts")
             raise AuthenticationRequiredError(
-                f"Invalid username or password. {remaining_attempts} attempts remaining"
+                f"Invalid username or password. {budget} attempts remaining"
             )
 
         user, profile = auth_result
+        # Refunded as soon as the password is right, not after 2FA: the slot
+        # was spent up front, so returning "2FA required" first would leave it
+        # spent. The second step has a budget of its own.
+        await rate_limiter.clear_attempts(username)
 
         totp_service = TOTPService(redis)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
@@ -1690,8 +1720,6 @@ async def user_login(
             await _spend_2fa_attempt(
                 redis, user.id, lambda: totp_service.verify_2fa(user.id, totp_code)
             )
-
-        await rate_limiter.clear_attempts(username)
 
         session_manager = SessionManager(redis)
         client_ip = request.client.host if request.client else ""
@@ -1769,7 +1797,10 @@ async def srp_login_init(
         raise AuthenticationRequiredError("Invalid username or password")
     stored_salt, stored_verifier = parts[1], parts[2]
 
-    server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+    try:
+        server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+    except ValueError:
+        raise AuthenticationRequiredError("Invalid username or password") from None
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
     try:
@@ -1839,11 +1870,13 @@ async def srp_login_verify(
 
         srp_key = f"srp:login:{username}"
         server_secret = await redis.get(srp_key)
-        if not server_secret:
+        if not isinstance(server_secret, str) or not server_secret:
             raise AuthenticationRequiredError(
                 "SRP session expired, please reinitialize"
             )
         await redis.delete(srp_key)
+
+        await _spend_login_attempt(rate_limiter, username)
 
         success, server_proof_hex = _srp_verify_session(
             server_secret_hex=server_secret,
@@ -1855,7 +1888,6 @@ async def srp_login_verify(
         )
 
         if not success:
-            await rate_limiter.record_failed_attempt(username)
             raise AuthenticationRequiredError("Invalid username or password")
 
         # SRP verified — clear rate limiter
@@ -1876,7 +1908,7 @@ async def srp_login_verify(
                 "data": {
                     "requires2FA": True,
                     "tempToken": await _issue_2fa_pending_token(user.id),
-                    "serverProof": "",
+                    "serverProof": server_proof_hex,
                 },
             }
 
@@ -2189,7 +2221,7 @@ async def sudo_auth(
                 "Password authentication not available for this account"
             )
 
-        import bcrypt
+        from app.domain.user.passwords import check_password
 
         hashed_password = user.hashed_password
 
@@ -2198,11 +2230,7 @@ async def sudo_auth(
             await _spend_sudo_password_attempt(
                 redis,
                 auth_user.user_id,
-                lambda: asyncio.to_thread(
-                    bcrypt.checkpw,
-                    password.encode("utf-8"),
-                    hashed_password.encode("utf-8"),
-                ),
+                lambda: check_password(password, hashed_password),
                 message="Invalid password",
             )
         finally:
@@ -2231,7 +2259,12 @@ async def sudo_auth(
 
             if not client_ephemeral and not client_proof:
                 # SRP Step 1: Generate server ephemeral and store session state
-                server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+                try:
+                    server_public, server_secret = _srp_generate_ephemeral(
+                        stored_verifier
+                    )
+                except ValueError:
+                    raise AuthenticationRequiredError("Corrupted SRP data") from None
 
                 # Store server secret in Redis (expires in 5 minutes)
                 await redis.setex(srp_key, 300, server_secret)
@@ -2252,7 +2285,7 @@ async def sudo_auth(
                 )
 
             stored_secret = await redis.get(srp_key)
-            if not stored_secret:
+            if not isinstance(stored_secret, str) or not stored_secret:
                 raise AuthenticationRequiredError(
                     "SRP session expired, please reinitialize"
                 )
@@ -2676,6 +2709,7 @@ async def reset_password(
 
     if len(new_password) < 6:
         raise BadRequestError("Password must be at least 6 characters")
+    _reject_overlong_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2784,6 +2818,10 @@ async def recover_password_verify(
 
     if not has_password and not has_srp:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_password:
+        _reject_overlong_password(new_password)
+    if has_srp:
+        _require_srp_hex(srp_salt, srp_verifier)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2794,11 +2832,10 @@ async def recover_password_verify(
             raise UnprocessableEntityError("Invalid or expired reset token")
 
         user_id = int(token_data["user_id"])
-        if has_password:
+        if new_password:
             await auth_service.update_password(user_id, new_password)
-        else:
-            srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-            await auth_service._user_repo.update_password(user_id, srp_data)
+        elif srp_salt and srp_verifier:
+            await auth_service.set_srp_credentials(user_id, srp_salt, srp_verifier)
 
         return {
             "code": 200,
@@ -2806,6 +2843,36 @@ async def recover_password_verify(
         }
     finally:
         await redis.aclose()
+
+
+@router.patch(
+    "/{userId}/password",
+    summary="Change password",
+)
+async def change_password(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: ChangePasswordRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Replace the account's password with new SRP credentials.
+
+    Other sessions stay signed in: the session layer cannot yet revoke them
+    (#1481).
+    """
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can change their password.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSWORD_CHANGE,
+    )
+    await auth_service.set_srp_credentials(
+        user_id, payload.srp_salt, payload.srp_verifier
+    )
+
+    return {"code": 200, "message": "Password changed successfully"}
 
 
 @router.get(
@@ -3052,10 +3119,14 @@ async def enable_user_2fa(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    """Two-phase, reference contract: no body → generate a secret and hand it
-    to the client (nothing persisted yet); {secret, code} → verify the live
-    code against that secret, persist it, and return the one-time backup
-    codes."""
+    """Two-phase, reference contract: no code → generate a secret and hand it
+    to the client; {secret, code} → verify the live code against that secret,
+    persist it, and return the one-time backup codes.
+
+    The first phase spends a sudo ticket. The second needs none of its own:
+    it accepts only the secret the first phase offered, so reaching it at all
+    means having re-authenticated.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
@@ -3096,7 +3167,12 @@ async def enable_user_2fa(
                 },
             }
 
-        new_secret = totp_service.generate_secret()
+        await _spend_sudo_ticket(
+            payload.get("sudoTicket"),
+            user_id=auth_user.user_id,
+            purpose=SudoPurpose.TWO_FA_ENABLE,
+        )
+        new_secret = await totp_service.offer_secret(auth_user.user_id)
         otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
         return {
             "code": 200,
@@ -3174,7 +3250,7 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
 )
 async def disable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    payload: DisableTwoFactorRequest = Body(default_factory=DisableTwoFactorRequest),
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
@@ -3263,6 +3339,7 @@ async def get_user_2fa_status(
 )
 async def regenerate_backup_codes(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -3280,6 +3357,11 @@ async def regenerate_backup_codes(
         if not await totp_service.is_2fa_enabled(user_id):
             raise BadRequestError("2FA is not enabled")
 
+        await _spend_sudo_ticket(
+            payload.sudo_ticket,
+            user_id=auth_user.user_id,
+            purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
+        )
         backup_codes = await totp_service.generate_backup_codes(user_id)
         return {
             "code": 201,
@@ -3310,6 +3392,12 @@ async def update_2fa_settings(
     always_required = payload.get("always_required")
     if not isinstance(always_required, bool):
         raise BadRequestError("always_required (boolean) is required")
+
+    await _spend_sudo_ticket(
+        payload.get("sudoTicket"),
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.TWO_FA_SETTINGS,
+    )
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -3349,10 +3437,17 @@ def _challenge_from_credential(credential: dict) -> str:
 )
 async def passkey_register_challenge(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
+    """Start registering a passkey, against a sudo ticket.
+
+    Only this step spends the ticket. Completing the registration needs a
+    challenge this step stored, so nothing can be registered without having
+    come through here.
+    """
     import json
 
     from redis.asyncio import Redis as AsyncRedis
@@ -3361,6 +3456,12 @@ async def passkey_register_challenge(
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can register a passkey.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSKEY_ADD,
+    )
 
     user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
 
@@ -3578,11 +3679,18 @@ async def list_passkeys(
 async def delete_passkey(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     credential_id: Annotated[str, Path(alias="credentialId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can delete their passkeys.")
+
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.PASSKEY_DELETE,
+    )
 
     deleted = await passkey_service.delete_passkey(user_id, credential_id)
 
@@ -3620,40 +3728,107 @@ def _oauth_frontend_url(path: str, **params: str | None) -> str:
 
 # --- OAuth client-completion flow (reference contract) --------------------
 # When the callback cannot resolve the account by itself it hands the browser
-# to a frontend page with either a stateless stateToken (decision page) or a
-# Redis-backed pending session (credential-verify page). 15-minute TTL both.
+# to a frontend page with either a signed stateToken (decision page) or a
+# Redis-backed pending session (credential-verify page). 15-minute TTL both,
+# and each is redeemable once: the stateToken's ``jti`` is reserved when it is
+# minted and claimed by whichever create/bind request spends it.
 
 _OAUTH_STATE_TTL_S = 15 * 60
+_OAUTH_STATE_SCOPE = "oauth_state"
 _OAUTH_PENDING_PREFIX = "oauth:pending:"
 
 
-def _mint_oauth_state_token(provider_id: str, user_info: dict) -> str:
+async def _issue_oauth_state_token(provider_id: str, user_info: dict) -> str:
+    """Mint a decision-page stateToken and reserve it for one redemption.
+
+    Raises ``SingleUseUnavailableError`` when Redis is unreachable: a token we
+    could not reserve would be refused by every endpoint that spends it.
+    """
     import time
+    import uuid
+
+    from app.core.single_use_state import reserve
 
     now = int(time.time())
-    return jwt.encode(
+    jti = uuid.uuid4().hex
+    token = jwt.encode(
         {
             "type": "oauth_state",
             "provider": provider_id,
             "info": user_info,
+            "jti": jti,
             "iat": now,
             "exp": now + _OAUTH_STATE_TTL_S,
         },
         settings.jwt_secret,
         algorithm="HS256",
     )
+    await reserve(_OAUTH_STATE_SCOPE, jti, ttl_s=_OAUTH_STATE_TTL_S)
+    return token
 
 
-def _decode_oauth_state_token(token: str) -> tuple[str, dict]:
+def _decode_oauth_state_token(token: str) -> tuple[str, dict, str]:
+    """(provider, userInfo, jti). Reading does not spend the token."""
     try:
         claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError as exc:
         raise AuthenticationRequiredError(
             "Invalid or expired OAuth state token"
         ) from exc
-    if claims.get("type") != "oauth_state":
+    jti = claims.get("jti")
+    if claims.get("type") != "oauth_state" or not isinstance(jti, str) or not jti:
         raise AuthenticationRequiredError("Invalid or expired OAuth state token")
-    return str(claims["provider"]), dict(claims["info"])
+    return str(claims["provider"]), dict(claims["info"]), jti
+
+
+async def _redeem_oauth_state_token(jti: str) -> bool:
+    """Spend a decoded stateToken. True exactly once; fails closed."""
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    try:
+        return await claim(_OAUTH_STATE_SCOPE, jti)
+    except SingleUseUnavailableError:
+        logger.exception("oauth: cannot claim state token")
+        return False
+
+
+async def _spend_oauth_password_attempt(username: str) -> bool:
+    """Charge one attempt to ``username``'s login budget before a credential
+    check. False when the budget is spent and the request must be refused.
+
+    The same counter password and SRP login use, so proving a password through
+    an OAuth binding page cannot bypass a login lockout.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import LoginRateLimiter
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        limiter = LoginRateLimiter(redis)
+        if await limiter.is_locked_out(username):
+            return False
+        return await limiter.consume_attempt(username) is not None
+    finally:
+        await redis.aclose()
+
+
+async def _clear_oauth_password_attempts(username: str) -> None:
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import LoginRateLimiter
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await LoginRateLimiter(redis).clear_attempts(username)
+    finally:
+        await redis.aclose()
+
+
+def _oauth_too_many_attempts_redirect() -> RedirectResponse:
+    return _oauth_error_redirect(
+        "TOO_MANY_ATTEMPTS", "Too many failed attempts. Try again later"
+    )
 
 
 def _oauth_user_info_dict(user_info) -> dict:
@@ -3739,7 +3914,29 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
 async def _oauth_login_redirect(
     auth_service, user_id: int, provider_id: str, **extra: str | None
 ) -> RedirectResponse:
-    """Issue tokens for a resolved OAuth login and land on the success page."""
+    """Issue tokens for a resolved OAuth login and land on the success page.
+
+    An account with 2FA gets a 2FA ticket and the verify page instead, exactly
+    as a password login would: the provider stands in for the password only.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import TOTPService
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        requires_2fa = await TOTPService(redis).is_2fa_enabled(user_id)
+    finally:
+        await redis.aclose()
+    if requires_2fa:
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_2fa_verify_path,
+                token=await _issue_2fa_pending_token(user_id),
+            ),
+            status_code=302,
+        )
+
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
     access_token_jwt = create_access_token(user_id, handle=user_obj.username)
     refresh_token = create_refresh_token(user_id)
@@ -3773,26 +3970,97 @@ def _oauth_error_redirect(error_code: str, message: str) -> RedirectResponse:
     )
 
 
+# The login `state` is ours, never the client's. It is reserved server-side so
+# the callback can spend it once, and bound to the browser that started the
+# flow by an httpOnly cookie: a callback URL carried to another browser arrives
+# without the cookie and is refused. SameSite=Lax still sends the cookie on the
+# provider's top-level GET redirect back to us.
+_OAUTH_LOGIN_STATE_COOKIE = "OAUTH_STATE"
+_OAUTH_LOGIN_STATE_SCOPE = "oauth_login_state"
+_OAUTH_LOGIN_STATE_TTL_S = 10 * 60
+
+
+def _oauth_login_state_scope(provider_id: str) -> str:
+    # Per provider, so a state issued for one provider cannot be spent at
+    # another provider's callback.
+    return f"{_OAUTH_LOGIN_STATE_SCOPE}:{provider_id}"
+
+
+async def _spend_oauth_login_state(
+    provider_id: str, state: str | None, cookie_state: str | None
+) -> bool:
+    """True when ``state`` is the one this browser was issued and is unspent."""
+    import hmac
+
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    if not state or not cookie_state:
+        return False
+    if not hmac.compare_digest(state.encode(), cookie_state.encode()):
+        return False
+    try:
+        return await claim(_oauth_login_state_scope(provider_id), state)
+    except SingleUseUnavailableError:
+        logger.exception("OAuth callback: cannot claim login state for %s", provider_id)
+        return False
+
+
+def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectResponse:
+    return RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_error_path, message=message, provider=provider_id
+        ),
+        status_code=302,
+    )
+
+
 @router.get(
     "/auth/oauth/login/{providerId}",
     summary="Redirect to the OAuth provider's authorization page",
 )
 async def get_oauth_login_url(
     provider_id: Annotated[str, Path(alias="providerId")],
-    state: str | None = Query(default=None),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     # The frontend navigates the browser straight to this endpoint, so we
-    # 302-redirect to the provider's authorization page. `state` is generated
-    # by the frontend (CSRF) and passed through to the provider unchanged.
+    # 302-redirect to the provider's authorization page.
+    import secrets
+    from urllib.parse import urlparse
+
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
+
+    state = secrets.token_urlsafe(32)
     try:
+        provider = oauth_service.get_provider(provider_id)
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
     except NotFoundError:
         raise NotFoundError(
             f"OAuth provider '{provider_id}' not found or not enabled"
         ) from None
 
-    return RedirectResponse(auth_url, status_code=302)
+    try:
+        await reserve(
+            _oauth_login_state_scope(provider_id),
+            state,
+            ttl_s=_OAUTH_LOGIN_STATE_TTL_S,
+        )
+    except SingleUseUnavailableError:
+        logger.exception("OAuth login: cannot reserve state for %s", provider_id)
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+
+    redirect = RedirectResponse(auth_url, status_code=302)
+    redirect.set_cookie(
+        _OAUTH_LOGIN_STATE_COOKIE,
+        state,
+        max_age=_OAUTH_LOGIN_STATE_TTL_S,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        # The provider sends the browser to exactly this URL, so its path is
+        # the callback path as the browser sees it, gateway mount included.
+        path=urlparse(provider.config.redirect_url).path or "/",
+    )
+    return redirect
 
 
 @router.get(
@@ -3801,30 +4069,31 @@ async def get_oauth_login_url(
 )
 async def handle_oauth_callback(
     provider_id: Annotated[str, Path(alias="providerId")],
+    request: Request,
     code: str = Query(...),
     state: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> RedirectResponse:
+    # Step 0: the state must be the one issued to this browser, unspent —
+    # checked before the code is exchanged.
+    if not await _spend_oauth_login_state(
+        provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
+    ):
+        logger.info("OAuth callback: state rejected for %s", provider_id)
+        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+
     # Step 1: exchange the code and fetch the provider profile. Any failure here
     # is an authentication problem — bounce to the frontend error page.
     try:
         _access_token, user_info = await oauth_service.handle_callback(
             provider_id=provider_id,
             code=code,
-            state=state,
         )
     except Exception:
         logger.exception("OAuth callback: provider exchange failed for %s", provider_id)
-        return RedirectResponse(
-            _oauth_frontend_url(
-                settings.frontend_oauth_error_path,
-                message="oauth_failed",
-                provider=provider_id,
-            ),
-            status_code=302,
-        )
+        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
 
     # Step 2 — resolve the local account (reference contract):
     #   A. existing binding → straight to the success page.
@@ -3890,7 +4159,7 @@ async def handle_oauth_callback(
                 status_code=302,
             )
 
-        state_token = _mint_oauth_state_token(provider_id, info_dict)
+        state_token = await _issue_oauth_state_token(provider_id, info_dict)
         return RedirectResponse(
             _oauth_frontend_url(
                 settings.frontend_oauth_complete_path, stateToken=state_token
@@ -3920,7 +4189,7 @@ async def get_oauth_state(
     token: str = Query(...),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    provider_id, user_info = _decode_oauth_state_token(token)
+    provider_id, user_info, _jti = _decode_oauth_state_token(token)
     suggested_username, suggested_nickname = await _suggest_oauth_identity(
         auth_service, user_info
     )
@@ -4003,6 +4272,8 @@ async def oauth_verify_conflict(
         return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
 
     user_id = int(pending["userId"])
+    if not await _spend_oauth_password_attempt(pending["username"]):
+        return _oauth_too_many_attempts_redirect()
     try:
         if pending["type"] == "password":
             password = payload.get("password") or ""
@@ -4010,11 +4281,9 @@ async def oauth_verify_conflict(
             hashed = user.hashed_password or ""
             if hashed.startswith("SRP:") or not hashed or not password:
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
-            import bcrypt
+            from app.domain.user.passwords import check_password
 
-            if not await asyncio.to_thread(
-                bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
-            ):
+            if not await check_password(password, hashed):
                 return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
         else:
             success, _proof = _srp_verify_session(
@@ -4030,6 +4299,7 @@ async def oauth_verify_conflict(
                     "INVALID_SRP_PROOF", "Security verification failed"
                 )
 
+        await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
             session=session,
             auth_service=auth_service,
@@ -4056,12 +4326,13 @@ async def oauth_create_user(
     passwordMode: str = Form(default="none"),
     srpSalt: str | None = Form(default=None),
     srpVerifier: str | None = Form(default=None),
+    inviteCode: str | None = Form(default=None),
     session: AsyncSession = Depends(get_db),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     try:
-        provider_id, user_info = _decode_oauth_state_token(stateToken)
+        provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
@@ -4077,6 +4348,27 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
         )
+    if passwordMode == "srp" and not (
+        is_srp_hex(srpSalt or "") and is_srp_hex(srpVerifier or "")
+    ):
+        return _oauth_error_redirect(
+            "INVALID_SRP_CREDENTIALS", "Malformed SRP credentials"
+        )
+    # Same gate as /users registration: an OAuth account is still a new account.
+    try:
+        invite_code = _normalize_registration_invite_code(
+            inviteCode, required=settings.require_invite_code
+        )
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect("INVITE_CODE_REQUIRED", str(exc))
+    invite_service = InviteCodeService(session)
+    if invite_code:
+        try:
+            await invite_service.validate_code(invite_code)
+        except ValueError as exc:
+            return _oauth_error_redirect(
+                "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+            )
     if is_reserved_username(username):
         # Ahead of the try/except below on purpose: that block catches
         # Exception broadly and answers with a generic "creation failed" plus an
@@ -4085,8 +4377,11 @@ async def oauth_create_user(
         return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
     if await auth_service.is_username_taken(username):
         return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
-    # Before the account is created, not after: a replayed stateToken would
-    # otherwise leave a second account behind with nothing linked to it.
+    if not await _redeem_oauth_state_token(jti):
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    # Before the account is created, not after: a second stateToken for an
+    # identity linked meanwhile would otherwise leave an account behind with
+    # nothing linked to it.
     if await oauth_service.get_connection_by_provider(
         provider_id=provider_id, provider_user_id=str(user_info.get("id"))
     ):
@@ -4114,6 +4409,14 @@ async def oauth_create_user(
             if str(exc) == "EMAIL_TAKEN":
                 return _oauth_error_redirect("EMAIL_TAKEN", "Email already registered")
             raise
+        if invite_code:
+            try:
+                await invite_service.consume_code(invite_code)
+            except ValueError as exc:
+                await session.rollback()
+                return _oauth_error_redirect(
+                    "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                )
         return await _complete_oauth_binding(
             session=session,
             auth_service=auth_service,
@@ -4143,24 +4446,30 @@ async def oauth_bind_user(
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> RedirectResponse:
     try:
-        provider_id, user_info = _decode_oauth_state_token(stateToken)
+        provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    if not await _redeem_oauth_state_token(jti):
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+
+    if not await _spend_oauth_password_attempt(username):
+        return _oauth_too_many_attempts_redirect()
+
+    from app.domain.user.passwords import check_password
 
     user = await auth_service._user_repo.get_by_username(username)
-    if user is None:
-        return _oauth_error_redirect("USER_NOT_FOUND", "User not found")
-    hashed = user.hashed_password or ""
-    if hashed.startswith("SRP:") or not hashed:
-        # SRP accounts must use the bind/srp/init + verify pair.
-        return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
-
-    import bcrypt
-
-    if not password or not await asyncio.to_thread(
-        bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
+    hashed = (user.hashed_password or "") if user is not None else ""
+    # SRP accounts must use the bind/srp/init + verify pair; they, unknown
+    # users and wrong passwords all get the same answer.
+    if (
+        user is None
+        or not hashed
+        or hashed.startswith("SRP:")
+        or not password
+        or not await check_password(password, hashed)
     ):
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+    await _clear_oauth_password_attempts(username)
 
     try:
         return await _complete_oauth_binding(
@@ -4189,25 +4498,31 @@ async def oauth_bind_srp_init(
     state_token = payload.get("stateToken") or ""
     username = payload.get("username") or ""
     try:
-        provider_id, user_info = _decode_oauth_state_token(state_token)
+        provider_id, user_info, jti = _decode_oauth_state_token(state_token)
     except AuthenticationRequiredError:
         raise AuthenticationRequiredError("Session expired, please try again") from None
 
     user = await auth_service._user_repo.get_by_username(username)
-    if user is None:
-        raise NotFoundError("User not found")
-    hashed = user.hashed_password or ""
-    if not hashed.startswith("SRP:"):
-        raise BadRequestError("User does not support SRP authentication")
+    hashed = (user.hashed_password or "") if user is not None else ""
     parts = hashed.split(":", 2)
-    if len(parts) != 3:
-        raise BadRequestError("User does not support SRP authentication")
+    if user is None or not hashed.startswith("SRP:") or len(parts) != 3:
+        raise AuthenticationRequiredError("Invalid username or password")
     salt, verifier = parts[1], parts[2]
+
+    # Spent here rather than at verify: the pending session below is itself
+    # single-use, so one stateToken buys exactly one proof attempt. A username
+    # typo above is answered before the token is spent, because the decision
+    # page stays open on that error.
+    if not await _redeem_oauth_state_token(jti):
+        raise AuthenticationRequiredError("Session expired, please try again")
 
     import secrets as _secrets
     import time as _time
 
-    server_public, server_secret = _srp_generate_ephemeral(verifier)
+    try:
+        server_public, server_secret = _srp_generate_ephemeral(verifier)
+    except ValueError:
+        raise BadRequestError("User does not support SRP authentication") from None
     session_id = (
         f"oauth_srp_{provider_id}_{user_info.get('id')}_"
         f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"
@@ -4251,6 +4566,8 @@ async def oauth_bind_srp_verify(
     pending = await _pop_oauth_pending(sessionId)
     if not pending or pending.get("type") != "srp_bind":
         return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
+    if not await _spend_oauth_password_attempt(pending["username"]):
+        return _oauth_too_many_attempts_redirect()
 
     success, _proof = _srp_verify_session(
         server_secret_hex=pending["serverSecret"],
@@ -4264,6 +4581,7 @@ async def oauth_bind_srp_verify(
         return _oauth_error_redirect(
             "INVALID_SRP_PROOF", "Security verification failed"
         )
+    await _clear_oauth_password_attempts(pending["username"])
 
     try:
         return await _complete_oauth_binding(
@@ -4279,40 +4597,6 @@ async def oauth_bind_srp_verify(
         await session.rollback()
         logger.exception("OAuth SRP bind: binding failed")
         return _oauth_error_redirect("SRP_VERIFICATION_FAILED", "Binding failed")
-
-
-@router.post(
-    "/auth/oauth/link",
-    summary="Link OAuth account to existing user",
-)
-async def link_oauth_account(
-    payload: LinkOAuthRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    oauth_service: OAuthService = Depends(get_oauth_service),
-) -> dict:
-    provider_id = payload.provider_id
-    provider_user_id = payload.provider_user_id
-    raw_profile = payload.profile
-
-    existing = await oauth_service.get_connection_by_provider(
-        provider_id=provider_id,
-        provider_user_id=provider_user_id,
-    )
-    if existing:
-        raise BadRequestError("This OAuth account is already linked to another user")
-
-    connection = await oauth_service.create_connection(
-        user_id=auth_user.user_id,
-        provider_id=provider_id,
-        provider_user_id=provider_user_id,
-        raw_profile=raw_profile,
-    )
-
-    return {
-        "code": 201,
-        "message": "OAuth account linked successfully.",
-        "data": {"connection": connection},
-    }
 
 
 # ── Invite Code Management ──────────────────────────────────────────────

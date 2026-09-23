@@ -26,6 +26,21 @@ def _fake_credential(challenge_b64url: str = "bm90LWEtcmVhbC1jaGFsbGVuZ2U") -> d
     }
 
 
+def _sudo_ticket(api_client: TestClient, user: CreatedUser, purpose: str) -> str:
+    """A ticket got the way a client gets one: by re-entering the password."""
+    resp = api_client.post(
+        "/users/auth/sudo",
+        headers={"Authorization": f"Bearer {user.token}"},
+        json={
+            "method": "password",
+            "credentials": {"password": user.password},
+            "purpose": purpose,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["sudoTicket"]
+
+
 class TestPasskeyIntegration:
     def test_register_options(
         self, authenticated_user: CreatedUser, api_client: TestClient
@@ -33,6 +48,11 @@ class TestPasskeyIntegration:
         resp = api_client.post(
             f"/users/{authenticated_user.user_id}/passkeys/options",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
+            json={
+                "sudoTicket": _sudo_ticket(
+                    api_client, authenticated_user, "passkey:add"
+                )
+            },
         )
         assert resp.status_code == 200, (
             f"Expected 200, got {resp.status_code}: {resp.text}"
@@ -105,9 +125,15 @@ class TestPasskeyIntegration:
     def test_delete_passkey_not_found(
         self, authenticated_user: CreatedUser, api_client: TestClient
     ):
-        resp = api_client.delete(
+        resp = api_client.request(
+            "DELETE",
             f"/users/{authenticated_user.user_id}/passkeys/nonexistent-credential-id",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
+            json={
+                "sudoTicket": _sudo_ticket(
+                    api_client, authenticated_user, "passkey:delete"
+                )
+            },
         )
         assert resp.status_code == 404, (
             f"Expected 404, got {resp.status_code}: {resp.text}"
@@ -145,3 +171,57 @@ class TestPasskeyIntegration:
         assert resp.status_code == 400, (
             f"Expected 400, got {resp.status_code}: {resp.text}"
         )
+
+
+class TestPasskeyManagementNeedsReAuthentication:
+    """Adding or removing a passkey changes how the account can be signed
+    into, so a live session alone is not enough for either."""
+
+    def _options(self, api_client: TestClient, user: CreatedUser, ticket=None):
+        return api_client.post(
+            f"/users/{user.user_id}/passkeys/options",
+            headers={"Authorization": f"Bearer {user.token}"},
+            json={} if ticket is None else {"sudoTicket": ticket},
+        )
+
+    def _delete(self, api_client: TestClient, user: CreatedUser, ticket=None):
+        return api_client.request(
+            "DELETE",
+            f"/users/{user.user_id}/passkeys/some-credential-id",
+            headers={"Authorization": f"Bearer {user.token}"},
+            json={} if ticket is None else {"sudoTicket": ticket},
+        )
+
+    def test_starting_a_registration_needs_a_ticket(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
+        refused = self._options(api_client, authenticated_user)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+
+    def test_deleting_a_passkey_needs_a_ticket(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
+        refused = self._delete(api_client, authenticated_user)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["name"] == "SudoRequiredError"
+
+    def test_a_ticket_for_one_is_not_a_ticket_for_the_other(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
+        add = _sudo_ticket(api_client, authenticated_user, "passkey:add")
+        refused = self._delete(api_client, authenticated_user, add)
+        assert refused.status_code == 403, refused.text
+
+        delete = _sudo_ticket(api_client, authenticated_user, "passkey:delete")
+        refused = self._options(api_client, authenticated_user, delete)
+        assert refused.status_code == 403, refused.text
+
+    def test_a_registration_ticket_is_spent_by_its_first_use(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
+        ticket = _sudo_ticket(api_client, authenticated_user, "passkey:add")
+        assert self._options(api_client, authenticated_user, ticket).status_code == 200
+
+        replay = self._options(api_client, authenticated_user, ticket)
+        assert replay.status_code == 403, replay.text

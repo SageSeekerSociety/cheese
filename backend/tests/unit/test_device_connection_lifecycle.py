@@ -12,7 +12,7 @@ import pytest
 from app import device_connection_app
 from app.core.config import settings
 from app.core.db import get_db
-from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 from tests.support import wire
 
@@ -163,6 +163,79 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     assert new_backend.is_online("machine")
     await new_backend.close()
     await device_hub.detach_device("machine", connector)
+
+
+@pytest.mark.anyio
+async def test_old_disconnect_cannot_take_down_the_replacement_connection(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    monkeypatch.setattr(device_hub, "_devices", {})
+    monkeypatch.setattr(device_hub, "_screens", {})
+    monkeypatch.setattr(device_hub, "_by_screen_token", {})
+    monkeypatch.setattr(device_connection_app, "_executor_calls", {})
+    monkeypatch.setattr(device_connection_app, "_release_draining", False)
+    monkeypatch.setattr(device_connection_app, "_active_rpc_calls", 0)
+
+    old = wire.RecordingDevice()
+    replacement = wire.RecordingDevice()
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+    waiters = []
+    try:
+        await device_hub.attach_device("machine", old)
+        await old.sent.get()
+        await device_hub.on_device_message(
+            "machine", {"t": "hello", "v": 3, "executor": True}
+        )
+        interrupted = asyncio.create_task(
+            backend.call_executor(
+                "machine",
+                "/room/executor",
+                "invoke",
+                {"tool": "Bash"},
+                trace_id="before-reconnect",
+            )
+        )
+        waiters.append(interrupted)
+        await asyncio.wait_for(old.next_call(), 1)
+
+        # The new socket arrives before the old receive loop runs its finally.
+        await device_hub.attach_device("machine", replacement)
+        await replacement.sent.get()
+        await device_hub.on_device_message(
+            "machine", {"t": "hello", "v": 3, "executor": True}
+        )
+        with pytest.raises(DeviceOffline):
+            await asyncio.wait_for(interrupted, 1)
+
+        answered = asyncio.create_task(
+            backend.call_executor(
+                "machine",
+                "/room/executor",
+                "invoke",
+                {"tool": "Bash"},
+                trace_id="after-reconnect",
+            )
+        )
+        waiters.append(answered)
+        call = await asyncio.wait_for(replacement.next_call(), 1)
+        await device_hub.detach_device("machine", old)
+        await backend.refresh()
+        assert backend.is_online("machine")
+        await device_hub.on_device_message(
+            "machine", wire.execution_data(call.id, b'{"result":{"output":"done"}}')
+        )
+        await device_hub.on_device_message("machine", wire.execution_result(call.id))
+        assert await asyncio.wait_for(answered, 1) == {"output": "done"}
+        assert old.sent.empty()
+        assert replacement.sent.empty()
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        await backend.close()
+        await device_hub.detach_device("machine", replacement)
 
 
 @pytest.mark.anyio

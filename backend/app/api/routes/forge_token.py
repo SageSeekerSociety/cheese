@@ -120,7 +120,7 @@ async def forge_tunnel(
                 pass
         try:
             await websocket.close()
-        except (RuntimeError, OSError):
+        except (RuntimeError, OSError, WebSocketDisconnect):
             pass
 
 

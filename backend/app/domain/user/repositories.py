@@ -167,6 +167,50 @@ class UserRepository:
         stmt = select(func.count(User.id)).where(User.deleted_at.is_(None))
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """存量里有多少真人、多少 agent。
+
+        判据是 `agent_bindings` —— **同一个判据** `IdentityService.is_agent` 和
+        管理员选择器用的那一个，只是从一次一个的探针变成一条聚合 SQL。不在这里
+        另发明一（handle 前缀、email 域名……）：两套判据的症状是「看板说 12 个
+        agent、成员页标出 9 个」。
+
+        agent 有一行 `agent_bindings`，真人没有。分身是一人一行（见
+        `identity/services.py`），所以这里的 agent 数是**身份数**，不是「几个
+        芝士」。
+        """
+        agent = exists().where(AgentBinding.user_id == User.id)
+        stmt = select(
+            func.count(User.id).filter(agent),
+            func.count(User.id).filter(~agent),
+        ).where(User.deleted_at.is_(None))
+        agents, humans = (await self._session.execute(stmt)).one()
+        return {"humans": int(humans or 0), "agents": int(agents or 0)}
+
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """窗口内按 **UTC 的天**新增的账号数，真人 / agent 各一条；稀疏，补 0 由
+        调用方做。和 `count_accounts_by_kind` 同一个判据（`agent_bindings`）。"""
+        agent = exists().where(AgentBinding.user_id == User.id)
+        day = utc_day(User.created_at)
+        stmt = (
+            select(day.label("day"), agent.label("is_agent"), func.count(User.id))
+            .where(
+                User.deleted_at.is_(None),
+                User.created_at >= since,
+                User.created_at < until,
+            )
+            .group_by(day, agent)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        out: dict[str, dict[date, int]] = {"humans": {}, "agents": {}}
+        for row in rows:
+            key = "agents" if row[1] else "humans"
+            out[key][row[0].date()] = int(row[2])
+        return out
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:
@@ -209,6 +253,52 @@ class UserProfileRepository:
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}
 
+    async def nickname_and_avatar_by_user_id(
+        self, user_ids: Sequence[int]
+    ) -> dict[int, tuple[str | None, int | None]]:
+        """user_id -> (昵称, 自己挑过的头像 id)，一条查询里两列。
+
+        名单、名册这些「画一行」的地方要的是名字和脸，而它们一个在 `UserProfile`
+        上、一个要经 `Avatar` 认出来 —— 分开查就是每个调用点自己 join 一次，或者
+        先查 profile 再按 avatar_id 回查一遍（那又成了 N+1）。这里一次 outerjoin
+        就够，`AdminService.admins_out` 那类「一屏几十行」的调用点因此不需要第二
+        次往返。
+
+        avatar id 只在**真的挑过**时才有值，判据仍是 ``avatar_type != "default"``，
+        不是拿 id 去比 1：默认头像是哪一行是种子数据，每个环境不一样。
+
+        outerjoin 而不是 join：没有档案行的人、头像 id 指着一个已经不在 `Avatar`
+        里的人，都要留在结果里（值给 None），而不是整行消失 —— 调用方要画的是
+        「这个人在名单上，只是没挑过头像」。这一条正是它和 ``chosen_avatar_ids``
+        分开的原因：那边「没挑过」要整条不见（界面据此画彩色首字母），这边要给一个
+        能占位的行。规则仍只有一处，``chosen_avatar_ids`` 从这条结果里过滤。
+        """
+        if not user_ids:
+            return {}
+        stmt = (
+            select(
+                UserProfile.user_id,
+                UserProfile.nickname,
+                UserProfile.avatar_id,
+                Avatar.avatar_type,
+            )
+            .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+            .where(
+                and_(
+                    UserProfile.user_id.in_(list(user_ids)),
+                    UserProfile.deleted_at.is_(None),
+                )
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {
+            user_id: (
+                nickname,
+                avatar_id if avatar_type not in (None, "default") else None,
+            )
+            for user_id, nickname, avatar_id, avatar_type in rows
+        }
+
     async def chosen_avatar_ids(self, user_ids: Sequence[int]) -> dict[int, int]:
         """user_id -> the avatar this person actually PICKED, for those who did.
 
@@ -223,22 +313,18 @@ class UserProfileRepository:
         The default row is recognised by ``avatar_type``, not by comparing
         against a literal 1: which row holds the default is seed data and
         differs per environment.
+
+        This is now a filter over ``nickname_and_avatar_by_user_id`` rather than
+        its own query, so 「哪一行是默认头像」 has one implementation: a caller
+        that wants the nickname too (``AdminService.admins_out``) reads the same
+        join instead of writing a second one that could drift.
         """
-        if not user_ids:
-            return {}
-        stmt = (
-            select(UserProfile.user_id, UserProfile.avatar_id)
-            .join(Avatar, Avatar.id == UserProfile.avatar_id)
-            .where(
-                and_(
-                    UserProfile.user_id.in_(list(user_ids)),
-                    UserProfile.deleted_at.is_(None),
-                    Avatar.avatar_type != "default",
-                )
-            )
-        )
-        rows = (await self._session.execute(stmt)).all()
-        return {user_id: avatar_id for (user_id, avatar_id) in rows}
+        faces = await self.nickname_and_avatar_by_user_id(user_ids)
+        return {
+            user_id: avatar_id
+            for user_id, (_, avatar_id) in faces.items()
+            if avatar_id is not None
+        }
 
     async def get_profile_by_user_id(self, user_id: int) -> UserProfile | None:
         stmt: Select[tuple[UserProfile]] = select(UserProfile).where(

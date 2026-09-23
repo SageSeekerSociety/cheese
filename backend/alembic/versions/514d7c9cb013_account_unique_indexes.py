@@ -10,7 +10,7 @@ duplicates, ``upgrade`` stops before creating any index and names every
 conflicting value with its row ids, so they can be resolved by hand first.
 
 Revision ID: 514d7c9cb013
-Revises: 8c9ea105b7d2
+Revises: d4c1a7f83b96
 Create Date: 2026-09-23 03:00:00.000000
 
 """
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "514d7c9cb013"
-down_revision: str | Sequence[str] | None = "8c9ea105b7d2"
+down_revision: str | Sequence[str] | None = "d4c1a7f83b96"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

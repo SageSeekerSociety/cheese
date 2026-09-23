@@ -7,6 +7,7 @@ on:
       - 'backend/**'
       - 'cli/**'
       - 'scripts/remote_execution/**'
+      - '.github/scripts/ci-test-evidence.py'
       - '.github/workflows/remote-execution.yml'
   pull_request:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - 'backend/**'
       - 'cli/**'
       - 'scripts/remote_execution/**'
+      - '.github/scripts/ci-test-evidence.py'
       - '.github/workflows/remote-execution.yml'
   workflow_dispatch:
 
@@ -110,6 +112,7 @@ jobs:
           backend/.venv/bin/python scripts/remote_execution/private_acceptance.py
           --output tmp/remote-execution/private-ci-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Verify private chat routing and authorization
+        id: private_tests
         working-directory: backend
         env:
           CHEESE_TEST_CLAUDE: ${{ github.workspace }}/scripts/remote_execution/node_modules/.bin/claude
@@ -130,11 +133,13 @@ jobs:
       # floor catches the other half: a selection that collapsed to a handful
       # of cases and reported green anyway.
       - name: Assert the private-chat selection actually ran
+        id: private_selection
         working-directory: backend
         run: >-
           .venv/bin/python scripts/assert_suite_ran.py
           "$RUNNER_TEMP/private-chat.xml" --at-least 220
       - name: Verify two private turns through native RC
+        id: private_terminal
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
@@ -143,6 +148,37 @@ jobs:
       - name: Release the private image
         if: ${{ always() && steps.private-image.outcome == 'success' }}
         run: docker rm --force cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Produce private-chat CLEAN evidence
+        id: private_evidence
+        if: ${{ !cancelled() }}
+        env:
+          CI_STEPS_JSON: ${{ toJSON(steps) }}
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 .github/scripts/ci-test-evidence.py
+          --suite private-chat
+          --source "$RUNNER_TEMP/private-chat.xml"
+          --output "$RUNNER_TEMP/ci-test-evidence/private-chat/evidence.json"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --head-sha "$EVIDENCE_HEAD_SHA"
+          --tested-sha "$GITHUB_SHA"
+          --steps-json "$CI_STEPS_JSON"
+          --require-step scratch
+          --require-step private_tests
+          --require-step private_selection
+          --require-step private_terminal
+          --at-least 220
+      - name: Upload private-chat CLEAN evidence
+        if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-private-chat
+          path: ${{ runner.temp }}/ci-test-evidence/private-chat/evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         # Tolerated: this is debug output, and the account's artifact storage
         # filling up is not this change being broken. On 2026-09-16 it reported
@@ -197,12 +233,34 @@ jobs:
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
           uv sync --project backend --locked
       - name: Run acceptance
+        id: run_acceptance
         run: >-
           backend/.venv/bin/python scripts/remote_execution/suite.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
           --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check out the released connection owner
+        id: checkout_owner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Released by release-device-connection run 35770200245.
+          ref: fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          path: tmp/owner-compat-baseline
+      - name: Current backend collects a call from the released owner
+        id: owner_compat
+        timeout-minutes: 3
+        env:
+          ACCEPTANCE_COMMIT: ${{ github.sha }}
+          OPENAI_API_KEY: test-openai-key
+          ANTHROPIC_AUTH_TOKEN: test-anthropic-token
+        run: >-
+          backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py
+          --owner-source tmp/owner-compat-baseline
+          --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+          --claude scripts/remote_execution/node_modules/.bin/claude
+          --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
       - name: Verify ordinary room turns through the connector
+        id: ordinary_terminal
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -226,6 +284,36 @@ jobs:
             tail -n 120 "$terminal"
             echo "::endgroup::"
           done
+      - name: Produce remote-acceptance CLEAN evidence
+        id: acceptance_evidence
+        if: ${{ !cancelled() }}
+        env:
+          CI_STEPS_JSON: ${{ toJSON(steps) }}
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 .github/scripts/ci-test-evidence.py
+          --suite remote-acceptance
+          --source "tmp/remote-execution/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/results.json"
+          --output "$RUNNER_TEMP/ci-test-evidence/remote-acceptance/evidence.json"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --head-sha "$EVIDENCE_HEAD_SHA"
+          --tested-sha "$GITHUB_SHA"
+          --steps-json "$CI_STEPS_JSON"
+          --require-step run_acceptance
+          --require-step checkout_owner
+          --require-step owner_compat
+          --require-step ordinary_terminal
+      - name: Upload remote-acceptance CLEAN evidence
+        if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-remote-acceptance
+          path: ${{ runner.temp }}/ci-test-evidence/remote-acceptance/evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload acceptance receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -243,7 +331,9 @@ jobs:
           path: |
             tmp/remote-execution/ordinary-ci-*/
             tmp/remote-execution/ci-*/inputs.json
+            tmp/remote-execution/ci-*/invocation.json
             tmp/remote-execution/ci-*/results.json
+            tmp/remote-execution/ci-*/backend-regressions.xml
             tmp/remote-execution/ci-*/progress.jsonl
             tmp/remote-execution/ci-*/*.log
             tmp/remote-execution/ci-*/*/summary.json
@@ -254,4 +344,5 @@ jobs:
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
+            logs/device-connection-acceptance-*.jsonl
           retention-days: 3

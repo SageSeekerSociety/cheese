@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from sqlalchemy import func, select
 
-from app.api.routes.users import _mint_oauth_state_token
+from app.api.routes.users import _issue_oauth_state_token
 from app.core.errors import ConflictError
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
@@ -28,35 +28,46 @@ from app.domain.user.models import User
 
 pytestmark = pytest.mark.anyio
 
-_CODE = "123456"
 
+async def _arm_email_code(email: str) -> str:
+    """Request a code through the real sending path and read it from the mail;
+    the register route checks it."""
+    import re
 
-async def _arm_email_code(email: str) -> None:
-    """Store a real verification code; the register route checks it."""
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
-    from app.domain.user.verification_service import (
-        VERIFICATION_CODE_PREFIX,
-        VERIFICATION_CODE_TTL,
-    )
+    from app.domain.user.verification_service import EmailVerificationService
 
+    class _Outbox:
+        is_configured = True
+        body = ""
+
+        async def send(self, **kwargs) -> bool:
+            self.body = kwargs["body_text"]
+            return True
+
+    outbox = _Outbox()
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        await redis.setex(
-            f"{VERIFICATION_CODE_PREFIX}{email}", VERIFICATION_CODE_TTL, _CODE
-        )
+        service = EmailVerificationService(redis)
+        service._sender = outbox
+        await service.send_verification_code(email)
     finally:
         await redis.aclose()
 
+    match = re.search(r"\b(\d{6})\b", outbox.body)
+    assert match, outbox.body
+    return match.group(1)
+
 
 async def _registration(username: str, email: str) -> dict:
-    await _arm_email_code(email)
+    code = await _arm_email_code(email)
     return {
         "username": username,
         "nickname": "someone",
         "email": email,
-        "emailCode": _CODE,
+        "emailCode": code,
         "password": "TestPassword123!",
     }
 
@@ -71,7 +82,8 @@ async def _count_users(factory, *, username: str) -> int:
 
 
 def _oauth_create(client, *, provider_uid: str, username: str, nickname="Prov"):
-    token = _mint_oauth_state_token(
+    token = client.portal.call(
+        _issue_oauth_state_token,
         "ruc",
         {
             "id": provider_uid,
@@ -146,7 +158,10 @@ async def test_concurrent_registrations_of_one_name_let_exactly_one_through(
 )
 async def test_registration_username_length_bounds(client, username, status):
     resp = client.post(
-        "/users", json=await _registration(username, f"{username}@example.com")
+        "/users",
+        json=await _registration(
+            username, f"{username}-{uuid.uuid4().hex[:8]}@example.com"
+        ),
     )
 
     assert resp.status_code == status, resp.text
@@ -168,7 +183,8 @@ async def test_oauth_create_username_length_bounds(client, username, error_code)
 
 
 async def test_oauth_suggestion_passes_the_username_rule(client):
-    token = _mint_oauth_state_token(
+    token = client.portal.call(
+        _issue_oauth_state_token,
         "ruc",
         {"id": "suggest-1", "email": None, "name": "张三", "preferredUsername": "张三"},
     )

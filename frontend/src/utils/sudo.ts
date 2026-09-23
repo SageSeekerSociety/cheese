@@ -10,7 +10,13 @@ let lastOperation: (() => Promise<any>) | null = null
 // 服务端会验票的操作，票上写着它是为哪一件事签的。没列在这里的操作服务端
 // 不收票，也就不该去要一张——一张没人验的票不是保护，是多配了一把钥匙。
 const SUDO_PURPOSES: Record<string, UserApi.SudoPurpose> = {
+  initTOTP: '2fa:enable',
   disableTOTP: '2fa:disable',
+  generateBackupCodes: '2fa:backup-codes',
+  update2FASettings: '2fa:settings',
+  addPasskey: 'passkey:add',
+  deletePasskey: 'passkey:delete',
+  changePassword: 'password:change',
 }
 
 export function sudoPurposeFor(opKey: string | undefined | null): UserApi.SudoPurpose | undefined {
