@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -719,4 +720,27 @@ def requested_model_of(body: bytes) -> str:
         value = json.loads(body[span[0] : span[1]])
     except ValueError:
         return ""
-    return value if isinstance(value, str) else ""
+    if not isinstance(value, str):
+        return ""
+    # 这个名字要进准入门（X-Cheese-Requested-Model 请求头）。原文照塞会让一
+    # 个带控制字符或非 Latin-1 的名字在 putheader 抛 ValueError，被 check()
+    # 当成传输故障 fail-open —— 准入拿不到名字,缓冲改写退成 no-op,请求体原
+    # 样上行。那是把客户端字符串放进准入门才新增的触发面,所以不合格的按未
+    # 指定处理:准入照常绑定,改写照样盖掉体里那个值。
+    if not _MODEL_NAME_RE.fullmatch(value):
+        return ""
+    return value
+
+
+# 目录里的模型名都落在这组字符里（claude-sonnet-5、glm-4.6、openai/gpt-5）。
+_MODEL_NAME_RE = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+
+
+def is_haiku_name(value: str) -> bool:
+    """是否属于小快家族 —— CLI 自己的后台请求类(会话标题、路径建议)。
+
+    与 ``_is_haiku`` 同一个判定,给请求体里读出来的名字用。这类请求从来不算
+    「指定模型」:主对话路径上它们留在 haiku(keep_haiku),分身路径上它们照旧
+    绑分身默认 —— 两条路都不进白名单校验。
+    """
+    return _is_haiku(value.encode())

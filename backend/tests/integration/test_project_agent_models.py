@@ -188,8 +188,8 @@ async def test_a_subagent_may_ask_for_a_teammates_model(client):
 
 @pytest.mark.anyio
 async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client):
-    """fork 分身继承父模型：主芝士没绑模型（None）时,白名单里放的是展开后
-    的项目默认 —— 继承父模型的分身不能因为「没指定」而被改道。"""
+    """fork 分身继承父模型：体里的名字翻译回来等于父会话绑定的,按「未指
+    定」退回分身默认 —— 继承名不会被推进队友白名单校验。"""
     project = create(client)
     pid = project["id"]
     body = client.post(
@@ -198,6 +198,60 @@ async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client)
     ).json()["data"]
     assert body["allow"] is True
     assert body["supply"]["model"] == "deepseek-flash"
+
+
+@pytest.mark.anyio
+async def test_an_inherited_subagent_keeps_the_projects_subagent_default(client):
+    """继承不算指定（这是 I27 那一侧最容易写错的一条）: CC 对 fork 和未带
+    model 的定义都在体里写父模型 —— 项目显式设的分身默认必须照走,池都不换。"""
+    project = create(client)
+    pid = project["id"]
+    response = client.put(
+        f"/projects/{pid}/default-model",
+        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+    )
+    assert response.status_code == 200, response.text
+    # 主芝士没绑模型(继承项目默认 deepseek-flash),体里写着 deepseek-flash
+    # 的 fork 不是「指定了 deepseek-flash」,是「没指定」。
+    body = client.post(
+        "/llm/admission",
+        headers=_subagent_headers(pid, project["root_topic_id"], "deepseek-flash"),
+    ).json()["data"]
+    assert body["allow"] is True
+    assert "sonnet" in body["supply"]["model"]
+    assert body["supply"]["pool"] == "subscription"
+
+
+@pytest.mark.anyio
+async def test_a_fork_of_a_teammate_session_also_reads_as_inherit(client):
+    """父会话是队友也一样:队友会话 fork 出来的分身,体里写的是队友绑的那
+    个模型 —— 同样按继承退回分身默认,不吃白名单。"""
+    project = create(client)
+    pid = project["id"]
+    teammate = agents(client, pid)[0]
+    response = client.put(
+        f"/projects/{pid}/agents/{teammate['id']}",
+        json={"configuration": {"model": "opus"}},
+    )
+    assert response.status_code == 200, response.text
+    response = client.put(
+        f"/projects/{pid}/default-model",
+        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+    )
+    assert response.status_code == 200, response.text
+    token = mint_scoped_token(
+        project_id=pid,
+        topic_id=project["root_topic_id"],
+        agent_handle=teammate["seat_handle"],
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Cheese-Subagent": "1",
+        "X-Cheese-Requested-Model": "claude-opus-5",
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["allow"] is True
+    assert "sonnet" in body["supply"]["model"]
 
 
 @pytest.mark.anyio

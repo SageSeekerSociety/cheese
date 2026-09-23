@@ -406,3 +406,14 @@ def test_requested_model_of_reads_the_top_level_member():
     assert core.requested_model_of(b'{"messages":[]}') == ""
     assert core.requested_model_of(b"") == ""
     assert core.requested_model_of(b'{"model":123}') == ""
+
+
+def test_requested_model_of_refuses_names_that_would_break_the_admission_header():
+    """体里的原文要进准入门:控制字符/非 Latin-1 会让 putheader 抛错,被当成
+    传输故障 fail-open。不合格的按未指定处理 —— 准入照常绑定,改写盖回去。"""
+    nasty = b'{"model":"glm-4.6\x0aevil: 1","messages":[]}'
+    assert core.requested_model_of(nasty) == ""
+    assert core.requested_model_of('{"model":"模型","messages":[]}'.encode()) == ""
+    assert core.requested_model_of(b'{"model":"openai/gpt-5","messages":[]}') == (
+        "openai/gpt-5"
+    )

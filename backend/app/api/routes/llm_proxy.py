@@ -103,7 +103,7 @@ def _teammate_model_ids(instances: list, choices: dict[str, dict]) -> set[str]:
     所以集合里放目录默认那个 id —— 分身请求体里的全名经 ``catalog_id`` 翻译
     回来，对上的正是它。
     """
-    default = next((c for c in choices.values() if c.get("default")), None)
+    default = _default_catalog_id(choices)
     allowed: set[str] = set()
     for row in instances:
         if not row.is_active:
@@ -112,25 +112,49 @@ def _teammate_model_ids(instances: list, choices: dict[str, dict]) -> set[str]:
         if isinstance(model, str) and model:
             allowed.add(model)
         elif default is not None:
-            allowed.add(default["id"])
+            allowed.add(default)
     return allowed
 
 
+def _default_catalog_id(choices: dict[str, dict]) -> str | None:
+    default = next((c for c in choices.values() if c.get("default")), None)
+    return default["id"] if default else None
+
+
 async def _bind_requested_subagent_model(
-    agents, project, choices: dict[str, dict], requested: str
+    agents, project, choices: dict[str, dict], requested: str, parent_handle: str | None
 ):
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目 AI 队友范围内。
 
     指定了就要么绑它、要么明说为什么不行 —— 静默改写回默认模型正是
-    「指定了却不生效」那个旧行为（I27 的另一种长相）。没指定的分身
-    （fork、定义里不带 model 的）不走这里，维持 ``default_subagent_model``。
+    「指定了却不生效」那个旧行为（I27 的另一种长相）。
+
+    继承不算指定：CC 对每个分身请求都在体里写一个顶层 model 成员，fork 和
+    定义里不带 model 的分身写的是**父会话的模型** —— 那才是「未指定」在请
+    求体里真正的长相。体里的名字翻译回来等于父会话绑定的，退回分身默认，
+    与今天逐字节一致。
     """
+    requested_id = binding.catalog_id(requested, choices)
+    parent = await agents.for_seat_handle(project, parent_handle)
+    if parent is None:
+        parent = await agents.for_project(project)
+    parent_model = (parent.configuration or {}).get("model") if parent else None
+    inherited_id = (
+        parent_model
+        if isinstance(parent_model, str) and parent_model
+        else _default_catalog_id(choices)
+    )
+    if requested_id is not None and requested_id == inherited_id:
+        return binding.resolve(
+            None,
+            choices,
+            default_model=(project.settings or {}).get("default_subagent_model"),
+        )
     allowed = _teammate_model_ids(await agents.list_for_project(project.id), choices)
     # 项目自己的分身默认也合法：主 agent 复述默认值不该吃到一个拒绝。
     default_sub = (project.settings or {}).get("default_subagent_model")
     if isinstance(default_sub, str) and default_sub:
         allowed.add(default_sub)
-    requested_id = binding.catalog_id(requested, choices)
     offer = "、".join(sorted(allowed)) or "（这个项目还没有可指定的队友模型）"
     if requested_id is None:
         raise ValidationError(
@@ -227,7 +251,7 @@ async def admission(
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(
-                agents, project, choices, requested
+                agents, project, choices, requested, claims.get("a")
             )
         else:
             bound = binding.resolve(

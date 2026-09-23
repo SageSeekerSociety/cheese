@@ -80,6 +80,7 @@ from cheese_billing_core import (  # noqa: E402
     ModelRewrite,
     StreamingUsageExtractor,
     control_answer,
+    is_haiku_name,
     proxy_basic_password,
     requested_model_of,
     verify_scoped_token,
@@ -107,6 +108,11 @@ INJECT_TOKEN_FILE = Path(
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
 ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
 ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
+# How large a deferred subagent body may be and still be buffered whole for the
+# requested-model read (see the defer branch in `requestheaders`). Real subagent
+# turns sit orders of magnitude below this; past it the flow keeps the old
+# streamed behaviour, which is a floor, not a failure.
+DEFER_BODY_LIMIT = int(os.environ.get("CHEESE_DEFER_BODY_LIMIT", str(8 * 1024 * 1024)))
 # Same backend as admission; no second public listener or deployment secret.
 RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
 RC_EXTRA_HOSTS = frozenset({"claude.ai", "cdn.growthbook.io"}) | TELEMETRY_HOSTS
@@ -693,15 +699,26 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # and that name sits in the request body, which has not arrived at header
     # time. Only this class pays for a buffered body — the main conversation's
     # turns, the long ones whose size is the #654 OOM, keep streaming through.
+    #
+    # …and only up to a size: buffered means held whole in this process's RAM,
+    # so an unbounded defer would hand a caller-controlled OOM knob to the
+    # shared proxy (the #654 shape, wearing a new hat). Over the cap the flow
+    # simply takes the old road — streamed, admitted without a requested model,
+    # bound to the subagent default. The cap is a property of the discovery
+    # layer, never a refusal: nothing a real turn does is lost beyond running
+    # on the default instead of a named teammate, which is what every subagent
+    # did before this change.
     if is_messages and is_subagent:
-        flow.request.stream = False
-        flow.metadata["cheese_deferred"] = (
-            project_id,
-            topic_id,
-            bearer,
-            carries_own_credential,
-        )
-        return
+        declared = flow.request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) <= DEFER_BODY_LIMIT:
+            flow.request.stream = False
+            flow.metadata["cheese_deferred"] = (
+                project_id,
+                topic_id,
+                bearer,
+                carries_own_credential,
+            )
+            return
 
     verdict = None
     if project_id and ADMISSION_URL:
@@ -778,6 +795,10 @@ async def request(flow: http.HTTPFlow) -> None:
         return
     project_id, topic_id, bearer, carries_own_credential = deferred
     requested = requested_model_of(flow.request.content or b"")
+    if requested and is_haiku_name(requested):
+        # CLI 自己的后台请求类(会话标题、路径建议),不是主 agent 的指定:照
+        # 旧路走 —— 准入按未指定绑定,改写把它盖成分身默认,与今天逐字节一致。
+        requested = ""
     verdict = None
     if project_id and ADMISSION_URL:
         verdict = await _admit(
