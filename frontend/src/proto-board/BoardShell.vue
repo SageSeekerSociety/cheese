@@ -134,7 +134,6 @@ function goInvite() {
           <v-chip size="small" variant="tonal" label class="board__role">
             {{ me.name }} · {{ ROLE_LABEL[role] }}
           </v-chip>
-          <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" to="/publish" size="small">发题目</v-btn>
         </div>
       </div>
 

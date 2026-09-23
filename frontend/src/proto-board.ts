@@ -13,6 +13,7 @@
 import '@/styles/content.scss'
 import '@/styles/fonts.css'
 import './style.css'
+import './proto-board/standalone.css'
 
 import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
