@@ -640,7 +640,10 @@ def refused_connection_acceptance(endpoint, token, work, log):
             response = httpx.post(
                 endpoint,
                 content=body,
-                headers={"X-Cheese-Token": self.headers["X-Cheese-Token"]},
+                headers={
+                    "X-Cheese-Token": self.headers["X-Cheese-Token"],
+                    "Content-Type": self.headers["Content-Type"],
+                },
                 timeout=30,
             )
             self.send_response(response.status_code)

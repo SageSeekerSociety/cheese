@@ -1,160 +1,115 @@
 <template>
   <div>
-    <!-- 标题区域 - 美观大气 -->
-    <div class="mb-12">
-      <h1 class="text-h3 font-weight-light mb-3" style="color: var(--ink); line-height: 1.2">
-        {{ t('account.signIn') }}
-      </h1>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">{{ t('account.welcomeBackToCheese') }}</p>
-    </div>
+    <AccountHeading :title="t('account.signIn.title')" />
 
-    <!-- 错误/成功提示区域 -->
-    <div v-if="errorMessage || route.query.message" class="mb-8">
-      <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-4">
-        {{ errorMessage }}
-      </v-alert>
-      <v-alert v-if="route.query.message" type="success" variant="tonal" density="comfortable">
-        {{ route.query.message }}
-      </v-alert>
-    </div>
+    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
+      {{ errorMessage }}
+    </v-alert>
+    <v-alert v-else-if="notice" type="success" variant="tonal" density="comfortable" class="mb-6">
+      {{ notice }}
+    </v-alert>
 
-    <v-fade-transition mode="out-in">
-      <div :key="String(isPasskeyLoading)">
-        <!-- 主要登录表单区域 -->
-        <div class="mb-10">
-          <v-form ref="loginForm" @submit.prevent="login">
-            <!-- 表单字段组 - 预留错误提示空间 -->
-            <div class="mb-4">
-              <v-text-field
-                id="signin-username"
-                v-model="username"
-                name="username"
-                autocomplete="username"
-                :label="t('account.username')"
-                variant="outlined"
-                v-bind="usernameProps"
-                class="mb-4"
-              />
+    <v-form ref="loginForm" @submit.prevent="login">
+      <v-text-field
+        id="signin-username"
+        v-model="username"
+        name="username"
+        autocomplete="username"
+        :label="t('account.field.username')"
+        v-bind="usernameProps"
+      />
 
-              <v-text-field
-                id="signin-password"
-                v-model="password"
-                name="password"
-                autocomplete="current-password"
-                :label="t('account.password')"
-                :type="showPassword ? 'text' : 'password'"
-                variant="outlined"
-                :append-inner-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
-                v-bind="passwordProps"
-                @click:append-inner="showPassword = !showPassword"
-              />
-            </div>
+      <PasswordField
+        id="signin-password"
+        v-model="password"
+        name="password"
+        autocomplete="current-password"
+        :label="t('account.field.password')"
+        v-bind="passwordProps"
+      />
 
-            <!-- 功能选项行 -->
-            <div class="mb-6">
-              <div class="d-flex justify-end align-center">
-                <v-btn variant="text" color="primary" to="recover/password" size="small" style="text-transform: none">
-                  {{ t('account.forgotPassword') }}
-                </v-btn>
-              </div>
-            </div>
-
-            <!-- 主要操作按钮 -->
-            <v-btn
-              block
-              color="primary"
-              size="large"
-              type="submit"
-              :loading="isSubmitting"
-              style="text-transform: none; font-weight: 500; height: 48px"
-              class="mb-4"
-            >
-              {{ t('account.signIn2') }}
-            </v-btn>
-
-            <!-- 注册链接 - 自然文本流 -->
-            <p class="text-body-2" style="color: var(--muted)">
-              {{ t('account.newToCheese') }}
-              <v-btn
-                variant="text"
-                color="primary"
-                to="signup"
-                size="small"
-                style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
-                class="text-decoration-none"
-                >{{ t('account.createAccount') }}</v-btn
-              >
-            </p>
-          </v-form>
-        </div>
-
-        <!-- 替代登录方式区域 -->
-        <div>
-          <!-- 优雅的分割线 -->
-          <div class="d-flex align-center mb-6">
-            <v-divider class="flex-grow-1" />
-            <span class="px-4 text-body-2" style="color: var(--faint)">{{ t('account.or') }}</span>
-            <v-divider class="flex-grow-1" />
-          </div>
-
-          <!-- 通行密钥登录 -->
-          <div class="mb-6">
-            <v-btn
-              block
-              color="primary"
-              variant="outlined"
-              size="large"
-              :loading="isPasskeyLoading"
-              :disabled="!webAuthnSupported"
-              style="text-transform: none; font-weight: 500; height: 48px"
-              @click="handlePasskeyLogin"
-            >
-              <v-icon start icon="mdi-key-chain" size="20" /> {{ t('account.signInWithAPasskey') }}
-            </v-btn>
-            <p v-if="!webAuthnSupported" class="text-body-2 mt-2" style="color: var(--faint)">
-              {{ t('account.passkeysAreNotSupportedInThisEnvironment') }}
-            </p>
-          </div>
-
-          <!-- 第三方登录 -->
-          <div v-if="oAuthProviders.length > 0">
-            <div class="text-body-1 font-weight-medium mb-4" style="color: var(--text)">
-              {{ t('account.continueWithAnotherAccount') }}
-            </div>
-            <div class="d-flex flex-column" style="gap: 12px">
-              <v-btn
-                v-for="provider in oAuthProviders"
-                :key="provider.id"
-                block
-                variant="outlined"
-                size="large"
-                :loading="oAuthLoading === provider.id"
-                style="
-                  text-transform: none;
-                  font-weight: 500;
-                  height: 48px;
-                  border-color: var(--line-2);
-                  justify-content: flex-start;
-                  padding-left: 16px;
-                "
-                @click="handleOAuthLogin(provider.id)"
-              >
-                <v-icon start :icon="getProviderIcon(provider.id)" size="20" />
-                {{ provider.name }}
-              </v-btn>
-            </div>
-          </div>
-
-          <!-- 登录不建号（建号都在注册页和第三方首次建号页，那两处各有明确的
-               同意），所以这里是告知，不是复选框（#1486）。放在所有登录方式
-               下面，对哪一种都成立。 -->
-          <p class="text-body-2 mt-8" style="color: var(--muted)">
-            {{ t('account.signInMeansYouAgreeTo') }}
-            <LegalLinks />
-          </p>
-        </div>
+      <div class="d-flex justify-end mt-n2 mb-4">
+        <v-btn
+          variant="text"
+          color="primary"
+          to="recover/password"
+          style="text-transform: none; padding: 0; min-width: auto"
+        >
+          {{ t('account.signIn.forgotPassword') }}
+        </v-btn>
       </div>
-    </v-fade-transition>
+
+      <v-btn
+        block
+        color="primary"
+        size="large"
+        type="submit"
+        :loading="isSubmitting"
+        style="text-transform: none; font-weight: 500; height: 48px"
+        class="mb-4"
+      >
+        {{ t('account.signIn.submit') }}
+      </v-btn>
+
+      <p class="text-body-2" style="color: var(--muted)">
+        {{ t('account.signIn.noAccount') }}
+        <v-btn
+          variant="text"
+          color="primary"
+          to="signup"
+          style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
+          class="text-decoration-none"
+          >{{ t('account.signIn.createAccount') }}</v-btn
+        >
+      </p>
+    </v-form>
+
+    <div class="d-flex align-center my-6">
+      <v-divider class="flex-grow-1" />
+      <span class="px-4 text-body-2" style="color: var(--faint)">{{ t('account.signIn.or') }}</span>
+      <v-divider class="flex-grow-1" />
+    </div>
+
+    <div class="d-flex flex-column" style="gap: 12px">
+      <v-btn
+        block
+        variant="outlined"
+        color="on-surface"
+        size="large"
+        :loading="isPasskeyLoading"
+        :disabled="!webAuthnSupported"
+        class="alt-method"
+        @click="handlePasskeyLogin"
+      >
+        <v-icon start icon="mdi-key-chain" size="20" /> {{ t('account.signIn.passkey') }}
+      </v-btn>
+      <p v-if="!webAuthnSupported" class="text-body-2" style="color: var(--faint)">
+        {{ t('account.signIn.passkeyUnsupported') }}
+      </p>
+
+      <v-btn
+        v-for="provider in oAuthProviders"
+        :key="provider.id"
+        block
+        variant="outlined"
+        color="on-surface"
+        size="large"
+        :loading="oAuthLoading === provider.id"
+        class="alt-method"
+        @click="handleOAuthLogin(provider.id)"
+      >
+        <v-icon start :icon="getProviderIcon(provider.id)" size="20" />
+        {{ t('account.signIn.withProvider', { provider: provider.name }) }}
+      </v-btn>
+    </div>
+
+    <!-- 登录不建号（建号都在注册页和第三方首次建号页，那两处各有明确的
+         同意），所以这里是告知，不是复选框（#1486）。放在所有登录方式
+         下面，对哪一种都成立。 -->
+    <p class="text-body-2 mt-8" style="color: var(--muted)">
+      {{ t('account.signInMeansYouAgreeTo') }}
+      <LegalLinks />
+    </p>
   </div>
 </template>
 
@@ -172,7 +127,11 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { signInNotice } from './signInNotice'
+
+import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalLinks from '@/components/account/LegalLinks.vue'
+import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -182,12 +141,14 @@ import AccountService from '@/services/account'
 const router = useRouter()
 const route = useRoute()
 
+// Signing in names an existing account, so only presence is checked here: the
+// server is the one that knows whether the name and password are right.
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: computed(() =>
     toTypedSchema(
       z.object({
-        username: z.string().min(4).max(30),
-        password: z.string().min(8),
+        username: z.string().min(1),
+        password: z.string().min(1),
       })
     )
   ),
@@ -197,7 +158,7 @@ const [username, usernameProps] = defineField('username', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 
 const errorMessage = ref('')
-const showPassword = ref(false)
+const notice = computed(() => signInNotice(route.query.message))
 const isPasskeyLoading = ref(false)
 const webAuthnSupported = ref(browserSupportsWebAuthn())
 const oAuthProviders = ref<OAuthProvider[]>([])
@@ -209,6 +170,7 @@ if (route.query.username) {
 }
 
 const login = handleSubmit(async (value) => {
+  errorMessage.value = ''
   try {
     const { data } = await UserApi.login(value)
     if (data.requires2FA) {
@@ -219,46 +181,35 @@ const login = handleSubmit(async (value) => {
       return
     }
     AccountService.login(data.accessToken!, data.user!)
-    toast.success(t('account.signedIn'))
+    toast.success(t('account.signIn.signedIn'))
     router.replace(postLoginTarget(route.query))
   } catch (e) {
-    console.error('登录失败:', e)
-    toast.error(requestErrorMessage(e, t('account.signinFailedPleaseTryAgain')))
+    errorMessage.value = requestErrorMessage(e, t('account.signIn.failed'))
   }
 })
 
 // 处理通行密钥登录
 const handlePasskeyLogin = async () => {
-  if (!browserSupportsWebAuthn()) {
-    toast.error(t('account.yourBrowserDoesNotSupportPasskeys'))
-    return
-  }
-
+  errorMessage.value = ''
   isPasskeyLoading.value = true
   try {
-    // 1. 获取认证选项
     const optionsResponse = await UserApi.getPasskeyAuthenticationOptions()
     const optionsJSON = optionsResponse.data.options
-
-    // 2. 开始认证流程
     const asseResp = await startAuthentication({ optionsJSON })
-
-    // 3. 验证认证结果
     const { data } = await UserApi.verifyPasskeyAuthentication(asseResp)
 
-    // 4. 处理登录成功
     AccountService.login(data.accessToken!, data.user!)
-    toast.success(t('account.signedIn'))
+    toast.success(t('account.signIn.signedIn'))
     router.replace(postLoginTarget(route.query))
   } catch (error: any) {
-    console.error('通行密钥登录失败:', error)
-
-    if (error.name === 'NotAllowedError') {
-      toast.error(t('account.canceled'))
-    } else if (error.response?.data?.code === 'PASSKEY_NOT_FOUND') {
-      toast.error(t('account.noMatchingPasskeyFound'))
+    // The browser's own error text is English and names WebAuthn internals, so
+    // it is never shown; the cases a person can act on get their own sentence.
+    if (error?.name === 'NotAllowedError') {
+      errorMessage.value = t('account.signIn.passkeyCanceled')
+    } else if (error?.response?.data?.code === 'PASSKEY_NOT_FOUND') {
+      errorMessage.value = t('account.signIn.passkeyNotFound')
     } else {
-      toast.error(error.message || t('account.passkeySigninFailed'))
+      errorMessage.value = t('account.signIn.passkeyFailed')
     }
   } finally {
     isPasskeyLoading.value = false
@@ -277,6 +228,7 @@ const fetchOAuthProviders = async () => {
 
 // 处理 OAuth 登录
 const handleOAuthLogin = async (providerId: string) => {
+  errorMessage.value = ''
   oAuthLoading.value = providerId
   try {
     // 生成随机 state 参数用于防止 CSRF 攻击
@@ -288,10 +240,9 @@ const handleOAuthLogin = async (providerId: string) => {
 
     // 跳转到 OAuth 登录页面
     UserApi.redirectToOAuthLogin(providerId, state)
-  } catch (error) {
+  } catch {
     oAuthLoading.value = null
-    console.error('OAuth 登录失败:', error)
-    toast.error(t('account.thirdpartySigninFailed'))
+    errorMessage.value = t('account.signIn.providerFailed')
   }
 }
 
@@ -313,3 +264,12 @@ onMounted(() => {
   fetchOAuthProviders()
 })
 </script>
+
+<style scoped>
+.alt-method {
+  height: 48px;
+  font-weight: 500;
+  text-transform: none;
+  border-color: var(--line-2);
+}
+</style>

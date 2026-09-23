@@ -26,7 +26,8 @@ pytestmark = pytest.mark.anyio
         ("password中文", 422),
         ("!!!!1234", 422),
         ("pa!1", 422),
-        ("x!" * 40, 400),
+        ("password!!", 422),
+        ("x!1" * 30, 400),
     ],
     ids=[
         "space",
@@ -37,6 +38,7 @@ pytestmark = pytest.mark.anyio
         "non-ascii-only",
         "no-letter",
         "too-short",
+        "no-digit",
         "over-72-bytes",
     ],
 )

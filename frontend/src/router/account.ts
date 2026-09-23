@@ -14,7 +14,7 @@ export default {
       component: () => import('@/views/account/SignIn.vue'),
       meta: {
         title: '登录',
-        titleKey: 'account.signIn',
+        titleKey: 'account.signIn.title',
       },
     },
     {
@@ -22,8 +22,8 @@ export default {
       name: 'SignUpStart',
       component: () => import('@/views/account/signup/Start.vue'),
       meta: {
-        title: '注册',
-        titleKey: 'account.createAccount',
+        title: '创建账号',
+        titleKey: 'account.signUp.title',
       },
     },
     {
@@ -31,8 +31,8 @@ export default {
       name: 'SignUpVerifyEmail',
       component: () => import('@/views/account/signup/VerifyEmail.vue'),
       meta: {
-        title: '注册',
-        titleKey: 'account.verifyYourEmail',
+        title: '验证邮箱',
+        titleKey: 'account.verifyEmail.title',
       },
     },
     {
@@ -41,7 +41,7 @@ export default {
       component: () => import('@/views/account/recover/password/Start.vue'),
       meta: {
         title: '找回密码',
-        titleKey: 'account.forgotPassword',
+        titleKey: 'account.recover.title',
       },
     },
     {
@@ -49,8 +49,8 @@ export default {
       name: 'RecoverPasswordVerify',
       component: () => import('@/views/account/recover/password/Verify.vue'),
       meta: {
-        title: '找回密码',
-        titleKey: 'account.forgotPassword',
+        title: '设置新密码',
+        titleKey: 'account.resetPassword.title',
       },
       beforeEnter: (to: any, from: any, next: any) => {
         if (!to.query.token) {
@@ -74,6 +74,7 @@ export default {
       component: () => import('@/views/account/Verify2FA.vue'),
       meta: {
         title: '两步验证',
+        titleKey: 'account.twoFactor.title',
       },
     },
     {
@@ -89,7 +90,8 @@ export default {
       name: 'OAuthVerify',
       component: () => import('@/views/account/OAuthVerify.vue'),
       meta: {
-        title: 'OAuth 验证',
+        title: '关联账号',
+        titleKey: 'account.oauth.verify.title',
       },
     },
     {
@@ -97,7 +99,8 @@ export default {
       name: 'OAuthSuccess',
       component: () => import('@/views/account/OAuthSuccess.vue'),
       meta: {
-        title: 'OAuth 登录成功',
+        title: '登录',
+        titleKey: 'account.signIn.title',
       },
     },
     {
@@ -105,8 +108,8 @@ export default {
       name: 'OAuthError',
       component: () => import('@/views/account/OAuthError.vue'),
       meta: {
-        title: 'OAuth 登录失败',
-        titleKey: 'account.thirdpartySigninFailed',
+        title: '登录失败',
+        titleKey: 'account.oauth.error.title',
       },
     },
   ],
