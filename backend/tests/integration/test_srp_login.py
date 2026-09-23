@@ -84,8 +84,26 @@ def _srp_login(client: TestClient, a: str = js.A, m1: str = js.M1):
 
 def _enable_2fa(client: TestClient, user: CreatedUser, token: str) -> str:
     headers = {"Authorization": f"Bearer {token}"}
+    sudo_init = client.post(
+        "/users/auth/sudo",
+        headers=headers,
+        json={"method": "srp", "credentials": {}, "purpose": "2fa:enable"},
+    )
+    assert sudo_init.status_code == 200, sudo_init.text
+    sudo = client.post(
+        "/users/auth/sudo",
+        headers=headers,
+        json={
+            "method": "srp",
+            "credentials": {"clientPublicEphemeral": js.A, "clientProof": js.M1},
+            "purpose": "2fa:enable",
+        },
+    )
+    assert sudo.status_code == 200, sudo.text
     url = f"/users/{user.user_id}/2fa/enable"
-    init = client.post(url, headers=headers, json={})
+    init = client.post(
+        url, headers=headers, json={"sudoTicket": sudo.json()["data"]["sudoTicket"]}
+    )
     assert init.status_code == 200, init.text
     secret = init.json()["data"]["secret"]
     confirm = client.post(
