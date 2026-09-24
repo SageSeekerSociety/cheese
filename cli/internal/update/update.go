@@ -1,6 +1,6 @@
 // Package update fetches a fresh connector binary (the server's `cheesehost`
 // artifact) and swaps it in place of the running executable. It carries the platform→artifact mapping the installer uses
-// (frontend/scripts/build-connector.mjs + install.sh), downloads the matching
+// (backend/scripts/build-connector.sh + install.sh), downloads the matching
 // binary next to the running executable, verifies it is a real, runnable binary,
 // and atomically replaces the current one. Handing the process off to the new
 // binary (so a running service keeps its tmux) is the caller's job; this package
