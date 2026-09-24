@@ -160,6 +160,7 @@ watch(active, () => {
 const ink = ref<{ left: number; width: number } | null>(null)
 const inkMoves = ref(false)
 let inkWatch: ResizeObserver | null = null
+let inkTarget: Element | null = null
 function placeInk() {
   const on = tabbarRef.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
   if (!on) {
@@ -169,10 +170,14 @@ function placeInk() {
   // 页签在 `.tabbar__file` 里的时候 offsetLeft 量的也是到 `.tabbar` 的距离：那层
   // 包装没有定位，偏移的基准一路落到定了位的 `.tabbar` 上。
   ink.value = { left: on.offsetLeft, width: on.offsetWidth }
-  inkWatch?.disconnect()
-  if (typeof ResizeObserver !== 'undefined') {
+  // 只在选中的换了一格时改盯的对象：`observe` 一挂上就先回调一次，回调里再
+  // `disconnect` + `observe` 同一格，就是每一帧都在重挂、每一帧都在报 ResizeObserver
+  // 循环。
+  if (on !== inkTarget && typeof ResizeObserver !== 'undefined') {
+    inkWatch?.disconnect()
     inkWatch ??= new ResizeObserver(() => placeInk())
     inkWatch.observe(on)
+    inkTarget = on
   }
   if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
 }
