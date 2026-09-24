@@ -63,6 +63,8 @@ const errorDescription = computed(() => {
       return t('account.oauth.error.creationFailed')
     case 'EMAIL_TAKEN':
       return t('account.oauth.error.emailTaken')
+    case 'EMAIL_UNVERIFIED':
+      return t('account.oauth.error.emailUnverified')
     case 'INVALID_CREDENTIALS':
       return t('account.oauth.error.invalidCredentials')
     case 'INVALID_INVITE_CODE':

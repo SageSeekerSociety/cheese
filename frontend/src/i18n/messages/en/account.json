@@ -46,7 +46,8 @@
     "usernameRequired": "Enter a username",
     "displayNameRequired": "Enter a display name",
     "passwordRequired": "Enter your password",
-    "confirmPasswordRequired": "Enter the password again"
+    "confirmPasswordRequired": "Enter the password again",
+    "emailInvalid": "Enter a valid email address"
   },
   "signIn": {
     "title": "Sign in",
@@ -94,7 +95,14 @@
     "resent": "Code sent again",
     "resendFailed": "Couldn't send the code. Please try again later.",
     "accountCreated": "Account created",
-    "failed": "Couldn't verify. Please try again."
+    "failed": "Couldn't verify. Please try again.",
+    "changeEmail": "Use another address"
+  },
+  "emailCode": {
+    "wrongCode": "The code is incorrect or has expired",
+    "emailTaken": "This email is used by another account",
+    "invalidEmail": "Enter a valid email address",
+    "tooSoon": "Codes were requested too often. Try again later."
   },
   "recover": {
     "title": "Reset password",
@@ -164,7 +172,8 @@
       "usernameReserved": "This username is reserved. Please choose another.",
       "usernameTaken": "This username is taken",
       "verificationFailed": "Verification failed. Please try again.",
-      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account"
+      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account",
+      "emailUnverified": "Verify your email address first"
     },
     "success": {
       "processing": "Signing in",
@@ -193,7 +202,8 @@
       "setPassword": "Also set a password",
       "setPasswordHint": "You can then sign in with your username and password too",
       "bindSubmit": "Link and sign in",
-      "unavailable": "Cannot continue signing in"
+      "unavailable": "Cannot continue signing in",
+      "emailBelongsToAccount": "This email is used by an existing account"
     }
   },
   "sudo": {

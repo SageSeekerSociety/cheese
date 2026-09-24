@@ -46,7 +46,8 @@
     "usernameRequired": "请输入用户名",
     "displayNameRequired": "请输入显示名称",
     "passwordRequired": "请输入密码",
-    "confirmPasswordRequired": "请再次输入密码"
+    "confirmPasswordRequired": "请再次输入密码",
+    "emailInvalid": "请输入有效的邮箱地址"
   },
   "signIn": {
     "title": "登录",
@@ -94,7 +95,14 @@
     "resent": "验证码已重新发送",
     "resendFailed": "发送失败，请稍后重试",
     "accountCreated": "注册成功",
-    "failed": "验证失败，请重试"
+    "failed": "验证失败，请重试",
+    "changeEmail": "更换邮箱"
+  },
+  "emailCode": {
+    "wrongCode": "验证码错误或已失效",
+    "emailTaken": "该邮箱已被其他账号使用",
+    "invalidEmail": "请输入有效的邮箱地址",
+    "tooSoon": "验证码请求过于频繁，请稍后重试"
   },
   "recover": {
     "title": "找回密码",
@@ -164,7 +172,8 @@
       "usernameReserved": "该用户名为平台保留，请换一个",
       "usernameTaken": "该用户名已被使用",
       "verificationFailed": "身份验证失败，请重试",
-      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号"
+      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号",
+      "emailUnverified": "请先验证邮箱"
     },
     "success": {
       "processing": "正在登录",
@@ -193,7 +202,8 @@
       "setPassword": "同时设置密码",
       "setPasswordHint": "设置后也可以用用户名和密码登录",
       "bindSubmit": "关联并登录",
-      "unavailable": "无法继续登录"
+      "unavailable": "无法继续登录",
+      "emailBelongsToAccount": "该邮箱已被现有账号使用"
     }
   },
   "sudo": {

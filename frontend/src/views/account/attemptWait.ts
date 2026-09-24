@@ -42,6 +42,22 @@ export function attemptMessage(error: unknown): string | null {
   return null
 }
 
+/** The sentence for a refused email code or address, or null for any other error. */
+export function emailCodeMessage(error: unknown): string | null {
+  switch (refusalOf(error).reason) {
+    case 'invalid_code':
+      return t('account.emailCode.wrongCode')
+    case 'email_taken':
+      return t('account.emailCode.emailTaken')
+    case 'invalid_email':
+      return t('account.emailCode.invalidEmail')
+    case 'code_wait':
+      return t('account.emailCode.tooSoon')
+    default:
+      return attemptMessage(error)
+  }
+}
+
 /** Holds a form's submit back until the wait the server asked for has passed. */
 export function useAttemptWait() {
   const waiting = ref(false)
