@@ -403,6 +403,28 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert not (work / "escaped").exists()
 
 
+def test_large_platform_response_keeps_its_json_receipt(central_transport):
+    process, _, _, _ = central_transport
+    body = {"payload": "x" * 180_000}
+    response = process.call(
+        "tools/call",
+        {
+            "name": "platform_request",
+            "arguments": {
+                "id": "large-platform-response",
+                "session_id": "fixture",
+                "method": "POST",
+                "path": "/platform-fixture",
+                "body": body,
+            },
+        },
+    )
+    encoded = response["content"][0]["text"]
+    assert len(encoded) < 32_000
+    receipt = json.loads(Path(json.loads(encoded)["receipt_path"]).read_text())
+    assert json.loads(receipt["result"]["stdout"]) == {"data": body}
+
+
 @pytest.mark.parametrize(
     "path", ["https://other.test/x", "//other.test/x", "relative", "/x#fragment"]
 )

@@ -1322,9 +1322,9 @@ def transport(config, target_path):
                     }
                 else:
                     encoded = json.dumps(outcome)
-                    if tool == "invoke" and len(encoded) > 32_000:
+                    if len(encoded) > 32_000:
                         # MCP replaces large text with prose; the plugin needs
-                        # the original receipt, including an Edit's file state.
+                        # the original receipt, including API JSON and Edit state.
                         receipts = Path(target_path).parent / "tool-results"
                         receipts.mkdir(exist_ok=True, mode=0o700)
                         receipt_path = receipts / f"{uuid.uuid4().hex}.json"

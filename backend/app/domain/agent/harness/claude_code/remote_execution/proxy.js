@@ -99,7 +99,10 @@ export function register(on) {
           ...args, id: tool_use_id, session_id: await $.session.id(),
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
-        const outcome = JSON.parse(response.content[0].text);
+        let outcome = JSON.parse(response.content[0].text);
+        if (outcome.receipt_path) {
+          outcome = JSON.parse(await $.fs.read(outcome.receipt_path, { as: "text" }));
+        }
         if (outcome.deny) return outcome;
         // Only a non-empty half becomes a block. A `text` block holding the
         // empty string is not harmless padding: a provider that validates text
