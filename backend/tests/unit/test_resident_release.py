@@ -425,16 +425,24 @@ async def test_release_acknowledgement_requires_connection(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("supplied_tree", [False, True])
 async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
-    tmp_path, monkeypatch, changed
+    tmp_path, monkeypatch, changed, supplied_tree
 ):
     config = tmp_path / ".claude"
     transcript = config / "projects/work/session.jsonl"
     transcript.parent.mkdir(parents=True)
     transcript.write_text("")
     prompts = []
+    fetched = []
+    scripts = []
+    tree = {"generation": "new", "entries": {}}
 
     class Hub:
+        async def call_executor(self, device, state, method, params, **kwargs):
+            fetched.append((device, state, method, params))
+            return tree
+
         async def exec(self, device, command, *, stdin=None, timeout):
             if stdin == "apply_forwarded_context":
                 return {
@@ -465,15 +473,31 @@ async def test_forwarded_context_reloads_skills_only_for_a_new_generation(
 
     channel = object.__new__(DeviceChannel)
     channel._hub = Hub()
-    monkeypatch.setattr(release, "script", lambda function, *args: function)
+
+    def script(function, *args):
+        scripts.append((function, args))
+        return function
+
+    monkeypatch.setattr(release, "script", script)
     monkeypatch.setattr(channel, "send_prompt", send_prompt)
     screen = HubScreen("screen", "device", [], "token", 1, "agent")
+    target: dict = {"device_id": "work", "state": "/state"}
+    if supplied_tree:
+        target["context_tree"] = tree
     await channel._refresh_forwarded_context(
         screen,
         str(tmp_path),
-        {"context_tree": {"generation": "new", "entries": {}}},
+        target,
     )
     assert prompts == (["/reload-skills"] if changed else [])
+    assert fetched == (
+        []
+        if supplied_tree
+        else [("work", "/state", "context_fs", {"operation": "tree"})]
+    )
+    assert scripts[0][1][1]["context_tree"] == tree
+    if changed:
+        assert scripts[1][1][-1] == "new"
 
 
 def test_forwarded_context_replaces_mirror_files_with_links(tmp_path, monkeypatch):
