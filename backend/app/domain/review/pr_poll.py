@@ -150,6 +150,13 @@ async def poll_uncarded_task_prs(
                     or task.delivered_head is not None
                 ):
                     continue
+                if await session.scalar(
+                    select(AcceptCard.id).where(AcceptCard.task_id == task_id).limit(1)
+                ):
+                    continue
+                topic = await session.get(Topic, task.room_id)
+                if topic is None or topic.status == TopicStatus.archived:
+                    continue
                 merged_at = status.merged_at or datetime.now(UTC)
                 task.status = TaskStatus.closed
                 task.closed_at = task.closed_at or merged_at
