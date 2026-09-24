@@ -225,9 +225,9 @@ def case(folder, options):
                 "--model",
                 "claude-sonnet-4-6",
                 "--tools",
-                "Read,Edit,Write,Bash,TaskStop,Skill",
+                "Read,Edit,Write,Bash,TaskStop,Skill,Agent",
                 "--allowedTools",
-                "Read,Edit,Write,Bash,TaskStop,Skill,mcp__custom__echo,"
+                "Read,Edit,Write,Bash,TaskStop,Skill,Agent,mcp__custom__echo,"
                 "mcp__native__chat_send,mcp__native__platform_request",
                 "--debug-file",
                 str(folder / "claude-debug.log"),
@@ -302,6 +302,16 @@ def case(folder, options):
             {
                 "name": "mcp__native__platform_request",
                 "input": {"method": "GET", "path": "/platform-fixture"},
+            },
+            # An isolated subagent would be built on this host, inside the
+            # read-only project view; the call is refused before anything is.
+            {
+                "name": "Agent",
+                "input": {
+                    "description": "Isolated look",
+                    "prompt": "List the files.",
+                    "isolation": "worktree",
+                },
             },
             {"name": "Read", "input": {"file_path": str(center / "image.png")}},
         ]
@@ -510,7 +520,13 @@ def case(folder, options):
             )
         results = tool_results(server.state["requests"][-1])
         if options.mode == "normal":
-            assert not [r for r in results if r.get("is_error")], results
+            isolated = results[-2]
+            assert isolated.get("is_error"), isolated
+            assert "cheese split" in json.dumps(isolated), isolated
+            assert not (center / ".claude").exists()
+            assert not [r for r in results[:-2] + results[-1:] if r.get("is_error")], (
+                results
+            )
             assert "BEFORE_EDIT" in json.dumps(results[0])
             picture = next(b for b in results[-1]["content"] if b["type"] == "image")
             original = executor.call(
