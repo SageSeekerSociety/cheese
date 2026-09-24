@@ -20,6 +20,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 import BoardShell from './proto-board/BoardShell.vue'
 import Analytics from './proto-board/pages/Analytics.vue'
+import Announcements from './proto-board/pages/Announcements.vue'
 import BoardHome from './proto-board/pages/BoardHome.vue'
 import Members from './proto-board/pages/Members.vue'
 import Mine from './proto-board/pages/Mine.vue'
@@ -40,6 +41,8 @@ const router = createRouter({
     { path: '/publish', component: Publish },
     { path: '/mine', component: Mine },
     { path: '/insights/:id', component: TaskInsights },
+    // 公告不设门槛：谁都能读，只是「能不能发」按身份在页面里判。
+    { path: '/announcements', component: Announcements },
     // 下面三条只对所有者与管理员开放。**守卫是可变的**：切身份之后原来的页面
     // 可能已经不该看，所以每次导航都重新判一次，而不是在启动时算一次就定下来。
     { path: '/review', component: Review, meta: { managerOnly: true } },
