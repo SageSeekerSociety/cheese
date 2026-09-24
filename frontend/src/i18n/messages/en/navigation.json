@@ -9,7 +9,8 @@
     "library": "Library",
     "members": "Members",
     "docs": "Project docs",
-    "settings": "Project settings"
+    "settings": "Project settings",
+    "general": "General"
   },
   "spaces": "Problem boards",
   "teams": "Teams",

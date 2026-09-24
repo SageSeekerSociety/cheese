@@ -21,7 +21,7 @@ import { useDisplay } from 'vuetify'
 import { getProjectUsage, getTopicUsage } from '@/api'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
-import { topicPhaseBadge, topicShortId, topicStateBadge } from '@/lib/topicState'
+import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
 const props = defineProps<{
@@ -52,6 +52,7 @@ const { mdAndUp } = useDisplay()
 // so a reviewer could sit in a topic that was waiting on them and see 「进行中」.
 const state = computed(() => (props.phase ? topicPhaseBadge(props.phase) : topicStateBadge(props.topic.status)))
 const shortId = computed(() => topicShortId(props.topic.id))
+const title = computed(() => topicTitle(props.topic))
 // 项目本体 is not a work topic — it has no id badge and no roster.
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
 // ---- 用量 popover (was the 资源 drawer) ----
@@ -114,9 +115,10 @@ function toggleFocus() {
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title" :title="topic.title">{{ topic.title }}</span>
+        <span class="topic-header__title t-title" :title="title">{{ title }}</span>
         <span class="topic-header__meta">
-          <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+          <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
+          <span v-if="isWorkTopic" class="pr-state" :class="state.cls">{{ state.label }}</span>
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
             <span class="status-dot status-dot--warn" />整台机器
           </span>

@@ -12,7 +12,7 @@ import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { topicPhase } from '@/lib/topicState'
+import { topicPhase, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -77,7 +77,7 @@ const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
   selectedTopic,
   (topic) => {
-    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
   },
   { immediate: true }

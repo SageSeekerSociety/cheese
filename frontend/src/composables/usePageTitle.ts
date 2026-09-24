@@ -55,8 +55,9 @@ export function usePageTitle() {
 
         let title = ''
 
-        if (routeName && store.hasDynamicTitle(routeName)) {
-          title = store.getDynamicTitle(routeName)!
+        const dynamicKey = routeName ?? meta.dynamicTitleKey
+        if (dynamicKey && store.hasDynamicTitle(dynamicKey)) {
+          title = store.getDynamicTitle(dynamicKey)!
         } else if (meta.titleKey && t) {
           try {
             title = t(meta.titleKey)

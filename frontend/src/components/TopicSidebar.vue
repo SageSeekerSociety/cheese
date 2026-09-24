@@ -9,6 +9,7 @@ import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
+import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -680,7 +681,9 @@ const canTransferProject = computed(() => {
                   />
                 </span>
               </template>
-              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">全局</v-list-item-title>
+              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">{{
+                topicTitle(rootTopic)
+              }}</v-list-item-title>
               <template #append>
                 <span v-if="unreadOf(rootTopic.id) > 0" class="unread-badge">{{ unreadLabel(rootTopic.id) }}</span>
               </template>

@@ -9,7 +9,8 @@
     "library": "资料库",
     "members": "成员",
     "docs": "项目文档",
-    "settings": "项目设置"
+    "settings": "项目设置",
+    "general": "全局"
   },
   "spaces": "题目板",
   "teams": "小队",
