@@ -26,6 +26,7 @@ from app.domain.agent.device_hub import (
     DeviceUnreachable,
 )
 from app.domain.device import owner_reads
+from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.topic.models import Topic
 
 router = APIRouter(tags=["execution"])
@@ -120,8 +121,13 @@ async def execute(
     }:
         raise ForbiddenError("This executor operation is not available to the session")
     target = lease
-    if not await owner_reads.execution_device_authorized(
-        db, target["device_id"], room.project_id
+    if not (
+        await ProjectMachineRepository(db).active_cloud_device_for_project(
+            target["device_id"], room.project_id
+        )
+        or await owner_reads.execution_device_authorized(
+            db, target["device_id"], room.project_id
+        )
     ):
         raise ForbiddenError("Device no longer serves this project")
     # 发出**之前**写下这次派发，和上面那次 commit 一起落库（结论 57，6.5）。带 id
