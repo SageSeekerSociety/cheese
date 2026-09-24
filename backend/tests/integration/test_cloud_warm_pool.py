@@ -231,7 +231,7 @@ class ClaimCloud(FakeMicroCloud):
         self.claims.append((machine_id, body))
         if self.fail_claim:
             raise MicroCloudError("response lost")
-        return {"id": machine_id, "status": "running", "aiStatus": "ready"}
+        return {"id": machine_id, "status": "running", "aiStatus": "disabled"}
 
 
 def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
@@ -239,6 +239,8 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
 ):
     client, topics, actor, cloud = warm_case
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    # The fixture's warm machine would serve this room; this is the cold path.
+    monkeypatch.setattr("app.domain.machine.warm.device_hub.is_online", lambda _: False)
 
     async def run():
         async with client.test_request_factory() as session:
@@ -253,11 +255,7 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
             machine.ip = "192.0.2.2"
             await session.commit()
             repo = ProjectMachineRepository(session)
-            assert machine in await repo.list_awaiting_enrollment(
-                5, desired_ai_mode="none"
-            )
-            assert await service.reconcile_ai_mode() == 0
-            assert cloud.ai_switches == []
+            assert machine in await repo.list_awaiting_enrollment(5)
             machine.device_id = "warm-test"
             await session.commit()
             assert (
@@ -449,7 +447,7 @@ def warm_case(client, monkeypatch):
                         "memoryMb": settings.microcloud_default_memory_mb,
                         "diskGb": settings.microcloud_default_disk_gb,
                         "user": settings.microcloud_login_user,
-                        "aiMode": settings.microcloud_ai_mode,
+                        "aiMode": "none",
                     },
                 )
             )
@@ -613,7 +611,7 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.state == "preparing"
             bootstrap.assert_not_called()
             cloud.machines[row.machine_id].update(
-                status="running", aiStatus="ready", ip="192.0.2.1"
+                status="running", aiStatus="disabled", ip="192.0.2.1"
             )
             await service.sweep()
             assert row.state == "ready"

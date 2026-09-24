@@ -480,7 +480,7 @@ class Settings(BaseSettings):
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
-    # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
+    # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.
     subscription_ca_host_path: str = ""
@@ -538,20 +538,6 @@ class Settings(BaseSettings):
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
-    # The machine's built-in AI channel (the tenant console's →ccproxy button).
-    # Sent in the create call (micro-cloud#78), so the machine is born on it;
-    # the enrollment sweep still switches any machine that came up on another
-    # channel — MicroCloud's default without the field is newapi, whose default
-    # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
-    microcloud_ai_mode: str = "ccproxy"
-
-    @property
-    def cloud_executor_ai_mode(self) -> str:
-        """Central sessions supply models; their Cloud guests only execute tools."""
-        if self.agent_session_device_id:
-            return "none"
-        return self.microcloud_ai_mode.strip().lower()
-
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
@@ -583,23 +569,11 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
-    # topic's first turn crosses this clock twice (running → switch the AI
-    # channel, ready → enroll), and at 60s a person waited up to two minutes on
-    # a timer for a machine that was already there. A tick with nothing
-    # unsettled is three cheap queries.
+    # devices. Ten seconds, not sixty: a Cloud topic's first turn waits on this
+    # clock, and at 60s a person waited up to a minute on a timer for a machine
+    # that was already there. A tick with nothing unsettled is three cheap
+    # queries.
     machine_enroll_interval_seconds: int = 10
-
-    # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
-    # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
-    # there mints it a machine identity whose fake ticket ccproxy alone can
-    # swap for real credentials — so removing the device revokes exactly that
-    # device, instead of rotating a credential every box shares. Empty secret =
-    # the feature reports itself unavailable; devices keep whatever
-    # `ccproxy_upstream` an admin set by hand.
-    ccproxy_tenant_base_url: str = ""
-    ccproxy_tenant_secret: str = ""
-    ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # Base URL the in-container `cheese` CLI calls back to (host → backend).

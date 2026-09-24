@@ -190,8 +190,6 @@ class WarmPoolService:
             "claimKey": str(machine.id if machine.session_id else machine.topic_id),
             "customerId": machine.customer_id,
             "accountId": machine.account_id,
-            "newapiAccountId": machine.account_id,
-            "ccproxyAccountId": machine.account_id,
         }
         await self.session.commit()
         started = time.monotonic()
@@ -255,7 +253,6 @@ class WarmPoolService:
         machine.device_id = warm.device_id
         machine.warm_claim_pending = False
         machine.enroll_error = None
-        machine.ccproxy_upstream = warm.ccproxy_upstream
         machine.enrolled_at = warm.enrolled_at
         machine.status = MachineStatus(upstream["status"])
         machine.ai_status = AiStatus(upstream["aiStatus"])
@@ -399,9 +396,6 @@ class WarmPoolService:
             raise ValidationError(
                 "warm pool requires a reachable connector_public_base"
             )
-        mode = settings.cloud_executor_ai_mode
-        if mode not in {"none", "ccproxy"}:
-            raise ValidationError("warm pool requires none or ccproxy AI mode")
         offering = await MachineService(self.session, self.client)._pick_offering()
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
@@ -423,7 +417,7 @@ class WarmPoolService:
             "warmPoolKey": str(key),
             "offeringId": int(offering["id"]),
             "user": settings.microcloud_login_user,
-            "aiMode": mode,
+            "aiMode": "none",
             "sshPubkey": enrollment.combine_authorized_keys(
                 public, settings.microcloud_operator_ssh_pubkey
             ),
@@ -453,13 +447,10 @@ class WarmPoolService:
         if machine is None:
             row.state = "deleting"
             return
-        if machine.get("status") == "error" or machine.get("aiStatus") == "error":
+        if machine.get("status") == "error":
             row.state = "deleting"
             return
-        if machine.get("status") != "running" or machine.get("aiStatus") not in {
-            "ready",
-            "disabled",
-        }:
+        if machine.get("status") != "running":
             return
         ip = machine.get("ip")
         row.ip = ip
@@ -490,13 +481,12 @@ class WarmPoolService:
                 token=device.token,
                 device_id=device.device_id,
             )
-            output = await enrollment.run_bootstrap(
+            await enrollment.run_bootstrap(
                 ip=ip,
                 login_user=row.create_request["user"],
                 private_key=row.bootstrap_key,
                 script=script,
             )
-            row.ccproxy_upstream = enrollment.parse_ccproxy_upstream(output)
             row.enrolled_at = datetime.now(UTC)
             row.bootstrap_key = None
         if row.device_id and device_hub.is_online(row.device_id):
@@ -526,5 +516,4 @@ class WarmPoolService:
                 )
         row.state = "deleted"
         row.bootstrap_key = None
-        row.ccproxy_upstream = None
         await self.session.commit()

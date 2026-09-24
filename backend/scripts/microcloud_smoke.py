@@ -273,10 +273,8 @@ def ensure_machine(
         "diskGb": clamp(disk_gb, "diskGbMin", "diskGbMax"),
         "user": login_user,
         "sshPubkey": pubkey,
-        # Named explicitly: the API would default both to accountId, but then a
-        # deployment could never separate compute spend from AI spend later.
-        "newapiAccountId": account_id,
-        "ccproxyAccountId": account_id,
+        # What the platform asks for: no built-in AI channel on the machine.
+        "aiMode": "none",
     }
     log.info(
         "creating machine %s from offering %s (%s cores / %s MiB / %s GB)",
@@ -296,9 +294,8 @@ def ensure_machine(
 def wait_for_machine(mc: MicroCloud, machine_id: int, timeout_s: int) -> dict[str, Any]:
     """Wait for BOTH lifecycles to settle.
 
-    `aiStatus` is independent of `status`: a machine reports `running` while its
-    Claude Code is still being wired up, so waiting on `status` alone declares
-    success before the machine can do the one job it exists for.
+    `aiStatus` is a separate field of MicroCloud's answer; a machine created
+    with `aiMode: none` reports it `disabled`.
     """
     deadline = time.monotonic() + timeout_s
     last = None
@@ -409,9 +406,9 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
         "-o",
         "BatchMode=yes",
         # A LOGIN shell, deliberately: MicroCloud installs `claude` into
-        # ~/.local/bin and exports the newapi credentials from the profile, none
-        # of which a plain non-interactive ssh command sees. Probing without it
-        # reports a perfectly good machine as having no agent at all.
+        # ~/.local/bin, which a plain non-interactive ssh command does not have
+        # on its PATH. Probing without it reports a perfectly good machine as
+        # having no agent at all.
         f"{login_user}@{ip}",
         f"bash -lc {shlex.quote(script)}",
     ]

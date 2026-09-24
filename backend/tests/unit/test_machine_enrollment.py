@@ -77,13 +77,11 @@ class FakeMachineRepo:
         self.enrolled: list[str] = []
         self.failures: list[str] = []
 
-    async def mark_enrolled(self, machine, *, device_id, when, ccproxy_upstream=None):
+    async def mark_enrolled(self, machine, *, device_id, when):
         machine.device_id = device_id
         machine.enrolled_at = when
         machine.enroll_error = None
         machine.bootstrap_key = None
-        if ccproxy_upstream:
-            machine.ccproxy_upstream = ccproxy_upstream
         self.enrolled.append(device_id)
         return machine
 
@@ -102,7 +100,7 @@ def make_machine(**overrides):
         login_user="cheese",
         ip="10.0.1.10",
         status=MachineStatus.running,
-        ai_status=AiStatus.ready,
+        ai_status=AiStatus.disabled,
         device_id=None,
         enrolled_at=None,
         enroll_error=None,
@@ -286,11 +284,7 @@ async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
 
     monkeypatch.setattr(service, "enroll", _enroll)
 
-    async def _awaiting(limit, **_settle_gate):
-        # **kwargs: the service now also asks for the desired AI mode and a
-        # settle cutoff (a machine enrolled before its channel settles loses its
-        # ccproxy identity for good). This test is about the sweep surviving one
-        # bad machine, so it takes the gate as given.
+    async def _awaiting(limit):
         return [bad, good]
 
     service._repo.list_awaiting_enrollment = _awaiting
@@ -397,9 +391,6 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
             return 0
 
         async def refresh_unsettled(self):
-            return None
-
-        async def reconcile_ai_mode(self):
             return None
 
         async def enroll_pending(self):
@@ -641,48 +632,6 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
     assert config["base"] == "https://cheese.test/api/connector"
 
 
-# --- the machine's ccproxy identity ----------------------------------------
-# Read during the bootstrap because that is the only moment the platform is on
-# the machine over ssh: `mark_enrolled` erases the bootstrap key. The meter
-# needs it to authenticate its ccproxy hop as THIS machine, which is the only
-# way ccproxy honours the ticket the machine itself carries.
-
-
-def test_bootstrap_reads_the_machines_ccproxy_identity():
-    script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
-    )
-    assert enrollment.CCPROXY_UPSTREAM_MARKER in script
-    # `set -eu` is in force, and a machine on a different supply route has no
-    # such file. Reading it must not be able to fail the enrollment.
-    assert "|| true" in script.split("CHEESE_UPSTREAM_EOF")[0]
-
-
-def test_the_identity_is_parsed_out_of_the_bootstrap_output():
-    output = f"cheese.service active\n{enrollment.CCPROXY_UPSTREAM_MARKER}m516:pw516\n"
-    assert enrollment.parse_ccproxy_upstream(output) == "m516:pw516"
-
-
-def test_no_identity_is_not_an_enrollment_failure():
-    """Every way it can be absent — machine on another supply route, no python,
-    AI channel not settled — means "fall back to the deployment-wide identity",
-    which is what that machine does today. None of them is a bad machine."""
-    assert enrollment.parse_ccproxy_upstream("cheese.service active") is None
-    assert enrollment.parse_ccproxy_upstream("") is None
-
-
-def test_half_an_identity_is_rejected_rather_than_stored():
-    """`user:` or `:password` authenticates as nobody. Storing it would move the
-    failure to a 407 from ccproxy, far from the machine that produced it."""
-    for junk in ("m516:", ":pw516", "m516", ""):
-        assert (
-            enrollment.parse_ccproxy_upstream(
-                f"{enrollment.CCPROXY_UPSTREAM_MARKER}{junk}"
-            )
-            is None
-        )
-
-
 async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch):
     """A lease whose machine or AI channel errored never reaches `on_ready`; the
     sweep hands it to `on_failed` in the same pass, so the room stops waiting."""
@@ -715,9 +664,6 @@ async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch
             return 0
 
         async def refresh_unsettled(self):
-            return None
-
-        async def reconcile_ai_mode(self):
             return None
 
         async def enroll_pending(self):
