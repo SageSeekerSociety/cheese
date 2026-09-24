@@ -49,6 +49,8 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { attemptMessage } from '../../attemptWait'
+
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
@@ -76,7 +78,7 @@ const submit = handleSubmit(async (value) => {
     await UserApi.recoverPasswordRequest(value.email)
     sent.value = true
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.recover.failed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.recover.failed'))
   }
 })
 </script>

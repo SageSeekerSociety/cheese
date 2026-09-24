@@ -107,6 +107,16 @@ describe('asking for a code', () => {
     expect(router.currentRoute.value.name).toBe('SignInEmailCode')
   })
 
+  it('says when no mail can be sent for now, in the interface language', async () => {
+    vi.mocked(UserApi.requestSignInCode).mockRejectedValue(refusal(503, { reason: 'mail_limit_reached' }))
+    setLocale('zh-CN')
+    const { view } = await open('/account/signin/email')
+    await fireEvent.update(view.getByLabelText('电子邮箱'), 'someone@example.com')
+    await fireEvent.submit(view.container.querySelector('form')!)
+
+    expect(await view.findByText('暂时无法发送邮件，请稍后重试')).toBeTruthy()
+  })
+
   it('sends someone who opens the code screen directly to enter an address first', async () => {
     const { router } = await open('/account/signin/email/verify')
 

@@ -32,6 +32,7 @@ export function attemptMessage(error: unknown): string | null {
   const { reason } = refusalOf(error)
   const wait = attemptWaitSeconds(error)
   if (reason === 'invalid_email_code') return t('account.attempts.wrongEmailCode')
+  if (reason === 'mail_limit_reached') return t('account.attempts.mailLimit')
   if (reason === 'email_code_too_soon') {
     return t('account.attempts.codeTooSoon', { wait: waitPhrase(wait) })
   }

@@ -2730,7 +2730,7 @@ async def recover_password_request(
 
     from app.core.background import spawn
     from app.core.client_address import resolved_client_address
-    from app.domain.user.mail_quota import MailQuota
+    from app.domain.user.mail_quota import MailQuota, site_mail_limit_reached
 
     email = payload.email.strip()
 
@@ -2740,7 +2740,8 @@ async def recover_password_request(
 
     # The quota is spent before the account is looked up, so it counts unknown
     # addresses exactly as it counts known ones; a request over it answers with
-    # the same success body and simply sends nothing.
+    # the same success body and simply sends nothing. Only the site-wide limit
+    # is said out loud: it is the same for every address.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         claim = await MailQuota(redis, "password_recovery").claim(
@@ -2748,6 +2749,8 @@ async def recover_password_request(
         )
     finally:
         await redis.aclose()
+    if claim.site_full:
+        raise site_mail_limit_reached()
     if not claim.granted:
         return _RECOVERY_REQUESTED
 

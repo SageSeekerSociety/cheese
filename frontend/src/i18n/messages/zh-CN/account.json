@@ -76,7 +76,8 @@
     "seconds": "{count} 秒",
     "minutes": "{count} 分钟",
     "wrongEmailCode": "验证码不正确或已过期",
-    "codeTooSoon": "请在 {wait}后重新获取验证码"
+    "codeTooSoon": "请在 {wait}后重新获取验证码",
+    "mailLimit": "暂时无法发送邮件，请稍后重试"
   },
   "signUp": {
     "title": "创建账号",

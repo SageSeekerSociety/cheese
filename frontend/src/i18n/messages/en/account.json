@@ -76,7 +76,8 @@
     "seconds": "1 second | {count} seconds",
     "minutes": "1 minute | {count} minutes",
     "wrongEmailCode": "The code is wrong or has expired.",
-    "codeTooSoon": "Request a new code in {wait}."
+    "codeTooSoon": "Request a new code in {wait}.",
+    "mailLimit": "Email can't be sent right now. Try again later."
   },
   "signUp": {
     "title": "Create account",

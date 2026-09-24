@@ -50,6 +50,11 @@ describe('the wait a refused attempt states', () => {
     )
   })
 
+  it('words the whole site running out of mail for the hour', () => {
+    setLocale('zh-CN')
+    expect(attemptMessage(refusal({ reason: 'mail_limit_reached' }, 503))).toBe('暂时无法发送邮件，请稍后重试')
+  })
+
   it('leaves any other error to the screen', () => {
     expect(attemptMessage(refusal({ reason: 'invalid_code', attemptsRemaining: 3 }, 401))).toBeNull()
     expect(attemptMessage(new BusinessError('Not found', 404))).toBeNull()

@@ -8,7 +8,11 @@ from redis.asyncio import Redis
 
 from app.core.email import get_email_sender
 from app.core.errors import BadRequestError, SystemBusyError
-from app.domain.user.mail_quota import MailQuota, normalize_email
+from app.domain.user.mail_quota import (
+    MailQuota,
+    normalize_email,
+    site_mail_limit_reached,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +111,8 @@ class EmailVerificationService:
         ``client``: the requester's address, for ``MailQuota.claim``.
         """
         claim = await self._quota.claim(email, client)
+        if claim.site_full:
+            raise site_mail_limit_reached()
         if not claim.granted:
             raise BadRequestError(
                 "Please wait before requesting a new code",
