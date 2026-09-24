@@ -177,6 +177,17 @@ FEEDBACK_PROPOSE_DESCRIPTION = (
 )
 
 
+# The only profiles `PUT /topics/{topic}/compute-profile` accepts. This script is
+# shipped to machines on its own and cannot import the backend, so the set is a
+# literal; tests/contract/test_platform_tools.py fails when it and the backend's
+# compute catalog differ.
+MACHINE_PROFILES = ("cloud", "device")
+MACHINE_PROFILE_DESCRIPTION = (
+    "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
+    "device 是项目已授权的自托管设备，配合 device_id 指定哪一台，"
+    "不填 device_id 就自动选一台在线的。"
+)
+
 PLATFORM_TOOLS = ToolTable(
     (
         {
@@ -269,10 +280,14 @@ PLATFORM_TOOLS = ToolTable(
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "profile": {"type": "string", "description": "算力档位名"},
+                    "profile": {
+                        "type": "string",
+                        "enum": list(MACHINE_PROFILES),
+                        "description": MACHINE_PROFILE_DESCRIPTION,
+                    },
                     "device_id": {
                         "type": "string",
-                        "description": "自托管设备的 id，只有自托管档位能指定",
+                        "description": "自托管设备的 id，只有 device 能指定",
                     },
                 },
                 "required": ["profile"],
@@ -1877,8 +1892,12 @@ def build_parser() -> argparse.ArgumentParser:
             "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。"
         ),
     )
-    pmach.add_argument("profile", help="算力档位名")
-    pmach.add_argument("--device-id", default=None, help="自托管设备的 id")
+    pmach.add_argument(
+        "profile", choices=MACHINE_PROFILES, help=MACHINE_PROFILE_DESCRIPTION
+    )
+    pmach.add_argument(
+        "--device-id", default=None, help="自托管设备的 id，只有 device 能指定"
+    )
 
     pnote = sub.add_parser(
         "note",

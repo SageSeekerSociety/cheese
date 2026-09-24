@@ -281,41 +281,64 @@ echo unknown
 """
 
 
-# Is the machine-local tunnel helper this topic's `claude` was pointed at still
+# Is the machine-local tunnel helper this room's `claude` was pointed at still
 # listening? Companion to DEVICE_ALIVE_PROBE, for the OTHER half of "the process
 # is alive but cannot reach the model".
 #
-# The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-# launcher's prefix — and a reused screen is reasserted (an adopt-create),
-# never relaunched. So a helper that dies under a still-running `claude` never
-# comes back on its own, and `claude` bakes its HTTPS_PROXY at startup and never
-# re-reads it: every turn thereafter dies with `API Error: Unable to connect to
-# API (ConnectionRefused)` while the process-tree probe above reports `alive`.
+# The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY before an
+# agent is started or claimed — and a reused screen is reasserted (an
+# adopt-create), never relaunched. So a helper that dies under a still-running
+# `claude` never comes back on its own, and `claude` bakes its HTTPS_PROXY at
+# startup and never re-reads it: every turn thereafter dies with `API Error:
+# Unable to connect to API (ConnectionRefused)` while the process-tree probe
+# above reports `alive`.
 # Measured 2026-08-18 on the dev box: five screens in that state, one of them
 # replaying the same 28-message batch for the 30th time, ~3 minutes burnt per
 # attempt, with no path in the system able to restore them.
 #
-# LISTEN on the port is the right question, not "is the helper's pid alive": the
-# port is exactly what `claude` connects to, and ConnectionRefused is exactly
-# "nothing is listening there". A lingering helper process that has lost its
-# upstream still holds the port and is NOT this failure.
+# The question is whether THIS room's helper holds the port: LISTEN by the pid
+# the room recorded. LISTEN alone is not enough. Once a helper dies, the kernel
+# may hand its free port to another room's helper, which then answers every
+# connection this room's `claude` makes, on that room's credential — the same
+# silent share a derived port used to cause. A lingering helper that has lost its
+# upstream still holds its own port and is NOT this failure.
+#
+# The port is read from the room's own `cheese-tunnel.port`, where the helper
+# recorded what the kernel gave it; nothing else knows it. CHEESE_TUNNEL_PROBE_HOME
+# is the room's home as the backend names it, with the literal `$HOME` placeholder
+# only this machine can resolve.
 #
 # Prints exactly one of `up` / `down` / `unknown`, same tri-state discipline as
 # the probe above: only an explicit `down` is actionable, so a missing /proc, an
-# absent awk, or any hiccup leaves a working screen alone.
-DEVICE_TUNNEL_PROBE = r"""port="${CHEESE_TUNNEL_PROBE_PORT:-}"
+# absent awk, a port file that is missing or unreadable, or any hiccup leaves a
+# working screen alone.
+DEVICE_TUNNEL_PROBE = r"""home="${CHEESE_TUNNEL_PROBE_HOME:-}"
+case "$home" in
+  '') echo unknown; exit 0 ;;
+  '$HOME'*) home="$HOME${home#'$HOME'}" ;;
+esac
+port=$(cat "$home/.cheese/cheese-tunnel.port" 2>/dev/null) || { echo unknown; exit 0; }
 case "$port" in ''|*[!0-9]*) echo unknown; exit 0 ;; esac
+pid=$(cat "$home/.cheese/cheese-tunnel.pid" 2>/dev/null) || { echo unknown; exit 0; }
+case "$pid" in ''|*[!0-9]*) echo unknown; exit 0 ;; esac
 [ -r /proc/net/tcp ] || { echo unknown; exit 0; }
 command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }
 hex=$(printf '%04X' "$port" 2>/dev/null) || { echo unknown; exit 0; }
+# The recorded helper is gone, so whatever holds its port now is not ours.
+[ -d "/proc/$pid" ] || { echo down; exit 0; }
+[ -r "/proc/$pid/fd" ] || { echo unknown; exit 0; }
+# The helper's sockets, as the inodes its fds point at (`socket:[INODE]`).
+inodes=$(ls -l "/proc/$pid/fd" 2>/dev/null \
+  | sed -n 's/.*socket:\[\([0-9]*\)\].*/\1/p' | tr '\n' ' ')
 # /proc/net/tcp columns: $2 is local_address as HEXIP:HEXPORT, $4 is the state
-# (0A = LISTEN). The header row's $4 is the literal "st", so it never matches.
-# tcp6 has a 32-char hex address but the same `:PORT` suffix, hence split on ":"
-# and compare the LAST field rather than matching the whole column.
+# (0A = LISTEN), $10 the socket inode. The header row's $4 is the literal "st",
+# so it never matches. tcp6 has a 32-char hex address but the same `:PORT`
+# suffix, hence split on ":" and compare the LAST field.
 for f in /proc/net/tcp /proc/net/tcp6; do
   [ -r "$f" ] || continue
-  if awk -v p="$hex" '$4=="0A" { n=split($2,a,":"); if (a[n]==p) { f=1; exit } }
-                      END { exit f?0:1 }' "$f"; then
+  if awk -v p="$hex" -v mine=" $inodes" '$4=="0A" {
+         n=split($2,a,":"); if (a[n]==p && index(mine, " " $10 " ")) { f=1; exit } }
+       END { exit f?0:1 }' "$f"; then
     echo up; exit 0
   fi
 done

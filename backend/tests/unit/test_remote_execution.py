@@ -3,6 +3,7 @@
 import ast
 import base64
 import errno
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -113,6 +114,28 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
           }, () => {throw new Error('searched session host')});
           assert.match(result.deny, /use Bash/);
         }
+    """)
+
+
+def test_isolated_subagents_are_refused_with_the_way_that_works():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        for (const isolation of ['worktree', 'remote']) {
+          const result = await handlers['tool.call']({}, {
+            tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+            prompt: 'list files', isolation,
+          }, () => {throw new Error('spawned on the session host')});
+          assert.match(result.deny, /cheese split/);
+        }
+        const spawned = await handlers['tool.call']({}, {
+          tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+          prompt: 'list files',
+        }, (event) => ({spawned: event.tool}));
+        assert.deepEqual(spawned, {spawned: 'Agent'});
     """)
 
 
@@ -1027,6 +1050,89 @@ def test_executor_upgrade_retries_after_installer_failure(
             capture_output=True,
             timeout=15,
         )
+
+
+@pytest.mark.parametrize("socket_gone", [False, True])
+def test_stop_waits_for_service_lock_after_socket_disappears(tmp_path, socket_gone):
+    state = tmp_path / "executor"
+    state.mkdir()
+    attempted = tmp_path / "lock-attempted"
+    signalled = tmp_path / "signalled"
+    observer = tmp_path / "observed_stop.py"
+    observer.write_text(
+        """
+import importlib.util
+import pathlib
+import sys
+
+source, state, attempted, signalled, socket_gone = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("executor_runtime", source)
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+original_flock = runtime.fcntl.flock
+
+def observe_flock(lock, operation):
+    try:
+        return original_flock(lock, operation)
+    except BlockingIOError:
+        pathlib.Path(attempted).touch()
+        raise
+
+runtime.fcntl.flock = observe_flock
+if socket_gone == "False":
+    runtime.request = lambda *_: {"pid": 123}
+    runtime.os.kill = lambda *_: pathlib.Path(signalled).touch()
+sys.argv = [source, "stop", "--state", state]
+runtime.main()
+"""
+    )
+    with (state / "service.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stop = subprocess.Popen(
+            [
+                sys.executable,
+                str(observer),
+                str(RUNTIME),
+                str(state),
+                str(attempted),
+                str(signalled),
+                str(socket_gone),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not attempted.exists():
+                if stop.poll() is not None:
+                    _, stderr = stop.communicate()
+                    pytest.fail(f"stop returned before lock release: {stderr.decode()}")
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert stop.poll() is None
+            if not socket_gone:
+                assert signalled.exists()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            try:
+                _, stderr = stop.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                stop.kill()
+                stop.communicate()
+                raise
+        assert stop.returncode == 0, stderr.decode()
+
+
+def test_stop_with_no_state_remains_a_no_op(tmp_path):
+    state = tmp_path / "missing"
+    result = subprocess.run(
+        [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not state.exists()
 
 
 @pytest.mark.parametrize("update_kind", ["runtime", "binary", "helper"])

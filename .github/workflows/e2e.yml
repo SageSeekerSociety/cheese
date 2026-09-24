@@ -2,13 +2,7 @@ name: E2E Tests
 
 on:
   workflow_call:
-# Superseded runs must not occupy the finite self-hosted capacity (three
-# cheese-ci slots, one per pool machine). test.yml and build.yml already do
-# this; e2e.yml was the one workflow still missing it — any backend/frontend
-# change triggers all three at once, and without this an e2e run for a
-# superseded commit keeps running to completion instead of being cancelled
-# (measured: only ~1.7% of e2e runs were ever cancelled, vs 15%/33% for
-# test/build).
+# Superseded PR runs should not keep using a runner after a newer commit arrives.
 #
 # Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
 # each merge in its own group: with a shared `github.ref` key, a second merge
@@ -36,7 +30,25 @@ jobs:
       JWT_SECRET: test-secret
       ENVIRONMENT: test
       DOCKER_CONTEXT: default
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
     # Same reasoning as test.yml's: a successful `e2e` runs 5m41s to 10m26s
     # (median 7m33s) over the last 40 runs, and 15 minutes has already
     # cancelled a run at 20m01s that was slow rather than stuck.
@@ -44,13 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
-      # resident-services.sh) rather than service containers of this job: a
-      # job's own bind host 5432/6379 and bring a 3 GB tmpfs each, which is why
-      # a pool machine could only ever run one job at a time.
-      #
-      # Everything this job binds or names therefore has to be its own. The slot
-      # comes from the machine's runner configuration; unset is the only slot.
+      # Keep the existing slot-scoped names and ports for local reproductions.
+      # A hosted runner uses slot zero and has its own service containers.
       - name: Scope this run to its runner slot
         run: |
           slot="${CHEESE_CI_SLOT:-0}"
@@ -71,19 +78,17 @@ jobs:
           # database; each slot takes its own block of 16.
           echo "REDIS_URL=redis://localhost:6389/$((slot * 16))" >> "$GITHUB_ENV"
 
-      # The resident Postgres outlives the job, so this database has to be made
-      # empty deliberately — a service container used to do it by being new. The
-      # seed step below is not idempotent, and a run that inherited the previous
-      # run's rows would fail somewhere far from the cause.
+      # Preserve the database creation expected by the migration and seed steps.
       - name: Give this run an empty database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "DROP DATABASE IF EXISTS \"$CHEESE_E2E_DB\" WITH (FORCE)"
-          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE DATABASE \"$CHEESE_E2E_DB\""
 
-      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
-      # See the note in test.yml's migration-heads job.
+      # Keep the dependency steps unchanged to measure the hosted runner's setup.
       - name: Point uv's cache outside the per-job temp
         run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
 
@@ -104,20 +109,8 @@ jobs:
         with:
           node-version: 22
 
-      # The venv is built per job out of uv's cache, which is the thing worth
-      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
-      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
-      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
-      # that cache is already shared by every slot on the machine.
-      #
-      # Keeping the venv between runs instead is what cost the disk: it stops
-      # sharing the moment the cache is rebuilt under it, and never repairs
-      # itself. All eight venvs found on one box had a link count of 1 on every
-      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
-      # supposed to be views of. The seconds this used to save are a COLD cache;
-      # the cache is what makes it fast, and the cache is not in the workspace
-      # checkout wipes.
-      - name: Point uv at a venv built from the shared cache
+      # Build a fresh venv for this job on the hosted runner's filesystem.
+      - name: Point uv at a per-job venv
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
       - name: Install backend deps
@@ -148,11 +141,7 @@ jobs:
         working-directory: e2e
         run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
-      # Non-default ports: this job used to run on the dev box, which serves the
-      # dev deployment on 8081, and Playwright died with "8081 is already used"
-      # before a single test ran. It now runs on the cheese-ci pool where
-      # nothing else listens, but the overrides stay — they cost nothing and the
-      # config's defaults (8081/3000) still collide with a local dev stack.
+      # Keep explicit ports aligned with the browser fixture and local runs.
       - name: Run E2E tests
         id: e2e_tests
         working-directory: e2e
@@ -212,22 +201,6 @@ jobs:
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 3
-
-      # Same reclaim test.yml does, and for the same reason: every run's
-      # postgres service container leaves an anonymous volume behind. This job
-      # had no reclaim at all, and nothing else on a pool machine removes them
-      # — deploy-docker.sh never runs here, and ci-runner/deps.sh's weekly cron
-      # is `docker system prune -af` WITHOUT `--volumes`, which does not touch
-      # volumes. So e2e's volumes only ever got swept when a test job happened
-      # to land on the same machine afterwards. On the dev box this exact leak
-      # reached 57 volumes / 19GB and failed a run with "No space left on
-      # device"; these pool VMs have 40G. Only volumes no container references
-      # are removed.
-      - name: Reclaim the service containers' volumes
-        if: always()
-        run: |
-          docker volume prune -f >/dev/null 2>&1 || true
-          df -h / | tail -1
 
       - name: Remove the isolated project forge
         if: always()
