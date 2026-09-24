@@ -1614,7 +1614,9 @@ class Executor:
                     self.active_calls > 0
                     or any(
                         self.task(marker)["status"]
-                        not in {"completed", "failed", "stopped"}
+                        # An unknown task has no exit trap and no live process;
+                        # it cannot still be holding the executor.
+                        not in {"completed", "failed", "stopped", "unknown"}
                         for marker in list(self.tasks)
                     )
                 )
