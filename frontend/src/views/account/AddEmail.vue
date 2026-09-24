@@ -36,7 +36,7 @@
         </v-btn>
 
         <p class="account-foot">
-          <button type="button" class="account-link account-link--quiet" :disabled="signingOut" @click="signOut">
+          <button type="button" class="account-link account-link--quiet" :disabled="signingOut" @click="signOut()">
             {{ t('account.addEmail.signOut') }}
           </button>
         </p>
@@ -78,7 +78,19 @@ const emailRules = [(v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) |
 
 const goOn = () => router.replace(postLoginTarget(route.query))
 
-const send = () => UserApi.sendAddEmailCode(email.value.trim())
+const reasonOf = (e: unknown) => (e as { error?: { data?: { reason?: string } } })?.error?.data?.reason
+
+// Only a recent sign-in may add the address. An older one is asked to sign in
+// again and comes back here, on its way to the same place.
+function whenSignInIsStale(e: unknown): never {
+  if (reasonOf(e) === 'reauth_required') {
+    toast.info(t('account.addEmail.signInAgain'))
+    void signOut(postLoginTarget(route.query))
+  }
+  throw e
+}
+
+const send = () => UserApi.sendAddEmailCode(email.value.trim()).catch(whenSignInIsStale)
 
 async function submitEmail() {
   const { valid } = await formRef.value.validate()
@@ -103,13 +115,13 @@ async function verify(code: string) {
     toast.success(t('account.addEmail.added'))
   } catch (e) {
     // Added meanwhile in another tab: the account needs nothing more.
-    if ((e as { error?: { data?: { reason?: string } } })?.error?.data?.reason !== 'email_present') throw e
+    if (reasonOf(e) !== 'email_present') whenSignInIsStale(e)
     await AccountService.updateUserInfo()
   }
   await goOn()
 }
 
-async function signOut() {
+async function signOut(redirect?: string) {
   signingOut.value = true
   // The same order as the account menu: the server drops the refresh token
   // first, or the next visit would restore the session.
@@ -119,7 +131,7 @@ async function signOut() {
     console.warn('Logout request failed; clearing local session anyway:', e)
   } finally {
     await AccountService.logout()
-    router.replace({ name: 'SignIn' })
+    router.replace({ name: 'SignIn', query: redirect ? { redirect } : {} })
   }
 }
 

@@ -53,6 +53,8 @@ export function emailCodeMessage(error: unknown): string | null {
       return t('account.emailCode.invalidEmail')
     case 'code_wait':
       return t('account.emailCode.tooSoon')
+    case 'reauth_required':
+      return t('account.addEmail.signInAgain')
     default:
       return attemptMessage(error)
   }

@@ -110,7 +110,8 @@
     "send": "Send code",
     "submit": "Verify and continue",
     "added": "Email address added",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "signInAgain": "Sign in again to add an email address"
   },
   "recover": {
     "title": "Reset password",

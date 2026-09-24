@@ -2,7 +2,7 @@ import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlsplit
 
@@ -1681,11 +1681,23 @@ async def get_current_user(
     }
 
 
+# How recent the sign-in behind a request must be for it to add the account's
+# first email. That address is what the account is recovered through, so a
+# session taken from its owner must not be able to attach one of its own; and
+# an account without an address usually has nothing else to confirm with.
+ADD_EMAIL_SIGN_IN_WINDOW = timedelta(minutes=15)
+
+
 async def _account_without_email(
-    auth_user: AuthUserInfo, auth_service: UserAuthService
+    auth_user: AuthUserInfo,
+    auth_service: UserAuthService,
+    session: AsyncSession,
+    session_id: uuid.UUID | None,
 ):
-    """The caller's account, refused once it holds an address of its own:
-    replacing one is a different operation, with its own confirmation."""
+    """The caller's account, refused once it holds an address of its own
+    (replacing one is a different operation, with its own confirmation), or
+    when the caller did not sign in within ``ADD_EMAIL_SIGN_IN_WINDOW``.
+    Refreshing does not count as signing in: it keeps the session's start."""
     try:
         user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
     except ValueError:
@@ -1693,6 +1705,19 @@ async def _account_without_email(
     if not is_placeholder_email(user.email):
         raise ConflictError(
             "This account already has an email address", {"reason": "email_present"}
+        )
+    started = None
+    if session_id is not None:
+        started = await session.scalar(
+            select(UserSession.created_at).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user.id,
+                UserSession.revoked_at.is_(None),
+            )
+        )
+    if started is None or datetime.now(UTC) - started > ADD_EMAIL_SIGN_IN_WINDOW:
+        raise ForbiddenError(
+            "Sign in again to add an email address", {"reason": "reauth_required"}
         )
     return user, profile
 
@@ -1706,8 +1731,10 @@ async def send_add_email_code(
     request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
 ) -> dict:
-    await _account_without_email(auth_user, auth_service)
+    await _account_without_email(auth_user, auth_service, session, session_id)
     email = _own_email(payload.email)
     if await auth_service.get_user_by_email(email) is not None:
         raise _email_taken()
@@ -1725,10 +1752,13 @@ async def add_email(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
 ) -> dict:
     from sqlalchemy.exc import IntegrityError
 
-    user, profile = await _account_without_email(auth_user, auth_service)
+    user, profile = await _account_without_email(
+        auth_user, auth_service, session, session_id
+    )
     email = _own_email(payload.email)
     # Before the code is spent: an address that cannot be taken should not
     # cost the person their code.

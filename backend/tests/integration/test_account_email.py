@@ -6,17 +6,18 @@ adds one; nothing is ever mailed to a placeholder."""
 
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.routes.users import _issue_oauth_state_token
 from app.core.config import settings
 from app.core.email import EmailSender, FallbackEmailSender
-from app.domain.user.models import User
+from app.domain.user.models import User, UserSession
 from tests.integration.conftest import CreatedUser, UserCreator
 from tests.support.consent import OAUTH_CONSENT_FORM
 
@@ -451,6 +452,73 @@ class TestAccountWithoutEmail:
 
         assert resp.status_code == 422
         assert mailbox.sent == []
+
+
+class TestAddingAnEmailNeedsARecentSignIn:
+    """A session taken from its owner must not attach an address of its own:
+    only a sign-in in the last fifteen minutes may add the first one."""
+
+    def _age_sign_ins(self, db_session, portal, user: CreatedUser, minutes: int):
+        async def age():
+            await db_session.execute(
+                update(UserSession)
+                .where(UserSession.user_id == user.user_id)
+                .values(created_at=datetime.now(UTC) - timedelta(minutes=minutes))
+            )
+            await db_session.flush()
+
+        portal.call(age)
+
+    def _send(self, client: TestClient, token: str):
+        return client.post(
+            "/users/me/email/code",
+            headers=_bearer(token),
+            json={"email": f"{_unique('fresh')}@example.com"},
+        )
+
+    def test_a_recent_sign_in_may_add_one(
+        self,
+        api_client: TestClient,
+        placeholder_user: CreatedUser,
+        db_session,
+        _portal,
+        mailbox: Mailbox,
+    ):
+        token = _login(api_client, placeholder_user).json()["data"]["accessToken"]
+        self._age_sign_ins(db_session, _portal, placeholder_user, 14)
+
+        assert self._send(api_client, token).status_code == 200
+
+    def test_an_older_sign_in_is_refused_even_after_a_refresh(
+        self,
+        api_client: TestClient,
+        placeholder_user: CreatedUser,
+        db_session,
+        _portal,
+        mailbox: Mailbox,
+    ):
+        login = _login(api_client, placeholder_user)
+        self._age_sign_ins(db_session, _portal, placeholder_user, 16)
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={login.cookies['cheese_refresh']}"},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        token = refreshed.json()["data"]["accessToken"]
+
+        address = f"{_unique('stale')}@example.com"
+        for path, body in (
+            ("/users/me/email/code", {"email": address}),
+            ("/users/me/email", {"email": address, "code": "123456"}),
+        ):
+            resp = api_client.post(path, headers=_bearer(token), json=body)
+            assert resp.status_code == 403, resp.text
+            assert resp.json()["error"]["data"]["reason"] == "reauth_required"
+        assert mailbox.sent == []
+
+        # Signing in again opens the window again.
+        again = _login(api_client, placeholder_user).json()["data"]["accessToken"]
+        assert self._send(api_client, again).status_code == 200
 
 
 class TestNoMailToPlaceholders:

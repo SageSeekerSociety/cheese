@@ -110,7 +110,8 @@
     "send": "发送验证码",
     "submit": "验证并继续",
     "added": "邮箱已添加",
-    "signOut": "退出登录"
+    "signOut": "退出登录",
+    "signInAgain": "请重新登录后再添加邮箱"
   },
   "recover": {
     "title": "找回密码",

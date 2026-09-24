@@ -118,6 +118,18 @@ describe('adding the email an account is missing', () => {
     expect(view.queryByText(/We sent a code to/)).toBeNull()
   })
 
+  it('asks an older sign-in to sign in again, returning to where it was going', async () => {
+    vi.mocked(UserApi.sendAddEmailCode).mockRejectedValue({ error: { data: { reason: 'reauth_required' } } })
+    const { view, router } = await signedInAt('/projects/7')
+
+    await requestCode(view, 'ada@example.com')
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('SignIn'))
+    expect(router.currentRoute.value.query.redirect).toBe('/projects/7')
+    expect(AccountService.logout).toHaveBeenCalled()
+    expect(view.queryByText(/We sent a code to/)).toBeNull()
+  })
+
   it('can sign out instead', async () => {
     const { view, router } = await signedInAt('/projects/7')
 
