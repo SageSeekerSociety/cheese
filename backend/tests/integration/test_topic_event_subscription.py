@@ -392,6 +392,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
                 "_eid": "stop-autonomous-1",
             },
         )
+        await subscription.sink.queue.join()
         started_frame = await asyncio.wait_for(room.get(), 1)
         progress_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
@@ -481,6 +482,7 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
                 "_eid": "stop-english-1",
             },
         )
+        await provider._subscriptions[topic_id].sink.queue.join()
         await asyncio.wait_for(room.get(), 1)  # turn_started
         progress_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
@@ -598,6 +600,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
                 "_eid": "stop-subagent-1",
             },
         )
+        await provider._subscriptions[topic_id].sink.queue.join()
         frames = [await asyncio.wait_for(room.get(), 1) for _ in range(6)]
 
     kinds = [frame["type"] for frame in frames]
