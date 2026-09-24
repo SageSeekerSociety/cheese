@@ -20,7 +20,7 @@ members who accepted an invitation. So:
 Irreversible: rows are deleted and tables dropped.
 
 Revision ID: 4b8e1f6c2a93
-Revises: e2ccbf34a7bd
+Revises: c5e1a9d3f742
 Create Date: 2026-09-24 06:00:00.000000
 
 """
@@ -32,7 +32,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "4b8e1f6c2a93"
-down_revision: str | Sequence[str] | None = "e2ccbf34a7bd"
+down_revision: str | Sequence[str] | None = "c5e1a9d3f742"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
