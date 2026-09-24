@@ -152,7 +152,9 @@ class LoginRequest(BaseModel):
 class SudoAuthRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    method: str
+    # None asks for a ticket on the strength of the session's sudo window
+    # alone, proving nothing new.
+    method: str | None = None
     credentials: dict = Field(default_factory=dict)
     # Which privileged operation the resulting ticket may be spent on. Absent
     # for the operations still gated in the client alone: they redeem nothing,
@@ -343,6 +345,20 @@ def _require_same_origin(request: Request) -> None:
         raise ForbiddenError("Cross-site request refused")
 
 
+# The credentials ``/auth/sudo`` accepts from any account that has them. A
+# mailed code is one only without two-step verification, which is why an
+# email-code sign-in that a trusted device let past the second step is not.
+_SUDO_SIGN_IN_METHODS = frozenset({"passkey", "password", "totp"})
+
+
+def _sign_in_opens_sudo(login_method: str, two_factor_skipped: bool) -> bool:
+    """Whether this sign-in proved a credential sudo would have accepted, so
+    that asking for one again straight away would only repeat it."""
+    if login_method in _SUDO_SIGN_IN_METHODS:
+        return True
+    return login_method == "email_code" and not two_factor_skipped
+
+
 async def issue_session(
     response: Response,
     request: Request,
@@ -376,6 +392,7 @@ async def issue_session(
         ip=resolved_client_address(request) or "",
         user_agent=user_agent,
         two_factor_skipped=trust is not None,
+        sudo=_sign_in_opens_sudo(login_method, trust is not None),
     )
     trusted = TrustedDeviceService(db)
     if trust is not None:
@@ -2558,6 +2575,7 @@ async def user_logout(
 async def sudo_auth(
     payload: SudoAuthRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
     session: AsyncSession = Depends(get_db),
@@ -2568,6 +2586,14 @@ async def sudo_auth(
     ``{"verified": true}`` and kept no record — nothing the server could check
     afterwards — so the gate it appeared to be existed only in the client, and
     the operation behind it took a session cookie and nothing more.
+
+    A verification opens a sudo window of ten minutes on the caller's
+    session, as does a sign-in whose credential this endpoint would have
+    accepted. Inside it, a request with no ``method`` gets a ticket without
+    proving anything again; outside it, that request is refused with
+    ``SudoRequiredError``. Tickets stay single-use and bound to one purpose
+    either way, and the window belongs to the session: revoking it ends the
+    window, and the account's other sessions keep their own.
     """
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2580,14 +2606,27 @@ async def sudo_auth(
 
     method = payload.method
     credentials = payload.credentials
+    sessions = SessionService(session)
 
-    async def verified(message: str, **extra: Any) -> dict:
+    async def ticketed(message: str, **extra: Any) -> dict:
         data: dict[str, Any] = {"verified": True, **extra}
         if payload.purpose is not None:
             data["sudoTicket"] = await _issue_sudo_ticket(
                 auth_user.user_id, payload.purpose
             )
         return {"code": 200, "message": message, "data": data}
+
+    async def verified(message: str, **extra: Any) -> dict:
+        if current is not None:
+            await sessions.open_sudo(auth_user.user_id, current)
+        return await ticketed(message, **extra)
+
+    if method is None:
+        if payload.purpose is None:
+            raise BadRequestError("purpose is required")
+        if current is None or not await sessions.in_sudo(auth_user.user_id, current):
+            raise SudoRequiredError("Re-authentication required for this operation")
+        return await ticketed("Sudo mode is active.")
 
     if method == "password":
         password = credentials.get("password")

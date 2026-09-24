@@ -261,6 +261,12 @@ class UserSession(Base):
         DateTime(timezone=True), nullable=True
     )
     revoked_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Until when this sign-in may get a sudo ticket without proving a
+    # credential again: set by a sudo verification, and by a sign-in whose
+    # credential sudo itself would have accepted.
+    sudo_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class UserTrustedDevice(Base):

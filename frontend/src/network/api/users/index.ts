@@ -294,6 +294,18 @@ export namespace UserApi {
     | 'realname:view'
     | 'realname:update'
 
+  /**
+   * A ticket for `purpose` without proving anything again, granted only while
+   * this sign-in is within its sudo window; refused with SudoRequiredError
+   * otherwise.
+   */
+  export const requestSudoTicket = (purpose: SudoPurpose) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: { purpose },
+    })
+
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse>({
       url: '/users/auth/sudo',

@@ -30,6 +30,10 @@ vi.mock('@/network/api/users', () => ({
     getPasskeyRegistrationOptions: vi.fn(),
     verifyPasskeyRegistration: vi.fn(),
     dismissPasskeyPrompt: vi.fn(),
+    // The sign-in is past its sudo window in these tests, so confirming is asked for.
+    requestSudoTicket: vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Re-authentication required'), { name: 'SudoRequiredError' })),
   },
 }))
 vi.mock('@/services/account', async () => {
