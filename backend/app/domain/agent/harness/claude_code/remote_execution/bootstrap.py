@@ -249,9 +249,12 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
-    plant_native_skills(config_dir, payload.get("skills") or {})
     with (platform_dir / "executor-bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        # Under the lock like everything else this writes: the temporary file
+        # each copy goes through is one name, and two prepares of one room
+        # would otherwise be renaming the same `.next` file.
+        plant_native_skills(config_dir, payload.get("skills") or {})
         stop_previous_root(home)
         release, contents = stage_release(platform_dir, payload)
         env = dict(os.environ)
