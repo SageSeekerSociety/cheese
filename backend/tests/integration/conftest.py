@@ -13,6 +13,7 @@ this by creating one session-scoped anyio blocking portal and:
   reuses it instead of spinning up a fresh per-instance loop.
 """
 
+import time
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import bcrypt
+import jwt
 import pytest
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
@@ -28,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.common.auth import create_access_token
+from app.core.config import settings
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -105,7 +108,7 @@ def create_approved_space(client, **kwargs):
     return response
 
 
-def session_token(handle: str) -> str:
+def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-only access token — the ONLY sanctioned way for a test to
     mint one.
 
@@ -114,13 +117,23 @@ def session_token(handle: str) -> str:
     connector / project routes) keys off. When a test needs a real DB user
     instead, use ``seed_user`` or the ``authenticated_user`` fixture.
 
+    ``ttl_s`` overrides the lifetime; pass a negative value for an already-expired
+    token (what a client holds after leaving a tab open over the weekend). The
+    claims are the minter's own, re-signed with only ``exp`` moved, so an
+    expired token differs from a live one in nothing else.
+
     Nothing else under ``backend/tests/`` may mint a handle-only token —
     ``tests/unit/test_no_adhoc_auth_helpers.py`` enforces it. Fourteen
     hand-rolled copies of this had accumulated — 9 named ``_auth``, 3 named
     ``_login``, 2 inlined into headers — which is why the rule is now a test
     rather than a sentence in a rules file.
     """
-    return create_access_token(None, handle=handle)
+    token = create_access_token(None, handle=handle)
+    if ttl_s is None:
+        return token
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims["exp"] = int(time.time()) + ttl_s
+    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
 
 
 def room_agent_seat(client, topic_id) -> str:

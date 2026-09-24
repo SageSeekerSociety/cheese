@@ -134,7 +134,13 @@ class TestOAuthSignup:
 
         params = parse_qs(urlparse(resp.headers["location"]).query)
         assert params["created"] == ["true"]
-        assert _pending(api_client, params["token"][0]) == []
+        # The landing page signs in with the cookie the redirect set.
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={resp.cookies['cheese_refresh']}"},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert _pending(api_client, refreshed.json()["data"]["accessToken"]) == []
 
 
 class TestReacceptance:
