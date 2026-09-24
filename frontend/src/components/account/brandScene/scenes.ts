@@ -5,7 +5,7 @@ import heatLogoUrl from '@/assets/brand-scene/logo-heat.png?url'
 import metalLogoUrl from '@/assets/brand-scene/logo-metal.png?url'
 
 // The brand scenes on the sign-in pages (design-system §9.9), built on Paper
-// Shaders. One is drawn at random per visit.
+// Shaders. One is drawn at random each time the page is opened.
 //
 // The logo textures for liquid metal and heat are the library's own
 // `toProcessedLiquidMetal` / `toProcessedHeatmap` output, generated once and
@@ -272,24 +272,28 @@ export const SCENES: Record<SceneId, (P: Paper, g: SceneGround) => Promise<Scene
   }),
 }
 
-const STORAGE_KEY = 'cheese.brandScene'
+const LAST_KEY = 'cheese.brandScene.last'
+let chosen: SceneId | null = null
 
 /**
- * The scene for this visit: drawn at random once, then kept for the tab, so
- * going from sign-in to sign-up and back does not swap the picture.
+ * The scene for this page load: drawn at random, never the one this browser
+ * showed last time, then kept while the person moves between the account
+ * pages. Opening or reloading the page draws again.
  */
-export function sceneForThisVisit(random: () => number = Math.random): SceneId {
+export function sceneForThisPage(random: () => number = Math.random): SceneId {
+  if (chosen) return chosen
+  let last: string | null = null
   try {
-    const kept = sessionStorage.getItem(STORAGE_KEY)
-    if (kept && (SCENE_IDS as readonly string[]).includes(kept)) return kept as SceneId
+    last = localStorage.getItem(LAST_KEY)
   } catch {
-    // storage unavailable — draw one for this page only
+    // storage unavailable — any scene will do
   }
-  const id = SCENE_IDS[Math.floor(random() * SCENE_IDS.length)]
+  const pool = SCENE_IDS.filter((id) => id !== last)
+  chosen = pool[Math.floor(random() * pool.length)]
   try {
-    sessionStorage.setItem(STORAGE_KEY, id)
+    localStorage.setItem(LAST_KEY, chosen)
   } catch {
     // as above
   }
-  return id
+  return chosen
 }

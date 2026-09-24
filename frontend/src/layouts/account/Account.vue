@@ -175,14 +175,15 @@ const defaults = {
   justify-content: space-between;
 }
 
+/* Every page's heading starts at the same height, so moving between pages
+   of different length changes what is below it, never where it is. Centring
+   would move the heading with every field a page adds. */
 .account-main {
   display: flex;
   flex: 1;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  /* The bar above takes room the bottom does not have; this keeps the form
-     centred on the pane, not on what is left under the bar. */
-  padding: 24px 24px 96px;
+  padding: clamp(48px, 18vh, 168px) 24px 64px;
 }
 
 .account-column {
@@ -380,7 +381,6 @@ const defaults = {
   }
 
   .account-main {
-    align-items: flex-start;
     padding: 28px 24px 48px;
   }
 
