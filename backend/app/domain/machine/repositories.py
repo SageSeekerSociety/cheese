@@ -7,7 +7,6 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceRow, DeviceTopicRow
-from app.domain.device.supply import Supply
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -22,24 +21,6 @@ from app.domain.machine.models import (
 class ProjectMachineRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
-
-    async def active_cloud_device_for_project(
-        self, device_id: str, project_id: uuid.UUID
-    ) -> bool:
-        return (
-            await self._session.scalar(
-                select(ProjectMachine.device_id)
-                .join(DeviceRow, DeviceRow.device_id == ProjectMachine.device_id)
-                .where(
-                    ProjectMachine.device_id == device_id,
-                    ProjectMachine.project_id == project_id,
-                    ProjectMachine.released_at.is_(None),
-                    ProjectMachine.superseded_at.is_(None),
-                    DeviceRow.supply == Supply.cloud,
-                )
-            )
-            is not None
-        )
 
     async def add(
         self,
