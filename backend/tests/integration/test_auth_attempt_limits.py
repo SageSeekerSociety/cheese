@@ -58,10 +58,12 @@ def outbox(monkeypatch) -> _Outbox:
 def forget_redis_state():
     """Lockouts outlive the test and its rolled-back users."""
     from app.domain.user.login_security import (
-        LOGIN_ATTEMPTS_PREFIX,
-        LOGIN_LOCKOUT_PREFIX,
+        LOGIN_FAILURES_PREFIX,
+        LOGIN_WAIT_PREFIX,
         STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
         STEP_UP_PASSWORD_LOCKOUT_PREFIX,
+        TWO_FACTOR_ATTEMPTS_PREFIX,
+        TWO_FACTOR_LOCKOUT_PREFIX,
     )
 
     users: list[CreatedUser] = []
@@ -74,17 +76,47 @@ def forget_redis_state():
     r = redis.Redis.from_url(settings.redis_url)
     for user in users:
         r.delete(
-            f"{LOGIN_ATTEMPTS_PREFIX}{user.username}",
-            f"{LOGIN_LOCKOUT_PREFIX}{user.username}",
+            f"{LOGIN_FAILURES_PREFIX}{user.username}",
+            f"{LOGIN_WAIT_PREFIX}{user.username}",
             *(
                 f"{p}{user.user_id}"
                 for p in (
                     STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
                     STEP_UP_PASSWORD_LOCKOUT_PREFIX,
+                    TWO_FACTOR_ATTEMPTS_PREFIX,
+                    TWO_FACTOR_LOCKOUT_PREFIX,
                 )
             ),
         )
     r.close()
+
+
+def _enable_2fa(
+    client: TestClient, user: CreatedUser, headers: dict[str, str]
+) -> pyotp.TOTP:
+    sudo = client.post(
+        "/users/auth/sudo",
+        headers=headers,
+        json={
+            "method": "password",
+            "credentials": {"password": user.password},
+            "purpose": "2fa:enable",
+        },
+    )
+    assert sudo.status_code == 200, sudo.text
+    init = client.post(
+        f"/users/{user.user_id}/2fa/enable",
+        headers=headers,
+        json={"sudoTicket": sudo.json()["data"]["sudoTicket"]},
+    )
+    secret = init.json()["data"]["secret"]
+    confirm = client.post(
+        f"/users/{user.user_id}/2fa/enable",
+        headers=headers,
+        json={"secret": secret, "code": pyotp.TOTP(secret).now()},
+    )
+    assert confirm.status_code == 200, confirm.text
+    return pyotp.TOTP(secret)
 
 
 def _login(client: TestClient, username: str, password: str):
@@ -318,13 +350,16 @@ class TestOverlongPasswords:
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        resp = _login(api_client, user.username, OVERLONG)
+        for _ in range(LOGIN_FREE_FAILURES):
+            resp = _login(api_client, user.username, OVERLONG)
+            assert resp.status_code == 401, resp.text
 
-        assert resp.status_code == 401, resp.text
-        assert "4 attempts remaining" in resp.json()["error"]["message"]
+        assert _login(api_client, user.username, user.password).status_code == 403
 
     def test_re_authenticating_with_one_is_a_wrong_password(
         self,
@@ -403,43 +438,81 @@ class TestRecoveryPasswordRule:
         assert reset.status_code == 200, reset.text
 
 
-class TestLoginBudget:
-    def test_the_budget_counts_down_locks_and_refuses_the_right_password(
+def _wait_of(resp) -> int | None:
+    return (resp.json()["error"].get("data") or {}).get("retryAfterSeconds")
+
+
+class TestLoginWait:
+    def test_repeated_failures_start_a_wait_that_refuses_the_right_password(
         self,
         api_client: TestClient,
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        for left in (4, 3, 2, 1):
+        for _ in range(LOGIN_FREE_FAILURES - 1):
             resp = _login(api_client, user.username, "wrong-Password!")
             assert resp.status_code == 401, resp.text
-            assert f"{left} attempts remaining" in resp.json()["error"]["message"]
+            assert _wait_of(resp) is None
 
-        fifth = _login(api_client, user.username, "wrong-Password!")
-        assert fifth.status_code == 403, fifth.text
+        last = _login(api_client, user.username, "wrong-Password!")
+        assert last.status_code == 401, last.text
+        assert _wait_of(last) > 0
 
         right = _login(api_client, user.username, user.password)
         assert right.status_code == 403, right.text
-        assert "Try again in" in right.json()["error"]["message"]
+        assert right.json()["error"]["data"]["reason"] == "too_many_attempts"
+        assert 0 < _wait_of(right) <= _wait_of(last)
 
-    def test_a_right_password_gives_the_budget_back(
+    def test_a_right_password_forgets_the_failures(
         self,
         api_client: TestClient,
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        for _ in range(4):
+        for _ in range(LOGIN_FREE_FAILURES - 1):
             _login(api_client, user.username, "wrong-Password!")
         assert _login(api_client, user.username, user.password).status_code == 200
 
-        resp = _login(api_client, user.username, "wrong-Password!")
-        assert "4 attempts remaining" in resp.json()["error"]["message"]
+        for _ in range(LOGIN_FREE_FAILURES - 1):
+            resp = _login(api_client, user.username, "wrong-Password!")
+            assert resp.status_code == 401, resp.text
+            assert _wait_of(resp) is None
+
+    def test_a_stranger_cannot_keep_the_owner_out(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        forget_redis_state,
+        monkeypatch,
+    ):
+        """However many wrong passwords somebody sends for the account, its
+        owner waits no longer than the cap and is then let in."""
+        import time
+
+        from app.domain.user import login_security
+
+        monkeypatch.setattr(login_security, "LOGIN_FIRST_WAIT_SECONDS", 1)
+        monkeypatch.setattr(login_security, "LOGIN_MAX_WAIT_SECONDS", 1)
+        user = user_client.create_user()
+        forget_redis_state(user)
+
+        for _ in range(login_security.LOGIN_FREE_FAILURES + 30):
+            resp = _login(api_client, user.username, "wrong-Password!")
+            assert resp.status_code in (401, 403), resp.text
+            assert (_wait_of(resp) or 0) <= 1
+
+        time.sleep(1.1)
+        assert _login(api_client, user.username, user.password).status_code == 200
 
     def test_stopping_at_the_2fa_prompt_spends_nothing(
         self,
@@ -450,30 +523,202 @@ class TestLoginBudget:
     ):
         user = authenticated_user
         forget_redis_state(user)
-        sudo = api_client.post(
-            "/users/auth/sudo",
-            headers=auth_headers,
-            json={
-                "method": "password",
-                "credentials": {"password": user.password},
-                "purpose": "2fa:enable",
-            },
-        )
-        assert sudo.status_code == 200, sudo.text
-        init = api_client.post(
-            f"/users/{user.user_id}/2fa/enable",
-            headers=auth_headers,
-            json={"sudoTicket": sudo.json()["data"]["sudoTicket"]},
-        )
-        secret = init.json()["data"]["secret"]
-        confirm = api_client.post(
-            f"/users/{user.user_id}/2fa/enable",
-            headers=auth_headers,
-            json={"secret": secret, "code": pyotp.TOTP(secret).now()},
-        )
-        assert confirm.status_code == 200, confirm.text
+        _enable_2fa(api_client, user, auth_headers)
 
         for _ in range(6):
             resp = _login(api_client, user.username, user.password)
             assert resp.status_code == 200, resp.text
             assert resp.json()["data"]["requires2FA"] is True
+
+
+PROXY = "10.255.0.1"
+
+
+@pytest.fixture
+def from_address(app, api_client: TestClient, _portal, monkeypatch):
+    """Clients that each reach the server from an address of their own, behind
+    a proxy the server trusts. The address a client is given here is the one
+    uvicorn would have resolved from the proxy's X-Forwarded-For."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", PROXY)
+    clients: list[TestClient] = []
+    addresses: list[str] = []
+
+    def make(address: str | None = None) -> TestClient:
+        if address is None:
+            octets = uuid.uuid4().bytes
+            address = f"198.18.{octets[0]}.{octets[1] % 254 + 1}"
+        client = TestClient(app, base_url="http://testserver", client=(address, 50000))
+        client.portal = _portal  # type: ignore[assignment]
+        clients.append(client)
+        addresses.append(address)
+        return client
+
+    yield make
+
+    import redis
+
+    from app.core.config import settings
+
+    for client in clients:
+        client.close()
+    r = redis.Redis.from_url(settings.redis_url)
+    for address in addresses:
+        stale = list(r.scan_iter(match=f"*:{address}*"))
+        if stale:
+            r.delete(*stale)
+    r.close()
+
+
+@pytest.fixture
+def few_failures(monkeypatch) -> int:
+    from app.domain.user import login_security
+
+    monkeypatch.setattr(login_security, "CLIENT_MAX_FAILURES", 3)
+    return 3
+
+
+def _nobody() -> str:
+    return f"nobody-{uuid.uuid4().hex[:12]}"
+
+
+def _refused(resp) -> bool:
+    return (
+        resp.status_code == 403
+        and resp.json()["error"]["data"]["reason"] == "too_many_attempts"
+        and resp.json()["error"]["data"]["retryAfterSeconds"] > 0
+    )
+
+
+class TestClientAddressLimits:
+    """Per-address limits: failures only, and only where the server knows the
+    client's address rather than a proxy's."""
+
+    def test_wrong_passwords_from_one_address_are_limited_across_usernames(
+        self, from_address, few_failures, user_client: UserCreator
+    ):
+        user = user_client.create_user()
+        guesser, other = from_address(), from_address()
+
+        for _ in range(few_failures):
+            assert _login(guesser, _nobody(), "wrong-Password!").status_code == 401
+
+        assert _refused(_login(guesser, user.username, user.password))
+        assert _login(other, user.username, user.password).status_code == 200
+
+    def test_signing_in_neither_counts_nor_clears_an_address_failures(
+        self, from_address, few_failures, user_client: UserCreator
+    ):
+        user = user_client.create_user()
+        client = from_address()
+
+        for _ in range(few_failures - 1):
+            assert _login(client, _nobody(), "wrong-Password!").status_code == 401
+        for _ in range(few_failures + 1):
+            assert _login(client, user.username, user.password).status_code == 200
+        assert _login(client, _nobody(), "wrong-Password!").status_code == 401
+
+        assert _refused(_login(client, _nobody(), "wrong-Password!"))
+
+    def test_nothing_is_limited_by_address_without_trusted_proxies(
+        self, from_address, few_failures, user_client: UserCreator, monkeypatch
+    ):
+        """Unset, every request carries the proxy's address, and a limit on it
+        would refuse everybody at once."""
+        monkeypatch.delenv("FORWARDED_ALLOW_IPS")
+        user = user_client.create_user()
+        client = from_address()
+
+        for _ in range(few_failures * 3):
+            assert _login(client, _nobody(), "wrong-Password!").status_code == 401
+        assert _login(client, user.username, user.password).status_code == 200
+
+    def test_requests_from_a_trusted_proxy_itself_are_not_limited(
+        self, from_address, few_failures
+    ):
+        client = from_address(PROXY)
+
+        for _ in range(few_failures * 3):
+            assert _login(client, _nobody(), "wrong-Password!").status_code == 401
+
+    def test_wrong_second_factors_from_one_address_are_limited(
+        self,
+        from_address,
+        few_failures,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        auth_headers: dict[str, str],
+        forget_redis_state,
+    ):
+        user = authenticated_user
+        forget_redis_state(user)
+        totp = _enable_2fa(api_client, user, auth_headers)
+        guesser, other = from_address(), from_address()
+
+        def second_step(client: TestClient, code: str):
+            first = _login(client, user.username, user.password)
+            assert first.status_code == 200, first.text
+            return client.post(
+                "/users/auth/verify-2fa",
+                json={"temp_token": first.json()["data"]["tempToken"], "code": code},
+            )
+
+        wrong = "000000" if totp.now() != "000000" else "111111"
+        for _ in range(few_failures):
+            assert second_step(guesser, wrong).status_code == 401
+
+        assert _refused(second_step(guesser, totp.now()))
+        assert second_step(other, totp.now()).status_code == 200
+
+    def test_wrong_email_codes_from_one_address_are_limited(
+        self, from_address, few_failures, outbox: _Outbox
+    ):
+        guesser, other = from_address(), from_address()
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+        sent = other.post("/users/verify/email", json={"email": email})
+        assert sent.status_code == 200, sent.text
+        code = _mailed_code(outbox)
+        wrong = "000000" if code != "000000" else "111111"
+
+        for _ in range(few_failures):
+            unknown = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+            resp = guesser.post("/users", json=_registration(unknown, wrong))
+            assert resp.status_code == 422, resp.text
+
+        assert _refused(guesser.post("/users", json=_registration(email, code)))
+        assert other.post("/users", json=_registration(email, code)).status_code == 200
+
+    def test_verification_mail_from_one_address_is_limited_across_recipients(
+        self, from_address, outbox: _Outbox, monkeypatch
+    ):
+        import app.domain.user.mail_quota as mail_quota
+
+        monkeypatch.setattr(mail_quota, "MAIL_CLIENT_HOURLY_LIMIT", 2)
+        sender, other = from_address(), from_address()
+
+        def send(client: TestClient):
+            email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+            return client.post("/users/verify/email", json={"email": email})
+
+        assert send(sender).status_code == 200
+        assert send(sender).status_code == 200
+        assert send(sender).status_code == 400
+        assert send(other).status_code == 200
+        assert len(outbox.sent) == 3
+
+    def test_recovery_mail_from_one_address_is_limited_across_recipients(
+        self, from_address, user_client: UserCreator, outbox: _Outbox, monkeypatch
+    ):
+        import app.domain.user.mail_quota as mail_quota
+
+        monkeypatch.setattr(mail_quota, "MAIL_CLIENT_HOURLY_LIMIT", 2)
+        users = [user_client.create_user() for _ in range(4)]
+        sender, other = from_address(), from_address()
+
+        for user in users[:3]:
+            assert _recover(sender, user.email).status_code == 200
+        outbox.settle(2)
+        assert _recover(other, users[3].email).status_code == 200
+
+        outbox.settle(3)
+        expected = {u.email for u in users[:2]} | {users[3].email}
+        assert {m["to"] for m in outbox.sent} == expected

@@ -68,6 +68,13 @@
     },
     "lastUsed": "上次使用"
   },
+  "attempts": {
+    "wrongPassword": "用户名或密码错误",
+    "wrongPasswordWait": "用户名或密码错误，请在 {wait}后重试",
+    "tooManyWait": "尝试次数过多，请在 {wait}后重试",
+    "seconds": "{count} 秒",
+    "minutes": "{count} 分钟"
+  },
   "signUp": {
     "title": "创建账号",
     "submit": "创建账号",
@@ -118,7 +125,6 @@
     "useTotp": "改用验证器验证码",
     "wrongCode": "验证码不正确，请重试",
     "wrongCodeRemaining": "验证码不正确，还可以尝试 {count} 次",
-    "tooManyAttempts": "尝试次数过多，请 {minutes} 分钟后再试",
     "sessionExpired": "验证已失效，请重新登录",
     "backupUsedTitle": "已使用备用码",
     "backupUsedBody": "每个备用码只能使用一次。建议现在生成一组新的备用码。",

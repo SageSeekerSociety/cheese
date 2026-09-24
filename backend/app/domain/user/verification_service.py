@@ -45,12 +45,15 @@ class EmailVerificationService:
         self._redis = redis
         self._sender = get_email_sender()
 
-    async def send_verification_code(self, email: str) -> None:
+    async def send_verification_code(
+        self, email: str, client: str | None = None
+    ) -> None:
+        """``client``: the requester's address, for ``MailQuota.take``."""
         code = generate_verification_code()
         key = f"{VERIFICATION_CODE_PREFIX}{email}"
 
         quota = MailQuota(self._redis, "email_verification")
-        if not await quota.take(email):
+        if not await quota.take(email, client):
             raise BadRequestError("Please wait before requesting a new code")
 
         pipe = self._redis.pipeline(transaction=True)
@@ -95,7 +98,7 @@ class EmailVerificationService:
             # Nobody received this code, so it must not count against the
             # resend quota either.
             await self._redis.delete(key)
-            await quota.give_back(email)
+            await quota.give_back(email, client)
             raise SystemBusyError(
                 "Failed to send the verification email. Please try again"
             )

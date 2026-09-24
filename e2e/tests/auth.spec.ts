@@ -19,16 +19,17 @@ test.describe("Login", () => {
   test("wrong credentials are rejected and the user stays on the sign-in page", async ({
     page,
   }) => {
-    // A made-up username, not the shared demo account: the backend's login
-    // rate limiter locks out by username after 5 failed attempts (see
-    // backend/app/api/routes/users.py user_login), and that Redis state
-    // outlives a single test run — on CI too: e2e.yml recreates the Postgres
-    // database per run but never flushes the slot's Redis, and the attempts
-    // key lives 15 minutes. Two runs on one slot inside that window (each up
-    // to 3 attempts with retries) reached 5 and turned this test red with the
-    // lockout message instead of the wrong-password one. So the name is unique
-    // per run attempt, and failing against a throwaway name also keeps this
-    // test from ever locking out `alice`, who the other specs depend on.
+    // A made-up username, not the shared demo account: after 5 failed
+    // attempts the backend makes the next sign-in for that username wait (see
+    // backend/app/domain/user/login_security.py LoginDelay), and that Redis
+    // state outlives a single test run — on CI too: e2e.yml recreates the
+    // Postgres database per run but never flushes the slot's Redis, and the
+    // failures are remembered for an hour. Runs on one slot inside that window
+    // (each up to 3 attempts with retries) would reach 5 and turn this test red
+    // with the too-many-attempts message instead of the wrong-password one. So
+    // the name is unique per run attempt, and failing against a throwaway name
+    // also keeps this test from ever holding up `alice`, who the other specs
+    // depend on.
     const noSuchUser = `no-such-user-e2e-${process.env.GITHUB_RUN_ID ?? "local"}-${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`;
     await page.goto("/account/signin");
     await page.getByLabel("用户名").fill(noSuchUser);
@@ -37,7 +38,9 @@ test.describe("Login", () => {
     await page.getByLabel("密码", { exact: true }).fill("wrong-password");
     await page.getByRole("button", { name: "登录", exact: true }).click();
 
-    await expect(page.getByText(/invalid username or password/i)).toBeVisible();
+    // The page words the refusal itself, in the interface language (zh-CN
+    // here): account.attempts.wrongPassword in the catalog.
+    await expect(page.getByText("用户名或密码错误")).toBeVisible();
     await expect(page).toHaveURL(/\/account\/signin/);
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
