@@ -67,8 +67,8 @@ to `POST /control` to perform the same background action as Ctrl+B:
 Specify `tool_use_id` inside `request` to target a particular running tool.
 Use a stable request ID when retrying the HTTP request; a different payload with
 the same ID returns a conflict. Read the result before interpreting delivery as
-execution. These operation IDs also appear in the existing `cheese api` command
-catalog; no second CLI transport is required.
+execution. These operation IDs also appear in the backend's `/openapi.json`, which an agent
+reads through `platform_request`; no second CLI transport is required.
 
 An answer body contains `session_id`, `request_id`, and `response`. Allow a tool
 with `{"behavior":"allow","updatedInput":{...}}`, or deny it with

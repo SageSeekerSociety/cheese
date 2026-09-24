@@ -8,7 +8,7 @@
 
 ## Central sessions and private chat execution
 
-All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
+All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
 
 Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
 
