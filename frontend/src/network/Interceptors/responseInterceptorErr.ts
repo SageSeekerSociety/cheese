@@ -1,7 +1,7 @@
 import type { AxiosError } from 'axios'
 import type { ResponseDataType } from '../types/index'
 
-import { BusinessError, ServerError, SudoRequiredError } from '../types/error'
+import { BusinessError, ServerError } from '../types/error'
 
 import refreshToken from './hooks/refreshToken'
 
@@ -31,7 +31,6 @@ export default (error: AxiosError<ResponseDataType>) => {
     )
   }
 
-  // 403 错误可能是 SudoRequired 或其他业务错误
   if (statusCode === 403) {
     throw createBusinessError(error)
   }
@@ -40,14 +39,9 @@ export default (error: AxiosError<ResponseDataType>) => {
   throw createError(error)
 }
 
-// 创建业务错误对象（特殊处理 SudoRequired）
+// 创建业务错误对象
 function createBusinessError(error: AxiosError<ResponseDataType>): Error {
   const response = error.response?.data
-
-  // 特殊处理 SudoRequired 错误
-  if (response?.error?.name === 'SudoRequiredError' || response?.message?.includes('SudoRequiredError')) {
-    return new SudoRequiredError(response.message)
-  }
 
   // 处理带有详细错误信息的响应
   if (response?.error?.name) {

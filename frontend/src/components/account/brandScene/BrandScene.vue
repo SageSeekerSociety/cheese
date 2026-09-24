@@ -28,10 +28,17 @@ const FOLLOW = 0.08
 
 const reducedQuery = typeof window !== 'undefined' ? window.matchMedia?.('(prefers-reduced-motion: reduce)') : undefined
 
+// A lost context gets one more try, a moment later: a GPU reset or a laptop
+// waking up is usually over by then, and a GPU that keeps failing is left alone.
+const RETRY_AFTER_LOSS = 1000
+const TRIES_AFTER_LOSS = 1
+
 let mount: ShaderMount | null = null
 let generation = 0
 let raf = 0
 let stopPointer = () => {}
+let losses = 0
+let retry = 0
 
 async function start() {
   const el = host.value
@@ -58,11 +65,21 @@ async function start() {
       1600 * 1000,
       spec.mipmaps
     )
+    el.querySelector('canvas')?.addEventListener('webglcontextlost', onContextLost, { once: true })
     shown.value = true
     if (!reduced) stopPointer = followPointer(pane, spec)
   } catch {
     // No WebGL 2, or a texture failed to load: the pane keeps its plain ground.
   }
+}
+
+// A canvas whose context is gone stays on top of the pane, blank, or painted
+// by the browser as a crashed canvas. It goes, and the pane shows its plain
+// ground until the scene can be drawn again.
+function onContextLost() {
+  shown.value = false
+  stop()
+  if (losses++ < TRIES_AFTER_LOSS) retry = window.setTimeout(start, RETRY_AFTER_LOSS)
 }
 
 function followPointer(pane: HTMLElement, spec: Awaited<ReturnType<(typeof SCENES)[SceneId]>>) {
@@ -116,6 +133,7 @@ function followPointer(pane: HTMLElement, spec: Awaited<ReturnType<(typeof SCENE
 
 function stop() {
   generation++
+  clearTimeout(retry)
   cancelAnimationFrame(raf)
   raf = 0
   stopPointer()

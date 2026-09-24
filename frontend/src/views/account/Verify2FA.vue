@@ -73,6 +73,8 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { attemptMessage } from './attemptWait'
+
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
@@ -137,7 +139,7 @@ const handleVerify = async () => {
     }
   } catch (error: any) {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
-    // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等一刻钟——压成同一句
+    // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等到期限过去——压成同一句
     // 提示的话，用户会一直重试一个根本不可能成功的操作。
     const detail = error?.error?.data ?? {}
     totpCode.value = ''
@@ -154,12 +156,7 @@ const handleVerify = async () => {
       return
     }
 
-    if (detail.reason === 'too_many_attempts') {
-      const minutes = Math.max(1, Math.ceil((detail.retryAfterSeconds ?? 900) / 60))
-      toast.error(t('account.twoFactor.tooManyAttempts', { minutes }))
-    } else {
-      toast.error(t('account.twoFactor.sessionExpired'))
-    }
+    toast.error(attemptMessage(error) ?? t('account.twoFactor.sessionExpired'))
     router.replace(backToSignIn())
   } finally {
     loading.value = false

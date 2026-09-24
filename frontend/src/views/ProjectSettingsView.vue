@@ -40,8 +40,7 @@ import {
 } from '../lib/githubAccount'
 import { relTime } from '../lib/relTime'
 import { myId } from '../me'
-import { useSudoStore } from '../stores/sudo'
-import { withSudo } from '../utils/sudo'
+import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 // Project defaults and favorites never change an already running room.
 const props = defineProps<{ projectId: string }>()
@@ -121,40 +120,23 @@ async function loadGithubAccountConnection() {
   }
 }
 
-// Unbinding needs a fresh re-authentication: withSudo sends the user through
-// the verification page, which returns here, and onMounted retries with the
-// ticket it minted.
-async function disconnectGithubAccount(connectionId = githubAccountConn.value?.id) {
+// Unbinding needs the person to confirm who they are first.
+async function disconnectGithubAccount() {
   const userId = myId()
+  const connectionId = githubAccountConn.value?.id
   if (!userId || connectionId === undefined) return
   disconnectingGithubAccount.value = true
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        await deleteOAuthConnection(userId, connectionId, sudoTicket)
-        githubAccountConn.value = null
-      },
-      'unbindOAuthConnection',
-      { connectionId },
-      router
-    )
+    await withSudo('oauth:unbind', async (sudoTicket) => {
+      await deleteOAuthConnection(userId, connectionId, sudoTicket)
+      githubAccountConn.value = null
+    })
   } catch (e) {
+    if (e instanceof SudoCancelledError) return
     error.value = e instanceof Error ? e.message : '断开 GitHub 账号失败'
   } finally {
     disconnectingGithubAccount.value = false
   }
-}
-
-// Back from the verification page: finish the unbind the user already asked
-// for, then load the connection so the section shows what the server holds.
-// The retry state is cleared only after the retry has read its ticket.
-async function resumeGithubAccountDisconnect() {
-  const sudoStore = useSudoStore()
-  const retry = sudoStore.retryOperation
-  if (!sudoStore.isVerified || retry?.opKey !== 'unbindOAuthConnection') return
-  const connectionId = retry.opData?.connectionId
-  if (typeof connectionId === 'number') await disconnectGithubAccount(connectionId)
-  sudoStore.clearRetryState()
 }
 
 // 分支保护 (#718): its own three-state load (like 连接 GitHub 账号 above) —
@@ -370,11 +352,10 @@ function consumeGithubCallbackNotice() {
   router.replace({ query: rest })
 }
 
-onMounted(async () => {
+onMounted(() => {
   consumeGithubCallbackNotice()
   load()
   loadBranchProtection()
-  await resumeGithubAccountDisconnect()
   loadGithubAccountConnection()
 })
 watch(

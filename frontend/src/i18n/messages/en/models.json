@@ -153,7 +153,15 @@
     "accountAs": "Account: {email}",
     "done": "Done",
     "failed": "Authorization did not complete",
-    "retry": "Try again"
+    "retry": "Try again",
+    "upstreamModel": "Upstream model",
+    "upstreamModelHint": "Optional. Leave empty to follow the deployment default; enter another model your subscription offers (e.g. openai/gpt-5.6-luna).",
+    "upstreamModelInvalid": "Upstream model must not be empty",
+    "upstreamModelCurrent": "Upstream model: {model}",
+    "upstreamModelDefault": "Upstream model: deployment default",
+    "upstreamModelEdit": "Edit",
+    "upstreamModelSave": "Save",
+    "upstreamModelCancel": "Cancel"
   },
   "dialog": {
     "cancel": "Cancel",
@@ -253,7 +261,8 @@
       "subscriptionCancel": "Cancelled a subscription import",
       "subscriptionRefresh": "Refreshed a subscription token",
       "subscriptionRevoke": "Revoked a subscription",
-      "other": "Other action"
+      "other": "Other action",
+      "subscriptionUpdateUpstream": "Changed a subscription's upstream model"
     },
     "diff": {
       "show": "Show changes",

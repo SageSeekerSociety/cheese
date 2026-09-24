@@ -21,3 +21,20 @@ class DeviceFlowStart(BaseModel):
     provider: Literal["openai_codex"] = "openai_codex"
     label: str | None = Field(default=None, max_length=200)
     target_subscription_id: uuid.UUID | None = None
+    # 显式指定上游模型（如 openai/gpt-5.6-luna）；null = 跟随部署默认
+    # （settings.subscription_upstream_model），行里存 NULL，热配保留。
+    # 定向重授权时语义细分（服务层靠 model_fields_set 兑现）：字段**缺省** =
+    # 继承旧行的选择；显式 **null** = 清除选择、回落部署默认。
+    upstream_model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class UpstreamModelUpdate(BaseModel):
+    """`PATCH /admin/subscriptions/{id}/upstream-model` 的体 —— 授权完成后改上游模型。
+
+    字段**必填但可为 null**（BudgetUpdate 同规）：缺省（`{}`）直接 400 ——
+    「忘了传」绝不能被读成「清除选择」；``None`` 才是显式的清除，回落到部署
+    默认 —— 网关那一下推的是回落后的解析值，不是 NULL（网关的合并语义里
+    缺省才是「不动」）。
+    """
+
+    upstream_model: str | None = Field(min_length=1, max_length=200)

@@ -3,16 +3,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-class TestLoginRateLimiter:
+class TestAttemptLimiter:
     @pytest.fixture
     def mock_redis(self):
         return AsyncMock()
 
     @pytest.fixture
     def rate_limiter(self, mock_redis):
-        from app.domain.user.login_security import LoginRateLimiter
+        from app.domain.user.login_security import TwoFactorRateLimiter
 
-        return LoginRateLimiter(mock_redis)
+        return TwoFactorRateLimiter(mock_redis)
 
     @pytest.mark.anyio
     async def test_not_locked_initially(self, rate_limiter, mock_redis) -> None:
@@ -54,7 +54,7 @@ class TestTwoFactorBudgets:
         """Not the username keys: a successful password step clears those, so
         sharing them would reset the 2FA budget on every login attempt."""
         from app.domain.user.login_security import (
-            LOGIN_ATTEMPTS_PREFIX,
+            LOGIN_FAILURES_PREFIX,
             TWO_FACTOR_ATTEMPTS_PREFIX,
             TwoFactorRateLimiter,
         )
@@ -64,7 +64,7 @@ class TestTwoFactorBudgets:
 
         key = mock_redis.incr.call_args.args[0]
         assert key == f"{TWO_FACTOR_ATTEMPTS_PREFIX}42"
-        assert not key.startswith(LOGIN_ATTEMPTS_PREFIX)
+        assert not key.startswith(LOGIN_FAILURES_PREFIX)
 
     @pytest.mark.anyio
     async def test_backup_codes_count_under_keys_of_their_own(self, mock_redis) -> None:
@@ -393,7 +393,7 @@ class TestTOTPServiceStorage:
         assert await totp.is_always_required(user_id) is False
 
 
-class TestLoginRateLimiterExtended:
+class TestAttemptLimiterExtended:
     """Additional rate limiter tests for uncovered methods."""
 
     @pytest.fixture
@@ -402,9 +402,9 @@ class TestLoginRateLimiterExtended:
 
     @pytest.fixture
     def rate_limiter(self, mock_redis):
-        from app.domain.user.login_security import LoginRateLimiter
+        from app.domain.user.login_security import TwoFactorRateLimiter
 
-        return LoginRateLimiter(mock_redis)
+        return TwoFactorRateLimiter(mock_redis)
 
     @pytest.mark.anyio
     async def test_get_remaining_lockout_seconds_locked(self, rate_limiter, mock_redis):

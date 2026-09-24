@@ -45,6 +45,7 @@ export type GetPasskeysResponse = {
 }
 
 export type AuthMethodsResponse = {
+  supports_password: boolean
   supports_passkey: boolean
   supports_2fa: boolean
   requires_2fa: boolean

@@ -69,7 +69,6 @@ import type {
 
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
-import { SudoRequiredError } from './network/types/error'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -501,9 +500,6 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const said = body as { message?: string; error?: { name?: string; message?: string } }
-    // The one refusal the caller answers differently: withSudo sends the user
-    // through re-authentication and retries, so it must see the typed error.
-    if (said.error?.name === 'SudoRequiredError') throw new SudoRequiredError(said.message)
     const serverSaid = said.message || said.error?.message || ''
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
@@ -3003,6 +2999,8 @@ export interface GatewaySubscriptionOverlay {
   id: string
   status: string
   account_email: string | null
+  /** 这条订阅显式选的上游模型；null = 跟随部署默认。 */
+  upstream_model?: string | null
   token_expires_at?: string | null
   last_refresh_error?: string | null
   quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
@@ -3188,6 +3186,8 @@ export interface LlmSubscription {
   last_refresh_at: string | null
   last_refresh_error: string | null
   linked_model_name: string | null
+  /** 显式选的上游模型；null = 跟随部署默认（settings.subscription_upstream_model）。 */
+  upstream_model: string | null
   quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
   created_by_handle: string
   created_at: string
@@ -3212,6 +3212,8 @@ export function startSubscriptionDeviceFlow(body: {
   provider?: 'openai_codex'
   label?: string | null
   target_subscription_id?: string | null
+  /** 显式指定上游模型（如 openai/gpt-5.6-luna）；空 = 跟随部署默认。 */
+  upstream_model?: string | null
 }): Promise<DeviceFlowStartResponse> {
   return request<DeviceFlowStartResponse>('/admin/subscriptions/device-flows', {
     method: 'POST',
@@ -3251,6 +3253,14 @@ export function getSubscriptionQuota(id: string): Promise<{
   stale: boolean
 }> {
   return request(`/admin/subscriptions/${encodeURIComponent(id)}/quota`)
+}
+
+/** 改一条订阅的上游模型并推进网关；`upstream_model` 为 null = 清除显式选择、回落部署默认。 */
+export function updateSubscriptionUpstreamModel(id: string, upstreamModel: string | null): Promise<LlmSubscription> {
+  return request<LlmSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/upstream-model`, {
+    method: 'PATCH',
+    body: JSON.stringify({ upstream_model: upstreamModel }),
+  })
 }
 
 /** 移除一条订阅：置终态，并 best-effort 停用挂在网关上的模型。 */

@@ -1,4 +1,5 @@
 {
+  "back": "Back",
   "cheese": "Cheese",
   "copyright": "© {year} Cheese",
   "transportReadFailure": "Service temporarily unavailable. Please try again later. (HTTP {status})",

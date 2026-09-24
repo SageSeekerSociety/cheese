@@ -1,8 +1,8 @@
 <template>
-  <div class="account-shell" :class="{ 'account-shell--plain': plain }">
+  <div class="account-shell">
     <!-- The brand scene belongs to the layout, not to a page, so moving between
          sign-in, sign-up and recovery never draws it again. -->
-    <aside v-if="!plain" class="account-art">
+    <aside class="account-art">
       <BrandScene :narrow="narrow" />
       <router-link to="/" class="account-brand account-art__brand" :aria-label="t('account.layout.home')">
         <span class="account-brand__mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
@@ -14,11 +14,6 @@
 
     <div class="account-side">
       <header class="account-bar">
-        <router-link v-if="plain" to="/" class="account-brand" :aria-label="t('account.layout.home')">
-          <span class="account-brand__mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-          <span class="account-brand__word">cheese</span>
-          <span v-if="locale === 'zh-CN'" class="account-brand__cn">{{ t('global.cheese') }}</span>
-        </router-link>
         <LanguageToggle />
       </header>
 
@@ -33,15 +28,12 @@
           </v-defaults-provider>
         </div>
       </main>
-
-      <footer v-if="plain" class="account-footer">{{ t('global.copyright', { year }) }}</footer>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import logo from '@/assets/logo-plain.svg?url'
@@ -51,13 +43,8 @@ import i18n, { t } from '@/i18n'
 
 const locale = i18n.global.locale
 const year = new Date().getFullYear()
-const route = useRoute()
 const { mdAndUp } = useDisplay()
 
-// A page that interrupts someone already signed in (re-verifying before a
-// sensitive change) is not a way in, so it gets no brand scene: a quiet page
-// they finish and leave (design-system §0.2, principles 4 and 8).
-const plain = computed(() => !!route.meta.plain)
 // Below the md breakpoint the scene is a short band above the form.
 const narrow = computed(() => !mdAndUp.value)
 
@@ -88,10 +75,6 @@ const defaults = {
   grid-template-columns: 5fr 7fr;
   min-height: 100dvh;
   background: var(--surface);
-}
-
-.account-shell--plain {
-  grid-template-columns: 1fr;
 }
 
 /* ---- The brand pane ---- */
@@ -171,10 +154,6 @@ const defaults = {
   padding: 16px 24px;
 }
 
-.account-shell--plain .account-bar {
-  justify-content: space-between;
-}
-
 /* Every page's heading starts at the same height, so moving between pages
    of different length changes what is below it, never where it is. Centring
    would move the heading with every field a page adds. */
@@ -189,14 +168,6 @@ const defaults = {
 .account-column {
   width: 100%;
   max-width: 360px;
-}
-
-.account-footer {
-  padding: 16px 24px 24px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--faint);
-  text-align: center;
 }
 
 /* ---- Fields: label above (AccountField), a quiet box, an amber ring on focus ---- */
@@ -349,13 +320,10 @@ const defaults = {
 /* ---- Phone and narrow tablet: the scene is a band above the form ---- */
 
 @media (max-width: 959.98px) {
-  .account-shell {
-    grid-template-columns: 1fr;
-  }
-
   /* The band keeps its height; any room left over goes to the form. */
-  .account-shell:not(.account-shell--plain) {
+  .account-shell {
     grid-template-rows: auto 1fr;
+    grid-template-columns: 1fr;
   }
 
   .account-art {
@@ -374,10 +342,6 @@ const defaults = {
     right: 0;
     z-index: 2;
     padding: 12px 16px;
-  }
-
-  .account-shell--plain .account-bar {
-    position: static;
   }
 
   .account-main {
