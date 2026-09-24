@@ -13,9 +13,11 @@ import { watch } from 'vue'
 export const ADD_EMAIL_ROUTE = 'AccountAddEmail'
 
 // 登录的过程本身：会话还没落定（可能正从这一页的回跳里到来），走完再要求。
+// 登录后提议添加通行密钥那一步也算在内：它手里的登录凭证只在登录后几分钟内有效。
 // 协议页也放行：它们是这个要求之外的公开页面。
 const PASSES = new Set([
   'SignIn',
+  'PasskeyOffer',
   'SignUpStart',
   'SignUpVerifyEmail',
   'RecoverPasswordRequest',

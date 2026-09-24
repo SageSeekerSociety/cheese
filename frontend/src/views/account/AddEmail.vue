@@ -96,10 +96,16 @@ async function submitEmail() {
 }
 
 async function verify(code: string) {
-  const { data } = await UserApi.addEmail({ email: email.value.trim(), code })
-  AccountService.user = data.user
-  localStorage.setItem('user', JSON.stringify(data.user))
-  toast.success(t('account.addEmail.added'))
+  try {
+    const { data } = await UserApi.addEmail({ email: email.value.trim(), code })
+    AccountService.user = data.user
+    localStorage.setItem('user', JSON.stringify(data.user))
+    toast.success(t('account.addEmail.added'))
+  } catch (e) {
+    // Added meanwhile in another tab: the account needs nothing more.
+    if ((e as { error?: { data?: { reason?: string } } })?.error?.data?.reason !== 'email_present') throw e
+    await AccountService.updateUserInfo()
+  }
   await goOn()
 }
 
