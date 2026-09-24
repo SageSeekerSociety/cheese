@@ -4,7 +4,7 @@
 （AI 维护的一页纸）分开两列，因为「谁说的」不同，合并会让两者互相覆盖。
 
 Revision ID: 9c4e7a1b6d20
-Revises: b7c4e19f2a83
+Revises: 7c2e5d1a9b40
 Create Date: 2026-09-20 09:40:00.000000
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9c4e7a1b6d20"
-down_revision: str | Sequence[str] | None = "b7c4e19f2a83"
+down_revision: str | Sequence[str] | None = "7c2e5d1a9b40"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
