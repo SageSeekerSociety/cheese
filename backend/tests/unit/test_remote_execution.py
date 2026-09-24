@@ -225,6 +225,33 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
     """)
 
 
+def test_large_platform_receipt_reaches_the_caller_as_json():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const body = JSON.stringify({data: 'x'.repeat(180000)});
+        const receipt = {result: {stdout: body, stderr: ''}};
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async () => ({content: [{type: 'text', text:
+            JSON.stringify({receipt_path: '/config/tool-results/large.json'})}]})},
+          fs: {read: async (path, {as}) => {
+            assert.equal(path, '/config/tool-results/large.json');
+            assert.equal(as, 'text');
+            return JSON.stringify(receipt);
+          }},
+        };
+        const call = {tool: 'mcp__native__platform_request', tool_use_id: 'req',
+                      method: 'GET', path: '/projects/x/alerts'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [{type: 'text', text: body}],
+        });
+    """)
+
+
 def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
     _run_proxy("""
         import assert from 'node:assert/strict';
