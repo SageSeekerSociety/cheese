@@ -64,15 +64,17 @@
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
         <v-card-title class="t-dialog-title pb-1">{{
-          newProjectStep === 1 ? '新建项目' : t('work.teammate.title')
+          newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')
         }}</v-card-title>
         <v-card-text v-show="newProjectStep === 1" class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">来自题目：{{ sourceTask.name }}</p>
+          <p v-if="sourceTask" class="t-body c-muted mb-3">
+            {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
+          </p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
             autocomplete="off"
-            label="项目名称"
+            :label="t('work.newProject.name')"
             variant="outlined"
             color="primary"
             autofocus
@@ -85,8 +87,8 @@
           <v-textarea
             v-model="newProjectIntent"
             autocomplete="off"
-            label="你打算做什么（可选）"
-            placeholder="例如：帮我把这学期的课程材料整理成一份大纲"
+            :label="t('work.newProject.intent')"
+            :placeholder="t('work.newProject.intentExample')"
             variant="outlined"
             color="primary"
             rows="2"
@@ -101,7 +103,7 @@
             :items="newProjectTeams"
             :item-title="teamLabel"
             item-value="id"
-            label="所属团队"
+            :label="t('work.newProject.team')"
             variant="outlined"
             color="primary"
             class="mt-3"
@@ -113,10 +115,10 @@
             v-model="newProjectForgeKind"
             autocomplete="off"
             :items="[
-              { title: '由芝士托管（默认）', value: 'forgejo' },
-              { title: '连接 GitHub', value: 'github_app' },
+              { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
+              { title: t('work.newProject.forgeGithub'), value: 'github_app' },
             ]"
-            label="代码仓库"
+            :label="t('work.newProject.forge')"
             variant="outlined"
             color="primary"
             class="mt-3"
@@ -125,14 +127,14 @@
           />
           <div class="t-meta-read mt-2">
             {{
-              newProjectForgeKind === 'forgejo'
-                ? '托管服务在项目创建后不可更改'
-                : '创建后在项目设置中连接 GitHub。托管服务在项目创建后不可更改。'
+              newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
             }}
           </div>
           <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ teamLoadError }}
-            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
+            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+              t('work.newProject.retry')
+            }}</v-btn>
           </v-alert>
         </v-card-text>
         <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
@@ -165,7 +167,9 @@
         </v-alert>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
-          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">取消</v-btn>
+          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">{{
+            t('work.newProject.cancel')
+          }}</v-btn>
           <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
             t('work.teammate.back')
           }}</v-btn>
@@ -191,7 +195,7 @@
     <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
-        <v-btn variant="text" @click="loadCxProjects">重试</v-btn>
+        <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>
       </template>
     </v-snackbar>
 
@@ -327,9 +331,7 @@ async function loadCxProjects() {
     saveCachedProjects(myHandle(), cxProjects.value)
     showProjectListWarning.value = false
   } catch {
-    projectListWarning.value = cxProjects.value.length
-      ? '项目列表刷新失败，正在显示上次成功加载的内容'
-      : '项目列表暂时无法加载，请稍后重试'
+    projectListWarning.value = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
     showProjectListWarning.value = true
   }
 }
@@ -432,7 +434,7 @@ const newProjectTeams = ref<Team[]>([])
 const newProjectTeamId = ref<number | null>(null)
 const loadingTeams = ref(false)
 const teamLoadError = ref<string | null>(null)
-const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
+const teamLabel = (team: Team) => (team.personal ? t('work.newProject.personalTeam') : team.name)
 
 function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
@@ -448,10 +450,10 @@ async function loadProjectTeams() {
       data: { teams },
     } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
-    if (!teams.length) teamLoadError.value = '暂无可用团队，请先创建或加入团队'
+    if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {
     newProjectTeams.value = []
-    teamLoadError.value = '团队列表加载失败，请重试后选择项目归属'
+    teamLoadError.value = t('work.newProject.teamsFailed')
   } finally {
     loadingTeams.value = false
   }
@@ -508,7 +510,7 @@ async function confirmNewProject() {
     )
   } catch (e) {
     // Inline error inside the dialog — not a native alert() chrome.
-    newProjectError.value = e instanceof Error ? e.message : '创建项目失败'
+    newProjectError.value = e instanceof Error ? e.message : t('work.newProject.createFailed')
   } finally {
     creatingProject.value = false
   }

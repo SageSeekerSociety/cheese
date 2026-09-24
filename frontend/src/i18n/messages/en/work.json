@@ -138,5 +138,36 @@
     "loading": "Loading",
     "joinHint": "Once you confirm, you become a team member and can use the team's projects and compute",
     "join": "Join team"
+  },
+  "newProject": {
+    "title": "New project",
+    "fromTask": "From task: {task}",
+    "name": "Project name",
+    "intent": "What do you plan to do (optional)",
+    "intentExample": "For example: turn this term's course materials into an outline",
+    "team": "Team",
+    "personalTeam": "Personal",
+    "teamsEmpty": "No teams available. Create or join a team first.",
+    "teamsFailed": "Could not load teams",
+    "forge": "Code repository",
+    "forgeHosted": "Hosted by Cheese (default)",
+    "forgeGithub": "Connect GitHub",
+    "forgeHint": "The hosting service cannot be changed after the project is created",
+    "forgeGithubHint": "Connect GitHub in the project settings after it is created. The hosting service cannot be changed after the project is created.",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "createFailed": "Could not create the project"
+  },
+  "projectList": {
+    "stale": "Could not refresh the project list. Showing the last loaded version.",
+    "unavailable": "The project list is unavailable. Try again later."
+  },
+  "resourceLimits": {
+    "projects": "Projects: no limit is set",
+    "concurrent": "Environments are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
+    "machines": "Cloud machines: a team shares {count} by default. See the team compute page for the actual quota and usage.",
+    "failed": "Could not load resource limits",
+    "retry": "Retry",
+    "loading": "Loading resource limits…"
   }
 }
