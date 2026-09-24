@@ -24,6 +24,7 @@ from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
+from tests.integration.conftest import registered
 
 
 class WorkingScreen(StubChannel):
@@ -76,6 +77,7 @@ async def _until(cond, timeout: float = 5.0) -> None:
 
 async def _a_topic(factory) -> uuid.UUID:
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="u"

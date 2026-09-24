@@ -4,9 +4,11 @@
 came from — otherwise it is indistinguishable from one made anywhere else.
 """
 
+from tests.integration.conftest import post_project
+
 
 def _create(client, **body):
-    return client.post("/projects", json={"name": "赛题项目", **body})
+    return post_project(client, json={"name": "赛题项目", **body})
 
 
 def test_a_project_created_from_a_task_remembers_it(client):

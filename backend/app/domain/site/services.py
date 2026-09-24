@@ -21,7 +21,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.membership.services import MemberService
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.site.models import Site, SiteRelease
@@ -65,18 +65,7 @@ async def can_publish_site(
     project = await ProjectService(session).get(project_id)
     if project is None or not handle:
         return False
-    if project.owner_handle == handle:
-        return True
-    member = await MemberService(session).get(project_id=project_id, user_handle=handle)
-    if member is not None and member.role == ProjectRole.lead:
-        return True
-    if project.team_id is not None:
-        user = await user_by_handle(session, handle)
-        if user is not None:
-            return await team_service(session).is_team_at_least_admin(
-                project.team_id, user.id
-            )
-    return False
+    return await MemberService(session).manages(project_id, handle)
 
 
 async def get_current_release(

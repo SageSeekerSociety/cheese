@@ -18,7 +18,12 @@ import uuid
 
 import pytest
 
-from tests.integration.conftest import room_agent_seat, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 _DEFAULTS = {
     "required_checks": [],
@@ -37,7 +42,7 @@ def _authed(client):
 
 def _make_project(client) -> str:
     _authed(client)
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -190,14 +195,10 @@ def test_update_requires_a_human_project_steward(client):
     assert _put(client, pid, {"strict": True}).status_code == 404
 
 
-def test_update_allows_project_lead_not_ordinary_member(client):
+def test_update_allows_a_team_admin_not_an_ordinary_member(client):
     pid = _make_project(client)
-    for handle, role in (("lead-user", "lead"), ("member-user", "member")):
-        r = client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": handle, "role": role},
-        )
-        assert r.status_code == 200
+    join_project_team(client, pid, "lead-user", admin=True)
+    join_project_team(client, pid, "member-user")
 
     client.headers.update(session_auth_headers("lead-user"))
     assert _put(client, pid, {"strict": True}).status_code == 200
@@ -206,22 +207,18 @@ def test_update_allows_project_lead_not_ordinary_member(client):
     assert _put(client, pid, {"strict": False}).status_code == 404
 
 
-@pytest.mark.parametrize("role", ["lead", "owner"])
+@pytest.mark.parametrize("role", ["team-admin", "owner"])
 def test_an_agent_steward_changes_merge_policy_like_any_other_steward(client, role):
-    """The role answers this, not whether the steward is a person.
+    """Standing answers this, not whether the steward is a person.
 
-    Nothing about relaxing a check is safer in a human's hands: whoever holds
-    owner or lead was given that authority deliberately, and a project that does
-    not want an agent changing its checks does not make one a steward.
+    Nothing about relaxing a check is safer in a human's hands: whoever owns the
+    project or administers its team was given that authority deliberately, and a
+    project that does not want an agent changing its checks does not give one it.
     """
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
     handle = room_agent_seat(client, project["root_topic_id"])
-    response = client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": handle, "role": "lead"},
-    )
-    assert response.status_code == 200, response.text
+    join_project_team(client, pid, handle, admin=True)
     if role == "owner":
         response = client.put(f"/projects/{pid}/owner", json={"owner_handle": handle})
         assert response.status_code == 200, response.text
@@ -232,17 +229,11 @@ def test_an_agent_steward_changes_merge_policy_like_any_other_steward(client, ro
 
 
 def test_an_agent_who_is_not_a_steward_still_cannot(client):
-    """The role is the whole of it: seated as an ordinary member, refused."""
+    """Standing is the whole of it: an ordinary member of the team, refused."""
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
     handle = room_agent_seat(client, project["root_topic_id"])
-    assert (
-        client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": handle, "role": "member"},
-        ).status_code
-        == 200
-    )
+    join_project_team(client, pid, handle)
     before = _get(client, pid)
     client.headers.update(session_auth_headers(handle))
     assert _put(client, pid, {"auto_merge_allowed": True}).status_code == 404

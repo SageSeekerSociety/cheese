@@ -21,6 +21,7 @@ from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -49,6 +50,7 @@ async def _turn_in(factory, tmp_path, *, private: bool, facts: dict[str, str]) -
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         if private:
             topic = await TopicService(session).get_or_create_private(

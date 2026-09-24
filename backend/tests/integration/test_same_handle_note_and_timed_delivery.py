@@ -16,11 +16,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
 from app.domain.delivery.timer import DELIVERED_AS_ASKED, deliver_due
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, name: str, owner: str = "user-1") -> str:
-    r = client.post("/projects", json={"name": name, "owner_handle": owner})
+    r = post_project(client, json={"name": name, "owner_handle": owner})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

@@ -49,46 +49,12 @@ class ProjectRepository:
         return await self._session.get(Project, project_id)
 
     async def team_for_project(self, project_id: uuid.UUID) -> int | None:
-        """The owning team, including a personal team's older unassigned projects."""
+        """The project's team; None only when there is no such project."""
         project = await self.get(project_id)
-        if project is None:
-            return None
-        if project.team_id is not None:
-            return project.team_id
-        return await self._session.scalar(
-            select(Team.id)
-            .join(User, User.id == Team.personal_owner_user_id)
-            .where(User.username == project.owner_handle, Team.deleted_at.is_(None))
-        )
+        return project.team_id if project is not None else None
 
-    async def teams_for_projects(
-        self, projects: list[Project]
-    ) -> dict[uuid.UUID, int | None]:
-        """`team_for_project` 的批量版：一批项目 → 各自的所属小队。
-
-        `team_id` 非空的直接取值，不发查询；为空的那批（个人小队的旧项目）用
-        **一条** `Team JOIN User` 把 owner_handle → team_id 的映射一次查回，
-        而不是逐项目各发一条 —— 管理页的项目额度表靠它把整段查询从 2N+1
-        降到 3。
-        """
-        out: dict[uuid.UUID, int | None] = {}
-        orphan_handles: set[str] = set()
-        orphan_ids: dict[str, list[uuid.UUID]] = {}
-        for project in projects:
-            out[project.id] = project.team_id
-            if project.team_id is None and project.owner_handle:
-                orphan_handles.add(project.owner_handle)
-                orphan_ids.setdefault(project.owner_handle, []).append(project.id)
-        if orphan_handles:
-            rows = await self._session.execute(
-                select(User.username, Team.id)
-                .join(User, User.id == Team.personal_owner_user_id)
-                .where(User.username.in_(orphan_handles), Team.deleted_at.is_(None))
-            )
-            for username, team_id in rows.all():
-                for project_id in orphan_ids.get(username, []):
-                    out[project_id] = team_id
-        return out
+    async def teams_for_projects(self, projects: list[Project]) -> dict[uuid.UUID, int]:
+        return {project.id: project.team_id for project in projects}
 
     async def get_by_team(self, team_id: int) -> Project | None:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
@@ -109,17 +75,6 @@ class ProjectRepository:
         stmt = (
             select(Project)
             .where(Project.team_id == team_id)
-            .order_by(Project.created_at.desc())
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_personal_legacy(self, owner_handle: str) -> list[Project]:
-        """Pre-personal-team rows: team-less projects of one owner. New personal
-        projects carry the personal team's id; these are the NULL-team leftovers
-        that must still show on the personal team's 项目 page."""
-        stmt = (
-            select(Project)
-            .where(Project.team_id.is_(None), Project.owner_handle == owner_handle)
             .order_by(Project.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
@@ -146,17 +101,17 @@ class ProjectRepository:
         await self._session.flush()
 
     async def people(self, project_id: uuid.UUID) -> list[dict]:
-        """名册上**人**的那一半：每个人的 handle、昵称、头像和角色。
+        """名册上**人**的那一半：每个人的 handle、昵称、头像，和他是怎么在这里的。
 
         「这个项目里有谁」不在这里回答，在 ``membership/roster.py`` 的 ``roster()``
         ——这里只是它的两个来源之一，另一个是这个项目的队友。名字从 ``list_members``
         改成 ``people``，正是为了让「拿它当整张名册」在调用点就读得出不对。
 
-        人这一半自己也有三个记录处 —— 成员行、所属小队、``owner_handle`` —— 三个都
-        要读：所有者**故意**不写成员行（``ProjectService._seed_roster`` 说明了原因），
-        所以少了这里补出来的那一行，一个成员表为空的项目里，它的所有者谁也看不见：
-        他自己说的话渲染成一串裸 handle、没有头像，@ 他解析不到人、也通知不到谁。
-        这是读出来的投影，不往表里放任何东西。
+        人这一半有三个来处，``source`` 说是哪一个：``owner``（``owner_handle``，从不
+        写成员行）、``team``（所属团队的成员，读的时候实时算，所以退出团队就离开了它
+        的项目）、``external``（成员行：接受了邀请的外部成员）。成员行里也坐着 AI 队
+        友的座位，那几行由 ``roster()`` 按 binding 认出来改掉。这是读出来的投影，不往
+        表里放任何东西。
         """
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
@@ -179,7 +134,6 @@ class ProjectRepository:
         stmt = (
             select(
                 ProjectMember.user_handle,
-                ProjectMember.role,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
                 Avatar.avatar_type,
@@ -188,42 +142,39 @@ class ProjectRepository:
             .join(UserProfile, UserProfile.user_id == User.id, isouter=True)
             .join(Avatar, Avatar.id == UserProfile.avatar_id, isouter=True)
             .where(ProjectMember.project_id == project_id)
+            .order_by(ProjectMember.created_at)
         )
         rows = (await self._session.execute(stmt)).all()
-        members = [
+        external = [
             {
                 "handle": h,
-                "role": str(role),
                 "name": name or h,
                 "avatar_id": None if avatar_type == "default" else avatar_id,
+                "source": "external",
             }
-            for (h, role, name, avatar_id, avatar_type) in rows
+            for (h, name, avatar_id, avatar_type) in rows
         ]
         project = await self.get(project_id)
         if project is None:
-            return members
-        explicit = {m["handle"] for m in members}
-        if project.owner_handle and project.owner_handle not in explicit:
+            return external
+        members: list[dict] = []
+        seen: set[str] = set()
+        if project.owner_handle:
             name, avatar_id, avatar_type = await self._profile_of(project.owner_handle)
             # Front of the list: the owner is the first person a reader of the
-            # roster is looking for. ``lead`` because that is what the owner can
-            # do (manage the roster) expressed in the only vocabulary this field
-            # has — ProjectRole carries no separate owner value.
-            members.insert(
-                0,
+            # roster is looking for.
+            members.append(
                 {
                     "handle": project.owner_handle,
-                    "role": "lead",
                     "name": name or project.owner_handle,
                     "avatar_id": None if avatar_type == "default" else avatar_id,
                     "source": "owner",
-                },
+                }
             )
-            explicit.add(project.owner_handle)
-        if project.team_id is None:
-            return members
-        # Team access is inherited at read time, including teammates who join
-        # after registration. Do not persist a second grant that survives leaving.
+            seen.add(project.owner_handle)
+        # Team access is read here, never stored, so it ends the moment someone
+        # leaves the team. Someone who was an external member and later joined the
+        # team is on it now, and is shown that way.
         team_rows = (
             await self._session.execute(
                 select(
@@ -246,12 +197,11 @@ class ProjectRepository:
         team = await self._session.get(Team, project.team_id)
         team_handle = team.handle if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
-            if handle in explicit:
+            if handle in seen:
                 continue
             members.append(
                 {
                     "handle": handle,
-                    "role": "member",
                     "name": name or handle,
                     "avatar_id": None if avatar_type == "default" else avatar_id,
                     "source": "team",
@@ -260,6 +210,8 @@ class ProjectRepository:
                     "created_at": created_at.isoformat(),
                 }
             )
+            seen.add(handle)
+        members.extend(row for row in external if row["handle"] not in seen)
         return members
 
     async def person(self, handle: str) -> dict:
@@ -391,7 +343,9 @@ class ProjectRepository:
             claims.append(
                 Project.team_id.in_(
                     select(TeamUserRelation.team_id).where(
-                        TeamUserRelation.user_id == user_id
+                        TeamUserRelation.user_id == user_id,
+                        # Someone who left the team has left its projects.
+                        TeamUserRelation.deleted_at.is_(None),
                     )
                 )
             )

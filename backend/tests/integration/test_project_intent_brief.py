@@ -12,6 +12,14 @@ from anyio.from_thread import BlockingPortal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import AuthorType
+from tests.integration.conftest import post_project, registered
+
+
+async def _owner(session) -> str:
+    """Someone to own the project: it belongs to a team, here their personal one."""
+    await registered(session, "intent-owner")
+    return "intent-owner"
+
 
 # 建项目现在还会顺手把代码托管仓库准备好（主分支的 forge 逻辑），所以服务层的用
 # 例也要装上 ``stub_project_forge``：不装，create 会去够一个测试环境里不存在的
@@ -27,7 +35,7 @@ def test_intent_becomes_the_newborn_rooms_brief(
 
         said = "帮我把这学期的课程材料整理成一份大纲"
         project = await ProjectService(db_session).create(
-            name="这学期的课", intent=said
+            name="这学期的课", intent=said, owner_handle=await _owner(db_session)
         )
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
@@ -53,7 +61,9 @@ def test_no_intent_leaves_the_room_without_a_document(
         from app.domain.block.repositories import BlockRepository
         from app.domain.project.services import ProjectService
 
-        project = await ProjectService(db_session).create(name="没说要做什么")
+        project = await ProjectService(db_session).create(
+            name="没说要做什么", owner_handle=await _owner(db_session)
+        )
 
         assert project.intent == ""
         assert project.root_topic_id is not None
@@ -76,7 +86,7 @@ def test_whitespace_only_intent_is_not_an_intent(
         from app.domain.project.services import ProjectService
 
         project = await ProjectService(db_session).create(
-            name="空白", intent="   \n\t "
+            name="空白", intent="   \n\t ", owner_handle=await _owner(db_session)
         )
 
         assert project.root_topic_id is not None
@@ -93,7 +103,7 @@ def test_the_answer_survives_the_http_round_trip(client):
     """
 
     said = "帮我把这学期的课程材料整理成一份大纲"
-    created = client.post("/projects", json={"name": "这学期的课", "intent": said})
+    created = post_project(client, json={"name": "这学期的课", "intent": said})
 
     assert created.status_code == 200
     assert created.json()["data"]["intent"] == said
@@ -102,7 +112,7 @@ def test_the_answer_survives_the_http_round_trip(client):
 def test_a_request_that_never_says_still_creates_the_project(client):
     """不答这一问是允许的——请求里根本没有这个键，项目照建，房间照旧。"""
 
-    created = client.post("/projects", json={"name": "没答这一问的项目"})
+    created = post_project(client, json={"name": "没答这一问的项目"})
 
     assert created.status_code == 200
     assert created.json()["data"]["intent"] == ""

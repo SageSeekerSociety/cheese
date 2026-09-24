@@ -11,12 +11,13 @@ import pytest
 
 from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import post_project
 
 CONTINUATION = uuid.UUID("22222222-3333-4444-5555-666666666666")
 
 
 def _room(client, owner: str = "alice") -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]["id"]
     rid = client.post(

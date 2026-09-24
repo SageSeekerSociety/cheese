@@ -15,12 +15,13 @@ import uuid
 from app.api.routes import terminal
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
+from tests.integration.conftest import post_project
 from tests.integration.test_connector_viewer import _login
 from tests.machine_work import declare_task, machine_commits
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(

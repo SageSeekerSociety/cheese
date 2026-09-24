@@ -11,7 +11,7 @@ the platform's structured event; a project belonging to no 赛题 is unlimited.
 import pytest
 
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
 # default rate (1 credit = 10k tokens) one turn costs 0.0015 credits.
@@ -26,7 +26,7 @@ def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> 
     body: dict = {"name": name}
     if from_task is not None:
         body["external_task_id"] = from_task
-    r = client.post("/projects", json=body)
+    r = post_project(client, json=body)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

@@ -47,6 +47,7 @@ from app.domain.room_task.services import TaskService
 from app.domain.room_task.thread_label import thread_label
 from app.domain.topic.repositories import TopicProgressRepository
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -65,6 +66,7 @@ class _IdleChannel(Channel):
 
 async def _seed_room(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
+        await registered(session, "u1")
         project = await ProjectService(session).create(name="P", owner_handle="u1")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u1"

@@ -16,6 +16,7 @@ from app.main import app
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
+    post_project,
     room_agent_seat,
     session_auth_headers,
 )
@@ -29,7 +30,7 @@ PNG_1PX = bytes.fromhex(
 
 def _create_project_and_topic(client) -> tuple[str, str]:
     client.headers.update(session_auth_headers("user-1"))
-    pr = client.post("/projects", json={"name": "Demo"})
+    pr = post_project(client, json={"name": "Demo"})
     project_id = pr.json()["data"]["id"]
     tr = client.post(
         "/topics",

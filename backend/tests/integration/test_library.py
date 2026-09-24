@@ -9,12 +9,12 @@
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client) -> str:
     client.headers.update(session_auth_headers("user-1"))
-    return client.post("/projects", json={"name": "Demo"}).json()["data"]["id"]
+    return post_project(client, json={"name": "Demo"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str, title: str) -> str:

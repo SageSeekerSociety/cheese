@@ -29,6 +29,7 @@ from app.domain.space.repositories import SpaceInviteCodeRepository
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    post_project,
     session_auth_headers,
     unique_int,
 )
@@ -316,8 +317,8 @@ class TestLeavingAndBeingRemoved:
         assert space_id in _listed_space_ids(api_client, member_token)
 
         # A project of their own, made while a member.
-        project = api_client.post(
-            "/projects",
+        project = post_project(
+            api_client,
             json={"name": f"Kept Project ({unique_int(1000, 9999)})"},
             headers=session_auth_headers(member.username),
         )

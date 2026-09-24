@@ -132,10 +132,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.5 验收 / 采纳（状态机）  ✅
 
 - **行为**：成果做完 → 把**验收卡递给一个具体的人**（非广播）→ 对方在"成果待采纳"框点**采纳并归档**（话题归档=PR Merged）或**退回**；可**改验收人**；采纳后可**撤回**（话题回 active）。卡面在按钮上方写明这次交付定的是什么：哪一项产物的第几版（版号由后端按卡的状态算，还没采纳的那一张算的是它采纳之后的号），以及交出去的那一份——文件当场下载得到（快照在递卡那一刻就落好，所以不必等采纳），地址当场打开，交出去的是一次合并时没有可拿的东西。
-- **铁律**：协作模式下 AI 不能验收自己的活（必须人来）；同话题**只允许一张待处理卡**；归档话题不能重复采纳；撤销需身份（原采纳人/owner/组长）；空 `required_topic` 协议条件不再误判全员须导师验收。
+- **铁律**：协作模式下 AI 不能验收自己的活（必须人来）；同话题**只允许一张待处理卡**；归档话题不能重复采纳；撤销需身份（原采纳人、项目所有者或团队的所有者、管理员）；空 `required_topic` 协议条件不再误判全员须外部成员验收。
 - **采纳 = git merge**：采纳时把话题分支合并回 base（best-effort，冲突不阻断归档）。
 - **实现**：`AcceptService`（`backend/app/domain/review/services.py`）；接口 `POST /api/topics/{id}/accept-card`、`/api/accept-cards/{id}/{accept|reject|reassign|revoke}`；前端 `WorkspaceView` 合并框。
-- 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`。（「采纳直接合 main 未走父分支」那条已经不成立：一件活的结论被采信时，提交折进它所在房间的分支，见 `conclusion/services.py::fold_into_room`。）
+- 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`，而它的意思是「由这个项目的外部成员验收」。（「采纳直接合 main 未走父分支」那条已经不成立：一件活的结论被采信时，提交折进它所在房间的分支，见 `conclusion/services.py::fold_into_room`。）
 
 ### 3.6 记忆（项目 / 关于某个人）  ✅
 
@@ -173,7 +173,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.11 Space / Task Template / Task  ✅ 协议侧 / 🟡 资源侧
 
-- **行为**：机构（Space）发布 Task Template（协议：资源包 + 条件）→ Task；项目**链接 Task = 接受协议**，可**断开**；链接时把模板的默认 agent 类型给这个项目的默认 agent。验收时按协议条件强制（如某话题须导师验收）。
+- **行为**：机构（Space）发布 Task Template（协议：资源包 + 条件）→ Task；项目**链接 Task = 接受协议**，可**断开**；链接时把模板的默认 agent 类型给这个项目的默认 agent。验收时按协议条件强制（如某话题须外部成员验收）。
 - **实现**：`backend/app/domain/{space,task,project}/`；接口 `POST/DELETE /api/projects/{id}/tasks/{task_id?}`、`/api/spaces/{id}/templates`、`/api/templates/{id}/tasks`。协议强制在 `AcceptService._enforce_protocol`。
 - 🟡 资源包（`resource_pack`）只存不发放；多 reviewer 协议、必做话题自动创建未做。
 

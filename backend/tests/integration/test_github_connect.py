@@ -12,14 +12,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 
 def _make_project(client) -> str:
-    r = client.post(
-        "/projects",
+    r = post_project(
+        client,
         json={"name": "P", "owner_handle": "alice", "forge_kind": "github_app"},
     )
     assert r.status_code == 200

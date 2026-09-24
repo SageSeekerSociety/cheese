@@ -14,6 +14,7 @@ import uuid
 
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
+from tests.integration.conftest import post_project
 
 
 class _Screen(StubChannel):
@@ -39,7 +40,7 @@ class _Screen(StubChannel):
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(

@@ -13,6 +13,7 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind
+from tests.integration.conftest import a_team
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 from tests.support import git_store
@@ -23,7 +24,7 @@ def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             await forge.provision_repository(project.id, s)

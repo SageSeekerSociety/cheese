@@ -12,7 +12,6 @@ from app.domain.authz.policy import (
     refuse_unauthenticated_chat,
 )
 from app.domain.identity.actor import Actor
-from app.domain.project.models import ProjectRole
 from app.domain.topic.models import TopicRole
 
 pytestmark = pytest.mark.anyio
@@ -201,14 +200,14 @@ async def test_can_manage_roster_owner_admin_only():
 OWNER = "alice"
 
 
-def _project_adapters(*, owner: str | None = OWNER, roles: dict | None = None):
+def _project_adapters(*, owner: str | None = OWNER, team_admins: set | None = None):
     async def project_owner(_pid):
         return owner
 
-    async def project_role(_pid, handle):
-        return (roles or {}).get(handle)
+    async def team_manager(_pid, handle):
+        return handle in (team_admins or set())
 
-    return dict(project_owner=project_owner, project_role=project_role)
+    return dict(project_owner=project_owner, team_manager=team_manager)
 
 
 async def _may_manage(actor, **adapters):
@@ -221,25 +220,17 @@ async def test_project_owner_may_manage_members():
     assert await _may_manage(_actor("token", OWNER)) is True
 
 
-async def test_project_lead_may_manage_members():
-    assert await _may_manage(_actor("token", "bob"), roles={"bob": ProjectRole.lead})
+async def test_an_admin_of_the_projects_team_may_manage_members():
+    assert await _may_manage(_actor("token", "bob"), team_admins={"bob"})
 
 
-async def test_project_lead_may_manage_when_owner_is_null():
-    # owner_handle is nullable in practice; without leads counting, an owner-less
-    # project's roster would be frozen with no way to recover.
-    assert await _may_manage(
-        _actor("token", "bob"), owner=None, roles={"bob": ProjectRole.lead}
-    )
+async def test_a_team_admin_may_manage_when_the_project_has_no_owner():
+    # owner_handle is nullable; the team's admins keep such a project manageable.
+    assert await _may_manage(_actor("token", "bob"), owner=None, team_admins={"bob"})
 
 
-async def test_project_member_and_mentor_may_not_manage_members():
-    assert not await _may_manage(
-        _actor("token", "bob"), roles={"bob": ProjectRole.member}
-    )
-    assert not await _may_manage(
-        _actor("token", "carol"), roles={"carol": ProjectRole.mentor}
-    )
+async def test_someone_who_only_belongs_may_not_manage_members():
+    assert not await _may_manage(_actor("token", "bob"))
 
 
 async def test_project_outsider_with_a_token_may_not_manage_members():
@@ -249,15 +240,17 @@ async def test_project_outsider_with_a_token_may_not_manage_members():
 async def test_claimed_handle_may_not_manage_members():
     # Claiming to be the owner proves nothing — a claim being enough WAS the hole.
     assert await _may_manage(_actor("handle", OWNER)) is False
-    assert await _may_manage(_actor("handle", "anonymous")) is False
+    assert (
+        await _may_manage(_actor("handle", "anonymous"), team_admins={"anonymous"})
+        is False
+    )
 
 
 @pytest.mark.parametrize("via", ["token", "cheese"])
-async def test_management_uses_roles_for_people_and_agents(via):
+async def test_management_is_the_same_rule_for_people_and_agents(via):
     actor = _actor(via, "participant")
     assert not await _may_manage(actor)
-    assert not await _may_manage(actor, roles={"participant": ProjectRole.member})
-    assert await _may_manage(actor, roles={"participant": ProjectRole.lead})
+    assert await _may_manage(actor, team_admins={"participant"})
     assert await _may_manage(actor, owner="participant")
 
 

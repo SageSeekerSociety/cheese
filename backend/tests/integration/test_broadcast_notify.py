@@ -1,10 +1,19 @@
 """@all / @here notify the whole topic roster (群播, fusion-design §3)."""
 
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    """A room in a project whose team has bob and carol on it — rooms seat only
+    people who are in the project."""
+    p = post_project(client, json={"name": "P"}).json()["data"]
+    for handle in ("bob", "carol"):
+        join_project_team(client, p["id"], handle)
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": created_by},

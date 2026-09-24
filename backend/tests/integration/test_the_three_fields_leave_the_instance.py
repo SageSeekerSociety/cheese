@@ -16,6 +16,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.domain.project.services import ProjectService
+from tests.integration.conftest import registered
 
 RETIRED = {"model", "harness", "effort"}
 
@@ -41,8 +42,9 @@ def test_no_saved_configuration_still_carries_the_three_keys(db_session, _portal
     migration = _migration()
 
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Three fields", forge_kind="github_app"
+            owner_handle="owner", name="Three fields", forge_kind="github_app"
         )
         await db_session.flush()
         connection = await db_session.connection()

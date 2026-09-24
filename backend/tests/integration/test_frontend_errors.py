@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from app.domain import frontend_log
+from tests.integration.conftest import post_project
 
 
 @pytest.fixture(autouse=True)
@@ -15,7 +16,7 @@ def _fresh_intake(monkeypatch):
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

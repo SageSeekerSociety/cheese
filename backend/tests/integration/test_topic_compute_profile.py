@@ -22,10 +22,11 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
+from tests.integration.conftest import post_project
 
 
 def _project(client, owner: str = "andyl") -> str:
-    return client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+    return post_project(client, json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]["id"]
 

@@ -5,16 +5,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.project.models import InvitationStatus, ProjectRole
+from app.domain.project.models import InvitationStatus
 
 
 class MemberCreate(BaseModel):
     user_handle: str = Field(min_length=1, max_length=64)
-    role: ProjectRole = ProjectRole.member
-
-
-class MemberRoleUpdate(BaseModel):
-    role: ProjectRole
 
 
 class MemberOut(BaseModel):
@@ -23,21 +18,11 @@ class MemberOut(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     user_handle: str
-    role: ProjectRole
     created_at: datetime
 
 
 class InvitationCreate(BaseModel):
     user_handle: str = Field(min_length=1, max_length=64)
-    role: ProjectRole = ProjectRole.member
-
-
-class JoinLinkSettings(BaseModel):
-    approval: bool
-
-
-class JoinThroughLink(BaseModel):
-    message: str = Field(default="", max_length=500)
 
 
 class InvitationRespond(BaseModel):
@@ -51,7 +36,6 @@ class InvitationOut(BaseModel):
     project_id: uuid.UUID
     invitee_handle: str
     inviter_handle: str
-    role: ProjectRole
     status: InvitationStatus
     created_at: datetime
     responded_at: datetime | None

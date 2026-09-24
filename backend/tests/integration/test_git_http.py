@@ -4,10 +4,11 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_task
+from tests.integration.conftest import post_project
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "git 项目"}).json()["data"]["id"]
+    return post_project(client, json={"name": "git 项目"}).json()["data"]["id"]
 
 
 def test_backend_git_protocol_endpoint_is_retired(client):
@@ -20,7 +21,7 @@ def test_backend_git_protocol_endpoint_is_retired(client):
 
 
 def test_task_manifest_names_only_that_tasks_branch_and_target(client):
-    project = client.post("/projects", json={"name": "Task manifest"}).json()["data"]
+    project = post_project(client, json={"name": "Task manifest"}).json()["data"]
     task = delivery_task(client, project["root_topic_id"], commit=False)
     headers = {
         "X-Cheese-Token": mint_scoped_token(
@@ -66,8 +67,8 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     from app.domain.topic.models import Topic
     from tests.integration.conftest import session_auth_headers
 
-    project = client.post(
-        "/projects", json={"name": "Task authors", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Task authors", "owner_handle": "alice"}
     ).json()["data"]
     pid, room = project["id"], project["root_topic_id"]
     task = delivery_task(client, room, commit=False)
@@ -125,7 +126,7 @@ def test_historical_task_does_not_invent_an_agent_author(client):
     from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
 
-    project = client.post("/projects", json={"name": "Old task"}).json()["data"]
+    project = post_project(client, json={"name": "Old task"}).json()["data"]
     task = delivery_task(client, project["root_topic_id"], commit=False)
 
     async def read():

@@ -14,6 +14,7 @@ from app.domain.room_task import snapshots
 from app.domain.room_task.models import Task, TaskSnapshot
 from app.domain.topic.models import Topic
 from scripts import migrate_forge
+from tests.integration.conftest import a_team
 from tests.unit.test_forge_migration import legacy_repository
 
 
@@ -30,7 +31,7 @@ async def test_github_local_work_survives_migration_without_remote_writes(
     tokens = AsyncMock(side_effect=AssertionError("GitHub must remain unchanged"))
     monkeypatch.setattr(migrate_forge, "tokens_for_project", tokens)
     async with db_factory() as session:
-        project = Project(name="Existing GitHub project")
+        project = Project(team_id=await a_team(session), name="Existing GitHub project")
         session.add(project)
         await session.flush()
         binding = ProjectForge(

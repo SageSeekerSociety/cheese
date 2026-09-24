@@ -10,6 +10,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.domain.project.services import ProjectService
+from tests.integration.conftest import a_team
 
 
 def test_existing_configuration_is_snapshotted_and_originals_are_archived(
@@ -25,9 +26,16 @@ def test_existing_configuration_is_snapshotted_and_originals_are_archived(
 
     async def run():
         projects = ProjectService(db_session)
-        custom = await projects.create(name="Custom", forge_kind="github_app")
-        plain = await projects.create(name="Plain", forge_kind="github_app")
-        preset = await projects.create(name="Preset", forge_kind="github_app")
+        team_id = await a_team(db_session)
+        custom = await projects.create(
+            name="Custom", forge_kind="github_app", team_id=team_id
+        )
+        plain = await projects.create(
+            name="Plain", forge_kind="github_app", team_id=team_id
+        )
+        preset = await projects.create(
+            name="Preset", forge_kind="github_app", team_id=team_id
+        )
         custom_agent_id = custom.default_agent_instance_id
         preset_agent_id = preset.default_agent_instance_id
         await db_session.flush()

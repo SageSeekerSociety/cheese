@@ -16,11 +16,12 @@ from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
+from tests.integration.conftest import a_team
 
 
 async def seed(factory, *, delivered):
     async with factory() as session:
-        project = Project(name="Dependency test")
+        project = Project(team_id=await a_team(session), name="Dependency test")
         session.add(project)
         await session.flush()
         room = Topic(project_id=project.id, title="Room")

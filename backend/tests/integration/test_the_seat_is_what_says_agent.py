@@ -21,11 +21,15 @@ import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from app.domain.identity.handles import agent_instance_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client, name, owner="alice"):
-    return client.post("/projects", json={"name": name, "owner_handle": owner}).json()[
+    return post_project(client, json={"name": name, "owner_handle": owner}).json()[
         "data"
     ]
 
@@ -60,7 +64,7 @@ def test_publishing_needs_a_seat_in_this_room_not_an_agent_shaped_caller(client)
     # This room is not where it sits.
     joined = client.post(
         f"/projects/{project['id']}/members",
-        json={"user_handle": seat, "role": "member"},
+        json={"user_handle": seat},
         headers=session_auth_headers("alice"),
     )
     assert joined.status_code == 200, joined.text
@@ -114,7 +118,9 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
     )
     assert seated.status_code == 200, seated.text
 
-    # 人没有这条限制：同一个 handle 在两个项目的房间里都坐得下。
+    # 人没有这条限制：同一个人在两个项目的房间里都坐得下（两个项目都在 alice 的
+    # 个人团队里，bob 在这个团队里）。
+    join_project_team(client, home["id"], "bob")
     for room in (theirs, ours):
         joined = client.post(
             f"/topics/{room['id']}/members",
@@ -148,7 +154,7 @@ def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
 
     joined = client.post(
         f"/projects/{project['id']}/members",
-        json={"user_handle": seat, "role": "member"},
+        json={"user_handle": seat},
         headers=session_auth_headers("alice"),
     )
     assert joined.status_code == 200, joined.text

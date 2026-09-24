@@ -17,13 +17,13 @@
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 OWNER = "alice"
 
 
 def _project(client) -> dict:
-    made = client.post("/projects", json={"name": "一张名册", "owner_handle": OWNER})
+    made = post_project(client, json={"name": "一张名册", "owner_handle": OWNER})
     assert made.status_code == 200, made.text
     return made.json()["data"]
 

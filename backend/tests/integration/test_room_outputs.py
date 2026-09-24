@@ -11,11 +11,12 @@
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import post_project
 from tests.support import git_store
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

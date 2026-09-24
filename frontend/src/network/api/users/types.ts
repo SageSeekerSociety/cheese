@@ -151,24 +151,24 @@ export interface OAuthState {
     email: string | null
     name: string
     preferredUsername: string
+    // Set once the person has proven an address with a code; the account is
+    // created with it.
+    verifiedEmail?: string
   }
   suggestedUsername: string
   suggestedNickname: string
-  emailConflict: boolean
 }
 
-export type GetOAuthStateResponse = {
-  providerId: string
-  userInfo: {
-    id: string
-    email: string | null
-    name: string
-    preferredUsername: string
-  }
-  suggestedUsername: string
-  suggestedNickname: string
-  emailConflict: boolean
+export type GetOAuthStateResponse = OAuthState
+
+// The verify page's query, when the address belongs to an existing account.
+export interface OAuthOwnership {
+  type: string
+  email: string
+  sessionId: string
 }
+
+export type VerifyOAuthEmailResponse = { stateToken: string; ownership?: undefined } | { ownership: OAuthOwnership }
 
 // OAuth 创建用户请求类型
 export interface OAuthCreateUserRequest {

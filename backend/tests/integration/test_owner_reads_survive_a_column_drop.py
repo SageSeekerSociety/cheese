@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from app.domain.device import owner_reads
-from tests.integration.conftest import session_token
+from tests.integration.conftest import a_team, session_token
 
 
 async def _project(db_session, handle: str = "alice") -> uuid.UUID:
@@ -26,11 +26,16 @@ async def _project(db_session, handle: str = "alice") -> uuid.UUID:
     await db_session.execute(
         text(
             "INSERT INTO projects"
-            " (id, name, owner_handle, ai_mode, summary, settings,"
+            " (id, name, owner_handle, team_id, ai_mode, summary, settings,"
             " created_at, updated_at)"
-            " VALUES (:id, :name, :owner, 'off', '', '{}', now(), now())"
+            " VALUES (:id, :name, :owner, :team, 'off', '', '{}', now(), now())"
         ),
-        {"id": project_id, "name": "Owner reads", "owner": handle},
+        {
+            "id": project_id,
+            "name": "Owner reads",
+            "owner": handle,
+            "team": await a_team(db_session),
+        },
     )
     return project_id
 
@@ -140,7 +145,6 @@ def test_viewer_authorization_survives_unrelated_membership_column_drops(
         else:
             db_session.add(TopicMembership(topic_id=room, member_handle="viewer"))
         await db_session.flush()
-        await _without_column(db_session, "project_members", "role")
         await _without_column(db_session, "topic_memberships", "role")
         screen = SimpleNamespace(project_id=project, topic_id=room)
         assert await _may_view_screen(db_session, screen, session_token("viewer"))

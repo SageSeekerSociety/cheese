@@ -44,6 +44,7 @@ from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.conftest import StubChannel, drain_hooks, stub_compute
+from tests.integration.conftest import post_project
 
 SESSION_ID = "sess-exit-path"
 
@@ -90,7 +91,7 @@ class _Screen(StubChannel):
 
 
 def _seed_topic(client) -> str:
-    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
     return client.post("/topics", json={"project_id": pid, "title": "退出路径"}).json()[
         "data"
     ]["id"]

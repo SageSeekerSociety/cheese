@@ -26,6 +26,7 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, finish_turn, stub_compute
+from tests.integration.conftest import registered
 
 
 class SlowScreen(StubChannel):
@@ -89,6 +90,7 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -151,6 +153,7 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -211,6 +214,7 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -268,6 +272,7 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -324,6 +329,7 @@ async def test_backend_resolves_room_agent_mention(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -356,6 +362,7 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -395,6 +402,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -426,6 +434,7 @@ async def test_other_teammate_message_waits_for_live_turn(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -484,6 +493,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -522,6 +532,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
     )
 
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         project.settings = {"compute_profile": "local-docker"}
         topic = await TopicService(session).create(
@@ -561,6 +572,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     )
 
     async with factory() as session:
+        await registered(session, "user-1")
         project = await ProjectService(session).create(name="P", owner_handle="user-1")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="user-1"
@@ -645,6 +657,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P2", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T2", created_by="u"
@@ -710,6 +723,7 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -776,6 +790,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     )
 
     async with factory() as session:
+        await registered(session, "user-1")
         project = await ProjectService(session).create(name="P", owner_handle="user-1")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="user-1"
@@ -871,6 +886,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
     )
 
     async with factory() as session:
+        await registered(session, "user-1")
         project = await ProjectService(session).create(name="P", owner_handle="user-1")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="user-1"
@@ -949,6 +965,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -1002,6 +1019,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

@@ -27,6 +27,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
+from tests.integration.conftest import registered
 
 
 def _replace_chat_sleep(monkeypatch, sleep):
@@ -131,6 +132,7 @@ async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
         gateway=fake,  # duck-typed LlmGateway
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

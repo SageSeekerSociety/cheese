@@ -1,11 +1,12 @@
 """Issue / inspect / revoke a project's agent credential.
 
 The credential lets 芝士 act in this project from outside the platform process —
-a local agent, a bot, a CI job. It is the PROJECT's credential: an owner or lead
-signs the issue with their own login because someone accountable has to decide
-that this project wants an off-platform agent, but nothing about the credential
-is theirs afterwards. It does not weaken when they leave, does not change when
-the project changes leads, and does not carry their permissions.
+a local agent, a bot, a CI job. It is the PROJECT's credential: its owner, or an
+owner/admin of its team, signs the issue with their own login because someone
+accountable has to decide that this project wants an off-platform agent, but
+nothing about the credential is theirs afterwards. It does not weaken when they
+leave, does not change when the project changes hands, and does not carry their
+permissions.
 
 The secret is shown once, at issue. Nothing stores it, so losing one means
 issuing a new one (and revoking, which retires the old one along with every
@@ -24,8 +25,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
+from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
 
 router = APIRouter(prefix="/projects", tags=["agent-credential"])
@@ -35,7 +35,6 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 # Who may decide that this project hands a credential to an off-platform agent.
 # Deliberately narrower than "member": a member acts for themselves, these two
 # answer for the project, and this is a decision about the project.
-_STEWARD_ROLES = frozenset({ProjectRole.lead})
 
 
 async def require_project_steward(
@@ -43,25 +42,20 @@ async def require_project_steward(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> None:
-    """Only a verified project owner/lead may manage credentials.
-
-    An agent needs the same role. Revocation invalidates every credential in
-    the project generation, including any issued by an authorized agent.
+    """Only a verified project owner, or an owner/admin of its team, may manage
+    credentials. An agent needs the same standing. Revocation invalidates every
+    credential in the project generation, including any issued by an authorized
+    agent.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
-        raise ForbiddenError("只有项目的 owner / lead 能管理项目凭证")
+        raise ForbiddenError("只有项目所有者或团队管理员能管理项目凭证")
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.owner_handle == actor.handle:
+    if await MemberService(db).manages(project_id, actor.handle):
         return
-    member = await MemberRepository(db).get(
-        project_id=project_id, user_handle=actor.handle
-    )
-    if member is not None and member.role in _STEWARD_ROLES:
-        return
-    raise ForbiddenError("只有项目的 owner / lead 能管理项目凭证")
+    raise ForbiddenError("只有项目所有者或团队管理员能管理项目凭证")
 
 
 class IssueCredentialIn(BaseModel):

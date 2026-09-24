@@ -16,6 +16,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -52,6 +53,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             workspace_root=str(tmp_path / "ws"),
         )
         async with factory() as session:
+            await registered(session, "u")
             project = await ProjectService(session).create(name="P", owner_handle="u")
             if private:
                 topic = await TopicService(session).get_or_create_private(

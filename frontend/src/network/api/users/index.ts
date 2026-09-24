@@ -20,6 +20,7 @@ import type {
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
   UserList,
+  VerifyOAuthEmailResponse,
 } from './types'
 
 import { API_BASE_URL } from '../../utils'
@@ -527,6 +528,36 @@ export namespace UserApi {
     ApiInstance.request<GetOAuthStateResponse>({
       url: `/users/auth/oauth/state?token=${encodeURIComponent(stateToken)}`,
       method: 'GET',
+    })
+
+  // The address a new third-party account will hold is proven with a code.
+  export const sendOAuthEmailCode = (data: { stateToken: string; email: string }) =>
+    ApiInstance.request({
+      url: '/users/auth/oauth/email/code',
+      method: 'POST',
+      data,
+    })
+
+  export const verifyOAuthEmail = (data: { stateToken: string; email: string; code: string }) =>
+    ApiInstance.request<VerifyOAuthEmailResponse>({
+      url: '/users/auth/oauth/email/verify',
+      method: 'POST',
+      data,
+    })
+
+  // An account without an address of its own adds one.
+  export const sendAddEmailCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/me/email/code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const addEmail = (data: { email: string; code: string }) =>
+    ApiInstance.request<{ user: User }>({
+      url: '/users/me/email',
+      method: 'POST',
+      data,
     })
 
   // 从 OAuth 创建新用户 (通过表单提交，会重定向)

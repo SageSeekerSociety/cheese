@@ -16,6 +16,7 @@ from app.domain.agent import execution
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task_id
+from tests.integration.conftest import post_project
 
 BINARY = bytes(range(256)) * 8
 
@@ -42,7 +43,7 @@ def _worktree(client, topic):
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
+    resp = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()
     return uuid.UUID(resp["data"]["id"])
 
 

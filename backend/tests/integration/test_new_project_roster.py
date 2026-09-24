@@ -17,6 +17,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.services import team_service
+from tests.integration.conftest import post_project, registered
 
 OWNER = "owner-1"
 
@@ -33,7 +34,8 @@ def _people(client, project_id: str) -> list[dict]:
 
 
 def _roster(client, project_id: str) -> dict[str, str]:
-    return {m["user_handle"]: m["role"] for m in _people(client, project_id)}
+    """handle → how they are on the roster (owner / team / external)."""
+    return {m["user_handle"]: m["source"] for m in _people(client, project_id)}
 
 
 def _rows(client, project_id: str) -> dict[str, dict]:
@@ -46,12 +48,11 @@ def test_the_owner_is_on_the_roster_without_a_member_row(client):
     两件事得同时成立：界面和 @ 都读名册，所以他必须在上面；而成员表里多这一行会
     让别处「把所有者加进名册」的调用撞上唯一约束。
     """
-    pid = client.post("/projects", json={"name": "P", "owner_handle": OWNER}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": OWNER}).json()[
         "data"
     ]["id"]
 
-    assert _roster(client, pid) == {OWNER: "lead"}
-    assert _rows(client, pid)[OWNER]["source"] == "owner"
+    assert _roster(client, pid) == {OWNER: "owner"}
 
     async def absent() -> bool:
         async with client.test_request_factory() as session:
@@ -108,7 +109,7 @@ def test_the_owner_is_shown_by_nickname_and_chosen_avatar(client):
 
     avatar_id = client.portal.call(seed)
 
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "boss"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "boss"}).json()[
         "data"
     ]["id"]
 
@@ -117,29 +118,28 @@ def test_the_owner_is_shown_by_nickname_and_chosen_avatar(client):
     assert row["avatar_id"] == avatar_id
 
 
-def test_an_owner_who_is_also_a_member_row_appears_once(client, bearer):
-    """所有者也被显式加进了成员表时，名册上仍然只有他一行。
+def test_an_owner_who_also_has_a_member_row_appears_once(client):
+    """所有者在成员表里也有一行时（旧数据留下的），名册上仍然只有他一行。
 
-    补出来的那一行是给「表里没有他」准备的，不是无条件多加一个人。重复一行会让
-    界面上出现两个同名的人，也会让 @ 的通知发两遍。
+    重复一行会让界面上出现两个同名的人，也会让 @ 的通知发两遍。现在接口不会再写
+    出这种行，所以直接写库造出来。
     """
-    pid = client.post("/projects", json={"name": "P", "owner_handle": OWNER}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": OWNER}).json()[
         "data"
     ]["id"]
-    assert (
-        client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": OWNER, "role": "lead"},
-            headers=bearer(OWNER),
-        ).status_code
-        == 200
-    )
+
+    async def legacy_row() -> None:
+        async with client.test_request_factory() as session:
+            await MemberRepository(session).add(
+                project_id=uuid.UUID(pid), user_handle=OWNER
+            )
+            await session.commit()
+
+    client.portal.call(legacy_row)
 
     rows = _people(client, pid)
     assert [m["user_handle"] for m in rows] == [OWNER]
-    # 表里有他自己的一行时，报的就是那一行（带 id），不是补出来的那个影子。
-    assert rows[0]["id"] is not None
-    assert "source" not in rows[0]
+    assert rows[0]["source"] == "owner"
 
 
 async def _user(factory, username: str) -> int:
@@ -189,8 +189,7 @@ def test_a_teams_project_starts_with_the_whole_team(client):
 
     # 队友进来了；建项目的那个人也在，作为所有者，而不是靠小队那条路——他在小队里
     # 也有一行，但名册上他只出现一次。
-    assert _roster(client, pid) == {"captain": "lead", "teammate": "member"}
-    assert _rows(client, pid)["captain"]["source"] == "owner"
+    assert _roster(client, pid) == {"captain": "owner", "teammate": "team"}
 
 
 def test_a_personal_project_pulls_nobody_in(client):
@@ -201,6 +200,7 @@ def test_a_personal_project_pulls_nobody_in(client):
         factory = client.test_request_factory
         await _user(factory, "solo")
         async with factory() as session:
+            await registered(session, "solo")
             project = await ProjectService(session).create(
                 name="P", owner_handle="solo"
             )
@@ -209,7 +209,7 @@ def test_a_personal_project_pulls_nobody_in(client):
 
     pid = client.portal.call(seed)
 
-    assert _roster(client, pid) == {"solo": "lead"}
+    assert _roster(client, pid) == {"solo": "owner"}
 
 
 def test_late_teammate_is_listed_without_a_persistent_project_grant(client):
@@ -231,7 +231,7 @@ def test_late_teammate_is_listed_without_a_persistent_project_grant(client):
             return project.id, team.id, mate
 
     pid, team_id, mate = client.portal.call(create)
-    assert _roster(client, str(pid)) == {"late-captain": "lead"}
+    assert _roster(client, str(pid)) == {"late-captain": "owner"}
 
     async def add() -> None:
         async with client.test_request_factory() as session:
@@ -263,4 +263,4 @@ def test_late_teammate_is_listed_without_a_persistent_project_grant(client):
 
     client.portal.call(remove)
     # 退队的人从名册上消失；所有者不受影响。
-    assert _roster(client, str(pid)) == {"late-captain": "lead"}
+    assert _roster(client, str(pid)) == {"late-captain": "owner"}

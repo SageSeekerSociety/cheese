@@ -22,10 +22,12 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
+from tests.integration.conftest import registered
 
 
 async def _seed(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

@@ -38,7 +38,6 @@ from app.domain.project.models import (
     AiMode,
     Project,
     ProjectMember,
-    ProjectRole,
 )
 from app.domain.review.models import AcceptCard
 from app.domain.space.models import SpaceCategory
@@ -155,17 +154,14 @@ async def seed() -> None:
                 ProjectMember(
                     project_id=project.id,
                     user_handle="user-1",
-                    role=ProjectRole.lead,
                 ),
                 ProjectMember(
                     project_id=project.id,
                     user_handle="user-2",
-                    role=ProjectRole.member,
                 ),
                 ProjectMember(
                     project_id=project.id,
                     user_handle="mentor-1",
-                    role=ProjectRole.mentor,
                 ),
             ]
         )

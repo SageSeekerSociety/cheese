@@ -38,6 +38,7 @@ from app.domain.review.models import AcceptCard
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
+from tests.integration.conftest import a_team
 
 pytestmark = [
     pytest.mark.anyio,
@@ -71,7 +72,9 @@ async def test_native_tools_through_platform_transport(
         Path(os.environ["FORGEJO_TEST_TOKEN_FILE"]).read_text().strip(),
     )
     async with db_factory() as session:
-        project = Project(name="Native Git transport test")
+        project = Project(
+            name="Native Git transport test", team_id=await a_team(session)
+        )
         session.add(project)
         await session.flush()
         binding = await provision_repository(project.id, session)
@@ -224,7 +227,9 @@ async def test_legacy_repository_migration_preserves_all_refs(
     storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
     monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     async with db_factory() as session:
-        project = Project(name="Legacy repository migration test")
+        project = Project(
+            name="Legacy repository migration test", team_id=await a_team(session)
+        )
         session.add(project)
         await session.flush()
         room = Topic(project_id=project.id, title="Legacy room")
@@ -302,7 +307,9 @@ async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):
     monkeypatch.setattr(settings, "forge_webhook_url", hook_url)
     monkeypatch.setattr(settings, "forge_event_secret", "isolated-hook-secret")
     async with db_factory() as session:
-        project = Project(name="Forgejo event registration test")
+        project = Project(
+            name="Forgejo event registration test", team_id=await a_team(session)
+        )
         session.add(project)
         await session.flush()
         binding = await provision_repository(project.id, session)
@@ -391,7 +398,10 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)
         async with db_factory() as session:
-            project = Project(name="Forgejo outbound event delivery test")
+            project = Project(
+                name="Forgejo outbound event delivery test",
+                team_id=await a_team(session),
+            )
             session.add(project)
             await session.flush()
             binding = await provision_repository(project.id, session)
@@ -522,7 +532,11 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     monkeypatch.setattr(settings, "forgejo_admin_token", admin)
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "platform-storage"))
     async with db_factory() as session:
-        project = Project(name="Forgejo integration test", owner_handle="requester")
+        project = Project(
+            name="Forgejo integration test",
+            owner_handle="requester",
+            team_id=await a_team(session),
+        )
         session.add(project)
         await session.flush()
         binding = await provision_repository(project.id, session)
