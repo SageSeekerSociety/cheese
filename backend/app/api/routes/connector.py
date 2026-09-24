@@ -32,7 +32,6 @@ from fastapi import (
     Depends,
     Header,
     Query,
-    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -44,8 +43,6 @@ from app.api.auth import ActorResolverDep
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
-    BadRequestError,
-    BaseError,
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
@@ -64,7 +61,6 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic import transcripts
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
@@ -337,67 +333,6 @@ async def agent_socket(
             time.monotonic() - opened_at,
         )
         await device_hub.detach_device(device.device_id, transport)
-
-
-# --- transcripts: a device stores a home's raw session files here before the
-# home is deleted (topic/retire.py, docs/where-a-turn-runs.md §8) --------------
-
-
-@router.put("/transcripts/{project_id}/{place_id}")
-async def store_transcripts(
-    project_id: uuid.UUID,
-    place_id: uuid.UUID,
-    request: Request,
-    db: DbSession,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Receive one home's `.claude/projects` + `.claude/todos` as a tar.gz body.
-
-    Authenticated with the durable device token as a bearer (the cli's own
-    `CHEESE_TOKEN`), authorized by the pin. The archive is kept as a new
-    timestamped file under `transcripts_dir/<project>/<place>/`, never
-    replacing an earlier one; 413 past `transcripts_max_bytes`, 400 for a body
-    that is not a whole archive, and neither keeps anything on disk."""
-    scheme, _, token = (authorization or "").partition(" ")
-    device = await owner_reads.device_for_token(
-        db, token.strip() if scheme.lower() == "bearer" else ""
-    )
-    if device is None:
-        raise UnauthorizedError("unknown or missing device token")
-    if not await owner_reads.project_exists(db, project_id):
-        raise NotFoundError("no such project")
-    # The place may be a room or a thread, or already deleted; what it must not
-    # be is a place of some other project wearing this project's path.
-    place = await owner_reads.place(db, place_id)
-    if place is not None and place.project_id != project_id:
-        raise NotFoundError("no such place in this project")
-    allowed = await owner_reads.device_ran_place(
-        db, device.device_id, project_id, place_id
-    )
-    if place is not None and device.device_id in place.session_machines:
-        allowed = True
-    # Every read is done. Release the transaction before the body streams in:
-    # an upload can take minutes, and a session held open across it would sit
-    # `idle in transaction` on the topic tables for that long (#356).
-    await db.commit()
-    if not allowed:
-        raise ForbiddenError("this machine did not run that place")
-    try:
-        stored = await transcripts.store(project_id, place_id, request.stream())
-    except transcripts.ArchiveTooLarge as exc:
-        raise BaseError(413, str(exc)) from exc
-    except transcripts.NotAnArchive as exc:
-        raise BadRequestError(str(exc)) from exc
-    logger.info(
-        "transcripts stored: project=%s place=%s device=%s file=%s size=%d sha256=%s",
-        project_id,
-        place_id,
-        device.device_id,
-        stored.path.name,
-        stored.size,
-        stored.sha256,
-    )
-    return {"file": stored.path.name, "size": stored.size, "sha256": stored.sha256}
 
 
 # --- 现场 viewer: a browser watches a device screen's real terminal, and can type

@@ -2,31 +2,42 @@
 
 Unarchived rooms retain their running environment. Archival creates a durable
 cleanup operation; it does not immediately destroy a machine. The default grace
-period is five minutes. A failed publication or transcript check retains the
-resource and records the reason.
-
-Final verification reads one stored chunk per request and saves progress, so a
-worker restart does not restart verification of a long transcript. Cloud deletion
-also requires an empty room-directory inventory; unknown directories retain the VM.
+period is five minutes. A failed publication check retains the resource and
+records the reason. Cloud deletion also requires an empty room-directory
+inventory; unknown directories retain the VM.
 
 ## Configuration
 
-Set these in the backend environment file before deploying:
+Set this in the backend environment file before deploying:
 
 ```dotenv
 TOPIC_ARCHIVE_CLEANUP_DELAY_S=300
-TRANSCRIPT_S3_BUCKET=cheese-db-backups
 ```
 
-The named bucket must be private. The collector uses `S3_ENDPOINT_URL`,
-`S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_REGION` for the connection. These credentials
-need read/write access to `transcripts/raw/`. No public uploads bucket fallback is
-provided. Confirm bucket privacy and authenticated download before enabling use.
 Changing the grace period affects future archives only.
 
-Existing archives in `TRANSCRIPTS_DIR` and their additive R2 backup remain intact.
-The migration does not backfill cleanup operations for historical archives or
-unknown directories. Inventory and approve those separately.
+## Transcripts
+
+Transcripts are not uploaded. Every Claude Code session runs on the central
+session host (`AGENT_SESSION_DEVICE_ID`), so a room's transcripts are in its home
+there. When cleanup removes that home, it first compresses the home's
+`.claude/projects` tree — the main session files and each subagent's — into
+`~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host,
+readable only by the host user. A link in the tree is stored as a link and
+never followed. Other devices keep no transcripts.
+
+The operation then waits in the `retained` state. Thirty days after the home was
+removed (`TRANSCRIPT_RETENTION` in `backend/app/domain/topic/retire.py`), the same
+timer deletes the archive and the operation becomes `complete`. The copy exists for
+debugging what an agent did after the fact; nothing reads it. Handing the work on
+does not need it: the room's chat, its living doc and its action timeline stay
+with the room.
+
+Unarchiving a room while its transcripts are retained restores nothing. The room
+gets a new resource generation and its agents start new sessions, as after any
+completed cleanup; the retained archive still expires on schedule. Archiving the
+room again retains the new generation's transcripts in a second archive beside
+the first.
 
 ## Independent trigger
 
@@ -52,24 +63,18 @@ operations, but are not a replacement for the independent clock.
 ## Verification and pending work
 
 Use a disposable owner-managed room to verify archive, deadline persistence across
-a backend restart, transcript download, and unarchive after cleanup. Check the
-downloaded main-session and subagent files against their original bytes. Collection
-is asynchronous; a device lost before upload can still lose its latest unsent bytes.
+a backend restart, the retained transcript archive on the session host, and
+unarchive after cleanup.
 
 `GET /topics/{id}/cleanup` reports the stage, deadline, completed resource count and
-the latest failure. Backend logs include the cleanup operation and room IDs. Device
-collector failures are timestamped in the room's `.claude/cheese-drain.log`.
-Existing sessions upgrade their sender when the next turn reuses the session;
-this preserves the native agent process. Cleanup always ships the current collector
-for its final flush, including rooms last used before this deployment.
+the latest failure. Backend logs include the cleanup operation and room IDs.
+Before removing a home, cleanup delivers the room's outstanding hook events with
+the sender the backend ships today, including for rooms last used before a
+deployment.
 
 The device needs Python 3, curl, tmux and lsof. Missing tooling, offline devices,
-active writers, unpublished Git changes, outstanding hook events or incomplete
-storage verification retain the original resource. A stop whose outcome is unknown
-must be reconciled before that same environment can be resumed. A backend worktree
-already moved aside stays owned by the unfinished cleanup until it completes.
-
-Private object storage contains a `source.json` identity record and immutable
-offset/hash chunks for every raw file. PostgreSQL holds the normal read index;
-restoring an older DB backup may require rebuilding missing index rows from those
-objects. Keep the existing database backup schedule.
+active writers, unpublished Git changes or outstanding hook events retain the
+original resource. A stop whose outcome is unknown must be reconciled before that
+same environment can be resumed. A backend worktree already moved aside stays
+owned by the unfinished cleanup until it completes. An offline session host keeps
+a retained operation waiting until it is back.

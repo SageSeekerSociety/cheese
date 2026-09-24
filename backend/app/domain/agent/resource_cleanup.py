@@ -1,7 +1,6 @@
 """Device-side checks and deletion, restricted to a recorded resource directory."""
 
 import fcntl
-import hashlib
 import json
 import os
 import runpy
@@ -9,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 from pathlib import Path
@@ -31,6 +31,10 @@ FOOTPRINT_ROOT = ".cheese"
 # launcher built, and this is also the directory `place.write` refuses: the one
 # name serves both, so a rename that reaches only one of them cannot happen.
 CHECKOUT_DIR = "room"
+
+# Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
+# the cleanup that retained them deletes them (topic/retire.py sets how long).
+TRANSCRIPTS_ROOT = "transcripts"
 
 # The platform's directories INSIDE a room's home, the current one first — the
 # pair is `place.session_platform_dirs()`, and it is a pair only in there. The
@@ -328,33 +332,72 @@ def resource_paths(
     return paths[0], paths[1]
 
 
-def check_transcripts(home: Path, receipts: list[dict]) -> None:
-    expected = {receipt["source"]: receipt for receipt in receipts}
-    found = {}
-    for path in (home / ".claude/projects").rglob("*.jsonl"):
-        # The same two cases the uploader skips (event_drain.collect_transcripts),
-        # skipped for the same reason: what was uploaded is the set this is
-        # checked against. Claude Code links a resumed session's subagent
-        # transcripts to the original session's files — a link inside the same
-        # home, whose target is uploaded under its own path — and refusing it
-        # here left a room's cleanup failing every minute for five days
-        # (operation a12198c1, 2026-09-13 to 09-19) over a file that was never
-        # in the receipts to begin with.
-        if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
-            continue
-        digest = hashlib.sha256()
-        size = 0
-        with path.open("rb") as original:
-            while part := original.read(1024 * 1024):
-                digest.update(part)
-                size += len(part)
-        found[str(path.relative_to(home))] = (size, digest.hexdigest())
-    if found != {
-        source: (item["size"], item["sha256"]) for source, item in expected.items()
-    }:
-        raise RuntimeError("transcripts changed after durable confirmation")
+def check_events_delivered(home: Path) -> None:
     if any((home / ".cheese/cheese-spool").glob("[0-9]*")):
         raise RuntimeError("hook events still await backend acknowledgement")
+
+
+def retained_transcripts(machine_home: Path, project: str, room: str, resource: str):
+    """Where a removed home's session transcripts are kept until they expire.
+
+    One archive per resource generation, under the room: a room reopened and
+    archived again has a new generation and so a second archive beside the
+    first, and neither overwrites the other."""
+    project, room = str(uuid.UUID(project)), str(uuid.UUID(room))
+    return (
+        machine_home
+        / FOOTPRINT_ROOT
+        / TRANSCRIPTS_ROOT
+        / project
+        / room
+        / (str(uuid.UUID(resource)) + ".tar.gz")
+    )
+
+
+def retain_transcripts(home: Path, archive: Path) -> None:
+    """Compress the home's Claude Code session files before the home goes.
+
+    `.claude/projects` holds every session of the room — the main transcript
+    and each subagent's beside it. A link is stored as a link and never
+    followed: Claude Code links a resumed session's subagent files to the
+    originals in the same tree, and a link out of the home is not ours to read.
+    Written under a temporary name and renamed, so an archive under the final
+    name is always whole; a retry after a crash rewrites it from the same home.
+    """
+    source = home / ".claude/projects"
+    if source.is_symlink() or not source.is_dir():
+        return
+    archive.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = archive.with_name(archive.name + ".part")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with (
+            os.fdopen(descriptor, "wb") as output,
+            tarfile.open(fileobj=output, mode="w:gz") as bundle,
+        ):
+            bundle.add(source, arcname="projects", recursive=True)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, archive)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    directory = os.open(archive.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def expire_transcripts(archive: Path) -> None:
+    archive.unlink(missing_ok=True)
+    archive.with_name(archive.name + ".part").unlink(missing_ok=True)
+    # The room and project directories go once nothing else is in them.
+    for directory in (archive.parent, archive.parent.parent):
+        try:
+            directory.rmdir()
+        except OSError:
+            break
 
 
 def session_target(home: Path, resource: str) -> dict | None:
@@ -412,7 +455,9 @@ def stop_executor(home: Path, resource: str) -> None:
 
 
 def main() -> None:
-    action, project, resource, cleanup = sys.argv[1:]
+    # `room` names the room whose transcripts this device keeps, or is "-" on a
+    # device that does not keep them.
+    action, project, resource, cleanup, room = sys.argv[1:]
     home, work = resource_paths(Path.home(), project, resource)
     executor = session_target(home, resource)
     if action == "prepare":
@@ -466,18 +511,23 @@ def main() -> None:
         if executor is None:
             check_resource_publication(home, work)
         if home.exists():
-            check_transcripts(
-                home, json.loads(os.environ["CHEESE_TRANSCRIPT_RECEIPTS"])
-            )
+            check_events_delivered(home)
         if executor is not None and executor["kind"] == "private":
             helper = runpy.run_path(
                 str(platform_dir(home) / "remote-execution/private.py")
             )
             helper["release"](executor)
+        if room != "-" and home.exists():
+            retain_transcripts(
+                home, retained_transcripts(Path.home(), project, room, resource)
+            )
         for path in (work, home):
             if path.exists():
                 remove_tree(path)
         print(json.dumps({"removed": True}))
+    elif action == "expire":
+        expire_transcripts(retained_transcripts(Path.home(), project, room, resource))
+        print(json.dumps({"expired": True}))
     else:
         raise ValueError("unknown cleanup action")
 

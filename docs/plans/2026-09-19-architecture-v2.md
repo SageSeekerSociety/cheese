@@ -44,7 +44,7 @@
 | 3 | **项目 Project** | L0 | 一个源仓库、一个资料库、一份产物清单、一份名册、一套配置。**每个项目恰好有一个源仓库（git），但不是项目里的每样东西都进它** [已定] 结论 26 |
 | 4 | **房间 Room** | L0 | 一条时间线的容器，里面坐着若干成员，其中一些是 agent。**它不指向任何 agent**。私聊和项目总览是它的两种特例，不占槽位 [已定方向] #1180 |
 | 5 | **活 Work** | L0 | 一件要交付的工作：一条分支、一张提案卡、一个唯一负责人。**房间里是平的，没有子卡**。工作树是它在某个地点的缓存。**它用做它的那个 agent 的手，不声明自己的环境** [已定] 结论 33、38（按结论 60 修订） |
-| 6 | **会话 Session** | L1 | 一个 agent 在一个**房间**的连续 transcript（一个 handle 一条）。**权威副本在平台**，它不拥有机器 [已定] 结论 29 |
+| 6 | **会话 Session** | L1 | 一个 agent 在一个**房间**的连续 transcript（一个 handle 一条）。**transcript 在中心会话机上，平台不另存一份**；它不拥有机器 [已定] 结论 29 |
 | 7 | **地点 Place** | L2 | 一段**有期限、可归还、可休眠**的机器使用权。agent 的一双手，不是它的身体 [已定] 结论 24、39 |
 | 8 | **骨架 Harness** | — | 在一个地点上驱动一个 agent 的程序。**开发者选项，不是产品概念**，它不拥有任何产品语义 [已定] 结论 28 |
 | 9 | **托管方 Forge** | — | 改动最后落在哪，以及谁回答「能不能合」。平台自己的仓库也是一个实现 [已定] #363 |
@@ -71,7 +71,7 @@
 │                              后端（L0 的唯一所有者）                            │
 │                                                                               │
 │   参与者 · 席位 · 项目 · 房间 · 活 · 事件           ← 记录，不可再生             │
-│   会话（身份 + 续跑凭据 + transcript 权威副本）      ← L1，可搬不可重开          │
+│   会话（身份 + 续跑凭据）                            ← L1，可搬不可重开          │
 │   记忆（三个目录，全随 agent 实例关在项目里）         ← L0                       │
 │   平台文案目录（所有用户可见的句子都在这里）                                     │
 │                                                                               │
@@ -145,10 +145,10 @@
 | **I15** | **没有项目记忆池**（结论 7）；**记忆是平台侧的文件**（结论 42） | 三条：①`MemoryScope.project` 在全仓零命中；②人和 agent 共同看的东西全部是 1.12 那几份文档，每一份都有一个指名的所有者；③一条记忆是一个文件，**自带「关于谁」「何时观察到」两项元数据**，落在「一个实例一个目录、目录下按关于谁分三个子目录」那棵树上，项目源仓库里零命中，版本由平台给，**索引由平台维护**，**读它的路径走平台工具、不经过工作区那双手** |
 | **I16** | **agent 关于每个人的知识在任何房间都可读，怎么用是它的判断**（结论 54 修订结论 9）；**写入按「关于谁」归目录**（结论 42） | 六条：①读关于某个人的池不以「他在不在这个房间」为条件——守卫：取记忆的代码里没有一处按在场名册过滤池；②跨项目仍然读不到：池按 (实例, 项目) 关着（I15），放开的是房间这一层，不是项目这一层；③agent 对人记了什么，这个人在这个 agent 的 profile「记忆」页上读得到、翻得了历史、标得了、删得掉；④任何提到某个人的判断只能落进那个人的那个子目录，落在项目或自己那两个目录里就是写错；⑤关于某个人的文件只对当事人可见——另一个项目成员在同一个记忆页上列不出它，**这是隐私那一侧仅剩的一条**（结论 54）；⑥记忆的改动不进房间时间线、不产生通知，搜索默认不覆盖它 |
 | **I17** | Project and teammate model selection | Project main and native subagent defaults are separate. Teammates may override the main default with an available model. The prepared turn keeps its model; configuration changes apply at the next task boundary. Reported usage records the actual model. Harness and effort remain outside teammate configuration. |
-| **I18** | 会话可迁移，而迁移是搬运不是重开；**transcript 的权威副本在平台** | 把一个房间的会话搬到另一台机器，下一轮 agent 能引用上一轮自己说过的话；恢复的源是平台副本，不是另一台机器 |
+| **I18** | 会话可迁移，而迁移是搬运不是重开；**transcript 在会话机上，平台不另存一份** | 把一个房间的会话搬到另一台会话机，下一轮 agent 能引用上一轮自己说过的话；搬运的源是原来那台会话机上的 transcript |
 | **I18b** | **活与子 agent 不声明自己的地点**（结论 38，按结论 60 修订） | 活与子 agent 不声明自己的地点——它们用**做这条活的那个 agent 的会话**解析出的租约（原生子 agent 用父进程那一份，结论 43）；活、轮次与子 agent 的数据结构上没有 place / placement 字段 |
-| **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到三张收据：transcript 已落库、记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这三张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
-| **I19b** | 任何只在平台上存在的东西——源仓库、资料库、产物清单、transcript、文档——都有一条**不经平台界面也能取回**的导出通路（结论 27） | 对每一类各断言一条导出路径存在，且产出可校验（仓库能 clone 出来并对上 HEAD、资料库与产物按原名取回并对上校验和、transcript 与文档导出后能重新读回） |
+| **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到两张收据：记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这两张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
+| **I19b** | 任何只在平台上存在的东西——源仓库、资料库、产物清单、文档——都有一条**不经平台界面也能取回**的导出通路（结论 27） | 对每一类各断言一条导出路径存在，且产出可校验（仓库能 clone 出来并对上 HEAD、资料库与产物按原名取回并对上校验和、文档导出后能重新读回） |
 | **I20** | 一个对象一条命 | 归档一个房间之后，`agent_sessions` 行与地点租约各自按自己的规则存活或回收；守卫：任一删除路径只删自己那一个概念的行 |
 | **I21** | 每个项目恰好有一个源仓库；「无 git」是展示决定，不是存储决定；不是项目里的每样东西都进它 | 四条：①建任意一个项目，断言平台侧仓库存在且有 base commit；②守卫：产品判断不许读「项目有没有绑外部仓库」这个布尔，只许读 4.5 的能力位；③资料库的写入路径不经过任何 git 命令；④产物清单允许没有仓库路径的条目（引用型） |
 | **I21b** | **平台不因为自己的东西改被托管的仓库**（结论 49）：仓库的树、历史、检出目录里只有 agent 替用户做的活；平台的配置、钩子、技能、提示词、进度、记忆、实况文档、资料库、草稿、备份全部住在会话 home 或平台侧 | 三条：①一轮结束后，检出目录里 `git status --porcelain` 列出的每个路径都是这一轮 agent 工具调用改过的文件，没有平台写的；②守卫：全仓写文件的调用里，目标路径以检出目录为前缀的只允许出现在执行 agent 工具调用的那条路径上；③绑定 GitHub 的项目分支上，作者为平台的提交内容全是活，`git log` 里零个只含平台文件的提交 |
@@ -513,7 +513,7 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 **「线程位」是会话的槽位，不是概念 7 的地点**——地点是机器使用权（1.7），
 本节以下每一处「地点」都只作那一义。
 
-- **拥有**：会话身份、续跑凭据（对平台不透明）、**transcript 的权威副本**、它的代际号、
+- **拥有**：会话身份、续跑凭据（对平台不透明）、它的代际号、
   **这条会话的进程现在跑在哪台会话机上**，以及**它自己那份工作机器租约**——两样都是一会话一条、
   各自可迁移（6.4）[已定] 结论 60（修订结论 56）；活不声明它们，轮次也不声明它们。
 - **不拥有**：**机器**本身——它持有的是一份有期限、可归还的租约（1.7），不是那台机器。
@@ -558,13 +558,9 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 **这张表和那段 docstring 字面互斥，而目标形状的那张表已经在库里。**
 所以这不是「造一个新架构」，是「把箭头掉过来，让上游读已经对的那张表」。
 
-**「权威副本在平台」今天为什么是个空壳，机械原因在这里**：
-后端**收着字节**（`agent/event_drain.py` 每轮 PUT 增量分片回后端，`:59` 的 `"PUT"`、`:94 collect_transcripts`
-docstring 逐字「Send original bytes, preserving progress after each acknowledged chunk」），
-**却没有任何一条回放路径**——全仓唯一的搬运是
-`harness/claude_code/remote_execution/launch.py:92 transfer_history`，
-它只有一个调用点（`central_provider.py:236`），被 `if not previous` 圈住，**只在首次 placement 时跑，而且只走机器→机器**。
-结论 29 把「权威副本在平台、恢复从平台副本恢复」写成了**骨架契约的一条**，这条空壳因此不再是实现细节。
+**transcript 只在会话机上** [已定] 结论 29：平台不上收它，也不存一份。全仓唯一的搬运是
+`harness/claude_code/remote_execution/launch.py:92 transfer_history`，机器→机器；
+它只有一个调用点（`central_provider.py:236`），被 `if not previous` 圈住，**只在首次 placement 时跑**。
 
 ### 1.7 地点 Place 〔L2〕
 
@@ -909,7 +905,7 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 
 [已定] 结论 29。三句：
 
-1. **会话身份和 transcript 的权威副本在平台**，每轮结束前增量交上来；**恢复从平台副本恢复**。
+1. **会话身份在平台；transcript 留在中心会话机上**，平台不另收一份，也不从副本恢复；接手靠房间 chat、实况文档和动作时间线。
 2. **pi 满足它的路径倾向和 Claude Code 同一条**：进程在中心机、工具走执行器。
 3. **契约测试要盖到 pi 的 TypeScript 侧**（`harness/pi/platform.ts`）：
    pi 的机器侧算一个实现 [已定] 结论 29。
@@ -1240,12 +1236,12 @@ nobody wrote its prompt, so there is nothing to re-send」。
 
 | 情形 | 状态存在哪 | 谁被通知（按 5.2） | agent 拿到什么 | 下一步由谁 |
 |---|---|---|---|---|
-| **轮次中途机器掉线** | L0 全在库里一行不动；会话身份在 `agent_sessions`，transcript 增量已在后端 | 房间里一条事件 + 这个 agent；自托管还要加机主 | 一条能力事件（下面给文本），不是一个 HTTP 状态码 | 这一轮结束，**不重跑**；再点名才有下一轮 |
+| **轮次中途机器掉线** | L0 全在库里一行不动；会话身份在 `agent_sessions`，transcript 在中心会话机上 | 房间里一条事件 + 这个 agent；自托管还要加机主 | 一条能力事件（下面给文本），不是一个 HTTP 状态码 | 这一轮结束，**不重跑**；再点名才有下一轮 |
 | **轮次开始前机器不在（自托管）** | 同上 | **机主**——下一步在他手上（他去开机）。房间里写「正在等这台机器」 | 同上；不需要手的轮次照常跑完 | 不换机器、不改绑定，但照记健康账、照告知在等 |
 | **Cloud 机器正在开 / 已死** | 同上 | **不通知任何人**——下一步在平台手上；房间里留一条可见的等待事件 | 同上 | 平台：另开一台并把会话搬过去 |
 | **Cloud 机器在休眠中**（结论 39） | L0 全在库里；工作区快照原样躺在那台机器上 | **不通知任何人**——下一步在平台手上 | 一条可见的等待事件，不是一次失败 | 平台：window 内唤醒同一台，工作区原样；window 过了才走归还与收据（6.5） |
 | **换到了另一台工作机器** | 只更换工作机器，会话进程位置不变 | 房间 + 这个 agent | 「工作机器已更换，旧工作区保留，文件未自动迁移」 | 正常继续 |
-| **中心会话机离线** | L0 不动；会话身份与 transcript 增量在库；**会话的躯壳没了** | 房间里一条「正在等一台会话机」的等待事件；不通知任何人 | 同上 | 平台：等它回来，或 rehome 到另一台会话机 |
+| **中心会话机离线** | L0 不动；会话身份在库；**会话的躯壳和它的 transcript 都在那台机器上**，一起够不着 | 房间里一条「正在等一台会话机」的等待事件；不通知任何人 | 同上 | 平台：等它回来，或 rehome 到另一台会话机 |
 | **后端重启** | L0 在库；**L1 的躯壳在机器上继续活着**；L2 不受影响 | 无 | 无（它没掉线） | 靠重新发现接回；在途的一轮发一次事件然后停下，**不重跑** |
 
 **中心会话机是一个单点，而他已经明确接受了现阶段**：`settings.agent_session_device_id` 是一个部署级常量；
@@ -1303,8 +1299,8 @@ Their next opening transfers the transcript; **no new prompt starts on the old h
 
 会话既然不属于机器，换机器就必须是一个**正常操作**而不是一个错误。
 接口形式：`Session.rehome(new_place)`。
-**它的完成判据不是接口存在，是**：`transfer_history` 的源可以是**平台存的 transcript**（结论 29），
-而不只是另一台机器，且它的调用点不再只有「首次 placement」这一处。
+**它的完成判据不是接口存在，是**：`transfer_history` 的调用点不再只有「首次 placement」这一处；
+搬运的源是原来那台会话机上的 transcript（结论 29）。
 
 **一句必须写进定稿的消歧**：**rehome 不是「平台自己续跑」**——
 它只保证下一次有人点名时接得回同一份 transcript，平台不会自己发起那一轮。
@@ -1318,15 +1314,16 @@ Their next opening transfers the transcript; **no new prompt starts on the old h
 
 **休眠不是回收** [已定] 结论 39。Cloud 的租约闲置到点是快照后停机，
 reconnect window 之内醒来是同一台机器、工作区原样，**这条路上一张收据都不取**；
-window 过了才转成归还，那时下面三张一张不少。把休眠也套上收据，等于每次闲置都跑一遍记忆整理。
+window 过了才转成归还，那时下面两张一张不少。把休眠也套上收据，等于每次闲置都跑一遍记忆整理。
 **这条闲置计时是租约自己的，不是结论 55 否掉的那种「到期自动换资源」**——它不替任何人决定换不换机器，
 只把没人用的机器停下来；「等 N 分钟就替 agent 换一台」那种计时器一个都没有。
 
-**回收前三张收据**（I19）：
+**回收前两张收据**（I19）：
 
-1. transcript 落库；
-2. 记忆整理跑过（[已定] #1078「整理这件事……时机也对：**沙箱回收之前跑，因为只有那台机器上才有代码可以对照**」）；
-3. 未提交工作已推。
+1. 记忆整理跑过（[已定] #1078「整理这件事……时机也对：**沙箱回收之前跑，因为只有那台机器上才有代码可以对照**」）；
+2. 未提交工作已推。
+
+transcript 不是收据：它在中心会话机上，不在可回收的地点上（结论 29）。
 
 形式是一个**函数**而不是一段散文：所有回收路径（归档清理、Cloud 释放、容器回收、会话机 drain）
 走同一个 `receipts_ready()`，收据不齐就保持 pending 并说明理由。
@@ -1338,9 +1335,9 @@ window 过了才转成归还，那时下面三张一张不少。把休眠也套�
 - **结果未知的操作交人确认**，不自动重发。把一次「可能已经做过」的写操作再发一遍，比不做更坏；
   这类操作的下一步在人手上，按 5.2 通知他一次。
 - **正常回收与突然损坏分开写保证**：
-  **正常回收**走上面三张收据，一张不齐就 pending；
+  **正常回收**走上面两张收据，一张不齐就 pending；
   **机器突然损坏**取不到任何收据，那一刻能兑现的只有平台侧已经有的东西——
-  已上交的 transcript 增量、已经 push 上去的提交（结论 52 的「边干边 push」正是为这一刻）、这份执行记录。
+  已经 push 上去的提交（结论 52 的「边干边 push」正是为这一刻）、这份执行记录。
   把两种情形写成同一句保证，就会得到一条在损坏时兑现不了的承诺。
 
 **代际号**是「一个对象一条命」（I20）在时间维度上的解：
@@ -1392,7 +1389,7 @@ Cloud 是一条持久的等待事件 + 连接器上来就自动重投，自托�
 | 静默提醒 | `chat.py:1533`（平台，英文）**加** `pi/platform.ts:624 QUIET_LIMIT = 10`（机器上的 TypeScript，中文） | 两套并行，见 9.4 |
 | 每轮自动同步 | `device_launch.py:303` 的 `cheese sync --all` 脚本 + `:767 sync_on_stop` | 只有 cc；同一条活交给 pi，代码 commit 了但没 push |
 
-**契约上写死了三句**（transcript 权威副本在平台、pi 走和 cc 同一条路径、契约测试盖到 TypeScript 侧），
+**契约上写死了三句**（会话身份在平台而 transcript 留在会话机上、pi 走和 cc 同一条路径、契约测试盖到 TypeScript 侧），
 再加结论 43 那四条硬性要求（起子 agent 并指定模型、事件带线程标识、改指令、停止）。
 **「关掉骨架自带实现」那一格也有形状了** [已定] 结论 48：一份对着钉住版本验证过的行为声明（4.2、第 11 节已定二）。
 
@@ -1568,7 +1565,7 @@ agent **看不到**：平台对某个项目配置的解释。
 ### 8.5 运维看到
 
 三张 conformance 矩阵的当前状态（含每一个 `暂缺` 的到期日）、地点健康账与租约账本、
-**收据看板**（哪些回收在等 transcript、等记忆整理、等未发布的工作）、死信队列、
+**收据看板**（哪些回收在等记忆整理、等未发布的工作）、死信队列、
 以及每一条被吞掉的失败落在哪里。
 
 死信队列里的东西从哪来——是 I26。没有 I26，「死信队列」就是一个没有生产者的看板。
@@ -1607,11 +1604,11 @@ so check there and not in the menu, the contract or the doc**」。
 | **参与者** | `identity/`、`user/`、`agent_instance/`、`agent_type/`。`ensure_identity` 已给 agent 建 user 行 | `actor.py:48` 的 `is_agent` 字段给了分岔的钩子；`AgentConfiguration` 与 `agent_type/schemas.py:19/21` 带 `model`/`harness` | ①`Actor` 上没有 `is_agent` 列，授权/收件人/署名三类决策里 `is_agent`/`looks_like_agent_handle`/`names_a_person` 零命中；②`AgentConfiguration` 与类型 schema 里没有 `model`/`harness`/`effort` 三个字段（`effort` 移到活的资源绑定上，1.1），而选模型的代码改读「这条活的绑定」 |
 | **席位** | `topic/models.py:252 TopicMembership` + `topic_membership/` + `membership/`（两个包只有 service/repo，model 在 `topic/` 里） | 第二条授权线：`Actor.via` + 路由级 cheese-gate（`api/auth.py`） | ①认证路径只答「这张凭证是真的吗」；「它能干什么」全仓只有一个答法，入参是一条席位行；②往另一个项目的房间插一个 agent 实例的 handle 被拒，人没有这条限制（I9b）；③`resolve_agent_handle`（定义在 `topic_membership/services.py`，10 个调用点，其中 `api/auth.py:234` **在认证路径里**）零命中；④一个坐两个 AI 队友的房间，不带 @ 的消息不启动任何一轮；⑤认证路径上的改动有一条独立的回归测试：一张过期或张冠李戴的沙箱 token 仍然被拒 |
 | **项目** | `project/`、`workspace/`。`workspace/service.py:236 ensure_repo` 无条件建平台侧 git 仓 | `workspace/` 现在同时是「项目的 git 源」和「项目的资料库」（`:860 write_library_file`，#1209 合进来的；#1247 又给资料库加了页面和 `:887 delete_library_file`），两样不同的东西挤一个包；建项目不播种 agent 实例，`agent_instance/services.py:53 IMPLICIT_DEFAULT` 是一个 `instance_id=None` 的隐式默认 | ①产品判断不再读「项目有没有绑外部仓库」这个布尔，只读 4.5 的能力位；②建任意一个项目，断言存在一行芝士实例与它在根房间的席位行，`IMPLICIT_DEFAULT` 这种无实例行的隐式默认不存在 |
-| **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
+| **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
 | **└ 私聊** | `topic_memberships` 上的两席（`TopicMemberService.private_seats`）+ `chat.py` 里一处 `is_private` 读点（`_is_dm`，两类答案都从它推出来） | — | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
 | **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | 只剩一处：`prompt.py:217` 的 `thread_relay_prompt` 还在让房间起一个替补执行者去调 `cheese_bind`，而那个工具 #1378 已经删了。第二身份随 P11、kickoff 随 P26、第二会话/地点随 #1396 都已退场 | ①房间派生的 agent handle 零命中（`repo-guards.yml` 守着）；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
-| **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；③**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
+| **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | 会话只在首次 placement 搬一次（`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的调用点不再只有首次 placement；②`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；③**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `agent_sessions` 的 `work_lease`/`runtime_location`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑤地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
 | **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据由一次真探测答（`git push --dry-run`），探测本身要连远端，所以读路径上有一份 10 分钟的进程内缓存 | 平台开始持有远端凭据的记录时，探测改成先问记录再连远端 |
@@ -1630,7 +1627,7 @@ so check there and not in the menu, the contract or the doc**」。
 - **「有 git 远端但不是 GitHub」这一档托管方。**
 - **agent 的收件箱读侧**，和给 agent 的**能力清单**。
 - **足迹根作为接口字段。**
-- **可迁移的会话**：有 `agent_sessions` 行，没有把 transcript 从平台放回一台新机器的路径。
+- **可迁移的会话**：有 `agent_sessions` 行，没有把一条已经在跑的会话搬到另一台会话机的路径。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
@@ -1652,8 +1649,7 @@ so check there and not in the menu, the contract or the doc**」。
 `topics` 表的逐列层归属登记表**本稿没有给出**，所以 I3 的后半今天写不成守卫。
 本稿能先写下的分类只有这一句，它不是登记表：
 `cleanup_id`/`cleanup_due_at` 是 L2 的清理计划、
-`compute_config`/`compute_profile` 是 L0 的项目/房间配置、`resource_id` 是代际号（跨层）、
-`transcripts_archived_at` 是 L1 的收据。
+`compute_config`/`compute_profile` 是 L0 的项目/房间配置、`resource_id` 是代际号（跨层）。
 
 ### 9.4 今天有两份的（I4a 的登记清单）
 
@@ -1688,7 +1684,7 @@ so check there and not in the menu, the contract or the doc**」。
 | 十一 记忆 vs CLAUDE.md | **第 2 节整节靠它**。结论 7 就是这一条的推论：人和 agent 共同看的只能是文档（规矩），记忆是各自的观察。结论 42 把这条边界做成了存储上的事实——记忆是平台侧的文件，不进项目仓库，所以它想混进 `CLAUDE.md` 也得先走一条活 |
 | 十二 不要把对话升格成机械 | 4.3 说明矩阵是**守卫**不是产品功能；结论 16 解散 `scheduler/` 正是这一条那张表里「定期巡检」那一行的兑现；结论 13（平台从不发起）是它最彻底的一次执行；agent 的收件箱是人的接口换一个 `who`，不是新造一套 |
 | 十三 第一性原理 | 4.1 那段（同一个轴两种机制）就是这条。结论 3 也是：「换模型」的正确问题不是「怎么让第二个 agent 好用一点」，是「模型为什么被建模成了参与者的属性」 |
-| **十四 续跑是接回 transcript，平台自己不续** | **本稿修订它的后半句，见下。** 前半句概念 1.6、6.4 全盘采用，而且结论 29 把「transcript 权威副本在平台」写进骨架契约，让它第一次有了可执行的形式 |
+| **十四 续跑是接回 transcript，平台自己不续** | **本稿修订它的后半句，见下。** 前半句概念 1.6、6.4 全盘采用；接回的 transcript 在中心会话机上，平台不另存一份（结论 29） |
 | 十五 只 care device | 「沙盒」在本设计里是自托管机器的一个可见性档，不是第三类基础设施 |
 | 十六 平台的水管不许弄脏机器 | 8.2 把它做成两个接口字段（足迹根 + 撤离），并把「可见性与足迹永不互相推导」写成规则 |
 
