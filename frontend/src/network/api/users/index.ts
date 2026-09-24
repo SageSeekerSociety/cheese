@@ -84,6 +84,21 @@ export namespace UserApi {
       withCredentials: true,
     })
 
+  export const requestSignInCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/auth/email-code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const signInWithEmailCode = (data: { email: string; code: string }) =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/email-code/verify',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
   export const sendEmailCode = (email: string, inviteCode?: string) =>
     ApiInstance.request({
       url: '/users/verify/email',

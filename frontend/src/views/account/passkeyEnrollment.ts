@@ -95,24 +95,27 @@ async function deviceCanUnlockPasskeys(): Promise<boolean> {
   }
 }
 
-// The second-step page is reached both from the password form and from a
-// provider's redirect; only the first follows a password, and only that one
-// happens without leaving the page.
-let passwordAwaitingSecondStep = false
+/** A first step that can lead to the second-step page without leaving the app. */
+export type FirstStep = 'password' | 'email_code'
 
-export function passwordAccepted(): void {
-  passwordAwaitingSecondStep = true
+// The second-step page is reached from the password form, from the email
+// code page, and from a provider's redirect; only the first two happen
+// without leaving the page, so only they can be remembered here.
+let awaitingSecondStep: FirstStep | null = null
+
+export function firstStepAccepted(step: FirstStep): void {
+  awaitingSecondStep = step
 }
 
-/** Whether the second step just completed followed a password. */
-export function takePasswordStep(): boolean {
-  const followed = passwordAwaitingSecondStep
-  passwordAwaitingSecondStep = false
+/** Which first step the second step just completed followed, if one of ours. */
+export function takeFirstStep(): FirstStep | null {
+  const followed = awaitingSecondStep
+  awaitingSecondStep = null
   return followed
 }
 
-/** What a password sign-in started for passkeys as it finished. */
-export interface PasswordSignInUpgrade {
+/** What a finished sign-in started for passkeys. */
+export interface SignInUpgrade {
   enrollment: Enrollment
   /** Whether the password manager added a passkey without asking. */
   created: Promise<boolean>
@@ -125,7 +128,7 @@ export interface PasswordSignInUpgrade {
 export function upgradeAfterPasswordSignIn(
   userId: number,
   passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
-): PasswordSignInUpgrade | null {
+): SignInUpgrade | null {
   if (!passkeyEnrollment) return null
   const enrollment = new Enrollment(userId, passkeyEnrollment.ticket)
   return {
@@ -134,6 +137,34 @@ export function upgradeAfterPasswordSignIn(
     due: passkeyEnrollment.offer,
     canStopAsking: passkeyEnrollment.canStopAsking,
   }
+}
+
+/**
+ * What a sign-in by a mailed code starts for passkeys: the offer alone. No
+ * password manager filled anything in, so there is nobody to ask quietly.
+ */
+export function upgradeAfterEmailCodeSignIn(
+  userId: number,
+  passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
+): SignInUpgrade | null {
+  if (!passkeyEnrollment) return null
+  return {
+    enrollment: new Enrollment(userId, passkeyEnrollment.ticket),
+    created: Promise.resolve(false),
+    due: passkeyEnrollment.offer,
+    canStopAsking: passkeyEnrollment.canStopAsking,
+  }
+}
+
+/** How a sign-in that went through the second step starts for passkeys. */
+export function upgradeAfterSecondStep(
+  step: FirstStep | null,
+  userId: number,
+  passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
+): SignInUpgrade | null {
+  if (step === 'password') return upgradeAfterPasswordSignIn(userId, passkeyEnrollment)
+  if (step === 'email_code') return upgradeAfterEmailCodeSignIn(userId, passkeyEnrollment)
+  return null
 }
 
 /** The offer on screen now, held in memory only: the ticket inside it must
@@ -155,18 +186,15 @@ export function endPasskeyOffer(): void {
 }
 
 /**
- * Where a sign-in goes: to `target`, or, after a password, first to the
- * screen offering a passkey. The screen is shown only to someone bound for
+ * Where a sign-in goes: to `target`, or, after a password or a mailed code,
+ * first to the screen offering a passkey. The screen is shown only to someone bound for
  * the home page —
  * whoever is headed for a particular page (a link they followed, a device to
  * approve, a consent to give) is taken straight there — whose account is due
  * it, whose device can unlock a passkey with a fingerprint, face or screen
  * lock, and whose password manager did not just add one.
  */
-export async function landingAfterSignIn(
-  upgrade: PasswordSignInUpgrade | null,
-  target: string
-): Promise<RouteLocationRaw> {
+export async function landingAfterSignIn(upgrade: SignInUpgrade | null, target: string): Promise<RouteLocationRaw> {
   offer = null
   if (!upgrade || !upgrade.due || target !== '/') return target
   if (!(await deviceCanUnlockPasskeys())) return target

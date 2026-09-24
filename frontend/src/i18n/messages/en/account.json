@@ -66,7 +66,8 @@
     "notice": {
       "passwordReset": "Your password has been reset. Sign in with the new one."
     },
-    "lastUsed": "Last used"
+    "lastUsed": "Last used",
+    "emailCode": "Sign in with an email code"
   },
   "attempts": {
     "wrongPassword": "Wrong username or password.",
@@ -315,6 +316,12 @@
     "unlinked": "Unlinked",
     "unlinkFailed": "Could not unlink. Try again.",
     "lastWayIn": "This is your only way to sign in. Set a password or add a passkey first.",
-    "loadFailed": "Some details could not load. Refresh the page."
+    "loadFailed": "Some details could not load. Refresh the page.",
+    "methodEmailCode": "Email code sign-in"
+  },
+  "emailCode": {
+    "title": "Sign in with an email code",
+    "send": "Send code",
+    "codeTitle": "Enter the code"
   }
 }

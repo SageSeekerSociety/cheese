@@ -66,7 +66,8 @@
     "notice": {
       "passwordReset": "密码已重置，请使用新密码登录"
     },
-    "lastUsed": "上次使用"
+    "lastUsed": "上次使用",
+    "emailCode": "使用邮箱验证码登录"
   },
   "attempts": {
     "wrongPassword": "用户名或密码错误",
@@ -315,6 +316,12 @@
     "unlinked": "已解除关联",
     "unlinkFailed": "解除关联失败，请重试",
     "lastWayIn": "这是你唯一的登录方式。请先设置密码或添加通行密钥",
-    "loadFailed": "部分信息加载失败，请刷新页面"
+    "loadFailed": "部分信息加载失败，请刷新页面",
+    "methodEmailCode": "邮箱验证码登录"
+  },
+  "emailCode": {
+    "title": "邮箱验证码登录",
+    "send": "发送验证码",
+    "codeTitle": "输入验证码"
   }
 }

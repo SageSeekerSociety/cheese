@@ -637,6 +637,7 @@ const METHOD_LABELS: Record<string, () => string> = {
   passkey: () => t('account.security.methodPasskey'),
   totp: () => t('account.security.methodTotp'),
   backup_code: () => t('account.security.methodBackupCode'),
+  email_code: () => t('account.security.methodEmailCode'),
   signup: () => t('account.security.methodSignup'),
 }
 
