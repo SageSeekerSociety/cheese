@@ -73,7 +73,13 @@ class SessionService:
         self._db = db
 
     async def start(
-        self, user_id: int, login_method: str, *, ip: str, user_agent: str
+        self,
+        user_id: int,
+        login_method: str,
+        *,
+        ip: str,
+        user_agent: str,
+        two_factor_skipped: bool = False,
     ) -> Started:
         """Open a session and hand back its first refresh token."""
         token = secrets.token_urlsafe(32)
@@ -83,6 +89,7 @@ class SessionService:
             user_id=user_id,
             current_hash=_digest(token),
             login_method=login_method,
+            two_factor_skipped=two_factor_skipped,
             user_agent=user_agent[:1024],
             ip=ip[:512],
             last_used_at=now,

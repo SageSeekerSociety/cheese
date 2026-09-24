@@ -64,7 +64,11 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
-from app.domain.user.models import UserFollowingRelationship, UserSession
+from app.domain.user.models import (
+    UserFollowingRelationship,
+    UserSession,
+    UserTrustedDevice,
+)
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserFollowingRepository,
@@ -83,6 +87,7 @@ from app.domain.user.services import (
     normalize_nickname,
 )
 from app.domain.user.sessions import RevokeReason, SessionService
+from app.domain.user.trusted_devices import Granted, TrustedDeviceService
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -279,6 +284,34 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
+# A browser trusted to skip two-step verification holds this cookie. Scoped
+# like the refresh cookie: only the sign-in routes ever read it.
+TRUST_COOKIE = "cheese_trusted_device"
+
+
+def _set_trust_cookie(response: Response, granted: Granted) -> None:
+    response.set_cookie(
+        TRUST_COOKIE,
+        granted.token,
+        max_age=max(0, int((granted.expires_at - datetime.now(UTC)).total_seconds())),
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path=_REFRESH_COOKIE_PATH,
+    )
+
+
+async def _trusted_device(
+    request: Request, db: AsyncSession, user_id: int
+) -> UserTrustedDevice | None:
+    """The live trust this browser holds for ``user_id``, if any. Only the
+    server decides: a cookie for another account, or one revoked or expired,
+    finds nothing."""
+    return await TrustedDeviceService(db).find(
+        request.cookies.get(TRUST_COOKIE), user_id
+    )
+
+
 def _origin_of(url: str) -> str:
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}".lower()
@@ -318,23 +351,45 @@ async def issue_session(
     user_id: int,
     handle: str,
     login_method: str,
+    trust: UserTrustedDevice | None = None,
+    grant_trust: bool = False,
 ) -> str:
     """Sign the user in: open a session, put its refresh token in the cookie
     on ``response``, and return the access token for the body.
 
     Every way of signing in ends here, so every sign-in is a session the
     account can see and end.
+
+    ``trust`` is the trusted device that stood in for two-step verification,
+    when one did. ``grant_trust`` trusts this browser from now on: the
+    sign-in has just passed two-step verification and its owner asked not to
+    be asked again here.
     """
     from app.core.client_address import resolved_client_address
 
+    user_agent = request.headers.get("user-agent", "")
     # Behind a proxy that is not trusted to name the client, the peer is the
     # proxy; the device list shows no address rather than the proxy's.
     started = await SessionService(db).start(
         user_id,
         login_method,
         ip=resolved_client_address(request) or "",
-        user_agent=request.headers.get("user-agent", ""),
+        user_agent=user_agent,
+        two_factor_skipped=trust is not None,
     )
+    trusted = TrustedDeviceService(db)
+    if trust is not None:
+        await trusted.used(trust, started.session_id)
+    if grant_trust:
+        _set_trust_cookie(
+            response,
+            await trusted.grant(
+                user_id,
+                started.session_id,
+                user_agent=user_agent,
+                replacing=request.cookies.get(TRUST_COOKIE),
+            ),
+        )
     _set_refresh_cookie(response, started.refresh_token, started.expires_at)
     return create_access_token(user_id, handle=handle, sid=started.session_id)
 
@@ -2067,8 +2122,11 @@ async def user_login(
 
         totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
+        trust = (
+            await _trusted_device(request, session, user.id) if requires_2fa else None
+        )
 
-        if requires_2fa:
+        if requires_2fa and trust is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
                 return {
@@ -2096,7 +2154,8 @@ async def user_login(
             session,
             user_id=user.id,
             handle=user.username,
-            login_method="totp" if requires_2fa else "password",
+            login_method="totp" if requires_2fa and trust is None else "password",
+            trust=trust,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -2132,6 +2191,8 @@ async def verify_2fa_login(
     """Second step of a 2FA login: exchange the short-lived ``2fa_pending``
     token from the password step plus a TOTP code (or a one-time backup
     code) for real session tokens. Reference contract: POST {temp_token, code}.
+    With ``trust_device`` true, this browser is trusted to skip the step for
+    30 days.
 
     Two independent bounds keep this from being a code oracle for anyone
     holding a leaked password (#357): the ticket is redeemable exactly once
@@ -2148,6 +2209,7 @@ async def verify_2fa_login(
 
     temp_token = payload.get("temp_token") or ""
     code = (payload.get("code") or "").strip()
+    trust_device = payload.get("trust_device") is True
     if not temp_token or not code:
         raise BadRequestError("temp_token and code are required")
 
@@ -2210,6 +2272,7 @@ async def verify_2fa_login(
             user_id=user.id,
             handle=user.username,
             login_method="backup_code" if used_backup_code else "totp",
+            grant_trust=trust_device,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -2330,8 +2393,8 @@ async def verify_sign_in_code(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """The mailed code is a first step like a password: an account with 2FA
-    gets the same ``2fa_pending`` ticket the password step hands out, and
-    only an account without it is signed in here."""
+    gets the same ``2fa_pending`` ticket the password step hands out, unless
+    this browser is trusted to skip it."""
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.client_address import resolved_client_address
@@ -2367,16 +2430,19 @@ async def verify_sign_in_code(
     if user is None or is_placeholder_email(user.email):
         raise _invalid_email_code()
 
+    trust = None
     if await TOTPService(session).is_2fa_enabled(user.id):
-        return {
-            "code": 200,
-            "message": "2FA required",
-            "data": {
-                "requires2FA": True,
-                "userId": user.id,
-                "tempToken": await _issue_2fa_pending_token(user.id),
-            },
-        }
+        trust = await _trusted_device(request, session, user.id)
+        if trust is None:
+            return {
+                "code": 200,
+                "message": "2FA required",
+                "data": {
+                    "requires2FA": True,
+                    "userId": user.id,
+                    "tempToken": await _issue_2fa_pending_token(user.id),
+                },
+            }
 
     try:
         user, profile = await auth_service.get_user_with_profile(user.id)
@@ -2390,6 +2456,7 @@ async def verify_sign_in_code(
         user_id=user.id,
         handle=user.username,
         login_method="email_code",
+        trust=trust,
     )
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -2792,7 +2859,9 @@ async def get_user_identity_access_logs(
     return {"code": 200, "message": "Success", "data": data}
 
 
-def _session_dto(row: UserSession, current: uuid.UUID | None) -> dict:
+def _session_dto(
+    row: UserSession, current: uuid.UUID | None, trusted: set[uuid.UUID]
+) -> dict:
     return {
         "id": str(row.id),
         "loginMethod": row.login_method,
@@ -2801,6 +2870,8 @@ def _session_dto(row: UserSession, current: uuid.UUID | None) -> dict:
         "createdAt": row.created_at.isoformat(),
         "lastActiveAt": row.last_used_at.isoformat(),
         "current": row.id == current,
+        # Its browser is trusted to skip two-step verification.
+        "trusted": row.id in trusted,
     }
 
 
@@ -2814,10 +2885,11 @@ async def list_sessions(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     rows = await SessionService(session).live(auth_user.user_id)
+    trusted = await TrustedDeviceService(session).trusted_sessions(auth_user.user_id)
     return {
         "code": 200,
         "message": "OK",
-        "data": {"sessions": [_session_dto(row, current) for row in rows]},
+        "data": {"sessions": [_session_dto(row, current, trusted) for row in rows]},
     }
 
 
@@ -2831,9 +2903,13 @@ async def revoke_session(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """End one sign-in. Its refresh token stops working at once; an access
-    token it already holds lasts out its few remaining minutes."""
+    token it already holds lasts out its few remaining minutes. Its browser
+    is no longer trusted to skip two-step verification."""
     if not await SessionService(session).revoke(auth_user.user_id, session_id):
         raise NotFoundError("Session not found")
+    await TrustedDeviceService(session).revoke_for_session(
+        auth_user.user_id, session_id
+    )
     return {
         "code": 200,
         "message": "Session revoked successfully.",
@@ -2849,9 +2925,13 @@ async def revoke_all_sessions(
     current: uuid.UUID | None = Depends(get_current_session_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Sign out every device but the one asking."""
+    """Sign out every device but the one asking, and stop trusting every
+    browser but its own."""
     count = await SessionService(session).revoke_all(
         auth_user.user_id, RevokeReason.REVOKED, keep=current
+    )
+    await TrustedDeviceService(session).revoke_all(
+        auth_user.user_id, keep_session=current
     )
     return {
         "code": 200,
@@ -2998,6 +3078,7 @@ async def recover_password_verify(
         # Whoever made the reset necessary may hold a sign-in; end them all.
         # Connector devices are not sign-ins and stay until removed.
         await SessionService(session).revoke_all(user_id, RevokeReason.PASSWORD_RESET)
+        await TrustedDeviceService(session).revoke_all(user_id)
 
         return {
             "code": 200,
@@ -3022,7 +3103,8 @@ async def change_password(
     """Replace the account's password and sign out every other device.
 
     The device making the change stays signed in: it has just proved who is
-    at it with the sudo ticket.
+    at it with the sudo ticket. No browser stays trusted to skip two-step
+    verification, this one included.
     """
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can change their password.")
@@ -3039,6 +3121,7 @@ async def change_password(
     await SessionService(session).revoke_all(
         user_id, RevokeReason.PASSWORD_CHANGED, keep=current
     )
+    await TrustedDeviceService(session).revoke_all(user_id)
 
     return {"code": 200, "message": "Password changed successfully"}
 
@@ -3319,6 +3402,8 @@ async def enable_user_2fa(
         if not ok:
             raise UnprocessableEntityError("Invalid or expired verification code")
         backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
+        # A browser trusted for an earlier factor has not proved this one.
+        await TrustedDeviceService(session).revoke_all(auth_user.user_id)
         otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
         return {
             "code": 201,
@@ -3442,6 +3527,7 @@ async def disable_user_2fa(
     )
 
     await totp_service.disable_2fa(auth_user.user_id)
+    await TrustedDeviceService(session).revoke_all(auth_user.user_id)
 
     user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
     await _notify_2fa_disabled(user.email, user.username)
@@ -4058,18 +4144,22 @@ async def _oauth_login_redirect(
     """Sign in a resolved OAuth login and land on the success page.
 
     An account with 2FA gets a 2FA ticket and the verify page instead, exactly
-    as a password login would: the provider stands in for the password only.
+    as a password login would: the provider stands in for the password only,
+    and a trusted browser skips the second step here as it does there.
     """
     from app.domain.user.login_security import TOTPService
 
+    trust = None
     if await TOTPService(session).is_2fa_enabled(user_id):
-        return RedirectResponse(
-            _oauth_frontend_url(
-                settings.frontend_2fa_verify_path,
-                token=await _issue_2fa_pending_token(user_id),
-            ),
-            status_code=302,
-        )
+        trust = await _trusted_device(request, session, user_id)
+        if trust is None:
+            return RedirectResponse(
+                _oauth_frontend_url(
+                    settings.frontend_2fa_verify_path,
+                    token=await _issue_2fa_pending_token(user_id),
+                ),
+                status_code=302,
+            )
 
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
     redirect = RedirectResponse(
@@ -4091,6 +4181,7 @@ async def _oauth_login_redirect(
         user_id=user_id,
         handle=user_obj.username,
         login_method=f"oauth:{provider_id}",
+        trust=trust,
     )
     return redirect
 
