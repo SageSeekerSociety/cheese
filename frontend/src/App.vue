@@ -218,6 +218,8 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
+import { avatarColor } from '@/utils/avatar'
+
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -527,15 +529,16 @@ function onRailShortcut(e: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener('keydown', onRailShortcut))
 
+// 项目格子：首字压在 avatarColor() 的底色上，和人的默认头像同一套取色——
+// 色相由名字散列而来，明度固定，所以每一种色相上的白字都过 4.5:1。白字写死是
+// 对的：底色本身不随主题变，字也不能变。
 function projectAvatar(name: string): string {
   const trimmed = (name || '').trim()
   const ch = trimmed ? [...trimmed][0] : '·'
-  const colors = ['#F57F17', '#1f9d55', '#2563eb', '#7c3aed', '#dc2626', '#0891b2']
-  const c = colors[trimmed.length % colors.length]
   const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
-    `<rect width="48" height="48" rx="11" fill="${c}"/>` +
+    `<rect width="48" height="48" rx="11" fill="${avatarColor(trimmed)}"/>` +
     `<text x="24" y="24" font-size="24" fill="#ffffff" text-anchor="middle" ` +
     `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
   // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a

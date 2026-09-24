@@ -135,11 +135,6 @@ function warmDestination() {
 </script>
 
 <style lang="scss">
-.no-style-link {
-  text-decoration: none;
-  color: inherit;
-}
-
 .app-rail-item {
   position: relative;
   width: 48px;
@@ -151,7 +146,10 @@ function warmDestination() {
   --app-rail-item-background: 0.67;
   background-color: rgba(var(--v-theme-surface-light), var(--app-rail-item-background));
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  transition: all 0.2s ease;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
   gap: 2px;
 
   &:hover {
@@ -161,10 +159,12 @@ function warmDestination() {
     cursor: pointer;
   }
 
+  // 琥珀在这里只做底色与左侧那道指示条；图标与字用 --accent-ink，--accent 本身
+  // 写字在浅色下只有 2.7:1。
   &[aria-current] {
     --app-rail-item-background: 0.1;
     background-color: rgba(var(--v-theme-primary), var(--app-rail-item-background));
-    color: rgba(var(--v-theme-primary), var(--v-high-emphasis-opacity));
+    color: var(--accent-ink);
   }
 
   &.app-rail-item-cheese {
@@ -189,7 +189,9 @@ function warmDestination() {
       height: 32px !important;
       fill: rgb(var(--v-theme-on-surface));
       opacity: var(--v-medium-high-opacity);
-      transition: all 0.2s ease;
+      transition:
+        fill var(--dur-quick) var(--ease-standard),
+        opacity var(--dur-quick) var(--ease-standard);
     }
 
     // Brand paint. These two literals are deliberate and identical in both
@@ -213,16 +215,6 @@ function warmDestination() {
 
   .app-rail-item-text {
     line-height: 1;
-  }
-
-  // project tiles: keep the name to a single, truncated line so a long title
-  // ("知是 2.0 融合演示") never breaks the tile grid
-  .app-rail-item-label {
-    max-width: 44px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 10px;
   }
 }
 
@@ -266,22 +258,17 @@ function warmDestination() {
   overflow: visible;
 
   // the colored avatar IS the tile — never draw a card box behind it (that made
-  // a messy second square around the icon). Active state = the label turns the
-  // brand colour instead.
+  // a messy second square around the icon).
   &:hover,
   &[aria-current] {
     background-color: transparent;
-  }
-  &[aria-current] .app-rail-item-label {
-    color: rgb(var(--v-theme-primary));
-    font-weight: 600;
   }
 
   // Selected project reads as selected via an amber ring FRAMING the square —
   // the 40px avatar keeps a small gap to the ring (box-shadow: 0 spread = the
   // avatar edge, then a transparent gap, then the 2px amber ring).
   .v-img {
-    transition: box-shadow 0.2s ease;
+    transition: box-shadow var(--dur-quick) var(--ease-standard);
   }
   &[aria-current] .v-img {
     // `primary`, not the #f57f17 literal: identical in light (primary IS
@@ -294,20 +281,17 @@ function warmDestination() {
 }
 
 // "add project" affordance: a dashed rounded square with a muted plus, distinct
-// from a project tile (no colored avatar). Greens up on hover to invite the click.
+// from a project tile (no colored avatar). Hover stays neutral: it is not the
+// page's primary action, so it gets no amber.
 .app-rail-item.app-rail-item--add {
   background-color: transparent;
   border: 1.5px dashed rgba(var(--v-theme-on-surface), 0.28);
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-  .app-rail-add-icon {
-    transition: all 0.2s ease;
-  }
-
   &:hover {
-    background-color: rgba(var(--v-theme-primary), 0.08);
-    border-color: rgba(var(--v-theme-primary), 0.6);
-    color: rgba(var(--v-theme-primary), var(--v-high-emphasis-opacity));
+    background-color: var(--fill-2);
+    border-color: var(--line-2);
+    color: var(--text);
   }
 }
 
@@ -317,7 +301,7 @@ function warmDestination() {
   width: 24px;
   margin: 6px auto;
   opacity: 0.6;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
 }
 
 /* active indicator — a soft amber pill on the left edge, in our brand accent
@@ -331,7 +315,8 @@ function warmDestination() {
   transform: translateY(-50%);
   width: 4px;
   height: 22px;
-  border-radius: 0 3px 3px 0;
+  border-top-right-radius: var(--radius-pill);
+  border-bottom-right-radius: var(--radius-pill);
   background: rgb(var(--v-theme-primary));
 }
 
@@ -375,10 +360,10 @@ function warmDestination() {
   padding: 8px 12px;
   background: var(--rail-flyout-bg);
   color: var(--rail-flyout-ink);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 600;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__kbd {
   display: inline-flex;
@@ -386,8 +371,8 @@ function warmDestination() {
   justify-content: center;
   min-width: 20px;
   height: 20px;
-  padding: 0 5px;
-  border-radius: 5px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
   background: var(--rail-flyout-kbd-bg);
   color: var(--rail-flyout-ink);
   font-size: 12px;

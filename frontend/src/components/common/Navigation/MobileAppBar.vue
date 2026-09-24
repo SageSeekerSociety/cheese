@@ -150,7 +150,7 @@ watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true }
 .v-toolbar-title.t-title {
   font-size: 15px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: var(--lh-15);
   color: var(--ink);
 }
 
