@@ -478,7 +478,9 @@ def test_agent_reads_the_projects_record_through_the_room_it_works_in(client):
     }
     for collection, (action, body) in written.items():
         assert (
-            client.post(f"/topics/{origin}/{action}", json=body, headers=auth).status_code
+            client.post(
+                f"/topics/{origin}/{action}", json=body, headers=auth
+            ).status_code
             == 200
         )
         listed = client.get(
