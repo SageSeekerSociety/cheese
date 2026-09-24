@@ -40,6 +40,34 @@ class UpgradeDeferred(Exception):
         self.info = info
 
 
+def plant_native_skills(config_dir, skills):
+    """Write the platform's skills where this machine's shell will look for them.
+
+    The agent reads a skill's text, then runs the command that text gives it —
+    here, on the executor machine. Everything else that installs these files
+    does it beside the claude it starts (the container launch, the
+    device-hosted launch); this path starts no claude at all, so nothing
+    installed them and `$CLAUDE_CONFIG_DIR/skills/documents/scripts/office.py`
+    named a file that was not on the machine. The room's own answer to that was
+    to scavenge a copy out of another room's cache, which is not a mechanism.
+
+    Written through a temporary because a half-written `office.py` is a script
+    the agent is told to run, and only rewritten when the bytes differ: this
+    runs on every prepare, including the ones that change nothing.
+    """
+    for name, content in sorted(skills.items()):
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Native skill file must be inside the config directory")
+        path = config_dir / relative
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".next")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+
+
 def stage_release(platform_dir, payload):
     contents = {
         name: (
@@ -221,6 +249,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
+    plant_native_skills(config_dir, payload.get("skills") or {})
     with (platform_dir / "executor-bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         stop_previous_root(home)

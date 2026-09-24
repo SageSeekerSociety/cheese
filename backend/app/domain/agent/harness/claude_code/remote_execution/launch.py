@@ -26,6 +26,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
+from app.domain.agent.skills import native_skill_files
 
 
 def can_prepare(info):
@@ -79,6 +80,14 @@ def payload_for(project_id, resource_id, env, known_files=None):
         "resource": str(resource_id),
         "env": values,
         "environment": environment,
+        # Carried as content, not as a release file: the agent's shell runs on
+        # THIS machine, and the skill text it was handed names
+        # `$CLAUDE_CONFIG_DIR/skills/...` — a path that only resolves here. The
+        # executor has no claude of its own, so nothing else on this side
+        # installs them (bootstrap.prepared writes them out). Kept out of
+        # `file_sources()` on purpose: a skill edit is not a reason to
+        # restart every room's executor, and the release digest would make it one.
+        "skills": native_skill_files(),
         "file_names": list(files),
         "files": {
             name: base64.b64encode(content.encode()).decode()
