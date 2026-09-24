@@ -1,6 +1,5 @@
 """Device-side checks and deletion, restricted to a recorded resource directory."""
 
-import fcntl
 import json
 import os
 import runpy
@@ -12,6 +11,9 @@ import tarfile
 import time
 import uuid
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
 
 # The one directory the platform writes under the machine's own `$HOME`. A copy
 # of `place.footprint_root()`, not a second answer: this file is piped to the
@@ -91,6 +93,60 @@ def platform_dir(home: Path) -> Path:
     return home / PLATFORM_DIRS[0]
 
 
+def lock(file) -> None:
+    """flock(LOCK_EX). This file arrives on stdin and cannot load portable.py
+    for the Windows lock, so it carries the same one."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        while True:
+            os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
+            try:
+                msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+    fcntl.flock(file, fcntl.LOCK_EX)
+
+
+def portable(paths: list[Path]) -> dict | None:
+    """The Windows primitives out of a room's own executor installation.
+
+    Every process the platform starts in a room comes from that installation,
+    so a room without one has nothing of ours running in it.
+    """
+    for path in paths:
+        helper = platform_dir(path) / "remote-execution/portable.py"
+        if helper.is_file():
+            return runpy.run_path(str(helper))
+    return None
+
+
+def windows_holders(paths: list[Path]) -> list[int]:
+    """What `lsof +D` answers, as far as Windows lets a process be asked.
+
+    A process holds the room when its executable, its command line or its
+    working directory is inside it. Files it merely has open are not visible
+    this way — but Windows refuses to delete a file that is open, so deletion
+    fails there rather than going ahead underneath it.
+    """
+    helper = portable(paths)
+    if helper is None:
+        return []
+    roots = [os.path.normcase(str(path.resolve())) + os.sep for path in paths]
+    own = {os.getpid(), os.getppid()}
+    found = []
+    for row in helper["processes"](directories=True):
+        places = [row["image"], row["command"], row.get("cwd", "")]
+        if row["pid"] not in own and any(
+            root in os.path.normcase(place) + os.sep
+            for root in roots
+            for place in places
+        ):
+            found.append(row["pid"])
+    return found
+
+
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
 ) -> subprocess.CompletedProcess:
@@ -148,6 +204,12 @@ def check_no_writers(paths: list[Path]) -> None:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
+    if sys.platform == "win32":
+        if windows_holders([Path(path) for path in present]):
+            raise StillRunning(
+                "resource still has processes holding files or working directories"
+            )
+        return
     result = run_command(["lsof", "-t", "+D", *present])
     if result.stdout.strip():
         raise StillRunning(
@@ -164,6 +226,8 @@ def holders(paths: list[Path]) -> list[int]:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return []
+    if sys.platform == "win32":
+        return windows_holders([Path(path) for path in present])
     result = run_command(["lsof", "-t", "+D", *present])
     own = {os.getpid(), os.getppid()}
     return [
@@ -182,6 +246,11 @@ def end_holders(paths: list[Path]) -> None:
     """
     pids = holders(paths)
     for signal_number, wait in ((15, 10.0), (9, 2.0)):
+        helper = portable(paths) if sys.platform == "win32" else None
+        if helper is not None:
+            # No SIGTERM to send on Windows; both rounds end them outright.
+            helper["terminate"](pids)
+            pids = []
         for pid in pids:
             try:
                 os.kill(pid, signal_number)
@@ -225,6 +294,10 @@ def remove_tree(path: Path) -> None:
             raise error
         # Go module caches contain read-only directories owned by this user.
         parent.chmod(parent.stat().st_mode | stat.S_IWUSR)
+        if sys.platform == "win32":
+            # There it is the file's own read-only flag that refuses, and Git
+            # sets it on every object it writes.
+            Path(name).chmod(stat.S_IWRITE)
         function(name)
 
     shutil.rmtree(path, onerror=retry_unlink)
@@ -382,11 +455,19 @@ def retain_transcripts(home: Path, archive: Path) -> None:
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
-    directory = os.open(archive.parent, os.O_RDONLY)
+    sync_directory(archive.parent)
+
+
+def sync_directory(directory: Path) -> None:
+    """Make a rename inside `directory` durable. Windows cannot open a
+    directory to fsync it, so there the rename is left to NTFS's own journal."""
+    if sys.platform == "win32":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
     try:
-        os.fsync(directory)
+        os.fsync(descriptor)
     finally:
-        os.close(directory)
+        os.close(descriptor)
 
 
 def expire_transcripts(archive: Path) -> None:
@@ -417,6 +498,45 @@ def session_target(home: Path, resource: str) -> dict | None:
     return target
 
 
+def wait_for_launcher(home: Path, state: Path) -> None:
+    """On Windows the process that started the executor waits on it instead of
+    becoming it, and outlives it by the moment it takes to exit. Until it has,
+    it is a process in the room."""
+    helper = portable([home])
+    if helper is None:
+        return
+    name = os.path.normcase(str(state))
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and any(
+        name in os.path.normcase(row["command"]) for row in helper["processes"]()
+    ):
+        time.sleep(0.1)
+
+
+def stop_windows_helper(home: Path, pid: int, expected: str) -> None:
+    """`kill` of a helper a Git Bash script started, by the pid it recorded.
+
+    That pid is Git Bash's own (`$!`), not Windows's, and the helper's command
+    line names its script the way Git Bash passed it on — `C:/…/x.py` — so both
+    are translated before anything is compared or ended. The shell that started
+    it waits on it and exits with it; it is in the room until it has.
+    """
+    helper = portable([home])
+    native = helper["windows_pid"](pid) if helper else None
+    if helper is None or native is None:
+        return
+    if os.path.normcase(expected) not in os.path.normcase(
+        helper["command_line"](native)
+    ):
+        return
+    helper["terminate"]([native])
+    for _ in range(30):
+        if helper["windows_pid"](pid) is None:
+            return
+        time.sleep(0.1)
+    raise RuntimeError(Path(expected).stem + " helper has not stopped")
+
+
 def stop_executor(home: Path, resource: str) -> None:
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
@@ -432,14 +552,19 @@ def stop_executor(home: Path, resource: str) -> None:
             )
             if result.returncode:
                 raise RuntimeError("executor has not stopped: " + result.stderr)
+            if sys.platform == "win32":
+                wait_for_launcher(home, state)
     # Both helpers can outlive the agent, including launches without an executor.
     for name in ("cheese-preview", "cheese-tunnel"):
         marker = home / ".cheese" / (name + ".pid")
         if not marker.exists():
             continue
         pid = int(marker.read_text())
-        command = run_command(["ps", "-p", str(pid), "-o", "args="])
         expected = str(home / ".cheese" / (name + ".py"))
+        if sys.platform == "win32":
+            stop_windows_helper(home, pid, expected)
+            continue
+        command = run_command(["ps", "-p", str(pid), "-o", "args="])
         if expected in command.stdout:
             try:
                 os.kill(pid, 15)
@@ -466,8 +591,8 @@ def main() -> None:
         directory = Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
         directory.mkdir(parents=True, exist_ok=True)
         receipt = directory / (str(uuid.UUID(resource)) + ".ready")
-        with receipt.with_suffix(".lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with receipt.with_suffix(".lock").open("a") as receipt_lock:
+            lock(receipt_lock)
             if not receipt.exists() or receipt.read_text() != "ready\n":
                 # The first attempt stamps when the room was asked to leave;
                 # every later attempt measures the grace from that stamp, not
@@ -476,14 +601,14 @@ def main() -> None:
                 if not requested.exists():
                     requested.write_text(str(time.time()))
                 try:
-                    request_exit(home, work, lock.fileno())
+                    request_exit(home, work, receipt_lock.fileno())
                     stop_executor(home, resource)
                     check_no_writers([home, work])
                 except StillRunning:
                     if time.time() - float(requested.read_text()) < FORCE_AFTER_S:
                         raise
                     end_holders([home, work])
-                    request_exit(home, work, lock.fileno())
+                    request_exit(home, work, receipt_lock.fileno())
                     stop_executor(home, resource)
                     check_no_writers([home, work])
                 temporary = receipt.with_suffix(".tmp")
@@ -492,11 +617,7 @@ def main() -> None:
                     output.flush()
                     os.fsync(output.fileno())
                 os.replace(temporary, receipt)
-                descriptor = os.open(directory, os.O_RDONLY)
-                try:
-                    os.fsync(descriptor)
-                finally:
-                    os.close(descriptor)
+                sync_directory(directory)
         print(json.dumps({"ready": True}))
     elif action == "publication":
         # Central workspaces hold generated context. Project publication is
