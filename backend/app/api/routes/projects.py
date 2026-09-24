@@ -1366,7 +1366,7 @@ async def save_forge_attribution(
 
 
 def _default_model_state(project_settings: dict | None) -> dict:
-    from app.domain.agent_instance.configuration import model_choices
+    from app.domain.agent_instance.configuration import model_choices, project_pool
 
     choices = model_choices(project_settings)
     chosen = (project_settings or {}).get("default_model")
@@ -1384,6 +1384,9 @@ def _default_model_state(project_settings: dict | None) -> dict:
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
+        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
+        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
+        "pool": project_pool(project_settings),
         "can_manage": False,  # 由路由层按权限填
     }
 

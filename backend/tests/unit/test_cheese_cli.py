@@ -770,59 +770,115 @@ def test_machine_reports_its_session_choice(monkeypatch, capsys):
     assert "点头" not in output
 
 
-def test_sync_agents_writes_and_prunes_teammate_definitions(monkeypatch, tmp_path):
-    """活跃队友各得一份 mate-<handle>.md（名字、一句话描述、model）；退休的
-    被清掉；不是它写的 agent 文件一个不动。"""
+def test_sync_agents_writes_and_prunes_model_definitions(monkeypatch, tmp_path):
+    """项目模型目录（本池）每项各得一份 model-<name>.md（名字、一句话描述、
+    model=目录 id）；不再可指定的（带记号的）被清掉；上一版按队友写的
+    mate-*.md 无条件清掉；手写的同名前缀文件和其他人的 agent 文件不动。
+
+    响应形状照 `ok(state)` 的真实信封：data 就是 state 本身（不是分页的
+    data.data）——形状搞错的代价是目录恒空、一份文件不写还全清。"""
     cli = _load()
     monkeypatch.setattr(cli, "PROJECT", "proj")
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
 
     def request(method, path, body=None, **kwargs):
-        assert (method, path) == ("GET", "/projects/proj/agents")
+        assert (method, path) == ("GET", "/projects/proj/default-model")
         return {
             "data": {
-                "data": [
+                "model": "deepseek-flash",
+                "subagent_model": None,
+                "pool": "gateway",
+                "choices": [
                     {
-                        "handle": "cheese",
-                        "display_name": "芝士",
-                        "is_active": True,
-                        "type_name": None,
-                        "configuration": {"body": "你是主芝士。", "model": None},
+                        "id": "deepseek-flash",
+                        "label": "DeepSeek Flash",
+                        "supply": "gateway",
+                        "default": True,
                     },
                     {
-                        "handle": "spark",
-                        "display_name": "Spark",
-                        "is_active": True,
-                        "type_name": "coder",
-                        "configuration": {"body": "", "model": "glm-4.6"},
+                        "id": "kimi-k3",
+                        "label": "Kimi K3",
+                        "supply": "gateway",
+                        "default": False,
                     },
                     {
-                        "handle": "old",
-                        "display_name": "Old",
-                        "is_active": False,
-                        "type_name": None,
-                        "configuration": {"model": "sonnet"},
+                        "id": "MiMo/V2.6 Pro",
+                        "label": "MiMo",
+                        "supply": "gateway",
+                        "default": False,
                     },
-                ]
+                    {
+                        "id": "sonnet",
+                        "label": "Sonnet",
+                        "supply": "subscription",
+                        "default": False,
+                    },
+                ],
             }
         }
 
     monkeypatch.setattr(cli, "_call", request)
     agents = tmp_path / "agents"
     agents.mkdir()
-    (agents / "mate-old.md").write_text("stale")
+    (agents / "mate-cheese.md").write_text("上一版按队友写的")
+    (agents / "model-old.md").write_text(
+        "由 cheese sync-agents 按项目模型目录生成，别手改。\n旧内容"
+    )
+    (agents / "model-manual.md").write_text("手写的，别碰")
     (agents / "keep.md").write_text("someone else's file")
     cli.main()
-    spark = (agents / "mate-spark.md").read_text()
-    assert "name: spark" in spark
-    assert "model: glm-4.6" in spark
-    assert "Spark（模型 glm-4.6） · coder" in spark
-    main_def = (agents / "mate-cheese.md").read_text()
-    assert "model: inherit" in main_def
-    assert "你是主芝士。" in main_def
-    assert not (agents / "mate-old.md").exists()
+    kimi = (agents / "model-kimi-k3.md").read_text()
+    assert "name: kimi-k3" in kimi
+    assert "model: kimi-k3" in kimi
+    assert "平台模型目录 · Kimi K3（kimi-k3）" in kimi
+    assert (agents / "model-deepseek-flash.md").exists()
+    # CC 分身名比模型 id 严格：名字是清洗过的,真 id 在 frontmatter 的 model 里。
+    mimo = (agents / "model-mimo-v2.6-pro.md").read_text()
+    assert "name: mimo-v2.6-pro" in mimo
+    assert "model: MiMo/V2.6 Pro" in mimo
+    # 池外的不写：订阅短名对这个 gateway 项目不可指定。
+    assert not (agents / "model-sonnet.md").exists()
+    assert not (agents / "mate-cheese.md").exists()
+    # 带记号的旧文件清掉；手写的同名前缀文件不动。
+    assert not (agents / "model-old.md").exists()
+    assert (agents / "model-manual.md").read_text() == "手写的，别碰"
     assert (agents / "keep.md").read_text() == "someone else's file"
+
+
+def test_sync_agents_falls_back_to_default_choice_for_pool(monkeypatch, tmp_path):
+    """旧后端的响应里没有 pool 字段：退回「默认那一项的供给」；一个默认项
+    都没有时宁可不列也不按错池列。"""
+    cli = _load()
+    monkeypatch.setattr(cli, "PROJECT", "proj")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync-agents"])
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    def request(method, path, body=None, **kwargs):
+        return {
+            "data": {
+                "choices": [
+                    {
+                        "id": "sonnet",
+                        "label": "Sonnet",
+                        "supply": "subscription",
+                        "default": True,
+                    },
+                    {
+                        "id": "kimi-k3",
+                        "label": "Kimi",
+                        "supply": "gateway",
+                        "default": False,
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    cli.main()
+    agents = tmp_path / "agents"
+    assert (agents / "model-sonnet.md").exists()
+    assert not (agents / "model-kimi-k3.md").exists()
 
 
 def test_sync_agents_never_breaks_the_session(monkeypatch, tmp_path, capsys):

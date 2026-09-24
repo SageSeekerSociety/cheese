@@ -67,7 +67,7 @@ PRIVATE_INSTRUCTIONS = (
 
 
 def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.hooks_settings 的同款）：队友分身定义随会话启动
+    """发现层（session_launch.hooks_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
