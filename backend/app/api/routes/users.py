@@ -469,6 +469,18 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
     return minted.token
 
 
+async def _passkey_enrollment(user_id: int) -> dict[str, Any]:
+    """What a finished sign-in hands back for adding a passkey.
+
+    The person has just proved more than the sudo page would ask of them, so
+    sending them there before a passkey can be added would only make them
+    prove it twice. The ticket is an ordinary sudo ticket for ``PASSKEY_ADD``:
+    the same few minutes, the same single use, good for nothing else. It
+    travels in the response body and never in a URL.
+    """
+    return {"ticket": await _issue_sudo_ticket(user_id, SudoPurpose.PASSKEY_ADD)}
+
+
 async def _spend_sudo_ticket(
     ticket: object, *, user_id: int, purpose: SudoPurpose
 ) -> None:
@@ -1784,6 +1796,7 @@ async def user_login(
                 "accessToken": access_token,
                 "requires2FA": False,
                 "sessionId": session_id,
+                "passkeyEnrollment": await _passkey_enrollment(user.id),
             },
         }
     finally:
@@ -1905,6 +1918,7 @@ async def verify_2fa_login(
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
                 "sessionId": session_id,
+                "passkeyEnrollment": await _passkey_enrollment(user.id),
             },
         }
     finally:
