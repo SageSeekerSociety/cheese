@@ -39,7 +39,8 @@ export interface SignedInAccount {
   readonly sessionRestored: Promise<void>
 }
 
-const needsEmail = (account: SignedInAccount) => account.loggedIn && account.user?.emailMissing === true
+const needsEmail = (account: SignedInAccount | undefined) =>
+  account?.loggedIn === true && account.user?.emailMissing === true
 
 const passes = (route: RouteLocationNormalized) =>
   route.name === ADD_EMAIL_ROUTE || (typeof route.name === 'string' && PASSES.has(route.name))
@@ -48,20 +49,15 @@ const addEmail = (route: RouteLocationNormalized) => ({ name: ADD_EMAIL_ROUTE, q
 
 /**
  * `account` 异步取：AccountService 的请求客户端反过来依赖路由，静态导入会成环
- * （router/home.ts 同理）。
+ * （router/home.ts 同理）。也因此不在建路由时就去读它：那一刻环上的模块可能还没
+ * 求值完，拿到的是个空壳。第一次导航时整张依赖图早已就绪，从那时起才读、才开始
+ * 盯着标记；读不到就不拦，这个守卫不该挡住一个它判断不了的导航。
  */
-export function requireEmail(router: Router, account: () => Promise<SignedInAccount>) {
-  router.beforeEach(async (to) => {
-    const current = await account()
-    if (to.name === ADD_EMAIL_ROUTE) {
-      // 这一页只对登着的人有意义；冷打开时先等会话恢复完再判断。
-      await current.sessionRestored
-      return current.loggedIn ? true : { name: 'SignIn' }
-    }
-    return passes(to) || !needsEmail(current) ? true : addEmail(to)
-  })
+export function requireEmail(router: Router, account: () => Promise<SignedInAccount | undefined>) {
+  let watching = false
 
-  void account().then((current) =>
+  function watchFlag(current: SignedInAccount) {
+    watching = true
     watch(
       () => needsEmail(current),
       async (need) => {
@@ -69,8 +65,19 @@ export function requireEmail(router: Router, account: () => Promise<SignedInAcco
         await router.isReady()
         const here = router.currentRoute.value
         if (!passes(here)) await router.replace(addEmail(here))
-      },
-      { immediate: true }
+      }
     )
-  )
+  }
+
+  router.beforeEach(async (to) => {
+    const current = await account()
+    if (!current) return true
+    if (!watching) watchFlag(current)
+    if (to.name === ADD_EMAIL_ROUTE) {
+      // 这一页只对登着的人有意义；冷打开时先等会话恢复完再判断。
+      await current.sessionRestored
+      return current.loggedIn ? true : { name: 'SignIn' }
+    }
+    return passes(to) || !needsEmail(current) ? true : addEmail(to)
+  })
 }
