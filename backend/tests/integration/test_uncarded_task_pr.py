@@ -43,11 +43,26 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
     assert second["tasks_merged"] == 0
 
     async def read_result():
-        async with client.test_factory() as session:
-            return await session.get(Task, task.id)
+        from sqlalchemy import select
 
-    row = client.portal.call(read_result)
+        from app.domain.block.models import Block
+
+        async with client.test_factory() as session:
+            row = await session.get(Task, task.id)
+            events = list(
+                await session.scalars(
+                    select(Block).where(
+                        Block.topic_id == row.room_id,
+                        Block.meta["event_type"].as_string() == "accept_done",
+                    )
+                )
+            )
+            return row, events
+
+    row, events = client.portal.call(read_result)
     assert row.status == TaskStatus.closed
     assert row.accepted_at is not None
     assert row.accepted_by is None
     assert row.delivered_head == head
+    assert len(events) == 1
+    assert events[0].content == f"PR #{number} 已在代码仓库合并，任务已交付"
