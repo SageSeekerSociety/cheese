@@ -2752,12 +2752,19 @@ async def get_user_identity(
 ) -> dict:
     """The owner's identity, masked unless ``precise`` is asked for.
 
+    Nobody else reads it in either form: the masked one still carries grade,
+    major and class in full, which with a surname names a student. The check
+    comes before the lookup, so a refusal says nothing about whether a record
+    exists.
+
     The unmasked name and student ID take a fresh re-authentication: a
     session alone, stolen or left open, only ever reads the masked form.
     """
+    from app.core.client_address import resolved_client_address
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can view identity.")
     if precise:
-        if auth_user.user_id != user_id:
-            raise ForbiddenError("Precise identity view only allowed for the owner.")
         await _spend_sudo_ticket(
             sudo_ticket, user_id=auth_user.user_id, purpose=SudoPurpose.REALNAME_VIEW
         )
@@ -2779,7 +2786,7 @@ async def get_user_identity(
                 target_id=user_id,
                 access_reason=accessReason or "Precise real-name view",
                 access_type=accessType,
-                ip_address=request.client.host if request.client else "",
+                ip_address=resolved_client_address(request) or "",
                 module_type=moduleType,
                 module_entity_id=moduleEntityId,
             )

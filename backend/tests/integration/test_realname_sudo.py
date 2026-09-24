@@ -1,6 +1,6 @@
-"""A real name and student ID are shown unmasked, and changed, only after the
-owner re-authenticates for that operation; the masked form needs a session
-alone."""
+"""A real name and student ID are read only by their owner. They are shown
+unmasked, and changed, only after the owner re-authenticates for that
+operation; the masked form needs the owner's session alone."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -114,6 +114,34 @@ class TestReading:
         ticket = registered.sudo_ticket(api_client, "realname:update")
 
         _refused(registered.read(api_client, precise=True, ticket=ticket))
+
+
+class TestSomeoneElse:
+    @pytest.mark.parametrize("has_record", [True, False])
+    def test_another_user_is_refused_the_masked_form(
+        self,
+        has_record: bool,
+        owner: _Owner,
+        user_client: UserCreator,
+        api_client: TestClient,
+    ):
+        if has_record:
+            ticket = owner.sudo_ticket(api_client, "realname:update")
+            assert owner.put(api_client, IDENTITY, ticket).status_code == 200
+        stranger = _Owner(user_client)
+
+        resp = api_client.get(
+            f"/users/{owner.id}/identity",
+            headers=stranger.headers,
+            params={"precise": "false"},
+        )
+
+        # Refused the same way whether or not a record exists, and as a
+        # permission refusal, not as a prompt to re-authenticate.
+        assert resp.status_code == 403, resp.text
+        body = resp.json()
+        assert body["error"]["name"] == "ForbiddenError"
+        assert "identity" not in (body.get("data") or {})
 
 
 class TestChanging:
