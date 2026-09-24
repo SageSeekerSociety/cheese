@@ -1,6 +1,6 @@
 //! Where cheesehost runs on this computer, and what it needs there first. Each
-//! platform provides `prepare`, `sh` (a shell where cheesehost lives), `kill`
-//! and `CHEESEHOST_CONFIG`.
+//! platform provides `prepare`, `shell` and `PRELUDE` (a sh where cheesehost
+//! lives), `kill` and `CHEESEHOST_CONFIG`.
 
 #[cfg(target_os = "macos")]
 mod macos;

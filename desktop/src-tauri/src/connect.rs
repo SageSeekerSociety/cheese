@@ -10,7 +10,8 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Mutex;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
 
 use crate::platform;
 
@@ -26,15 +27,37 @@ pub fn approval_code(printed: &str) -> Option<String> {
     (complete && !code.is_empty()).then_some(code)
 }
 
-/// Runs a shell script where cheesehost lives and returns what it printed.
-pub async fn sh(script: &str) -> Result<String, String> {
-    let out = platform::sh(script).output().await.map_err(|e| e.to_string())?;
+/// Starts `shell` — a `sh -s` somewhere — and hands it `script` on stdin. A
+/// script never travels as an argument: on Windows it would cross wsl.exe, which
+/// joins its arguments and lets the default shell split them again. Braces make
+/// sh read the whole script before running any of it, so a command inside that
+/// reads stdin gets end-of-file rather than the rest of the script.
+pub async fn spawn_script(mut shell: Command, script: &str) -> Result<Child, String> {
+    let mut child = shell
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(format!("{{\n{script}\n}}\n").as_bytes()).await.map_err(|e| e.to_string())?;
+    Ok(child)
+}
+
+/// Runs `script` in `shell` and returns what it printed, or that as the error.
+pub async fn run_script(shell: Command, script: &str) -> Result<String, String> {
+    let out = spawn_script(shell, script).await?.wait_with_output().await.map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     if out.status.success() {
         Ok(text)
     } else {
         Err(text.trim().to_string())
     }
+}
+
+/// Runs a script where cheesehost lives: on this Mac, or inside the Windows side's WSL distro.
+pub async fn sh(script: &str) -> Result<String, String> {
+    run_script(platform::shell(), &format!("{}{script}", platform::PRELUDE)).await
 }
 
 /// The running `cheesehost link connect`, so the page can cancel it.
@@ -68,11 +91,12 @@ pub async fn connect(
     }
 
     step("正在接入");
-    let mut child = platform::sh(&format!("exec \"$HOME/.local/bin/cheesehost\" link connect '{origin}/connector'"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cheesehost: {e}"))?;
+    let mut child = spawn_script(
+        platform::shell(),
+        &format!("{}exec \"$HOME/.local/bin/cheesehost\" link connect '{origin}/connector'", platform::PRELUDE),
+    )
+    .await
+    .map_err(|e| format!("cheesehost: {e}"))?;
     *running.0.lock().unwrap() = child.id();
 
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();

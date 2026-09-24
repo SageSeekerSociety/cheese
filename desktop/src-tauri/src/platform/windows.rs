@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tokio::process::Command;
 
-use crate::connect::sh as run_sh;
+use crate::connect::{run_script, sh as run_sh};
 
 // Inside the distro cheesehost is the Linux build, reading ~/.config/cheese.
 pub const CHEESEHOST_CONFIG: &str = "$HOME/.config/cheese/config.json";
@@ -35,12 +35,19 @@ fn hidden(program: &str) -> Command {
     cmd
 }
 
-pub fn sh(script: &str) -> Command {
+// wsl.exe starts no login session, so systemctl --user cannot find the user
+// manager unless pointed at it; cheesehost installs its service through it.
+pub const PRELUDE: &str = "export XDG_RUNTIME_DIR=/run/user/$(id -u); cd\n";
+
+/// A sh inside the distro reading its script from stdin (connect::spawn_script).
+/// --exec runs it directly rather than through the user's default shell.
+pub fn shell() -> Command {
+    shell_as(USER)
+}
+
+fn shell_as(user: &str) -> Command {
     let mut cmd = hidden("wsl.exe");
-    // wsl.exe starts no login session, so systemctl --user cannot find the user
-    // manager unless pointed at it; cheesehost installs its service through it.
-    let script = format!("export XDG_RUNTIME_DIR=/run/user/$(id -u); cd; {script}");
-    cmd.args(["-d", DISTRO, "-u", USER, "--", "sh", "-c", &script]);
+    cmd.args(["-d", DISTRO, "-u", user, "--exec", "sh", "-s"]);
     cmd
 }
 
@@ -62,7 +69,7 @@ async fn run(program: &str, args: &[&str]) -> Result<String, String> {
 }
 
 async fn as_root(script: &str) -> Result<String, String> {
-    run("wsl.exe", &["-d", DISTRO, "-u", "root", "--", "sh", "-c", script]).await
+    run_script(shell_as("root"), script).await
 }
 
 async fn powershell(script: &str) -> Result<String, String> {

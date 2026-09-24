@@ -15,9 +15,12 @@ pub const CHEESEHOST_CONFIG: &str = "$HOME/Library/Application Support/cheese/co
 // An app opened from Finder inherits launchd's bare PATH, not the user's shell.
 const PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin";
 
-pub fn sh(script: &str) -> Command {
+pub const PRELUDE: &str = "";
+
+/// A sh reading its script from stdin (connect::spawn_script).
+pub fn shell() -> Command {
     let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(script).env("PATH", PATH);
+    cmd.arg("-s").env("PATH", PATH);
     cmd
 }
 
