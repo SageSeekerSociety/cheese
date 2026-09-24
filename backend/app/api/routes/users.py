@@ -1992,10 +1992,18 @@ async def refresh_access_token(
     summary="Logout",
 )
 async def user_logout(
+    request: Request,
     response: Response,
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    # Logout is idempotent: even if the refresh cookie is missing or expired,
-    # the client should receive cookie-clearing headers and a success response.
+    """End the session behind the refresh cookie and clear the cookie.
+
+    Idempotent: with the cookie missing or its session already over, the
+    client still gets the clearing header and a success response.
+    """
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
+    if refresh_token:
+        await SessionService(session).end(refresh_token)
     _clear_refresh_cookie(response)
     return {
         "code": 201,
@@ -2455,6 +2463,7 @@ async def recover_password_request(
 async def recover_password_verify(
     payload: ResetPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2475,6 +2484,9 @@ async def recover_password_verify(
 
         user_id = int(token_data["user_id"])
         await auth_service.update_password(user_id, new_password)
+        # Whoever made the reset necessary may hold a sign-in; end them all.
+        # Connector devices are not sign-ins and stay until removed.
+        await SessionService(session).revoke_all(user_id, RevokeReason.PASSWORD_RESET)
 
         return {
             "code": 200,
@@ -2492,12 +2504,14 @@ async def change_password(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: ChangePasswordRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Replace the account's password.
+    """Replace the account's password and sign out every other device.
 
-    Other sessions stay signed in: the session layer cannot yet revoke them
-    (#1481).
+    The device making the change stays signed in: it has just proved who is
+    at it with the sudo ticket.
     """
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can change their password.")
@@ -2511,6 +2525,9 @@ async def change_password(
         purpose=SudoPurpose.PASSWORD_CHANGE,
     )
     await auth_service.update_password(user_id, password)
+    await SessionService(session).revoke_all(
+        user_id, RevokeReason.PASSWORD_CHANGED, keep=current
+    )
 
     return {"code": 200, "message": "Password changed successfully"}
 

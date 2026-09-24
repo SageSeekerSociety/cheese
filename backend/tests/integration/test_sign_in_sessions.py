@@ -6,6 +6,7 @@ passed by hand because the TestClient talks to the backend without the
 gateway in front, and the cookie's path is the one the browser sees.
 """
 
+import re
 import time
 from http.cookies import SimpleCookie
 
@@ -230,3 +231,85 @@ def test_a_session_of_another_account_cannot_be_ended(
 
     assert resp.status_code == 404, resp.text
     assert _refresh(api_client, theirs.refresh).status_code == 200
+
+
+def test_signing_out_ends_the_sign_in_on_the_server(
+    api_client: TestClient, user: CreatedUser
+):
+    here = _sign_in(api_client, user)
+    elsewhere = _sign_in(api_client, user)
+
+    resp = api_client.post(
+        "/users/auth/logout", headers={"Cookie": f"{COOKIE}={here.refresh}"}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert int(_cookies(resp)[COOKIE]["max-age"]) == 0
+    assert _refresh(api_client, here.refresh).status_code == 401
+    assert _refresh(api_client, elsewhere.refresh).status_code == 200
+
+
+def test_signing_out_without_a_cookie_still_succeeds(api_client: TestClient):
+    assert api_client.post("/users/auth/logout").status_code == 200
+
+
+def test_changing_the_password_signs_out_every_other_device(
+    api_client: TestClient, user: CreatedUser
+):
+    here = _sign_in(api_client, user)
+    elsewhere = _sign_in(api_client, user)
+    ticket = api_client.post(
+        "/users/auth/sudo",
+        headers=here.headers,
+        json={
+            "method": "password",
+            "credentials": {"password": user.password},
+            "purpose": "password:change",
+        },
+    ).json()["data"]["sudoTicket"]
+
+    resp = api_client.patch(
+        f"/users/{user.user_id}/password",
+        headers=here.headers,
+        json={"password": "brand-New-pass1", "sudoTicket": ticket},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert _refresh(api_client, elsewhere.refresh).status_code == 401
+    assert _refresh(api_client, here.refresh).status_code == 200
+
+
+class _Outbox:
+    def __init__(self) -> None:
+        self.is_configured = True
+        self.sent: list[dict] = []
+
+    async def send(self, **kwargs) -> bool:
+        self.sent.append(kwargs)
+        return True
+
+
+def test_resetting_a_forgotten_password_signs_out_everywhere(
+    api_client: TestClient, user: CreatedUser, monkeypatch
+):
+    import app.core.email as email_module
+
+    outbox = _Outbox()
+    monkeypatch.setattr(email_module, "get_email_sender", lambda: outbox)
+    sign_ins = [_sign_in(api_client, user), _sign_in(api_client, user)]
+    api_client.post("/users/recover/password/request", json={"email": user.email})
+    deadline = time.monotonic() + 5
+    while not outbox.sent:
+        assert time.monotonic() < deadline, "the recovery mail never left"
+        time.sleep(0.01)
+    match = re.search(r"token=([\w.-]+)", outbox.sent[-1]["body_text"])
+    assert match, outbox.sent[-1]
+
+    resp = api_client.post(
+        "/users/recover/password/verify",
+        json={"token": match.group(1), "password": "brand-New-pass1"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    for sign_in in sign_ins:
+        assert _refresh(api_client, sign_in.refresh).status_code == 401
