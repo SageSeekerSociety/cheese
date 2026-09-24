@@ -1,7 +1,6 @@
 import type { User } from '@/types'
 import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
-  AuthMethodsResponse,
   FollowUserResponse,
   GetAnswerListResponse,
   GetOAuthProvidersResponse,
@@ -11,6 +10,7 @@ import type {
   GetRealNameInfoResponse,
   GetSessionsResponse,
   GetUserInfoResponse,
+  MyAuthMethods,
   OAuthBindUserRequest,
   OAuthBindUserResponse,
   OAuthCreateUserRequest,
@@ -80,6 +80,21 @@ export namespace UserApi {
   export const login = (data: { username: string; password: string }) =>
     ApiInstance.request<AuthResponseDataType>({
       url: '/users/auth/login',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  export const requestSignInCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/auth/email-code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const signInWithEmailCode = (data: { email: string; code: string }) =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/email-code/verify',
       method: 'POST',
       data,
       withCredentials: true,
@@ -401,10 +416,27 @@ export namespace UserApi {
       },
     })
 
-  // 获取认证方法
-  export const getAuthMethods = (username: string) =>
-    ApiInstance.request<AuthMethodsResponse>({
-      url: `/users/auth/methods/${username}`,
+  /** Mail a code that confirms the signed-in user's identity to their own address. */
+  export const requestSudoEmailCode = () =>
+    ApiInstance.request<{ email: string }>({
+      url: '/users/me/sudo/email-code',
+      method: 'POST',
+    })
+
+  export const verifySudoEmailCode = (code: string, purpose?: SudoPurpose) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'email_code',
+        credentials: { code },
+        purpose,
+      },
+    })
+
+  export const getMyAuthMethods = () =>
+    ApiInstance.request<MyAuthMethods>({
+      url: '/users/me/auth-methods',
       method: 'GET',
     })
 

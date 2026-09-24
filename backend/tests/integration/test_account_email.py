@@ -176,7 +176,7 @@ class TestOAuthSignUpVerifiesAnEmail:
         code = mailbox.code_for(address)
         wrong = _verify(api_client, token, address, _wrong(code))
         assert wrong.status_code == 422
-        assert wrong.json()["error"]["data"]["reason"] == "invalid_code"
+        assert wrong.json()["error"]["data"]["reason"] == "invalid_email_code"
 
         verified = _verify(api_client, token, address, code)
         assert verified.status_code == 200, verified.text
@@ -227,7 +227,7 @@ class TestOAuthSignUpVerifiesAnEmail:
         resp = _verify(api_client, token, other, mailbox.code_for(sent_to))
 
         assert resp.status_code == 422
-        assert resp.json()["error"]["data"]["reason"] == "invalid_code"
+        assert resp.json()["error"]["data"]["reason"] == "invalid_email_code"
 
     def test_five_wrong_codes_use_the_code_up(
         self, api_client: TestClient, _portal, mailbox: Mailbox
@@ -399,7 +399,7 @@ class TestAccountWithoutEmail:
             json={"email": address, "code": _wrong(code)},
         )
         assert wrong.status_code == 422
-        assert wrong.json()["error"]["data"]["reason"] == "invalid_code"
+        assert wrong.json()["error"]["data"]["reason"] == "invalid_email_code"
         assert _me(api_client, token)["emailMissing"] is True
 
         added = api_client.post(

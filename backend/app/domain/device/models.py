@@ -21,7 +21,6 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
-    Text,
     UniqueConstraint,
     Uuid,
 )
@@ -71,25 +70,6 @@ class DeviceRow(Base):
         server_default=Visibility.isolated.value,
         nullable=False,
     )
-    # The ccproxy identity (`user:password`) this DEVICE's subscription turns go
-    # out as — the self-hosted twin of `ProjectMachine.ccproxy_upstream`, so
-    # every compute form uses ONE credential model: the device carries its own
-    # ccproxy ticket (worthless off that proxy), claude refreshes it, the
-    # platform holds no spendable credential, and the meter relays the ticket
-    # over this identity (ccproxy scopes its fake→real swap to the authenticated
-    # connection, measured 2026-08-14). A MicroCloud machine's identity is
-    # captured at enrollment; a self-hosted device has no enrollment, so this is
-    # set by whoever administers the device (the dev box being the first). NULL —
-    # the overwhelmingly common case, every laptop-class device — means the
-    # device brings no identity and its turns use the platform pool as before.
-    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The id ccproxy knows this device by (#420) — the revocation handle. Set
-    # when cheese registers the device as a ccproxy machine; deleting the
-    # device then calls `DELETE /machine/{id}` there, killing exactly this
-    # device's ticket instead of rotating a credential every box shares. NULL =
-    # the device predates per-device tickets (or brings no ccproxy identity),
-    # and deletion has nothing to revoke.
-    ccproxy_machine_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class HostedDeviceRow(Base):

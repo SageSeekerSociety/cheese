@@ -58,7 +58,6 @@ class FakeMicroCloud:
         self._offerings = OFFERING if offerings is None else offerings
         self.created: list[dict] = []
         self.deleted: list[int] = []
-        self.ai_switches: list[tuple[int, str]] = []
         self.topups: list[tuple[int, float]] = []
         self.machines: dict[int, dict] = {}
         self._next_id = 100
@@ -127,19 +126,6 @@ class FakeMicroCloud:
         self.machines[machine_id]["status"] = "resuming"
         return self.machines[machine_id]
 
-    async def switch_ai(self, machine_id, mode):
-        self.ai_switches.append((machine_id, mode))
-        machine = self.machines.get(machine_id)
-        if machine is not None:
-            machine["aiMode"] = mode
-            machine["aiStatus"] = "provisioning"
-        # The real control plane answers a switch in UPPERCASE.
-        return {
-            "machineId": machine_id,
-            "aiMode": mode.upper(),
-            "aiStatus": "PROVISIONING",
-        }
-
 
 class FakeRepo:
     """In-memory stand-in for ProjectMachineRepository."""
@@ -197,15 +183,6 @@ class FakeRepo:
 
     async def list_for_team(self, _team_id):
         return self.rows
-
-    async def list_ai_mode_mismatch(self, desired, limit):
-        return [
-            r
-            for r in self.rows
-            if r.status == MachineStatus.running
-            and r.ai_status == AiStatus.ready
-            and r.ai_mode != desired
-        ][:limit]
 
     async def set_state(
         self,
@@ -725,12 +702,9 @@ def test_hostname_survives_a_name_with_nothing_usable_in_it():
 
 
 async def test_a_running_machine_with_ai_still_provisioning_keeps_being_polled():
-    """The regression this second lifecycle introduces.
-
-    MicroCloud reports `running` while it is still wiring the machine's Claude
-    Code. Polling on the machine status alone stops right there, freezing
-    ai_status at `provisioning` forever — a machine that cannot run a turn would
-    read as finished.
+    """MicroCloud reports the two lifecycles separately and a room's lease
+    waits on both, so polling on the machine status alone would freeze
+    ai_status at whatever was read first.
     """
     client = FakeMicroCloud()
     service = build_service(client)
@@ -778,18 +752,6 @@ async def test_polling_stops_once_both_lifecycles_settle():
         row.last_seen_at = datetime.now(UTC) - timedelta(hours=1)
     await service.list_for_project(project_id)
     assert client.reads > settled
-
-
-async def test_ai_accounts_are_named_rather_than_left_to_the_default():
-    client = FakeMicroCloud()
-    service = build_service(client)
-    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
-
-    body = client.created[0]
-    # MicroCloud would default both to accountId; naming them is what lets a
-    # deployment split compute spend from AI spend later.
-    assert body["newapiAccountId"] == body["accountId"]
-    assert body["ccproxyAccountId"] == body["accountId"]
 
 
 async def test_an_ai_state_we_do_not_know_yet_reads_as_unknown():
@@ -923,118 +885,15 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
     assert any("supply=self_hosted" in r.getMessage() for r in caplog.records)
 
 
-# ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
-
-
-async def test_provision_asks_for_the_ai_channel_in_the_create_call():
-    """The mode rides in the create body (micro-cloud#78) and nothing is asked
-    afterwards: a separate switch on a machine still provisioning was a 22s 400
-    in the turn path. What MicroCloud actually did is read back like any other
-    field, and the sweep reconciles a machine that came up elsewhere."""
-    client = FakeMicroCloud()
-    service = build_service(client)
-
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
-
-    assert client.created[0]["aiMode"] == "ccproxy"
-    assert client.ai_switches == []
-    assert machine.ai_status == AiStatus.provisioning
-
-
-async def test_provision_sends_no_ai_mode_when_none_is_configured(monkeypatch):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "")
+async def test_provision_asks_for_a_machine_without_an_ai_channel():
+    """The machine only executes tools; its sessions' models come from the
+    session host. Without the field MicroCloud wires its default channel on."""
     client = FakeMicroCloud()
     service = build_service(client)
 
     await service.provision(project_id=uuid.uuid4(), requested_by="andy")
 
-    assert "aiMode" not in client.created[0]
-
-
-async def test_sweep_reconciles_a_machine_left_on_newapi():
-    client = FakeMicroCloud()
-    repo = FakeRepo()
-    service = build_service(client, repo=repo)
-    repo.rows.append(
-        SimpleNamespace(
-            id=uuid.uuid4(),
-            machine_id=463,
-            hostname="m-1",
-            project_id=uuid.uuid4(),
-            status=MachineStatus.running,
-            ai_status=AiStatus.ready,
-            ai_mode="newapi",
-            ip="10.0.0.5",
-            device_id=None,
-        )
-    )
-
-    switched = await service.reconcile_ai_mode()
-
-    assert switched == 1
-    assert client.ai_switches == [(463, "ccproxy")]
-    row = repo.rows[0]
-    assert row.ai_mode == "ccproxy"
-    assert row.ai_status == AiStatus.provisioning
-
-
-async def test_reconcile_is_off_without_a_desired_mode(monkeypatch):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "")
-    client = FakeMicroCloud()
-    repo = FakeRepo()
-    service = build_service(client, repo=repo)
-    repo.rows.append(
-        SimpleNamespace(
-            id=uuid.uuid4(),
-            machine_id=1,
-            hostname="m-2",
-            project_id=uuid.uuid4(),
-            status=MachineStatus.running,
-            ai_status=AiStatus.ready,
-            ai_mode="newapi",
-            ip=None,
-            device_id=None,
-        )
-    )
-
-    assert await service.reconcile_ai_mode() == 0
-    assert client.ai_switches == []
-
-
-async def test_forgetting_waits_when_ccproxy_revocation_is_unconfirmed(caplog):
-    """#420: `forget` fires from a GET, so an unconfirmed ticket revocation must
-    neither wedge the listing nor reap the machine row — the row is what brings
-    the sweep back to retry once ccproxy answers again."""
-    from unittest.mock import AsyncMock
-
-    from app.domain.device.ccproxy_tenant import CcproxyTenantError
-
-    client = FakeMicroCloud()
-    service = build_service(client)
-    project_id = uuid.uuid4()
-    machine = await service.provision(
-        project_id=project_id, requested_by="andy", owner_user_id=42
-    )
-    machine.device_id = "ticketed-device"
-    service._devices.devices[machine.device_id] = SimpleNamespace(
-        owner_user_id=42, supply=Supply.cloud
-    )
-    service._devices.delete_platform_provisioned = AsyncMock(
-        side_effect=CcproxyTenantError("engine unreachable", status=502)
-    )
-
-    client.machines.clear()
-    listed = await service.list_for_project(project_id)
-
-    assert listed == []  # the vanished machine is not shown...
-    assert "ticketed-device" in service._devices.devices
-    # ...but its row survives for the retry.
-    assert machine in await service._repo.list_for_project(project_id)
-    assert any("revocation" in r.getMessage() for r in caplog.records)
+    assert client.created[0]["aiMode"] == "none"
 
 
 async def test_a_reservation_counts_against_quota_before_the_provider_answers(
@@ -1143,8 +1002,8 @@ async def test_settling_adopts_a_machine_the_provider_has_and_drops_one_it_does_
         "hostname": "p-1",
         "status": "running",
         "ip": "10.0.0.7",
-        "aiMode": "ccproxy",
-        "aiStatus": "ready",
+        "aiMode": "none",
+        "aiStatus": "disabled",
     }
     assert await service.settle_reservations() == 2
     assert adopted.machine_id == 777 and adopted.status == MachineStatus.running

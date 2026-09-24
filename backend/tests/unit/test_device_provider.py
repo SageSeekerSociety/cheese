@@ -24,6 +24,9 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release as resident_release,
+)
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
@@ -33,11 +36,7 @@ from app.domain.device.supply import Supply, Visibility
 
 @pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
-    """The backend addresses this device at the base it was built with.
-
-    (A device that brings no ccproxy identity is the whole layer's default, in
-    `tests/unit/conftest.py`; the tests about the machine-ticket signal
-    override it with a real value.)"""
+    """The backend addresses this device at the base it was built with."""
 
     async def public_base(self, _device_id):
         return self._public_base
@@ -970,41 +969,56 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatc
 class BehindReleaseHub(DeadTunnelHub):
     """A live screen of a room whose work runs on an executor, left on the
     release before this backend's: its marker names no current version. Answers
-    the release steps the way a machine that applies them does."""
+    the release steps the way a machine that applies them does.
 
-    def __init__(self) -> None:
+    With ``launch_writes_marker``, a screen opened after the first one starts on
+    the current release, as a fresh launch does."""
+
+    def __init__(
+        self, *, launch_writes_marker: bool = False, busy: bool = False
+    ) -> None:
         super().__init__()
         self.envs: list[dict | None] = []
+        self.marker = ""
+        self.launch_writes_marker = launch_writes_marker
+        self.busy = busy
+        self.steps: list[str] = []
 
     async def open_screen(self, device_id, command, **kw) -> HubScreen:
         self.envs.append(kw.get("env"))
+        if self.launch_writes_marker and len(self.envs) > 1:
+            self.marker = resident_release.digest(resident_release.sources())
         return await super().open_screen(device_id, command, **kw)
-
-    async def call_executor(
-        self, device_id, state, method, params, *, trace_id=None, timeout=660
-    ) -> dict:
-        assert method == "context_fs" and params == {"operation": "tree"}
-        return {"generation": "current", "entries": []}
 
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         if argv != ["python3", "-"]:
+            if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
+                self.execs.append((argv, stdin))
+                return {"stdout": self.marker, "stderr": "", "exit": 0}
             return await super().exec(
                 device_id, argv, cwd=cwd, env=env, timeout=timeout, stdin=stdin
             )
         self.execs.append((argv, stdin))
         assert stdin is not None
         step = stdin.rsplit("\nprint(json.dumps(", 1)[1].split("(", 1)[0]
-        answer = {"changed": step == "stage", "offsets": {}}
+        self.steps.append(step)
+        if step == "stage" and self.busy:
+            answer = {"changed": False, "busy": True}
+        else:
+            answer = {"changed": step == "stage", "offsets": {}}
         return {"stdout": json.dumps(answer), "stderr": "", "exit": 0}
 
 
 class NativeControl:
-    """The room's Remote Control store, holding ``session`` for every agent."""
+    """The room's Remote Control store, holding ``session`` for every agent.
+    A control named in ``unanswered`` is never answered, as when the process
+    behind the session does not complete it."""
 
-    def __init__(self, session: dict | None) -> None:
+    def __init__(self, session: dict | None, unanswered: tuple = ()) -> None:
         self.session = session
+        self.unanswered = unanswered
         self.requests: list[str] = []
 
     async def current(self, topic_id, agent_handle=None):
@@ -1014,13 +1028,15 @@ class NativeControl:
         self.requests.append(payload["request"]["subtype"])
 
     async def result(self, sid, request_id, timeout):
+        if self.requests[-1] in self.unanswered:
+            return None
         response = {}
         if self.requests[-1] == "mcp_status":
             response = {"mcpServers": [{"name": "native", "status": "connected"}]}
         return {"response": {"subtype": "success", "response": response}}
 
 
-def _executor_screen_arguments(topic_id: uuid.UUID) -> dict:
+def _executor_screen_arguments(topic_id: uuid.UUID, target: dict | None = None) -> dict:
     return dict(
         device_id="dev1",
         agent_user_id=1,
@@ -1029,20 +1045,33 @@ def _executor_screen_arguments(topic_id: uuid.UUID) -> dict:
         topic_id=topic_id,
         token="tok",
         env={
-            "CHEESE_EXECUTION_TARGET": json.dumps(
-                {"device_id": "executor", "state": "/executor"}
-            )
+            "CHEESE_EXECUTION_TARGET": json.dumps(target or {"device_id": "executor"})
         },
         launch=ClaudeLaunch(system_prompt="", resume_session_id="conversation"),
     )
+
+
+def _live(session: dict) -> dict:
+    """A control session whose worker is heartbeating."""
+    return {**session, "last_seen": time.time()}
+
+
+def _retire_reasons(caplog) -> list[str]:
+    return [
+        record.getMessage().rsplit("reason=", 1)[1]
+        for record in caplog.records
+        if record.getMessage().startswith("device_screen_retired")
+    ]
 
 
 @pytest.mark.parametrize(
     "session",
     [
         None,
-        {"id": "rc", "status": "ended", "execution": None},
-        {"id": "rc", "status": "active", "execution": {"resource_id": "earlier"}},
+        _live({"id": "rc", "status": "ended", "execution": None}),
+        _live(
+            {"id": "rc", "status": "active", "execution": {"resource_id": "earlier"}}
+        ),
     ],
     ids=["no_session", "inactive", "another_generation"],
 )
@@ -1082,6 +1111,39 @@ async def test_a_reused_screen_a_release_cannot_reach_is_relaunched(
     assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
 
 
+async def test_a_control_session_whose_worker_stopped_cannot_carry_a_release(
+    monkeypatch, caplog
+):
+    """A session keeps reading `active` after the worker behind it stops. On dev
+    2026-09-24 one room's worker had last heartbeat seven hours before, and each
+    turn queued a reconnect that nobody would ever read, waited it out, and
+    failed. Its heartbeat says whether anyone is listening."""
+    from app.domain.agent import remote_control
+
+    session: dict = {
+        "id": "rc",
+        "status": "active",
+        "execution": None,
+        "last_seen": time.time() - 7 * 3600,
+    }
+    control = NativeControl(session)
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    arguments = _executor_screen_arguments(topic_id)
+    first = await provider._ensure_screen(**arguments)
+    session["execution"] = {"resource_id": str(first.resource_id)}
+
+    with caplog.at_level("INFO"):
+        replacement = await provider._ensure_screen(**arguments)
+
+    assert hub.closed == [first.sid]
+    assert hub.all_online_screens() == [replacement]
+    assert control.requests == []
+    assert _retire_reasons(caplog) == ["resident_release_unreachable"]
+
+
 async def test_a_reused_screen_is_released_in_place_through_its_control_session(
     monkeypatch,
 ):
@@ -1089,7 +1151,7 @@ async def test_a_reused_screen_is_released_in_place_through_its_control_session(
     brought to the current release in place and keeps serving the room."""
     from app.domain.agent import remote_control
 
-    session: dict = {"id": "rc", "status": "active", "execution": None}
+    session: dict = _live({"id": "rc", "status": "active", "execution": None})
     control = NativeControl(session)
     monkeypatch.setattr(remote_control, "store", lambda: control)
     hub = BehindReleaseHub()
@@ -1105,6 +1167,102 @@ async def test_a_reused_screen_is_released_in_place_through_its_control_session(
     assert hub.reasserted == [first.sid]
     assert ["/reload-plugins"] in hub.prompts
     assert control.requests[0] == "mcp_reconnect"
+
+
+async def test_a_release_that_fails_in_place_relaunches_the_screen(monkeypatch, caplog):
+    """The running process never completes the reconnect that would load the
+    new helpers. Measured on dev 2026-09-24: one room failed ten turns in a row
+    on exactly that. A fresh launch starts on the current release, so this turn
+    gets one — and the turn after reuses it rather than trying again."""
+    from app.domain.agent import remote_control
+
+    session: dict = _live({"id": "rc", "status": "active", "execution": None})
+    control = NativeControl(session, unanswered=("mcp_reconnect",))
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub(launch_writes_marker=True)
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    arguments = _executor_screen_arguments(topic_id)
+    first = await provider._ensure_screen(**arguments)
+    session["execution"] = {"resource_id": str(first.resource_id)}
+
+    with caplog.at_level("INFO"):
+        replacement = await provider._ensure_screen(**arguments)
+        again = await provider._ensure_screen(**arguments)
+
+    assert hub.closed == [first.sid]
+    assert replacement is not first and again is replacement
+    assert hub.all_online_screens() == [replacement]
+    assert hub.reasserted == [replacement.sid]
+    assert _retire_reasons(caplog) == ["resident_release_failed"]
+    # Only the first screen was asked to release in place.
+    assert control.requests == ["mcp_reconnect"]
+    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
+
+
+async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
+    monkeypatch, caplog
+):
+    """Helpers are not replaced under a conversation that is still running.
+    That is a reason to wait, not a failed turn: this turn runs on the release
+    the process has, and the next turn tries again."""
+    from app.domain.agent import remote_control
+
+    session: dict = _live({"id": "rc", "status": "active", "execution": None})
+    control = NativeControl(session)
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub(busy=True)
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    arguments = _executor_screen_arguments(topic_id)
+    first = await provider._ensure_screen(**arguments)
+    session["execution"] = {"resource_id": str(first.resource_id)}
+
+    with caplog.at_level("INFO"):
+        reused = await provider._ensure_screen(**arguments)
+        hub.busy = False
+        await provider._ensure_screen(**arguments)
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid, first.sid]
+    assert _retire_reasons(caplog) == []
+    # Refused on the first attempt, applied on the next.
+    assert hub.steps == ["stage", "stage", "wait_reloaded", "acknowledge"]
+    assert control.requests[0] == "mcp_reconnect"
+
+
+async def test_a_deferred_room_is_released_without_a_context_tree(monkeypatch):
+    """A room that has not leased a work machine yet carries a `deferred`
+    target, and no target carries a context tree: the machine's own transport
+    fetches the tree at launch and again when a lease arrives. Every such room
+    used to fail the turn after its release, looking the tree up on the target."""
+    from app.domain.agent import remote_control
+
+    session: dict = _live({"id": "rc", "status": "active", "execution": None})
+    control = NativeControl(session)
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    target = {
+        "kind": "deferred",
+        "resource_id": str(topic_id),
+        "session_id": str(uuid.uuid4()),
+        "lease_path": f"/topics/{topic_id}/sessions/s/work-lease",
+        "setup_env": {},
+        "workspace": "/unavailable-project",
+        "mcp_servers": [],
+    }
+    arguments = _executor_screen_arguments(topic_id, target)
+    first = await provider._ensure_screen(**arguments)
+    session["execution"] = {"resource_id": str(first.resource_id)}
+
+    reused = await provider._ensure_screen(**arguments)
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid]
+    assert hub.steps == ["stage", "wait_reloaded", "acknowledge"]
+    assert reused.execution_target == target
 
 
 @pytest.mark.parametrize(
@@ -1737,13 +1895,13 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
     assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
-    # The login credential is a scoped cheese token the proxy can verify —
-    # never a real subscription credential.
-    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
+    # What the backend hands over is a scoped cheese token the proxy can
+    # verify; the Claude login is the host's own and never travels from here.
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    claims = scoped_token_claims(env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert claims["p"] == str(project) and claims["t"] == str(topic)
     assert claims["rc"] == 1
-    assert env["CHEESE_CONNECT_TOKEN"] == env["CLAUDE_CODE_OAUTH_TOKEN"]
     assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
@@ -1758,7 +1916,7 @@ async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
     hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
-    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    token = env["CHEESE_CONNECT_TOKEN"]
     assert env["HTTPS_PROXY"] == f"http://cheese:{token}@172.17.0.1:8444"
     for key in ("NO_PROXY", "no_proxy"):
         assert "cheese.test" in env[key]
@@ -1784,9 +1942,9 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
 async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     monkeypatch, tmp_path
 ):
-    """The proxy/OAuth token is baked into the bare process's env (HTTPS_PROXY
-    CONNECT password + CLAUDE_CODE_OAUTH_TOKEN Bearer), read ONCE at launch and
-    never hot-refreshed while the screen is reused across turns. A 1h token
+    """The proxy token is baked into the bare process's env (the HTTPS_PROXY
+    CONNECT password), read ONCE at launch and never hot-refreshed while the
+    screen is reused across turns. A 1h token
     therefore expires under a still-running agent and the metering proxy 407s
     every later turn. Its exp must span the session, like the CHEESE_TOKEN minted
     beside it — not the per-turn default."""
@@ -1799,8 +1957,8 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
-    # The Bearer and the CONNECT credential are one and the same token …
-    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    # The CONNECT credential …
+    token = env["CHEESE_CONNECT_TOKEN"]
     assert f"cheese:{token}@" in env["HTTPS_PROXY"]
     # … and it lives for the whole session, not one hour.
     claims = scoped_token_claims(token)
@@ -1842,7 +2000,7 @@ async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_p
 
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model="glm-5.2")
-    claims = scoped_token_claims(hub.env["CLAUDE_CODE_OAUTH_TOKEN"])
+    claims = scoped_token_claims(hub.env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert "m" not in claims
     assert "glm-5.2" not in repr(claims)
@@ -2450,40 +2608,6 @@ def test_topic_credential_expiry_reads_the_live_screens_stamp():
     # A screen whose expiry was never recorded is skipped, not read as 0.
     hub_none = Hub({tid: [_screen_with("dev1", None)]}, {"dev1"})
     assert topic_credential_expiry(tid, hub=hub_none) is None  # type: ignore[arg-type]
-
-
-@pytest.mark.anyio
-async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
-    monkeypatch, tmp_path
-):
-    """A device can run without a tunnel while bringing a ccproxy identity on its
-    device row. The launcher must be told to hand claude the
-    DEVICE's ticket (CHEESE_MACHINE_TICKET) — without the signal the reconcile
-    injects our scoped token and every turn dies upstream as
-    `401 Invalid bearer token` (measured on the box, 2026-08-15)."""
-    _subscription_settings(monkeypatch, tmp_path)
-
-    async def own_identity(_self, _device_id):
-        return "m161:pw161"
-
-    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", own_identity)
-    hub, _project, _topic = await _subscription_screen()
-
-    assert hub.env["CHEESE_MACHINE_TICKET"] == "1"
-    # The identity itself must NOT travel: the machine authenticates the meter
-    # hop with its scoped token, and admission tells the meter the identity.
-    assert "m161" not in repr(hub.env)
-
-
-@pytest.mark.anyio
-async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_path):
-    """No identity, no signal: the reconcile keeps asserting our scoped token,
-    which the meter swaps for the platform credential — today's behaviour for
-    every laptop-class device."""
-    _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen()
-
-    assert "CHEESE_MACHINE_TICKET" not in hub.env
 
 
 @pytest.mark.anyio

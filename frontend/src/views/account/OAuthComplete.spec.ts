@@ -148,13 +148,13 @@ describe('the email of a new third-party account', () => {
   })
 
   it('stays on the code step after a wrong code, and creates nothing', async () => {
-    vi.mocked(UserApi.verifyOAuthEmail).mockRejectedValue({ error: { data: { reason: 'invalid_code' } } })
+    vi.mocked(UserApi.verifyOAuthEmail).mockRejectedValue({ error: { data: { reason: 'invalid_email_code' } } })
     const { view } = await open({ email: 'ada@school.edu' })
     await createAccount(view)
 
     await enterCode(view)
 
-    await view.findByText('The code is incorrect or has expired')
+    await view.findByText('The code is wrong or has expired.')
     expect(UserApi.createUserFromOAuth).not.toHaveBeenCalled()
   })
 

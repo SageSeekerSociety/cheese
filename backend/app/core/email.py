@@ -16,8 +16,9 @@ PLACEHOLDER_EMAIL_DOMAINS = frozenset({"placeholder.internal", "oauth.ruc.local"
 
 
 def is_placeholder_email(email: str | None) -> bool:
+    """An address nobody reads: never mailed, and never proof of anything."""
     if not email or "@" not in email:
-        return False
+        return True
     return email.rsplit("@", 1)[1].strip().lower() in PLACEHOLDER_EMAIL_DOMAINS
 
 

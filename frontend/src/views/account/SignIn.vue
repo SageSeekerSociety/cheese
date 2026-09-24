@@ -113,7 +113,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
 import { oauthProviderIcon } from './oauthProvider'
-import { landingAfterSignIn, passwordAccepted, takePasswordStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
+import { firstStepAccepted, landingAfterSignIn, takeFirstStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 
@@ -189,6 +189,12 @@ const alternatives = computed<Way[]>(() => {
   if (webAuthnSupported) {
     ways.push({ key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain', go: handlePasskeyLogin })
   }
+  ways.push({
+    key: 'email_code',
+    label: t('account.signIn.emailCode'),
+    icon: 'mdi-email-outline',
+    go: () => router.push({ name: 'SignInEmailCode', query: { redirect: route.query.redirect } }),
+  })
   const i = ways.findIndex((w) => w.key === last)
   if (i > 0) ways.unshift(...ways.splice(i, 1))
   return ways
@@ -220,7 +226,7 @@ const login = handleSubmit(async (value) => {
     const { data } = await UserApi.login(value)
     if (data.requires2FA) {
       rememberSignIn('password')
-      passwordAccepted()
+      firstStepAccepted('password')
       router.push({
         name: 'Verify2FA',
         query: { token: data.tempToken, redirect: route.query.redirect },
@@ -331,7 +337,7 @@ onMounted(() => {
   forgetOAuthRedirect()
   // Likewise a password accepted on an earlier visit: a second step reached
   // from here next time follows whichever way this visit signs in.
-  takePasswordStep()
+  takeFirstStep()
   fetchOAuthProviders()
   startAutofill()
 })

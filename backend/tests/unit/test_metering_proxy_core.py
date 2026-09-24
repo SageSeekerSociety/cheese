@@ -134,8 +134,8 @@ def test_proxy_basic_password_extracts_the_connect_credential():
 
 
 def test_the_served_hosts_are_exactly_the_anthropic_names():
-    """The proxy injects the REAL credential per request, so the allowlist is
-    what keeps an attacker-chosen SNI from receiving the subscription token."""
+    """The proxy relays each session's own Claude credential, so the allowlist
+    is what keeps an attacker-chosen SNI from receiving it."""
     assert core.ANTHROPIC_HOSTS == {
         "api.anthropic.com",
         "console.anthropic.com",
@@ -261,32 +261,6 @@ def test_unknown_or_absent_supply_falls_back_to_the_subscription():
     assert ok.pool == core.GATEWAY and ok.key == "sk-virt-9"
 
 
-def test_a_half_upstream_identity_is_read_as_none(monkeypatch):
-    """`user:password` is what the ccproxy hop authenticates with. Half of one
-    authenticates as nobody, and the failure would surface as an upstream 407
-    several hops from the control plane that sent it — so it is rejected at the
-    parse, where the source is still obvious. None then means what it always
-    means: fall back to the deployment-wide identity."""
-
-    def answer(supply: dict) -> core.Verdict:
-        captured = json.dumps({"data": {"allow": True, "supply": supply}}).encode()
-
-        class _Resp:
-            def __enter__(self):
-                return io.BytesIO(captured)
-
-            def __exit__(self, *a):
-                return False
-
-        with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
-            return core._post_admission("http://backend/llm/admission", "tok", 3.0)
-
-    assert answer({"pool": "subscription", "upstream": "m516:pw"}).upstream == "m516:pw"
-    for junk in ("m516:", ":pw", "m516", "", None, 5, ["m516:pw"]):
-        assert answer({"pool": "subscription", "upstream": junk}).upstream is None
-    assert answer({"pool": "subscription"}).upstream is None
-
-
 def test_admission_gate_caches_and_fails_open():
     calls: list[str] = []
 
@@ -326,35 +300,31 @@ def test_relaunched_agent_does_not_reuse_its_previous_model_supply():
     assert gate.check("project", "room", "new-session").pool == core.GATEWAY
 
 
-def test_one_topics_machine_identity_is_never_served_to_another():
-    """Two topics of ONE project, on two different machines — the ordinary shape
-    of a project that leased more than one box.
+def test_one_topics_bound_model_is_never_served_to_another():
+    """Two topics of ONE project, asking with the same token — the shape of two
+    sessions sharing one tunnel helper, whose CONNECT token names whichever
+    launched last.
 
-    The budget half of an admission answer is the project's, but the identity
-    half names a single machine, and ccproxy only honours a machine's ticket
-    over that machine's own connection. So a verdict cached per project hands
-    the second topic the first one's identity for the rest of the window: the
-    turn is authenticated as a machine it is not, which the far edge answers
-    with a 401 that names nothing, and whatever does get through is billed to
-    the wrong machine.
+    The budget half of an admission answer is the project's, but the model it
+    binds comes from the topic's card. A verdict cached per project would hand
+    the second topic the first one's model for the rest of the window.
     """
-    identities = {"t-alpha": "m516:pw516", "t-beta": "m784:pw784"}
+    answers = iter(["claude-opus-5", "glm-4.6"])
     asked: list[str] = []
 
     def post(url, bearer, timeout_s):
         asked.append(bearer)
-        return core.Verdict(True, "ok", upstream=identities[bearer])
+        return core.Verdict(True, "ok", model=next(answers))
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=post)
 
-    # The bearer is the per-topic scoped token, so it stands in for the topic.
-    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
-    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
-    assert asked == ["t-alpha", "t-beta"]
+    assert gate.check("p1", "t-alpha", "tok").model == "claude-opus-5"
+    assert gate.check("p1", "t-beta", "tok").model == "glm-4.6"
+    assert len(asked) == 2
 
     # Still cached — per topic, which is the point. Neither answer moved.
-    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
-    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert gate.check("p1", "t-alpha", "tok").model == "claude-opus-5"
+    assert gate.check("p1", "t-beta", "tok").model == "glm-4.6"
     assert len(asked) == 2
 
 

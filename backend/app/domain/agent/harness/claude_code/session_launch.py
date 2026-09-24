@@ -261,10 +261,8 @@ def build_session_launch(
 def _gates(workdir: str) -> str:
     """The first-launch dialogs, pre-accepted for this session's own cwd.
 
-    Nothing credential-shaped is ever planted: login is via
-    CLAUDE_CODE_OAUTH_TOKEN in the screen's env, NOT a `.credentials.json` —
-    that file gets a local validation the env var skips, and rejected our
-    placeholder as "Not logged in".
+    Nothing credential-shaped is ever planted: the session logs in with its
+    host's own Claude credential, which the launch script points it at.
     """
     return json.dumps(
         {

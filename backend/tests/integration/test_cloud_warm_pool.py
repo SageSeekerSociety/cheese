@@ -18,6 +18,7 @@ from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import (
     AiStatus,
@@ -28,6 +29,7 @@ from app.domain.machine.models import (
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.machine.warm import WarmPoolService
+from app.domain.topic.models import Topic
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.test_project_machines import _project
@@ -35,8 +37,6 @@ from tests.unit.test_machine_service import FakeMicroCloud
 
 
 async def _sessions_for_cloud(client, topic_id):
-    from app.domain.topic.models import Topic
-
     async with client.test_request_factory() as db:
         topic = await db.get(Topic, uuid.UUID(topic_id))
         result = []
@@ -231,7 +231,7 @@ class ClaimCloud(FakeMicroCloud):
         self.claims.append((machine_id, body))
         if self.fail_claim:
             raise MicroCloudError("response lost")
-        return {"id": machine_id, "status": "running", "aiStatus": "ready"}
+        return {"id": machine_id, "status": "running", "aiStatus": "disabled"}
 
 
 def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
@@ -239,6 +239,8 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
 ):
     client, topics, actor, cloud = warm_case
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    # The fixture's warm machine would serve this room; this is the cold path.
+    monkeypatch.setattr("app.domain.machine.warm.device_hub.is_online", lambda _: False)
 
     async def run():
         async with client.test_request_factory() as session:
@@ -253,11 +255,7 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
             machine.ip = "192.0.2.2"
             await session.commit()
             repo = ProjectMachineRepository(session)
-            assert machine in await repo.list_awaiting_enrollment(
-                5, desired_ai_mode="none"
-            )
-            assert await service.reconcile_ai_mode() == 0
-            assert cloud.ai_switches == []
+            assert machine in await repo.list_awaiting_enrollment(5)
             machine.device_id = "warm-test"
             await session.commit()
             assert (
@@ -449,7 +447,7 @@ def warm_case(client, monkeypatch):
                         "memoryMb": settings.microcloud_default_memory_mb,
                         "diskGb": settings.microcloud_default_disk_gb,
                         "user": settings.microcloud_login_user,
-                        "aiMode": settings.microcloud_ai_mode,
+                        "aiMode": "none",
                     },
                 )
             )
@@ -458,6 +456,39 @@ def warm_case(client, monkeypatch):
 
     actor = client.portal.call(lambda: seed())
     return client, topics, actor, ClaimCloud()
+
+
+def test_cloud_execution_requires_an_active_machine_in_the_project(warm_case):
+    client, topics, actor, cloud = warm_case
+
+    async def run():
+        async with client.test_request_factory() as db:
+            project_id = (await db.get(Topic, uuid.UUID(topics[0]))).project_id
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            machine = await MachineService(db, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            assert await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", uuid.uuid4()
+            )
+            machine.superseded_at = datetime.now(UTC)
+            await db.flush()
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            machine.superseded_at = None
+            machine.released_at = datetime.now(UTC)
+            await db.flush()
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+
+    client.portal.call(run)
 
 
 def test_concurrent_rooms_take_one_warm_machine_and_create_one_cold(warm_case):
@@ -613,7 +644,7 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.state == "preparing"
             bootstrap.assert_not_called()
             cloud.machines[row.machine_id].update(
-                status="running", aiStatus="ready", ip="192.0.2.1"
+                status="running", aiStatus="disabled", ip="192.0.2.1"
             )
             await service.sweep()
             assert row.state == "ready"

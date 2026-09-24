@@ -219,6 +219,59 @@ def record(log, event: str, **values) -> None:
     log.flush()
 
 
+def prepare_owner_image(image: str, docker, log) -> None:
+    """Use the pinned local image, or authenticate and pull it for this runner."""
+    platform = "linux/amd64"
+
+    def local_platform() -> str:
+        return docker(
+            "image",
+            "inspect",
+            "--format",
+            "{{.Os}}/{{.Architecture}}",
+            image,
+            check=False,
+        ).strip()
+
+    inspected = local_platform()
+    if inspected == platform:
+        record(log, "image_reused", owner_image=image, platform=platform)
+        return
+
+    started = time.monotonic()
+    record(
+        log,
+        "image_pull_started",
+        owner_image=image,
+        platform=platform,
+        cached=False,
+        inspected_platform=inspected or None,
+    )
+    token = os.environ.get("GH_TOKEN")
+    if token:
+        docker(
+            "login",
+            "ghcr.io",
+            "-u",
+            os.environ["GITHUB_REPOSITORY_OWNER"],
+            "--password-stdin",
+            input=token,
+        )
+    docker("pull", "--platform", platform, image, timeout=300)
+    inspected = local_platform()
+    if inspected != platform:
+        raise RuntimeError(
+            f"owner image {image} has platform {inspected!r}, expected {platform}"
+        )
+    record(
+        log,
+        "image_pull_finished",
+        owner_image=image,
+        platform=platform,
+        elapsed_s=time.monotonic() - started,
+    )
+
+
 @contextmanager
 def image_owner(options, root: Path, *, start_runtime=True):
     """Run the released owner and its packaged Go connector without code mounts."""
@@ -299,25 +352,7 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 port=options.port,
                 resource_label=resource_label,
             )
-            started = time.monotonic()
-            record(
-                log,
-                "image_pull_started",
-                cached=bool(
-                    docker(
-                        "image",
-                        "inspect",
-                        "--format",
-                        "{{.Id}}",
-                        options.owner_image,
-                        check=False,
-                    )
-                ),
-            )
-            docker(
-                "pull", "--platform", "linux/amd64", options.owner_image, timeout=300
-            )
-            record(log, "image_pull_finished", elapsed_s=time.monotonic() - started)
+            prepare_owner_image(options.owner_image, docker, log)
             docker("network", "create", "--label", resource_label, network)
             docker(
                 "run",

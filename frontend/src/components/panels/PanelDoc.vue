@@ -35,6 +35,7 @@ import {
 } from '../../lib/docEditState'
 import { compareRoundTrip, docExtensions, docReplaceRange, serializeDoc } from '../../lib/docMarkdown'
 import { createSlashCommands } from '../../lib/docSlashMenu'
+import { topicTitle } from '../../lib/topicState'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -1522,7 +1523,7 @@ onBeforeUnmount(() => {
         >
           <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
             <!-- Large document title (Feishu Docs), = the topic title -->
-            <h1 class="doc-page__title">{{ topic.title }}</h1>
+            <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
             <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
             <div v-if="lossy" class="doc-lossy-banner">

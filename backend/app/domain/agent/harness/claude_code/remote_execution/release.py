@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import time
 from importlib.metadata import distribution
 from pathlib import Path
@@ -154,7 +153,10 @@ def stage(home, sources):
             ):
                 busy = False
         if busy:
-            raise RuntimeError("Native conversation must finish before helper release")
+            # Replacing helpers under a running turn swaps the code its tool
+            # calls are in. Said rather than raised: it is a reason to wait,
+            # which the caller decides, not a failed release.
+            return {"changed": False, "busy": True, "version": version}
     forwarded = directory / "forwarded-project"
     if Path(target.get("central_workspace", "")) != forwarded:
         # `release_mount`, not a bare fusermount: it also takes down a mount whose
@@ -227,7 +229,7 @@ def stage(home, sources):
     return {"changed": True, "version": version, "offsets": offsets}
 
 
-def local_command_completed(offsets, prefix):
+def reloaded(offsets):
     for name, offset in offsets.items():
         with Path(name).open() as stream:
             stream.seek(offset)
@@ -239,18 +241,12 @@ def local_command_completed(offsets, prefix):
                 if (
                     event.get("type") == "system"
                     and event.get("subtype") == "local_command"
-                    and event.get("content", "").startswith(prefix)
+                    and event.get("content", "").startswith(
+                        "<local-command-stdout>Reloaded:"
+                    )
                 ):
                     return True
     return False
-
-
-def reloaded(offsets):
-    return local_command_completed(offsets, "<local-command-stdout>Reloaded:")
-
-
-def skills_reloaded(offsets):
-    return local_command_completed(offsets, "<local-command-stdout>Reloaded skills:")
 
 
 def acknowledge(home, version):
@@ -267,159 +263,6 @@ def wait_reloaded(offsets):
             return True
         time.sleep(0.05)
     raise TimeoutError("Native plugin reload did not produce a completion receipt")
-
-
-def wait_skills_reloaded(offsets, home=None, generation=None):
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if skills_reloaded(offsets):
-            if home is not None and generation is not None:
-                replace(
-                    Path(os.path.expandvars(home))
-                    / ".cheese/remote-session/context-generation",
-                    generation,
-                )
-            return True
-        time.sleep(0.05)
-    raise TimeoutError("Native skill reload did not produce a completion receipt")
-
-
-def transcript_offsets(home):
-    config = Path(os.path.expandvars(home)) / ".claude"
-    return {
-        str(path): path.stat().st_size
-        for path in (config / "projects").glob("*/*.jsonl")
-    }
-
-
-def apply_forwarded_context(home, target):
-    platform_dir = Path(os.path.expandvars(home)) / ".cheese"
-    directory = platform_dir / "remote-session"
-    helpers = platform_dir / "remote-execution"
-    target_path = directory / "execution.json"
-    current = json.loads(target_path.read_text())
-    tree = target.pop("context_tree")
-    unsupported = tree.get("unsupported_imports", []) + tree.get(
-        "unsupported_paths", []
-    )
-    if unsupported:
-        raise RuntimeError(
-            "Project context leaves the forwarded project boundary: "
-            + ", ".join(unsupported)
-        )
-    remote_target = {
-        **current,
-        **target,
-        "central_workspace": current["central_workspace"],
-        "central_config": current["central_config"],
-        "helper": current["helper"],
-        "target_file": current["target_file"],
-        "token_file": str(directory / "execution.token"),
-    }
-    replace(target_path, json.dumps(remote_target))
-    generation_path = directory / "context-generation"
-    previous = generation_path.read_text() if generation_path.exists() else None
-    changed = tree["generation"] != previous
-    if changed:
-        replace(directory / "context-tree.json", json.dumps(tree))
-    hidden = directory / "forwarded-project"
-    hidden.mkdir(exist_ok=True)
-    mounted = mount_state(hidden) == MOUNT_LIVE
-    if not mounted:
-        # A mount whose server died still occupies the directory and cannot be
-        # mounted over; take it down before spawning its replacement.
-        release_mount(hidden)
-        log = (directory / "forwarded-project.log").open("a")
-        subprocess.Popen(
-            [
-                sys.executable,
-                str(helpers / "forwarded_fs.py"),
-                str(target_path),
-                str(hidden),
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-        )
-        deadline = time.monotonic() + 10
-        while mount_state(hidden) != MOUNT_LIVE and time.monotonic() < deadline:
-            time.sleep(0.05)
-        if mount_state(hidden) != MOUNT_LIVE:
-            raise RuntimeError("Forwarded project mount did not become ready")
-    if not changed and mounted:
-        return {"changed": False}
-    if not changed:
-        return {"changed": True, "offsets": transcript_offsets(home)}
-
-    workspace = Path(current["central_workspace"])
-    if workspace != hidden:
-        manifest = directory / "context-manifest.json"
-        mirrored = set(json.loads(manifest.read_text())) if manifest.exists() else set()
-        backup = helpers / "release-backups/forwarded-context" / (previous or "legacy")
-        if manifest.exists():
-            backup.mkdir(parents=True, exist_ok=True)
-            manifest_backup = backup / "context-manifest.json"
-            if not manifest_backup.exists():
-                shutil.copy2(manifest, manifest_backup)
-        for name in sorted(mirrored, key=lambda value: value.count("/"), reverse=True):
-            path = workspace / name
-            if path.is_file() and not path.is_symlink():
-                file_backup = backup / "files" / name
-                if not file_backup.exists():
-                    file_backup.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(path, file_backup)
-            if path.is_file() or path.is_symlink():
-                path.unlink(missing_ok=True)
-            parent = path.parent
-            while parent != workspace:
-                try:
-                    parent.rmdir()
-                except OSError:
-                    break
-                parent = parent.parent
-        manifest.unlink(missing_ok=True)
-
-        entries = tree["entries"]
-        links = {
-            name
-            for name, entry in entries.items()
-            if entry["kind"] != "directory"
-            and not name.startswith((".claude/rules/", ".claude/skills/"))
-        }
-        for name in (".claude/rules", ".claude/skills"):
-            if name in entries:
-                links.add(name)
-        links_path = directory / "forwarded-links.json"
-        old_links = (
-            set(json.loads(links_path.read_text())) if links_path.exists() else set()
-        )
-        for name in sorted(
-            old_links - links, key=lambda value: value.count("/"), reverse=True
-        ):
-            path = workspace / name
-            if path.is_symlink():
-                path.unlink()
-        for name in sorted(links, key=lambda value: value.count("/")):
-            path = workspace / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if path.is_symlink():
-                if path.resolve() == (hidden / name).resolve():
-                    continue
-                path.unlink()
-            elif path.exists():
-                raise RuntimeError(
-                    f"Forwarded context conflicts with central file: {name}"
-                )
-            path.symlink_to(
-                hidden / name, target_is_directory=entries[name]["kind"] == "directory"
-            )
-        replace(links_path, json.dumps(sorted(links)))
-
-    link_forwarded_user_context(
-        directory, Path(current["central_config"]), hidden, tree, helpers
-    )
-    return {"changed": True, "offsets": transcript_offsets(home)}
 
 
 def link_forwarded_user_context(directory, config, forwarded, tree, helpers):

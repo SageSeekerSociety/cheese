@@ -93,7 +93,7 @@ def test_device_auth_survives_unrelated_column_drops(db_session, _portal):
     async def ask():
         project = await _project(db_session)
         await _seed_device(db_session, "allowed", project_id=project)
-        await _without_column(db_session, "device", "ccproxy_upstream")
+        await _without_column(db_session, "device", "cloud_control_private")
         await _without_column(db_session, "device", "visibility")
         await _without_column(db_session, "hosted_device", "owner_user_id")
         identity = await owner_reads.device_for_token(db_session, "tok-allowed")
@@ -112,7 +112,7 @@ def test_device_can_connect_after_an_unrelated_column_is_dropped(
 
     async def prepare():
         await _seed_device(db_session, "connect-after-migration")
-        await _without_column(db_session, "device", "ccproxy_upstream")
+        await _without_column(db_session, "device", "cloud_control_private")
 
     _portal.call(prepare)
     monkeypatch.setattr(settings, "device_connection_owner", True)

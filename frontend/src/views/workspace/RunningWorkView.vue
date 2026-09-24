@@ -24,10 +24,12 @@ import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
+import { t } from '@/i18n'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -269,157 +271,163 @@ function openTask(task: RoomTask) {
 </script>
 
 <template>
-  <div class="board">
-    <!-- 这一页是项目的落点，所以顶上只有一个标题，就是项目名。板曾经在它下面另
-         起一个「看板」的二级标题——一页两个标题，而板就是这一页的主体，列头自己已
-         经说明了它是什么。统计和「只看我的」因此直接归到项目名这一行下面。 -->
-    <header class="board__title">
-      <h1 v-if="store.projectName" class="t-page-title">{{ store.projectName }}</h1>
-      <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
-           登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
-      <button v-if="mineHandle" type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
+  <!-- 这一页是项目的落点，页头写的是它是什么（看板），项目名在侧栏顶上那一行——那一
+       行点下去就回到这里。统计和「只看我的」归在页头上：它们说的是整块板。 -->
+  <ProjectPage :title="t('navigation.project.board')" width="full">
+    <template #meta>
+      <span class="board__tally">
+        <template v-if="tally.length">
+          <template v-for="(item, i) in tally" :key="item.label">
+            <span v-if="i" class="board__sep">·</span>
+            <span>{{ item.label }} {{ item.n }}</span>
+          </template>
+        </template>
+        <template v-else-if="!loading">暂无派出去的任务</template>
+      </span>
+    </template>
+    <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
+         登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
+    <template v-if="mineHandle" #actions>
+      <button type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
         只看我的
       </button>
-    </header>
-    <p class="board__tally t-meta c-muted">
-      <template v-if="tally.length">
-        <template v-for="(t, i) in tally" :key="t.label">
-          <span v-if="i" class="board__sep">·</span>
-          {{ t.label }} {{ t.n }}
-        </template>
-      </template>
-      <template v-else-if="!loading">暂无派出去的任务</template>
-    </p>
+    </template>
+    <div class="board">
+      <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
+      <NeedsYou :project-id="projectId" />
 
-    <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
-    <NeedsYou :project-id="projectId" />
+      <div v-if="errorMsg" class="pa-6 t-body c-muted">
+        {{ errorMsg }}
+        <v-btn class="ms-2" size="small" variant="text" @click="load()">重试</v-btn>
+      </div>
 
-    <div v-if="errorMsg" class="pa-6 t-body c-muted">
-      {{ errorMsg }}
-      <v-btn class="ms-2" size="small" variant="text" @click="load()">重试</v-btn>
-    </div>
-
-    <template v-else-if="nothingYet">
-      <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
+      <template v-else-if="nothingYet">
+        <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
            「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。产物那一列在
            这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
-      <div class="board__start">
-        <p class="t-body">这个项目还没有开始的工作</p>
-        <p class="t-meta c-muted">在对话里说明你要完成什么，芝士会把它拆成具体任务</p>
-        <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入对话</v-btn>
-      </div>
-    </template>
+        <div class="board__start">
+          <p class="t-body">这个项目还没有开始的工作</p>
+          <p class="t-meta c-muted">在对话里说明你要完成什么，芝士会把它拆成具体任务</p>
+          <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入对话</v-btn>
+        </div>
+      </template>
 
-    <template v-else>
-      <!-- 列永远都在，空了也留着列头和 0。整列消失会让板在两次刷新之间跳，而位置
+      <template v-else>
+        <!-- 列永远都在，空了也留着列头和 0。整列消失会让板在两次刷新之间跳，而位置
            本身就是信息：「等你」那一列在哪儿，不该取决于它此刻有没有东西。筛选也
            一样——「只看我的」筛空一列，那一列照样留在原地。 -->
-      <div class="board__cols">
-        <section v-for="col in BOARD_COLUMNS" :key="col.key" class="board-col" :data-column="col.key">
-          <header class="board-col__head">
-            <span class="board-dot" :class="col.cls" :style="columnDotStyle(col.key)" aria-hidden="true" />
-            <span class="board-col__name t-body">{{ col.label }}</span>
-            <span class="board-col__count t-meta">{{ countLabel(col.key) }}</span>
-          </header>
-          <!-- 活还在路上时，列已经在这儿了：列本身是固定的（三列 + 列头），会变的
+        <div class="board__cols">
+          <section v-for="col in BOARD_COLUMNS" :key="col.key" class="board-col" :data-column="col.key">
+            <header class="board-col__head">
+              <span class="board-dot" :class="col.cls" :style="columnDotStyle(col.key)" aria-hidden="true" />
+              <span class="board-col__name t-body">{{ col.label }}</span>
+              <span class="board-col__count t-meta">{{ countLabel(col.key) }}</span>
+            </header>
+            <!-- 活还在路上时，列已经在这儿了：列本身是固定的（三列 + 列头），会变的
                只有里面装什么。所以加载态画在列**里面**，板的框架一开始就是最终的
                样子，卡到齐的那一刻没有任何东西挪位置。定时重拉走的是静默那一路，
                它不碰 loading，所以骨架不会在人看着的时候再回来一次。 -->
-          <LoadingSkeleton v-if="loading && !rows.length" variant="card" :rows="2" class="board-col__skel" />
-          <!-- 这块板每 15 秒自己重拉一次，所以卡是会在没人碰它的时候变的：一条活
+            <LoadingSkeleton v-if="loading && !rows.length" variant="card" :rows="2" class="board-col__skel" />
+            <!-- 这块板每 15 秒自己重拉一次，所以卡是会在没人碰它的时候变的：一条活
                从「施工中」挪进「待处理」，那一刻的画面是这一页唯一一处不由点击引
                起的变化，而它恰好是最要紧的那一种——轮到你了。所以卡的进出走过渡，
                而不是原地换一批。同一列里剩下的那几张跟着 FLIP 补位。
                跨列不连着动：两列各是一个能独立滚动的容器，一张卡跨过去在前一列是
                「离开」、在后一列是「进入」，中间那段轨迹没有共同的坐标系可言。 -->
-          <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
-            <!-- 空列自己说它空。「施工中」那一列还多一句下一步：三列同时空着是这
+            <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
+              <!-- 空列自己说它空。「施工中」那一列还多一句下一步：三列同时空着是这
                  个项目的常态，那几行字就是第一屏的主要内容。 -->
-            <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
-              {{ emptyLine(col.key) }}
-              <span v-if="col.key === 'building' && !mine" class="board-col__next t-meta"
-                >在房间里说明要做什么，芝士会把它拆成任务</span
-              >
-            </li>
-            <li v-for="row in inColumn(col.key)" :key="row.id">
-              <button type="button" class="board-card" @click="openTask(row)">
-                <span class="board-card__title t-body">{{ row.title }}</span>
-                <span class="board-card__owner t-meta">
-                  <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
-                  <span class="board-card__sep">·</span>
-                  <span v-if="row.owner_handle" class="board-card__who">
-                    <img
-                      v-if="avatarSrc(row.owner_handle)"
-                      class="board-card__avatar"
-                      :src="avatarSrc(row.owner_handle)!"
-                      alt=""
-                      @error="onAvatarError(row.owner_handle)"
-                    />
+              <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
+                {{ emptyLine(col.key) }}
+                <span v-if="col.key === 'building' && !mine" class="board-col__next t-meta"
+                  >在房间里说明要做什么，芝士会把它拆成任务</span
+                >
+              </li>
+              <li v-for="row in inColumn(col.key)" :key="row.id">
+                <button type="button" class="board-card" @click="openTask(row)">
+                  <span class="board-card__title t-body">{{ row.title }}</span>
+                  <span class="board-card__owner t-meta">
+                    <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
+                    <span class="board-card__sep">·</span>
+                    <span v-if="row.owner_handle" class="board-card__who">
+                      <img
+                        v-if="avatarSrc(row.owner_handle)"
+                        class="board-card__avatar"
+                        :src="avatarSrc(row.owner_handle)!"
+                        alt=""
+                        @error="onAvatarError(row.owner_handle)"
+                      />
+                      <span
+                        v-else
+                        class="board-card__avatar board-card__avatar--initial"
+                        :style="{ backgroundColor: avatarColor(row.owner_handle) }"
+                        aria-hidden="true"
+                        >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
+                      >
+                      <span class="board-card__name">{{ ownerName(row.owner_handle) }}</span>
+                    </span>
+                    <span v-else class="c-faint">暂无负责人</span>
+                    <!-- 这个房间四个槽位占满了：它后面那些是真的在等，不是没人理。 -->
+                    <span v-if="(runningPerRoom.get(row.room_id) ?? 0) >= 4" class="board-card__full">房间满员</span>
+                  </span>
+                  <span class="board-card__rule" aria-hidden="true" />
+                  <span class="board-card__status t-meta">
+                    <!-- 在跑的那条活换成侧栏那一颗呼吸点（同一个类名、同一套观感）：
+                       色点是列级的，同一列里在跑的和排队的原来长得一模一样。 -->
+                    <span v-if="isRunning(row)" class="running-dot" title="正在运行" />
                     <span
                       v-else
-                      class="board-card__avatar board-card__avatar--initial"
-                      :style="{ backgroundColor: avatarColor(row.owner_handle) }"
+                      class="board-dot"
+                      :style="columnDotStyle(row.presentation.column)"
                       aria-hidden="true"
-                      >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
-                    >
-                    <span class="board-card__name">{{ ownerName(row.owner_handle) }}</span>
+                    />
+                    <span class="board-card__phrase">{{ row.presentation.display_status }}</span>
+                    <span class="board-card__when">{{ relTime(row.updated_at ?? row.created_at) }}</span>
                   </span>
-                  <span v-else class="c-faint">暂无负责人</span>
-                  <!-- 这个房间四个槽位占满了：它后面那些是真的在等，不是没人理。 -->
-                  <span v-if="(runningPerRoom.get(row.room_id) ?? 0) >= 4" class="board-card__full">房间满员</span>
-                </span>
-                <span class="board-card__rule" aria-hidden="true" />
-                <span class="board-card__status t-meta">
-                  <!-- 在跑的那条活换成侧栏那一颗呼吸点（同一个类名、同一套观感）：
-                       色点是列级的，同一列里在跑的和排队的原来长得一模一样。 -->
-                  <span v-if="isRunning(row)" class="running-dot" title="正在运行" />
-                  <span v-else class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-                  <span class="board-card__phrase">{{ row.presentation.display_status }}</span>
-                  <span class="board-card__when">{{ relTime(row.updated_at ?? row.created_at) }}</span>
-                </span>
-                <!-- 一条活骑一张卡、一棵树开一个 PR，是一对一 —— 所以这里永远只有
+                  <!-- 一条活骑一张卡、一棵树开一个 PR，是一对一 —— 所以这里永远只有
                      一个号，不为多个 PR 留结构。 -->
-                <span v-if="row.card?.pr_number" class="board-card__pr t-meta">PR #{{ row.card.pr_number }}</span>
-              </button>
-            </li>
-          </TransitionGroup>
-        </section>
+                  <span v-if="row.card?.pr_number" class="board-card__pr t-meta">PR #{{ row.card.pr_number }}</span>
+                </button>
+              </li>
+            </TransitionGroup>
+          </section>
 
-        <!-- 做出了什么：板上最右边那一列。三列从左到右是一条流水线（施工中 → 交付
+          <!-- 做出了什么：板上最右边那一列。三列从左到右是一条流水线（施工中 → 交付
              中 → 待处理），产物是这条流水线吐出来的东西，接在后面。它不摞在板上面
              是因为那要占竖直高度，有几项就占多高，而这一页不滚——板会被挤没。空的
              时候这一列留着：一列凭空消失会让整个网格错位。 -->
-        <section class="board-col board-col--made">
-          <header class="board-col__head">
-            <span class="board-col__name t-body">做出了什么</span>
-            <span class="board-col__count t-meta">{{ madeCount }}</span>
-          </header>
-          <ArtifactManifest :project-id="projectId" @count="madeCount = $event" />
-        </section>
-      </div>
+          <section class="board-col board-col--made">
+            <header class="board-col__head">
+              <span class="board-col__name t-body">做出了什么</span>
+              <span class="board-col__count t-meta">{{ madeCount }}</span>
+            </header>
+            <ArtifactManifest :project-id="projectId" @count="madeCount = $event" />
+          </section>
+        </div>
 
-      <!-- 已完成收在底部。不是隐藏：件数写在按钮上，谁想看点开就是。 -->
-      <div v-if="doneTotal" class="board__done">
-        <button type="button" class="board__done-head" :aria-expanded="showDone" @click="showDone = !showDone">
-          <v-icon size="16">{{ showDone ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-          <span class="t-body">{{ columnLabel('done') }}</span>
-          <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
-        </button>
-        <ul v-if="showDone" class="board__done-list">
-          <li v-if="!doneRows.length" class="board-col__empty t-body">暂无归你的任务</li>
-          <li v-for="row in doneRows" :key="row.id">
-            <button type="button" class="done-row" @click="openTask(row)">
-              <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
-              <span class="done-row__title t-body">{{ row.title }}</span>
-              <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
-              <span class="done-row__phrase t-meta">{{ row.presentation.display_status }}</span>
-            </button>
-          </li>
-        </ul>
-      </div>
-    </template>
-  </div>
+        <!-- 已完成收在底部。不是隐藏：件数写在按钮上，谁想看点开就是。 -->
+        <div v-if="doneTotal" class="board__done">
+          <button type="button" class="board__done-head" :aria-expanded="showDone" @click="showDone = !showDone">
+            <v-icon size="16">{{ showDone ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+            <span class="t-body">{{ columnLabel('done') }}</span>
+            <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
+          </button>
+          <ul v-if="showDone" class="board__done-list">
+            <li v-if="!doneRows.length" class="board-col__empty t-body">暂无归你的任务</li>
+            <li v-for="row in doneRows" :key="row.id">
+              <button type="button" class="done-row" @click="openTask(row)">
+                <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
+                <span class="done-row__title t-body">{{ row.title }}</span>
+                <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
+                <span class="done-row__phrase t-meta">{{ row.presentation.display_status }}</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </template>
+    </div>
+  </ProjectPage>
 </template>
 
 <style scoped>
@@ -442,24 +450,6 @@ function openTask(task: RoomTask) {
   min-height: 0;
   padding: 16px 12px 12px;
   container-type: inline-size;
-}
-.board__title {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-}
-.board__title h1 {
-  margin: 0;
-}
-/* 统计那一行在活到齐之前是空的，但位置得留着：一个空 <p> 高度为 0，字一出现整块
-   板就往下掉一行。 */
-.board__tally {
-  flex: 0 0 auto;
-  min-height: 19px;
-  margin: 2px 0 10px;
-  padding: 0 10px;
 }
 .board__sep {
   color: var(--faint);

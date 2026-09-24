@@ -10,48 +10,14 @@ from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
 from tests.support.consent import SIGNUP_CONSENT
+from tests.support.outbox import Outbox, install_outbox
 
 OVERLONG = "a1!" * 24 + "b"  # 73 bytes: one past what bcrypt can take
 
 
-class _Outbox:
-    def __init__(self, *, delivers: bool = True) -> None:
-        self.is_configured = True
-        self.delivers = delivers
-        self.held = False
-        self.sent: list[dict] = []
-
-    async def send(self, **kwargs) -> bool:
-        import asyncio
-
-        while self.held:
-            await asyncio.sleep(0.01)
-        self.sent.append(kwargs)
-        return self.delivers
-
-    def wait_for(self, count: int, timeout: float = 5.0) -> None:
-        """Recovery mail leaves after the response, so wait for it to land."""
-        deadline = time.monotonic() + timeout
-        while len(self.sent) < count:
-            assert time.monotonic() < deadline, f"{len(self.sent)} of {count} sent"
-            time.sleep(0.01)
-
-    def settle(self, count: int) -> None:
-        """Wait for ``count`` mails, then make sure no further one follows."""
-        self.wait_for(count)
-        time.sleep(0.2)
-        assert len(self.sent) == count, self.sent
-
-
 @pytest.fixture
-def outbox(monkeypatch) -> _Outbox:
-    import app.core.email as email_module
-    import app.domain.user.verification_service as verification_module
-
-    box = _Outbox()
-    monkeypatch.setattr(email_module, "get_email_sender", lambda: box)
-    monkeypatch.setattr(verification_module, "get_email_sender", lambda: box)
-    return box
+def outbox(monkeypatch) -> Outbox:
+    return install_outbox(monkeypatch)
 
 
 @pytest.fixture
@@ -125,12 +91,6 @@ def _login(client: TestClient, username: str, password: str):
     )
 
 
-def _mailed_code(outbox: _Outbox) -> str:
-    match = re.search(r"\b(\d{6})\b", outbox.sent[-1]["body_text"])
-    assert match, outbox.sent[-1]
-    return match.group(1)
-
-
 def _registration(email: str, code: str, password: str = "abc123456Test!") -> dict:
     suffix = uuid.uuid4().hex[:10]
     return {
@@ -145,7 +105,7 @@ def _registration(email: str, code: str, password: str = "abc123456Test!") -> di
 
 class TestRegistrationEmailCode:
     def test_a_failed_send_is_an_error_and_can_be_retried_at_once(
-        self, api_client: TestClient, outbox: _Outbox
+        self, api_client: TestClient, outbox: Outbox
     ):
         email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
 
@@ -159,14 +119,14 @@ class TestRegistrationEmailCode:
         assert len(outbox.sent) == 2
 
     def test_five_wrong_codes_void_the_right_one(
-        self, api_client: TestClient, outbox: _Outbox
+        self, api_client: TestClient, outbox: Outbox
     ):
         email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
         assert (
             api_client.post("/users/verify/email", json={"email": email}).status_code
             == 200
         )
-        code = _mailed_code(outbox)
+        code = outbox.code()
         wrong = "000000" if code != "000000" else "111111"
 
         for _ in range(5):
@@ -175,14 +135,14 @@ class TestRegistrationEmailCode:
 
         resp = api_client.post("/users", json=_registration(email, code))
         assert resp.status_code == 422, resp.text
-        assert "verification code" in resp.json()["error"]["message"]
+        assert resp.json()["error"]["data"]["reason"] == "invalid_email_code"
 
     def test_the_right_code_still_works_after_fewer_misses(
-        self, api_client: TestClient, outbox: _Outbox
+        self, api_client: TestClient, outbox: Outbox
     ):
         email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
         api_client.post("/users/verify/email", json={"email": email})
-        code = _mailed_code(outbox)
+        code = outbox.code()
         wrong = "000000" if code != "000000" else "111111"
 
         for _ in range(4):
@@ -192,11 +152,11 @@ class TestRegistrationEmailCode:
         assert resp.status_code == 200, resp.text
 
     def test_an_overlong_password_is_refused_without_spending_the_code(
-        self, api_client: TestClient, outbox: _Outbox
+        self, api_client: TestClient, outbox: Outbox
     ):
         email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
         api_client.post("/users/verify/email", json={"email": email})
-        code = _mailed_code(outbox)
+        code = outbox.code()
 
         refused = api_client.post(
             "/users", json=_registration(email, code, password=OVERLONG)
@@ -207,7 +167,7 @@ class TestRegistrationEmailCode:
         assert accepted.status_code == 200, accepted.text
 
     def test_the_sixth_code_within_an_hour_is_refused(
-        self, api_client: TestClient, outbox: _Outbox, monkeypatch
+        self, api_client: TestClient, outbox: Outbox, monkeypatch
     ):
         import app.domain.user.mail_quota as mail_quota
 
@@ -220,6 +180,9 @@ class TestRegistrationEmailCode:
 
         refused = api_client.post("/users/verify/email", json={"email": email})
         assert refused.status_code == 400, refused.text
+        data = refused.json()["error"]["data"]
+        assert data["reason"] == "email_code_too_soon"
+        assert 0 < data["retryAfterSeconds"] <= 60 * 60
         assert len(outbox.sent) == 5
 
 
@@ -236,7 +199,7 @@ def _unknown_email() -> str:
 
 class TestRecoveryMail:
     def test_a_second_request_within_a_minute_sends_nothing(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         user = user_client.create_user()
 
@@ -251,7 +214,7 @@ class TestRecoveryMail:
         self,
         api_client: TestClient,
         user_client: UserCreator,
-        outbox: _Outbox,
+        outbox: Outbox,
         monkeypatch,
     ):
         import app.domain.user.mail_quota as mail_quota
@@ -267,7 +230,7 @@ class TestRecoveryMail:
         outbox.settle(5)
 
     def test_addresses_have_separate_limits(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         first = user_client.create_user()
         second = user_client.create_user()
@@ -280,7 +243,7 @@ class TestRecoveryMail:
         assert {m["to"] for m in outbox.sent} == {first.email, second.email}
 
     def test_case_and_whitespace_variants_share_the_limit(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         user = user_client.create_user()
         _recover(api_client, user.email)
@@ -292,7 +255,7 @@ class TestRecoveryMail:
         outbox.settle(1)
 
     def test_known_and_unknown_addresses_get_the_same_answer(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         user = user_client.create_user()
         unknown = _unknown_email()
@@ -312,7 +275,7 @@ class TestRecoveryMail:
         assert outbox.sent[0]["to"] == user.email
 
     def test_the_answer_does_not_wait_for_the_mail(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         user = user_client.create_user()
         outbox.held = True
@@ -328,7 +291,7 @@ class TestRecoveryMail:
         assert match, outbox.sent[0]
 
     def test_a_failed_send_still_answers_the_same(
-        self, api_client: TestClient, user_client: UserCreator, outbox: _Outbox
+        self, api_client: TestClient, user_client: UserCreator, outbox: Outbox
     ):
         user = user_client.create_user()
         outbox.delivers = False
@@ -382,7 +345,7 @@ class TestOverlongPasswords:
         self,
         api_client: TestClient,
         user_client: UserCreator,
-        outbox: _Outbox,
+        outbox: Outbox,
         forget_redis_state,
     ):
         user = user_client.create_user()
@@ -415,7 +378,7 @@ class TestRecoveryPasswordRule:
         password: str,
         api_client: TestClient,
         user_client: UserCreator,
-        outbox: _Outbox,
+        outbox: Outbox,
         forget_redis_state,
     ):
         user = user_client.create_user()
@@ -497,7 +460,6 @@ class TestLoginWait:
     ):
         """However many wrong passwords somebody sends for the account, its
         owner waits no longer than the cap and is then let in."""
-        import time
 
         from app.domain.user import login_security
 
@@ -670,13 +632,13 @@ class TestClientAddressLimits:
         assert second_step(other, totp.now()).status_code == 200
 
     def test_wrong_email_codes_from_one_address_are_limited(
-        self, from_address, few_failures, outbox: _Outbox
+        self, from_address, few_failures, outbox: Outbox
     ):
         guesser, other = from_address(), from_address()
         email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
         sent = other.post("/users/verify/email", json={"email": email})
         assert sent.status_code == 200, sent.text
-        code = _mailed_code(outbox)
+        code = outbox.code()
         wrong = "000000" if code != "000000" else "111111"
 
         for _ in range(few_failures):
@@ -688,7 +650,7 @@ class TestClientAddressLimits:
         assert other.post("/users", json=_registration(email, code)).status_code == 200
 
     def test_verification_mail_from_one_address_is_limited_across_recipients(
-        self, from_address, outbox: _Outbox, monkeypatch
+        self, from_address, outbox: Outbox, monkeypatch
     ):
         import app.domain.user.mail_quota as mail_quota
 
@@ -706,7 +668,7 @@ class TestClientAddressLimits:
         assert len(outbox.sent) == 3
 
     def test_recovery_mail_from_one_address_is_limited_across_recipients(
-        self, from_address, user_client: UserCreator, outbox: _Outbox, monkeypatch
+        self, from_address, user_client: UserCreator, outbox: Outbox, monkeypatch
     ):
         import app.domain.user.mail_quota as mail_quota
 

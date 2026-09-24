@@ -27,10 +27,15 @@ export function waitPhrase(seconds: number): string {
   return whole < 60 ? t('account.attempts.seconds', whole) : t('account.attempts.minutes', Math.ceil(whole / 60))
 }
 
-/** The sentence for a wrong password or a refused attempt, or null for any other error. */
+/** The sentence for a wrong credential or a refused attempt, or null for any other error. */
 export function attemptMessage(error: unknown): string | null {
   const { reason } = refusalOf(error)
   const wait = attemptWaitSeconds(error)
+  if (reason === 'invalid_email_code') return t('account.attempts.wrongEmailCode')
+  if (reason === 'mail_limit_reached') return t('account.attempts.mailLimit')
+  if (reason === 'email_code_too_soon') {
+    return t('account.attempts.codeTooSoon', { wait: waitPhrase(wait) })
+  }
   if (reason === 'invalid_credentials') {
     return wait
       ? t('account.attempts.wrongPasswordWait', { wait: waitPhrase(wait) })
@@ -45,14 +50,10 @@ export function attemptMessage(error: unknown): string | null {
 /** The sentence for a refused email code or address, or null for any other error. */
 export function emailCodeMessage(error: unknown): string | null {
   switch (refusalOf(error).reason) {
-    case 'invalid_code':
-      return t('account.emailCode.wrongCode')
     case 'email_taken':
-      return t('account.emailCode.emailTaken')
+      return t('account.addEmail.emailTaken')
     case 'invalid_email':
-      return t('account.emailCode.invalidEmail')
-    case 'code_wait':
-      return t('account.emailCode.tooSoon')
+      return t('account.rule.emailInvalid')
     case 'reauth_required':
       return t('account.addEmail.signInAgain')
     default:

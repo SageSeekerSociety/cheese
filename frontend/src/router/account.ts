@@ -18,6 +18,24 @@ export default {
       },
     },
     {
+      path: 'signin/email',
+      name: 'SignInEmailCode',
+      component: () => import('@/views/account/emailCode/Request.vue'),
+      meta: {
+        title: '邮箱验证码登录',
+        titleKey: 'account.emailCode.title',
+      },
+    },
+    {
+      path: 'signin/email/verify',
+      name: 'SignInEmailCodeVerify',
+      component: () => import('@/views/account/emailCode/Verify.vue'),
+      meta: {
+        title: '输入验证码',
+        titleKey: 'account.emailCode.codeTitle',
+      },
+    },
+    {
       path: 'signup',
       name: 'SignUpStart',
       component: () => import('@/views/account/signup/Start.vue'),

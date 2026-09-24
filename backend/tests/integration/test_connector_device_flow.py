@@ -5,7 +5,12 @@ NO agent. Also: the /agent WS rejects a bad token, and approve requires a logged
 human.
 """
 
+import asyncio
+import socket
+
+import httpx
 import pytest
+import uvicorn
 
 from tests.conftest import seed_user
 
@@ -68,6 +73,102 @@ def test_full_device_flow_start_approve_poll(client):
     dd = done.json()
     assert dd["status"] == "approved"
     assert dd["device_id"] == device_id and dd["token"]
+
+
+def test_device_code_is_committed_before_start_http_response():
+    """A second TCP request must find a code after the first receives its 200."""
+    from app.core.db import engine, get_db
+    from app.main import app
+
+    async def check() -> None:
+        commit_entered = asyncio.Event()
+        release_commit = asyncio.Event()
+        response_sent = asyncio.Event()
+
+        async def gated_get_db():
+            provider = get_db()
+            session = await anext(provider)
+            original_commit = session.commit
+
+            async def held_commit():
+                if not commit_entered.is_set():
+                    commit_entered.set()
+                    await release_commit.wait()
+                await original_commit()
+
+            session.commit = held_commit
+            try:
+                yield session
+            except BaseException as exc:
+                try:
+                    await provider.athrow(exc)
+                except StopAsyncIteration:
+                    pass
+                raise
+            else:
+                try:
+                    await anext(provider)
+                except StopAsyncIteration:
+                    pass
+
+        async def observed_app(scope, receive, send):
+            async def observed_send(message):
+                await send(message)
+                if (
+                    scope["type"] == "http"
+                    and scope["path"] == "/connector/auth/device/start"
+                    and message["type"] == "http.response.body"
+                    and not message.get("more_body", False)
+                ):
+                    response_sent.set()
+
+            await app(scope, receive, observed_send)
+
+        app.dependency_overrides[get_db] = gated_get_db
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(128)
+        server = uvicorn.Server(
+            uvicorn.Config(observed_app, log_level="error", lifespan="on")
+        )
+        server_task = asyncio.create_task(server.serve(sockets=[sock]))
+        try:
+            async with asyncio.timeout(20):
+                while not server.started:
+                    await asyncio.sleep(0.01)
+
+            async with httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{sock.getsockname()[1]}", timeout=10
+            ) as http:
+                start_task = asyncio.create_task(
+                    http.post(
+                        "/connector/auth/device/start", json={"device_name": "probe"}
+                    )
+                )
+                try:
+                    await asyncio.wait_for(commit_entered.wait(), timeout=10)
+                    with pytest.raises(TimeoutError):
+                        await asyncio.wait_for(response_sent.wait(), timeout=0.5)
+                    assert not start_task.done()
+                finally:
+                    release_commit.set()
+
+                start = await asyncio.wait_for(start_task, timeout=10)
+                assert start.status_code == 200, start.text
+                code = start.json()["device_code"]
+                poll = await http.post(
+                    "/connector/auth/device/poll", json={"device_code": code}
+                )
+                assert poll.status_code == 200, poll.text
+                assert poll.json()["status"] == "pending"
+        finally:
+            release_commit.set()
+            server.should_exit = True
+            await asyncio.wait_for(server_task, timeout=15)
+            app.dependency_overrides.pop(get_db, None)
+            await engine.dispose()
+
+    asyncio.run(check())
 
 
 def test_the_human_door_creates_the_hosted_subtype(client):

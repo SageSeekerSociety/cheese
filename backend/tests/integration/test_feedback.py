@@ -17,10 +17,13 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
+from fastapi import Request
 from sqlalchemy import select, update
 
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.feedback import repositories as feedback_repo
@@ -32,6 +35,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
+from app.main import app
 from tests.integration.conftest import room_agent_seat, session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
@@ -249,6 +253,86 @@ def test_security_is_a_subclass_of_private(client, as_admin):
         ).status_code
         == 404
     )
+
+
+def test_admin_patch_is_visible_when_its_response_arrives(client, as_admin):
+    """A refresh started by the PATCH response sees the committed assignment."""
+    row = _report(client, REPORTER)
+    original_get_db = app.dependency_overrides[get_db]
+
+    async def patch_and_read() -> tuple[httpx.Response, str | None]:
+        gate_entered = asyncio.Event()
+        response_sent = asyncio.Event()
+        release_gate = asyncio.Event()
+
+        async def gated_get_db(request: Request):
+            provider = original_get_db()
+            session = await anext(provider)
+            try:
+                yield session
+            except BaseException as exc:
+                try:
+                    await provider.athrow(exc)
+                except StopAsyncIteration:
+                    pass
+                raise
+            else:
+                if request.method == "PATCH":
+                    gate_entered.set()
+                    await release_gate.wait()
+                try:
+                    await anext(provider)
+                except StopAsyncIteration:
+                    pass
+
+        class ObservedApp:
+            async def __call__(self, scope, receive, send):
+                async def observed_send(message):
+                    await send(message)
+                    if (
+                        scope["method"] == "PATCH"
+                        and message["type"] == "http.response.body"
+                        and not message.get("more_body", False)
+                    ):
+                        response_sent.set()
+
+                await app(scope, receive, observed_send)
+
+        app.dependency_overrides[get_db] = gated_get_db
+        headers = dict(client.headers)
+        headers.update(session_auth_headers(as_admin))
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=ObservedApp()),
+                    base_url="http://test",
+                ) as writer,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://test"
+                ) as reader,
+            ):
+                patch_task = asyncio.create_task(
+                    writer.patch(
+                        f"/admin/feedback/{row['id']}",
+                        json={"assignee_handle": STRANGER},
+                        headers=headers,
+                    )
+                )
+                await asyncio.wait_for(gate_entered.wait(), timeout=5)
+                await asyncio.wait_for(response_sent.wait(), timeout=5)
+                refreshed = await reader.get(
+                    f"/admin/feedback/{row['id']}", headers=headers
+                )
+                release_gate.set()
+                patch = await patch_task
+                return patch, refreshed.json()["data"]["assignee_handle"]
+        finally:
+            release_gate.set()
+            app.dependency_overrides[get_db] = original_get_db
+
+    response, refreshed_assignee = client.portal.call(patch_and_read)
+    assert response.status_code == 200, response.text
+    assert refreshed_assignee == STRANGER
 
 
 def test_the_room_that_filed_it_can_see_it(client):

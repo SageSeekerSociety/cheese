@@ -44,7 +44,7 @@ const topic: Topic = {
   project_id: 'p1',
   parent_id: null,
   title: 'Synthetic room',
-  kind: 'root',
+  kind: 'topic',
   status: 'active',
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-01T00:00:00Z',

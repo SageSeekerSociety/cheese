@@ -38,6 +38,22 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+def test_unknown_finished_task_does_not_hold_idle_upgrade(tmp_path):
+    executor = runtime.Executor.__new__(runtime.Executor)
+    executor.state = tmp_path
+    executor.config = {"claude": "old"}
+    executor.admission_lock = threading.Lock()
+    executor.active_calls = 0
+    executor.upgrading = False
+    executor.tasks = {"lost-exit-trap": {"status": "unknown"}}
+    executor.task = lambda marker: executor.tasks[marker]
+
+    result = executor.dispatch("begin_upgrade", {"release": "next"})
+
+    assert result["ready"] is True
+    assert executor.upgrading is True
+
+
 def test_acceptance_cleanup_leaves_another_runs_same_named_case_alive(
     tmp_path, monkeypatch
 ):

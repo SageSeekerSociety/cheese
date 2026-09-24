@@ -17,6 +17,8 @@ export const ADD_EMAIL_ROUTE = 'AccountAddEmail'
 // 协议页也放行：它们是这个要求之外的公开页面。
 const PASSES = new Set([
   'SignIn',
+  'SignInEmailCode',
+  'SignInEmailCodeVerify',
   'PasskeyOffer',
   'SignUpStart',
   'SignUpVerifyEmail',

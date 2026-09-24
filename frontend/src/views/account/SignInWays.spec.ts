@@ -73,6 +73,16 @@ describe('signing in the way used last time', () => {
     expect(precedes(view.getByLabelText('Username'), github)).toBe(true)
   })
 
+  it('offers a mailed code, marked when it was used last time', async () => {
+    localStorage.setItem('cheese.lastSignIn', 'email_code')
+    const view = await mount()
+
+    const byEmail = await view.findByRole('button', { name: /Sign in with an email code/ })
+    const github = await view.findByRole('button', { name: /Sign in with GitHub/ })
+    expect(precedes(byEmail, github)).toBe(true)
+    expect(byEmail.textContent).toContain('Last used')
+  })
+
   it('leads with the one-click ways when nothing was used before', async () => {
     const view = await mount()
 

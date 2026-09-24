@@ -1,7 +1,7 @@
 """一台机器只有一种启动环境，所以代理要自己把 Claude Code 扶起来（结论 46）。
 
-A machine is launched with no base URL, this proxy on `HTTPS_PROXY` and a fake
-ticket — one shape, whether or not the deployment owns an Anthropic
+A session is launched with no base URL, this proxy on `HTTPS_PROXY` and its
+host's own Claude login — one shape, whether or not the deployment owns an Anthropic
 subscription at all. Claude Code asks for four things on its way up that have
 nothing to do with inference (identity, settings, policy, telemetry) plus its
 feature flags, and every one of them has to be answered here or the process
@@ -137,9 +137,9 @@ def test_the_login_hosts_are_not_answered_from_the_boot_table(host):
     /login` or `claude setup-token` — and those ask for the very same paths
     against a REAL Anthropic account. Answered from this table they would get
     Cheese's synthesised account back (uuid = a topic, email @cheese.local),
-    and the setup-token that login produces is the credential this proxy
-    injects on every subscription turn. So the boot rows answer one host, and
-    every other request on these two goes upstream untouched."""
+    and the login that produces is the credential sessions on that host carry
+    on every subscription turn. So the boot rows answer one host, and every
+    other request on these two goes upstream untouched."""
     for path in (
         "/api/oauth/profile",
         "/api/claude_code/settings",

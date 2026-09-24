@@ -810,31 +810,6 @@ class DeviceChannel(Channel):
         async with factory() as session:
             return await device_api_base(session, device_id, self._public_base)
 
-    async def _device_ccproxy_upstream(self, device_id: str) -> str:
-        """The ccproxy identity this DEVICE brings, '' when it brings none.
-
-        Non-empty means the device runs on the machine-ticket model — claude
-        carries the device's own ccproxy ticket and the meter relays it over
-        this identity — the same credential shape as an enrolled MicroCloud
-        machine (whose identity lives on `ProjectMachine` and whose launches are
-        already steered by CHEESE_TUNNEL_URL)."""
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        async with factory() as session:
-            device = await sql_device_service(session).get_device(device_id)
-        if device is None:
-            return ""
-        # Direct attribute access, not getattr-with-default: this field was added
-        # to the model but not the domain dataclass at first, and a
-        # getattr(..., None) fallback turned that gap into a silent "" — the
-        # signal was never sent and the box looped on the swap path. A missing
-        # field must now be an AttributeError at the first turn, not a quiet
-        # miss (2026-08-15).
-        return (device.ccproxy_upstream or "").strip()
-
     def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
         """The screen's cwd on the device.
 
@@ -1011,13 +986,15 @@ class DeviceChannel(Channel):
         None is not a hiccup the next attempt outlives. Measured on dev
         2026-09-23: a screen whose control session had registered under another
         room was asked for it on every turn after a release, got the same None
-        every time, and the room could not run a turn at all while it failed."""
-        from app.domain.agent.remote_control import store
+        every time, and the room could not run a turn at all while it failed.
+        A session whose worker stopped is the same: its requests are queued for
+        a reader that is gone (dev 2026-09-24, twelve turns of one room)."""
+        from app.domain.agent.remote_control import connected, store
 
         # A screen is launched as one named agent and records it, so this is
         # the agent whose control session to look for — no second answer.
         session = await store().current(str(screen.topic_id), screen.agent_handle)
-        if not session or session["status"] != "active":
+        if not session or not connected(session):
             return None
         if screen.resource_id is not None and (
             (session.get("execution") or {}).get("resource_id")
@@ -1036,8 +1013,8 @@ class DeviceChannel(Channel):
             return False
         session = await self._resident_control(screen)
         if session is None:
-            # The reuse gate relaunches a screen without one; reaching here
-            # means the session went away since, and the next turn relaunches.
+            # It went away since the reuse gate looked, which relaunches the
+            # screen on this error just as it would have without one.
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
             )
@@ -1056,6 +1033,15 @@ class DeviceChannel(Channel):
             return json.loads(result["stdout"])
 
         staged = await execute("stage", home_dir, sources)
+        if staged.get("busy"):
+            # Helpers are not replaced under a conversation that is still
+            # running. This turn runs on the release it has; the marker stays
+            # behind, so the next turn tries again.
+            logger.info(
+                "resident release deferred topic=%s reason=conversation_busy",
+                screen.topic_id,
+            )
+            return False
         if not staged["changed"]:
             return False
         # The rendezvous path runs terminal-only slash commands without typing
@@ -1173,52 +1159,6 @@ class DeviceChannel(Channel):
         )
         return True
 
-    async def _refresh_forwarded_context(
-        self, screen: HubScreen, home_dir: str, target: dict
-    ) -> None:
-        if not target.get("context_tree"):
-            from app.domain.agent import execution
-
-            target = {
-                **target,
-                "context_tree": await execution.call(
-                    target,
-                    "context_fs",
-                    {"operation": "tree"},
-                    hub=self._hub,
-                    timeout=40,
-                ),
-            }
-        result = await self._hub.exec(
-            screen.device_id,
-            ["python3", "-"],
-            stdin=resident_release.script("apply_forwarded_context", home_dir, target),
-            timeout=40,
-        )
-        if result.get("exit") != 0:
-            raise ScreenSetupError(
-                "Forwarded context refresh failed: " + str(result.get("stderr") or "")
-            )
-        status = json.loads(result["stdout"])
-        if not status.get("changed"):
-            return
-        await self.send_prompt(screen, "/reload-skills")
-        result = await self._hub.exec(
-            screen.device_id,
-            ["python3", "-"],
-            stdin=resident_release.script(
-                "wait_skills_reloaded",
-                status["offsets"],
-                home_dir,
-                target["context_tree"]["generation"],
-            ),
-            timeout=40,
-        )
-        if result.get("exit") != 0:
-            raise ScreenSetupError(
-                "Forwarded skill reload failed: " + str(result.get("stderr") or "")
-            )
-
     def _link_failure(
         self, device_id: str, *, step: str, waited_s: float, offline: bool
     ) -> str:
@@ -1300,15 +1240,6 @@ class DeviceChannel(Channel):
             if status["state"] == "preparing":
                 return existing
         agent_configuration = (env or {}).get("CHEESE_AGENT_CONFIG", "")
-        stable_target = (
-            {
-                name: value
-                for name, value in execution_target.items()
-                if name != "context_tree"
-            }
-            if execution_target
-            else None
-        )
         if existing is not None and (
             existing.closing or self._credential_is_stale(existing)
         ):
@@ -1343,14 +1274,13 @@ class DeviceChannel(Channel):
         # CLAUDE_MODEL=deepseek-chat while users thought they were talking to
         # Claude). This is what ``builds_model_env`` declares.
         #
-        # The machine holds no real credential: the env ships a scoped cheese
-        # token as the fake login, and the proxy injects the real one.
+        # The Claude login is the host's own, established by the launch script;
+        # the scoped cheese token below only proves which project to bill.
         ca_pem = _read_proxy_ca()
         # Session-length TTL, not the 1h default. This token is baked into the
-        # bare process's HTTPS_PROXY (CONNECT credential) and
-        # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
-        # hot-refreshed; the screen is reused across turns (a reassert only
-        # re-attaches, it does not relaunch claude). A 1h token
+        # bare process's HTTPS_PROXY (CONNECT credential), read ONCE at process
+        # start and never hot-refreshed; the screen is reused across turns (a
+        # reassert only re-attaches, it does not relaunch claude). A 1h token
         # thus expires under a still-running process, and every turn after the
         # first hour is rejected by the metering proxy (407) — the agent looks
         # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
@@ -1373,7 +1303,6 @@ class DeviceChannel(Channel):
             ca_path=_DEVICE_PROXY_CA_PATH,
             project_id=str(project_id),
             topic_id=str(topic_id),
-            session_token=session_token,
             connect_proxy_url=connect_proxy_url,
             no_proxy=self._no_proxy_hosts(),
         )
@@ -1402,8 +1331,10 @@ class DeviceChannel(Channel):
         # The tunnel's CONNECT credential must carry the same place and RC
         # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
         model_env["CHEESE_CONNECT_TOKEN"] = session_token
-        # These scopes describe the Cheese control credential. The model
-        # provider still authenticates inference at its existing proxy hop.
+        # Read by Claude Code only when its login comes from the environment (a
+        # host with a setup-token): the scopes it then believes it holds. RC is
+        # served by Cheese, not Anthropic, so the sessions scope enables it
+        # whatever the token grants upstream. A stored login has its own.
         model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
             "user:inference user:profile user:sessions:claude_code"
         )
@@ -1416,14 +1347,6 @@ class DeviceChannel(Channel):
             # arguments because a remote machine's launch is built entirely from
             # `extra_env` — there is no other channel into that builder.
             model_env["CHEESE_TUNNEL_URL"] = tunnel_url
-        elif await self._device_ccproxy_upstream(device_id):
-            # A device with its own ccproxy identity runs on the machine-ticket
-            # model: the launcher's reconcile hands claude the device's
-            # own ticket instead of our scoped token, and admission tells
-            # the meter which identity to relay it over. Without this flag
-            # such a device silently falls onto the platform-credential swap
-            # path — the #393 dependency this model exists to remove.
-            model_env["CHEESE_MACHINE_TICKET"] = "1"
         # Preserve the birth expiry across device and backend restarts.
         credential_expires = _credential_expiry(session_token)
         model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
@@ -1478,7 +1401,7 @@ class DeviceChannel(Channel):
         configuration = _launch_identity(
             agent_configuration=agent_configuration,
             harness_contract=holes.contract,
-            execution_target=stable_target,
+            execution_target=execution_target,
         )
         # The machine reports its environment back, so this is the one value
         # both sides of the seam can be asked for. Exported for every harness,
@@ -1543,15 +1466,26 @@ class DeviceChannel(Channel):
                 retire_reason = "claude_not_alive"
             elif tunnel_down:
                 retire_reason = "tunnel_helper_down"
-            elif (
-                release_state is not None
-                and self._resident_release_due(release_state)
-                and await self._resident_control(existing) is None
+            elif release_state is not None and self._resident_release_due(
+                release_state
             ):
-                # A release reaches a running process only through its native
-                # control session; without one the process stays on the old
-                # release for good. A fresh launch starts on the current one.
-                retire_reason = "resident_release_unreachable"
+                # Releasing in place is an optimisation: a fresh launch starts
+                # on the current release. So a process the release cannot reach,
+                # or one it failed to reach, is replaced instead of failing the
+                # turn — and failing it again on every turn after.
+                if await self._resident_control(existing) is None:
+                    retire_reason = "resident_release_unreachable"
+                else:
+                    try:
+                        await self._refresh_resident(existing, home_dir, release_state)
+                    except ScreenSetupError:
+                        logger.warning(
+                            "resident release failed topic=%s sid=%s",
+                            topic_id,
+                            existing.sid,
+                            exc_info=True,
+                        )
+                        retire_reason = "resident_release_failed"
             if retire_reason is not None:
                 # Adopt-create cannot restart a dead process, its tunnel or its
                 # release while the connector still knows the sid. A new sid
@@ -1574,22 +1508,6 @@ class DeviceChannel(Channel):
                 # an expired credential on the next turn.
                 command = _launcher_command(resource_id)
         mark("device_checks_complete")
-        if existing is not None:
-            if release_state is not None:
-                assert execution_target is not None
-                released = await self._refresh_resident(
-                    existing, home_dir, release_state
-                )
-                previous_tree = (existing.execution_target or {}).get(
-                    "context_tree", {}
-                )
-                current_tree = execution_target.get("context_tree", {})
-                if released or previous_tree.get("generation") != current_tree.get(
-                    "generation"
-                ):
-                    await self._refresh_forwarded_context(
-                        existing, home_dir, execution_target
-                    )
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
             # credential it was born with — so the recorded birth expiry must NOT be

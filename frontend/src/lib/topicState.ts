@@ -8,6 +8,8 @@
 // for. One table, so they can never disagree about what `archived` is called or
 // about which of two true things a topic is mostly in.
 
+import { t } from '@/i18n'
+
 export interface TopicStateBadge {
   label: string
   /** Class suffix the host styles: `pr-state--open` / `--merged` / `--draft`. */
@@ -64,4 +66,13 @@ export function topicPhaseBadge(phase: TopicPhase): TopicStateBadge {
 /** The short id a topic is referred to by on screen ("#a1b2c3"). */
 export function topicShortId(id?: string | null): string {
   return id ? id.slice(0, 6) : ''
+}
+
+/**
+ * 一个话题在屏幕上叫什么。项目本身那个房间（kind = root）在侧栏上叫「全局」，
+ * 点进去页头也得叫「全局」——它存着的标题是建项目时写下的「<项目名> · 项目总览」，
+ * 照着写就是同一个房间两个名字。
+ */
+export function topicTitle(topic: { kind?: string | null; title: string }): string {
+  return topic.kind === 'root' ? t('navigation.project.general') : topic.title
 }

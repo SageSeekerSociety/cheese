@@ -9,7 +9,7 @@
 
 `<&frontend/vite.config.ts>` 的 dev server proxy：
 
-1. 新增 `/users` 转发规则（跟 `/api`、`/connector` 同风格），修复 SRP 登录第一步 `GET /users/auth/methods/:username` 在 vite dev 模式下到不了后端的问题——这是两个登录 E2E 用例超时的根因。
+1. 新增 `/users` 转发规则（跟 `/api`、`/connector` 同风格），让绕过 axios 层的裸 `/users` 请求在 vite dev 模式下也能到达后端。
 2. `/api` 规则加了 `rewrite: (path) => path.replace(/^\/api\/api\b/, '/api')`，只精确剥掉 `BASE = '/api/api'`（见 `<&frontend/src/api.ts>`）造成的双层前缀，模拟生产 nginx 网关"剥一层 /api"的效果；刻意用精确匹配而不是无条件剥一层——`terminal.py` 返回的终端 iframe 地址是单层 `/api/topics/.../terminal/live/`，必须原样不动才能命中后端真实路由，无条件剥层会把这条弄坏。
 
 `VITE_API_BASE_URL` 不需要设置：`API_BASE_URL` 未设时 axios baseURL 是 `undefined`，请求走相对路径，纯靠 proxy 转发即可，跟 `/connector` 现状一致。
@@ -19,7 +19,6 @@
 沙箱没有 docker，`playwright install --with-deps` 需要的系统级共享库（`libglib-2.0.so.0` 等）装不了，浏览器起不来（`chrome-headless-shell: error while loading shared libraries`）——这是沙箱本身的限制，不是本次改动引入的问题。已用其他方式做了等价验证：
 
 - 起了真实 backend（`uvicorn`，接真实 Postgres——沙箱内用户态 `pgserver` + `fakeredis` TCP server 代替 docker 里的 PG/Redis）+ 真实 `vite` dev server，用 `curl` 走 dev proxy 实测：
-  - `GET /users/auth/methods/alice` 经 3100 端口 proxy 拿到的响应跟直连后端 8791 完全一致（200，认证方式 JSON）——此前这个请求在 dev 模式下根本到不了后端。
   - `POST /users/auth/login`（alice/demo12345，seed 数据）经 proxy 返回 200 + `accessToken`，跟直连后端一致——对应第一个 E2E 用例的断言路径。
   - 错误凭据经 proxy 返回 401 + "Invalid username or password"文案——对应第二个 E2E 用例的断言路径。
   - `GET /api/api/projects`（双层前缀）经 proxy 现在正确落到 `/api/projects`，返回 200，不再 404。

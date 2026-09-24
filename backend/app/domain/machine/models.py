@@ -60,11 +60,13 @@ TRANSITIONAL = {
 
 
 class AiStatus(enum.StrEnum):
-    """How far MicroCloud has got wiring this machine's Claude Code up.
+    """MicroCloud's report on the machine's built-in AI channel.
 
-    Deliberately separate from MachineStatus: a machine reports `running` while
-    its agent access is still being provisioned, so treating the two as one
-    would call a machine usable before it can run a turn.
+    Cheese creates every machine with `aiMode: none`, which MicroCloud reports
+    as `disabled`: the machine only executes tools, and its sessions' models
+    come from the session host. Kept separate from MachineStatus because it is
+    a separate field of MicroCloud's answer, and `error` here still means the
+    provider gave up on the machine.
     """
 
     disabled = "disabled"
@@ -100,7 +102,6 @@ class WarmMachine(UuidPk, Timestamps, Base):
     bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
     enrolled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -175,9 +176,11 @@ class ProjectMachine(UuidPk, Timestamps, Base):
         default=MachineStatus.provisioning,
     )
     ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    # How the machine's Claude Code reaches a model (none | newapi | ccproxy),
-    # and how far that setup has got. Free-form text for the mode: it names a
-    # MicroCloud-side supply route, and a new one must not break reads here.
+    # MicroCloud's built-in AI channel for the machine and how far its setup has
+    # got, as MicroCloud reports them. Cheese creates every machine with
+    # `aiMode: none` (models come from the session host, never the machine), so
+    # these read `none` / `disabled` once settled. Free-form text for the mode:
+    # it names a MicroCloud-side route, and a new one must not break reads here.
     ai_mode: Mapped[str] = mapped_column(
         String(16), default="none", server_default="none"
     )
@@ -206,25 +209,6 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # solely so the platform can perform the one-time bootstrap. Erased the
     # moment enrollment succeeds — it is a means, not an access path we keep.
     bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # `user:password` — this machine's identity at ccproxy, as MicroCloud wrote
-    # it into the machine's own ~/.claude/settings.json. The meter presents it
-    # when carrying THIS machine's traffic, because ccproxy scopes its
-    # fake→real ticket swap to the identity the connection authenticated as:
-    # measured 2026-08-14, a ticket issued to m516 replayed over an m161
-    # connection comes back `401 OAuth access token is invalid` with no
-    # request_id, while the same ticket over m516's own connection reaches
-    # Anthropic. Carrying the identity is therefore what lets the machine's own
-    # ticket pass through untouched — the platform never holds a model
-    # credential of its own.
-    #
-    # Read once, during enrollment — the only moment the platform is on the
-    # machine over ssh, since `mark_enrolled` erases the bootstrap key. So a
-    # machine enrolled before this column existed keeps NULL forever, and NULL
-    # is therefore a supported steady state, not a gap to backfill: the meter
-    # falls back to the deployment-wide identity and its old swap, which is
-    # exactly the behaviour that machine has today.
-    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # When MicroCloud last answered about this machine at all. `updated_at` is
     # not a substitute: it only moves when a field actually changes, so a
     # machine reconciled repeatedly with the same answer would look permanently

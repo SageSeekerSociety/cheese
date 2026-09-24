@@ -98,13 +98,13 @@ describe('adding the email an account is missing', () => {
   })
 
   it('keeps the account here after a wrong code', async () => {
-    vi.mocked(UserApi.addEmail).mockRejectedValue({ error: { data: { reason: 'invalid_code' } } })
+    vi.mocked(UserApi.addEmail).mockRejectedValue({ error: { data: { reason: 'invalid_email_code' } } })
     const { view, router } = await signedInAt('/projects/7')
     await requestCode(view, 'ada@example.com')
 
     await enterCode(view)
 
-    await view.findByText('The code is incorrect or has expired')
+    await view.findByText('The code is wrong or has expired.')
     expect(router.currentRoute.value.name).toBe('AccountAddEmail')
   })
 
