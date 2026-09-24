@@ -49,6 +49,24 @@ ANTHROPIC_HOSTS = frozenset(
 # (backend/app/domain/agent/harness/claude_code/device_launch.py).
 NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
 
+# The non-model endpoints Claude Code calls at boot that only a real account can
+# answer, answered here for a session on the placeholder instead of a 503. None
+# of them gates a turn (measured on 2.1.277: a turn completes with all three
+# refused), so this only keeps refusals out of every boot; each response schema
+# is all-optional in the client. With a real login they go to Anthropic.
+NO_LOGIN_ANSWERS = {
+    "/api/claude_cli/bootstrap": b"{}",
+    "/api/claude_code_penguin_mode": b'{"enabled": false}',
+    "/api/oauth/validate": b"{}",
+}
+
+
+def no_login_answer(host: str, path: str) -> bytes | None:
+    """The local answer for a placeholder session's boot call, else None."""
+    if host != "api.anthropic.com":
+        return None
+    return NO_LOGIN_ANSWERS.get(path.split("?", 1)[0])
+
 
 def proxy_basic_password(header_value: str) -> str:
     """The password of a ``Proxy-Authorization: Basic`` header, else "".
