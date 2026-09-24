@@ -57,70 +57,48 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   await page.screenshot({ path: 'shell-default-desktop.png', fullPage: false });
 });
 
-// 顶栏那个「反馈」入口：它得是右边这一簇里唯一有**可见轮廓**的东西，而且和语言开关
-// 同高。两个数都不是审美偏好，是修掉之后的读数：
+// 顶栏右边这一簇（登录后是「帮助与反馈」和铃铛）：同一种形状 —— 同高、无描边、不带
+// 琥珀。登录后语言开关不在这里（它在「我」的菜单里，和外观并排），所以这一簇只剩两颗。
 //
-//  · 高度。这一簇里两个控件的高度来自两处互不相干的规则：按钮那侧是 Vuetify 的
-//    `:size` 给出的**内联** height（CSS 里的 `min-height` 压不过它），语言开关那侧
-//    是这条系统栏里的一条规则。两边各改各的，量出来就差着（历史读数 28 对 26、24
-//    对 26），而旁边那行注释写的正是「这条系统栏里的东西高度必须一致」。所以现在是
-//    **两边都钉死 24**：`AppBar.vue` 里给语言开关补了 `height: 24px`，按钮继续靠
-//    `:size="24"`。注释与代码不一致，只有真量一次才发现。
-//  · 描边。`variant="outlined"` 画的是 `1px solid currentColor`，也就是这个按钮本来
-//    就在用的 `--muted`。这条断言同时钉两件事：它**有**边（以前 `variant="text"` 一条
-//    线都没有，而它右边的语言开关有一圈带描边的 chip，于是同一簇里唯一没有形状的控件
-//    恰恰是「给平台提意见」这个），以及这圈边**不是琥珀色**（`--accent` 当线色在浅色
-//    下只有 2.65:1，设计系统 §7.3 明令不许）。
+//  · 高度。按钮那侧的高度来自两处互不相干的规则：铃铛是 Vuetify `:size` 给出的**内联**
+//    height，「帮助与反馈」是它自己组件里的一条规则。两边各改各的，量出来就会差着（历史
+//    读数 28 对 26、24 对 26），所以钉的是「两颗一样高」，不是某一个数。
+//  · 字装得下。`:size="24"` 对数字给的是一个**方格**（Vuetify 的 `useSize` 同时下发内联
+//    的 width 与 height），带文字的按钮被压成正方形、字溢到隔壁 —— 真发生过，而只量高度
+//    的话一切正常。
 //
-// 它现在是一个**菜单**（「帮助与反馈」），不再是一条直达链接 —— 底下有反馈中心 /
-// 我的反馈 / 管理后台三个目的地，而其中两个以前只能二级跳。改形状最容易弄丢的是
-// 「点得开、项都在」，所以这一条同时钉住：尺寸与语言开关同高、字装得下、点开之后
-// 三项都在、管理员那一项按身份出现。
-test('顶栏的帮助与反馈：和语言开关同高、字装得下、点开有三项', async ({ page }) => {
+// 它是一个**菜单**：底下有反馈中心 / 我的反馈 / 管理后台 / 了解知是。改形状最容易弄丢
+// 的是「点得开、项都在」，所以这一条同时钉住点开之后各项都在、管理员那一项按身份出现。
+test('顶栏的帮助与反馈：和铃铛同高、字装得下、点开各项都在', async ({ page }) => {
   await login(page);
+
+  // 登录后语言在「我」的菜单里，顶栏不再有语言开关。
+  await expect(page.locator('.app-system-bar .language-toggle')).toHaveCount(0);
 
   const entry = page.locator('.help-entry');
   const box = await entry.evaluate((el) => {
     const s = getComputedStyle(el);
-    const lang = document.querySelector('.language-toggle');
+    const bell = document.querySelector('.app-system-bar [aria-label="通知"]');
+    const content = el.querySelector('.v-btn__content');
     return {
       height: el.getBoundingClientRect().height,
-      langHeight: lang ? lang.getBoundingClientRect().height : null,
+      bellHeight: bell ? bell.getBoundingClientRect().height : null,
       borderWidth: s.borderTopWidth,
-      borderStyle: s.borderTopStyle,
-      borderColor: s.borderTopColor,
       color: s.color,
       tag: el.tagName,
       label: el.getAttribute('aria-label'),
-      // 「那五个字放得下吗」。高度那条拦的是「矮了一档」，拦不住「宽度被钉死、字溢出」
-      // —— 真发生过：`:size="24"` 对数字给的是一个**方格**（Vuetify 的 `useSize` 同时
-      // 下发内联的 width 与 height），带文字的按钮被压成正方形、字压到隔壁那颗语言
-      // 开关上，而只量高度的话两边都是 24、一切正常。
-      contentRight: (() => {
-        const c = el.querySelector('.v-btn__content');
-        return c ? c.getBoundingClientRect().right : null;
-      })(),
       right: el.getBoundingClientRect().right,
-      contentScrollW: (() => {
-        const c = el.querySelector('.v-btn__content');
-        return c ? c.scrollWidth : null;
-      })(),
-      contentClientW: (() => {
-        const c = el.querySelector('.v-btn__content');
-        return c ? c.clientWidth : null;
-      })(),
+      contentRight: content ? content.getBoundingClientRect().right : null,
+      contentScrollW: content ? content.scrollWidth : null,
+      contentClientW: content ? content.clientWidth : null,
     };
   });
 
-  // 同一档高度（「这条系统栏里的东西高度必须一致」那句注释要成立就得靠这个）。判据写
-  // 「两个数相等」而不是「等于 24」：两边的高度来自两处不同的规则，该钉的是「它们一样」。
-  expect(box.langHeight).not.toBeNull();
-  expect(box.height).toBeCloseTo(box.langHeight as number, 0);
-  // 有形状：一整圈实线，而且跟着文字色走（不是一个写死的色值）
-  expect(box.borderStyle).toBe('solid');
-  expect(box.borderWidth).toBe('1px');
-  expect(box.borderColor).toBe(box.color);
-  // 那圈边不是琥珀：`--accent` 不许当线色，这个入口也一个琥珀都不该加
+  expect(box.bellHeight).not.toBeNull();
+  expect(box.height).toBeCloseTo(box.bellHeight as number, 0);
+  // 和铃铛同一种形状：没有描边（Vuetify 的按钮样式是 solid、宽 0，所以量宽度）
+  expect(box.borderWidth).toBe('0px');
+  // 不带琥珀：它不是这一屏的主操作
   expect(box.color).not.toBe('rgb(245, 127, 23)');
   expect(box.tag).toBe('BUTTON');
 
@@ -129,13 +107,14 @@ test('顶栏的帮助与反馈：和语言开关同高、字装得下、点开�
   expect(box.contentRight as number).toBeLessThanOrEqual(box.right + 1);
   expect(box.contentScrollW as number).toBeLessThanOrEqual((box.contentClientW as number) + 1);
 
-  // 点开：三个目的地都从二级跳变成一级。alice 在 e2e 里是平台管理员（见
+  // 点开：各个目的地都是一级可达。alice 在 e2e 里是平台管理员（见
   // playwright.config.ts 的 PLATFORM_ADMIN_HANDLES），所以管理后台那一项也该在。
   await entry.click();
   const menu = page.locator('.v-overlay__content').filter({ hasText: '反馈中心' });
   await expect(menu.getByRole('link', { name: '反馈中心' })).toBeVisible();
   await expect(menu.getByRole('link', { name: '我的反馈' })).toBeVisible();
   await expect(menu.getByRole('link', { name: '管理后台' })).toBeVisible();
+  await expect(menu.getByRole('link', { name: '了解知是' })).toBeVisible();
 
   // 可访问名字**带着未读状态**：色点对读屏和色觉障碍读者不成立，所以状态同时进名字。
   expect(box.label === '帮助与反馈' || box.label === '帮助与反馈，有未读更新').toBe(true);

@@ -16,7 +16,8 @@
     <HelpAndFeedbackMenu />
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
-      <LanguageToggle />
+      <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
+      <LanguageToggle v-if="!loggedIn" />
       <v-menu
         v-if="loggedIn"
         v-model="notificationMenuOpen"
@@ -157,17 +158,23 @@ onMounted(() => {
   color: rgb(var(--v-theme-on-surface-variant));
 }
 
-/* 高度**钉死，不靠内容撑**。这个 chip 原来只有 `min-height`，实际高度是行盒 +
-   上下内边距 + 上下描边算出来的（12px 的字在这条栏里落在 20px 的行盒上，20+2+2+1+1
-   = 26），而旁边那条 `:size="24"` 的反馈入口是实打实的 24 —— 同一簇里两个控件差 2px，
-   在真浏览器里量出来就是 24 对 26。行盒是被继承下来的，改一次字体就再差一次，所以
-   这里把两边都定成 24：`height` 是 border-box，行盒放得下就不再参与高度。
-   （端到端那条 `shell-default.spec.ts` 的「顶栏的反馈入口」钉的就是这个等式。） */
-.app-system-bar .language-toggle {
-  min-height: 24px;
-  height: 24px;
+/* 右上这一簇是同一种形状：高 28、无边、悬停出底色。语言开关自己的样式是给页头
+   用的（白底、描边、高 40），在这条系统栏里压成和旁边的按钮一样。高度**钉死**，
+   不靠行盒 + 内边距去撑 —— 撑出来的高度随字体变，同一簇里就会差出一两像素。
+   选择器写两遍类名是为了压过语言开关自己的 scoped 规则（同特异度时看注入顺序）。 */
+.app-system-bar.app-system-bar .language-toggle {
+  min-height: 28px;
+  height: 28px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.app-system-bar.app-system-bar .language-toggle:hover {
+  background: var(--fill);
 }
 
 .cursor-pointer {
