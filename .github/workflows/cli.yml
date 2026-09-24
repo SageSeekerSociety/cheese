@@ -68,6 +68,12 @@ jobs:
       - name: go build
         run: go build ./...
 
+      # Windows devices run a build of the same code with its own service,
+      # process and executor files; nothing else here would notice it stop
+      # compiling.
+      - name: go vet (windows)
+        run: GOOS=windows GOARCH=amd64 go vet ./...
+
       # -race because this binary's whole job is concurrent: it supervises tmux
       # sessions and multiplexes screens over a bus.
       - name: go test
