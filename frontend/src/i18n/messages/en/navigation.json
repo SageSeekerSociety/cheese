@@ -37,6 +37,11 @@
     "appearance": "Appearance",
     "language": "Language",
     "logout": "Log out",
-    "noIntro": "No bio yet"
+    "noIntro": "No bio yet",
+    "theme": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    }
   }
 }
