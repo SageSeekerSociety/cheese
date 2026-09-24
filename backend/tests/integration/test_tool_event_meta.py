@@ -32,6 +32,10 @@ def stub_hooks() -> ToolScreen:
     return ToolScreen()
 
 
+def _display(meta: dict) -> dict:
+    return {key: value for key, value in meta.items() if key != "eid"}
+
+
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 hi"})
@@ -49,11 +53,15 @@ def test_event_blocks_persist_structured_meta(client):
 
     tr = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
     by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
+    # Each event also carries the harness's own id for it (its dedup key); the
+    # display fields are what this test is about.
+    assert all(b["meta"].get("eid") for b in by_tool.values())
+    shown = {name: _display(b["meta"]) for name, b in by_tool.items()}
 
     # Plain work → neutral dot; verb/arg live in meta for display-time labels.
     # in_room=False keeps 芝士's working detail out of the conversation (§14.1).
     grep = by_tool["Grep"]
-    assert grep["meta"] == {
+    assert shown["Grep"] == {
         "tool": "Grep",
         "arg": "TODO",
         "platform": False,
@@ -76,7 +84,7 @@ def test_event_blocks_persist_structured_meta(client):
     # fallback), but meta still lets a NEWER frontend table translate it.
     fut = by_tool["FutureTool"]
     assert fut["content"] == "FutureTool"
-    assert fut["meta"] == {
+    assert shown["FutureTool"] == {
         "tool": "FutureTool",
         "platform": False,
         "in_room": False,

@@ -3,7 +3,6 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
@@ -90,16 +89,8 @@ __all__ = [
     "platform_identity",
     "requester_handle",
     "resolve_for_handle",
-    "session_dir",
     "work_items",
 ]
-
-
-def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Directory for this room's session logs and command spools."""
-    return (
-        Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
-    ).resolve()
 
 
 def platform_identity(handle: str) -> GitIdentity:

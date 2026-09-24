@@ -1,0 +1,10 @@
+1 tests/integration/test_gateway_usage.py 7 failed, 12 passed, 7 errors in 245.68s (0:04:05)
+124 tests/integration/test_room_sees_the_work.py 
+1 tests/integration/test_replay_visibility.py 6 failed, 1 passed in 2.45s
+1 tests/integration/test_turn_exit_paths.py 5 failed, 1 passed in 13.70s
+1 tests/integration/test_turn_message_window.py 2 failed, 2 passed in 1.40s
+1 tests/integration/test_talking_to_a_thread.py 3 failed, 1 passed in 1.71s
+1 tests/integration/test_open_and_conclude_a_thread.py 3 failed, 7 passed in 3.99s
+0 tests/integration/test_consecutive_messages.py 4 passed in 1.46s
+1 tests/integration/test_compute_credits.py 3 failed, 4 passed in 2.46s
+1 tests/integration/test_turn_without_files_rents_no_hands.py 2 failed, 8 passed, 1 error in 5.39s

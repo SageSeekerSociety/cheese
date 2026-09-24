@@ -447,7 +447,7 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 平台在这件事上只认一样东西：**卡**。
 
 - **先开卡，再起子 agent**：卡是这条活在平台上唯一的存在形式。
-- **归属靠线程标识**：子 agent 的事件带一个可归到卡的线程标识，hook 按它把事件挂上那张卡。
+- **归属靠线程标识**：子 agent 的事件带一个可归到卡的线程标识，平台按它把事件挂上那张卡。
 - **结束写结论**：子 agent 做完把结论写回卡，给父线程的那条便条走 5.5。
 - **人对卡的操作投递给父线程执行**：人在卡上改指令、按停，收件人是**父线程**（8.1）；
   平台不直接去动那个子 agent——它在平台这一侧没有句柄。
@@ -896,8 +896,7 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 
 ### 4.2 骨架接口
 
-今天是 `AgentRuntime` + `Harness` 注册表，能力位三个：
-`speaks_gateway`（`__init__.py:437`）、`carries_subscription`（`:441`）、`draws_on_its_screen`（`:453`）。
+今天是 `AgentRuntime` + `Harness` 注册表，能力位两个：`speaks_gateway`、`carries_subscription`（`harness/__init__.py`）。
 五个动词的契约（`ensure / send / backlog / interrupt / close`）写在文件开头，论证也是对的：
 「Reading from a cursor is what makes recovery a reconnect instead of a salvage operation」。
 
@@ -920,7 +919,7 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 
 1. **能起一个子 agent，并指定它用哪个模型**——模型是这条活的资源绑定（1.5、4.6），
    起不了带模型的子 agent，这条绑定就落不下去。
-2. **子 agent 的事件带一个可归到卡的线程标识**，平台的 hook 按它把事件挂上那张卡。
+2. **子 agent 的事件带一个可归到卡的线程标识**，平台按它把事件挂上那张卡。
 3. **父线程能改它的指令。**
 4. **父线程能停掉它**——「停掉」就是本节那五个动词里的 `interrupt`，
    和「人在卡上按停」（8.1）是同一个动词的两个调用者，不另立第二条停止通路。
@@ -933,7 +932,7 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 [已定] 结论 43 取代了那个措辞（它逐字写着「本条取代第 30 条里『后台分身应当支持』的措辞」）：
 起不了子 agent 的骨架接不进来，那条码不存在（4.4）。
 
-**平台这一侧的对应项同样是硬的**：先开卡再起子 agent、hook 按线程标识归卡、结束写结论、
+**平台这一侧的对应项同样是硬的**：先开卡再起子 agent、按线程标识归卡、结束写结论、
 人对卡的操作投递给父线程执行（1.5）。
 **子 agent 与父进程同生同死**，所以恢复不是把那条线程接回来，是**从分支重派**，
 而**重派之前先读平台侧的执行记录** [已定] 结论 57（6.5）——
@@ -944,7 +943,6 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 - `carries_subscription` **合格**：订阅凭据为一个骨架铸造，别的骨架物理上拿不了。
   今天 `agent_instance/configuration.py:104-113 _drives()` 的注释逐字说明了这个方向
   （「The credential, not the shape」，注释在 `:107-109`，读能力位的那一行在 `:110`）。
-- `draws_on_its_screen` **合格**：TUI 在屏幕上画东西，跑 runner 的骨架那面屏永远是空的。
 - **起子 agent** 不上这张表（结论 43）：它不是一个可以声明有无的能力位，是接入资格，见上一小节。
 - 「有没有进度清单」**不合格**：那是产品概念。今天它钉死在 Claude Code 的四个工具名上
   （`chat.py:569 _TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}`，
@@ -1473,9 +1471,9 @@ pool 名（`device` / `cloud`）、可见性枚举（`isolated` / `host`）、
 这台机器上平台占的那个根、连接与断开，以及一次**明确的整机访问确认**。
 
 最后一条是今天缺的，而且是一处真空：`docs/device-self-hosting.md:19` 写着「By the user's explicit choice」，
-而 `harness/claude_code/cli.py:20-23` 的 `--dangerously-skip-permissions` 是无条件拼进命令行的，
+而 `harness/claude_code/cli.py` 的 `--permission-mode bypassPermissions` 是无条件拼进命令行的，
 前端没有任何开关；机主做过的唯一一次「选择」是点了「连接这台机器」。
-[我提的] **整机访问必须有机主的一次明确授权确认，`--dangerously-skip-permissions` 的前提是这次确认**；
+[我提的] **整机访问必须有机主的一次明确授权确认，`bypassPermissions` 的前提是这次确认**；
 今天它是无条件拼进命令行的。
 
 **不侵入用户机器，落到接口上是三件事**：
@@ -1734,7 +1732,7 @@ so check there and not in the menu, the contract or the doc**」。
 每个骨架的适配层带一份**行为声明**：它自带哪些产品概念（提问、待办、提醒、自动同步……）、每一项平台怎么关掉、
 以及这份声明是对着哪个**钉住的版本**验证过的。三条判据：
 ① 钉住的版本号全仓只写一处，声明引用它；升级 pin 而没有重验声明，CI 红。
-② 真正的验证是契约测试对着钉住的二进制跑（今天的 `harness-contract.yml`）；`claude-canary.yml` 每夜对 @latest 跑同一套，提前预告下一版会变什么。
+② 真正的验证是契约测试对着钉住的二进制跑（今天的 `harness-contract.yml`）；`mcp-contract.yml` 每天对最新发布版跑 headless 与 MCP 两份协议检查，提前预告下一版会变什么。
 ③ 提供不了关闭动作的项，4.3 的矩阵那一格标「暂缺」，谁都看得见。
 4.2 末尾那条「关掉这个动作在接口上不存在」由此有了落点：它是声明里的一项，不是各适配层各自记得的事。
 

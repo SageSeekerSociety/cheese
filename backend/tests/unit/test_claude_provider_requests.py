@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from tests.pinned_claude import claude_binary
 from tests.support.harness_prompts import event_prompts, system_prompt
 
 
@@ -90,7 +91,7 @@ async def test_real_claude_provider_receives_complete_platform_prompt(
     process = None
     try:
         process = await asyncio.create_subprocess_exec(
-            "claude",
+            claude_binary(),
             "--print",
             "--model",
             "claude-sonnet-4-6",

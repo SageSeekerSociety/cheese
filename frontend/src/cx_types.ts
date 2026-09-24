@@ -330,31 +330,26 @@ export type WsServerFrame =
   | { type: 'block_updated'; block: Block }
   // Answer to the client's liveness ping; carries nothing.
   | { type: 'pong' }
-  // The room's session state moved: the agent asked something, a session
-  // appeared, went quiet or came back. Carries what the platform's own store
-  // knows. The machine's background-task list is NOT in here — nothing tells
-  // the platform when that changes — so the panel that shows it still reads it
-  // over HTTP.
+  // The room's session state moved: a task started or finished (the harness's
+  // own, or a command the executor runs), or the session reported its model.
+  // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
-
-export interface AgentControlRequest {
-  request_id: string
-  request: {
-    subtype: string
-    tool_name?: string
-    input?: Record<string, unknown>
-  }
-}
 
 export interface AgentControlState {
   id: string | null
+  agent_handle?: string | null
   connected: boolean
-  title?: string
   controls?: string[]
-  pending?: Record<string, AgentControlRequest>
   tasks?: Record<
     string,
-    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+    {
+      task_id: string
+      description?: string
+      status?: string
+      subtype?: string
+      tool_use_id?: string
+      task_type?: string
+    }
   >
   state?: Record<string, Record<string, unknown>>
 }

@@ -84,7 +84,7 @@ export default defineConfig({
     }),
     viteCompression(),
     // PWA / offline support. Goal (owner spec): the app shell + already-seen
-    // content load offline; live features (WS chat, 现场 terminal, notifications)
+    // content load offline; live features (WS chat, notifications)
     // degrade gracefully and auto-recover when the network returns. NO offline
     // writes / message queue — reads only.
     VitePWA({
@@ -276,8 +276,6 @@ export default defineConfig({
               // caching them would persist a bearer token on disk and serve
               // another user stale bytes.
               if (url.searchParams.has('token')) return false
-              // Terminal availability changes with the live connection.
-              if (/^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(url.pathname)) return false
               // SSE streams (agent advice): a NetworkFirst would hang forever
               // waiting to cache a response that never ends.
               if ((request.headers.get('accept') || '').includes('text/event-stream')) return false

@@ -951,9 +951,6 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
         f"http://172.17.0.1:8081/topics/{topic_id}/execution/session-{resource}"
     )
     assert launch_env["CHEESE_API"] == "https://cheese.example.test/api"
-    assert launch_env["CHEESE_HOOK_URL"] == (
-        f"https://cheese.example.test/api/sandbox/hooks/{topic_id}"
-    )
     assert launch_env["CHEESE_PREVIEW_URL"] == (
         "wss://cheese.example.test/api/preview/tunnel"
     )

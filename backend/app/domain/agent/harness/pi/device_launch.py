@@ -7,7 +7,7 @@ like any other metered caller, and can therefore live where the files are.
 
 What that buys, and why the runner is the screen's program rather than a daemon
 started beside it: the session gets the project's prepared environment, the
-event spool and its drainer, the preview tunnel, and a supervisor that reaps it
+preview tunnel, and a supervisor that reaps it
 — the platform half of ``machine_launcher``, unchanged, because none of it was
 ever about Claude Code.
 """

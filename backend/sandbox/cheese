@@ -36,7 +36,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -1584,33 +1583,39 @@ def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     return task_dir
 
 
-def _report_task_sync(
-    task_id: str, status: str, *, head: str | None = None, branch: str | None = None
-) -> None:
-    """The installed hook durably spools failures for the room's visible warning."""
-    hook = shutil.which("cheese-hook")
-    if hook is None:
+def _report_sync_failure(task_id: str, branch: str | None) -> None:
+    """Tell the room that a task's work did not reach its branch.
+
+    Only the failure: a turn that ends with its work still on the machine looks
+    identical to one that succeeded — that is what let a rejected push read as a
+    completed turn until the machine was deleted and the work went with it. On
+    success the work is already visible in the branch, and a message per turn
+    saying so would be noise that trains people to skip it.
+    """
+    if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
-    payload = {
-        "hook_event_name": "CheeseSync",
-        "status": status,
-        "branch": branch or f"任务 {task_id}",
-        "task_id": task_id,
-        "commit": head,
+    where = branch or f"任务 {task_id}"
+    body = {
+        "content": (
+            f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+            "看不到它。请重试本轮；若机器被回收，改动会丢失。"
+        ),
+        "request_id": str(uuid.uuid4()),
     }
+    req = urllib.request.Request(
+        f"{API}/topics/{TOPIC}/messages",
+        data=json.dumps(body).encode(),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Cheese-Token", TOKEN)
     try:
-        result = subprocess.run(
-            [hook],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        result = None
-    if result is None or result.returncode:
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception:  # noqa: BLE001 — the sync's own failure is what matters
         print(
-            f"[cheese] 同步通知未送达，任务 {task_id} 的 cheese-sync.log 保留了结果",
+            f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
+            "cheese-sync.log 保留了结果",
             file=sys.stderr,
         )
 
@@ -1680,12 +1685,11 @@ def _sync_task(task_id: str) -> None:
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
             )
-            _report_task_sync(task_id, "ok", head=head, branch=branch)
         except BaseException as exc:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
             )
-            _report_task_sync(task_id, "failed", branch=branch)
+            _report_sync_failure(task_id, branch)
             raise
 
 
