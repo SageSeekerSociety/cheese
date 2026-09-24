@@ -1,5 +1,5 @@
 """2FA (TOTP) end-to-end: setup → status → login completion → backup codes →
-settings → disable. Contract mirrors the reference NestJS users controller
+disable. Contract mirrors the reference NestJS users controller
 (/users/{id}/2fa/* + /users/auth/verify-2fa)."""
 
 import pyotp

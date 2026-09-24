@@ -1,9 +1,9 @@
 """2FA set up while it lived in Redis keeps working after the move (#1482).
 
-Seeds Redis the way the previous code wrote it — the TOTP secret in the clear,
-backup codes as SHA-256 digests, the "always required" flag as a key — runs the
-real ``alembic upgrade`` into Postgres, and then signs in through the service:
-the same authenticator and the same backup codes must still work. A deployment
+Seeds Redis the way the previous code wrote it — the TOTP secret in the clear
+and backup codes as SHA-256 digests — runs the real ``alembic upgrade`` into
+Postgres, and then signs in through the service: the same authenticator and
+the same backup codes must still work. A deployment
 that cannot reach Redis must stop instead of dropping everyone's factor.
 """
 
