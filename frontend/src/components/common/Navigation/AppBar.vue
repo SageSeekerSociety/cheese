@@ -137,10 +137,6 @@ onMounted(() => {
 </script>
 
 <style>
-.app-bar-title {
-  user-select: none;
-}
-
 .title-bar {
   height: 100%;
   user-select: none;
@@ -174,34 +170,7 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.floating-search-container {
-  float: left;
-}
-
-.user-menu-card {
-  overflow: hidden;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.user-menu-list .v-list-item {
-  transition: all 0.2s ease;
-  min-height: 44px;
-}
-
-.user-menu-list .v-list-item:hover {
-  background-color: rgba(var(--v-theme-primary), 0.04);
-}
-
 .cursor-pointer {
   cursor: pointer;
-}
-
-.primary-gradient {
-  background: linear-gradient(135deg, var(--v-theme-primary), var(--v-theme-primary-darken-1));
-}
-
-.ai-quota-card {
-  transition: all 0.2s ease;
-  overflow: hidden;
 }
 </style>
