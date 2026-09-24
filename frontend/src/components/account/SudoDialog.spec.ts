@@ -47,9 +47,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function accountWith(methods: { passkey: boolean; twoFactor: boolean }) {
+function accountWith(methods: { password?: boolean; passkey: boolean; twoFactor: boolean }) {
   vi.mocked(UserApi.getAuthMethods).mockResolvedValue({
-    data: { supports_passkey: methods.passkey, supports_2fa: methods.twoFactor, requires_2fa: methods.twoFactor },
+    data: {
+      supports_password: methods.password ?? true,
+      supports_passkey: methods.passkey,
+      supports_2fa: methods.twoFactor,
+      requires_2fa: methods.twoFactor,
+    },
   } as never)
 }
 
@@ -107,6 +112,34 @@ describe('what the dialog offers first', () => {
 
     await screen.findByRole('button', { name: 'Confirm with a passkey' })
     expect(otherWays()).toEqual(['Enter your password'])
+  })
+
+  it('does not offer a password to an account without one', async () => {
+    accountWith({ password: false, passkey: true, twoFactor: true })
+    await ask()
+
+    await screen.findByRole('button', { name: 'Confirm with a passkey' })
+    expect(otherWays()).toEqual(['Enter a code from your authenticator app'])
+  })
+
+  it('leads with the code when that is the only way the account has', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: true })
+    await ask()
+
+    await waitFor(() => expect(document.querySelector('.v-otp-input input')).toBeTruthy())
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(otherWays()).toEqual([])
+  })
+
+  it('says so when the account has no way to confirm, and can still be closed', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false })
+    const { result } = await ask()
+
+    expect(await screen.findByText('No way to confirm your identity is set up')).toBeTruthy()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await expect(result).rejects.toBeInstanceOf(SudoCancelledError)
   })
 
   it('says what is being confirmed', async () => {

@@ -1567,10 +1567,13 @@ async def get_auth_methods(
     """Return supported auth methods without revealing whether the user exists."""
     from app.domain.user.login_security import TOTPService
 
+    # An unknown name answers like the most common account, one with only a
+    # password, so the answer does not say whether the name exists.
     default_response = {
         "code": 200,
         "message": "Authentication methods retrieved successfully.",
         "data": {
+            "supports_password": True,
             "supports_passkey": False,
             "supports_2fa": False,
             "requires_2fa": False,
@@ -1600,6 +1603,8 @@ async def get_auth_methods(
         "code": 200,
         "message": "Authentication methods retrieved successfully.",
         "data": {
+            # An account created through a third-party sign-in may have none.
+            "supports_password": bool(user.hashed_password),
             "supports_passkey": passkey_count > 0,
             "supports_2fa": has_2fa,
             "requires_2fa": has_2fa,

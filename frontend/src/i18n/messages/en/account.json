@@ -188,6 +188,7 @@
     "ledeFor": "Before you {action}, you need to confirm your identity",
     "passkey": "Confirm with a passkey",
     "otherMethods": "Other ways",
+    "noMethod": "No way to confirm your identity is set up",
     "method": {
       "password": "Enter your password",
       "totp": "Enter a code from your authenticator app"

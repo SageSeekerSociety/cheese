@@ -19,6 +19,8 @@
         <v-progress-linear indeterminate color="primary" height="2" />
       </div>
 
+      <p v-else-if="!available.length" class="sudo__empty">{{ t('account.sudo.noMethod') }}</p>
+
       <template v-else>
         <transition name="sudo-method" mode="out-in" @after-enter="focusFirst">
           <div :key="method" ref="panel">
@@ -169,7 +171,7 @@ const codeLabelId = useId()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const request = pendingSudo
-const methods = ref<Pick<AuthMethodsResponse, 'supports_passkey' | 'supports_2fa'> | null>(null)
+const methods = ref<Pick<AuthMethodsResponse, 'supports_password' | 'supports_passkey' | 'supports_2fa'> | null>(null)
 const method = ref<Method>('password')
 const loading = ref(false)
 const password = ref('')
@@ -181,13 +183,13 @@ const lede = computed(() =>
   request.value ? t('account.sudo.ledeFor', { action: t(ACTIONS[request.value.purpose]) }) : ''
 )
 
-// The strongest way this account has comes first. Every account can use its
-// password: the server does not say which ones have none.
+// The strongest way this account has comes first. An account created
+// through a third-party sign-in may have no password.
 const available = computed<Method[]>(() => {
   if (!methods.value) return []
   const list: Method[] = []
   if (webAuthnSupported && methods.value.supports_passkey) list.push('passkey')
-  list.push('password')
+  if (methods.value.supports_password) list.push('password')
   if (methods.value.supports_2fa) list.push('totp')
   return list
 })
@@ -207,11 +209,11 @@ watch(
     errorMessage.value = ''
     password.value = ''
     code.value = ''
-    let found = { supports_passkey: false, supports_2fa: false }
+    let found = { supports_password: true, supports_passkey: false, supports_2fa: false }
     try {
       if (currentUserName.value) found = (await UserApi.getAuthMethods(currentUserName.value)).data
     } catch {
-      // Without the list, the password is still a way in.
+      // Without the list, offer the password, the way most accounts have.
     }
     if (request.value !== current) return
     methods.value = found
@@ -329,6 +331,13 @@ function verifyTotp() {
   display: flex;
   align-items: center;
   height: 44px;
+}
+
+.sudo__empty {
+  margin: 0;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
 }
 
 .sudo__username {
