@@ -81,7 +81,7 @@ class TestOAuthCallback:
         )
         oauth = _oauth_service(user_info=info, existing_connection={"userId": 7})
         auth = _auth_service(existing_user=_fake_user(7, "a@ruc.edu.cn"))
-        session = MagicMock(rollback=AsyncMock())
+        session = MagicMock(rollback=AsyncMock(), flush=AsyncMock())
 
         resp = await handle_oauth_callback(
             "ruc",
@@ -99,7 +99,7 @@ class TestOAuthCallback:
             f"{settings.frontend_url}{settings.frontend_oauth_success_path}"
         )
         assert "token=" in loc and "provider=ruc" in loc
-        assert "REFRESH_TOKEN" in resp.headers.get("set-cookie", "")
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
         oauth.create_connection.assert_not_awaited()
 
     @pytest.mark.anyio

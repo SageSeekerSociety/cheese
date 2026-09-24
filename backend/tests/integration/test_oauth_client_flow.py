@@ -159,7 +159,7 @@ class TestOAuthCreate:
         assert params["created"] == "true"
         assert params["authMode"] == "none"
         assert params["token"]
-        assert "REFRESH_TOKEN" in resp.headers.get("set-cookie", "")
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
         # the minted token is a live session for the new account
         me = api_client.get(
@@ -393,7 +393,7 @@ class TestOAuthRespectsTwoFactor:
     def _assert_2fa_ticket(self, client: TestClient, resp, secret: str) -> None:
         loc = _loc(resp)
         assert loc.startswith(f"{settings.frontend_url}/account/verify-2fa?")
-        assert "REFRESH_TOKEN" not in resp.headers.get("set-cookie", "")
+        assert "cheese_refresh=" not in resp.headers.get("set-cookie", "")
         done = client.post(
             "/users/auth/verify-2fa",
             json={"temp_token": _q(loc)["token"], "code": pyotp.TOTP(secret).now()},

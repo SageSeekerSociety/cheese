@@ -175,7 +175,16 @@ class Settings(BaseSettings):
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
+    # A sign-in lasts this long from the moment it happened; refreshing does
+    # not extend it.
     refresh_token_expires_seconds: int = 60 * 60 * 24 * 30
+    # A sign-in nobody has refreshed for this long is over, however much of
+    # its lifetime remains.
+    refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
+    # How long a refresh token that was just rotated away still answers.
+    # Two tabs refreshing at the same moment both present the old token; the
+    # slower one must not read as a stolen copy and sign the user out.
+    refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
     # The SDK talks to the model via the `claude` CLI. We route to a provider

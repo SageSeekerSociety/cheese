@@ -18,13 +18,19 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def create_access_token(user_id: int, handle: str | None = None) -> str:
+def create_access_token(
+    user_id: int, handle: str | None = None, *, sid: uuid.UUID | None = None
+) -> str:
     """Create a short-lived access token for the given user.
 
     ``handle`` (= the user's username) is embedded as an extra claim so the ONE
     token also satisfies the cheesex auth layer, which keys on handle (fusion
     unify P3: one token for both API layers). Main auth reads ``sub`` (int id);
-    cheesex reads ``handle`` (falling back to ``sub``)."""
+    cheesex reads ``handle`` (falling back to ``sub``).
+
+    ``sid`` names the sign-in session the token was issued under, so a request
+    can tell which session is its own. Nothing looks the session up per
+    request (``app.domain.user.sessions``)."""
     now = _utcnow()
     payload = {
         "sub": str(user_id),
@@ -36,6 +42,8 @@ def create_access_token(user_id: int, handle: str | None = None) -> str:
     }
     if handle:
         payload["handle"] = handle
+    if sid is not None:
+        payload["sid"] = str(sid)
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
@@ -209,28 +217,47 @@ def verify_sudo_ticket(token: str) -> SudoTicketClaims | None:
     return SudoTicketClaims(user_id=user_id, purpose=purpose, jti=jti)
 
 
-def create_refresh_token(user_id: int) -> str:
-    """Create a longer-lived refresh token for the given user."""
-    now = _utcnow()
-    payload = {
-        "sub": str(user_id),
-        "type": "refresh",
-        "iat": int(now.timestamp()),
-        "exp": int(
-            (
-                now + timedelta(seconds=settings.refresh_token_expires_seconds)
-            ).timestamp()
-        ),
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+class AccessClaims(NamedTuple):
+    # None when ``sub`` names a handle rather than a user id: such a token
+    # authenticates to the handle-keyed layer only.
+    user_id: int | None
+    handle: str
+    sid: uuid.UUID | None
 
 
-def decode_token(token: str) -> dict:
-    """Decode and verify a JWT, returning its payload."""
+def verify_access_token(token: str) -> AccessClaims | None:
+    """What a valid, unexpired access token says, else None.
+
+    The one check every access token goes through, whichever API layer it is
+    presented to. It verifies the signature only: the session the token names
+    is not consulted (``app.domain.user.sessions``).
+    """
+    if not token:
+        return None
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError as exc:  # type: ignore[attr-defined]
-        raise AuthenticationRequiredError("Invalid or expired token") from exc
+        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:  # type: ignore[attr-defined]
+        return None
+    sub = decoded.get("sub")
+    if decoded.get("type") != "access" or not isinstance(sub, str) or not sub:
+        return None
+    try:
+        sid = uuid.UUID(decoded["sid"]) if decoded.get("sid") else None
+    except (TypeError, ValueError):
+        return None
+    handle = decoded.get("handle")
+    return AccessClaims(
+        user_id=int(sub) if sub.isdigit() else None,
+        handle=handle if isinstance(handle, str) and handle else sub,
+        sid=sid,
+    )
+
+
+def _bearer_claims(authorization: str | None) -> AccessClaims | None:
+    token = (authorization or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return verify_access_token(token)
 
 
 async def get_current_user_id(
@@ -247,21 +274,10 @@ async def get_current_user_id(
       `environment` reads, and any whose `environment` is not development/test.
     """
     if authorization:
-        token = authorization.strip()
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        payload = decode_token(token)
-        if payload.get("type") != "access":
-            raise AuthenticationRequiredError(
-                "Invalid token type: expected access token"
-            )
-        sub = payload.get("sub")
-        if sub is None:
-            raise AuthenticationRequiredError("Invalid token subject")
-        try:
-            return int(sub)
-        except (TypeError, ValueError) as exc:
-            raise AuthenticationRequiredError("Invalid token subject") from exc
+        claims = _bearer_claims(authorization)
+        if claims is None or claims.user_id is None:
+            raise AuthenticationRequiredError("Invalid or expired token")
+        return claims.user_id
 
     if x_user_id is not None:
         from app.core.config import settings
@@ -276,6 +292,14 @@ async def get_current_user_id(
         return x_user_id
 
     raise AuthenticationRequiredError("Authorization header is required")
+
+
+async def get_current_session_id(
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> uuid.UUID | None:
+    """The sign-in session the caller's access token was issued under."""
+    claims = _bearer_claims(authorization)
+    return claims.sid if claims is not None else None
 
 
 async def get_optional_user_id(

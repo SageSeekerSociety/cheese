@@ -1,5 +1,6 @@
 import logging
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
@@ -27,10 +28,9 @@ from app.auth.core import AuthUserInfo
 from app.common.auth import (
     SudoPurpose,
     create_access_token,
-    create_refresh_token,
-    decode_token,
+    get_current_session_id,
 )
-from app.core.config import settings
+from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -61,7 +61,7 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
-from app.domain.user.models import UserFollowingRelationship
+from app.domain.user.models import UserFollowingRelationship, UserSession
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserFollowingRepository,
@@ -78,6 +78,7 @@ from app.domain.user.services import (
     is_valid_username,
     normalize_nickname,
 )
+from app.domain.user.sessions import RevokeReason, SessionService
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -195,34 +196,66 @@ class CreateInviteCodeRequest(BaseModel):
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
-    """The refresh cookie lives as long as the token in it. Without a Max-Age
+# The refresh token rides in this cookie and is sent to the auth routes only.
+# Its path is the one the browser sees, through the gateway, not the route's.
+REFRESH_COOKIE = "cheese_refresh"
+_REFRESH_COOKIE_PATH = f"{GATEWAY_MOUNT}/users/auth"
+
+
+def _set_refresh_cookie(
+    response: Response, refresh_token: str, expires_at: datetime
+) -> None:
+    """The cookie lasts as long as the sign-in behind it. Without a Max-Age
     the browser drops it when the session ends while the access token in
     localStorage survives, and the next refresh signs the user out."""
     response.set_cookie(
-        "REFRESH_TOKEN",
+        REFRESH_COOKIE,
         refresh_token,
-        max_age=settings.refresh_token_expires_seconds,
+        max_age=max(0, int((expires_at - datetime.now(UTC)).total_seconds())),
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/",
+        path=_REFRESH_COOKIE_PATH,
     )
 
 
-def _set_session_cookie(response: Response, session_id: str) -> None:
-    """Kept as long as the server-side session it names."""
-    from app.domain.user.login_security import SESSION_TTL
-
-    response.set_cookie(
-        "SESSION_ID",
-        session_id,
-        max_age=SESSION_TTL,
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        REFRESH_COOKIE,
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/",
+        path=_REFRESH_COOKIE_PATH,
     )
+
+
+async def issue_session(
+    response: Response,
+    request: Request,
+    db: AsyncSession,
+    *,
+    user_id: int,
+    handle: str,
+    login_method: str,
+) -> str:
+    """Sign the user in: open a session, put its refresh token in the cookie
+    on ``response``, and return the access token for the body.
+
+    Every way of signing in ends here, so every sign-in is a session the
+    account can see and end.
+    """
+    from app.core.client_address import resolved_client_address
+
+    # Behind a proxy that is not trusted to name the client, the peer is the
+    # proxy; the device list shows no address rather than the proxy's.
+    started = await SessionService(db).start(
+        user_id,
+        login_method,
+        ip=resolved_client_address(request) or "",
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    _set_refresh_cookie(response, started.refresh_token, started.expires_at)
+    return create_access_token(user_id, handle=handle, sid=started.session_id)
 
 
 logger = logging.getLogger(__name__)
@@ -1460,10 +1493,14 @@ async def register_user(
         except ValueError as exc:
             raise _invite_code_error(exc) from exc
 
-    access_token = create_access_token(user.id, handle=user.username)
-    refresh_token = create_refresh_token(user.id)
-
-    _set_refresh_cookie(response, refresh_token)
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user.id,
+        handle=user.username,
+        login_method="signup",
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1693,7 +1730,6 @@ async def user_login(
     from app.domain.user.login_security import (
         ClientFailureBudget,
         LoginDelay,
-        SessionManager,
         TOTPService,
     )
 
@@ -1756,20 +1792,14 @@ async def user_login(
                 client=client,
             )
 
-        session_manager = SessionManager(redis)
-        client_ip = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-        session_id = await session_manager.create_session(
+        access_token = await issue_session(
+            response,
+            request,
+            session,
             user_id=user.id,
-            ip_address=client_ip,
-            user_agent=user_agent,
+            handle=user.username,
+            login_method="totp" if requires_2fa else "password",
         )
-
-        access_token = create_access_token(user.id, handle=user.username)
-        refresh_token = create_refresh_token(user.id)
-
-        _set_refresh_cookie(response, refresh_token)
-        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1783,7 +1813,6 @@ async def user_login(
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
-                "sessionId": session_id,
             },
         }
     finally:
@@ -1812,15 +1841,11 @@ async def verify_2fa_login(
     """
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.common.auth import (
-        create_access_token,
-        create_refresh_token,
-        verify_2fa_pending_token,
-    )
+    from app.common.auth import verify_2fa_pending_token
     from app.core.client_address import resolved_client_address
     from app.core.config import settings
     from app.core.single_use_state import SingleUseUnavailableError, claim
-    from app.domain.user.login_security import SessionManager, TOTPService
+    from app.domain.user.login_security import TOTPService
 
     temp_token = payload.get("temp_token") or ""
     code = (payload.get("code") or "").strip()
@@ -1879,12 +1904,14 @@ async def verify_2fa_login(
         except ValueError as exc:
             raise AuthenticationRequiredError(str(exc)) from exc
 
-        access_token = create_access_token(user.id, handle=user.username)
-        refresh_token = create_refresh_token(user.id)
-        session_id = await SessionManager(redis).create_session(user.id)
-
-        _set_refresh_cookie(response, refresh_token)
-        _set_session_cookie(response, session_id)
+        access_token = await issue_session(
+            response,
+            request,
+            session,
+            user_id=user.id,
+            handle=user.username,
+            login_method="backup_code" if used_backup_code else "totp",
+        )
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1904,7 +1931,6 @@ async def verify_2fa_login(
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
-                "sessionId": session_id,
             },
         }
     finally:
@@ -1919,37 +1945,37 @@ async def refresh_access_token(
     request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    refresh_token = request.cookies.get("REFRESH_TOKEN")
+    """Trade the refresh cookie for a new access token, rotating the cookie.
+
+    A 401 from here is the one answer that means the sign-in is over. A
+    refresh racing another one with the same cookie gets an access token and
+    no new cookie: the winner's response already carries the successor.
+    """
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise AuthenticationRequiredError("Refresh token is missing")
 
-    payload = decode_token(refresh_token)
-    if payload.get("type") != "refresh":
-        raise AuthenticationRequiredError("Invalid refresh token")
-
-    sub = payload.get("sub")
-    if sub is None:
-        raise AuthenticationRequiredError("Invalid token subject")
-    try:
-        user_id = int(sub)
-    except (TypeError, ValueError) as exc:
-        raise AuthenticationRequiredError("Invalid token subject") from exc
+    refreshed = await SessionService(session).refresh(refresh_token)
+    if refreshed is None:
+        raise AuthenticationRequiredError("This sign-in has ended")
 
     try:
-        user, profile = await auth_service.get_user_with_profile(user_id)
+        user, profile = await auth_service.get_user_with_profile(refreshed.user_id)
     except ValueError as exc:
         raise AuthenticationRequiredError(str(exc)) from exc
 
-    access_token = create_access_token(user_id, handle=user.username)
-    new_refresh_token = create_refresh_token(user_id)
-
-    _set_refresh_cookie(response, new_refresh_token)
+    if refreshed.refresh_token is not None:
+        _set_refresh_cookie(response, refreshed.refresh_token, refreshed.expires_at)
+    access_token = create_access_token(
+        user.id, handle=user.username, sid=refreshed.session_id
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
         profile=profile,
-        viewer_id=user_id,
+        viewer_id=user.id,
     )
     return {
         "code": 201,
@@ -1970,14 +1996,7 @@ async def user_logout(
 ) -> dict:
     # Logout is idempotent: even if the refresh cookie is missing or expired,
     # the client should receive cookie-clearing headers and a success response.
-    response.delete_cookie(
-        "REFRESH_TOKEN",
-        path="/",
-    )
-    response.delete_cookie(
-        "REFRESH_TOKEN",
-        path="/users/auth",
-    )
+    _clear_refresh_cookie(response)
     return {
         "code": 201,
         "message": "Logout successfully.",
@@ -2263,44 +2282,33 @@ async def get_user_identity_access_logs(
     return {"code": 200, "message": "Success", "data": data}
 
 
+def _session_dto(row: UserSession, current: uuid.UUID | None) -> dict:
+    return {
+        "id": str(row.id),
+        "loginMethod": row.login_method,
+        "ipAddress": row.ip,
+        "userAgent": row.user_agent,
+        "createdAt": row.created_at.isoformat(),
+        "lastActiveAt": row.last_used_at.isoformat(),
+        "current": row.id == current,
+    }
+
+
 @router.get(
     "/me/sessions",
     summary="List active sessions",
 )
 async def list_sessions(
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        sessions = await session_manager.list_user_sessions(auth_user.user_id)
-
-        session_list = [
-            {
-                "id": s.get("session_id"),
-                "deviceInfo": s.get("device_info", ""),
-                "ipAddress": s.get("ip_address", ""),
-                "userAgent": s.get("user_agent", ""),
-                "createdAt": s.get("created_at"),
-                "lastActiveAt": s.get("last_active_at"),
-            }
-            for s in sessions
-        ]
-
-        return {
-            "code": 200,
-            "message": "OK",
-            "data": {
-                "sessions": session_list,
-            },
-        }
-    finally:
-        await redis.aclose()
+    rows = await SessionService(session).live(auth_user.user_id)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"sessions": [_session_dto(row, current) for row in rows]},
+    }
 
 
 @router.delete(
@@ -2308,28 +2316,18 @@ async def list_sessions(
     summary="Revoke a session",
 )
 async def revoke_session(
-    session_id: Annotated[str, Path(alias="sessionId")],
+    session_id: Annotated[uuid.UUID, Path(alias="sessionId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        success = await session_manager.revoke_session(session_id, auth_user.user_id)
-
-        if not success:
-            raise NotFoundError("Session not found")
-
-        return {
-            "code": 200,
-            "message": "Session revoked successfully.",
-        }
-    finally:
-        await redis.aclose()
+    """End one sign-in. Its refresh token stops working at once; an access
+    token it already holds lasts out its few remaining minutes."""
+    if not await SessionService(session).revoke(auth_user.user_id, session_id):
+        raise NotFoundError("Session not found")
+    return {
+        "code": 200,
+        "message": "Session revoked successfully.",
+    }
 
 
 @router.delete(
@@ -2337,33 +2335,21 @@ async def revoke_session(
     summary="Revoke all other sessions",
 )
 async def revoke_all_sessions(
-    request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    current_session_id = request.cookies.get("SESSION_ID")
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        count = await session_manager.revoke_all_sessions(
-            auth_user.user_id,
-            except_session_id=current_session_id,
-        )
-
-        return {
-            "code": 200,
-            "message": f"Revoked {count} sessions.",
-            "data": {
-                "revokedCount": count,
-            },
-        }
-    finally:
-        await redis.aclose()
+    """Sign out every device but the one asking."""
+    count = await SessionService(session).revoke_all(
+        auth_user.user_id, RevokeReason.REVOKED, keep=current
+    )
+    return {
+        "code": 200,
+        "message": f"Revoked {count} sessions.",
+        "data": {
+            "revokedCount": count,
+        },
+    }
 
 
 # Every exit of the recovery request answers with this one body: unknown
@@ -3195,15 +3181,16 @@ async def passkey_authenticate_challenge(
     summary="Verify passkey authentication",
 )
 async def passkey_authenticate_verify(
+    request: Request,
     response: Response,
     payload: dict = Body(default={}),
     passkey_service: PasskeyService = Depends(get_passkey_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
 
     credential = payload.get("response")
     if not isinstance(credential, dict):
@@ -3227,22 +3214,14 @@ async def passkey_authenticate_verify(
 
     user, profile = await auth_service.get_user_with_profile(user_id)
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        session_id = await session_manager.create_session(
-            user_id=user_id,
-            ip_address="",
-            user_agent="passkey",
-        )
-    finally:
-        await redis.aclose()
-
-    access_token = create_access_token(user_id, handle=user.username)
-    refresh_token = create_refresh_token(user_id)
-
-    _set_refresh_cookie(response, refresh_token)
-    _set_session_cookie(response, session_id)
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user_id,
+        handle=user.username,
+        login_method="passkey",
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -3255,7 +3234,6 @@ async def passkey_authenticate_verify(
         "data": {
             "user": user_dto,
             "accessToken": access_token,
-            "sessionId": session_id,
         },
     }
 
@@ -3519,6 +3497,7 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
 
 
 async def _oauth_login_redirect(
+    request: Request,
     session: AsyncSession,
     auth_service,
     user_id: int,
@@ -3542,19 +3521,22 @@ async def _oauth_login_redirect(
         )
 
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
-    access_token_jwt = create_access_token(user_id, handle=user_obj.username)
-    refresh_token = create_refresh_token(user_id)
-    redirect = RedirectResponse(
-        _oauth_frontend_url(
-            settings.frontend_oauth_success_path,
-            token=access_token_jwt,
-            email=user_obj.email or user_obj.username,
-            provider=provider_id,
-            **extra,
-        ),
-        status_code=302,
+    redirect = RedirectResponse("", status_code=302)
+    access_token = await issue_session(
+        redirect,
+        request,
+        session,
+        user_id=user_id,
+        handle=user_obj.username,
+        login_method=f"oauth:{provider_id}",
     )
-    _set_refresh_cookie(redirect, refresh_token)
+    redirect.headers["location"] = _oauth_frontend_url(
+        settings.frontend_oauth_success_path,
+        token=access_token,
+        email=user_obj.email or user_obj.username,
+        provider=provider_id,
+        **extra,
+    )
     return redirect
 
 
@@ -3706,7 +3688,7 @@ async def handle_oauth_callback(
         )
         if existing:
             return await _oauth_login_redirect(
-                session, auth_service, existing["userId"], provider_id
+                request, session, auth_service, existing["userId"], provider_id
             )
 
         info_dict = _oauth_user_info_dict(user_info)
@@ -3797,6 +3779,7 @@ async def get_oauth_state(
 
 async def _complete_oauth_binding(
     *,
+    request: Request,
     session: AsyncSession,
     auth_service: UserAuthService,
     oauth_service: OAuthService,
@@ -3836,7 +3819,7 @@ async def _complete_oauth_binding(
             "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     return await _oauth_login_redirect(
-        session, auth_service, user_id, provider_id, **extra
+        request, session, auth_service, user_id, provider_id, **extra
     )
 
 
@@ -3845,6 +3828,7 @@ async def _complete_oauth_binding(
     summary="Prove ownership of an email-conflicting account (verify page)",
 )
 async def oauth_verify_conflict(
+    request: Request,
     payload: dict = Body(default={}),
     session: AsyncSession = Depends(get_db),
     auth_service: UserAuthService = Depends(get_user_auth_service),
@@ -3868,6 +3852,7 @@ async def oauth_verify_conflict(
 
         await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
@@ -4000,6 +3985,7 @@ async def oauth_create_user(
                     "INVALID_INVITE_CODE", str(_invite_code_error(exc))
                 )
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
@@ -4020,6 +4006,7 @@ async def oauth_create_user(
     summary="Bind OAuth to an existing account (decision page, form post)",
 )
 async def oauth_bind_user(
+    request: Request,
     stateToken: str = Form(...),
     username: str = Form(...),
     password: str = Form(default=""),
@@ -4045,6 +4032,7 @@ async def oauth_bind_user(
 
     try:
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
