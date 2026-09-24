@@ -58,8 +58,8 @@ def outbox(monkeypatch) -> _Outbox:
 def forget_redis_state():
     """Lockouts outlive the test and its rolled-back users."""
     from app.domain.user.login_security import (
-        LOGIN_ATTEMPTS_PREFIX,
-        LOGIN_LOCKOUT_PREFIX,
+        LOGIN_FAILURES_PREFIX,
+        LOGIN_WAIT_PREFIX,
         STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
         STEP_UP_PASSWORD_LOCKOUT_PREFIX,
     )
@@ -74,8 +74,8 @@ def forget_redis_state():
     r = redis.Redis.from_url(settings.redis_url)
     for user in users:
         r.delete(
-            f"{LOGIN_ATTEMPTS_PREFIX}{user.username}",
-            f"{LOGIN_LOCKOUT_PREFIX}{user.username}",
+            f"{LOGIN_FAILURES_PREFIX}{user.username}",
+            f"{LOGIN_WAIT_PREFIX}{user.username}",
             *(
                 f"{p}{user.user_id}"
                 for p in (
@@ -318,13 +318,16 @@ class TestOverlongPasswords:
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        resp = _login(api_client, user.username, OVERLONG)
+        for _ in range(LOGIN_FREE_FAILURES):
+            resp = _login(api_client, user.username, OVERLONG)
+            assert resp.status_code == 401, resp.text
 
-        assert resp.status_code == 401, resp.text
-        assert "4 attempts remaining" in resp.json()["error"]["message"]
+        assert _login(api_client, user.username, user.password).status_code == 403
 
     def test_re_authenticating_with_one_is_a_wrong_password(
         self,
@@ -403,43 +406,81 @@ class TestRecoveryPasswordRule:
         assert reset.status_code == 200, reset.text
 
 
-class TestLoginBudget:
-    def test_the_budget_counts_down_locks_and_refuses_the_right_password(
+def _wait_of(resp) -> int | None:
+    return (resp.json()["error"].get("data") or {}).get("retryAfterSeconds")
+
+
+class TestLoginWait:
+    def test_repeated_failures_start_a_wait_that_refuses_the_right_password(
         self,
         api_client: TestClient,
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        for left in (4, 3, 2, 1):
+        for _ in range(LOGIN_FREE_FAILURES - 1):
             resp = _login(api_client, user.username, "wrong-Password!")
             assert resp.status_code == 401, resp.text
-            assert f"{left} attempts remaining" in resp.json()["error"]["message"]
+            assert _wait_of(resp) is None
 
-        fifth = _login(api_client, user.username, "wrong-Password!")
-        assert fifth.status_code == 403, fifth.text
+        last = _login(api_client, user.username, "wrong-Password!")
+        assert last.status_code == 401, last.text
+        assert _wait_of(last) > 0
 
         right = _login(api_client, user.username, user.password)
         assert right.status_code == 403, right.text
-        assert "Try again in" in right.json()["error"]["message"]
+        assert right.json()["error"]["data"]["reason"] == "too_many_attempts"
+        assert 0 < _wait_of(right) <= _wait_of(last)
 
-    def test_a_right_password_gives_the_budget_back(
+    def test_a_right_password_forgets_the_failures(
         self,
         api_client: TestClient,
         user_client: UserCreator,
         forget_redis_state,
     ):
+        from app.domain.user.login_security import LOGIN_FREE_FAILURES
+
         user = user_client.create_user()
         forget_redis_state(user)
 
-        for _ in range(4):
+        for _ in range(LOGIN_FREE_FAILURES - 1):
             _login(api_client, user.username, "wrong-Password!")
         assert _login(api_client, user.username, user.password).status_code == 200
 
-        resp = _login(api_client, user.username, "wrong-Password!")
-        assert "4 attempts remaining" in resp.json()["error"]["message"]
+        for _ in range(LOGIN_FREE_FAILURES - 1):
+            resp = _login(api_client, user.username, "wrong-Password!")
+            assert resp.status_code == 401, resp.text
+            assert _wait_of(resp) is None
+
+    def test_a_stranger_cannot_keep_the_owner_out(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        forget_redis_state,
+        monkeypatch,
+    ):
+        """However many wrong passwords somebody sends for the account, its
+        owner waits no longer than the cap and is then let in."""
+        import time
+
+        from app.domain.user import login_security
+
+        monkeypatch.setattr(login_security, "LOGIN_FIRST_WAIT_SECONDS", 1)
+        monkeypatch.setattr(login_security, "LOGIN_MAX_WAIT_SECONDS", 1)
+        user = user_client.create_user()
+        forget_redis_state(user)
+
+        for _ in range(login_security.LOGIN_FREE_FAILURES + 30):
+            resp = _login(api_client, user.username, "wrong-Password!")
+            assert resp.status_code in (401, 403), resp.text
+            assert (_wait_of(resp) or 0) <= 1
+
+        time.sleep(1.1)
+        assert _login(api_client, user.username, user.password).status_code == 200
 
     def test_stopping_at_the_2fa_prompt_spends_nothing(
         self,

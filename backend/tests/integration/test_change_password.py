@@ -30,8 +30,8 @@ class TestChangePassword:
 
         from app.core.config import settings
         from app.domain.user.login_security import (
-            LOGIN_ATTEMPTS_PREFIX,
-            LOGIN_LOCKOUT_PREFIX,
+            LOGIN_FAILURES_PREFIX,
+            LOGIN_WAIT_PREFIX,
             STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
             STEP_UP_PASSWORD_LOCKOUT_PREFIX,
         )
@@ -40,8 +40,8 @@ class TestChangePassword:
         r.delete(
             f"{STEP_UP_PASSWORD_ATTEMPTS_PREFIX}{self.user.user_id}",
             f"{STEP_UP_PASSWORD_LOCKOUT_PREFIX}{self.user.user_id}",
-            f"{LOGIN_ATTEMPTS_PREFIX}{self.user.username}",
-            f"{LOGIN_LOCKOUT_PREFIX}{self.user.username}",
+            f"{LOGIN_FAILURES_PREFIX}{self.user.username}",
+            f"{LOGIN_WAIT_PREFIX}{self.user.username}",
         )
         r.close()
 

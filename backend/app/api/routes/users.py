@@ -82,7 +82,7 @@ from app.domain.user.services import (
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
-    from app.domain.user.login_security import LoginRateLimiter
+    from app.domain.user.login_security import LoginDelay
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -312,8 +312,8 @@ async def _spend_2fa_attempt(
     """
     from app.domain.user.login_security import (
         LOCKOUT_DURATION_SECONDS,
+        AttemptLimiter,
         BackupCodeRateLimiter,
-        LoginRateLimiter,
         StepUpTwoFactorRateLimiter,
         TwoFactorRateLimiter,
     )
@@ -322,7 +322,7 @@ async def _spend_2fa_attempt(
     # Exactly one of the two TOTP budgets, plus the backup-code one when the
     # code is a backup code — so a backup guess spends both and routine TOTP
     # typos cannot exhaust the tighter backup allowance.
-    limiters: list[LoginRateLimiter] = [
+    limiters: list[AttemptLimiter] = [
         StepUpTwoFactorRateLimiter(redis) if step_up else TwoFactorRateLimiter(redis)
     ]
     if is_backup_code:
@@ -1605,18 +1605,30 @@ async def get_auth_methods(
     }
 
 
-async def _spend_login_attempt(limiter: "LoginRateLimiter", username: str) -> int:
-    """Spend one slot of the username's login budget before the credential is
-    checked, and return how many remain; see ``consume_attempt`` for why the
-    slot goes first. The caller clears the budget once the credential holds."""
-    if await limiter.is_locked_out(username):
-        remaining = await limiter.get_remaining_lockout_seconds(username)
-        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
-    budget = await limiter.consume_attempt(username)
-    if budget is None:
-        remaining = await limiter.get_remaining_lockout_seconds(username)
-        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
-    return budget
+async def _admit_login_attempt(delay: "LoginDelay", username: str) -> int:
+    """Admit one password check for ``username``, or refuse it while the wait
+    earlier failures started is still running. Returns the wait this attempt
+    starts if the password turns out wrong. The caller clears the count once
+    the password holds."""
+    admission = await delay.admit(username)
+    if not admission.admitted:
+        raise ForbiddenError(
+            f"Too many failed attempts. Try again in {admission.wait_seconds} seconds",
+            {
+                "reason": "too_many_attempts",
+                "retryAfterSeconds": admission.wait_seconds,
+            },
+        )
+    return admission.wait_seconds
+
+
+def _wrong_password(wait_seconds: int) -> AuthenticationRequiredError:
+    if wait_seconds == 0:
+        return AuthenticationRequiredError("Invalid username or password")
+    return AuthenticationRequiredError(
+        f"Invalid username or password. Try again in {wait_seconds} seconds",
+        {"reason": "invalid_credentials", "retryAfterSeconds": wait_seconds},
+    )
 
 
 @router.post(
@@ -1634,7 +1646,7 @@ async def user_login(
 
     from app.core.config import settings
     from app.domain.user.login_security import (
-        LoginRateLimiter,
+        LoginDelay,
         SessionManager,
         TOTPService,
     )
@@ -1645,25 +1657,21 @@ async def user_login(
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        rate_limiter = LoginRateLimiter(redis)
+        login_delay = LoginDelay(redis)
 
-        budget = await _spend_login_attempt(rate_limiter, username)
+        wait_if_wrong = await _admit_login_attempt(login_delay, username)
 
         auth_result = await auth_service.authenticate(
             username=username, password=password
         )
         if auth_result is None:
-            if budget == 0:
-                raise ForbiddenError("Account locked due to too many failed attempts")
-            raise AuthenticationRequiredError(
-                f"Invalid username or password. {budget} attempts remaining"
-            )
+            raise _wrong_password(wait_if_wrong)
 
         user, profile = auth_result
-        # Refunded as soon as the password is right, not after 2FA: the slot
-        # was spent up front, so returning "2FA required" first would leave it
-        # spent. The second step has a budget of its own.
-        await rate_limiter.clear_attempts(username)
+        # Cleared as soon as the password is right, not after 2FA: the attempt
+        # was counted up front, so returning "2FA required" first would leave
+        # it counted. The second step has a budget of its own.
+        await login_delay.clear(username)
 
         totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
@@ -3306,22 +3314,20 @@ async def _redeem_oauth_state_token(jti: str) -> bool:
 
 
 async def _spend_oauth_password_attempt(username: str) -> bool:
-    """Charge one attempt to ``username``'s login budget before a credential
-    check. False when the budget is spent and the request must be refused.
+    """Count one attempt against ``username`` before a credential check.
+    False while the wait earlier failures started is running, and the request
+    must be refused.
 
-    The same counter password login uses, so proving a password through
-    an OAuth binding page cannot bypass a login lockout.
+    The same count password login uses, so proving a password through an
+    OAuth binding page cannot skip the wait.
     """
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.domain.user.login_security import LoginRateLimiter
+    from app.domain.user.login_security import LoginDelay
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        limiter = LoginRateLimiter(redis)
-        if await limiter.is_locked_out(username):
-            return False
-        return await limiter.consume_attempt(username) is not None
+        return (await LoginDelay(redis).admit(username)).admitted
     finally:
         await redis.aclose()
 
@@ -3329,11 +3335,11 @@ async def _spend_oauth_password_attempt(username: str) -> bool:
 async def _clear_oauth_password_attempts(username: str) -> None:
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.domain.user.login_security import LoginRateLimiter
+    from app.domain.user.login_security import LoginDelay
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        await LoginRateLimiter(redis).clear_attempts(username)
+        await LoginDelay(redis).clear(username)
     finally:
         await redis.aclose()
 
