@@ -260,7 +260,7 @@ onMounted(async () => {
       <!-- 用邀请码加入 -->
       <v-dialog v-model="joinOpen" max-width="440">
         <v-card rounded="lg">
-          <v-card-title class="t-title">{{ t('work.joinTitle') }}</v-card-title>
+          <v-card-title class="t-dialog-title">{{ t('work.joinTitle') }}</v-card-title>
           <v-card-text>
             <p class="t-body c-muted mb-3">{{ t('work.joinBody') }}</p>
             <v-text-field

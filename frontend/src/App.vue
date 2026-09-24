@@ -63,7 +63,7 @@
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
-        <v-card-title class="text-h6 font-weight-bold pb-1">{{
+        <v-card-title class="t-dialog-title pb-1">{{
           newProjectStep === 1 ? '新建项目' : t('work.teammate.title')
         }}</v-card-title>
         <v-card-text v-show="newProjectStep === 1" class="pb-2">
@@ -109,7 +109,6 @@
             :loading="loadingTeams"
             :disabled="creatingProject || loadingTeams"
           />
-          <div class="t-meta mt-2">项目归所选团队，成员可以一起协作</div>
           <v-select
             v-model="newProjectForgeKind"
             autocomplete="off"
@@ -124,13 +123,12 @@
             hide-details
             :disabled="creatingProject"
           />
-          <div class="t-meta mt-2">
+          <div class="t-meta-read mt-2">
             {{
               newProjectForgeKind === 'forgejo'
-                ? '创建项目时自动准备代码仓库。'
-                : '创建后前往项目设置连接 GitHub，连接完成后即可开始代码任务。'
+                ? '托管服务在项目创建后不可更改'
+                : '创建后在项目设置中连接 GitHub。托管服务在项目创建后不可更改。'
             }}
-            项目创建后，暂不支持切换托管服务。
           </div>
           <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ teamLoadError }}
@@ -160,7 +158,7 @@
               />
             </template>
           </v-text-field>
-          <p class="t-meta c-muted">{{ t('work.teammate.more') }}</p>
+          <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
         </v-card-text>
         <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
           {{ newProjectError }}

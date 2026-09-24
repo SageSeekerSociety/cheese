@@ -361,6 +361,18 @@
   color: var(--ink);
 }
 
+/* Dialog title: 18 / 26 / 600 / --ink. 弹窗标题那一档（§3.2 的 18px），此前没有
+   类可用，弹窗各自拿 Vuetify 的 text-h6（20px，不在字号阶梯上）。
+   选择器写两遍是为了压过 .v-card-title：两者特异度相同，而 VCard 的样式表在这份
+   文件之后注入，单写一个类会被它的 20px / 500 盖掉。 */
+.t-dialog-title.t-dialog-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: var(--lh-18);
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
 /* Eyebrow label: 12 / 18 / 600 / --faint / .04em (not all-caps for Chinese) */
 .t-eyebrow {
   font-size: 12px;
