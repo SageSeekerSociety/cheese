@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from app.api.routes import llm_proxy
+from app.core.db import pool_status
 from app.core.sandbox_auth import mint_scoped_token
 
 
@@ -18,6 +19,30 @@ def _make_project(client) -> str:
     r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
+
+
+def test_admission_releases_its_database_connection_before_gateway_key(
+    client, monkeypatch
+):
+    from app.domain.agent.chat import ChatService
+
+    project_id = _make_project(client)
+    checked_out = []
+
+    async def gateway_key(self, project_id):
+        status = pool_status(client.test_app_engine)
+        assert status is not None
+        checked_out.append(status["checked_out"])
+        return "project-key"
+
+    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
+    token = mint_scoped_token(project_id=project_id)
+    response = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["supply"]["key"] == "project-key"
+    assert checked_out == [0]
 
 
 class _FakeResponse:
