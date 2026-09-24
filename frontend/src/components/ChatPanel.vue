@@ -228,7 +228,7 @@ function todoIcon(status: string): string {
   return 'mdi-circle-outline'
 }
 
-// ---- 选项问题 (cheese ask): buttons under the message; one click answers
+// ---- 选项问题 (cheese_ask): buttons under the message; one click answers
 // and summons 芝士 to continue. Answered state renders for everyone. ----
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {

@@ -194,7 +194,7 @@ def _project(client, owner: str) -> tuple[str, str]:
 
 def _split(client, parent_id: str, *, by: str) -> str:
     """Split as `by` would: no human token, the handle only in the body — the
-    exact shape `cheese task` sends from a 分身's sandbox."""
+    exact shape `cheese_task` sends from a 分身's sandbox."""
     r = client.post(
         f"/topics/{parent_id}/split",
         json=dict(

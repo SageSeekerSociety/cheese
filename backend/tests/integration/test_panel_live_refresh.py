@@ -1,4 +1,4 @@
-"""面板必须跟着变 (§3.1.1): a `cheese` command that changes platform state has to
+"""面板必须跟着变 (§3.1.1): a platform tool that changes platform state has to
 say so WHILE the turn runs, not only in the record it leaves behind.
 
 The action block 芝士 files at the end of a turn is history — it says what was
@@ -18,15 +18,17 @@ from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 
-class _RunsCheese(StubChannel):
-    """A turn that runs one Bash command and stops."""
+class _CallsATool(StubChannel):
+    """A turn that makes one tool call and stops. The platform tools arrive under
+    the session's MCP server name, as they do from a real room."""
 
-    command = 'cheese accept-request lisi "最懂这块"'
+    tool = "mcp__native__cheese_accept_request"
+    arguments: dict = {"task": str(uuid.uuid4()), "subject": "fix: x"}
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del prompt
         self.starts(topic_id)
-        self.uses(topic_id, "Bash", eid="e-bash", command=self.command)
+        self.uses(topic_id, self.tool, eid="e-tool", **self.arguments)
         self.stops(topic_id, reply)
 
 
@@ -64,26 +66,39 @@ def _refreshed(frames: list[dict]) -> list[str]:
 
 
 def test_filing_a_card_tells_the_room_the_panel_is_stale(client, tmp_path):
-    frames = _turn_frames(client, tmp_path, _RunsCheese())
+    frames = _turn_frames(client, tmp_path, _CallsATool())
     assert _refreshed(frames) == ["accept"]
 
 
 def test_editing_the_doc_refreshes_the_doc_panel(client, tmp_path):
-    class _WritesDoc(_RunsCheese):
-        command = "cheese doc set docs/topics/x.md"
+    class _WritesDoc(_CallsATool):
+        tool = "mcp__native__cheese_doc_set"
+        arguments = {"path": "notes/x.md"}
 
     frames = _turn_frames(client, tmp_path, _WritesDoc())
     assert _refreshed(frames) == ["doc"]
 
 
 def test_an_ordinary_command_refreshes_nothing(client, tmp_path):
-    """Only a platform-mutating `cheese` subcommand. A shell command that
-    happens to mention the word must not make every panel re-fetch."""
+    """Only a platform tool that changes a panel. A shell command that happens
+    to mention the word, or a read-only platform tool, must not make every panel
+    re-fetch."""
 
-    class _JustRuns(_RunsCheese):
-        command = "grep -rn cheese backend/"
+    class _JustRuns(_CallsATool):
+        tool = "Bash"
+        arguments = {"command": "grep -rn cheese_doc_set backend/"}
 
     frames = _turn_frames(client, tmp_path, _JustRuns())
     # The turn still ran — otherwise this asserts nothing at all.
+    assert any(f["type"] == "event_block" for f in frames)
+    assert _refreshed(frames) == []
+
+
+def test_reading_the_doc_refreshes_nothing(client, tmp_path):
+    class _ReadsDoc(_CallsATool):
+        tool = "mcp__native__cheese_doc_get"
+        arguments: dict = {}
+
+    frames = _turn_frames(client, tmp_path, _ReadsDoc())
     assert any(f["type"] == "event_block" for f in frames)
     assert _refreshed(frames) == []

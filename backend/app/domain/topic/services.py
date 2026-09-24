@@ -68,7 +68,7 @@ from app.domain.topic.repositories import (
 )
 from app.domain.topic_membership.services import TopicMemberService
 
-# Titles are AI-generated (the agent names a topic via `cheese title`), never
+# Titles are AI-generated (the agent names a topic via `cheese_title`), never
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts
 # untitled and 芝士 names it on its first turn (same as a + new topic).
 PLACEHOLDER_TITLE = "新话题"
@@ -1218,7 +1218,7 @@ class TopicService:
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese doc get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         landed = landing(

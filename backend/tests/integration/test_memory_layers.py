@@ -30,7 +30,7 @@ def _pool() -> str:
     return str(uuid.uuid4())
 
 
-# --- the write side (`cheese remember --core`) ----------------------------
+# --- the write side (`cheese_remember --core`) ----------------------------
 
 
 def test_the_layer_survives_a_write_and_is_visible_to_humans(client):
@@ -157,7 +157,7 @@ def test_the_longest_pool_key_anyone_can_name_still_fits_the_column(
 
     关于某个人的池键是 `<项目 uuid>:<agent handle>:<人的 handle>`，两个 handle 各
     自最长 64（agent 的是用户在「AI 队友」页自己填的），36+1+64+1+64 = 166。列比
-    它窄一个字符，`cheese remember` 就是一个 500，迁移里同样的拼接就是一次
+    它窄一个字符，`cheese_remember` 就是一个 500，迁移里同样的拼接就是一次
     `alembic upgrade head` 失败——而那一步失败，整次发布停在换容器之前。
     """
 

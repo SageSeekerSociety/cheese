@@ -1,4 +1,4 @@
-"""Memory search endpoint (`cheese recall`) on the flat DB backend.
+"""Memory search endpoint (`cheese_recall`) on the flat DB backend.
 
 The behaviour under test is the one that decides whether memory is usable at
 all: a fact can only help if it can be found by someone who does not already

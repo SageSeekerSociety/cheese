@@ -16,7 +16,7 @@ def declaration() -> Declaration:
         built_ins=frozenset({BuiltIn.ASK}),
         how_disabled={
             # thread/start 的 config 里直接关掉，和 shell_tool / view_image 同一
-            # 处：文件与命令归房间执行器，提问归 `cheese ask`。
+            # 处：文件与命令归房间执行器，提问归 `cheese_ask`。
             BuiltIn.ASK: (
                 "harness/codex/session.py 的 thread/start config 里 "
                 "tools.experimental_request_user_input.enabled=False"

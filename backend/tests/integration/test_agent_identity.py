@@ -138,7 +138,7 @@ def test_the_summon_receipt_carries_the_same_agent(client):
 
 
 def _acting(project_id: str, topic_id: str, seat: str | None) -> dict[str, str]:
-    """`cheese remember` runs on the acting agent's own token; without one the
+    """`cheese_remember` runs on the acting agent's own token; without one the
     write lands as the room's default."""
     if seat is None:
         return {}
@@ -283,7 +283,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
 def _remember_about(client, project_id: str, person: str, fact: str) -> None:
     """项目默认芝士对某个人的一条记忆。
 
-    直接按键写库：写的那一侧（私聊里的 `cheese remember`）有自己的测试，这一组
+    直接按键写库：写的那一侧（私聊里的 `cheese_remember`）有自己的测试，这一组
     问的是列出来的时候都带回了什么。"""
 
     async def _seed() -> None:
@@ -307,7 +307,7 @@ def _list_memory(client, project_id: str, **params) -> list[dict]:
 
 
 def test_listing_a_project_shows_what_its_agents_remembered(client):
-    """`cheese remember` always carries a topic, so every agent write lands in
+    """`cheese_remember` always carries a topic, so every agent write lands in
     an agent pool. If listing skipped those, the memory panel showed an empty
     project while the live pool kept growing — unauditable by construction."""
     project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]

@@ -1065,7 +1065,7 @@ class Executor:
                 "files": {},
                 "instructions": "This chat has temporary scratch space at /work. "
                 "Use shell and file tools for drafts and small processing tasks. "
-                "Save finished documents through cheese doc set and publish artifacts "
+                "Save finished documents through cheese_doc_set and publish artifacts "
                 "through cheese show. Scratch files can disappear when execution "
                 "is released; they are not permanent storage. "
                 "No project checkout is available.",

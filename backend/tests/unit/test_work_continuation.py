@@ -133,7 +133,7 @@ async def test_continuation_for_is_none_outside_a_running_turn(db_factory):
 
 # --- Who is driving: the other question the live turn record answers ---------
 #
-# 归属跟推进者走 (拍板 2026-08-17): `cheese task` runs under the 分身's own
+# 归属跟推进者走 (拍板 2026-08-17): `cheese_task` runs under the 分身's own
 # `cheese-<hex12>` handle, so the endpoint cannot see the person who asked for the
 # split. That person is in the same `_recent` record as the continuation id, which
 # is why both are read off it — and why they must agree about which turn "now" is.

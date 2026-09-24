@@ -1,4 +1,4 @@
-"""房间给它派出的活留话 (`POST /topics/{id}/tell`, `cheese tell`).
+"""房间给它派出的活留话 (`POST /topics/{id}/tell`, `cheese_tell`).
 
 One direction, and nothing is woken. The worker doing that thread is a 分身
 inside this very session, which the room reaches with its own tooling — waking a

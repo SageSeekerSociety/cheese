@@ -2210,7 +2210,7 @@ class AgentWorkRunner:
                         continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
-                        # `topic_work()` reads this so `cheese status` reports the
+                        # `topic_work()` reads this so `cheese_status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
                         # The frame's only remaining job here: it is emitted before

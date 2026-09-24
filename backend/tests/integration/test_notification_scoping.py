@@ -721,7 +721,7 @@ def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
     """展开成零行的广播报错，不静默回 200。
 
     广播现在是「名册上一人一行」，而一间只坐着芝士的房间展开出来是空的 —— 回 200
-    的话 `cheese notify` 把返回值整个丢掉，写的人和该收的人都不会知道这条通知掉在
+    的话 `cheese_notify` 把返回值整个丢掉，写的人和该收的人都不会知道这条通知掉在
     了地上。并表之前它是一行 `target_handle IS NULL`，谁读都看得见，丢不掉。
     """
     pid = _project(client)

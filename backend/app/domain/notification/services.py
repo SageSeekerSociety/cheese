@@ -264,7 +264,7 @@ class ProjectNotificationService:
             # 名册上一个人都不剩（只坐着 agent，或者项目既没成员也没主人）。并表
             # 之前广播是一行 `target_handle IS NULL`，谁读都看得见，丢不掉；展开
             # 成一人一行之后「展开成零行」就是把整条通知扔了，而路由照样回 200、
-            # `cheese notify` 把返回值整个丢掉 —— 发的人和收的人都不会知道。一条
+            # `cheese_notify` 把返回值整个丢掉 —— 发的人和收的人都不会知道。一条
             # 到不了任何人的通知不是成功。
             raise ValidationError(
                 "这条通知没有收件人：这个房间的名册上只有 agent（或者这个项目还"

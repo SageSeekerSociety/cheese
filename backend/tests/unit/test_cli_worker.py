@@ -92,78 +92,28 @@ def mcp_call(address, tmp_path, request):
 
 
 def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
+    """The tree holds what runs on the machine and nothing else: the platform's
+    own tools are the session-side table (结论 63), not leaves of this parser."""
     receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
     tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
     assert set(tools) == {
-        "cheese_accept_request",
-        "cheese_api",
-        "cheese_show",
-        "cheese_ask",
-        "cheese_chat_get",
-        "cheese_chat_list",
-        "cheese_chat_replies",
-        "cheese_chat_search",
-        "cheese_chat_send",
-        "cheese_close_task",
         "cheese_convert",
-        "cheese_decision",
-        "cheese_describe",
-        "cheese_doc_get",
-        "cheese_doc_set",
-        "cheese_feedback_propose",
-        "cheese_fetch",
         "cheese_library_get",
-        "cheese_library_ls",
-        "cheese_lock",
-        "cheese_members",
-        "cheese_deliver_at",
-        "cheese_machine",
-        "cheese_milestone",
-        "cheese_note",
-        "cheese_notify",
         "cheese_push_fix",
-        "cheese_ready",
         "cheese_recalc",
-        "cheese_recall",
         "cheese_recover",
-        "cheese_remember",
         "cheese_serve",
-        "cheese_status",
+        "cheese_show",
         "cheese_sync",
         "cheese_sync_agents",
-        "cheese_task",
-        "cheese_tell",
-        "cheese_title",
-        "cheese_unlock",
         "cheese_worktree",
     }
-    assert tools["cheese_task"]["inputSchema"]["required"] == ["title"]
-    assert tools["cheese_task"]["inputSchema"]["properties"]["contributor"] == {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": "实际贡献者的 handle，可重复",
-        "default": [],
-    }
+    assert tools["cheese_worktree"]["inputSchema"]["required"] == ["task_id"]
+    assert tools["cheese_sync"]["inputSchema"]["properties"]["all"]["type"] == (
+        "boolean"
+    )
     assert tools["cheese_serve"]["inputSchema"]["properties"]["port"]["type"] == (
         "integer"
-    )
-
-
-def test_worker_feedback_description_includes_parent_triggers(worker, tmp_path):
-    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
-    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    description = tools["cheese_feedback_propose"]["description"]
-    for trigger in (
-        "某个工具或命令反复失败",
-        "你做不到用户要求的事",
-        "用户指出你的错,或者你自己发现犯了错",
-        "用户让你提",
-    ):
-        assert trigger in description
-    assert "什么时候不该提" in description
-    assert "芝士 平台 CLI" not in description
-    assert description.index("什么时候该提") < description.index(
-        "把你发现的问题提成一张提案卡"
     )
 
 
@@ -292,10 +242,10 @@ def test_worker_preserves_dash_leading_structured_strings(worker, tmp_path):
 
 def test_worker_preserves_actual_cli_help(worker):
     _, address, _ = worker
-    args, env = command(address, "chat", "send", "--help")
+    args, env = command(address, "sync", "--help")
     actual = subprocess.run(args, env=env, capture_output=True, timeout=10)
     expected = subprocess.run(
-        [sys.executable, str(CLI), "chat", "send", "--help"],
+        [sys.executable, str(CLI), "sync", "--help"],
         capture_output=True,
         timeout=10,
     )
@@ -306,23 +256,18 @@ def test_worker_preserves_actual_cli_help(worker):
     )
 
 
-@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
-def test_worker_publishes_with_current_credentials(worker, encoding):
+def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
+    """Each invocation runs with the environment it was sent, so a rotated token
+    is the one the next call carries."""
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     received = []
 
     class API(BaseHTTPRequestHandler):
-        def do_POST(self):
-            received.append(
-                (
-                    self.path,
-                    self.headers["X-Cheese-Token"],
-                    json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
-                )
-            )
-            body = '{"data":{"id":"réponse"}}'.encode()
+        def do_GET(self):
+            received.append((self.path, self.headers["X-Cheese-Token"]))
+            body = "café".encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -336,85 +281,32 @@ def test_worker_publishes_with_current_credentials(worker, encoding):
     thread.start()
     try:
         for token in ("first-test-token", "rotated-test-token"):
-            args, env = command(worker[1], "chat", "send", "--file", "-")
+            out = tmp_path / f"{token}.txt"
+            args, env = command(
+                worker[1], "library", "get", "notes.txt", "--out", str(out)
+            )
             result = subprocess.run(
                 args,
                 env={
                     **env,
                     "CHEESE_TOKEN": token,
                     "CHEESE_TOPIC": "room",
+                    "CHEESE_PROJECT": "project",
                     "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
                     "NO_PROXY": "*",
-                    "PYTHONIOENCODING": encoding,
                 },
-                input="café".encode(encoding),
                 capture_output=True,
                 timeout=10,
             )
             assert result.returncode == 0, result.stderr
-            assert json.loads(result.stdout.decode(encoding)) == {"id": "réponse"}
+            assert out.read_text(encoding="utf-8") == "café"
         assert [row[1] for row in received] == [
             "first-test-token",
             "rotated-test-token",
         ]
-        assert all(row[0] == "/topics/room/messages" for row in received)
-        assert all(row[2]["content"] == "café" for row in received)
-        assert received[0][2]["request_id"] != received[1][2]["request_id"]
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-def test_cli_client_publishes_inline_chat_without_worker(tmp_path):
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    received = []
-
-    class API(BaseHTTPRequestHandler):
-        def do_POST(self):
-            received.append(
-                (
-                    self.path,
-                    self.headers["X-Cheese-Token"],
-                    json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
-                )
-            )
-            body = b'{"data":{"id":"direct"}}'
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), API)
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
-    try:
-        args, env = command(
-            "/tmp/socket-that-does-not-exist", "chat", "send", "direct message"
+        assert all(
+            row[0].startswith("/projects/project/library/raw") for row in received
         )
-        result = subprocess.run(
-            args,
-            env={
-                **env,
-                "CHEESE_TOKEN": "direct-token",
-                "CHEESE_TOPIC": "room",
-                "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
-                "NO_PROXY": "*",
-            },
-            capture_output=True,
-            timeout=10,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout) == {"id": "direct"}
-        assert received[0][0] == "/topics/room/messages"
-        assert received[0][1] == "direct-token"
-        assert received[0][2]["content"] == "direct message"
     finally:
         server.shutdown()
         server.server_close()

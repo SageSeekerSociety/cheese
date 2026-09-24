@@ -4,7 +4,7 @@ A room stalls; someone else picks it up; 芝士 splits a sub-topic out of THEIR
 turn. The child used to inherit the parent room's owner regardless — which is not
 merely wrong bookkeeping: the child ends in an accept card, so the card landed on
 someone who had already stopped working on this, and the work stalled a second
-time. `cheese task` cannot supply the answer itself (it runs under the 分身's own
+time. `cheese_task` cannot supply the answer itself (it runs under the 分身's own
 `cheese-<hex12>` handle, and letting an agent name the driver would be forgeable
 anyway), so the endpoint reads it off the runner's live turn record.
 
@@ -127,7 +127,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
 
 
 def _split(client, parent_id: str, *, by: str) -> dict:
-    """Dispatch work the way `cheese task` does from a 分身's sandbox: no human
+    """Dispatch work the way `cheese_task` does from a 分身's sandbox: no human
     token, the acting handle only in the body."""
     r = client.post(
         f"/topics/{parent_id}/split",
@@ -147,7 +147,7 @@ def _roster(client, topic_id: str) -> dict[str, str]:
 def _pr_body(client, pid: str, tid: str) -> str:
     """房间递卡开出的 PR，正文长什么样。
 
-    卡从**房间**递，因为递卡=封树开 PR，交付的是这条分支上一整批活（`cheese task`
+    卡从**房间**递，因为递卡=封树开 PR，交付的是这条分支上一整批活（`cheese_task`
     派出去的那些全在上面），支线自己递不了。
     """
     from app.domain.review import pr_publish

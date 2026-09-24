@@ -130,7 +130,7 @@ def test_isolated_subagents_are_refused_with_the_way_that_works():
             prompt: 'list files', isolation,
           }, () => {throw new Error('spawned on the session host')});
           assert.match(result.deny, /omit isolation/);
-          assert.match(result.deny, /cheese task/);
+          assert.match(result.deny, /cheese_task/);
         }
         const spawned = await handlers['tool.call']({}, {
           tool: 'Agent', tool_use_id: 'spawn', description: 'look',
@@ -701,18 +701,18 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert runtime.request(state, "ping")["workspace"] == str(home / "room")
-        publication_help = runtime.request(
+        sync_help = runtime.request(
             state,
             "invoke",
             {
                 "id": "cli-worker-help",
                 "tool": "Bash",
                 "args": {
-                    "command": 'test -S "$CHEESE_CLI_SOCKET" && cheese chat send --help'
+                    "command": 'test -S "$CHEESE_CLI_SOCKET" && cheese sync --help'
                 },
             },
         )
-        assert "--request-id" in publication_help["value"]["stdout"]
+        assert "--all" in sync_help["value"]["stdout"]
         payload["files"]["cheese"] = base64.b64encode(
             b"import sys\n"
             b"if __name__ == 'preload':\n"
@@ -1313,7 +1313,7 @@ def test_a_platform_tool_answers_while_a_shell_command_still_holds_the_room(
         waited = time.monotonic() - started
 
         assert waited < 2, f"the listing waited {waited:.1f}s for the shell"
-        assert "cheese_status" in {tool["name"] for tool in listing["tools"]}
+        assert "cheese_worktree" in {tool["name"] for tool in listing["tools"]}
         assert not release.exists(), "the command had already finished"
         deferred = runtime.request(state, "begin_upgrade", {"release": "next"})
         assert deferred["ready"] is False

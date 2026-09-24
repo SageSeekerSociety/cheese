@@ -20,13 +20,11 @@ describe('toolLabel', () => {
     expect(toolLabel('grep')).toBe('搜索内容')
   })
 
-  it('translates the platform commands a pi room calls as tools', () => {
-    // 同一件事在两个 harness 里叫不同的名字：一边是 MCP 工具，一边是 CLI 的
-    // 命令树生成的目录。两边都得有词，否则现场那一行显示的是它内部的拼法。
-    expect(toolLabel('cheese_accept_request')).toBe('提交验收卡')
+  it('translates the platform tools every harness calls by the same name', () => {
+    expect(toolLabel('mcp__native__cheese_accept_request')).toBe('提交验收卡')
     expect(toolLabel('cheese_doc_set')).toBe('更新实况文档')
     expect(toolLabel('chat_send')).toBe('发布消息')
-    expect(toolLabel('cheese_chat_send')).toBe('发布消息')
+    expect(toolLabel('cheese_worktree')).toBe('准备工作目录')
   })
 
   it('translates the background jobs, which pi has none of on its own', () => {

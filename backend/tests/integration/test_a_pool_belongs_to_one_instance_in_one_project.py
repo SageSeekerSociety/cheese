@@ -39,7 +39,7 @@ async def _turn_in(factory, tmp_path, *, private: bool, facts: dict[str, str]) -
     """开一个项目、往指定的池里写几条核心记忆、跑一轮，交回这一轮的 system prompt。
 
     ``facts``：``{"about_person" | "own": 内容}``。写的是 core 层，因为注入只带
-    core（`recall_pools`）——普通记忆要 `cheese recall` 才拿得到，注入里本来就不该有。
+    core（`recall_pools`）——普通记忆要 `cheese_recall` 才拿得到，注入里本来就不该有。
     """
     screen = Screen()
     svc = ChatService(

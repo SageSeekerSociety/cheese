@@ -1,6 +1,6 @@
 """Query keywords for the flat DB memory backend's search.
 
-The DB backend has no embeddings, so `cheese recall` cannot retrieve by
+The DB backend has no embeddings, so `cheese_recall` cannot retrieve by
 meaning. What it can do — and what this module implements — is degrade
 *honestly*: cut a natural-language question into the keywords it is made of,
 match any of them, and rank each memory by how much of the question it covers.

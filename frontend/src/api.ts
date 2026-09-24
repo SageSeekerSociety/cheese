@@ -1681,7 +1681,7 @@ export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
 }
 
-// 选项问题 (cheese ask): one-click answer.
+// 选项问题 (cheese_ask): one-click answer.
 export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
     method: 'POST',

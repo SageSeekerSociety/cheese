@@ -1,13 +1,19 @@
-"""Drift guard: the cheese CLI's manual vs. the CLI itself.
+"""Drift guard: the platform skill's two tables vs. what actually exists.
 
 芝士 can only act on what the injected skill tells it exists. When the two
 disagree the agent walks into a wall it cannot diagnose — observed 2026-08-10,
 where SKILL.md documented a command in mandatory terms while no such subcommand
 existed yet, and conversely `gh-token` was implemented but documented nowhere.
 
-So the command table and the argparse surface are pinned to each other, the same
-way test_hooks_substrate pins the committed hook script to its source constant.
-Adding a subcommand without documenting it (or the reverse) fails here.
+SKILL.md's tools section has two tables, one per way of calling:
+
+- the MCP table writes each tool's signature — `| \\`cheese_note(thread, content)\\`
+  | … |` — and must name exactly the session-side table (`PLATFORM_TOOLS`) plus
+  the transport's `platform_request`;
+- the CLI table writes the command line itself — `| \\`cheese sync [--task …]\\` |`
+  — and must name exactly the CLI's subcommands.
+
+A tool or subcommand added without a row (or a row without one) fails here.
 """
 
 import argparse
@@ -20,16 +26,9 @@ _SANDBOX = Path(__file__).resolve().parents[2] / "sandbox"
 _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
 
-# SKILL.md 的工具一节有两张表，两种写法，这里两种都认：
-#
-# - MCP 工具那张写工具签名 —— `| \`cheese_note(thread, content)\` | 说明 |`。它们
-#   在 CLI 上各有一条同名子命令（`cheese_deliver_at` → `deliver-at`、
-#   `cheese_feedback_propose` → `feedback`），由 `_command_for` 折回去；
-# - 子命令那张左列写的就是命令行本身 —— `| \`cheese doc set <文件>\` | 说明 |`，
-#   第一个词就是子命令，不用猜。
-_TOOL_ROW = re.compile(r"^\|\s*`(cheese_[a-z_]+|chat_send|platform_request)\(")
+#: One row may document a pair of tools (`cheese_lock(…)` / `cheese_unlock(…)`).
+_TOOL = re.compile(r"`(cheese_[a-z_]+|chat_send|platform_request)\(")
 _COMMAND_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
-_TOOL_TO_COMMAND = {"chat_send": "chat", "platform_request": "api"}
 
 
 def _load_cli():
@@ -41,55 +40,54 @@ def _load_cli():
     return mod
 
 
-def _implemented() -> set[str]:
-    """Public subcommands. Names starting with `_` are internal plumbing the
-    agent never types and are deliberately undocumented."""
+def _rows():
+    return [
+        line
+        for line in _SKILL.read_text(encoding="utf-8").splitlines()
+        if line.startswith("|")
+    ]
+
+
+def _documented_tools() -> set[str]:
+    names = set()
+    for line in _rows():
+        first_cell = line.split("|")[1]
+        names.update(_TOOL.findall(first_cell))
+    return names
+
+
+def _documented_commands() -> set[str]:
+    return {m.group(1) for line in _rows() if (m := _COMMAND_ROW.match(line))}
+
+
+def _implemented_commands() -> set[str]:
     parser = _load_cli().build_parser()
     groups = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
     assert len(groups) == 1, "expected exactly one subcommand group"
     return {name for name in groups[0].choices if not name.startswith("_")}
 
 
-def _command_for(tool: str) -> str:
-    """`cheese_doc_set` → `doc`: the first subcommand word, `_` written as `-`
-    where the CLI spells it that way (`accept_request` → `accept-request`)."""
-    rest = tool.removeprefix("cheese_")
-    for name in sorted(_implemented(), key=len, reverse=True):
-        if rest == name.replace("-", "_") or rest.startswith(
-            name.replace("-", "_") + "_"
-        ):
-            return name
-    return rest
-
-
-def _documented() -> set[str]:
-    names: set[str] = set()
-    for line in _SKILL.read_text(encoding="utf-8").splitlines():
-        command = _COMMAND_ROW.match(line)
-        if command:
-            names.add(command.group(1))
-            continue
-        tool = _TOOL_ROW.match(line)
-        if not tool:
-            continue
-        name = tool.group(1)
-        names.add(_TOOL_TO_COMMAND.get(name) or _command_for(name))
-    return names
-
-
-def test_every_documented_command_is_implemented():
-    missing = _documented() - _implemented()
-    assert not missing, (
-        f"SKILL.md promises commands the CLI does not implement: {sorted(missing)}. "
-        "芝士 reads that table as fact — implement them or drop the rows."
+def test_the_mcp_table_is_the_session_side_tool_table():
+    served = {*_load_cli().PLATFORM_TOOLS.names(), "platform_request"}
+    documented = _documented_tools()
+    assert documented - served == set(), (
+        f"SKILL.md promises tools nobody serves: {sorted(documented - served)}"
+    )
+    assert served - documented == set(), (
+        f"tools SKILL.md never mentions, which 芝士 will never use: "
+        f"{sorted(served - documented)}"
     )
 
 
-def test_every_implemented_command_is_documented():
-    undocumented = _implemented() - _documented()
-    assert not undocumented, (
-        f"the CLI implements commands SKILL.md never mentions: {sorted(undocumented)}. "
-        "An undocumented command is one 芝士 will never use."
+def test_the_cli_table_is_the_cli():
+    documented, implemented = _documented_commands(), _implemented_commands()
+    assert documented - implemented == set(), (
+        f"SKILL.md promises commands the CLI does not implement: "
+        f"{sorted(documented - implemented)}"
+    )
+    assert implemented - documented == set(), (
+        f"the CLI implements commands SKILL.md never mentions: "
+        f"{sorted(implemented - documented)}"
     )
 
 

@@ -88,7 +88,7 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackProposalIn(BaseModel):
     """The body of ``POST /topics/{topic_id}/feedback-proposals`` — and therefore
-    what `cheese feedback propose` sends.
+    what `cheese_feedback_propose` sends.
 
     The shape is cc's `SendFeedback` draft (§5.0/§5.5), which the requirement
     asked us to copy: a fixed skeleton, bullets rather than prose, and —
