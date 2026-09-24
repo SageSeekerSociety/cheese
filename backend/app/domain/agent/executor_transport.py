@@ -223,7 +223,11 @@ class RemoteClient:
         ):
             raise ValueError("Platform requests require a relative API path and method")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
-        token = os.environ.get("CHEESE_TOKEN", "")
+        token = (
+            self.execution_token()
+            if self.config.get("token_file")
+            else os.environ.get("CHEESE_TOKEN", "")
+        )
         if not api or not token:
             raise RuntimeError("Platform requests require room credentials")
         with self.platform_lock:
