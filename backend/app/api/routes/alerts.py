@@ -219,36 +219,23 @@ async def resolve_notification(
 async def _carry_out(
     row: Notification, chosen: str, db: AsyncSession, resolver: ActorResolver
 ) -> bool:
-    """A card that stands for a membership decision is answered by making it.
+    """A card that stands for a project invitation is answered by answering it.
 
-    Recording the choice alone would clear the card while the invitation or the
-    join request stayed exactly where it was. The decision settles its own cards
-    (every manager's, for a request), so there is nothing left to record here.
-    Returns False for every other card.
+    Recording the choice alone would clear the card while the invitation stayed
+    exactly where it was. Answering settles the card itself, so there is nothing
+    left to record here. Returns False for every other card.
     """
-    from app.domain.membership.join_links import REQUEST_OPTIONS, JoinLinkService
     from app.domain.membership.services import INVITATION_OPTIONS, InvitationService
 
-    payload = row.metadata_payload or {}
-    request_id = payload.get("join_request_id")
-    invitation_id = payload.get("invitation_id")
-    if request_id is None and invitation_id is None:
+    invitation_id = (row.metadata_payload or {}).get("invitation_id")
+    if invitation_id is None:
         return False
-    options = REQUEST_OPTIONS if request_id is not None else INVITATION_OPTIONS
-    if chosen not in options or row.project_id is None:
+    if chosen not in INVITATION_OPTIONS or row.project_id is None:
         raise ValidationError("所选项不在候选项中")
     actor = await resolver.require_verified_caller()
-    if request_id is not None:
-        await JoinLinkService(db).decide(
-            row.project_id,
-            uuid.UUID(request_id),
-            approve=chosen == options[0],
-            actor=actor,
-        )
-    else:
-        await InvitationService(db).respond(
-            invitation_id=uuid.UUID(invitation_id),
-            accept=chosen == options[0],
-            actor=actor,
-        )
+    await InvitationService(db).respond(
+        invitation_id=uuid.UUID(invitation_id),
+        accept=chosen == INVITATION_OPTIONS[0],
+        actor=actor,
+    )
     return True

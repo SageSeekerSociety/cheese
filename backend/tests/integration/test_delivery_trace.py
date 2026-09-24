@@ -8,7 +8,11 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_artifact, delivery_headers
-from tests.integration.conftest import room_agent_seat, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import _rendered_head, app_world  # noqa: F401
 from tests.machine_work import declare_task, machine_commits
 
@@ -31,7 +35,7 @@ def _task_line(pid: str, room: str, task: str, subagent: str, title: str) -> str
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _room(client, project_id: str) -> str:

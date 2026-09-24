@@ -12,11 +12,11 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "Demo"}).json()["data"]["id"]
+    return post_project(client, json={"name": "Demo"}).json()["data"]["id"]
 
 
 def _dm(client, project_id: str, user: str, peer: str | None = None) -> str:

@@ -10,7 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.domain.agent.device_hub import HubScreen, device_hub
 from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import post_project, session_auth_headers, session_token
 
 
 def _login(client, handle: str) -> str:
@@ -51,6 +51,22 @@ def _register_screen(
     return screen
 
 
+def _agent_identity(client, handle: str) -> None:
+    """The agent user a real screen runs as: a user row carrying an agent binding,
+    made the way the platform makes one. Without it the handle names nobody, and
+    a room refuses it like any non-member."""
+    import asyncio
+
+    from app.domain.identity.services import IdentityService
+
+    async def _make() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            await IdentityService(session).ensure_agent_user(handle=handle, name=handle)
+            await session.commit()
+
+    asyncio.run(_make())
+
+
 def _unregister(screen: HubScreen) -> None:
     device_hub._screens.pop(screen.sid, None)
     device_hub._by_screen_token.pop(screen.token, None)
@@ -61,9 +77,9 @@ def _unregister(screen: HubScreen) -> None:
 
 
 def test_project_member_may_watch_screen(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -83,9 +99,9 @@ def test_project_member_may_watch_screen(client):
 
 
 def test_outsider_cannot_watch_screen(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     bob = _login(client, "bob")  # logged in, but not in alice's project/topic
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -114,9 +130,9 @@ def test_unknown_screen_is_refused(client):
 def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     """A cheese write carrying ``X-Cheese-Screen`` acts as the screen's agent-user
     (device agent-as-user), not the generic 芝士 nor the body's author."""
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
@@ -125,6 +141,7 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
         topic_id=uuid.UUID(topic["id"]),
         handle="agent-macbook",
     )
+    _agent_identity(client, "agent-macbook")
     assert (
         client.post(
             f"/topics/{topic['id']}/members",
@@ -146,9 +163,9 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
 
 
 def test_cheese_call_without_screen_header_is_not_the_agent(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
@@ -164,8 +181,8 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
 def test_write_gate_and_route_use_the_same_screen_participant(client):
     from app.core.sandbox_auth import mint_scoped_token
 
-    project = client.post(
-        "/projects", json={"name": "Screen identity", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Screen identity", "owner_handle": "alice"}
     ).json()["data"]
     tid = project["root_topic_id"]
     owner = session_auth_headers("alice")
@@ -178,6 +195,7 @@ def test_write_gate_and_route_use_the_same_screen_participant(client):
         topic_id=uuid.UUID(tid),
         handle="screen-agent",
     )
+    _agent_identity(client, "screen-agent")
     try:
         assert (
             client.post(
@@ -232,9 +250,9 @@ def _enroll_device(client, owner_token: str, project_id: str | None = None) -> d
 
 
 def test_my_devices_list_rename_and_unbind(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     alice = _login_real(client, "alice")
     enrolled = _enroll_device(client, alice, project_id=project["id"])
     device_id = enrolled["device_id"]
@@ -309,9 +327,9 @@ def test_a_member_can_type_into_the_screen(client, monkeypatch):
 
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
@@ -345,9 +363,9 @@ def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
 
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
-    project = client.post(
-        "/projects", json={"name": "P2", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P2", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     alice = _login(client, "alice")
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-y"

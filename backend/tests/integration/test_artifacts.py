@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 @pytest.fixture(autouse=True)
@@ -16,9 +16,7 @@ def content_domain(monkeypatch):
 
 
 def _topic(client, owner: str | None = None) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
@@ -315,7 +313,7 @@ def test_app_artifact_and_preview(client):
     hands the browser a path a browser can actually fetch."""
     from app.domain.library import service as library
 
-    pr = client.post("/projects", json={"name": "P"})
+    pr = post_project(client, json={"name": "P"})
     pid = pr.json()["data"]["id"]
     tr = client.post("/topics", json={"project_id": pid, "title": "T"})
     tid = tr.json()["data"]["id"]

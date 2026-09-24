@@ -16,7 +16,7 @@ from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.codex.channel import CodexChannel
 from app.domain.agent.harness.pi.channel import PiChannel
 from app.domain.identity.services import IdentityService
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.mark.anyio
@@ -25,8 +25,8 @@ from tests.integration.conftest import session_auth_headers
 async def test_invited_teammate_is_the_startup_identity(
     client, monkeypatch, harness, needs_place
 ):
-    project = client.post(
-        "/projects", json={"name": "Trial", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Trial", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",

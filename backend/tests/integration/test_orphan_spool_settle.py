@@ -25,7 +25,7 @@ from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project, registered
 from tests.turn_log import open_turn, open_turn_ids
 
 
@@ -62,6 +62,7 @@ class _RecordingScreen(StubChannel):
 
 async def _seed_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -325,7 +326,7 @@ def test_completed_live_turn_settles_before_another_prompt(
         "schedule_spool_settle",
         lambda self, topic_id, delay_s=2.0: real_schedule(self, topic_id, delay_s=0),
     )
-    project = client.post("/projects", json={"name": "P"}).json()["data"]
+    project = post_project(client, json={"name": "P"}).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "T", "created_by": "u"},

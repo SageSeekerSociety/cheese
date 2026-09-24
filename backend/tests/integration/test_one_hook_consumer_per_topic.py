@@ -39,6 +39,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import settle_turn
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -64,6 +65,7 @@ class _Hub:
 async def _seed(factory) -> dict[str, object]:
     """一个项目、两个房间，各绑一台机器：一台平台开的云机器，一台人自己接进来的。"""
     async with factory() as session:
+        await registered(session, "alice")
         project = await ProjectService(session).create(name="P", owner_handle="alice")
         topics = TopicService(session)
         on_cloud = await topics.create(

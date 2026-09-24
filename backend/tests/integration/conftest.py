@@ -70,6 +70,191 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
+def _caller_handle(headers: dict | None) -> str | None:
+    """The handle a bearer token in ``headers`` names, as the route resolves it."""
+    auth = next(
+        (v for k, v in (headers or {}).items() if k.lower() == "authorization"), ""
+    )
+    if not auth.startswith("Bearer "):
+        return None
+    import jwt
+
+    claims = jwt.decode(auth[7:], options={"verify_signature": False})
+    return claims.get("handle") or claims.get("sub")
+
+
+async def a_team(session, owner_handle: str | None = None) -> int:
+    """A shared team on ``session`` for a test that inserts a project row itself
+    — every project belongs to one. With ``owner_handle`` that person (registered
+    first) owns it. Returns the team id."""
+    from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+
+    now = datetime.now(UTC)
+    team = Team(
+        name="Test team",
+        handle=f"t-{uuid.uuid4().hex[:12]}",
+        intro="",
+        description="",
+        avatar_id=1,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(team)
+    await session.flush()
+    if owner_handle:
+        session.add(
+            TeamUserRelation(
+                team_id=team.id,
+                user_id=await registered(session, owner_handle),
+                role=TeamMemberRole.OWNER,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+    return team.id
+
+
+async def registered(session, handle: str) -> int:
+    """Make ``handle`` a registered person on ``session`` (get-or-create), the
+    way :func:`tests.conftest.seed_user` does; return the user id.
+
+    For tests that build a project through ``ProjectService.create`` in their
+    own session: a project with no team given goes to its owner's personal
+    team, so the owner has to be someone.
+    """
+    from app.domain.user.repositories import UserRepository
+
+    repo = UserRepository(session)
+    user = await repo.get_by_username(handle)
+    if user is None:
+        user = await repo.create_user(username=handle, email=f"{handle}@example.com")
+    return user.id
+
+
+def post_project(client, json: dict | None = None, *, headers=None, **kwargs):
+    """``POST /projects`` with an owner who is a real person.
+
+    Every project belongs to a team, and a project with no team named goes to
+    its owner's personal team — so the owner must be a registered user. The
+    owner is the one the route would pick: the body's ``owner_handle``, else the
+    caller the token names, else ``owner``. That person is registered with
+    :func:`tests.conftest.seed_user` first; nobody else is. Returns the response.
+    """
+    body = dict(json or {})
+    caller = _caller_handle(headers) or _caller_handle(
+        dict(getattr(client, "headers", {}))
+    )
+    owner = body.get("owner_handle") or caller or "owner"
+    body["owner_handle"] = owner
+    if body.get("team_id") is None:
+        _register(client, owner)
+    return client.post("/projects", json=body, headers=headers, **kwargs)
+
+
+def _register(client, handle: str) -> None:
+    """:func:`tests.conftest.seed_user`, callable from inside a running event loop.
+
+    ``seed_user`` drives its session with ``asyncio.run``, which cannot start
+    while an async test's loop is running on this thread; there it runs on a
+    thread of its own. The test engine pools nothing, so that thread's loop gets
+    its own connection.
+    """
+    import asyncio as _asyncio
+    import threading
+
+    from tests.conftest import seed_user
+
+    if not hasattr(client, "test_factory"):
+        # The ``api_client`` harness registers people through its own
+        # ``user_client`` fixture, and tests on it pass those usernames; there
+        # is no session here to register anyone else with.
+        return
+    try:
+        _asyncio.get_running_loop()
+    except RuntimeError:
+        seed_user(client, handle)
+        return
+    failure: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            seed_user(client, handle)
+        except BaseException as exc:  # re-raised on the test's thread below
+            failure.append(exc)
+
+    worker = threading.Thread(target=_run)
+    worker.start()
+    worker.join()
+    if failure:
+        raise failure[0]
+
+
+def new_project(client, name: str = "P", owner: str = "owner", **extra) -> dict:
+    """A project owned by ``owner`` (registered first), as the API returns it."""
+    resp = post_project(client, {"name": name, "owner_handle": owner, **extra})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]
+
+
+def join_project_team(client, project_id: str, handle: str, *, admin: bool = False):
+    """Put ``handle`` (registered first) on the team the project belongs to.
+
+    This is how a person is in a project now: team members are read from the
+    team. ``admin`` makes them a team admin, which is who manages the project
+    alongside its owner.
+    """
+    import asyncio as _asyncio
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    _register(client, handle)
+
+    async def _join() -> None:
+        now = datetime.now(UTC)
+        async with client.test_factory() as session:
+            project = await session.get(Project, uuid.UUID(str(project_id)))
+            assert project is not None, project_id
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            from app.domain.team.repositories import TeamRepository
+
+            if await TeamRepository(session).is_team_member(project.team_id, user.id):
+                return
+            session.add(
+                TeamUserRelation(
+                    team_id=project.team_id,
+                    user_id=user.id,
+                    role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_join())
+
+
+def add_external_member(client, project_id: str, handle: str, *, by: str = "owner"):
+    """Invite ``handle`` (registered first) into the project and accept, as a
+    person from outside its team comes in. ``by`` must manage the project."""
+    _register(client, handle)
+    inv = client.post(
+        f"/projects/{project_id}/invitations",
+        json={"user_handle": handle},
+        headers=session_auth_headers(by),
+    )
+    assert inv.status_code == 200, inv.text
+    ok = client.post(
+        f"/invitations/{inv.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers(handle),
+    )
+    assert ok.status_code == 200, ok.text
+
+
 def ask_to_join(
     api_client: "TestClient", team_id: int, token: str, message: str
 ) -> int:

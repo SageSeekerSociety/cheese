@@ -9,9 +9,9 @@ ownerless room made every sub-topic under it ownerless too. On the dogfood
 project this had reached 96 of 149 topics.
 
 These tests pin the fallback ladder — real creator → parent room's owner →
-project owner → project 组长 — and the escape hatch that gets the ALREADY-broken
-rooms out: while a room has no manager at all, the project's owner/lead may
-appoint one.
+project owner → the owner of the project's team — and the escape hatch that
+gets the ALREADY-broken rooms out: while a room has no manager at all, whoever
+manages the project (its owner, or a team owner/admin) may appoint one.
 Without it those rooms are a dead end with no route out of the product (only an
 owner may appoint an owner, and there is none), repairable only by hand-editing
 the database.
@@ -23,19 +23,21 @@ import uuid
 from sqlalchemy import delete, select
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client, owner: str | None) -> dict:
     body: dict = {"name": "P"}
     if owner is not None:
         body["owner_handle"] = owner
-    return client.post("/projects", json=body).json()["data"]
+    return post_project(client, json=body).json()["data"]
 
 
 def _roster(client, topic_id: str) -> dict[str, str]:
@@ -54,17 +56,10 @@ def _create_topic(client, project_id: str, **kw) -> dict:
     return client.post("/topics", json=body, **kw).json()["data"]
 
 
-def _add_project_member(
-    client, project_id: str, handle: str, role: str, *, actor: str = "alice"
-) -> None:
-    """Seed the project roster as its owner — writing it needs an owner/lead token
-    now, so an anonymous POST here would silently 403 and leave the roster empty."""
-    r = client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": handle, "role": role},
-        headers=session_auth_headers(actor),
-    )
-    assert r.status_code == 200, r.text
+def _add_team_member(client, project_id: str, handle: str, *, admin: bool) -> None:
+    """Put ``handle`` on the project's team — an admin answers for the project,
+    a plain member only belongs to it."""
+    join_project_team(client, project_id, handle, admin=admin)
 
 
 def _orphan_the_roster(client, topic_id: str) -> None:
@@ -121,20 +116,25 @@ def _make_project_ownerless(client, project_id: str) -> None:
     asyncio.run(_go())
 
 
-def _seed_project_lead_directly(client, project_id: str, handle: str) -> None:
-    """Put a 组长 on the project roster without going through the API.
+def _strip_team_owner(client, project_id: str) -> None:
+    """End the owner relation of the project's team, so no rung is left."""
+    from datetime import UTC, datetime
 
-    Writing that roster needs an owner/lead token, and the whole premise here is
-    a project that has neither — so an HTTP POST would 403 and leave the roster
-    empty, quietly turning the test below into a test of nothing.
-    """
+    from sqlalchemy import update
+
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
 
     async def _go() -> None:
         async with client.test_factory() as session:
-            await MemberRepository(session).add(
-                project_id=uuid.UUID(project_id),
-                user_handle=handle,
-                role=ProjectRole.lead,
+            project = await ProjectRepository(session).get(uuid.UUID(project_id))
+            assert project is not None
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.role == TeamMemberRole.OWNER,
+                )
+                .values(deleted_at=datetime.now(UTC))
             )
             await session.commit()
 
@@ -169,7 +169,7 @@ def test_topic_created_anonymously_still_gets_an_owner(client):
     assert _roster(client, topic["id"]).get("alice") == "owner"
 
 
-def test_an_ownerless_project_falls_back_to_its_lead(client):
+def test_an_ownerless_project_falls_back_to_its_teams_owner(client):
     """The rung below "the project's owner", and the one the dogfood project
     actually needed.
 
@@ -180,26 +180,27 @@ def test_an_ownerless_project_falls_back_to_its_lead(client):
     and is born blank. Five active rooms were sitting in that state, none of
     them manageable by anyone.
 
-    The ladder was right; its bottom rung had nothing to stand on. The roster
-    did — that project has a 组长, which is "who answers for this project"
-    already recorded rather than a policy invented to fill the hole.
+    The ladder was right; its bottom rung had nothing to stand on. The team
+    does — its owner is "who answers for this project" already recorded rather
+    than a policy invented to fill the hole.
     """
-    p = _project(client, owner=None)
+    p = _project(client, owner="dana")
     _make_project_ownerless(client, p["id"])
-    _seed_project_lead_directly(client, p["id"], "dana")
 
     topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
 
+    # dana owns the personal team the project was created in.
     assert _roster(client, topic["id"]).get("dana") == "owner"
 
 
 def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
-    """No creator, no parent owner, no project owner, no lead — the ladder runs
+    """No creator, no parent owner, no project owner, no team owner — the ladder runs
     out. It must not raise: an ownerless room is a roster problem the rescue
     hatch below already covers, but a 500 on topic-create is a dead product.
     """
     p = _project(client, owner=None)
     _make_project_ownerless(client, p["id"])
+    _strip_team_owner(client, p["id"])
     topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
 
     roster = _roster(client, topic["id"])
@@ -293,6 +294,7 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     way out — no owner existed to grant anyone anything."""
     p = _project(client, owner="alice")
     topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+    join_project_team(client, p["id"], "bob")
 
     r = client.post(
         f"/topics/{topic['id']}/members",
@@ -303,15 +305,15 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     assert _roster(client, topic["id"]).get("bob") == "member"
 
 
-def test_project_lead_can_rescue_a_room_that_lost_its_owner(client):
-    """The way out for the 96 rooms already stuck: a project lead may appoint an
+def test_a_team_admin_can_rescue_a_room_that_lost_its_owner(client):
+    """The way out for the 96 rooms already stuck: a team admin may appoint an
     owner while the room has none. Before this, the only fix was a DB script."""
     p = _project(client, owner="alice")
     topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     _orphan_the_roster(client, topic["id"])
     assert "owner" not in _roster(client, topic["id"]).values()
 
-    _add_project_member(client, p["id"], "dana", "lead")
+    _add_team_member(client, p["id"], "dana", admin=True)
     r = client.post(
         f"/topics/{topic['id']}/members",
         json={"handle": "dana", "role": "owner", "actor": "dana"},
@@ -327,7 +329,7 @@ def test_plain_project_member_cannot_rescue_a_room(client):
     topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     _orphan_the_roster(client, topic["id"])
 
-    _add_project_member(client, p["id"], "erin", "member")
+    _add_team_member(client, p["id"], "erin", admin=False)
     r = client.post(
         f"/topics/{topic['id']}/members",
         json={"handle": "erin", "role": "owner", "actor": "erin"},
@@ -337,11 +339,11 @@ def test_plain_project_member_cannot_rescue_a_room(client):
 
 
 def test_hatch_closes_once_the_room_has_an_owner_again(client):
-    """A healthy room's owner is never overridden — the lead loses the power the
+    """A healthy room's owner is never overridden — the admin loses the power the
     moment the room can manage itself, so this isn't a blanket project-wide key."""
     p = _project(client, owner="alice")
     topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
-    _add_project_member(client, p["id"], "dana", "lead")
+    _add_team_member(client, p["id"], "dana", admin=True)
 
     r = client.post(
         f"/topics/{topic['id']}/members",

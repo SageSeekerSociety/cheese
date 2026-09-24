@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 class ToolScreen(StubChannel):
@@ -40,7 +40,7 @@ def _chat(client, topic_id: str) -> None:
 
 
 def test_event_blocks_persist_structured_meta(client):
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
@@ -86,7 +86,7 @@ def test_event_blocks_persist_structured_meta(client):
 def test_transcript_pages_back_instead_of_serving_everything(client):
     """现场 is the biggest thing a topic can hand back — one event per tool call,
     forever. So it comes in windows, newest first, and the caller walks back."""
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
@@ -116,7 +116,7 @@ def test_transcript_pages_back_instead_of_serving_everything(client):
 
 def test_transcript_rejects_a_cursor_from_another_topic(client):
     """未知游标不能悄悄退化成「最新 N 条」—— 调用方分不出那和真的一页有什么区别。"""
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     a = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "A", "created_by": "user-1"},

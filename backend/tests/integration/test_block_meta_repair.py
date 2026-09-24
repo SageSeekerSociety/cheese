@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from tests.conftest import TEST_DATABASE_URL
+from tests.integration.conftest import post_project
 
 _REPAIR = (
     Path(__file__).resolve().parents[2]
@@ -35,7 +36,7 @@ _CORRUPT = '[null, {"in_room": false}]'
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]

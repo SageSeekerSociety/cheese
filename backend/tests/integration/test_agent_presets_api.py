@@ -1,5 +1,7 @@
 """Built-in starting configurations are read-only and copied into new agents."""
 
+from tests.integration.conftest import post_project
+
 
 def test_presets_are_read_only(client):
     response = client.get("/agent-types")
@@ -19,8 +21,8 @@ def test_preset_initializes_a_project_agent(client):
         for item in client.get("/agent-types").json()["data"]["data"]
         if item["name"] == "fullstack-engineer"
     )
-    project = client.post(
-        "/projects", json={"name": "Preset", "agent_type": preset["name"]}
+    project = post_project(
+        client, json={"name": "Preset", "agent_type": preset["name"]}
     ).json()["data"]
     agent = client.get(f"/projects/{project['id']}/agents").json()["data"]["data"][0]
     assert agent["configuration"]["body"] == preset["body"]

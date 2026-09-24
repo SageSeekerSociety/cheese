@@ -12,12 +12,13 @@ from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.subscription import Subscription
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
+from tests.integration.conftest import post_project
 
 
 @pytest.mark.anyio
 async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
-    project = client.post(
-        "/projects", json={"name": "Codex events", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Codex events", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",
@@ -77,8 +78,8 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
 
 @pytest.mark.anyio
 async def test_same_agent_resumes_each_harness_history_independently(client):
-    project = client.post(
-        "/projects", json={"name": "Harness sessions", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Harness sessions", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",
@@ -128,8 +129,8 @@ async def test_same_agent_resumes_each_harness_history_independently(client):
 async def test_late_session_event_preserves_original_teammate_and_harness(
     client, tmp_path
 ):
-    project = client.post(
-        "/projects",
+    project = post_project(
+        client,
         json={
             "name": "Late owner",
             "owner_handle": "alice",
@@ -190,8 +191,8 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
 
 @pytest.mark.anyio
 async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp_path):
-    project = client.post(
-        "/projects",
+    project = post_project(
+        client,
         json={
             "name": "Reader crash",
             "owner_handle": "alice",

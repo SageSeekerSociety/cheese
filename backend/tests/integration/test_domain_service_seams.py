@@ -27,6 +27,7 @@ from app.domain.space.models import Space
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -57,6 +58,7 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(
     business_db_factory,
 ):
     async with business_db_factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         await session.commit()
         pid = project.id
@@ -91,6 +93,7 @@ async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(
     business_db_factory,
 ):
     async with business_db_factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_open = await topics.create(project_id=project.id, title="A", created_by="u")
@@ -117,6 +120,7 @@ async def test_open_pr_card_ids_skips_cards_on_archived_topics(business_db_facto
     还去跟进它，就是拿 GitHub 凭据去动没人跟的活儿。
     """
     async with business_db_factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_live = await topics.create(

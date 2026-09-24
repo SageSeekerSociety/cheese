@@ -1,8 +1,10 @@
 """B1 Phase 1: editing the living doc keeps a structured node tree in sync."""
 
+from tests.integration.conftest import post_project
+
 
 def _project_and_topic(client) -> str:
-    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
     tid = client.post("/topics", json={"project_id": pid, "title": "T"}).json()["data"][
         "id"
     ]

@@ -28,7 +28,7 @@ from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.topic.models import Topic, TopicKind
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import a_team, session_auth_headers
 
 ADMIN = "new-stats-admin"
 REPORTER = "new-stats-reporter"
@@ -59,7 +59,11 @@ def _room_with_cards(client, *cards: dict) -> dict:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name=f"P-{uuid.uuid4().hex[:8]}", owner_handle=REPORTER)
+            project = Project(
+                team_id=await a_team(s),
+                name=f"P-{uuid.uuid4().hex[:8]}",
+                owner_handle=REPORTER,
+            )
             s.add(project)
             await s.flush()
             room = Topic(

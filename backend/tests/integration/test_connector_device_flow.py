@@ -13,6 +13,7 @@ import pytest
 import uvicorn
 
 from tests.conftest import seed_user
+from tests.integration.conftest import join_project_team, post_project
 
 
 def _login(client, handle: str) -> str:
@@ -28,9 +29,9 @@ def _bearer(token: str) -> dict:
 
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     token = _login(client, "alice")
 
     # 1. start — the client (frozen cli) gets a code + an approve link.
@@ -247,19 +248,14 @@ def test_connect_requires_login(client):
 @pytest.mark.parametrize("member", [False, True])
 def test_project_binding_requires_membership_before_approval(client, member):
     owner = _login(client, "binding-owner")
-    project = client.post(
-        "/projects",
+    project = post_project(
+        client,
         json={"name": "Private project", "owner_handle": "binding-owner"},
         headers=_bearer(owner),
     ).json()["data"]
     token = _login(client, "device-owner")
     if member:
-        added = client.post(
-            f"/projects/{project['id']}/members",
-            json={"user_handle": "device-owner"},
-            headers=_bearer(owner),
-        )
-        assert added.status_code == 200, added.text
+        join_project_team(client, project["id"], "device-owner")
     code = client.post(
         "/connector/auth/device/start", json={"device_name": "test-device"}
     ).json()["device_code"]

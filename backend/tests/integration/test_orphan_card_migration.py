@@ -16,6 +16,7 @@ from pathlib import Path
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from tests.integration.conftest import a_team
 
 _MIGRATION = (
     Path(__file__).resolve().parents[2]
@@ -40,7 +41,7 @@ def test_migration_closes_every_stranded_card_and_leaves_the_rest_alone(client):
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
 

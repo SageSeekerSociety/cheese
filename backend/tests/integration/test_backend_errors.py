@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain import backend_log
 from app.main import app
+from tests.integration.conftest import post_project
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +52,7 @@ def crashing_route(client):
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

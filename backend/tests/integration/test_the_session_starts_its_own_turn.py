@@ -20,11 +20,11 @@ from sqlalchemy import select
 from app.domain.agent.models import AgentTurn
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, room_agent_seat
+from tests.integration.conftest import chat_ws_url, post_project, room_agent_seat
 
 
 def _room(client) -> tuple[str, str]:
-    project = client.post("/projects", json={"name": "P"}).json()["data"]
+    project = post_project(client, json={"name": "P"}).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "房间", "created_by": "u"},

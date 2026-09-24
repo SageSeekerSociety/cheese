@@ -29,7 +29,7 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work
 from app.domain.user.models import User
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 INSTALLED = {
     "workspace": "/project",
@@ -40,8 +40,8 @@ INSTALLED = {
 
 @pytest.fixture
 async def room(client):
-    project = client.post(
-        "/projects", json={"name": "Two teammates", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Two teammates", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",

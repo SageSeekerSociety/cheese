@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.memory import redundant
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project, registered
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -35,8 +35,8 @@ FACT = "中期答辩定在 11 月 15 日，要现场演示一个能跑的 demo"
 
 
 def _project_and_room(client) -> tuple[str, str]:
-    project_id = client.post(
-        "/projects", json={"name": "P", "owner_handle": "user-1"}
+    project_id = post_project(
+        client, json={"name": "P", "owner_handle": "user-1"}
     ).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
@@ -279,6 +279,7 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
     """
 
     async def run() -> None:
+        await registered(db_session, "andyl")
         project = await ProjectService(db_session).create(
             name="有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
         )
@@ -322,6 +323,7 @@ def test_the_migration_builds_the_first_document_for_a_project_that_has_none(
     """
 
     async def run() -> None:
+        await registered(db_session, "andyl")
         project = await ProjectService(db_session).create(
             name="没有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
         )

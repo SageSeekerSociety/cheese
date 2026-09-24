@@ -7,7 +7,7 @@ room stay open for the next piece of work, and for anything delivered into it
 later.
 """
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -15,7 +15,7 @@ from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str = "运维") -> str:

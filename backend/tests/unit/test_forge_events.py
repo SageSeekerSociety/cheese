@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import forge_events_app as relay
 from app.core.forge_events import subscription_assertion
+from tests.integration.conftest import a_team
 
 
 @pytest.fixture
@@ -256,7 +257,7 @@ async def test_registration_refreshes_database_bindings(
         "wss://relay.example/forge/events/first/connect",
     )
     async with db_factory() as session:
-        project = Project(name="Event subscription")
+        project = Project(team_id=await a_team(session), name="Event subscription")
         session.add(project)
         await session.flush()
         session.add(
@@ -306,7 +307,7 @@ async def test_event_and_poll_cannot_advance_the_same_card_twice(
     from app.domain.topic.models import Topic
 
     async with db_factory() as session:
-        project = Project(name="Concurrent event test")
+        project = Project(team_id=await a_team(session), name="Concurrent event test")
         session.add(project)
         await session.flush()
         room = Topic(project_id=project.id, title="Review room", created_by="requester")
@@ -494,7 +495,10 @@ async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypa
     from app.domain.review import pr_poll, pr_publish
 
     async with db_factory() as session:
-        first, second = Project(name="First"), Project(name="Second")
+        first, second = (
+            Project(team_id=await a_team(session), name="First"),
+            Project(team_id=await a_team(session), name="Second"),
+        )
         session.add_all([first, second])
         await session.flush()
         for project, repo in ((first, "owner/first"), (second, "owner/second")):

@@ -11,11 +11,16 @@ import pytest
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
 from tests.conftest import finish_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, room_agent_seat
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    registered,
+    room_agent_seat,
+)
 
 
 def _create_topic(client, owner: str = "alice") -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": owner},
@@ -208,6 +213,7 @@ async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
     from app.domain.topic.services import TopicService
 
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

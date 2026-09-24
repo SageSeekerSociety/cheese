@@ -1,6 +1,6 @@
 """改验收人 — reassign a pending accept card (spec §4.4)."""
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -8,7 +8,7 @@ from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _topic_and_card(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]

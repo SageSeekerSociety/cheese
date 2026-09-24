@@ -154,6 +154,7 @@ const {
   seatByHandle,
   agentDisplayName,
   displayName,
+  isExternal,
   avatarSrc,
   onAvatarError,
   myName,
@@ -1266,6 +1267,7 @@ onBeforeUnmount(() => {
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
@@ -1311,6 +1313,7 @@ onBeforeUnmount(() => {
             :mine="true"
             :topic-id="topic?.id ?? null"
             :author-name="myName"
+            :external="isExternal(AUTHOR)"
             :avatar="avatarSrc(AUTHOR)"
             :is-agent="false"
             :time="outgoingState(item)"

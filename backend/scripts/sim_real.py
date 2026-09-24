@@ -37,7 +37,6 @@ from app.domain.project.models import (
     AiMode,
     Project,
     ProjectMember,
-    ProjectRole,
     ProjectTaskLink,
 )
 from app.domain.review.models import AcceptCard  # noqa: F401
@@ -165,15 +164,9 @@ async def enrich_project(project_id: str, task_id: uuid.UUID) -> None:
         s.add(ProjectTaskLink(project_id=proj.id, task_id=task_id))
         s.add_all(
             [
-                ProjectMember(
-                    project_id=proj.id, user_handle="user-1", role=ProjectRole.lead
-                ),
-                ProjectMember(
-                    project_id=proj.id, user_handle="user-2", role=ProjectRole.member
-                ),
-                ProjectMember(
-                    project_id=proj.id, user_handle="mentor-1", role=ProjectRole.mentor
-                ),
+                ProjectMember(project_id=proj.id, user_handle="user-1"),
+                ProjectMember(project_id=proj.id, user_handle="user-2"),
+                ProjectMember(project_id=proj.id, user_handle="mentor-1"),
             ]
         )
         # 项目总览的实况文档（= 之前的 onboarding）：人和所有芝士共同看的那一份

@@ -9,6 +9,7 @@ from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from app.domain.user.models import User, UserProfile
+from tests.integration.conftest import post_project
 
 
 def test_user_profile_aggregates_across_projects(client, bearer):
@@ -42,24 +43,11 @@ def test_user_profile_aggregates_across_projects(client, bearer):
 
     asyncio.run(_seed_user())
 
-    # Two projects, member of both; started a topic in one.
-    p1 = client.post("/projects", json={"name": "P1", "owner_handle": "u1"}).json()[
-        "data"
-    ]["id"]
-    p2 = client.post("/projects", json={"name": "P2", "owner_handle": "u1"}).json()[
-        "data"
-    ]["id"]
-    # Roster writes need the owner's token, so u1 adds itself to both projects.
-    client.post(
-        f"/projects/{p1}/members",
-        json={"user_handle": "u1", "role": "lead"},
-        headers=bearer("u1"),
-    )
-    client.post(
-        f"/projects/{p2}/members",
-        json={"user_handle": "u1"},
-        headers=bearer("u1"),
-    )
+    # Two projects u1 owns; started a topic in one.
+    p1 = post_project(client, json={"name": "P1", "owner_handle": "u1"}).json()["data"][
+        "id"
+    ]
+    post_project(client, json={"name": "P2", "owner_handle": "u1"})
     client.post(
         "/topics",
         json={"project_id": p1, "title": "我的话题", "created_by": "u1"},
@@ -86,6 +74,7 @@ def test_user_profile_aggregates_across_projects(client, bearer):
     assert prof["bio"] == "后端"  # UserProfile.intro
     assert {p["name"] for p in prof["projects"]} == {"P1", "P2"}
     p1row = next(p for p in prof["projects"] if p["name"] == "P1")
-    assert p1row["role"] == "lead"
+    # How u1 is in P1: its owner.
+    assert p1row["source"] == "owner"
     assert p1row["topics_started"] >= 1
     assert any("后端架构" in u for u in prof["understanding"])

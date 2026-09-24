@@ -13,10 +13,11 @@ import pytest
 from app.api.routes import llm_proxy
 from app.core.db import pool_status
 from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import post_project
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

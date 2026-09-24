@@ -7,7 +7,10 @@ import { useRouter } from 'vue-router'
 import { useCachedResource } from '@/composables/useCachedResource'
 
 import { getMemberSummary, getUserProfile } from '../api'
-import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
+import { label, NOTIF_KIND, TOPIC_STATUS } from '../labels'
+
+import ExternalTag from '@/components/common/ExternalTag.vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 个人主页 = LinkedIn / GitHub profile (spec §1). "项目过程即简历": the page is
 // primarily the cross-project profile; the per-project member summary (TA 发起的
@@ -43,13 +46,10 @@ const initial = computed<string>(() => {
 
 const displayName = computed<string>(() => profile.value?.name || props.handle)
 
-// Role line: prefer the role for the project we arrived from, fall back to the
-// member summary role, then the first project on the profile.
-const roleLine = computed<string>(() => {
-  const fromProject = profile.value?.projects.find((p) => p.project_id === props.projectId)
-  const raw = fromProject?.role || member.value?.role || profile.value?.projects[0]?.role || ''
-  return label(PROJECT_ROLE, raw)
-})
+// 在这个项目里他是不是外部成员（团队以外、被邀请进来的人）——像飞书的外部标，看他
+// 资料的人一眼就知道。问的是项目名册，项目里没有「角色」这回事。
+const store = useWorkspaceStore()
+const external = computed(() => member.value?.source === 'external' || store.isExternal(props.handle))
 
 // Total contributions across projects → simple proportional bar (§10.1 spirit).
 const totalContributions = computed<number>(() =>
@@ -105,11 +105,11 @@ function openProject(p: ProfileProject) {
           <div class="px-6 pb-5">
             <div class="profile-avatar">{{ initial }}</div>
             <div class="mt-3">
-              <h1 class="t-page-title" style="font-size: 27px">{{ displayName }}</h1>
-              <div class="t-meta mt-1">@{{ props.handle }}</div>
-              <div v-if="roleLine" class="t-body c-text mt-1" style="font-weight: 500">
-                {{ roleLine }}
+              <div class="d-flex align-center ga-2">
+                <h1 class="t-page-title" style="font-size: 27px">{{ displayName }}</h1>
+                <ExternalTag v-if="external" />
               </div>
+              <div class="t-meta mt-1">@{{ props.handle }}</div>
               <p v-if="profile?.bio" class="t-body c-muted mt-3 mb-0" style="max-width: 640px">
                 {{ profile.bio }}
               </p>
@@ -177,7 +177,6 @@ function openProject(p: ProfileProject) {
                 <div class="d-flex align-center ga-2 mb-1">
                   <v-icon size="16" class="c-faint">mdi-source-repository</v-icon>
                   <span class="t-body" style="font-weight: 500; color: var(--ink)">{{ p.name }}</span>
-                  <span class="chip-neutral">{{ label(PROJECT_ROLE, p.role) }}</span>
                 </div>
                 <div class="t-meta mb-2">发起 {{ p.topics_started }} 个话题 · {{ p.contributions }} 条贡献</div>
                 <!-- Contribution bar (relative to the user's most active project) -->

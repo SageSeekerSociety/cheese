@@ -13,15 +13,13 @@ from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.main import app
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
     client, tmp_path, monkeypatch
 ):
-    project_id = client.post("/projects", json={"name": "Cloud wait"}).json()["data"][
-        "id"
-    ]
+    project_id = post_project(client, json={"name": "Cloud wait"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "Boot", "created_by": "user-1"},

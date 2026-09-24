@@ -1,8 +1,8 @@
 """Topic membership business logic (fusion-design §3).
 
 The roster is a topic's group-room membership: who is in the room, their role,
-and who @all/@here reaches. Roles are owner/admin/member (distinct from the
-project's lead/member/mentor). 芝士 is a member too, handle `cheese`.
+and who @all/@here reaches. Roles are owner/admin/member; the project itself
+has no roles. 芝士 is a member too, handle `cheese`.
 
 No auth layer exists yet (agent-as-user is P1, fusion-design §2): the acting
 user's handle is passed in and authorized against their topic role — owner and
@@ -44,8 +44,8 @@ class TopicMemberService:
 
     async def _require_manager(self, topic_id: uuid.UUID, actor: str) -> None:
         """Only an owner/admin of THIS topic may mutate its roster — unless the
-        room has NO manager at all, in which case the project's owner/lead may
-        step in.
+        room has NO manager at all, in which case whoever manages the project —
+        its owner, or an owner/admin of its team — may step in.
 
         Without that escape hatch an ownerless topic is a dead end with no way
         out of the product: only an owner may appoint one, and there is no
@@ -70,55 +70,16 @@ class TopicMemberService:
         )
 
     async def _is_project_steward(self, topic_id: uuid.UUID, actor: str) -> bool:
-        """Who may step into a room that has lost its owner.
-
-        Normally the project's owner or a lead — they answer for the whole
-        project, and so for a room inside it.
-
-        But that alone leaves a project with NEITHER a dead end, and such a
-        project is reachable: ``ProjectService.create`` accepts
-        ``owner_handle=None`` and seeds no member rows, so the row can have a
-        NULL owner and no lead at all. Its ownerless topics then have no way out
-        of the product in either direction — only a topic manager may appoint
-        one and there is none, only a steward may step in and there is none, and
-        appointing a project owner needs a steward too. Measured on dev
-        (2026-08-13): 5 of 18 active topics in `cheese 自建` sit with no owner
-        while the project's own ``owner_handle`` is NULL; that project happens to
-        have a lead, which is the only reason it is recoverable.
-
-        So when a project has nobody in charge at all, any of its members may.
-        The widening is deliberately the narrowest one that removes the dead
-        end: it opens only while BOTH the room and the project have no manager,
-        so a project with a lead never has its authority diluted.
+        """Who may step into a room that has lost its owner: whoever manages the
+        project — its owner, or an owner/admin of its team. A team always has an
+        owner, so a project always has someone who can.
         """
-        from app.domain.membership.repositories import MemberRepository
-        from app.domain.project.models import ProjectRole
-        from app.domain.project.repositories import ProjectRepository
+        from app.domain.membership.services import MemberService
 
         topic = await self._topics.get(topic_id)
         if topic is None:
             return False
-        project = await ProjectRepository(self._session).get(topic.project_id)
-        if project is not None and project.owner_handle == actor:
-            return True
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        if any(m.role == ProjectRole.lead for m in members if m.user_handle == actor):
-            return True
-        # Last resort: nobody is in charge of this project either.
-        #
-        # "Nobody" is strictly an ABSENT owner — NULL or empty. Not `anonymous`,
-        # even though that is what an unidentified caller resolves to and what
-        # `projects.py::_is_a_real_person` (advisorily) discounts: nothing
-        # reserves that username, so a real account could hold it, and dissolving
-        # a real owner's authority on a name is not a trade this may make. Same
-        # reason the agent-handle SHAPE heuristic stays out of here.
-        if project is None or project.owner_handle:
-            return False
-        if any(m.role == ProjectRole.lead for m in members):
-            return False
-        return any(m.user_handle == actor for m in members)
+        return await MemberService(self._session).manages(topic.project_id, actor)
 
     async def seed(
         self,
@@ -487,7 +448,12 @@ class TopicMemberService:
         if topic is None:
             raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
-        if handle.startswith(AGENT_HANDLE_PREFIX):
+        # Who is an agent is the binding's answer, not the handle's shape (I9):
+        # a connector's bound account can be named anything.
+        is_agent = handle.startswith(AGENT_HANDLE_PREFIX) or await IdentityService(
+            self._session
+        ).is_agent(handle)
+        if is_agent:
             # A teammate's seat is derived from its instance, and an instance
             # keys a memory pool inside ITS project — so another project's
             # teammate must not be seated here: nothing in this project would
@@ -497,10 +463,21 @@ class TopicMemberService:
             owner = await AgentInstanceService(self._session).project_of_seat(handle)
             if owner is not None and owner != topic.project_id:
                 raise NotFoundError("这个项目里没有这个 AI 队友")
+        elif not await self._on_project(topic.project_id, handle):
+            # A room seat admits on its own, so seating someone the project does
+            # not have would let them in without an invitation they accepted.
+            # People come into the project first — from its team, or as an
+            # external member — and rooms choose among them.
+            raise ValidationError("只能添加项目成员")
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
             raise ValidationError("该成员已在话题里")
         return await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
+
+    async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
+        from app.domain.membership.roster import roster
+
+        return any(m.handle == handle for m in await roster(self._session, project_id))
 
     async def update_role(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
@@ -545,11 +522,11 @@ class TopicMemberService:
         为什么项目级的退场必须走到话题这一层：项目成员身份是**进得来这个项目的全部
         话题**的凭据（``authorize_topic_access`` 认它），只删名册那一行、把话题席位
         留着，人还是每个房间都进得去 —— 退项目就只退了个名单。所以两条路（自己退、
-        被 owner / lead 移出）共用这一份撤销。
+        被项目管理者移出）共用这一份撤销。
 
         没有授权检查，因为**它不是一条被别人调用的用户动作**：调用方是项目级的退场
         动作，授权已经在那里做完了（``MemberService.leave`` 认本人，``remove`` 认
-        owner / lead）。
+        项目所有者或团队管理员）。
 
         只管项目的话题树，不管私聊：私聊是两个人之间的一间房，不是项目发的通行证
         （``TopicRepository.list_for_project`` 本来就不含它），人离开项目不该把它

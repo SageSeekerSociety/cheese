@@ -79,6 +79,7 @@ from app.domain.user.services import (
     UserAuthService,
     UserProfileService,
     is_valid_username,
+    lookup_account,
     normalize_nickname,
 )
 from app.domain.user.sessions import RevokeReason, SessionService
@@ -225,6 +226,24 @@ class CreateInviteCodeRequest(BaseModel):
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.get("/lookup", summary="Find one account by exact username or email")
+async def lookup_account_route(
+    q: str = Query(..., min_length=1, max_length=254),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """The one person an external-member invitation is about to go to.
+
+    Exact username or email only, like finding an external contact: no partial
+    match, so the endpoint cannot be used to list who is registered.
+    """
+    _ = auth_user
+    found = await lookup_account(db, q)
+    if found is None:
+        raise NotFoundError("No account with that username or email")
+    return {"code": 200, "message": "OK", "data": found}
 
 
 # The refresh token rides in this cookie and is sent to the auth routes only.

@@ -27,10 +27,7 @@ from app.core.config import settings
 from app.domain.user.login_security import TOTPService
 from tests.conftest import (
     _PG_BASE,
-    _TEMPLATE_DB,
     _admin_recreate_db,
-    _clone_db,
-    _db_exists,
 )
 
 _REVISION = "2a88bca6e12e"
@@ -79,12 +76,10 @@ async def _seed_user(db_name: str) -> None:
 @pytest.fixture
 def db_before_the_migration(_pg_schema):
     db_name = f"cheesex_2fa_{uuid.uuid4().hex[:8]}"
-    if asyncio.run(_db_exists(_TEMPLATE_DB)):
-        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
-        step = _alembic(db_name, "downgrade", _PREVIOUS)
-    else:
-        asyncio.run(_admin_recreate_db(db_name))
-        step = _alembic(db_name, "upgrade", _PREVIOUS)
+    # Built up from empty rather than walked down from the head template: the
+    # head is past 4b8e1f6c2a93, which cannot be downgraded.
+    asyncio.run(_admin_recreate_db(db_name))
+    step = _alembic(db_name, "upgrade", _PREVIOUS)
     assert step.returncode == 0, step.stderr
     asyncio.run(_seed_user(db_name))
     try:

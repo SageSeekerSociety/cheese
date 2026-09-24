@@ -36,7 +36,13 @@ from app.domain.feedback.models import (
 from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.main import app
-from tests.integration.conftest import room_agent_seat, session_auth_headers
+from tests.integration.conftest import (
+    add_external_member,
+    post_project,
+    registered,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
 #: of anything: platform admin is a platform-level fact, not a project role.
@@ -73,8 +79,8 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 def _project(client, handle: str) -> str:
-    return client.post(
-        "/projects", json={"name": "P"}, headers=session_auth_headers(handle)
+    return post_project(
+        client, json={"name": "P"}, headers=session_auth_headers(handle)
     ).json()["data"]["id"]
 
 
@@ -96,12 +102,8 @@ def _join_room(client, topic: str, handle: str, *, by: str) -> None:
 
 
 def _join_project(client, project: str, handle: str, *, by: str) -> None:
-    r = client.post(
-        f"/projects/{project}/members",
-        json={"user_handle": handle, "role": "member"},
-        headers=session_auth_headers(by),
-    )
-    assert r.status_code == 200, r.text
+    """``handle`` joins from outside the team: invited by ``by``, accepted."""
+    add_external_member(client, project, handle, by=by)
 
 
 def _remove_from_project(client, project: str, handle: str, *, by: str) -> None:
@@ -2401,11 +2403,7 @@ def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
     """
     ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})
     project = _project(client, "fb-picked")
-    client.post(
-        f"/projects/{project}/members",
-        json={"user_handle": "fb-plain"},
-        headers=session_auth_headers("fb-picked"),
-    )
+    add_external_member(client, project, "fb-plain", by="fb-picked")
     _report(client, "fb-picked", title="挑过头像的人提的")
     _report(client, "fb-plain", title="没挑过头像的人提的")
 
@@ -3374,6 +3372,10 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
     """
     c = python_client
     as_reporter = session_auth_headers(REPORTER)
+    async with c.test_factory() as session:
+        # A project goes to its owner's personal team: the owner is a person.
+        await registered(session, REPORTER)
+        await session.commit()
     project = (
         await c.post("/projects", json={"name": "P"}, headers=as_reporter)
     ).json()["data"]["id"]
