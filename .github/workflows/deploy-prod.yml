@@ -132,7 +132,7 @@ jobs:
           REF: ${{ needs.gate.outputs.sha || inputs.ref }}
         run: |
           git fetch --depth=1 origin "$REF"
-          echo "sha=$(git rev-parse --short=7 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+          echo "sha=$(bash deploy/image-tag.sh FETCH_HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy (or dry-run)
         env:

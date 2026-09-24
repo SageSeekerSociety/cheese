@@ -143,5 +143,5 @@ echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   echo "metering_proxy=$metering_proxy"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
-  echo "current_tag=$(git rev-parse --short=7 "$current_sha")"
+  echo "current_tag=$("$(dirname "$0")/../../deploy/image-tag.sh" "$current_sha")"
 } >> "$output_file"

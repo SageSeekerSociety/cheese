@@ -971,7 +971,7 @@ test_operator_uses_registry_sha_width() {
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=abc1234 \
-    APP_TIER_REQUIRE_SHORT7=true \
+    APP_TIER_GIT_SHA=abc1234def5678901234567890123456789abcde \
     CHEESE_DEV_HOST=fake-host \
     "$ROOT/scripts/whats-live.sh" >/dev/null
   echo "PASS: operator drift check uses the registry's 7-character SHA tag"

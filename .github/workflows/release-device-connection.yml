@@ -44,7 +44,7 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
-      - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"
+      - run: bash deploy/release-device-connection.sh "$(bash deploy/image-tag.sh HEAD)"
         env:
           DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
 
@@ -63,6 +63,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
-      - run: bash deploy/release-device-connection.sh "$(git rev-parse --short=7 HEAD)"
+      - run: bash deploy/release-device-connection.sh "$(bash deploy/image-tag.sh HEAD)"
         env:
           DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}

@@ -114,6 +114,47 @@ git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/gateway/Dockerfile
 assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false' "$base_sha"
 
+# Every image is published under the first seven characters of its commit
+# (docker/metadata-action `type=sha`), and promotion and deploys must name it the
+# same way. The commit below is fixed to 7a5fcd85…, and the blob
+# "ambiguous 245468762\n" hashes to 7a5fcd80…, so git itself abbreviates the
+# commit to eight characters here.
+tag_repo="$test_repo/ambiguous-prefix"
+git init -q "$tag_repo"
+git -C "$tag_repo" config user.email test@example.com
+git -C "$tag_repo" config user.name test
+git -C "$tag_repo" config commit.gpgsign false
+mkdir -p "$tag_repo/backend"
+printf 'base\n' > "$tag_repo/backend/main.py"
+git -C "$tag_repo" add .
+GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
+  git -C "$tag_repo" commit -qm base
+tag_base="$(git -C "$tag_repo" rev-parse HEAD)"
+printf 'ambiguous 245468762\n' | git -C "$tag_repo" hash-object -w --stdin >/dev/null
+if [[ "$(git -C "$tag_repo" rev-parse --short=7 HEAD)" == "${tag_base:0:7}" ]]; then
+  echo "FAIL: fixture no longer has an ambiguous prefix" >&2
+  exit 1
+fi
+
+plan_value() {
+  local key="$1" base="$2"
+  (
+    cd "$tag_repo"
+    BASE_SHA="$base" CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
+      GITHUB_OUTPUT=/dev/stdout bash "$planner" 2>/dev/null
+  ) | sed -n "s/^$key=//p"
+}
+
+published="${tag_base:0:7}"
+[[ "$(plan_value current_tag '')" == "$published" ]] \
+  || { echo "FAIL: current tag is not the published $published" >&2; exit 1; }
+[[ "$(cd "$tag_repo" && bash "$script_dir/../../deploy/image-tag.sh" HEAD)" == "$published" ]] \
+  || { echo "FAIL: deploy tag is not the published $published" >&2; exit 1; }
+printf 'change\n' >> "$tag_repo/backend/main.py"
+git -C "$tag_repo" commit -qam change
+[[ "$(plan_value base_tag "$tag_base")" == "$published" ]] \
+  || { echo "FAIL: promotion does not start from the published $published" >&2; exit 1; }
+
 # Exercise the same GitHub lookup used by the workflow without network calls.
 gh() {
   local endpoint="$2" filter="$4" page="${2##*&page=}"
