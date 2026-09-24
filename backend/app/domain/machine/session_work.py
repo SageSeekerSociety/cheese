@@ -218,6 +218,13 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
+    # Existing leases can outlive a deploy that changes the host's API address.
+    # Ping/prepare must dial the current configured base, just like a new lease.
+    if lease:
+        lease = {
+            **lease,
+            "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
+        }
     work_resource = (lease or {}).get("resource_id") or generation
     claim = str(uuid.uuid4())
     reservation = {
