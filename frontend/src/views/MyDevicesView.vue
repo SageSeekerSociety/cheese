@@ -384,7 +384,7 @@ onMounted(load)
           </li>
           <li>
             <span class="steps__n">2</span>
-            <span>按提示批准接入（<code>cheesehost auth login</code>）</span>
+            <span>再运行 <code>cheesehost link connect</code>，在它给出的链接里批准</span>
           </li>
           <li>
             <span class="steps__n">3</span>
