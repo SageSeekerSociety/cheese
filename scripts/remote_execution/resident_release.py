@@ -72,7 +72,11 @@ def main():
 
         class Control:
             async def current(self, topic_id, agent_handle=None):
-                return {"id": fixture.sid, "status": "active"}
+                return {
+                    "id": fixture.sid,
+                    "status": "active",
+                    "last_seen": time.time(),
+                }
 
             async def enqueue(self, sid, frame, actor):
                 original_send(fixture, frame)
