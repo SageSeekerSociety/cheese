@@ -51,10 +51,6 @@
            a button rather than a project tile -->
       <v-icon size="22" class="app-rail-add-icon">{{ item.icon }}</v-icon>
     </template>
-    <template v-else>
-      <v-icon size="small">{{ item.icon }}</v-icon>
-      <div class="text-caption app-rail-item-text">{{ item.title }}</div>
-    </template>
   </v-card>
   <template v-else>
     <!-- separates 本体(首页) from the project list — a short, visible rule -->
@@ -160,14 +156,6 @@ function warmDestination() {
     cursor: pointer;
   }
 
-  // 琥珀在这里只做底色与左侧那道指示条；图标与字用 --accent-ink，--accent 本身
-  // 写字在浅色下只有 2.7:1。
-  &[aria-current] {
-    --app-rail-item-background: 0.1;
-    background-color: rgba(var(--v-theme-primary), var(--app-rail-item-background));
-    color: var(--accent-ink);
-  }
-
   &.app-rail-item-cheese {
     // a clearly visible rounded-square tile (iOS-app-icon style, per Image #63)
     // so 知是's home icon reads as a 方块 — the 4 corners must show fill around
@@ -212,10 +200,6 @@ function warmDestination() {
         opacity: var(--v-high-emphasis-opacity);
       }
     }
-  }
-
-  .app-rail-item-text {
-    line-height: 1;
   }
 }
 
@@ -299,29 +283,6 @@ function warmDestination() {
   margin: 6px auto;
   opacity: 0.6;
   border-radius: var(--radius-pill);
-}
-
-/* active indicator — a soft amber pill on the left edge, in our brand accent
-   (not Discord's white), so the selected rail tile reads at a glance.
-   `primary` rather than the #f57f17 literal — same reason as the ring above. */
-.app-rail-item[aria-current]::before {
-  content: '';
-  position: absolute;
-  /* 格子在 64px 的栏里居中，左边留 8px：-8px 让指示条贴着栏的左边缘。 */
-  left: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 22px;
-  border-top-right-radius: var(--radius-pill);
-  border-bottom-right-radius: var(--radius-pill);
-  background: rgb(var(--v-theme-primary));
-}
-
-/* project tiles use the amber RING (above) as their active indicator, so drop
-   the left edge pill for them — the frame around the square carries selection */
-.app-rail-item.app-rail-item--tile[aria-current]::before {
-  content: none;
 }
 
 /* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the

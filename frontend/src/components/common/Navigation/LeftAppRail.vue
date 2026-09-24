@@ -39,7 +39,7 @@
         <template #activator="{ props }">
           <v-avatar
             v-tooltip="{ text: userMenu.nickname.value, disabled: userMenu.menuOpen.value }"
-            class="cursor-pointer elevation-1 mb-4"
+            class="cursor-pointer mb-4"
             size="32"
             :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             v-bind="props"
