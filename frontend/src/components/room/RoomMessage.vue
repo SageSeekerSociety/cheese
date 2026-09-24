@@ -439,7 +439,7 @@ function renderPlain(text: string): string {
   border-radius: 8px;
   box-shadow: var(--shadow-1);
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
   pointer-events: none;
 }
 /* One quiet square button per action: muted ink, fill on hover — the harsh
@@ -558,7 +558,7 @@ function renderPlain(text: string): string {
   line-height: 1;
   color: var(--muted);
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 .rx-chip:hover {
   border-color: var(--faint);

@@ -341,7 +341,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .ps__cell:hover {
   background: var(--fill);

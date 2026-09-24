@@ -1561,4 +1561,10 @@ onBeforeUnmount(() => {
     opacity: 0;
   }
 }
+/* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}
 </style>

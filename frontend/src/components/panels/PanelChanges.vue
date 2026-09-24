@@ -1229,7 +1229,7 @@ defineExpose({ openFile })
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .source-pick:hover {
   background: var(--fill);

@@ -469,9 +469,9 @@ function openTask(task: RoomTask) {
   color: var(--muted);
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
 }
 .board__mine:hover {
   background: var(--fill);
@@ -488,7 +488,7 @@ function openTask(task: RoomTask) {
   height: 15px;
   border-radius: var(--radius-pill);
   background: var(--line-2);
-  transition: background-color 0.15s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .board__sw::after {
   content: '';
@@ -499,7 +499,7 @@ function openTask(task: RoomTask) {
   height: 11px;
   border-radius: 50%;
   background: var(--surface);
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-quick) var(--ease-standard);
 }
 .board__mine[aria-pressed='true'] .board__sw {
   background: var(--ink);
@@ -622,16 +622,16 @@ function openTask(task: RoomTask) {
    不补上这两个数，淡出的那张会先横着挪 8px。
    减弱动效不在这儿单独关：全局那条把 transition 压到 0.001ms，进出于是瞬间完成。 */
 .board-card-move {
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 .board-card-enter-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 .board-card-leave-active {
   position: absolute;
   left: 8px;
   right: 8px;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur-quick) var(--ease-in);
 }
 .board-card-enter-from,
 .board-card-leave-to {

@@ -1019,7 +1019,7 @@ const canTransferProject = computed(() => {
   right: 3px;
   width: 2px;
   background: transparent;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .rail-resizer:hover::after {
   background: var(--accent);
@@ -1241,7 +1241,7 @@ const canTransferProject = computed(() => {
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .group-toggle:hover {
   background: var(--fill);
@@ -1429,6 +1429,12 @@ const canTransferProject = computed(() => {
     transform: scale(0.7);
   }
 }
+/* 关掉动效时是一颗常亮的绿点：和「等你」那颗靠颜色、大小两样还分得开。 */
+@media (prefers-reduced-motion: reduce) {
+  .running-dot {
+    animation: none;
+  }
+}
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。
    这是结构线，不是强调条——左条纹禁令不管它。 */
 .topic-row.is-sub::before {
@@ -1470,7 +1476,7 @@ const canTransferProject = computed(() => {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-1);
-  transition: opacity 0.1s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
   color: var(--muted);
 }
 /* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。
