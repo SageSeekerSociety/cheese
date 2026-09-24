@@ -435,19 +435,26 @@ class Executor:
                     }
                     if event == "PostToolUse":
                         payload["tool_response"] = result
+                    # A repository writes these hooks for plain Claude Code,
+                    # which invokes them with the project root in
+                    # CLAUDE_PROJECT_DIR (its documented way to reach a script
+                    # the repository ships), blocks on exit 2 alone, and lets
+                    # the call go ahead on any other failing exit.
                     response = subprocess.run(
                         ["bash", "-c", hook["command"]],
                         cwd=self.current_directory(),
-                        env=self.env,
+                        env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
                         input=json.dumps(payload),
                         capture_output=True,
                         text=True,
                         timeout=hook.get("timeout", 60),
                     )
-                    if response.returncode:
+                    if response.returncode == 2:
                         raise PermissionError(
                             f"Remote {event} hook failed: {response.stderr}"
                         )
+                    if response.returncode:
+                        continue
                     output = (
                         json.loads(response.stdout) if response.stdout.strip() else {}
                     )
