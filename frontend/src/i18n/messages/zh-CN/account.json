@@ -20,7 +20,6 @@
   "rulesUpdatedBody": "我们更新了以下条款。请阅读后选择是否同意；同意后可继续使用，不同意将退出登录。",
   "signInMeansYouAgreeTo": "登录即表示你同意",
   "termsOfService": "《用户协议》",
-  "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
   "layout": {
     "home": "知是首页"
   },
@@ -32,7 +31,8 @@
     "newPassword": "新密码",
     "password": "密码",
     "showPassword": "显示密码",
-    "username": "用户名"
+    "username": "用户名",
+    "capsLock": "大写锁定已开启"
   },
   "rule": {
     "displayName": "显示名称只能使用字母、数字、下划线和中文",
@@ -40,7 +40,11 @@
     "passwordHint": "至少 8 个字符，包含字母、数字和特殊字符",
     "passwordInvalid": "密码须至少 8 个字符，并包含字母、数字和特殊字符",
     "passwordsDoNotMatch": "两次输入的密码不一致",
-    "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符"
+    "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符",
+    "usernameRequired": "请输入用户名",
+    "displayNameRequired": "请输入显示名称",
+    "passwordRequired": "请输入密码",
+    "confirmPasswordRequired": "请再次输入密码"
   },
   "signIn": {
     "title": "登录",
@@ -50,7 +54,6 @@
     "createAccount": "创建账号",
     "or": "或",
     "passkey": "使用通行密钥登录",
-    "passkeyUnsupported": "当前环境不支持通行密钥",
     "withProvider": "使用 {provider} 登录",
     "signedIn": "登录成功",
     "failed": "登录失败，请重试",
@@ -60,7 +63,8 @@
     "providerFailed": "第三方登录失败，请重试",
     "notice": {
       "passwordReset": "密码已重置，请使用新密码登录"
-    }
+    },
+    "lastUsed": "上次使用"
   },
   "signUp": {
     "title": "创建账号",
@@ -90,7 +94,8 @@
     "submit": "发送重置邮件",
     "sent": "重置密码邮件已发送，请查收",
     "failed": "发送失败，请重试",
-    "rememberPassword": "想起密码了？"
+    "rememberPassword": "想起密码了？",
+    "sentTitle": "查收邮件"
   },
   "resetPassword": {
     "title": "设置新密码",
@@ -121,7 +126,8 @@
   "oauth": {
     "provider": {
       "wechat": "微信",
-      "weibo": "微博"
+      "weibo": "微博",
+      "ruc": "微人大"
     },
     "error": {
       "title": "登录失败",
@@ -163,6 +169,16 @@
       "wrongPassword": "密码错误，请重新输入",
       "failed": "验证失败，请重试",
       "incomplete": "验证信息不完整，请重新登录"
+    },
+    "complete": {
+      "title": "欢迎，{name}",
+      "lede": "你已通过 {provider} 验证身份。可以创建一个新账号，或关联到已有的账号",
+      "create": "创建新账号",
+      "bind": "关联已有账号",
+      "setPassword": "同时设置密码",
+      "setPasswordHint": "设置后也可以用用户名和密码登录",
+      "bindSubmit": "关联并登录",
+      "unavailable": "无法继续登录"
     }
   }
 }
