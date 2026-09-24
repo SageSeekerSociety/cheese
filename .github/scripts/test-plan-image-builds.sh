@@ -158,7 +158,7 @@ git -C "$tag_repo" commit -qam change
 # Exercise the same GitHub lookup used by the workflow without network calls.
 gh() {
   local endpoint="$2" filter="$4" page="${2##*&page=}"
-  if [[ "$1" != api || "$endpoint" != *'status=completed&event=push&per_page=100&page='* ]]; then
+  if [[ "$1" != api || "$endpoint" != *'status=completed&per_page=100&page='* ]]; then
     echo 'FAIL: query completed runs without a server-side conclusion filter' >&2
     return 1
   fi
