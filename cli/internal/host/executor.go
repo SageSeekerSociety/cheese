@@ -3,11 +3,8 @@ package host
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
-	"net"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -29,9 +26,7 @@ func executorExchange(ctx context.Context, state, input string, send func([]byte
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256([]byte(resolved))
-	socket := fmt.Sprintf("/tmp/cheese-execution-%d-%x.sock", os.Getuid(), digest[:12])
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	conn, err := dialExecutor(ctx, resolved)
 	if err != nil {
 		return err
 	}

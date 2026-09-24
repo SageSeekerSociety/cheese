@@ -21,14 +21,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
@@ -188,6 +187,12 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 				ui.OK("Logged in.")
 			}
+			// What the server's commands need and this system lacks (on Windows:
+			// python3 and a POSIX shell) is placed now, so the first command sent
+			// to a machine announced as ready finds it.
+			if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {
+				return fmt.Errorf("prepare this machine: %w", err)
+			}
 			// The install's own refusals (a binary it could never self-update,
 			// #501; a machine-wide connector already installed) are the whole
 			// point of running it, so they reach the user instead of turning
@@ -336,15 +341,25 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 		Use:   "update",
 		Short: "Update the cheese binary to the latest published build",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			restart := false
 			if pid := state.PID(*cfgPath); pid > 0 {
 				// A live service owns the tmux + tasks: let it update itself in-process
 				// and hand off, so nothing running is killed.
-				if err := syscall.Kill(pid, syscall.SIGUSR2); err != nil {
+				err := signalUpdate(pid)
+				if err == nil {
+					ui.OK("Update signalled to the running service (pid %d).", pid)
+					ui.Hint("it downloads, verifies and hands off in place — running screens are preserved")
+					return nil
+				}
+				if !errors.Is(err, errNoInProcessUpdate) {
 					return fmt.Errorf("signal running service (pid %d): %w", pid, err)
 				}
-				ui.OK("Update signalled to the running service (pid %d).", pid)
-				ui.Hint("it downloads, verifies and hands off in place — running screens are preserved")
-				return nil
+				// Where a running service cannot be asked to update itself, it hosts
+				// no screens either (Windows), so stopping it loses nothing.
+				if err := stopProcess(pid); err != nil {
+					return err
+				}
+				restart = true
 			}
 			// No running service: nothing to preserve — download + replace directly.
 			cfg, err := config.Load(*cfgPath)
@@ -362,6 +377,13 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			if err := update.Replace(tmp, self); err != nil {
 				return err
+			}
+			if restart {
+				if err := service.Control(*cfgPath, "start"); err != nil {
+					return err
+				}
+				ui.OK("cheese updated and restarted.")
+				return nil
 			}
 			ui.OK("cheese updated.")
 			ui.Hint("no service was running; the new binary is in place and used from now on")
@@ -439,7 +461,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			if err := os.Remove(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeSelf(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove binary %s: %w (delete it manually)", exe, err)
 			}
 			fmt.Println("cheese uninstalled — service, config, footprint, and binary removed.")
@@ -475,41 +497,6 @@ func warnScreens(cfgPath string) {
 	if n := state.Screens(cfgPath); n > 0 {
 		fmt.Printf("Note: %d running session(s) will be stopped.\n", n)
 	}
-}
-
-// procAlive reports whether pid names a live process. EPERM means it exists but we may
-// not signal it (a differently-owned process) — still alive; ESRCH means it is gone.
-func procAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-// stopProcess ensures pid is no longer running: SIGTERM (so the host tears its tmux
-// down cleanly), then SIGKILL as a backstop, polling briefly between. Returns nil once
-// the process is gone (or was never there), or an error if it is still alive after both
-// — e.g. we lack the privilege to signal a differently-owned process.
-func stopProcess(pid int) error {
-	if !procAlive(pid) {
-		return nil
-	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
-	for range 30 {
-		if !procAlive(pid) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	_ = syscall.Kill(pid, syscall.SIGKILL)
-	for range 20 {
-		if !procAlive(pid) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("process %d still alive", pid)
 }
 
 func confirm(q string) bool {
