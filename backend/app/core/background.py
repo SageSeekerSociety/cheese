@@ -368,6 +368,11 @@ def periodic_jobs(
             settings.accept_pr_poll_interval_s,
             lambda: pr_poll.poll_open_prs(chat),
         ),
+        PeriodicRunner(
+            "task pr poll",
+            settings.accept_pr_poll_interval_s,
+            lambda: pr_poll.poll_uncarded_task_prs(chat),
+        ),
         # 有东西就有 PR (#718 拍板①): a batch's draft PR opens at its first
         # commit, and the platform can only OBSERVE that commit (a 分身 commits
         # in the shared worktree — no push, no webhook, nothing to intercept).
