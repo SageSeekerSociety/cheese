@@ -1176,6 +1176,19 @@ class DeviceChannel(Channel):
     async def _refresh_forwarded_context(
         self, screen: HubScreen, home_dir: str, target: dict
     ) -> None:
+        if not target.get("context_tree"):
+            from app.domain.agent import execution
+
+            target = {
+                **target,
+                "context_tree": await execution.call(
+                    target,
+                    "context_fs",
+                    {"operation": "tree"},
+                    hub=self._hub,
+                    timeout=40,
+                ),
+            }
         result = await self._hub.exec(
             screen.device_id,
             ["python3", "-"],
