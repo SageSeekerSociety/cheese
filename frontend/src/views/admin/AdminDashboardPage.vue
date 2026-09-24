@@ -2277,7 +2277,7 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（§0）。 */
+/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（design-system §1.6）。 */
 .ad__retry {
   align-self: flex-start;
   margin-top: 8px;
@@ -2285,7 +2285,7 @@ onBeforeUnmount(() => {
 
 /* 急件警示行。只有真的压着没人管的急件时才画，所以它一出现就该被看见 —— 用
    `--warn-ink` 的文字而不是整块琥珀底：琥珀在这套设计系统里只留给「当前唯一的主操作」
-   （§0），一个警示行不是操作。 */
+   （design-system §1.6），一个警示行不是操作。 */
 .ad__urgent {
   margin: 12px 0 0;
   color: var(--warn-ink);

@@ -93,7 +93,7 @@ const output = computed(() => perMillion(props.prices.output))
 }
 
 /* 「未定价」用 `--muted` 而不是 `--warn-ink`：缺价是一个**状态事实**，不是一条警告 ——
- *  这一列里灰掉的项和定价的项是同一档信息，染成琥珀会把整列的重点带偏（§0）。 */
+ *  这一列里灰掉的项和定价的项是同一档信息，染成琥珀会把整列的重点带偏（design-system §1.6）。 */
 .ampc__unpriced {
   color: var(--muted);
 }
