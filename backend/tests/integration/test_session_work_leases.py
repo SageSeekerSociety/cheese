@@ -835,3 +835,113 @@ async def test_agent_cloud_choice_requires_its_own_team_membership(client, monke
         row = await AgentSessionService(db).by_id(session_id)
         assert row.work_lease is None
         assert row.execution_request["choice"]["device_id"] == device_id
+
+
+async def test_each_dialer_gets_its_configured_base_not_the_request_host(
+    client, monkeypatch
+):
+    """The session host dials the lease url; the work device dials the setup env.
+
+    Neither is the Host header of the hop that delivered the lease request.
+    """
+    from app.core.config import settings
+    from app.domain.agent.harness.claude_code import executor_launch
+
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    monkeypatch.setattr(settings, "agent_session_api_base", "http://172.17.0.1:8081/")
+    monkeypatch.setattr(
+        settings, "connector_public_base", "https://cheese.example.test/api"
+    )
+    project = client.post(
+        "/projects", json={"name": "Dialers", "owner_handle": "alice"}
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        if owner is None:
+            owner = User(
+                username="alice",
+                email="alice@example.test",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            db.add(owner)
+            await db.flush()
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("worker"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        session = await AgentSessionService(db).ensure(
+            topic_id, "ada", harness="claude-code"
+        )
+        session.execution_request = {
+            "generation": str(uuid.uuid4()),
+            "choice": {
+                "name": "worker",
+                "profile": "device",
+                "device_id": device.device_id,
+            },
+        }
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+
+    launch_env = {}
+    original_script = executor_launch.script
+
+    def capture_script(project, resource, env):
+        launch_env.update(env)
+        return original_script(project, resource, env)
+
+    monkeypatch.setattr(executor_launch, "script", capture_script)
+    info = {"state": "/w/state", "workspace": "/w/work", "mcp_servers": []}
+    hub = SimpleNamespace(
+        is_online=lambda _: True,
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    response = client.post(
+        f"/topics/{topic_id}/sessions/{session_id}/work-lease",
+        headers={"X-Cheese-Token": token, "Host": "172.17.0.1"},
+        json={"env": {}},
+    )
+    assert response.status_code == 200, response.text
+    target = response.json()["data"]["target"]
+    assert target["url"] == (
+        f"http://172.17.0.1:8081/topics/{topic_id}/execution/session-{resource}"
+    )
+    assert launch_env["CHEESE_API"] == "https://cheese.example.test/api"
+    assert launch_env["CHEESE_HOOK_URL"] == (
+        f"https://cheese.example.test/api/sandbox/hooks/{topic_id}"
+    )
+    assert launch_env["CHEESE_PREVIEW_URL"] == (
+        "wss://cheese.example.test/api/preview/tunnel"
+    )

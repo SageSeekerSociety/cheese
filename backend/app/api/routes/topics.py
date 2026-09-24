@@ -1463,7 +1463,6 @@ async def acquire_session_work_lease(
                     claims=claims,
                     token=token,
                     env=body.env,
-                    api=str(request.base_url).rstrip("/"),
                 )
             )
     except TimeoutError as exc:
