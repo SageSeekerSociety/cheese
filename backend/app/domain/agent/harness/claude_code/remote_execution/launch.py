@@ -46,6 +46,9 @@ def file_sources():
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
+        "remote-execution/portable.py": (
+            Path(runtime.__file__).with_name("portable.py").read_text()
+        ),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
         "remote-execution/bin/gh": Path(forge_cli.__file__).read_text(),
         "remote-execution/bin/fj": Path(forge_cli.__file__).read_text(),

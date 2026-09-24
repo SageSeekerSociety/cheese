@@ -4,9 +4,10 @@ The launcher invokes this inside the selected execution boundary. A lock prevent
 concurrent installers. At exec the lock is released; tmux owns agent reuse.
 """
 
-import fcntl
+import functools
 import json
 import os
+import runpy
 import signal
 import subprocess
 import sys
@@ -14,6 +15,34 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
+
+
+@functools.cache
+def portable():
+    """The Windows primitives; this file sits at the release's root, beside
+    the executor's own directory."""
+    return runpy.run_path(
+        str(Path(__file__).resolve().parent / "remote-execution/portable.py")
+    )
+
+
+def lock(file, blocking=True):
+    if sys.platform == "win32":
+        portable()["lock"](file, blocking)
+    else:
+        fcntl.flock(file, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def terminate(pid, started=None):
+    """End a process and what it started: SIGKILL to its group, or on Windows
+    its tree. `started` finds the tree of one that has already exited."""
+    if sys.platform == "win32":
+        portable()["terminate_tree"](pid, started)
+    else:
+        os.killpg(pid, signal.SIGKILL)
 
 
 def now():
@@ -24,6 +53,8 @@ def now():
 def process_identity(pid, *, reference=None):
     # Keep recognizing status files written by older helpers, including during
     # reset. New Linux records avoid spawning ps on every readiness poll.
+    if sys.platform == "win32":
+        return portable()["identity"](pid)
     if sys.platform == "linux" and (
         reference is None or reference.startswith("linux:")
     ):
@@ -62,7 +93,7 @@ def tool_prefix():
     The agent keeps the room's HOME. Only the installer's moves.
     """
     store = os.environ.get("CHEESE_STORE", "")
-    if not store or not store.startswith("/"):
+    if not store or not os.path.isabs(store):
         # No store means no shared prefix, and every tool falls back to the
         # room's own HOME — exactly where it was before this existed.
         return None
@@ -145,9 +176,9 @@ def wait_status(directory: Path) -> dict:
 
 def run(config, directory, command, *, adopt=None, task_work=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock = (directory / "lock").open("a")
+    room_lock = (directory / "lock").open("a")
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock(room_lock, blocking=False)
     except BlockingIOError:
         # The caller reconciles the existing attempt rather than queuing a
         # second installer that could mutate an environment already in use.
@@ -167,14 +198,18 @@ def run(config, directory, command, *, adopt=None, task_work=None):
         "log_file": log_name,
     }
     child = None
+    child_started = None
 
     def cancel(signum, _frame):
-        if child is not None:
+        if child is not None and sys.platform == "win32":
+            terminate(child.pid, child_started)
+            child.wait()
+        elif child is not None:
             try:
                 os.killpg(child.pid, signal.SIGTERM)
                 child.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
+                terminate(child.pid)
                 child.wait()
             except ProcessLookupError:
                 pass
@@ -213,6 +248,8 @@ def run(config, directory, command, *, adopt=None, task_work=None):
     receipt = directory / "initialized.json"
     if prefix is not None and task_work is None:
         script_environment["HOME"] = str(prefix)
+        if sys.platform == "win32":
+            script_environment["USERPROFILE"] = str(prefix)
         prefix_state = prefix / ".cheese-environment"
         prefix_state.mkdir(parents=True, exist_ok=True, mode=0o700)
         shared_lock = prefix_state / "lock"
@@ -257,7 +294,7 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                         # one that matters once the directory is shared.
                         installing = shared_lock.open("a")
                         try:
-                            fcntl.flock(installing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            lock(installing, blocking=False)
                         except BlockingIOError:
                             # WAIT, never fail: the other room is doing this
                             # room's work. `status.json` already says preparing
@@ -267,7 +304,7 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                                 f"{now()} setup: another room of this project is"
                                 " installing its tools; waiting\n"
                             )
-                            fcntl.flock(installing, fcntl.LOCK_EX)
+                            lock(installing)
                         # It may have just finished the very revision we want.
                         current = (
                             json.loads(receipt.read_text())
@@ -285,23 +322,32 @@ def run(config, directory, command, *, adopt=None, task_work=None):
                     log.write(f"{now()} {stage}: started\n")
                     if config[key].strip():
                         child = subprocess.Popen(
-                            ["bash", "-e", str(script)],
+                            (
+                                portable()["which"](["bash", "-e", str(script)])
+                                if sys.platform == "win32"
+                                else ["bash", "-e", str(script)]
+                            ),
                             cwd=work,
                             env=script_environment,
                             stdout=log,
                             stderr=subprocess.STDOUT,
                             start_new_session=True,
                         )
+                        if sys.platform == "win32":
+                            child_started = portable()["created"](child.pid)
                         try:
                             code = child.wait(timeout=1800)
                         except subprocess.TimeoutExpired:
                             cancel(signal.SIGTERM, None)
                         if code:
                             # Failed scripts must not leave background installers.
-                            try:
-                                os.killpg(child.pid, signal.SIGTERM)
-                            except ProcessLookupError:
-                                pass
+                            if sys.platform == "win32":
+                                terminate(child.pid, child_started)
+                            else:
+                                try:
+                                    os.killpg(child.pid, signal.SIGTERM)
+                                except ProcessLookupError:
+                                    pass
                             state["exit_code"] = code
                             raise RuntimeError(
                                 f"{stage} script exited with status {code}"
@@ -334,6 +380,14 @@ def run(config, directory, command, *, adopt=None, task_work=None):
             # Exec keeps the PID stable for status inspection. The project
             # variables are applied to the agent as well as both scripts.
             os.chdir(work)
+            if sys.platform == "win32":
+                # Windows has no exec that keeps the pid, so this process stays
+                # as the one the status names, and lives exactly as long as the
+                # command. The lock goes now, as an exec would have closed it.
+                room_lock.close()
+                signal.signal(signal.SIGTERM, previous_term)
+                signal.signal(signal.SIGINT, previous_int)
+                return subprocess.call(command, env=environment)
             os.execvpe(command[0], command, environment)
         except Exception as exc:
             state.update(state="failed", error=str(exc), finished_at=now())
@@ -345,7 +399,7 @@ def run(config, directory, command, *, adopt=None, task_work=None):
         finally:
             signal.signal(signal.SIGTERM, previous_term)
             signal.signal(signal.SIGINT, previous_int)
-            lock.close()
+            room_lock.close()
     return 0
 
 
@@ -398,7 +452,11 @@ if __name__ == "__main__":
                     check=True,
                 )
                 status = read_status(root)
-        if status["state"] == "ready":
+        if status["state"] == "ready" and sys.platform == "win32":
+            # There is no SIGTERM to send; the executor it waits on was asked
+            # to stop above, and what is left is ended with its children.
+            terminate(status["pid"])
+        elif status["state"] == "ready":
             try:
                 os.kill(status["pid"], signal.SIGTERM)
             except ProcessLookupError:
@@ -423,7 +481,9 @@ if __name__ == "__main__":
         print(json.dumps({"state": "pending"}))
     elif sys.argv[1:] == ["cancel"]:
         status = read_status(root)
-        if status["state"] == "preparing":
+        if status["state"] == "preparing" and sys.platform == "win32":
+            terminate(status["pid"])
+        elif status["state"] == "preparing":
             os.kill(status["pid"], signal.SIGTERM)
         print(json.dumps(status))
     elif sys.argv[1:] == ["status"]:
