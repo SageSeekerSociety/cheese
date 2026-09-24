@@ -18,6 +18,7 @@ from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import (
     AiStatus,
@@ -28,6 +29,7 @@ from app.domain.machine.models import (
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.machine.warm import WarmPoolService
+from app.domain.topic.models import Topic
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.test_project_machines import _project
@@ -35,8 +37,6 @@ from tests.unit.test_machine_service import FakeMicroCloud
 
 
 async def _sessions_for_cloud(client, topic_id):
-    from app.domain.topic.models import Topic
-
     async with client.test_request_factory() as db:
         topic = await db.get(Topic, uuid.UUID(topic_id))
         result = []
@@ -458,6 +458,39 @@ def warm_case(client, monkeypatch):
 
     actor = client.portal.call(lambda: seed())
     return client, topics, actor, ClaimCloud()
+
+
+def test_cloud_execution_requires_an_active_machine_in_the_project(warm_case):
+    client, topics, actor, cloud = warm_case
+
+    async def run():
+        async with client.test_request_factory() as db:
+            project_id = (await db.get(Topic, uuid.UUID(topics[0]))).project_id
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            machine = await MachineService(db, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            assert await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", uuid.uuid4()
+            )
+            machine.superseded_at = datetime.now(UTC)
+            await db.flush()
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+            machine.superseded_at = None
+            machine.released_at = datetime.now(UTC)
+            await db.flush()
+            assert not await machine_owner_reads.active_cloud_device_for_project(
+                db, "warm-test", project_id
+            )
+
+    client.portal.call(run)
 
 
 def test_concurrent_rooms_take_one_warm_machine_and_create_one_cold(warm_case):
