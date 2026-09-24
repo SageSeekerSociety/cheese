@@ -1,15 +1,20 @@
 import { test, expect } from "@playwright/test";
-import { DEMO_USERNAME, DEMO_PASSWORD, login } from "./helpers";
+import { DEMO_USERNAME, DEMO_PASSWORD } from "./helpers";
 
 test.describe("Login", () => {
   test("valid credentials sign the user in and land on the authenticated app shell", async ({
     page,
   }) => {
-    await login(page);
+    await page.goto("/account/signin");
+    await page.getByLabel("用户名").fill(DEMO_USERNAME);
+    await page.getByLabel("密码", { exact: true }).fill(DEMO_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+
     await expect(page.getByText("登录成功")).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
     );
@@ -68,9 +73,10 @@ test.describe("English login", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     expect(
       await page.evaluate(() => localStorage.getItem("accessToken")),
     ).toBeTruthy();
