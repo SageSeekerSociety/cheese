@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { login } from './helpers';
+import { apiLogin } from './helpers';
 
 // 项目格子拖着换序，真的接通到了顺序上。
 //
@@ -16,7 +16,7 @@ const order = (page: Page) =>
   );
 
 test('把最后一个项目拖到第一格上半边，它成为新的第一个', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const tiles = page.locator('.app-rail-item--tile');
   await tiles.first().waitFor();
 

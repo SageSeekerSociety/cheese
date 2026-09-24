@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, appOriginOf, isEnvironmentNoise, login } from './helpers';
+import { api, appOriginOf, isEnvironmentNoise, apiLogin } from './helpers';
 
 // 反馈的两条全流程，真的从界面走一遍：提交者提一条，管理员把它办完。
 //
@@ -56,7 +56,7 @@ test.afterEach(() => {
 const supportButton = (page: Page) => page.locator('.fb-page button', { hasText: /支持这个反馈|已支持/ });
 
 test('用户提一条反馈，能看见、能支持、能评论', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const title = uniqueTitle('提交者这一条');
   const comment = `补充一句：${title}`;
 
@@ -184,7 +184,7 @@ test('用户提一条反馈，能看见、能支持、能评论', async ({ page 
 });
 
 test('管理员把一条反馈走完四级，指派、优先级、内部备注都留得下', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const title = uniqueTitle('管理员这一条');
   const note = `内部备注：${title}`;
 

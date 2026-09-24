@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { appOriginOf, isEnvironmentNoise, login } from './helpers';
+import { appOriginOf, isEnvironmentNoise, apiLogin } from './helpers';
 
 // 管理后台的看板（`/admin/dashboard`）。
 //
@@ -65,7 +65,7 @@ function kindTab(page: Page, label: string) {
 }
 
 test('看板打的是各自那条新接口，各类各自出数', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const seen = watchStats(page);
 
   await page.goto('/admin/dashboard');
@@ -119,7 +119,7 @@ test('看板打的是各自那条新接口，各类各自出数', async ({ page 
 });
 
 test('切走再切回来不再打接口，也不会把上一类的内容画在当前这一类上', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const seen = watchStats(page);
 
   await page.goto('/admin/dashboard');
@@ -147,7 +147,7 @@ test('切走再切回来不再打接口，也不会把上一类的内容画在�
 });
 
 test('后台能切到私密那一栏 —— 它就在 URL 里，也只在 URL 里', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
 
   // 后端支持四个栏位（`tab=public|private|agent|security`），管理端有权限看私密。
   // 这一条守的是**地址**那一半：`?tab=private` 要能把那一栏拿出来。页面上有没有切它
@@ -159,7 +159,7 @@ test('后台能切到私密那一栏 —— 它就在 URL 里，也只在 URL �
 });
 
 test('切窗口（7→30 天）后，已加载的类带 days=30 重拉、新切的类按 30 天拉', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const seen = watchStats(page);
 
   await page.goto('/admin/dashboard');
@@ -190,7 +190,7 @@ test('切窗口（7→30 天）后，已加载的类带 days=30 重拉、新切�
 });
 
 test('看板拉取失败：错误块显示服务端原话，「重试」真重拉', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
 
   // 第一趟 pipeline 回 500（带服务端原话），之后放行。「错误块显示原话不改写」
   // 和「重试真重拉」是两条仓库口味，一起钉。
@@ -221,7 +221,7 @@ test('看板拉取失败：错误块显示服务端原话，「重试」真重�
 });
 
 test('下钻：用量横条指向项目页，性能表 chevron 展开分钟级 spark', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const seen = watchStats(page);
 
   // CI starts from an empty usage database. Keep the real endpoint, response envelope,

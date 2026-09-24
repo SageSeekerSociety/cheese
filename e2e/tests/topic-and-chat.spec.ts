@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { login, openFirstProject } from './helpers';
+import { apiLogin, openFirstProject } from './helpers';
 
 test.describe('Topics and chat', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
   });
 
   test('creating a topic adds it to the sidebar as the active topic', async ({ page }) => {
