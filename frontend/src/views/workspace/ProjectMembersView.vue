@@ -33,6 +33,7 @@ import {
   removeProjectMember,
   revokeInvitation,
 } from '@/api'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
@@ -391,7 +392,7 @@ async function submitInvite() {
       <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
       <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
         <div class="d-flex align-center pa-3">
-          <UserAvatar :name="a.display_name || a.handle" avatar="" :size="36" class="mr-3" />
+          <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
           <div class="min-w-0">
             <div class="t-title text-truncate">
               {{ a.display_name || a.handle }}

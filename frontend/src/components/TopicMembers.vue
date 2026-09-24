@@ -156,9 +156,13 @@ async function onSetRole(handle: string, role: string) {
               :style="{ zIndex: MAX_FACES - i }"
               @error="onFaceError(m.member_handle)"
             />
-            <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
-              initial(m.name || m.member_handle)
-            }}</span>
+            <span
+              v-else
+              class="members-mini__face"
+              :class="{ 'members-mini__face--ai': m.agent }"
+              :style="{ zIndex: MAX_FACES - i, backgroundColor: m.agent ? undefined : faceColor(m) }"
+              >{{ initial(m.name || m.member_handle) }}</span
+            >
           </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
@@ -327,12 +331,12 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-.members-mini__face--agent {
-  /* on-primary, not the inherited #fff: dark lightens the amber to #FFA733,
-     where white ink measures 1.9:1. */
-  color: rgb(var(--v-theme-on-primary));
-  background: var(--accent);
-  font-size: 0.6rem;
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：--ink 的方块、反色的字。
+   --ink 随主题反转，所以字用 --surface 跟着反转。 */
+.members-mini__face--ai {
+  color: var(--surface);
+  background: var(--ink);
+  border-radius: var(--radius-sm);
 }
 
 .roster {

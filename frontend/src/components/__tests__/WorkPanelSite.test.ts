@@ -31,6 +31,8 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
+    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
     getTerminal: (...a: unknown[]) => getTerminal(...a),

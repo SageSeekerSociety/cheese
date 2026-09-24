@@ -153,6 +153,24 @@
       "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
       "usageSplit": "输入 {input} · 输出 {output}",
       "noUsage": "暂无数据"
+    },
+    "progress": {
+      "title": "进度",
+      "tally": "完成 {done}/{total}"
+    },
+    "accept": {
+      "pending": "成果待采纳",
+      "conflict": "合并冲突 · 芝士处理中",
+      "gateFailed": "平台检查未通过",
+      "gateBlocked": "平台检查未能执行",
+      "delivering": "已采纳，未完成合并",
+      "accepted": "已采纳",
+      "waitingOn": "等 {'@'}{handle} 验收",
+      "waitingOnYou": "等你验收",
+      "decidedBy": "由 {'@'}{handle} 采纳",
+      "review": "去验收",
+      "expand": "展开详情",
+      "collapse": "收起详情"
     }
   },
   "members": {
