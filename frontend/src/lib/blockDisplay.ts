@@ -33,7 +33,7 @@ export function artifactKind(block: Block): string {
   return fileLabel(block.content)
 }
 
-/** 这一条是不是带选项的提问（`cheese ask`）。不是就返回 null。 */
+/** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
 export function askOptions(block: Block): string[] | null {
   const opts = (block.meta as Record<string, unknown> | null)?.options
   return Array.isArray(opts) && opts.length ? (opts as string[]) : null

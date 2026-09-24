@@ -25,6 +25,7 @@ Usage:
 import argparse
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -33,6 +34,7 @@ import tempfile
 import threading
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -42,6 +44,9 @@ from model_fixture import Handler, Server  # noqa: E402
 # The combination the driver launches with: ordinary tools never wait for a
 # person, and AskUserQuestion still reaches the driver as `can_use_tool`.
 DRIVER = ["--permission-mode", "bypassPermissions", "--permission-prompt-tool", "stdio"]
+# The likely final shape (#1606): no prompt tool, and AskUserQuestion taken
+# away, so nothing on stdin ever waits for a person.
+UNATTENDED = ["--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion"]
 MODEL = "claude-sonnet-4-5"
 QUESTION = {
     "questions": [
@@ -116,6 +121,26 @@ def last_tool_results(request):
     return [block for block in content if block.get("type") == "tool_result"]
 
 
+def results_since(session, mark):
+    """The tool_result blocks written to stdout since `mark`."""
+    return [
+        block
+        for event in session.events[mark:]
+        if event.get("type") == "user"
+        for block in blocks(event)
+        if block.get("type") == "tool_result"
+    ]
+
+
+def ran_in(path, marker):
+    """Whether a transcript file holds a tool_result whose output has `marker`."""
+    for line in path.read_text().splitlines():
+        for block in blocks(json.loads(line)):
+            if block.get("type") == "tool_result" and marker in text_of(block):
+                return True
+    return False
+
+
 def text_of(result):
     content = result.get("content")
     if isinstance(content, list):
@@ -123,74 +148,91 @@ def text_of(result):
     return str(content)
 
 
+def workspace(path):
+    """A git workspace with one committed file and one uncommitted change."""
+    git = ["git", "-c", "user.name=contract", "-c", "user.email=contract@example.invalid"]
+    (path / "target.txt").write_text("TARGET_CONTENT\n")
+    subprocess.run([*git, "init", "-q"], cwd=path, check=True)
+    subprocess.run([*git, "add", "."], cwd=path, check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], cwd=path, check=True)
+    (path / "target.txt").write_text("TARGET_CONTENT\nCHANGED\n")
+
+
+def isolated_flags():
+    mcp = {"mcpServers": {"fixture": {"command": sys.executable, "args": [str(HERE / "custom_mcp.py")]}}}
+    return [
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        json.dumps(mcp),
+        "--no-chrome",
+    ]
+
+
+def fixture_env(home, root, port):
+    """An environment that reaches only the fixture and only the isolated HOME."""
+    return {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+        "CLAUDE_CODE_TMPDIR": str(root / "tmp"),
+        "SHELL": "/bin/bash",
+        "LANG": "C.UTF-8",
+        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
+        "ANTHROPIC_API_KEY": "fixture-not-a-real-key",
+        "NO_PROXY": "127.0.0.1,localhost",
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    }
+
+
 class Session:
     """One headless Claude Code process in an isolated HOME, driven over stdio."""
 
-    def __init__(self, binary, root, name, args, settings=None, refuse=False, env=None):
+    def __init__(
+        self, binary, root, name, args, settings=None, refuse=False, env=None, home=None, launch=None
+    ):
         self.name = name
         self.root = root / name
-        self.home = self.root / "home"
+        # A session given `home` shares it — and so the config dir, the
+        # workspace and the transcripts — with whoever made it first.
+        self.home = Path(home) if home else self.root / "home"
         self.config = self.home / ".claude"
         # Under the isolated HOME: the build looks for CLAUDE.md and .claude/
         # in every directory above its cwd.
-        self.workspace = self.home / "workspace"
+        self.workspace = Path(launch["cwd"]) if launch else self.home / "workspace"
         self.fixture = self.root / "fixture"
         for path in (self.config, self.workspace, self.fixture, self.root / "tmp"):
             path.mkdir(parents=True, exist_ok=True)
-        git = ["git", "-c", "user.name=contract", "-c", "user.email=contract@example.invalid"]
-        (self.workspace / "target.txt").write_text("TARGET_CONTENT\n")
-        subprocess.run([*git, "init", "-q"], cwd=self.workspace, check=True)
-        subprocess.run([*git, "add", "."], cwd=self.workspace, check=True)
-        subprocess.run([*git, "commit", "-qm", "base"], cwd=self.workspace, check=True)
-        (self.workspace / "target.txt").write_text("TARGET_CONTENT\nCHANGED\n")
+        if not launch and not (self.workspace / ".git").exists():
+            workspace(self.workspace)
         if settings is not None:
             (self.config / "settings.json").write_text(json.dumps(settings, indent=2))
         self.server = Server(("127.0.0.1", 0), Refusing if refuse else Handler)
         self.server.state = {"dir": self.fixture, "actions": Directives(), "requests": []}
         self.serving = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.serving.start()
-        mcp = {
-            "mcpServers": {
-                "fixture": {"command": sys.executable, "args": [str(HERE / "custom_mcp.py")]}
-            }
-        }
-        self.argv = [
-            binary,
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--model",
-            MODEL,
-            "--setting-sources",
-            "user",
-            "--strict-mcp-config",
-            "--mcp-config",
-            json.dumps(mcp),
-            "--no-chrome",
-            *args,
-        ]
+        stream = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+        if launch:
+            # The remote-execution launch already carries its own settings
+            # source, plugin, MCP config and disallowed tools.
+            self.argv = [*launch["command"], *stream, "--model", MODEL, *args]
+        else:
+            self.argv = [binary, *stream, "--model", MODEL, *isolated_flags(), *args]
         environment = {
-            "PATH": os.environ["PATH"],
-            "HOME": str(self.home),
-            "CLAUDE_CONFIG_DIR": str(self.config),
-            "CLAUDE_CODE_TMPDIR": str(self.root / "tmp"),
-            "SHELL": "/bin/bash",
-            "LANG": "C.UTF-8",
-            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{self.server.server_port}",
-            "ANTHROPIC_API_KEY": "fixture-not-a-real-key",
-            "NO_PROXY": "127.0.0.1,localhost",
-            "DISABLE_AUTOUPDATER": "1",
-            "DISABLE_TELEMETRY": "1",
-            "DISABLE_ERROR_REPORTING": "1",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+            **fixture_env(self.home, self.root, self.server.server_port),
+            **(launch["env"] if launch else {}),
             **(env or {}),
         }
         self.started = time.monotonic()
         self.events = []
+        # stdout bytes read up to and including each event, so a turn's share
+        # of the journal can be measured between two event indexes.
+        self.offsets = []
         self.changed = threading.Condition()
         self.transcript = (self.root / "transcript.jsonl").open("w")
         self.process = subprocess.Popen(
@@ -221,7 +263,9 @@ class Session:
         self.transcript.flush()
 
     def _read(self):
+        read = 0
         for line in self.process.stdout:
+            read += len(line.encode())
             if not line.strip():
                 continue
             try:
@@ -232,9 +276,11 @@ class Session:
                 self._record("out", message)
             with self.changed:
                 self.events.append(message)
+                self.offsets.append(read)
                 self.changed.notify_all()
         with self.changed:
             self.events.append({"type": "_eof", "returncode": self.process.wait()})
+            self.offsets.append(read)
             self.changed.notify_all()
         self._record("eof", {"returncode": self.process.returncode})
 
@@ -895,6 +941,638 @@ def refused(binary, root):
         session.stop()
 
 
+class Interactive:
+    """The interactive CLI in a tmux pane, on its own server, sharing a HOME.
+
+    `tmux -L` keeps it off the default server: a default server on a
+    developer's machine may carry plugins (tmux-resurrect) that act on any
+    session started there.
+    """
+
+    def __init__(self, binary, root, name, home, args):
+        self.root = root / name
+        self.fixture = self.root / "fixture"
+        self.fixture.mkdir(parents=True, exist_ok=True)
+        self.home = Path(home)
+        self.workspace = self.home / "workspace"
+        self.tmux = ["tmux", "-L", f"headless-contract-{os.getpid()}-{name}"]
+        config = self.home / ".claude"
+        gate = config / ".claude.json"
+        gates = json.loads(gate.read_text()) if gate.exists() else {}
+        # The first-run dialogs an operator would click through once.
+        gates.update(hasCompletedOnboarding=True, autoUpdates=False)
+        # Keyed by the resolved path: on macOS the temp dir is under a symlink.
+        gates.setdefault("projects", {}).setdefault(str(self.workspace.resolve()), {}).update(
+            hasTrustDialogAccepted=True, hasCompletedProjectOnboarding=True
+        )
+        gate.write_text(json.dumps(gates))
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.server.state = {"dir": self.fixture, "actions": Directives(), "requests": []}
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        environment = fixture_env(self.home, self.root, self.server.server_port)
+        (self.root / "tmp").mkdir(exist_ok=True)
+        # An API key in the environment makes the interactive CLI ask whether
+        # to use it; a bearer token does not.
+        environment.pop("ANTHROPIC_API_KEY")
+        environment.update(ANTHROPIC_AUTH_TOKEN="fixture-not-a-real-key", TERM="xterm-256color")
+        argv = [binary, "--model", MODEL, *isolated_flags(), *args]
+        command = shlex.join(["env", "-i", *(f"{k}={v}" for k, v in environment.items()), *argv])
+        subprocess.run(
+            [*self.tmux, "new-session", "-d", "-s", "cli", "-x", "160", "-y", "50", "-c", str(self.workspace), command],
+            check=True,
+            capture_output=True,
+        )
+        self.socket = subprocess.run(
+            [*self.tmux, "display-message", "-p", "#{socket_path}"], capture_output=True, text=True
+        ).stdout.strip()
+
+    def screen(self):
+        return subprocess.run(
+            [*self.tmux, "capture-pane", "-p", "-t", "cli", "-S", "-200"], capture_output=True, text=True
+        ).stdout
+
+    def say(self, text, timeout=60):
+        """Type a prompt once the input box is up; True once the model is asked it."""
+        deadline = time.monotonic() + timeout
+        while "shortcuts" not in self.screen() and time.monotonic() < deadline:
+            time.sleep(0.5)
+        subprocess.run([*self.tmux, "send-keys", "-t", "cli", "-l", text], check=True)
+        time.sleep(0.5)
+        subprocess.run([*self.tmux, "send-keys", "-t", "cli", "Enter"], check=True)
+        while time.monotonic() < deadline:
+            if any(text in json.dumps(request.get("messages")) for request in self.server.state["requests"]):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def stop(self):
+        (self.root / "screen.txt").write_text(self.screen())
+        subprocess.run([*self.tmux, "kill-server"], capture_output=True, timeout=10)
+        # kill-server leaves the socket file behind.
+        if self.socket:
+            Path(self.socket).unlink(missing_ok=True)
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def transcript_path(home, session_id):
+    matches = list((Path(home) / ".claude" / "projects").glob(f"*/{session_id}.jsonl"))
+    return matches[0] if matches else None
+
+
+def settled(path, text, timeout=30):
+    """Wait until the transcript at `path` records `text`."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path and path.exists() and text in path.read_text():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def resuming(binary, root):
+    """A session started in one mode continues in the other, in the same HOME and cwd."""
+    home = root / "resuming-home"
+    for path in (home / "workspace", home / ".claude"):
+        path.mkdir(parents=True)
+    workspace(home / "workspace")
+
+    first = str(uuid.uuid4())
+    cli = Interactive(binary, root, "resuming-cli", home, ["--session-id", first])
+    try:
+        asked = cli.say("INTERACTIVE_MARKER first turn")
+        written = settled(transcript_path(home, first), "ACCEPTANCE_DONE")
+    finally:
+        cli.stop()
+    yield (
+        "the interactive CLI writes its transcript under the shared config dir",
+        asked and written,
+        f"asked={asked}, transcript={transcript_path(home, first)}",
+    )
+    session = Session(binary, root, "resuming-headless", [*DRIVER, "--resume", first], home=home)
+    try:
+        mark = session.user("HEADLESS_AFTER second turn")
+        _, init = session.wait(is_("system", "init"), 30, mark)
+        _, result = session.wait(is_("result"), 60, mark)
+        request = next(
+            (r for r in session.requests() if "HEADLESS_AFTER" in json.dumps(r.get("messages"))), None
+        )
+        history = json.dumps(request.get("messages")) if request else ""
+        yield (
+            "-p --resume continues an interactive session: the model sees its history",
+            bool(result) and result.get("is_error") is False and "INTERACTIVE_MARKER" in history,
+            f"init session {init and init.get('session_id')}, history carries the interactive turn: "
+            f"{'INTERACTIVE_MARKER' in history}",
+        )
+        yield (
+            "-p --resume keeps the session id and appends to the same transcript",
+            bool(init) and init.get("session_id") == first
+            and settled(transcript_path(home, first), "HEADLESS_AFTER", 5),
+            f"resumed {first}, init reports {init and init.get('session_id')}",
+        )
+        session.close_stdin()
+        session.process.wait(30)
+    finally:
+        session.stop()
+
+    second = str(uuid.uuid4())
+    session = Session(binary, root, "resuming-origin", [*DRIVER, "--session-id", second], home=home)
+    try:
+        mark = session.user("HEADLESS_MARKER first turn")
+        session.wait(is_("result"), 60, mark)
+        session.close_stdin()
+        session.process.wait(30)
+    finally:
+        session.stop()
+    cli = Interactive(binary, root, "resuming-cli-after", home, ["--resume", second])
+    try:
+        asked = cli.say("INTERACTIVE_AFTER second turn")
+        request = next(
+            (r for r in cli.server.state["requests"] if "INTERACTIVE_AFTER" in json.dumps(r.get("messages"))),
+            None,
+        )
+        history = json.dumps(request.get("messages")) if request else ""
+        appended = settled(transcript_path(home, second), "INTERACTIVE_AFTER")
+    finally:
+        cli.stop()
+    yield (
+        "interactive --resume continues a -p session: the model sees its history",
+        asked and "HEADLESS_MARKER" in history and appended,
+        f"asked={asked}, history carries the -p turn: {'HEADLESS_MARKER' in history}, appended={appended}",
+    )
+
+
+def probe(session, mark):
+    """The kinds of event on stdout since `mark`, for a receipt."""
+    return [
+        {key: event.get(key) for key in ("type", "subtype", "parent_tool_use_id") if event.get(key)}
+        for event in session.events[mark:]
+    ]
+
+
+def reloading(binary, root):
+    """/reload-plugins and /reload-skills written to stdin as user messages."""
+    plugin = root / "reloading-plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "contract-plugin", "version": "0.1.0"}))
+    session = Session(binary, root, "reloading", [*DRIVER, "--plugin-dir", str(plugin)])
+    try:
+        mark = session.user("hello")
+        _, init = session.wait(is_("system", "init"), 30, mark)
+        session.wait(is_("result"), 60, mark)
+        commands = (init or {}).get("slash_commands", [])
+        yield (
+            "init lists reload-plugins and reload-skills among the slash commands",
+            {"reload-plugins", "reload-skills"} <= set(commands),
+            json.dumps(sorted(c for c in commands if "reload" in c)),
+        )
+        for kind, created in (
+            ("skills", session.config / "skills" / "late-skill" / "SKILL.md"),
+            ("plugins", plugin / "skills" / "late-plugin-skill" / "SKILL.md"),
+        ):
+            created.parent.mkdir(parents=True)
+            name = created.parent.name
+            created.write_text(f"---\nname: {name}\ndescription: Added after launch {name.upper()}_SENTINEL.\n---\nBody.\n")
+            before = len(session.requests())
+            mark = session.user(f"/reload-{kind}")
+            _, result = session.wait(is_("result"), 60, mark)
+            asked = [r for r in session.requests()[before:] if f"/reload-{kind}" in json.dumps(r.get("messages"))]
+            yield (
+                f"/reload-{kind} runs as a command: a result, and the model is not asked about it",
+                bool(result) and result.get("is_error") is False and not asked,
+                json.dumps({"result": result and result.get("result"), "model_requests": len(session.requests()) - before,
+                            "events": probe(session, mark)})[:600],
+            )
+            mark = session.user("after reload")
+            session.wait(is_("result"), 60, mark)
+            listed = f"{name.upper()}_SENTINEL" in json.dumps(session.requests()[-1])
+            yield (
+                f"after /reload-{kind} the model is offered the {kind[:-1]} added after launch",
+                listed,
+                f"{name} offered: {listed}",
+            )
+    finally:
+        session.stop()
+
+
+def nesting(binary, root):
+    """Agents a subagent or a workflow starts: what reaches stdout and what only the files hold."""
+    session = Session(binary, root, "nesting", DRIVER)
+    try:
+        inner = do(
+            "Agent", description="grandchild", subagent_type="general-purpose", run_in_background=False,
+            prompt=do("Bash", command="echo NESTED_RAN", description="grandchild echo"),
+        )
+        mark = session.user(
+            do("Agent", description="child", subagent_type="general-purpose", run_in_background=False, prompt=inner)
+        )
+        session.wait(is_("result"), 90, mark)
+        started = [e for e in session.events[mark:] if is_("system", "task_started", task_type="local_agent")(e)]
+        outer = started[0]["tool_use_id"] if started else None
+        calls = [
+            b["id"]
+            for e in session.events[mark:]
+            if e.get("type") == "assistant" and e.get("parent_tool_use_id") == outer
+            for b in blocks(e)
+            if b.get("type") == "tool_use" and b.get("name") == "Agent"
+        ]
+        nested = next((e for e in started if e["tool_use_id"] in calls), None)
+        yield (
+            "a subagent's Agent call starts a nested agent, reported as task_started for that call",
+            len(started) == 2 and nested is not None,
+            json.dumps([{k: e.get(k) for k in ("task_id", "tool_use_id")} for e in started]),
+        )
+        if nested is None:
+            return
+        tags = sorted({e["parent_tool_use_id"] for e in session.events[mark:] if e.get("parent_tool_use_id")})
+        yield (
+            "a nested agent's own messages are not on stdout: only its parent subagent's are",
+            tags == [outer],
+            f"parent_tool_use_id values on stdout: {tags}; nested agent's call {nested['tool_use_id']}",
+        )
+        directory = session_dir(session)
+        transcript = directory / "subagents" / f"agent-{nested['task_id']}.jsonl"
+        yield (
+            "a nested agent's transcript is subagents/agent-<agentId>.jsonl, beside its parent's",
+            transcript.exists() and ran_in(transcript, "NESTED_RAN"),
+            str(transcript.relative_to(directory)),
+        )
+        script = (
+            "export const meta = { name: 'contract', description: 'contract probe' }\n"
+            f"await agent({json.dumps(do('Bash', command='echo WORKFLOW_RAN', description='workflow echo'))}, {{ label: 'one' }})\n"
+        )
+        mark = session.user(do("Workflow", script=script))
+        _, workflow = session.wait(is_("system", "task_started", task_type="local_workflow"), 60, mark)
+        if not workflow:
+            yield ("a workflow starts as a local_workflow task", False, "no task_started")
+            return
+        session.wait(is_("system", "task_notification", task_id=workflow["task_id"]), 90, mark)
+        session.wait(is_("result"), 30, len(session.events) - 1)
+        tagged = [e for e in session.events[mark:] if e.get("parent_tool_use_id")]
+        agents = {
+            entry["agentId"]
+            for e in session.events[mark:]
+            if is_("system", "task_progress", task_id=workflow["task_id"])(e)
+            for entry in e.get("workflow_progress") or []
+            if entry.get("agentId")
+        }
+        files = [
+            path
+            for agent in agents
+            for path in (directory / "subagents" / "workflows").glob(f"wf_*/agent-{agent}.jsonl")
+        ]
+        yield (
+            "a workflow agent's messages are not on stdout",
+            not tagged,
+            f"{len(tagged)} message(s) with parent_tool_use_id",
+        )
+        yield (
+            "task_progress names each workflow agent's agentId, whose transcript is wf_*/agent-<agentId>.jsonl",
+            len(agents) == 1 and len(files) == 1 and ran_in(files[0], "WORKFLOW_RAN"),
+            json.dumps({"agents": sorted(agents), "files": [str(f.relative_to(directory)) for f in files]}),
+        )
+    finally:
+        session.stop()
+
+
+def refusal(session, mark):
+    """The error tool_results of a turn, whether it asked the driver, and how it ended."""
+    _, result = session.wait(is_("result"), 90, mark)
+    asked = [e for e in session.events[mark:] if e.get("type") == "control_request"]
+    errors = [text_of(r) for r in results_since(session, mark) if r.get("is_error")]
+    return result, asked, errors
+
+
+def asking(binary, root):
+    """AskUserQuestion from inside a subagent, and with the tool disallowed."""
+    ask = do("AskUserQuestion", **QUESTION)
+    from_subagent = do(
+        "Agent", description="asker", subagent_type="general-purpose", run_in_background=False, prompt=ask
+    )
+    session = Session(binary, root, "asking", DRIVER)
+    try:
+        result, asked, errors = refusal(session, session.user(from_subagent))
+        yield (
+            "with the stdio prompt tool, AskUserQuestion inside a subagent is refused as unavailable; no can_use_tool",
+            not asked
+            and len(errors) == 1
+            and "AskUserQuestion is not available inside subagents" in errors[0]
+            and bool(result) and result.get("is_error") is False,
+            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
+        )
+    finally:
+        session.stop()
+    session = Session(binary, root, "asking-disallowed", [*UNATTENDED])
+    try:
+        mark = session.user(ask)
+        result, asked, errors = refusal(session, mark)
+        offered = [tool["name"] for tool in session.requests()[0].get("tools", [])] if session.requests() else []
+        yield (
+            "with AskUserQuestion disallowed it is not offered, and a call to it is a tool error the turn survives",
+            "AskUserQuestion" not in offered
+            and bool(offered)
+            and not asked
+            and len(errors) == 1
+            and "No such tool available: AskUserQuestion" in errors[0]
+            and bool(result) and result.get("is_error") is False,
+            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
+        )
+        result, asked, errors = refusal(session, session.user(from_subagent))
+        yield (
+            "with AskUserQuestion disallowed, a subagent's call to it is a tool error the turn survives",
+            not asked
+            and len(errors) == 1
+            and "No such tool available: AskUserQuestion" in errors[0]
+            and bool(result) and result.get("is_error") is False,
+            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
+        )
+    finally:
+        session.stop()
+
+
+def unattended(binary, root):
+    """bypassPermissions with no prompt tool: no tool ever asks the driver."""
+    session = Session(binary, root, "unattended", UNATTENDED)
+    try:
+        protected = session.workspace / ".claude" / "settings.json"
+        outside = session.home / "outside.txt"
+        calls = {
+            "Bash": do("Bash", command="touch touched.txt && echo TOUCHED", description="touch"),
+            "Write under .claude/": do("Write", file_path=str(protected), content="{}"),
+            "Write outside the workspace": do("Write", file_path=str(outside), content="OUTSIDE"),
+            # WebFetch upgrades http to https, so against the plain-HTTP fixture
+            # it fails on the TLS handshake — after deciding it may run.
+            "WebFetch": do("WebFetch", url=f"http://127.0.0.1:{session.server.server_port}/", prompt="Summarise"),
+            "an MCP tool": do("mcp__fixture__echo", message="MCP_MARKER"),
+        }
+        outputs = {}
+        for name, prompt in calls.items():
+            mark = session.user(prompt)
+            session.wait(lambda e: e.get("type") in ("result", "control_request"), 60, mark)
+            outputs[name] = " ".join(text_of(r) for r in results_since(session, mark))
+        asked = [e for e in session.events if e.get("type") == "control_request"]
+        yield (
+            "without a prompt tool no control_request arrives for Bash, Write, WebFetch or an MCP tool",
+            not asked,
+            f"{len(asked)} control_request(s)",
+        )
+        ran = {
+            "Bash": "TOUCHED" in outputs["Bash"] and (session.workspace / "touched.txt").exists(),
+            "Write under .claude/": protected.exists(),
+            "Write outside the workspace": outside.exists(),
+            "WebFetch": "ssl" in outputs["WebFetch"].lower() and "permission" not in outputs["WebFetch"].lower(),
+            "an MCP tool": "MCP_MARKER" in outputs["an MCP tool"],
+        }
+        yield (
+            "and each of them ran rather than being refused",
+            all(ran.values()),
+            json.dumps({name: [ok, outputs[name][:100]] for name, ok in ran.items()})[:700],
+        )
+    finally:
+        session.stop()
+
+
+LARGE = "yes 0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU | head -c 1000000"
+
+
+def turn_bytes(session, command):
+    """Run one Bash turn; stdout bytes it cost and the tool_result event's own share."""
+    mark = session.user(do("Bash", command=command, description="output"))
+    end, _ = session.wait(is_("result"), 90, mark)
+    if end is None:
+        return None
+    before = session.offsets[mark - 1] if mark else 0
+    results = [
+        (session.offsets[i] - session.offsets[i - 1], session.events[i])
+        for i in range(mark, end + 1)
+        if session.events[i].get("type") == "user" and any(b.get("type") == "tool_result" for b in blocks(session.events[i]))
+    ]
+    size, event = results[-1] if results else (0, {})
+    return {
+        "turn": session.offsets[end] - before,
+        "tool_result_event": size,
+        "tool_use_result": event.get("tool_use_result") if isinstance(event.get("tool_use_result"), dict) else {},
+        "model": sum(len(text_of(r)) for r in last_tool_results(session.requests()[-1])) if session.requests() else 0,
+    }
+
+
+def summary(measured):
+    return {
+        "turn_bytes": measured["turn"],
+        "tool_result_event_bytes": measured["tool_result_event"],
+        "tool_use_result.stdout_chars": len(measured["tool_use_result"].get("stdout", "")),
+        "persistedOutputSize": measured["tool_use_result"].get("persistedOutputSize"),
+        "model_chars": measured["model"],
+    }
+
+
+def journal(binary, root):
+    """How much of a large tool output stdout carries."""
+    session = Session(binary, root, "journal", DRIVER)
+    try:
+        small = turn_bytes(session, "echo SMALL")
+        large = turn_bytes(session, LARGE)
+        yield (
+            "a Bash printing 1 MB is not echoed in full: stdout carries at most ~30 KB of it, the rest is persisted",
+            bool(small and large)
+            and len(large["tool_use_result"].get("stdout", "")) <= 32_000
+            and large["tool_use_result"].get("persistedOutputSize") == 1_000_000
+            and large["turn"] < 64_000,
+            json.dumps({"small": small and summary(small), "1MB": large and summary(large)}),
+        )
+    finally:
+        session.stop()
+    session = remote(binary, root, "journal-remote", DRIVER)
+    try:
+        large = turn_bytes(session, LARGE)
+        yield (
+            "the same holds for a Bash the plugin runs on the executor",
+            bool(large) and large["turn"] < 64_000,
+            json.dumps(large and summary(large)),
+        )
+    finally:
+        stop_remote(session)
+
+
+def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook=None):
+    """A -p session launched the way a room's central session is, against a local executor.
+
+    The executor is the acceptance fixture's (`acceptance.setup`): runtime.py
+    serving `claude mcp serve` of the same build over a project seeded by
+    seed.py. The central side is `client.prepare`, so the function hook
+    (proxy.js), the shell prefix and the PreToolUse guard are exactly what a
+    room launches with. Two things differ from a room, neither of which the
+    checks read: the forwarded project view is a FUSE mount this fixture does
+    not have, so the central workspace is an empty directory, and the version
+    pin is relaxed so the daily job can run the newest build.
+    """
+    import acceptance
+
+    folder = root / name
+    home = folder / "home"
+    executor_home = folder / "executor-home"
+    for path in (home / ".claude", executor_home / ".claude"):
+        path.mkdir(parents=True)
+    saved = {key: os.environ.get(key) for key in ("HOME", "CLAUDE_CONFIG_DIR")}
+    # The executor's `claude mcp serve` inherits this process's environment.
+    os.environ.update(HOME=str(executor_home), CLAUDE_CONFIG_DIR=str(executor_home / ".claude"))
+    try:
+        executor, target = acceptance.setup(
+            folder, argparse.Namespace(ssh=None, claude=binary), "http://127.0.0.1:9"
+        )
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    release = acceptance.execution_release
+    release.mount_state = lambda path: release.MOUNT_LIVE
+    acceptance.client.PINNED_VERSION = (
+        subprocess.run([binary, "--version"], capture_output=True, text=True).stdout.split()[0]
+    )
+    settings = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": trusted_hook}]}]}} if trusted_hook else None
+    launch = acceptance.client.prepare(
+        home / "session",
+        target,
+        claude=binary,
+        base_settings=settings,
+        home_override=home,
+        config_override=home / ".claude",
+    )
+    if untrusted_hook:
+        # Added after prepare, so the shell prefix does not know it: the
+        # prefix sends any command it does not know to the executor.
+        written = json.loads((home / ".claude" / "settings.json").read_text())
+        written["hooks"].setdefault("Stop", []).append({"hooks": [{"type": "command", "command": untrusted_hook}]})
+        (home / ".claude" / "settings.json").write_text(json.dumps(written))
+    session = Session(binary, root, name, args, launch=launch, env=env)
+    session.executor = executor
+    session.remote_workspace = Path(json.loads((home / "session" / "execution.json").read_text())["workspace"])
+    session.execution = home / "session" / "execution.json"
+    return session
+
+
+def stop_remote(session):
+    session.stop()
+    subprocess.run(session.executor.command("stop"), capture_output=True, timeout=20)
+
+
+def functionhooks(binary, root):
+    """The remote-execution plugin under -p: tools, the shell prefix and the guard."""
+    trusted = root / "functionhooks" / "trusted-hook.txt"
+    session = remote(
+        binary, root, "functionhooks", DRIVER,
+        trusted_hook=f"printf CENTRAL > {shlex.quote(str(trusted))}",
+        untrusted_hook="printf PREFIXED > prefix-marker.txt",
+    )
+    try:
+        mark = session.user(do("Bash", command='printf "%s " "$EXECUTION_ENV"; pwd', description="where"))
+        session.wait(is_("result"), 60, mark)
+        out = [text_of(r) for r in results_since(session, mark)]
+        yield (
+            "function hooks: Bash runs on the executor, in its workspace and environment",
+            len(out) == 1 and "REMOTE_COMMAND_ENV" in out[0] and str(session.remote_workspace) in out[0],
+            json.dumps(out)[:200],
+        )
+        target = session.workspace / "new.txt"
+        mark = session.user(do("Write", file_path=str(target), content="REMOTE_WRITE"))
+        session.wait(is_("result"), 60, mark)
+        written = session.remote_workspace / "new.txt"
+        yield (
+            "function hooks: Write lands in the executor workspace, not the central one",
+            written.exists() and written.read_text() == "REMOTE_WRITE" and not target.exists(),
+            f"executor {written.exists()}, central {target.exists()}",
+        )
+        # Stop hooks run after the result; give them a moment.
+        deadline = time.monotonic() + 10
+        while not (trusted.exists() and (session.remote_workspace / "prefix-marker.txt").exists()) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        yield (
+            "CLAUDE_CODE_SHELL_PREFIX: a platform hook runs centrally, any other command on the executor",
+            trusted.exists()
+            and (session.remote_workspace / "prefix-marker.txt").exists()
+            and not (session.workspace / "prefix-marker.txt").exists(),
+            f"platform hook ran: {trusted.exists()}, unknown hook on executor: "
+            f"{(session.remote_workspace / 'prefix-marker.txt').exists()}, "
+            f"centrally: {(session.workspace / 'prefix-marker.txt').exists()}",
+        )
+    finally:
+        stop_remote(session)
+    # Without the function hook the native tool reaches the harness, and the
+    # PreToolUse guard prepare installs is what stops it running centrally.
+    session = remote(binary, root, "functionhooks-off", DRIVER, env={"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "0"})
+    try:
+        target = session.workspace / "new.txt"
+        mark = session.user(do("Write", file_path=str(target), content="CENTRAL_WRITE"))
+        _, result = session.wait(is_("result"), 60, mark)
+        out = results_since(session, mark)
+        yield (
+            "the PreToolUse guard denies a native call the plugin did not take, and the turn goes on",
+            len(out) == 1
+            and out[0].get("is_error") is True
+            and "the remote execution plugin did not handle this call" in text_of(out[0])
+            and not target.exists()
+            and not (session.remote_workspace / "new.txt").exists()
+            and bool(result) and result.get("is_error") is False,
+            json.dumps({"tool_result": text_of(out[0])[:200] if out else None, "result": result and result.get("is_error")}),
+        )
+    finally:
+        stop_remote(session)
+
+
+def remotebackground(binary, root):
+    """Moving a Bash the plugin routed to the executor into the background.
+
+    The harness never runs that Bash itself — the function hook answers the
+    call — so the harness has no task to move. The executor does: today the
+    room's button reaches it as an executor control (REMOTE_CONTROLS).
+    """
+    session = remote(binary, root, "remotebackground", DRIVER)
+    try:
+        mark = session.user(do("Bash", command="sleep 12; echo REMOTE_SLEPT", description="remote sleep", timeout=120000))
+        _, call = session.wait(
+            lambda e: e.get("type") == "assistant" and any(b.get("type") == "tool_use" for b in blocks(e)), 60, mark
+        )
+        tool = [b["id"] for b in blocks(call) if b.get("type") == "tool_use"][0] if call else None
+        time.sleep(3)
+        started = [e for e in session.events[mark:] if is_("system", "task_started")(e)]
+        answer = session.control({"subtype": "background_tasks", "tool_use_id": tool})
+        ended, _ = session.wait(is_("result"), 3, mark)
+        yield (
+            "a Bash the plugin routes is no harness task: no task_started, and stdin background_tasks moves nothing",
+            not started and (answer.get("response") or {}).get("backgrounded") is False and ended is None,
+            json.dumps({"task_started": len(started), "answer": answer.get("response"), "result": ended}),
+        )
+        executor = __import__("acceptance").client.RemoteClient(json.loads(session.execution.read_text()))
+        tasks = executor.control({"subtype": "background_tasks", "tool_use_id": tool})["tasks"]
+        ended, _ = session.wait(is_("result"), 10, mark)
+        out = [text_of(r) for r in results_since(session, mark)]
+        running = [t for t in tasks if t.get("request_id") == tool]
+        yield (
+            "background_tasks sent to the executor moves it: the turn ends while it runs, naming the executor task",
+            ended is not None
+            and len(running) == 1
+            and running[0]["status"] == "running"
+            and len(out) == 1
+            and f"Command running in background with ID: {running[0]['task_id']}" in out[0],
+            json.dumps({"result": ended, "tool_result": out[0][:120] if out else None}),
+        )
+        mark = len(session.events)
+        noted, _ = session.wait(
+            lambda e: is_("system", "task_notification")(e) or is_("result")(e), 20, mark
+        )
+        done = executor.control({"subtype": "task_output", "task_id": running[0]["task_id"]}) if running else {}
+        yield (
+            "its completion is not announced on stdout: no task_notification and no follow-up turn "
+            "(drop this check if it starts to be)",
+            noted is None and done.get("status") == "completed" and "REMOTE_SLEPT" in done.get("stdout", ""),
+            json.dumps({"announced at": noted, "executor": {k: done.get(k) for k in ("status", "exit_code")}}),
+        )
+    finally:
+        stop_remote(session)
+
+
 SCENARIOS = {
     "controls": controls,
     "background-bash": lambda binary, root: background(binary, root, "bash"),
@@ -908,6 +1586,14 @@ SCENARIOS = {
     "skipping": skipping,
     "lifetime": lifetime,
     "refused": refused,
+    "resuming": resuming,
+    "reloading": reloading,
+    "nesting": nesting,
+    "asking": asking,
+    "unattended": unattended,
+    "journal": journal,
+    "functionhooks": functionhooks,
+    "remotebackground": remotebackground,
 }
 
 
@@ -942,7 +1628,7 @@ def main():
             arguments.output.mkdir(parents=True, exist_ok=True)
             (arguments.output / "headless-contract.json").write_text(json.dumps(receipt, indent=2))
             for scenario in root.iterdir():
-                for name in ("transcript.jsonl", "stderr.log"):
+                for name in ("transcript.jsonl", "stderr.log", "screen.txt"):
                     if (scenario / name).exists():
                         (arguments.output / scenario.name).mkdir(exist_ok=True)
                         shutil.copy(scenario / name, arguments.output / scenario.name / name)

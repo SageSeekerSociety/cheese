@@ -13,7 +13,7 @@
 ## 收件人为什么有两个名字
 
 `recipient_handle` 是名册上的名字，`receiver_id` 是账号池里的那一行。投递这一侧只
-认 handle（I11）—— 房间的名册、@ 的目标、`cheese notify --to` 给的都是 handle；知是
+认 handle（I11）—— 房间的名册、@ 的目标、`cheese_notify` 的 `to` 给的都是 handle；知是
 那一侧的站内信按数字 id 查。项目收件箱写下的行两个都填（handle 在账号池里找不到对
 应行时后者为空），知是那一侧写下的行只有 `receiver_id`。
 
@@ -91,7 +91,7 @@ class NotificationType(str, Enum):
     #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
     CHEESE_QUESTION = "CHEESE_QUESTION"
 
-    #: 平台报告自己的那四种（原 `AlertKind`）。值保持小写原样：`cheese notify
+    #: 平台报告自己的那四种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒
     DECISION_REQUEST = "decision_request"  # 决策请求 (带选项)，拍板之前不离开收件箱

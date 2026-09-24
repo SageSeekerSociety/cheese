@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""cheese — 芝士 的平台 CLI（在沙箱里调,平台动作走 REST,不用 MCP）。
+"""cheese — 芝士 的平台工具：会话侧的工具表，和机器上的那个 CLI。
 
-代码/文件的事用原生工具（Bash/Write/Read）；改平台状态的事用本 CLI。
-环境变量（容器注入）：
+一个文件两种用法（结论 63）：
+
+* **会话侧**把它当模块读：`PLATFORM_TOOLS` 是平台 MCP 的工具表，`run_platform_tool`
+  执行其中一样。这些动作只要平台，所以机器够不着时它们一样不少。
+* **机器上**它是 `cheese` 这条命令：只剩必须在这台机器上作为进程跑的动作——任务
+  目录、同步与恢复、预览、读写工作区文件的转换。
+
+环境变量（启动器注入）：
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
                  经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
@@ -10,30 +16,15 @@
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
 
 例:
-  cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
-  cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 在本房间开一条活(返回线程标识,写进分身的 prompt)
-  cheese decision "用 item-based CF" # 记一条决策
-  cheese remember "技术栈=FastAPI"  # 记入项目记忆
-  cheese recall "技术选型"          # 按需检索记忆(关键词检索)
-  cheese notify --title "看下" --to mentor-1 --level strong
-  cheese accept-request mentor-1 "验收证据" --subject "feat: add report" \
-      --artifact <产物 id>                     # 交付清单上那一项的新一版
-  cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
-      --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
-  cheese accept-request mentor-1 "验收证据" --subject "docs: 结题报告定稿" \
-      --artifact <产物 id> --deliver 报告/结题报告.pdf   # 交出去的那一份
-  cheese accept-request mentor-1 "验收证据" --subject "feat: 上线官网" \
-      --artifact <产物 id> --deliver-url https://...     # 交出去的是一个地址
-  cheese close-task <task_id>                # 放弃或撤销任务
-  cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
-  cheese milestone "中期汇报" --due 2026-06-20
-  cheese status                             # 平台状态快照
+  cheese worktree <task_id>                 # 准备任务工作目录,输出路径
+  cheese sync                               # 同步当前任务的提交并备份未提交文件
+  cheese push-fix                           # 把新提交推到任务已有的 PR
   cheese show report.html                   # 把这一份摆到房间里给人看(进预览窗口)
   cheese show 评审简报.docx                  # 文档同理,用户可以打开和下载
   cheese recalc 预算表.xlsx                 # 重算表格里的公式,并报出算不出来的格
   cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
+  cheese library get 预算表.xlsx             # 取一份资料到 ~/attachments/library/
 """
 
 from __future__ import annotations
@@ -44,7 +35,6 @@ import fcntl
 import hashlib
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -65,11 +55,6 @@ TOKEN = os.environ.get("CHEESE_TOKEN", "")
 # The agent turn this CLI call belongs to — sent back so the blocks it creates
 # share the turn's id (R4).
 TURN = os.environ.get("CHEESE_TURN", "")
-# In a private chat, `remember` writes this 芝士's view of its owner — the pool
-# keyed `<project>:<agent handle>:<person>`, which belongs to this instance in
-# this project and is not carried to another one.
-MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
-OWNER = os.environ.get("CHEESE_OWNER", "")
 
 # What `artifact` may publish, and which of those are not text. The backend owns
 # the authoritative table (`api/routes/topics.py`); this copy exists because the
@@ -94,7 +79,9 @@ ARTIFACT_KIND_BY_SUFFIX = {
     ".webp": "webp",
 }
 ARTIFACT_KINDS = frozenset(ARTIFACT_KIND_BY_SUFFIX.values())
-BINARY_ARTIFACT_KINDS = frozenset({"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"})
+BINARY_ARTIFACT_KINDS = frozenset(
+    {"pdf", "docx", "pptx", "xlsx", "png", "jpg", "gif", "webp"}
+)
 
 
 def artifact_kind_for(path: str) -> str:
@@ -105,23 +92,22 @@ def artifact_kind_for(path: str) -> str:
 
 
 class ToolTable:
-    """平台的 MCP 工具表 —— 会话侧的一个常量（结论 21）。
+    """平台的 MCP 工具表 —— 会话侧的一个常量（结论 21，由结论 63 修订）。
 
     以前这张表是**问出来的**：会话侧的 MCP 服务器收到 `tools/list`，就去执行器要一
-    份（`ping` 拿 capabilities，再 `cli` 要 `tools/list`），执行器再把机器上那棵
-    argparse 树翻成工具。于是一台执行机够不着，整个 `cheese_*` 家族就从清单里消
-    失，agent 被告知 `No such tool available: mcp__native__cheese_status` —— 而它这
-    一刻最需要的恰恰是「跟房间说一句这里出事了」。这件事付过三轮（2026-09-13、
-    -14、-15）。
+    份，执行器再把机器上那棵 argparse 树翻成工具。于是一台执行机够不着，整个
+    `cheese_*` 家族就从清单里消失，agent 被告知 `No such tool available:
+    mcp__native__cheese_status` —— 而它这一刻最需要的恰恰是「跟房间说一句这里出事
+    了」。这件事付过三轮（2026-09-13、-14、-15）。
 
-    表在这里，它就不再问任何人：这六样要的是**平台**，不是文件系统，而平台是会话自
-    己够得着的（`platform_request` 是从会话直接打后端的 HTTP，不经过那台机器）。机
-    器离线时少的是项目那一侧 —— 文件、命令、项目 `.mcp.json`（结论 22），它们如实
-    标不可用，不在会话侧做替身。
+    表在这里，它就不再问任何人。表上是**纯平台动作**：它们要的是平台，不是那台机器，
+    所以从会话直接打后端，机器离线时一样不少——对话、记忆、任务卡、验收都在。有两样
+    还要机器上的一份东西：`cheese_doc_set` 读机器上那个文件，`cheese_accept_request`
+    先让机器把任务的提交推上去；机器够不着时它们当场说够不着，不等超时。
 
-    **只有六样**（结论 21）：`chat_send`、`cheese ask`、反馈、要一台机器、同 handle
-    便条、定时投递。别的平台动作不是没有了，是不在 MCP 上：它们是这个 CLI 的子命
-    令，在机器上用 Bash 调，跟机器一起在、一起没。
+    必须在机器上作为进程跑的（任务目录、同步与恢复、预览、读写工作区文件的转换、git
+    凭据）才是这个文件的 CLI 子命令，跟文件、命令、项目 `.mcp.json` 一样随机器在、随
+    机器没（结论 22）。
     """
 
     def __init__(self, tools):
@@ -138,19 +124,22 @@ class ToolTable:
         return name in self.names()
 
 
-def join_descriptions(*parts: str) -> str:
-    """The one way command-chain descriptions become a tool schema description."""
-    return "\n\n".join(part for part in parts if part)
+def _tool(name: str, description: str, properties=None, required=()) -> dict:
+    schema: dict = {"type": "object", "properties": properties or {}}
+    if required:
+        schema["required"] = list(required)
+    return {"name": name, "description": description, "inputSchema": schema}
 
 
-# `cheese feedback -h` and the native MCP schema for `cheese_feedback_propose`
-# must carry the same 什么时候该用 text. Both read these two strings — the parent
-# command's guidance and the leaf's — so the surfaces cannot drift apart.
+def _text(description: str) -> dict:
+    return {"type": "string", "description": description}
+
+
 FEEDBACK_DESCRIPTION = (
     "你在轮次里发现的问题,提到平台上给人看。\n"
     "\n"
     "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
-    "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
+    "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese_ask`。\n"
     "\n"
     "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
     "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
@@ -158,22 +147,16 @@ FEEDBACK_DESCRIPTION = (
     "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
     "「平台坏了」和「用户不会用」之间的那句话。\n"
     "\n"
-    "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
+    "写之前先看 `user_said`:它是必填的,要么引用用户原话,要么照抄那句"
     "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
     "\n"
     "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
-    "的不会再问)。超了平台会拒绝,不要重试。"
-)
-
-FEEDBACK_PROPOSE_DESCRIPTION = (
-    "把你发现的问题提成一张提案卡,交给人决定发不发。"
-    "人在聊天里按「提交反馈」才算发布,所以不用等他,"
-    "也不要在任务中途打断或宣布你提了这件事——卡本身就是那句话。\n"
+    "的不会再问)。超了平台会拒绝,不要重试。\n"
     "\n"
-    "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
-    "观察到的 vs 期望的,错误原文短就照抄。"
-    "**根因没在会话里验证过就不要写**;拿不准的字段留空,不要填一个猜测。"
-    "不要把密钥、凭据或别人的隐私写进去。"
+    "每一项都是短标签加一两行,只写事实:观察到的 vs 期望的,错误原文短就照抄。"
+    "**根因没在会话里验证过就不要写**;拿不准的字段留空。"
+    "不要把密钥、凭据或别人的隐私写进去。别在任务中途打断或宣布你提了这件事,"
+    "卡本身就是那句话。"
 )
 
 
@@ -188,200 +171,466 @@ MACHINE_PROFILE_DESCRIPTION = (
     "不填 device_id 就自动选一台在线的。"
 )
 
+_TASK = _text("任务 id")
+_CONTRIBUTOR = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "实际贡献者的 handle",
+}
+_CHAT_SCOPE = {
+    "topic": _text("房间 id，默认当前房间"),
+    "task": _text("任务 id：读或校验这条任务卡的记录"),
+    "json": {"type": "boolean", "description": "返回完整 JSON，不受文本长度限制"},
+}
+_CHAT_PAGE = {
+    "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
+    "before": _text("只读比这条消息 id 更早的"),
+    "after": _text("只读比这条消息 id 更新的，从早到晚"),
+    "kind": _text("按类型筛选：message、attachment、event、comment、doc_node"),
+    "author": _text("按作者 handle 精确筛选"),
+}
+_CHAT_READ = (
+    "只读，不叫醒任何人、不标记已读。文本一页 12000 字、每条预览 1500 字，"
+    "超出时结果末尾给出续读的调用，照抄它。"
+)
+
 PLATFORM_TOOLS = ToolTable(
     (
-        {
-            "name": "chat_send",
-            "description": (
-                "Publish a message to the current Cheese room. "
-                "Use for user-visible updates and replies; "
-                "ordinary model output is not published."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string"},
-                    "reply_to": {"type": "string"},
-                    "request_id": {
-                        "type": "string",
-                        "description": (
-                            "UUID from an uncertain prior result; "
-                            "reuse with the same content to retry."
-                        ),
-                    },
-                },
-                "required": ["content"],
+        _tool(
+            "chat_send",
+            "Publish a message to the current Cheese room. "
+            "Use for user-visible updates and replies; "
+            "ordinary model output is not published.",
+            {
+                "content": {"type": "string"},
+                "reply_to": {"type": "string"},
+                "request_id": _text(
+                    "UUID from an uncertain prior result; "
+                    "reuse with the same content to retry."
+                ),
             },
-        },
-        {
-            "name": "cheese_ask",
-            "description": (
-                "在对话里发一个带按钮的问题，用户点一下就是答案，自动带回你下一轮。"
-                "要人拍板时首选它，别让人打字。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "问题，一句话问清楚",
-                    },
-                    "option": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "2-4 个选项",
-                    },
-                },
-                "required": ["question", "option"],
+            ["content"],
+        ),
+        _tool(
+            "cheese_chat_list",
+            "读聊天记录（含结构化消息和表情），默认当前房间最近 50 条，从早到晚。"
+            + _CHAT_READ,
+            {**_CHAT_SCOPE, **_CHAT_PAGE},
+        ),
+        _tool(
+            "cheese_chat_search",
+            "按文字搜聊天记录：对正文、结构化信息和引用做不区分大小写的字面匹配，"
+            "搜范围内全部记录；查不到就缩短关键词或换说法，别断定没说过。" + _CHAT_READ,
+            {"query": _text("要匹配的文字，不是正则"), **_CHAT_SCOPE, **_CHAT_PAGE},
+            ["query"],
+        ),
+        _tool(
+            "cheese_chat_get",
+            "读一条记录的全文（任何类型，含任务卡评论和文档节点）；"
+            "超长的按 offset 续读。" + _CHAT_READ,
+            {
+                "message_id": _text("消息 id"),
+                **_CHAT_SCOPE,
+                "offset": {"type": "integer", "description": "从第几个字开始"},
+                "length": {"type": "integer", "description": "最多读多少字，1..12000"},
             },
-        },
-        {
-            # ⚠️ 这一段和下面 `feedback propose` 那个 argparse 叶子的 `description`
-            # **说的是同一件事，两处都要改**：claude_code 读的是会话侧这一张常量表
-            # （结论 21：表在这里，机器离线时它也在），而 pi / codex 那两条路是从
-            # argparse 树翻出来的。只改一处，模型看到的就是两种说法里的随机一种。
-            #
-            # 触发时机原来只写在 argparse 的**父** parser 上，而翻树那条路只取叶子
-            # ——所以它一个字都没到过模型。这一份当时连触发时机都没有。
-            "name": "cheese_feedback_propose",
-            "description": join_descriptions(
-                FEEDBACK_DESCRIPTION, FEEDBACK_PROPOSE_DESCRIPTION
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "kind": {"type": "string"},
-                    "visibility": {"type": "string"},
-                    "user_said": {
-                        "type": "string",
-                        "description": "引用用户原话；用户没说过就照抄那句规定好的",
-                    },
-                    "why": {"type": "string"},
-                    "what_happened": {"type": "string"},
-                    "expectation": {"type": "string"},
-                    "repro": {"type": "string"},
-                    "evidence": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "problem": {"type": "string"},
-                    "session_id": {"type": "string"},
-                    "environment": {"type": "string"},
-                    "tags": {"type": "string", "description": "逗号分隔"},
-                },
-                "required": ["title", "kind", "visibility", "user_said"],
+            ["message_id"],
+        ),
+        _tool(
+            "cheese_chat_replies",
+            "列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 id 再读。"
+            + _CHAT_READ,
+            {"message_id": _text("被回复的消息 id"), **_CHAT_SCOPE, **_CHAT_PAGE},
+            ["message_id"],
+        ),
+        _tool(
+            "cheese_doc_get",
+            "读本话题实况文档。读到的这一版就是接下来 cheese_doc_set 写回所依据的"
+            "那一版；没读过就写，只有本话题还没有文档时才让你建。",
+        ),
+        _tool(
+            "cheese_doc_set",
+            "把机器上一个文件的全文设为本话题实况文档：整块覆盖，不是补丁。"
+            "先 cheese_doc_get；期间别人改过会被拒，拒了就重读、把改动合进文件再写，"
+            "别原样重试。话题标题会渲染成大标题，正文别再用一级标题重复。",
+            {"path": _text("机器上 markdown 文件的绝对路径；草稿别放在任务工作目录里")},
+            ["path"],
+        ),
+        _tool(
+            "cheese_task",
+            "开一条活：任务卡、独立分支和负责人；不启动任何执行者，也不碰机器。"
+            "返回任务 id、线程标识和验收人。动手前用 Bash 跑 `cheese worktree <id>` "
+            "准备工作目录。交给原生后台分身时把线程标识原样写进它的 prompt，"
+            "分身干的事才记在这张卡上。",
+            {
+                "title": _text("任务标题"),
+                "brief": _text("目标、约束和验收标准"),
+                "reviewer": _text("验收人 handle；省略取项目默认"),
+                "base_task": _text("依赖的任务 id；PR 以它的分支为目标"),
+                "reported_by": _text("需求提出者的 handle"),
+                "contributor": _CONTRIBUTOR,
             },
-        },
-        {
-            "name": "cheese_machine",
-            "description": (
-                "更换你自己的工作机器，后续文件和命令操作使用新机器。"
-                "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "profile": {
-                        "type": "string",
-                        "enum": list(MACHINE_PROFILES),
-                        "description": MACHINE_PROFILE_DESCRIPTION,
-                    },
-                    "device_id": {
-                        "type": "string",
-                        "description": "自托管设备的 id，只有 device 能指定",
-                    },
-                },
-                "required": ["profile"],
+            ["title"],
+        ),
+        _tool(
+            "cheese_close_task",
+            "放弃或撤销一条任务时显式关闭；正常交付在采纳后自动关闭。",
+            {
+                "task": _TASK,
+                "conclusion": _text("关闭原因或最终说明"),
+                "reported_by": _text("需求提出者的 handle"),
+                "contributor": _CONTRIBUTOR,
             },
-        },
-        {
-            "name": "cheese_note",
-            "description": (
-                "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
-                "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
-                "跟别的 handle 说话只有 chat 一条路。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "thread": {
-                        "type": "string",
-                        "description": "那条线程的 topic id",
-                    },
-                    "content": {"type": "string"},
-                },
-                "required": ["thread", "content"],
+            ["task"],
+        ),
+        _tool(
+            "cheese_accept_request",
+            "为一条任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
+            "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
+            "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
+            "交文件或地址时 artifact（清单上那一项的 id）与 new_artifact"
+            "（新名字，配 about）必给其一；交合并时两个都不给。",
+            {
+                "task": _TASK,
+                "subject": _text("英文 Conventional Commits 标题，≤72 字符，无句号"),
+                "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
+                "reason": _text("验收证据和要对方检查的内容"),
+                "body": _text("改动原因和验证说明"),
+                "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
+                "new_artifact": _text("清单上还没有的东西的真名"),
+                "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
+                "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
+                "deliver_url": _text("交出去的地址"),
             },
-        },
-        {
-            "name": "cheese_deliver_at",
-            "description": (
-                "请平台在某个时刻把这条投递给你自己。到点产生的是一条投递，"
-                "不是平台替你想起来该干什么。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "at": {
-                        "type": "string",
-                        "description": "ISO-8601 时刻，带时区，如 2026-09-21T14:00:00Z",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "到点递给你的那句话",
-                    },
-                },
-                "required": ["at", "content"],
+            ["task", "subject"],
+        ),
+        _tool(
+            "cheese_describe",
+            "修改任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
+            {
+                "task": _TASK,
+                "subject": _text("英文 Conventional Commits 标题，≤72 字符"),
+                "body": _text("改动原因和验证说明"),
             },
-        },
+            ["task"],
+        ),
+        _tool(
+            "cheese_ready",
+            "把任务已有的 draft PR 标记为可评审；请人验收用 cheese_accept_request。",
+            {"task": _TASK},
+            ["task"],
+        ),
+        _tool(
+            "cheese_tell",
+            "在你派出的一条活的时间线上留一句追加要求；只记录，不唤醒执行者。"
+            "长的写进实况文档。",
+            {"target": _text("活的 id、<#id> 或标题"), "message": _text("要说的话")},
+            ["target", "message"],
+        ),
+        _tool(
+            "cheese_milestone",
+            "把以后会被回头对照的关键节点钉成里程碑，不是待办清单。",
+            {"title": _text("里程碑标题"), "due": _text("ISO 日期，如 2026-06-20")},
+            ["title"],
+        ),
+        _tool(
+            "cheese_title",
+            "给本话题起或改标题，≤12 字；话题还叫「新话题」时这是开工第一步。"
+            "带 task 给房间里的一条活起名。",
+            {"text": _text("标题"), "task": _text("给这条活而不是本话题起名")},
+            ["text"],
+        ),
+        _tool(
+            "cheese_decision",
+            "记一条「定了什么、为什么」的决策，别把进度当决策记。"
+            "平台会在对话里出一张卡，不用再说「已记录」。",
+            {"text": _text("决策内容")},
+            ["text"],
+        ),
+        _tool(
+            "cheese_remember",
+            "记一条事实进你自己的项目记忆，只有你读得到，不会自动出现在上下文里，"
+            "要用 cheese_recall 查。只记跨话题成立、从代码和 git 历史读不出的；"
+            "相对时间换成绝对日期。",
+            {
+                "fact": _text("一条事实，一句话"),
+                "core": {
+                    "type": "boolean",
+                    "description": "核心记忆，每轮全量注入；只给永远成立的身份、"
+                    "规则和目标，预算很小",
+                },
+                "everyone": {
+                    "type": "boolean",
+                    "description": "所有人都该知道：写进项目总览实况文档并署名，"
+                    "人和所有芝士都读得到；决策仍用 cheese_decision，节点仍用 "
+                    "cheese_milestone",
+                },
+            },
+            ["fact"],
+        ),
+        _tool(
+            "cheese_recall",
+            "按关键词检索你自己的记忆，不是语义检索。自动注入的只有核心记忆，"
+            "其余只能从这里拿；一次没查到不等于没有，换个说法或只用一两个词再试。",
+            {"query": _text("关键词或问题")},
+            ["query"],
+        ),
+        _tool(
+            "cheese_notify",
+            "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
+            "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
+            "正文纯文本，@ 和 <&文件> 不渲染。",
+            {
+                "title": _text("一行标题"),
+                "body": _text("正文"),
+                "level": {
+                    "type": "string",
+                    "enum": ["silent", "light", "strong"],
+                    "description": "silent 只进列表；light 默认；strong 强提醒，慎用",
+                },
+                "kind": _text("change_alert（默认）或 decision_request"),
+                "to": _text("收件人 handle"),
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "决策选项，配 decision_request",
+                },
+            },
+            ["title"],
+        ),
+        _tool(
+            "cheese_fetch",
+            "让平台读一个网页：先找站点发布的 markdown，再依次普通抓取、换浏览器指纹、"
+            "浏览器渲染，覆盖面比 WebFetch 广，出口也不在你的机器上。"
+            "带 prompt 返回答案，不带返回整页 markdown，尽量带上。"
+            "读不到时逐级说明怎么失败的。",
+            {"url": _text("网址"), "prompt": _text("想从这一页知道什么")},
+            ["url"],
+        ),
+        _tool(
+            "cheese_lock",
+            "为一条任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
+            "占不到时说谁占着，不等待。",
+            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
+            ["task"],
+        ),
+        _tool(
+            "cheese_unlock",
+            "释放任务持有的重资源锁；锁 30 分钟后自动到期。",
+            {"task": _TASK, "kind": {"type": "string", "enum": ["heavy"]}},
+            ["task"],
+        ),
+        _tool(
+            "cheese_members",
+            "列出当前话题可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
+        ),
+        _tool(
+            "cheese_status",
+            "平台状态快照：本轮运行状态、本话题验收卡（含闸门失败输出）、磁盘、排队和"
+            "额度。想知道卡到哪了、闸门为什么红时先看它，别轮询原始 API。",
+        ),
+        _tool(
+            "cheese_library_ls",
+            "列出项目资料库里的文件（用户给这个项目的，最近的在前）。"
+            "取一份用 Bash 跑 `cheese library get <名字>`。",
+        ),
+        _tool(
+            "cheese_ask",
+            "在对话里发一个带按钮的问题，用户点一下就是答案，自动带回你下一轮。"
+            "要人拍板时首选它，别让人打字。",
+            {
+                "question": _text("问题，一句话问清楚"),
+                "option": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "2-4 个选项",
+                },
+            },
+            ["question", "option"],
+        ),
+        _tool(
+            "cheese_feedback_propose",
+            FEEDBACK_DESCRIPTION,
+            {
+                "title": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["bug", "suggestion", "other"],
+                },
+                "visibility": {
+                    "type": "string",
+                    "enum": ["public", "private"],
+                    "description": "private 只有管理员、提交者和提出它时"
+                    "房间里的人看得见",
+                },
+                "user_said": _text("引用用户原话；用户没说过就照抄那句规定好的"),
+                "why": {"type": "string"},
+                "what_happened": {"type": "string"},
+                "expectation": {"type": "string"},
+                "repro": {"type": "string"},
+                "evidence": {"type": "string"},
+                "summary": {"type": "string"},
+                "problem": {"type": "string"},
+                "session_id": {"type": "string"},
+                "environment": {"type": "string"},
+                "tags": _text("逗号分隔"),
+            },
+            ["title", "kind", "visibility", "user_said"],
+        ),
+        _tool(
+            "cheese_machine",
+            "更换你自己的工作机器，后续文件和命令操作使用新机器。"
+            "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。",
+            {
+                "profile": {
+                    "type": "string",
+                    "enum": list(MACHINE_PROFILES),
+                    "description": MACHINE_PROFILE_DESCRIPTION,
+                },
+                "device_id": _text("自托管设备的 id，只有 device 能指定"),
+            },
+            ["profile"],
+        ),
+        _tool(
+            "cheese_note",
+            "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
+            "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
+            "跟别的 handle 说话只有 chat 一条路。",
+            {"thread": _text("那条线程的 topic id"), "content": {"type": "string"}},
+            ["thread", "content"],
+        ),
+        _tool(
+            "cheese_deliver_at",
+            "请平台在某个时刻把这条投递给你自己。到点产生的是一条投递，"
+            "不是平台替你想起来该干什么。",
+            {
+                "at": _text("ISO-8601 时刻，带时区，如 2026-09-21T14:00:00Z"),
+                "content": _text("到点递给你的那句话"),
+            },
+            ["at", "content"],
+        ),
     )
 )
 
+#: 要本话题 / 本项目才答得出的那些。缺了就在发出去之前说清楚，不让后端去猜。
+_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch"}
+_NEEDS_PROJECT = frozenset(
+    {
+        "cheese_milestone",
+        "cheese_notify",
+        "cheese_recall",
+        "cheese_remember",
+        "cheese_library_ls",
+    }
+)
+
+
+def _given(args: dict, *keys: str) -> dict:
+    """The optional fields the caller actually filled, under the backend's names.
+
+    「没说」和「说了空的」在后端是两件事（例如省略验收人 = 用项目默认值），所以
+    空值不发。"""
+    body = {}
+    for key in keys:
+        name, _, field = key.partition(":")
+        if args.get(name) not in (None, "", []):
+            body[field or name] = args[name]
+    return body
+
 
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
-    """Build the HTTP request shared by the CLI and native MCP transport."""
+    """The one backend request a platform tool is, as data.
+
+    Pure: nothing here reads the machine or the network, so a plan can be built
+    and checked with no session around it. Tools that take more than one request
+    (`_STEPS`) build theirs from the same pieces."""
     env = os.environ if environ is None else environ
-    topic = TOPIC if environ is None else env.get("CHEESE_TOPIC", "")
-    project = PROJECT if environ is None else env.get("CHEESE_PROJECT", "")
-    if (
-        tool
-        in {
-            "cheese_ask",
-            "cheese_close_task",
-            "cheese_decision",
-            "cheese_deliver_at",
-            "cheese_feedback_propose",
-            "cheese_machine",
-            "cheese_members",
-            "cheese_note",
-            "cheese_status",
-            "cheese_tell",
-            "cheese_title",
-        }
-        and not topic
-    ):
+    topic = env.get("CHEESE_TOPIC", "")
+    project = env.get("CHEESE_PROJECT", "")
+    if tool in _NEEDS_TOPIC and not topic:
         raise ValueError("Missing CHEESE_TOPIC")
-    if (
-        tool
-        in {
-            "cheese_milestone",
-            "cheese_notify",
-            "cheese_recall",
-            "cheese_remember",
-        }
-        and not project
-    ):
+    if tool in _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
-    if tool == "cheese_close_task":
-        body = {"conclusion": args.get("conclusion", "")}
-        if args.get("reported_by") is not None:
-            body["reporter_handle"] = args["reported_by"]
-        if args.get("contributor") is not None:
-            body["contributor_handles"] = args["contributor"]
+    task = f"/topics/{topic}/tasks/{args.get('task')}"
+    if tool == "chat_send":
+        body = {
+            "content": args["content"],
+            "request_id": str(uuid.UUID(args["request_id"]))
+            if args.get("request_id")
+            else str(uuid.uuid4()),
+            **_given(args, "reply_to"),
+        }
+        return {"method": "POST", "path": f"/topics/{topic}/messages", "body": body}
+    if tool == "cheese_doc_get":
+        return {"method": "GET", "path": f"/topics/{topic}/doc"}
+    if tool == "cheese_task":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/tasks/{args['task_id']}/close",
-            "body": body,
+            "path": f"/topics/{topic}/split",
+            "body": {
+                "title": args["title"],
+                "created_by": env.get("CHEESE_AUTHOR", "cheese"),
+                **_given(
+                    args,
+                    "brief",
+                    "reviewer:reviewer_handle",
+                    "base_task:base_task_id",
+                    "reported_by:reporter_handle",
+                    "contributor:contributor_handles",
+                ),
+            },
         }
+    if tool == "cheese_close_task":
+        return {
+            "method": "POST",
+            "path": task + "/close",
+            "body": {
+                "conclusion": args.get("conclusion") or "",
+                **_given(
+                    args,
+                    "reported_by:reporter_handle",
+                    "contributor:contributor_handles",
+                ),
+            },
+        }
+    if tool == "cheese_accept_request":
+        return {
+            "method": "POST",
+            "path": task + "/accept-card",
+            "body": {
+                "routing_reason": args.get("reason") or "",
+                "change_subject": args["subject"],
+                **_given(
+                    args,
+                    "reviewer:reviewer_handle",
+                    "body:change_body",
+                    "artifact",
+                    "new_artifact",
+                    "about",
+                    "deliver",
+                    "deliver_url",
+                ),
+            },
+        }
+    if tool == "cheese_describe":
+        body = _given(args, "subject:change_subject", "body:change_body")
+        if not body:
+            raise ValueError("describe 至少要给 subject 或 body")
+        return {"method": "POST", "path": task + "/accept-card/describe", "body": body}
+    if tool == "cheese_ready":
+        return {"method": "POST", "path": task + "/ready"}
+    if tool in {"cheese_lock", "cheese_unlock"}:
+        verb = tool.removeprefix("cheese_")
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/{verb}",
+            "body": {"kind": args.get("kind") or "heavy", "task_id": args["task"]},
+        }
+    if tool == "cheese_library_ls":
+        # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
+        where = urllib.parse.quote(topic)
+        return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
     if tool == "cheese_decision":
         return {
             "method": "POST",
@@ -396,39 +645,32 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         )
         return {"method": "POST", "path": path, "body": {"title": args["text"]}}
     if tool == "cheese_fetch":
-        body = {
-            "url": args["url"],
-            "topic": topic,
-            "project": project,
-        }
+        # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
+        # expired"——沙箱 token 是带作用域的。
+        body = {"url": args["url"], "topic": topic, "project": project}
         if args.get("prompt"):
             body["prompt"] = args["prompt"]
         return {"method": "POST", "path": "/fetch", "body": body}
     if tool in {"cheese_remember", "cheese_recall"}:
+        remember = tool == "cheese_remember"
         body = {
-            "content" if tool == "cheese_remember" else "query": (
-                args["fact"] if tool == "cheese_remember" else args["query"]
-            ),
+            "content" if remember else "query": args["fact" if remember else "query"],
             "topic": topic,
         }
-        if tool == "cheese_remember" and args.get("core"):
+        if remember and args.get("core"):
             body["layer"] = "core"
-        memory_scope = (
-            MEMORY_SCOPE
-            if environ is None
-            else env.get("CHEESE_MEMORY_SCOPE", "project")
-        )
-        owner = OWNER if environ is None else env.get("CHEESE_OWNER", "")
-        if tool == "cheese_remember" and args.get("everyone"):
+        owner = env.get("CHEESE_OWNER", "")
+        if remember and args.get("everyone"):
             # 写给所有人看的不是记忆，是项目总览的实况文档。这一路盖过私聊那一路：
             # 说了「所有人」，就不是只记给这一位看的。
             body["scope"] = "everyone"
-        elif memory_scope == "personal" and owner:
+        elif env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
+            # 私聊里记的是这个芝士对它主人的看法——池子按
+            # `<project>:<agent handle>:<person>` 分，属于这个项目里的这个实例。
             body.update(scope="user", owner=owner)
-        suffix = "" if tool == "cheese_remember" else "/search"
         return {
             "method": "POST",
-            "path": f"/projects/{project}/memory{suffix}",
+            "path": f"/projects/{project}/memory{'' if remember else '/search'}",
             "body": body,
         }
     if tool == "cheese_ask":
@@ -441,32 +683,34 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {"question": args["question"], "options": options},
         }
     if tool == "cheese_notify":
-        payload = {}
-        if args.get("options"):
-            payload["options"] = [
-                value.strip() for value in args["options"].split("|") if value.strip()
-            ]
+        options = [
+            value.strip() for value in args.get("options") or [] if value.strip()
+        ]
         return {
             "method": "POST",
             "path": f"/projects/{project}/alerts",
             "body": {
-                "level": args.get("level", "light"),
-                "kind": args.get("kind", "change_alert"),
+                "level": args.get("level") or "light",
+                "kind": args.get("kind") or "change_alert",
                 "title": args["title"],
-                "body": args.get("body", ""),
-                "target_handle": args.get("to"),
+                "body": args.get("body") or "",
+                "target_handle": args.get("to") or None,
                 "topic_id": topic or None,
-                "payload": payload,
+                "payload": {"options": options} if options else {},
             },
         }
     if tool == "cheese_tell":
+        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body
+        # 里，由后端校验它确实是这个房间派出的活。
         return {
             "method": "POST",
             "path": f"/topics/{topic}/tell",
             "body": {"target": args["target"], "content": args["message"]},
         }
     if tool == "cheese_milestone":
-        body = {"title": args["title"]}
+        # The room it came from: a room's token authenticates only with its room
+        # named, and a re-sent milestone is deduplicated against that room's turn.
+        body = {"title": args["title"], "source_topic_id": topic}
         if args.get("due"):
             due = args["due"]
             body["due_date"] = due if "T" in due else f"{due}T00:00:00Z"
@@ -478,41 +722,35 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_feedback_propose":
         # 话题级:配额、指纹去重、拒绝的记忆全挂在话题上,而「这个人能不能在这个
         # 话题里提」的答案就是 authorize_topic 已经算过的那个。
-        body: dict = {
+        body = {
             "title": args["title"],
             "kind": args["kind"],
             "visibility": args["visibility"],
+            **_given(
+                args,
+                "why",
+                "what_happened",
+                "expectation",
+                "repro",
+                "evidence",
+                "summary",
+                "problem",
+                "session_id",
+                "environment",
+                "user_said",
+            ),
         }
-        for key, arg in (
-            ("why", "why"),
-            ("what_happened", "what_happened"),
-            ("expectation", "expectation"),
-            ("repro", "repro"),
-            ("evidence", "evidence"),
-            ("summary", "summary"),
-            ("problem", "problem"),
-            ("session_id", "session_id"),
-            ("environment", "environment"),
-        ):
-            if args.get(arg):
-                body[key] = args[arg]
-        if args.get("user_said"):
-            body["user_said"] = args["user_said"]
         if args.get("tags"):
             body["tags"] = [
                 value.strip() for value in args["tags"].split(",") if value.strip()
             ]
-        if args.get("attach_logs"):
-            body["logs"] = collect_session_snapshot()
         return {
             "method": "POST",
             "path": f"/topics/{topic}/feedback-proposals",
             "body": body,
         }
     if tool == "cheese_machine":
-        body = {"profile": args["profile"]}
-        if args.get("device_id"):
-            body["device_id"] = args["device_id"]
+        body = {"profile": args["profile"], **_given(args, "device_id")}
         return {
             "method": "PUT",
             "path": f"/topics/{topic}/compute-profile",
@@ -539,6 +777,515 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     raise ValueError(f"No direct platform request plan for {tool}")
 
 
+class PlatformToolError(Exception):
+    """A refusal the agent reads as written: what happened and what to do next."""
+
+
+class PlatformHTTPError(RuntimeError):
+    """The backend answered, and not with success. `status` is what callers branch
+    on; the message keeps the backend's own words for the agent."""
+
+    def __init__(self, status: int, body: str):
+        super().__init__(f"Platform HTTP {status}: {body}")
+        self.status = status
+        self.body = body
+
+
+def run_platform_tool(tool: str, args: dict, host) -> str:
+    """Run one tool from `PLATFORM_TOOLS` and say, in text, what came of it.
+
+    `host` is where the session runs, and supplies the four things a tool can
+    need: `environ` (the room's CHEESE_* values), `request(plan)` (one backend
+    request, the parsed JSON back, `PlatformHTTPError` otherwise),
+    `read_file(path)` and `sync_task(task_id)` (the two that need the machine),
+    plus a `doc_versions` dict that outlives a single call. The text is what the
+    agent acts on — ids, the next call to make — so it is written for that
+    reader, not dumped JSON."""
+    if tool not in PLATFORM_TOOLS:
+        raise ValueError(f"Unknown platform tool: {tool}")
+    # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
+    schema = next(t for t in PLATFORM_TOOLS.schemas() if t["name"] == tool)
+    missing = [
+        name
+        for name in schema["inputSchema"].get("required", ())
+        if args.get(name) in (None, "", [])
+    ]
+    if missing:
+        raise PlatformToolError(f"{tool} 缺少参数：{', '.join(missing)}")
+    try:
+        if tool in _STEPS:
+            return _STEPS[tool](args, host)
+        plan = request_plan(tool, args, host.environ)
+    except ValueError as exc:
+        raise PlatformToolError(str(exc)) from exc
+    data = host.request(plan).get("data")
+    return _SAY[tool](args, data, host.environ)
+
+
+def _chat_message_text(block: dict) -> str:
+    """Keep typed payloads visible, including fields added by future messages."""
+    lines = [
+        f"[{block.get('created_at', '')}] {block.get('author', '')} "
+        f"({block.get('author_type', '')}, {block.get('kind', '')}) id={block['id']}"
+    ]
+    for key, value in block.items():
+        if key in {"id", "created_at", "author", "author_type", "kind", "content"}:
+            continue
+        if value is not None and value != [] and value != {}:
+            lines.append(
+                f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}"
+            )
+    lines.append(block.get("content") or "")
+    return "\n".join(lines)
+
+
+_CHAT_TEXT_BUDGET = 12000
+_CHAT_PREVIEW = 1500
+
+
+def _chat_call(name: str, **kwargs) -> str:
+    """A continuation the agent can act on, written as the tool call it is."""
+    args = ", ".join(
+        f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kwargs.items()
+    )
+    return f"{name}({args})"
+
+
+def _chat_scope(args: dict) -> dict:
+    return {key: args[key] for key in ("topic", "task") if args.get(key)}
+
+
+def _chat_get(args: dict, host) -> str:
+    offset = 0 if args.get("offset") is None else args["offset"]
+    length = _CHAT_TEXT_BUDGET if args.get("length") is None else args["length"]
+    if not 1 <= length <= _CHAT_TEXT_BUDGET or offset < 0:
+        raise PlatformToolError(f"length 取 1..{_CHAT_TEXT_BUDGET}，offset 不小于 0")
+    if args.get("json") and (offset or length != _CHAT_TEXT_BUDGET):
+        raise PlatformToolError("json 返回完整数据，不要同时给 offset 或 length")
+    topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
+    path = (
+        f"/topics/{urllib.parse.quote(topic, safe='')}/history/"
+        + urllib.parse.quote(args["message_id"], safe="")
+    )
+    block = host.request({"method": "GET", "path": path})["data"]
+    if args.get("task") and block.get("task_id") != args["task"]:
+        raise PlatformToolError("这条消息不属于那条任务卡")
+    if args.get("json"):
+        return json.dumps(block, ensure_ascii=False)
+    text = _chat_message_text(block)
+    end = offset + length
+    shown = text[offset:end]
+    if end < len(text):
+        more = _chat_call(
+            "cheese_chat_get",
+            message_id=args["message_id"],
+            offset=end,
+            **_chat_scope(args),
+        )
+        shown += f"\n\n[More text: {more}]"
+    return shown
+
+
+def _chat_page(tool: str):
+    def run(args: dict, host) -> str:
+        limit = 50 if args.get("limit") is None else args["limit"]
+        if not 1 <= limit <= 500:
+            raise PlatformToolError("limit 取 1..500")
+        if args.get("before") and args.get("after"):
+            raise PlatformToolError("before 和 after 只能给一个")
+        topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
+        params: dict = {"limit": limit}
+        for key, name in (
+            ("before", "before"),
+            ("after", "after"),
+            ("task", "task_id"),
+            ("kind", "kind"),
+            ("author", "author"),
+        ):
+            if args.get(key):
+                params[name] = args[key]
+        own: dict = {}
+        if tool == "cheese_chat_search":
+            params["q"] = own["query"] = args["query"]
+        elif tool == "cheese_chat_replies":
+            params["reply_to"] = own["message_id"] = args["message_id"]
+        path = (
+            f"/topics/{urllib.parse.quote(topic, safe='')}/history?"
+            + urllib.parse.urlencode(params)
+        )
+        data = host.request({"method": "GET", "path": path})["data"]
+        if args.get("json"):
+            return json.dumps(data, ensure_ascii=False)
+
+        def preview(block):
+            text = _chat_message_text(block)
+            if len(text) > _CHAT_PREVIEW:
+                more = _chat_call(
+                    "cheese_chat_get", message_id=block["id"], **_chat_scope(args)
+                )
+                text = text[:_CHAT_PREVIEW] + f"\n[Truncated; {more}]"
+            return text
+
+        out = []
+        remaining = _CHAT_TEXT_BUDGET
+        if parent := data.get("reply_to"):
+            parent_text = "Replying to:\n" + preview(parent) + "\n"
+            out.append(parent_text)
+            remaining -= len(parent_text) + 1
+        blocks = data.get("data") or []
+        if not blocks:
+            out.append("No messages matched this conversation and filter.")
+            return "\n".join(out)
+        # Walk from the requested edge. The next cursor must refer to the last
+        # displayed block, including when the text budget cuts a server page short.
+        forward = bool(args.get("after"))
+        selected = []
+        for block in blocks if forward else reversed(blocks):
+            text = preview(block)
+            if selected and len(text) + 2 > remaining:
+                break
+            selected.append((block, text))
+            remaining -= len(text) + 2
+        if not forward:
+            selected.reverse()
+        out.append("\n\n".join(text for _, text in selected))
+        if data.get("has_more") or len(selected) < len(blocks):
+            cursor = selected[-1 if forward else 0][0]["id"]
+            filters = {k: args[k] for k in ("kind", "author") if args.get(k)}
+            more = _chat_call(
+                tool,
+                **own,
+                **_chat_scope(args),
+                **filters,
+                limit=limit,
+                **({"after": cursor} if forward else {"before": cursor}),
+            )
+            out.append(f"\n[More messages: {more}]")
+        return "\n".join(out)
+
+    return run
+
+
+def _doc_get(args: dict, host) -> str:
+    """Reading is what earns the right to write.
+
+    The living doc has no partial write: `cheese_doc_set` replaces the whole
+    thing, so a write has to say which version it replaces, and that number must
+    be EVIDENCE OF A READ rather than something the caller states. An argument
+    would let the agent assert a version it only heard about — the platform
+    pushes 「文档已更新到第 7 版」 into a running session — and write ten-minute-old
+    content over it claiming to be based on it, which is the exact overwrite the
+    version exists to stop. So the version this read returned is kept by the
+    host, and the write reads it back from there."""
+    plan = request_plan("cheese_doc_get", args, host.environ)
+    doc = host.request(plan).get("data") or {}
+    version = doc.get("doc_version", 0)
+    host.doc_versions[host.environ.get("CHEESE_TOPIC", "")] = version
+    if not doc.get("content"):
+        return "本话题还没有实况文档；cheese_doc_set 会新建它。"
+    return doc["content"]
+
+
+def _doc_set(args: dict, host) -> str:
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise PlatformToolError("Missing CHEESE_TOPIC")
+    raw = host.read_file(args["path"])
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise PlatformToolError(f"{args['path']} 不是 UTF-8 文本: {exc}") from exc
+    # 0 —— 「我没读过」—— 是没有读过时的值，也是唯一允许**新建**文档的版本：
+    # 没读过一份已经存在的文档，正是写入必须被拒的时候。
+    based_on = host.doc_versions.get(topic, 0)
+    try:
+        result = host.request(
+            {
+                "method": "PUT",
+                "path": f"/topics/{topic}/doc",
+                "body": {
+                    "content": content,
+                    "author": host.environ.get("CHEESE_AUTHOR", "cheese"),
+                    "expected_version": based_on,
+                },
+            }
+        )
+    except Exception as exc:
+        # Any host's HTTP error carries `status`/`body` (this file's
+        # `PlatformHTTPError`, or the transport's, which this file cannot import).
+        if getattr(exc, "status", None) != 409:
+            raise
+        try:
+            current = json.loads(exc.body)["error"]["data"]["doc_version"]  # type: ignore[attr-defined]
+        except (ValueError, KeyError, TypeError):
+            current = "?"
+        raise PlatformToolError(
+            f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
+            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的文件，再 "
+            "cheese_doc_set。直接重试会原样被拒。"
+        ) from exc
+    version = (result.get("data") or {}).get("doc_version", 0)
+    host.doc_versions[topic] = version
+    return f"已更新实况文档（第 {version} 版）。"
+
+
+def _task_relative(path: str, task: str) -> str:
+    """交付物的路径，写成后端认的那种：相对这条任务的工作目录。
+
+    后端从任务目录里读它（`ProjectFiles.raw`），而 agent 手上常常是
+    `cheese worktree` 打印的那个绝对路径——把那一截前缀剥掉，别让一次能读到的
+    交付因为写法被打回。"""
+    marker = f"/.cheese/tasks/{task}/"
+    return path.split(marker, 1)[1] if marker in path else path
+
+
+def _accept_request(args: dict, host) -> str:
+    if args.get("deliver"):
+        args = {**args, "deliver": _task_relative(args["deliver"], args["task"])}
+    plan = request_plan("cheese_accept_request", args, host.environ)
+    # 卡读的是 forge 上那条分支：先让机器把这条任务的提交推上去，推不上去就不递
+    # ——递一张照着旧提交的卡，比一次「机器够不着」更糟，因为没人会发现。
+    host.sync_task(args["task"])
+    data = host.request(plan).get("data") or {}
+    art = data.get("artifact") or {}
+    named = art.get("name") or args.get("new_artifact") or args.get("artifact")
+    reviewer = data.get("reviewer_handle") or args.get("reviewer") or "验收人"
+    lines = [
+        f"已把验收卡递给 {reviewer}" + (f"，本次更新《{named}》。" if named else "。")
+    ]
+    # 新建的那一次把 id 说出来：往后交付这一项就用它，而这里是它第一次存在的地方。
+    if args.get("new_artifact") and art.get("id"):
+        lines.append(f"这一项的 id 是 {art['id']}，以后交付它用 artifact={art['id']}。")
+    # 交付物落没落下来当场说一句：字节只在这一刻读得到，没读到就再也读不到了。
+    if args.get("deliver"):
+        lines.append(f"这一版交出去的是 {args['deliver']}，已留存。")
+    elif args.get("deliver_url"):
+        lines.append(f"这一版交出去的是 {args['deliver_url']}。")
+    return "\n".join(lines)
+
+
+_STEPS = {
+    "cheese_chat_get": _chat_get,
+    "cheese_chat_list": _chat_page("cheese_chat_list"),
+    "cheese_chat_search": _chat_page("cheese_chat_search"),
+    "cheese_chat_replies": _chat_page("cheese_chat_replies"),
+    "cheese_doc_get": _doc_get,
+    "cheese_doc_set": _doc_set,
+    "cheese_accept_request": _accept_request,
+}
+
+
+def _say_task(args, data, env) -> str:
+    return (
+        f"任务：{data.get('title')}\nid={data.get('id')}\n"
+        f"线程标识：{data.get('thread_label')}\n"
+        f"验收人：{data.get('reviewer_handle') or '待指定'}\n"
+        f"动手前用 Bash 跑 `cheese worktree {data.get('id')}` 准备工作目录，"
+        "进入它返回的目录再改文件。交给原生分身时，把任务简报、那个目录和上面的"
+        "线程标识一起放进它的 prompt：平台从 prompt 上读出标识，分身干的每件事才"
+        "落在这张卡上；不写，这条活看着就是没人做。"
+    )
+
+
+def _say_lock(args, data, env) -> str:
+    if data.get("acquired"):
+        return f"占住了（{args.get('kind') or 'heavy'}）。"
+    raise PlatformToolError(f"没占到：{data.get('reason') or '别人占着'}")
+
+
+def _say_notify(args, data, env) -> str:
+    # 一条通知落成几行、收件人是谁，由平台按名册算 —— 不填 to 不等于「所有人」：
+    # 到的是这个房间名册上的人，不含芝士。把它当「所有人」转述，就是替平台许下
+    # 一个它没答应的承诺。
+    rows = (data or {}).get("data") or []
+    who = [r.get("target_handle") for r in rows if r.get("target_handle")]
+    if len(who) > 5:
+        return f"已发送通知给 {'、'.join(who[:5])} 等 {len(who)} 人。"
+    return f"已发送通知给 {'、'.join(who)}。" if who else "已发送通知。"
+
+
+def _say_remember(args, data, env) -> str:
+    if args.get("everyone"):
+        return "已写进项目总览的实况文档（所有人和所有芝士看的是同一份）。"
+    kind = "核心记忆（每轮都在场）" if args.get("core") else "记忆"
+    personal = env.get("CHEESE_MEMORY_SCOPE") == "personal" and env.get("CHEESE_OWNER")
+    return f"已记入{'个人' if personal else '项目'}{kind}。"
+
+
+def _say_recall(args, data, env) -> str:
+    hits = (data or {}).get("hits") or []
+    if not hits:
+        # 关键词检索没命中 ≠ 没有这条记忆。一次空结果当成「确认不存在」，就会一头
+        # 撞上那条记忆本来要拦住的坑。
+        return (
+            "没有找到相关记忆。（关键词检索，不是语义检索：换个说法、"
+            "或只用其中一两个关键词再试一次）"
+        )
+    return "\n".join(f"- {hit.get('abstract', '')}" for hit in hits)
+
+
+def _say_fetch(args, data, env) -> str:
+    data = data or {}
+    if not data.get("ok"):
+        # 逐级说清楚怎么失败的。只说「读不到」的话，下次没人知道该改哪一级。
+        said = f"读不到 {args['url']}。各级结果：{data.get('trail', '(无)')}"
+        if data.get("text"):
+            said += "\n抓到的残缺内容（可能是验证页或登录墙）：\n" + data["text"][:2000]
+        raise PlatformToolError(said)
+    note = "答案" if data.get("distilled") else "整页"
+    return f"{data.get('text', '')}\n\n[来源：{data.get('rung', '?')}（{note}）]"
+
+
+def _say_machine(args, data, env) -> str:
+    data = data or {}
+    if data.get("session"):
+        choice = data["session"]["choice"]
+        return (
+            f"工作机器已设为 {choice['name']}，下次执行操作时使用。"
+            "旧机器保留，文件不会自动迁移。"
+        )
+    if data.get("proposal"):
+        return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
+    return f"这个房间的算力现在是 {data.get('current')}。"
+
+
+def _say_members(args, data, env) -> str:
+    rows = data.get("data", data) if isinstance(data, dict) else data or []
+    if not rows:
+        return "这个话题还没有可点名的成员。"
+    return "\n".join(
+        f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{m.get('member_handle')}>"
+        " 点名 ta"
+        for m in rows
+    )
+
+
+def _say_library(args, data, env) -> str:
+    rows = (data or {}).get("data") or []
+    if not rows:
+        return "资料库里还没有文件。"
+    lines = []
+    for row in rows:
+        size = row.get("bytes") or 0
+        lines.append(
+            f"{row['path']}\t{f'{size / 1024:.0f}K' if size >= 1024 else f'{size}B'}"
+        )
+    return "\n".join(lines)
+
+
+def _say_chat_send(args, data, env) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
+_SAY = {
+    "chat_send": _say_chat_send,
+    "cheese_task": _say_task,
+    "cheese_close_task": lambda a, d, e: (
+        f"「{(d or {}).get('title')}」收了。"
+        f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
+    ),
+    "cheese_describe": lambda a, d, e: (
+        "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
+        f"{(d or {}).get('change_subject') or '（空）'}"
+    ),
+    "cheese_ready": lambda a, d, e: (
+        f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"
+        if (d or {}).get("ready")
+        else (d or {}).get("reason") or "没有可以翻的 PR。"
+    ),
+    "cheese_lock": _say_lock,
+    "cheese_unlock": lambda a, d, e: (
+        "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
+    ),
+    "cheese_tell": lambda a, d, e: (
+        f"已写在「{(d or {}).get('target_title') or a['target']}」上。"
+        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
+    ),
+    "cheese_milestone": lambda a, d, e: f"已钉里程碑：{a['title']}",
+    "cheese_title": lambda a, d, e: (
+        f"这条活现在叫「{(d or {}).get('title') or a['text']}」。"
+        if a.get("task")
+        else f"话题标题已设为：{a['text']}"
+    ),
+    "cheese_decision": lambda a, d, e: "已记入决策记录。",
+    "cheese_remember": _say_remember,
+    "cheese_recall": _say_recall,
+    "cheese_notify": _say_notify,
+    "cheese_fetch": _say_fetch,
+    "cheese_members": _say_members,
+    "cheese_status": lambda a, d, e: _format_status(d or {}),
+    "cheese_library_ls": _say_library,
+    "cheese_ask": lambda a, d, e: "已发出选项问题，用户点了按钮会带回你下一轮。",
+    # 卡片由平台渲染，所以这里只说结果。
+    "cheese_feedback_propose": lambda a, d, e: (
+        f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"
+    ),
+    "cheese_machine": _say_machine,
+    # `delivered` 是这条工具的答案本身：便条直接进那条线程正在跑的那一轮，那边这一
+    # 刻没在跑就没人接住。一律说「已递」，调用方会当作对面已经知道了往下走。
+    "cheese_note": lambda a, d, e: (
+        "便条已递给那条线程。"
+        if (d or {}).get("delivered")
+        else "那条线程这会儿没有在跑的轮次,便条没人接住。"
+    ),
+    "cheese_deliver_at": lambda a, d, e: f"到 {(d or {}).get('at')} 会把它递给你。",
+}
+
+
+class LocalHost:
+    """A host for a session that runs ON the machine (the pi harness): the backend
+    over plain HTTP, the file from this disk, the sync as this CLI's own
+    subcommand."""
+
+    def __init__(self, environ=None, doc_versions=None, cwd=None):
+        self.environ = dict(os.environ if environ is None else environ)
+        self.doc_versions = {} if doc_versions is None else doc_versions
+        self.cwd = cwd or os.getcwd()
+
+    def request(self, plan: dict) -> dict:
+        api = self.environ.get("CHEESE_API", "").rstrip("/")
+        body = plan.get("body")
+        req = urllib.request.Request(
+            api + plan["path"],
+            data=json.dumps(body).encode() if body is not None else None,
+            method=plan["method"],
+        )
+        req.add_header("Content-Type", "application/json")
+        for header, name in (
+            ("X-Cheese-Token", "CHEESE_TOKEN"),
+            ("X-Cheese-Turn", "CHEESE_TURN"),
+        ):
+            if self.environ.get(name):
+                req.add_header(header, self.environ[name])
+        # Generous because one caller is slow: reading a web page can climb a
+        # ladder of fetch strategies ending in a real browser, which measured
+        # 22 s on a page that answered and longer on one that tried every rung.
+        try:
+            with urllib.request.urlopen(req, timeout=240) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            raise PlatformHTTPError(
+                exc.code, exc.read().decode(errors="replace")
+            ) from None
+
+    def read_file(self, path: str) -> bytes:
+        with open(os.path.join(self.cwd, path), "rb") as stream:
+            return stream.read()
+
+    def sync_task(self, task_id: str) -> None:
+        result = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "sync", "--task", task_id],
+            env=self.environ,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if result.returncode:
+            raise PlatformToolError(
+                "任务的提交没能推上去，验收卡没有递：" + (result.stderr or "").strip()
+            )
+
+
 def _call(
     method: str,
     path: str,
@@ -552,10 +1299,8 @@ def _call(
     `tolerate` — those come back as ``{"ok": False, "status": ..., "error": ...}``
     for a caller that has something better to say than the raw response.
 
-    ``timeout`` is generous by default because these calls are small. One is
-    not: reading a web page can climb a ladder of fetch strategies ending in a
-    real browser, which measured 22 s on a page that answered and longer on one
-    that had to try every rung. That caller passes its own."""
+    ``timeout`` is generous by default because these calls are small. A caller
+    whose call is not (a document conversion) passes its own."""
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -583,14 +1328,6 @@ def _call(
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
-
-
-def _planned_call(tool: str, args: argparse.Namespace, *, timeout: int = 20) -> dict:
-    plan = request_plan(tool, vars(args))
-    positional = [plan["method"], plan["path"]]
-    if "body" in plan:
-        positional.append(plan["body"])
-    return _call(*positional, **({"timeout": timeout} if timeout != 20 else {}))
 
 
 def _task_root() -> Path:
@@ -1054,54 +1791,6 @@ def _sync_all_tasks() -> None:
         raise SystemExit(1)
 
 
-def _doc_version_path(topic: str) -> str:
-    """Where the version `cheese doc get` last showed for this topic is kept.
-
-    The living doc has no partial write: `doc set` replaces the whole thing. So
-    a write has to say which version it is replacing, and that number must be
-    EVIDENCE OF A READ rather than something the caller states. A flag would let
-    you assert a version you only heard about — the platform pushes 「文档已更新
-    到第 7 版」 into a running session — and write ten-minute-old content over it
-    claiming to be based on it, which is the exact overwrite the version exists
-    to stop.
-
-    Lives on the session mount (host-backed, survives a container rebuild): a
-    rebuild mid-turn must not turn a read the agent really did into a read the
-    CLI has forgotten.
-    """
-    home = os.environ.get("HOME") or "/tmp"
-    session = os.path.join(home, ".claude")
-    base = (
-        os.path.join(session, "cheese-doc")
-        if os.path.isdir(session)
-        else os.path.join(home, ".cheese", "doc")
-    )
-    os.makedirs(base, exist_ok=True)
-    return os.path.join(base, f"{topic}.version")
-
-
-def _remember_doc_version(topic: str, version: int) -> None:
-    try:
-        with open(_doc_version_path(topic), "w", encoding="utf-8") as f:
-            f.write(str(version))
-    except OSError:
-        # Losing the note costs a rejected `doc set` and a re-read, which is the
-        # safe direction. Failing the `doc get` over it is not.
-        pass
-
-
-def _read_doc_version(topic: str) -> int:
-    """The version this CLI last showed the agent. 0 — "I have not read it" —
-    when there is no note, which is also the only version under which `doc set`
-    may CREATE a doc. Not having read a doc that exists is exactly when a write
-    must be refused."""
-    try:
-        with open(_doc_version_path(topic), encoding="utf-8") as f:
-            return int(f.read().strip() or 0)
-    except (OSError, ValueError):
-        return 0
-
-
 def _need(name: str, value: str) -> str:
     if not value:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
@@ -1109,26 +1798,12 @@ def _need(name: str, value: str) -> str:
     return value
 
 
-def _api_root() -> str:
-    """The API surface base exactly as the launcher supplied it.
-
-    A direct backend URL is the app root. A public URL includes the gateway's
-    ``/api`` mount, which nginx strips before forwarding. Removing that suffix
-    here makes device calls to ``/openapi.json`` and ``/sandbox/forge-token``
-    miss the gateway and hit the frontend instead.
-    """
-    return API
-
-
 def _raw_request(
     method: str, path: str, data: str | None, out: str | None = None
 ) -> None:
-    """Raw API escape hatch (fusion-design §5.2): hit our backend directly with
-    the container's existing auth (CHEESE_TOKEN), printing the response body
-    verbatim. NOT a no-auth backdoor — it still carries the token, and the
-    backend still authorizes the actor per call; it is just the low-ceremony
-    channel for the 20% of cases the curated commands don't cover. Prefer the
-    curated `cheese <verb>` commands (title/doc/ask/remember/...) — see SKILL.md.
+    """One backend request on the container's existing auth (CHEESE_TOKEN), its
+    body printed or saved as it came — for the downloads (a library file, a task
+    backup) that land on this machine.
 
     `out` writes the body to a file as BYTES. Without it the body is decoded as
     text, which is right for JSON and destroys anything else: `decode(errors=
@@ -1166,27 +1841,6 @@ def _raw_request(
         print(f"已写入 {out}（{len(payload)} 字节）")
     else:
         print(payload.decode(errors="replace"))
-
-
-def collect_session_snapshot() -> str:
-    """The environment-and-logs snapshot `--attach-logs` sends.
-
-    Bounded on purpose: the whole point of the flag is that the reporter opts in,
-    and a snapshot that can be arbitrarily large is one nobody can read at the
-    other end. Records the facts that make a report reproducible — CLI
-    fingerprint, container, working directory — and the tail of nothing else.
-    """
-    facts = {
-        "cheese_fingerprint": source_fingerprint(),
-        "api": API,
-        "topic": TOPIC,
-        "project": PROJECT,
-        "turn": TURN,
-        "cwd": os.getcwd(),
-        "platform": platform.platform(),
-        "python": platform.python_version(),
-    }
-    return "\n".join(f"{key}: {value}" for key, value in facts.items() if value)
 
 
 def _format_status(d: dict) -> str:
@@ -1259,27 +1913,6 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
-def _print_api_index() -> None:
-    """List available operations from our FastAPI /openapi.json (like Restish,
-    but built from OUR live spec). Lets `cheese api` self-describe what raw calls
-    are possible without hardcoding anything."""
-    url = f"{_api_root()}/openapi.json"
-    try:
-        with urllib.request.urlopen(url, timeout=20) as r:
-            spec = json.load(r)
-    except Exception as e:  # noqa: BLE001
-        print(f"[cheese] 拉取 openapi 失败: {e}", file=sys.stderr)
-        sys.exit(1)
-    print("可用的原始 API 操作（优先用 curated 命令，这些是兜底逃生口）：")
-    for path in sorted(spec.get("paths", {})):
-        methods = spec["paths"][path]
-        for method in sorted(methods):
-            if method.lower() in ("get", "post", "put", "delete", "patch"):
-                print(f"  {method.upper():6} {path}")
-    print("\n用法: cheese api <METHOD> <path> [--data '<json>']")
-    print("例:   cheese api GET /topics/$CHEESE_TOPIC/blocks")
-
-
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -1294,155 +1927,15 @@ def source_fingerprint() -> str:
         return "unknown"
 
 
-def _chat_message_text(block: dict) -> str:
-    """Keep typed payloads visible, including fields added by future messages."""
-    lines = [
-        f"[{block.get('created_at', '')}] {block.get('author', '')} "
-        f"({block.get('author_type', '')}, {block.get('kind', '')}) id={block['id']}"
-    ]
-    for key, value in block.items():
-        if key in {"id", "created_at", "author", "author_type", "kind", "content"}:
-            continue
-        if value is not None and value != [] and value != {}:
-            lines.append(
-                f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}"
-            )
-    lines.append(block.get("content") or "")
-    return "\n".join(lines)
-
-
-_CHAT_TEXT_BUDGET = 12000
-_CHAT_PREVIEW = 1500
-
-
-def _chat_call(name: str, **kwargs) -> str:
-    """A continuation the agent can act on. It reaches these commands as the
-    `cheese_chat_*` tools (cli_worker publishes every leaf of this parser), so
-    the hint is written as that tool call, not as a shell line."""
-    args = ", ".join(
-        f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kwargs.items()
-    )
-    return f"{name}({args})"
-
-
-def _chat_scope(a) -> dict:
-    scope = {}
-    if a.topic:
-        scope["topic"] = a.topic
-    if getattr(a, "task", None):
-        scope["task"] = a.task
-    return scope
-
-
-def _chat_read(a, parser) -> None:
-    topic = a.topic or _need("CHEESE_TOPIC", TOPIC)
-    base = f"/topics/{urllib.parse.quote(topic, safe='')}/history"
-    if a.chatcmd == "get":
-        if not 1 <= a.length <= _CHAT_TEXT_BUDGET or a.offset < 0:
-            parser.error(
-                f"chat get: length must be 1..{_CHAT_TEXT_BUDGET}, offset >= 0"
-            )
-        if a.json and (a.offset or a.length != _CHAT_TEXT_BUDGET):
-            parser.error("--json returns complete data; omit --offset and --length")
-        block = _call("GET", base + "/" + urllib.parse.quote(a.message_id, safe=""))[
-            "data"
-        ]
-        if a.task is not None and block.get("task_id") != a.task:
-            parser.error("Message does not belong to --task")
-        if a.json:
-            print(json.dumps(block, ensure_ascii=False))
-            return
-        text = _chat_message_text(block)
-        end = a.offset + a.length
-        print(text[a.offset : end])
-        if end < len(text):
-            more = _chat_call(
-                "cheese_chat_get", message_id=a.message_id, offset=end, **_chat_scope(a)
-            )
-            print(f"\n[More text: {more}]")
-        return
-
-    if not 1 <= a.limit <= 500:
-        parser.error("chat: limit must be 1..500")
-    params = {"limit": a.limit}
-    for key, val in (
-        ("before", a.before),
-        ("after", a.after),
-        ("task_id", a.task),
-        ("kind", a.kind),
-        ("author", a.author),
-    ):
-        if val is not None:
-            params[key] = val
-    tool = f"cheese_chat_{a.chatcmd}"
-    own: dict = {}
-    if a.chatcmd == "search":
-        params["q"] = a.query
-        own["query"] = a.query
-    elif a.chatcmd == "replies":
-        params["reply_to"] = a.message_id
-        own["message_id"] = a.message_id
-    data = _call("GET", base + "?" + urllib.parse.urlencode(params))["data"]
-    if a.json:
-        print(json.dumps(data, ensure_ascii=False))
-        return
-
-    def preview(block):
-        text = _chat_message_text(block)
-        if len(text) > _CHAT_PREVIEW:
-            text = (
-                text[:_CHAT_PREVIEW]
-                + "\n[Truncated; "
-                + _chat_call(
-                    "cheese_chat_get", message_id=block["id"], **_chat_scope(a)
-                )
-                + "]"
-            )
-        return text
-
-    remaining = _CHAT_TEXT_BUDGET
-    if parent := data.get("reply_to"):
-        parent_text = "Replying to:\n" + preview(parent) + "\n"
-        print(parent_text)
-        remaining -= len(parent_text) + 1
-    blocks = data.get("data") or []
-    if not blocks:
-        print("No messages matched this conversation and filter.")
-        return
-    # Walk from the requested edge. The next cursor must refer to the last
-    # displayed block, including when the text budget cuts a server page short.
-    selected = []
-    for block in blocks if a.after else reversed(blocks):
-        text = preview(block)
-        if selected and len(text) + 2 > remaining:
-            break
-        selected.append((block, text))
-        remaining -= len(text) + 2
-    if not a.after:
-        selected.reverse()
-    print("\n\n".join(text for _, text in selected))
-    if data.get("has_more") or len(selected) < len(blocks):
-        cursor = selected[-1 if a.after else 0][0]["id"]
-        filters = {k: v for k, v in (("kind", a.kind), ("author", a.author)) if v}
-        more = _chat_call(
-            tool,
-            **own,
-            **_chat_scope(a),
-            **filters,
-            limit=a.limit,
-            **({"after": cursor} if a.after else {"before": cursor}),
-        )
-        print(f"\n[More messages: {more}]")
-
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cheese",
         description=(
-            "芝士 平台 CLI —— 改「平台状态」用它,改「文件/代码」用原生工具。\n"
+            "芝士 平台 CLI —— 只放必须在这台机器上作为进程跑的动作:任务目录、同步与"
+            "恢复、预览、读写工作区文件的转换。\n"
+            "平台状态(聊天、文档、任务卡、验收、记忆、通知)走会话侧的 cheese_* 工具。\n"
             "\n"
-            "每个子命令的 --help 是权威的那一份(它和代码同源,不会过期)。\n"
-            "散文文档(SKILL.md / CLAUDE.md / .claude/rules/)只补 --help 说不了的东西。"
+            "每个子命令的 --help 是权威的那一份(它和代码同源,不会过期)。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1454,140 +1947,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pchat = sub.add_parser(
-        "chat",
-        help="发消息，或读取聊天记录、回复和表情",
-        description=(
-            "用 send 发布用户可见消息（普通输出和最终答复只留在执行现场）；"
-            "用 list/get/replies/search 读取已存的聊天记录。"
-        ),
-    )
-    chatsub = pchat.add_subparsers(dest="chatcmd", required=True)
-    psend = chatsub.add_parser("send", help="发布消息；普通输出不会自动进入聊天")
-    psend.add_argument("content", nargs="?", help="要发送的消息")
-    psend.add_argument("--file", help="从 UTF-8 文件读取；- 表示标准输入")
-    psend.add_argument("--reply-to", help="回复当前聊天中的消息 ID")
-    psend.add_argument("--request-id", type=uuid.UUID, help="重试时沿用同一个请求 ID")
-
-    def _chat_scope_args(sp, *, task_help):
-        sp.add_argument("--topic", help="房间 ID（默认当前房间）")
-        sp.add_argument("--task", help=task_help)
-        sp.add_argument(
-            "--json",
-            action="store_true",
-            help="输出完整 JSON（含结构化元信息与表情作者）；文本长度限制不适用",
-        )
-
-    def _chat_page_args(sp):
-        sp.add_argument(
-            "--limit", type=int, default=50, help="每页条数，1..500（默认 50）"
-        )
-        cursors = sp.add_mutually_exclusive_group()
-        cursors.add_argument("--before", help="只读比这条消息 ID 更早的记录")
-        cursors.add_argument("--after", help="只读比这条消息 ID 更新的记录，从早到晚")
-        sp.add_argument(
-            "--kind",
-            help="按存储类型筛选，如 message、attachment、event、comment、doc_node",
-        )
-        sp.add_argument("--author", help="按作者 handle 精确筛选")
-
-    read_note = (
-        "只读，不叫醒任何人、不标记消息已读。文本输出有 12000 字的页预算，"
-        "每条预览 1500 字，超出的部分附带续读的工具调用；--json 返回完整字段。"
-    )
-    plist = chatsub.add_parser(
-        "list",
-        help="读最近的聊天记录（含结构化消息和表情）",
-        description="默认当前房间最近 50 条，从早到晚。" + read_note,
-    )
-    _chat_scope_args(plist, task_help="改读某条任务卡的记录，而不是房间时间线")
-    _chat_page_args(plist)
-    pget = chatsub.add_parser(
-        "get",
-        help="读一条消息的全文",
-        description="读一条记录（任何类型，含任务卡评论和文档节点）。" + read_note,
-    )
-    pget.add_argument("message_id", help="消息 ID")
-    _chat_scope_args(pget, task_help="校验这条消息属于该任务卡")
-    pget.add_argument("--offset", type=int, default=0, help="从第几个字开始（默认 0）")
-    pget.add_argument(
-        "--length",
-        type=int,
-        default=12000,
-        help="本次最多读多少字，1..12000（默认 12000）",
-    )
-    preplies = chatsub.add_parser(
-        "replies",
-        help="列出一条消息的直接回复",
-        description=(
-            "列出直接回复及其被回复的原文；嵌套回复按各条回复的 ID 再读。"
-            "回复查询沿用原消息所在的任务范围。" + read_note
-        ),
-    )
-    preplies.add_argument("message_id", help="被回复的消息 ID")
-    _chat_scope_args(preplies, task_help="校验原消息属于该任务卡")
-    _chat_page_args(preplies)
-    psearch = chatsub.add_parser(
-        "search",
-        help="按文字搜索聊天记录",
-        description=(
-            "对正文、结构化消息信息和引用文字做不区分大小写的字面子串匹配，"
-            "搜的是范围内全部记录而不只是最新一页。" + read_note
-        ),
-    )
-    psearch.add_argument("query", help="要匹配的文字（字面匹配，不是正则）")
-    _chat_scope_args(psearch, task_help="只搜某条任务卡的记录")
-    _chat_page_args(psearch)
-
-    pd = sub.add_parser(
-        "doc",
-        help="实况文档",
-        description=(
-            "实况文档 = 本话题的状态摘要,也是你跨轮的记忆。"
-            "话题标题会被渲染成文档大标题,正文别再用一级标题重复一遍。"
-        ),
-    )
-    pdsub = pd.add_subparsers(dest="doccmd", required=True)
-    pdset = pdsub.add_parser(
-        "set",
-        help="把文件设为本话题实况文档",
-        description=(
-            "整块覆盖:写的是你这个文件的全文,不是补丁。所以写之前必须先 "
-            "doc get 读一遍——平台按你读到的那一版收这次写入,期间别人改过就"
-            "直接拒了,不会悄悄盖掉。被拒之后重新 doc get、把别人的改动合进你"
-            "的文件、再 set,别原样重试。"
-        ),
-    )
-    pdset.add_argument(
-        "file",
-        help="工作区里的 markdown 文件路径(放 docs/topics/ 下,别堆在仓库根目录)",
-    )
-    pdsub.add_parser(
-        "get",
-        help="打印本话题实况文档",
-        description=(
-            "打印当前实况文档原文。这一步同时决定了你接下来能写回哪一版:"
-            "没 get 过就 set,平台当你没读过,只有本话题还没有文档时才让你建。"
-        ),
-    )
-
-    ps = sub.add_parser(
-        "split",
-        help="创建任务及其独立工作分支",
-        description="创建任务、独立分支和工作目录；执行者由调用者安排。",
-    )
-    ps.add_argument("title", help="任务标题")
-    ps.add_argument("--brief", help="任务目标、约束及验收标准")
-    ps.add_argument("--reviewer", help="验收人的 handle；省略时取项目默认值")
-    ps.add_argument("--base-task", help="依赖的任务；PR 以该任务分支为目标")
-    ps.add_argument("--reported-by", help="需求提出者的 handle")
-    ps.add_argument(
-        "--contributor", action="append", default=[], help="实际贡献者的 handle，可重复"
-    )
     pwork = sub.add_parser(
         "worktree",
         help="准备任务工作目录并输出路径",
-        description="准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。",
+        description=(
+            "准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。"
+            "任务用 cheese_task 创建。"
+        ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
     psync = sub.add_parser(
@@ -1609,17 +1975,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recovery.add_argument("task_id", help="任务 UUID")
 
-    pct = sub.add_parser(
-        "close-task",
-        help="结束不再继续的任务；交付请提交验收",
-        description="放弃或撤销任务；正常交付在采纳成功后自动关闭。",
-    )
-    pct.add_argument("task_id", help="任务 UUID")
-    pct.add_argument("--conclusion", default="", help="关闭原因或最终说明")
-    pct.add_argument("--reported-by", help="需求提出者的 handle")
-    pct.add_argument(
-        "--contributor", action="append", help="实际贡献者的 handle，可重复"
-    )
     pfix = sub.add_parser(
         "push-fix",
         help="将任务的新提交同步到它的 PR",
@@ -1632,402 +1987,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="已整理并验证独立改动后，将现有 PR 改到项目默认分支，清除任务依赖和旧批准",
     )
 
-    pfetch = sub.add_parser(
-        "fetch",
-        help="读一个网页(平台代抓,比内置的 WebFetch 覆盖面广)",
-        description=(
-            "让平台去读一个网页,把结果给你。\n\n"
-            "和内置的 WebFetch 有两点不一样,都是实测出来的:\n"
-            "① 覆盖面更广。平台按阶梯往下试——先看站点有没有直接发布 markdown\n"
-            "   (.md / llms.txt,命中的话又快又干净),再普通抓取,再换浏览器指纹,\n"
-            "   再(如果开了)第三方阅读器和共享浏览器。单一方法只能读到约六成页面,\n"
-            "   这条阶梯实测约八成五。\n"
-            "② 抓取在平台侧,不在你的沙箱里。沙箱的出口 IP 有些站直接拒。\n\n"
-            "带 --prompt 时返回的是**答案**,不带时返回整页 markdown。\n"
-            "尽量带上:同一篇维基词条,答案是几十个 token,整页是三万多。\n\n"
-            "读不到时会告诉你每一级分别是怎么失败的,不会只说一句读不到。"
-        ),
-    )
-    pfetch.add_argument("url", help="要读的网址")
-    pfetch.add_argument(
-        "--prompt",
-        default=None,
-        help="想从这一页里知道什么(带上它就返回答案而不是整页,省大量上下文)",
-    )
-
-    plock = sub.add_parser(
-        "lock",
-        help="占用房间的重任务资源",
-        description="占用房间内的重资源锁，占用者是一条任务；忙时直接报告。",
-    )
-    plock.add_argument("kind", choices=["heavy"], help="heavy：房间共享的重资源")
-    plock.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
-    punlock = sub.add_parser(
-        "unlock",
-        help="释放房间的重任务资源",
-        description="释放指定任务持有的重资源锁。",
-    )
-    punlock.add_argument("kind", choices=["heavy"], help="heavy：房间共享的重资源")
-    punlock.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
-
-    pdec = sub.add_parser(
-        "decision",
-        help="记录一条决策",
-        description=(
-            "记一条决策到决策记录。只记「定了什么 + 为什么」这种以后会被翻出来问的,"
-            "别把进度当决策记。记完平台会在对话里自动出一张可点的卡片——"
-            "你不用再写一句「已记入决策记录」。"
-        ),
-    )
-    pdec.add_argument("text", help="决策内容,一句话说清定了什么、为什么")
-
-    pfb = sub.add_parser(
-        "feedback",
-        help="给平台提一条反馈(提案,由人确认后发送)",
-        description=FEEDBACK_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pfbsub = pfb.add_subparsers(dest="feedbackcmd", required=True)
-    pfbprop = pfbsub.add_parser(
-        "propose",
-        help="把你发现的问题提成一张提案卡,交给人决定发不发",
-        # ⚠️ 这一段是**叶子**的说明。cli_worker._tools() 现在会把祖先 parser 的
-        # description 按序拼在它前面，所以「什么时候提」那段写在上面 `feedback` 父
-        # parser 的 FEEDBACK_DESCRIPTION 里即可，不必在这里复制一遍。
-        description=FEEDBACK_PROPOSE_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pfbprop.add_argument("title", help="一句话说清问题(≤300 字)")
-    pfbprop.add_argument(
-        "--kind",
-        choices=["bug", "suggestion", "other"],
-        default="bug",
-        help="bug=平台坏了;suggestion=可以更好;other=其余",
-    )
-    pfbprop.add_argument(
-        "--why",
-        default=None,
-        help="判断依据:为什么这是平台的问题,不是用户的使用方式问题",
-    )
-    pfbprop.add_argument(
-        "--what-happened",
-        default=None,
-        help="实际发生了什么(观察到的),只写事实",
-    )
-    pfbprop.add_argument(
-        "--expectation",
-        default=None,
-        help="你以为会发生什么",
-    )
-    pfbprop.add_argument(
-        "--repro",
-        default=None,
-        help="能复现它的最小步骤或形态",
-    )
-    pfbprop.add_argument(
-        "--evidence",
-        default=None,
-        help="可追溯的标识符:request id、时间戳、文件路径、版本。没有就省略",
-    )
-    pfbprop.add_argument(
-        "--user-said",
-        required=True,
-        help=(
-            "用户说过什么。**必填。** 引用原话;用户没说过,"
-            "就照抄这句:用户没有就这个问题说过话,以上是芝士自己观察到的"
-        ),
-    )
-    pfbprop.add_argument("--summary", default="", help="列表里显示的一行(省略则取标题)")
-    pfbprop.add_argument("--problem", default="", help="完整描述")
-    pfbprop.add_argument(
-        "--visibility",
-        choices=["public", "private"],
-        default="public",
-        help="private 只有管理员、提交者本人、以及提出它时在那个房间里的人看得见",
-    )
-    pfbprop.add_argument(
-        "--attach-logs",
-        action="store_true",
-        help="附上当前会话的环境与日志快照(默认不附)",
-    )
-    pfbprop.add_argument("--tags", default=None, help="逗号分隔的标签,最多 20 个")
-    pfbprop.add_argument(
-        "--session-id", default=None, help="当前会话 id(不填则由平台补)"
-    )
-    pfbprop.add_argument(
-        "--environment", default=None, help="运行环境描述(不填则由平台补)"
-    )
-
-    ptitle = sub.add_parser(
-        "title",
-        help="给本话题(或它下面的一条活)起/改标题",
-        description=(
-            "话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。\n"
-            "\n"
-            "--task 给这个房间里的一条活起名字:讨论升级出来的活是没有标题的,\n"
-            "只有你能给它起一个。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    ptitle.add_argument("text", help="标题,≤12 字")
-    ptitle.add_argument(
-        "--task",
-        default=None,
-        help="给这条活(而不是本话题)起标题,填 task id",
-    )
-
-    prem = sub.add_parser(
-        "remember",
-        help="记入项目记忆",
-        description=(
-            "记一条事实进**你自己**的项目记忆,以后任何话题都能 recall 到。\n"
-            "\n"
-            "只记「跨话题还成立、且从代码/git 历史里读不出来」的东西。"
-            "代码结构、改过什么 bug、本轮的临时状态都不要记。"
-            "相对时间要换成绝对日期。\n"
-            "\n"
-            "记忆是你自己的观察,只有你读得到。**所有人都该知道的事实用 "
-            "--everyone**,它写进项目总览的实况文档——那是人和所有芝士共同看的"
-            "那一份。\n"
-            "\n"
-            "普通记忆**不会自动出现在你的上下文里**,要用 recall 查;"
-            "--core 的每轮全量注入。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    prem.add_argument("fact", help="一条事实,一句话")
-    prem.add_argument(
-        "--everyone",
-        action="store_true",
-        help=(
-            "所有人都该知道:写进项目总览的实况文档,在「大家都该知道的」那一节里署你的名。"
-            "人看得到、改得动,别的房间下一轮就读到——记忆做不到这三件事里的任何"
-            "一件。项目的决定、分工、节点用它;你自己踩的坑不用。"
-        ),
-    )
-    prem.add_argument(
-        "--core",
-        action="store_true",
-        help=(
-            "记成核心记忆:每轮都在场,不参与相关性筛选。"
-            "只给「你是谁、你的长期规则和目标」这类永远成立的东西用——"
-            "核心记忆的预算很小,多一条就挤掉另一条,写多了等于没有核心记忆。"
-        ),
-    )
-
-    prec = sub.add_parser(
-        "recall",
-        help="按需检索记忆（关键词检索,不是语义检索）",
-        description=(
-            "检索项目记忆。**自动注入的只有核心记忆**,其余一条都不会自己出现——"
-            "注入块会明说池子里还有 N 条,而那 N 条只能从这里拿。所以:开工前、"
-            "话题拐弯了、需要某条的细节时,先 recall 再回答。\n"
-            "\n"
-            "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
-            "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"
-            "换个说法、或只用其中一两个关键词再试一次。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    prec.add_argument("query", help="关键词或问题,自然语言即可")
-
-    pn = sub.add_parser(
-        "notify",
-        help="发通知",
-        description=(
-            "给人发通知。要用户在对话里一键拍板,优先用 `cheese ask`(按钮直接回到"
-            "你下一轮);notify 走的是通知面板,适合「人不在这个话题里也得知道」的事。\n"
-            "\n"
-            "通知正文是纯文本渲染:@某人 / <&文件> 这类引用在这里不会变成 chip。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pn.add_argument("--title", required=True, help="一行标题,通知列表里只看得到它")
-    pn.add_argument("--body", default="", help="正文,纯文本渲染")
-    pn.add_argument(
-        "--level",
-        default="light",
-        choices=["silent", "light", "strong"],
-        help="打扰强度:silent=只进列表,light=默认,strong=强提醒(慎用)",
-    )
-    pn.add_argument(
-        "--kind",
-        default="change_alert",
-        help="change_alert=知会一声(默认);decision_request=要人拍板,配 --options",
-    )
-    pn.add_argument(
-        "--to",
-        default=None,
-        help="收件人 handle;不填=发给这个房间名册上的人(不含芝士),"
-        "名册上没有人会报错",
-    )
-    pn.add_argument(
-        "--options",
-        default=None,
-        help="决策选项,用 | 分隔;配 --kind decision_request 才有按钮",
-    )
-
-    pask = sub.add_parser(
-        "ask",
-        help="在对话里问一个带选项的问题（用户点按钮回答）",
-        description=(
-            "在对话里发一个带按钮的问题,用户点一下就是答案,自动带回你下一轮。"
-            "要人拍板时首选它,别让人打字。只在「不同答案会导致做的事不一样」时问——"
-            "有惯例默认值的选择自己定,说一声就行。"
-        ),
-    )
-    pask.add_argument("question", help="问题,一句话问清楚")
-    pask.add_argument(
-        "--option",
-        action="append",
-        required=True,
-        help="一个选项,可重复 2-4 次(少于 2 或多于 4 会被拒)",
-    )
-
-    pmach = sub.add_parser(
-        "machine",
-        help="更换自己的工作机器",
-        description=(
-            "更换你自己的工作机器，后续文件和命令操作使用新机器。"
-            "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。"
-        ),
-    )
-    pmach.add_argument(
-        "profile", choices=MACHINE_PROFILES, help=MACHINE_PROFILE_DESCRIPTION
-    )
-    pmach.add_argument(
-        "--device-id", default=None, help="自托管设备的 id，只有 device 能指定"
-    )
-
-    pnote = sub.add_parser(
-        "note",
-        help="给同一个 handle 的另一条线程留一张便条",
-        description=(
-            "给你自己在这个项目里的另一条线程留一张便条。它直接进那条线程正在跑的"
-            "那一轮，不进时间线。\n"
-            "\n"
-            "收件人只能是同一个 handle 的另一条线程：跟别的 handle 说话只有 chat "
-            "一条路，agent 对 agent 也是（结论 12）。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pnote.add_argument("thread", help="那条线程的 topic id")
-    pnote.add_argument("content", help="便条正文")
-
-    pdeliver = sub.add_parser(
-        "deliver-at",
-        help="请平台在某个时刻把这条投递给你自己",
-        description=(
-            "请平台在某个时刻把这条投递给你自己。到点产生的是一条投递——"
-            "平台不替你想起来该干什么，想起来要设这个闹钟的是你。"
-        ),
-    )
-    pdeliver.add_argument("at", help="ISO-8601 时刻，带时区，如 2026-09-21T14:00:00Z")
-    pdeliver.add_argument("content", help="到点递给你的那句话")
-
-    pa = sub.add_parser(
-        "accept-request",
-        help="提交当前任务的 PR 给验收人",
-        description=(
-            "为一条任务请求人工验收，沿用任务的 PR。"
-            "是否采纳由项目的验收人决定；执行者用此工具递交，不自行合并 PR。"
-        ),
-    )
-    pa.add_argument(
-        "reviewer", nargs="?", help="验收人的 handle；省略时沿用任务上的人选"
-    )
-    pa.add_argument(
-        "reason", nargs="?", default="", help="验收证据和需要对方检查的内容"
-    )
-    pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
-    pa.add_argument(
-        "--artifact",
-        help="这次交付是清单上哪一项产物的新一版，给它的 id（照抄系统提示里的清单）",
-    )
-    pa.add_argument(
-        "--new-artifact",
-        help="这次交付做出了一样清单上还没有的东西，给它起个真名；返回新的 id",
-    )
-    pa.add_argument(
-        "--deliver",
-        help=(
-            "这次交出去的那一份文件（工作目录里的路径），"
-            "平台留一份快照；单份最大 80MB"
-        ),
-    )
-    pa.add_argument(
-        "--deliver-url",
-        help="这次交出去的是一个地址（网站、看板）；只记这个指针",
-    )
-    pa.add_argument("--body", help="改动原因和验证说明")
-    pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
-    pdesc = sub.add_parser(
-        "describe",
-        help="修改当前任务的验收说明及 PR 正文",
-        description="修改当前任务尚未采纳的卡及 PR 的标题或正文。",
-    )
-    pdesc.add_argument("--subject", help="英文 Conventional Commits 标题，最多 72 字符")
-    pdesc.add_argument("--body", help="改动原因和验证说明")
-    pdesc.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
-    pready = sub.add_parser(
-        "ready",
-        help="把当前任务的 PR 标记为可以审阅",
-        description="只把指定任务已有的 draft PR 标记为可评审。",
-    )
-    pready.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
-
-    pt = sub.add_parser(
-        "tell",
-        help="在你派出的一条活上留一句话",
-        description=(
-            "把一句话写在你派出的某条活的时间线上。只有这一个方向:\n"
-            "  房间 → 它派出的活\n"
-            "\n"
-            "这条命令只记录消息，不启动或唤醒执行者。\n"
-            "\n"
-            "长的东西写进实况文档(两边都读得到),这里只写「一条追加要求」。\n"
-            "\n"
-            "对方是谁:活的 id、`<#id>`、或者标题都行(只认你自己派出的活)。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pt.add_argument("target", help="哪条活: id、<#id> 或标题")
-    pt.add_argument("message", help="要说的话")
-
-    pm = sub.add_parser(
-        "milestone",
-        help="钉里程碑",
-        description="把关键节点钉成里程碑。给「以后会被回头对照的节点」用,不是待办清单。",
-    )
-    pm.add_argument("title", help="里程碑标题")
-    pm.add_argument("--due", default=None, help="ISO 日期,如 2026-06-20")
-
-    sub.add_parser(
-        "members",
-        help="列出当前话题成员(名字+handle+角色)",
-        description=(
-            "列出当前话题可点名的成员。点名前先跑一次核对写法——名字和成员表不一致时,"
-            "平台会在现场标红「没能通知到」,而且那条提醒真的没送出去。"
-        ),
-    )
-
-    sub.add_parser(
-        "status",
-        help="平台状态快照:本轮运行状态/验收卡与闸门输出/磁盘与额度水位",
-        description=(
-            "想知道「卡到哪了 / 闸门为什么红」时先跑它,别去轮询原始 API。"
-            "验收卡那一段带闸门的失败输出。"
-        ),
-    )
-
     sub.add_parser(
         "sync-agents",
-        help="把项目 AI 队友写成本会话的分身定义(钩子自动调,一般不用手跑)",
+        help="把项目模型目录写成本会话的分身定义(钩子自动调,一般不用手跑)",
         description=(
-            "从项目 agents 接口读出活跃 AI 队友,在 $CLAUDE_CONFIG_DIR/agents/ 下"
-            "给每个队友写一份 mate-<handle>.md(名字、一句话描述、model=队友绑的模型),"
-            "退休队友对应的 mate-*.md 一并清掉。写在 SessionStart/UserPromptSubmit"
-            " 钩子上自动跑;它只是发现层,任何失败都不打断会话(恒退出 0)。"
+            "从项目 default-model 接口读出模型目录,在 $CLAUDE_CONFIG_DIR/agents/ 下"
+            "给每个可指定模型写一份 model-<id>.md(名字、一句话描述、model=目录 id),"
+            "不再可指定的对应 model-*.md 一并清掉(旧版按队友生成的 mate-*.md 也清)。"
+            "写在 SessionStart/UserPromptSubmit 钩子上自动跑;它只是发现层,任何失败"
+            "都不打断会话(恒退出 0)。"
         ),
     )
 
@@ -2058,18 +2026,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     plib = sub.add_parser(
         "library",
-        help="项目资料库:用户给这个项目的文件",
+        help="项目资料库:把用户给这个项目的一份文件取到这台机器上",
         description=(
             "资料库放的是用户给这个项目的文件,按他给的名字。它是项目一级的——\n"
             "另一个房间上周传的那份,你在这里也拿得到。\n\n"
             "跟着某条消息发来的资料不用再取:消息里给的就是它在这台机器上的\n"
             "绝对路径,照那个路径读。\n"
-            "用户提到一份你手上没有的('上周那份预算表'),先 ls 看叫什么,再 get。\n\n"
+            "用户提到一份你手上没有的('上周那份预算表'),先用 cheese_library_ls\n"
+            "看叫什么,再 get。\n\n"
             "资料库只读:改它没有意义,要改就改出另一份,原件留在原处。"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     libsub = plib.add_subparsers(dest="libcmd", required=True)
-    libsub.add_parser("ls", help="列出资料库里的文件(最近给的在前)")
     plibget = libsub.add_parser(
         "get",
         help=(
@@ -2092,7 +2061,7 @@ def build_parser() -> argparse.ArgumentParser:
             "你显式指定。最后摆的那一样同时是这个房间的当前预览。\n\n"
             "摆出来的东西留在这个房间里。用户想把一份留下来以后再用,自己按"
             "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
-            "accept-request 的 --artifact / --deliver。"
+            "cheese_accept_request 的 artifact / deliver。"
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")
@@ -2154,44 +2123,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="写到哪里(默认覆盖原文件)",
     )
 
-    papi = sub.add_parser(
-        "api",
-        help="原始 API 逃生口(兜底,不推荐):直接打后端,带容器已有鉴权。无参=列可用操作",
-        description=(
-            "原始 API 通道。上面那些 curated 命令覆盖 80% 场景,语义清晰、有校验,"
-            "**优先用它们**;只有当没有对应的 curated 命令时才用 api。\n"
-            "\n"
-            "它仍然走容器已有的鉴权(不是无鉴权后门,后端照样按你的身份授权),"
-            "但校验少、易出错。裸 curl 和翻 session 文件依然是禁止的——"
-            "这个逃生口只是「少校验的原始通道」,不改变鉴权纪律。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    papi.add_argument("method", nargs="?", help="HTTP 方法,如 GET/POST/PUT/DELETE")
-    papi.add_argument("path", nargs="?", help="API 路径,如 /topics/<id>/blocks")
-    papi.add_argument("--data", "-d", default=None, help="请求体(JSON 字符串)")
-    papi.add_argument(
-        "--output",
-        "-o",
-        default=None,
-        metavar="FILE",
-        help=(
-            "把响应体按**字节**写进这个文件,而不是当文本打印。"
-            "下载附件/图片必须用它:不带 -o 的输出会把每个 >0x7f 的字节换成 U+FFFD,"
-            "文件到手是坏的,而且看不出坏在哪"
-        ),
-    )
-
     return p
 
 
 def _sync_agents() -> None:
-    """把项目的活跃 AI 队友写成本会话的 Claude Code 分身定义文件。
+    """把项目的模型目录写成本会话的 Claude Code 分身定义文件。
 
     挂在 SessionStart / UserPromptSubmit 钩子上跑：主 agent 用 Agent 工具按名
-    起队友分身（模型=队友绑的那一个）靠的就是这批文件。它只是发现层 —— 真正
-    的闸在准入（指定了范围外的模型会被拒绝并列出可选）—— 所以任何失败都不
+    起分身（模型=目录里的那一个）靠的就是这批文件。它只是发现层 —— 真正的
+    闸在准入（指定了目录外的模型会被拒绝并列出可选）—— 所以任何失败都不
     许打断会话：`_call` 自己打印原因，这里恒退出 0。
+
+    分身是骨架原生机制，没有平台语义（无身份/席位/记忆）：文件按模型起，
+    不按队友起（2026-09-23 拍板）。
     """
     try:
         _sync_agents_core()
@@ -2205,134 +2149,72 @@ def _sync_agents_core() -> None:
     if not PROJECT:
         return
     res = _call(
-        "GET", f"/projects/{PROJECT}/agents", tolerate=(401, 403, 404), timeout=8
+        "GET",
+        f"/projects/{PROJECT}/default-model",
+        tolerate=(401, 403, 404),
+        timeout=8,
     )
     if res.get("ok") is False:
         return
-    items = (res.get("data") or {}).get("data") or []
+    state = res.get("data") or {}
+    choices = state.get("choices") or []
+    # 项目自己的池：后端直接给（与准入的 resolve_pool 同源）；旧后端没有这个
+    # 字段时退回「默认那一项的供给」。池外的模型主 agent 指定了也跑不起来,
+    # 所以知道池就按池列。实在推不出池（零默认的旧响应）就全列——准入兜底
+    # 会拒掉错池并给出正确的可选清单,比整个发现层空转强。
+    pool = state.get("pool")
+    if not isinstance(pool, str) or not pool:
+        pool = next(
+            (c.get("supply") for c in choices if c.get("default") and c.get("supply")),
+            None,
+        )
     agents_dir = (
         Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "agents"
     )
+    marker = "由 cheese sync-agents 按项目模型目录生成，别手改。"
     wanted: dict[str, str] = {}
-    for item in items:
-        if not item.get("is_active", True):
+    for item in choices:
+        model = item.get("id") or ""
+        if pool is not None and item.get("supply") != pool:
             continue
-        handle = item.get("handle") or ""
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", handle):
+        # CC 的分身名比模型 id 严格：清洗出名字,真 id 由 frontmatter 的
+        # model 带过去,准入认的是它。
+        name = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
             continue
-        conf = item.get("configuration") or {}
-        model = conf.get("model") or ""
-        display = item.get("display_name") or handle
+        label = item.get("label") or model
         # description 就是主 agent 在 Agent 工具的可用清单里读到的那一行 ——
-        # 发现队友、知道它跑哪个模型，全在这一行里,所以要短。
-        desc = f"{display}（模型 {model or '继承主对话'}）"
-        if item.get("type_name"):
-            desc += f" · {item['type_name']}"
+        # 发现模型、知道起哪个分身跑它，全在这一行里,所以要短。
+        desc = f"平台模型目录 · {label}（{model}）"
         content = (
             "---\n"
-            f"name: {handle}\n"
+            f"name: {name}\n"
             f"description: {json.dumps(desc, ensure_ascii=False)}\n"
-            f"model: {model or 'inherit'}\n"
-            "---\n\n" + (conf.get("body") or "").strip() + "\n"
+            f"model: {model}\n"
+            "---\n\n" + marker + "\n"
         )
-        wanted[f"mate-{handle}.md"] = content
+        wanted[f"model-{name}.md"] = content
     agents_dir.mkdir(parents=True, exist_ok=True)
     for name, content in wanted.items():
         path = agents_dir / name
         if not path.exists() or path.read_text(encoding="utf-8") != content:
             path.write_text(content, encoding="utf-8")
-    # 只收自己写出去的那批（前缀是记号），别人放的 agent 文件一个不动。
-    for stale in agents_dir.glob("mate-*.md"):
-        if stale.name not in wanted:
+    # model-*.md 只收带自己记号的（别人手写的同名前缀文件不动）；
+    # mate-*.md 是上一版按队友生成的，全是我们的陈迹，无条件清。
+    for stale in agents_dir.glob("model-*.md"):
+        if stale.name in wanted:
+            continue
+        if marker in stale.read_text(encoding="utf-8", errors="replace"):
             stale.unlink()
+    for stale in agents_dir.glob("mate-*.md"):
+        stale.unlink()
 
 
 def main() -> None:
     parser = build_parser()
     a = parser.parse_args()
 
-    if a.cmd == "chat" and a.chatcmd == "send":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        if (a.content is None) == (a.file is None):
-            raise SystemExit("请提供消息正文或 --file，二选一。")
-        if a.file == "-":
-            content = sys.stdin.read()
-        elif a.file:
-            with open(a.file, encoding="utf-8") as source:
-                content = source.read()
-        else:
-            content = a.content
-        if not content.strip():
-            raise SystemExit("消息不能为空。")
-        request_id = str(a.request_id or uuid.uuid4())
-        print(
-            f"[cheese] request_id={request_id}；重试请带 --request-id {request_id}",
-            file=sys.stderr,
-        )
-        body = {"content": content, "request_id": request_id}
-        if a.reply_to:
-            body["reply_to"] = a.reply_to
-        result = _call("POST", f"/topics/{topic}/messages", body)
-        print(json.dumps(result["data"], ensure_ascii=False))
-    elif a.cmd == "chat":
-        _chat_read(a, parser)
-    elif a.cmd == "doc" and a.doccmd == "set":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        with open(a.file, encoding="utf-8") as f:
-            content = f.read()
-        based_on = _read_doc_version(topic)
-        res = _call(
-            "PUT",
-            f"/topics/{topic}/doc",
-            {"content": content, "author": AUTHOR, "expected_version": based_on},
-            tolerate=(409,),
-        )
-        if res.get("ok") is False:
-            current = (res.get("error") or {}).get("data", {}).get("doc_version")
-            print(
-                f"[cheese] 没写进去：文档现在是第 {current} 版，你这份是照第 "
-                f"{based_on} 版改的。先 cheese doc get 重新读一遍，把别人的改动"
-                "合进你的文件，再 cheese doc set。直接重试会原样被拒。",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        _remember_doc_version(topic, (res.get("data") or {}).get("doc_version", 0))
-        print("已更新实况文档。")
-    elif a.cmd == "doc" and a.doccmd == "get":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        d = _call("GET", f"/topics/{topic}/doc").get("data")
-        # Reading is what earns the right to write: remember the version this
-        # printed, and `doc set` writes against it.
-        _remember_doc_version(topic, (d or {}).get("doc_version", 0))
-        print((d or {}).get("content", "") if d else "")
-    elif a.cmd == "split":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        body = {"title": a.title, "created_by": AUTHOR}
-        if a.reported_by:
-            body["reporter_handle"] = a.reported_by
-        if a.contributor:
-            body["contributor_handles"] = a.contributor
-        if a.brief:
-            body["brief"] = a.brief
-        if a.base_task:
-            body["base_task_id"] = a.base_task
-        # 不写 --reviewer = 用项目默认验收人。同 accept-request：别塞空串，
-        # 「没说」和「说了空的」在后端是两件事。
-        if a.reviewer:
-            body["reviewer_handle"] = a.reviewer
-        r = _call("POST", f"/topics/{topic}/split", body)["data"]
-        worktree = _task_worktree(r["id"])
-        print(
-            f"任务：{r['title']}\nid={r['id']}\n工作目录：{worktree}\n"
-            f"线程标识：{r['thread_label']}\n"
-            f"验收人：{r.get('reviewer_handle') or '待指定'}"
-        )
-        print(
-            "进入工作目录后执行任务。交给原生分身时，把任务简报、此目录和上面那个"
-            "线程标识一起放进它的 prompt：平台从 prompt 上读出标识，分身干的每件事"
-            "才落在这张卡上；不写，这条活看着就是没人做。"
-        )
-    elif a.cmd == "worktree":
+    if a.cmd == "worktree":
         print(_task_worktree(a.task_id))
     elif a.cmd == "recover":
         _recover_task(a.task_id)
@@ -2341,29 +2223,6 @@ def main() -> None:
             _sync_all_tasks()
         else:
             _sync_task(_task_id(a.task))
-    elif a.cmd == "close-task":
-        r = _planned_call("cheese_close_task", a)["data"]
-        print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")
-    elif a.cmd == "lock":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call(
-            "POST",
-            f"/topics/{topic}/lock",
-            {"kind": a.kind, "task_id": _task_id(a.task)},
-        )["data"]
-        if r.get("acquired"):
-            print(f"占住了({a.kind} {a.resource or ''})".rstrip())
-        else:
-            print(f"没占到:{r.get('reason') or '别人占着'}")
-            sys.exit(1)
-    elif a.cmd == "unlock":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call(
-            "POST",
-            f"/topics/{topic}/unlock",
-            {"kind": a.kind, "task_id": _task_id(a.task)},
-        )["data"]
-        print("已归还。" if r.get("released") else "你本来就没占着它。")
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
@@ -2376,35 +2235,11 @@ def main() -> None:
             print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
         else:
             print(f"没有推送：{r.get('reason') or '没有可推的东西'}")
-    elif a.cmd == "decision":
-        _planned_call("cheese_decision", a)
-        print("已记入决策记录。")
-    elif a.cmd == "feedback":
-        r = _planned_call("cheese_feedback_propose", a).get("data") or {}
-        # 卡片由平台渲染,所以这里只说结果。不要再写一句「已提交反馈」——
-        # 那是 SKILL.md 明令避免的旁白,卡本身就是那句话。
-        print(f"已提案(卡 id {r.get('block_id')}),等人按「提交反馈」。")
-    elif a.cmd == "title":
-        r = _planned_call("cheese_title", a).get("data") or {}
-        if a.task:
-            # 房间给它的活起名字。走房间的地址,因为这一轮的 token 是按房间签的,
-            # 直接拿活的 id 当地址会被判成跨话题(403)。
-            print(f"这条活现在叫「{r['title']}」。")
-        else:
-            print(f"话题标题已设为：{a.text}")
     elif a.cmd == "library":
         project = _need("CHEESE_PROJECT", PROJECT)
         # 带上话题:沙箱 token 是为一轮、一个地方铸的,后端要凭它确认这个凭据属于谁。
         where = f"?topic={urllib.parse.quote(_need('CHEESE_TOPIC', TOPIC))}"
-        if a.libcmd == "ls":
-            rows = _call("GET", f"/projects/{project}/library{where}")["data"]["data"]
-            if not rows:
-                print("资料库里还没有文件")
-            for row in rows:
-                size = row.get("bytes") or 0
-                shown = f"{size / 1024:.0f}K" if size >= 1024 else f"{size}B"
-                print(f"{row['path']}\t{shown}")
-        else:
+        if a.libcmd == "get":
             # 默认落在自己 home 下,和随消息发来的那份同一个位置;不落在工作目录
             # ——那是被托管的检出,资料库那一份写进去就是别人仓库里一个未跟踪文件
             # (结论 49)。`Path.home()` 按这个会话自己的 `$HOME` 解,正是执行器
@@ -2420,176 +2255,6 @@ def main() -> None:
                 None,
                 out=out,
             )
-    elif a.cmd == "fetch":
-        # 带上话题:沙箱 token 是带作用域的,后端要凭它确认这个凭据属于谁。
-        # 不带的话每一次调用都会被判成 "Agent credential is invalid or expired"。
-        # Long, because this is the one slow call: the platform tries a ladder
-        # of strategies and the last rung renders the page in a real browser.
-        # The platform bounds every rung, so this only has to outlast them.
-        data = _planned_call("cheese_fetch", a, timeout=240).get("data", {})
-        if not data.get("ok"):
-            # 逐级说清楚怎么失败的。只说"读不到"的话,下次没人知道该改哪一级。
-            print(f"[cheese] 读不到 {a.url}", file=sys.stderr)
-            print(f"[cheese] 各级结果: {data.get('trail', '(无)')}", file=sys.stderr)
-            if data.get("text"):
-                print(
-                    "[cheese] 抓到的残缺内容如下(可能是验证页/登录墙):", file=sys.stderr
-                )
-                print(data["text"][:2000])
-            sys.exit(1)
-        print(data.get("text", ""))
-        via = data.get("rung", "?")
-        note = "答案" if data.get("distilled") else "整页"
-        print(f"\n[cheese] 来源: {via}({note})", file=sys.stderr)
-    elif a.cmd == "remember":
-        # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
-        # (同一个项目里的两个芝士各记各的，跟人一样)。
-        kind = "核心记忆（每轮都在场）" if a.core else "记忆"
-        _planned_call("cheese_remember", a)
-        if a.everyone:
-            print("已写进项目总览的实况文档（所有人和所有芝士看的是同一份）。")
-        elif MEMORY_SCOPE == "personal" and OWNER:
-            print(f"已记入个人{kind}。")
-        else:
-            print(f"已记入项目{kind}。")
-    elif a.cmd == "recall":
-        hits = _planned_call("cheese_recall", a).get("data", {}).get("hits", [])
-        if not hits:
-            # 关键词检索没命中 ≠ 没有这条记忆。说清楚这一点,否则一次空结果就会被
-            # 当成"确认不存在",然后一头撞上那条记忆本来要拦住的坑。
-            print(
-                "没有找到相关记忆。（关键词检索,不是语义检索：换个说法、"
-                "或只用其中一两个关键词再试一次）"
-            )
-        for h in hits:
-            print(f"- {h.get('abstract', '')}")
-    elif a.cmd == "ask":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        opts = [o.strip() for o in a.option if o.strip()]
-        if not 2 <= len(opts) <= 4:
-            print("[cheese] ask 需要 2-4 个 --option", file=sys.stderr)
-            sys.exit(2)
-        _planned_call("cheese_ask", a)
-        print(f"[cheese] 已发出选项问题（{len(opts)} 个选项）")
-
-    elif a.cmd == "notify":
-        # 一条通知落成几行,收件人是谁,由平台按名册算 —— 不填 --to 不等于"所有人":
-        # 到的是这个房间名册上的人,不含芝士,项目里别的房间的人看不到。把它当"所有
-        # 人"转述给人,就是替平台许下一个它没答应的承诺。
-        rows = (_planned_call("cheese_notify", a).get("data") or {}).get("data") or []
-        who = [r.get("target_handle") for r in rows if r.get("target_handle")]
-        if len(who) > 5:
-            print(f"已发送通知给 {'、'.join(who[:5])} 等 {len(who)} 人。")
-        elif who:
-            print(f"已发送通知给 {'、'.join(who)}。")
-        else:
-            print("已发送通知。")
-    elif a.cmd == "machine":
-        r = _planned_call("cheese_machine", a).get("data") or {}
-        if r.get("session"):
-            choice = r["session"]["choice"]
-            print(
-                f"工作机器已设为 {choice['name']}，下次执行操作时使用。旧机器保留，文件不会自动迁移。"
-            )
-        elif r.get("proposal"):
-            print(f"已提请 {r['proposal']['approver']} 点头，等他拍板。")
-        else:
-            print(f"这个房间的算力现在是 {r.get('current')}。")
-    elif a.cmd == "note":
-        # `delivered` 是这条工具的答案本身,不是一个状态码:便条直接进那条线程正在
-        # 跑的那一轮,那边这一刻没在跑就没人接住。把它丢掉、一律打"已递",调用方会
-        # 当作对面已经知道了往下走,而那句话其实掉在地上了。
-        r = _planned_call("cheese_note", a).get("data") or {}
-        if r.get("delivered"):
-            print("便条已递给那条线程。")
-        else:
-            print("那条线程这会儿没有在跑的轮次,便条没人接住。")
-    elif a.cmd == "deliver-at":
-        r = _planned_call("cheese_deliver_at", a).get("data") or {}
-        print(f"到 {r.get('at')} 会把它递给你。")
-    elif a.cmd == "ready":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        task = _task_id(a.task)
-        r = _call("POST", f"/topics/{topic}/tasks/{task}/ready")["data"]
-        if r.get("ready"):
-            print(
-                f"PR #{r['pr_number']} 已从 draft 翻成 ready：{r.get('pr_url') or ''}"
-            )
-        else:
-            print(r.get("reason") or "没有可以翻的 PR。")
-    elif a.cmd == "describe":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        if a.subject is None and a.body is None:
-            print("[cheese] describe 至少要给 --subject 或 --body", file=sys.stderr)
-            sys.exit(2)
-        body = {}
-        if a.subject is not None:
-            body["change_subject"] = a.subject
-        if a.body is not None:
-            body["change_body"] = a.body
-        task = _task_id(a.task)
-        r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card/describe", body)[
-            "data"
-        ]
-        print(
-            f"验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
-            f"{r.get('change_subject') or '（空）'}"
-        )
-    elif a.cmd == "accept-request":
-        topic = _need("CHEESE_TOPIC", TOPIC)
-        payload = {
-            "routing_reason": a.reason,
-            "change_subject": a.subject,
-            "change_body": a.body,
-            "artifact": a.artifact,
-            "new_artifact": a.new_artifact,
-            "deliver": a.deliver,
-            "deliver_url": a.deliver_url,
-        }
-        # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
-        # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
-        # 那句打回文案正是这条命令唯一能帮上忙的地方。
-        if a.reviewer:
-            payload["reviewer_handle"] = a.reviewer
-        task = _task_id(a.task)
-        _sync_task(task)
-        r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
-        art = r.get("artifact") or {}
-        named = art.get("name") or a.new_artifact or a.artifact
-        print(
-            f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}"
-            f"，本次更新《{named}》。"
-        )
-        # 新建的那一次把 id 印出来:往后交付这一项就用它,而这条命令是它第一次
-        # 存在的地方 —— 不印出来,这一轮里没有别的地方读得到。
-        if a.new_artifact and art.get("id"):
-            print(f"这一项的 id 是 {art['id']}，以后交付它用 --artifact {art['id']}。")
-        # 交付物落没落下来当场说一句:字节只在这一刻读得到,没读到就再也读不到了。
-        if a.deliver:
-            print(f"这一版交出去的是 {a.deliver}，已留存。")
-        elif a.deliver_url:
-            print(f"这一版交出去的是 {a.deliver_url}。")
-    elif a.cmd == "tell":
-        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
-        # 由后端校验它确实是这个房间派出的活。
-        data = _planned_call("cheese_tell", a).get("data", {})
-        where = data.get("target_title") or data.get("target_topic_id") or a.target
-        print(
-            f"已写在「{where}」上。**没有人被叫醒**——做这条活的分身在你自己的"
-            "会话里，要它动就直接给它发消息。"
-        )
-    elif a.cmd == "milestone":
-        _planned_call("cheese_milestone", a)
-        print(f"已钉里程碑：{a.title}")
-    elif a.cmd == "members":
-        d = _planned_call("cheese_members", a).get("data", {})
-        rows = d.get("data", d) if isinstance(d, dict) else d
-        for m in rows:
-            h = m.get("member_handle")
-            print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
-    elif a.cmd == "status":
-        d = _planned_call("cheese_status", a).get("data") or {}
-        print(_format_status(d))
     elif a.cmd == "sync-agents":
         _sync_agents()
     elif a.cmd == "serve":
@@ -2605,7 +2270,7 @@ def main() -> None:
             # render as a white frame.
             print(
                 "[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
-                "[cheese] 要给人看结果,用 cheese_show 点名一个文件——网页、图片,"
+                "[cheese] 要给人看结果,用 cheese show 点名一个文件——网页、图片,"
                 "或报告、表格这类文档。",
                 file=sys.stderr,
             )
@@ -2735,23 +2400,6 @@ def main() -> None:
             if len(bad) > 20:
                 print(f"  …… 还有 {len(bad) - 20} 个")
             sys.exit(1)
-    elif a.cmd == "api":
-        if not a.method:
-            _print_api_index()
-            return
-        if not a.path:
-            print(
-                "[cheese] api 需要一个路径,如 cheese api GET /topics/<id>/blocks",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        if a.data is not None:
-            try:
-                json.loads(a.data)  # fail fast on malformed JSON
-            except ValueError as e:
-                print(f"[cheese] --data 不是合法 JSON: {e}", file=sys.stderr)
-                sys.exit(2)
-        _raw_request(a.method, a.path, a.data, a.output)
 
 
 if __name__ == "__main__":

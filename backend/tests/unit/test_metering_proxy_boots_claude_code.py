@@ -240,6 +240,29 @@ def test_a_body_with_no_model_member_is_refused_rather_than_run_as_it_came():
     assert rewrite.missed is True
 
 
+def test_the_rewrite_keeps_what_it_replaced():
+    """分身继承识别靠它:改写发生时被替换掉的原始 model 值要留下来。
+
+    device 启动环境不钉模型,CC 给分身回显的是它自己的内建默认 —— 代理只有
+    在主对话改写现场才能观察到这个名字。haiku 放行不算替换:留下的值是
+    haiku,不是父会话的工作模型。"""
+    rewrite = core.ModelRewrite("kimi-k3")
+    rewrite.feed(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert rewrite.original == "claude-sonnet-5"
+    assert rewrite.replaced is True
+
+    haiku = core.ModelRewrite("kimi-k3", keep_haiku=True)
+    haiku.feed(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert haiku.original == "claude-haiku-4-5"
+    assert haiku.replaced is False
+
+    missed = core.ModelRewrite("kimi-k3")
+    missed.feed(b'{"messages":[]}')
+    missed.feed(b"")
+    assert missed.original is None
+    assert missed.replaced is False
+
+
 def test_nothing_of_a_refused_body_goes_upstream_afterwards():
     """The miss is decided mid-body, and the chunks still arriving from the
     client must not become a request that runs."""

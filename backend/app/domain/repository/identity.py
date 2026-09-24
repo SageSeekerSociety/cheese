@@ -218,7 +218,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
 
     It used to be derived: the batch was taken to be the membership of the tree
     the card delivered. That is wrong whenever a room works across two batches,
-    which is the ordinary case. A task's tree is fixed when `cheese split` runs
+    which is the ordinary case. A task's tree is fixed when `cheese_task` runs
     and records which batch was open THEN; which branch its code goes out on is
     decided when the room files a card. Run that inference over this project's
     own room/task/tree data as of 2026-09-08 and one delivery comes out wrong in

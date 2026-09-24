@@ -11,7 +11,7 @@ from app.domain.agent.harness.prompt import (
     fit_doc_to_budget,
 )
 
-HINT = "用 `cheese doc get` 读全文"
+HINT = "用 `cheese_doc_get` 读全文"
 
 
 def _fit(text: str, budget: int) -> str:
@@ -76,7 +76,7 @@ def test_an_unsectioned_doc_is_truncated_from_the_tail_with_a_note():
 def test_the_topic_doc_note_names_the_full_read_command():
     prompt = build_system_prompt("底稿", "", "## 临时\n" + "长" * 9000, [])
 
-    assert "cheese doc get" in prompt
+    assert "cheese_doc_get" in prompt
 
 
 def test_compressed_docs_leave_the_memory_block_untouched():

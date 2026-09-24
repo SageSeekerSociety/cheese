@@ -166,6 +166,12 @@ if not ADMISSION_URL:
 # connection is finally opened. The client connection is what they share.
 _UPSTREAM_BY_CLIENT: dict[str, str] = {}
 
+# 每个 (project, topic) 的主对话最近一次被改写前体里的 model —— CC 给这个
+# 会话起分身时回显的就是它。推迟路径拿它认「继承」（见 `_write_bound_model`
+# 和 `request`）。一个房间一条主会话，条目数以房间数计；只防极端失控。
+PARENT_MODEL: dict[tuple[str, str], str] = {}
+_PARENT_MODEL_CAP = 10000
+
 # What each client connection PROVED at CONNECT time: (scoped token, claims).
 # The pass-through path needs this because its two halves otherwise contradict
 # each other — relaying a machine's own ccproxy ticket means the request Bearer
@@ -335,6 +341,10 @@ def _write_bound_model(
     rewrite = ModelRewrite(model, keep_haiku=keep_haiku)
     flow.request.headers.pop("content-length", None)
     flow.request.headers["transfer-encoding"] = "chunked"
+    attr = flow.metadata.get("cheese_attr")
+    # keep_haiku 不挡记录：haiku 放行时 rewrite.replaced 是 False，记不下
+    # 东西；订阅池主对话的真模型该记照记。
+    is_main = attr is not None and not flow.metadata.get("cheese_subagent")
 
     def write(chunk: bytes) -> bytes:
         out = rewrite.feed(chunk)
@@ -347,6 +357,20 @@ def _write_bound_model(
                 MODEL_REWRITE_LIMIT,
                 model,
             )
+        if (
+            is_main
+            and rewrite.replaced
+            and isinstance(rewrite.original, str)
+            and not is_haiku_name(rewrite.original)
+        ):
+            # 主对话刚被改写前体里的 model，就是 CC 给这个会话起分身时会回显
+            # 的那个名字。记住它，推迟路径拿它认「继承」，不认就是 2026-09-23
+            # 那个事故：准入拿席位配置去比 CC 的内建默认，永远不等，gateway
+            # 项目的普通分身全被当成范围外指定拒掉。haiku 类是 CLI 自己的后
+            # 台请求（会话标题、路径建议），不是父会话的工作模型，不记。
+            if len(PARENT_MODEL) >= _PARENT_MODEL_CAP:
+                PARENT_MODEL.clear()
+            PARENT_MODEL[attr] = rewrite.original
         return out
 
     flow.request.stream = write
@@ -693,9 +717,16 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         "subagent",
         "workflow",
     }
+    flow.metadata["cheese_subagent"] = is_subagent
 
     selected_model = flow.request.headers.pop("x-cheese-child-model", "")
     child_model = selected_model if is_subagent else ""
+    if child_model and child_model == PARENT_MODEL.get((project_id, topic_id)):
+        # CC 的 hint 头对每个分身都打上它解析出的分身模型:没指定时那个值就
+        # 是父会话(被改写前的)模型 —— 是「继承」不是「指定」。快路把它当显式
+        # 送准入,gateway 项目的普通分身全灭(2026-09-24 实测,昨晚事故换了个
+        # 头)。认出回显,按未指定走,与推迟路的体回显同一个判据。
+        child_model = ""
 
     # A subagent's /v1/messages defers everything from here to the `request`
     # hook: admission honours the model the parent named for this subagent,
@@ -810,6 +841,13 @@ async def request(flow: http.HTTPFlow) -> None:
     if requested and is_haiku_name(requested):
         # CLI 自己的后台请求类(会话标题、路径建议),不是主 agent 的指定:照
         # 旧路走 —— 准入按未指定绑定,改写把它盖成分身默认,与今天逐字节一致。
+        requested = ""
+    if requested and requested == PARENT_MODEL.get((project_id, topic_id)):
+        # 体里的模型 == 主对话被改写前的那个值:这是 CC 的「继承」长相,不是
+        # 主 agent 的指定 —— fork 和不带 model 定义的分身都长这样。device
+        # 启动环境不钉模型(结论 46),CC 回显的是它自己的内建默认,这个名字
+        # 在准入的席位配置里不存在,送上去只会吃到一个张冠李戴的拒绝
+        # (2026-09-23,gateway 项目普通分身全灭 30 分钟)。按未指定处理。
         requested = ""
     verdict = None
     if project_id and ADMISSION_URL:

@@ -66,6 +66,9 @@ export default {
       component: () => import('@/views/account/SudoVerify.vue'),
       meta: {
         title: '验证身份',
+        titleKey: 'account.sudo.title',
+        // Someone signed in, interrupted mid-task: no brand scene (Account.vue).
+        plain: true,
       },
     },
     {

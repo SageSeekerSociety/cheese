@@ -369,7 +369,7 @@ async def list_topic_blocks(
 
     Paging is OPT-IN: with no `limit` this returns the whole timeline, exactly
     as it always has. That default is deliberate — agents read this endpoint to
-    review history (`cheese api GET /topics/{id}/blocks`), and a default window
+    review history (`platform_request GET /topics/{id}/blocks`), and a default window
     would silently truncate them with no way to notice. Callers that DO page get
     `has_more` + `oldest_id` and can walk backwards.
 
@@ -1222,12 +1222,12 @@ async def edit_topic_doc(
     top of one — and false of the turn already in progress, which went on
     working from the version it started with and would then set that version
     back. What gets pushed is the version number and a line about what moved,
-    never the text: the doc is one `cheese doc get` away, and a document
+    never the text: the doc is one `cheese_doc_get` away, and a document
     injected mid-turn displaces the work instead of informing it."""
     # A thread has a doc of its own — its brief, and then how the work is
     # going — and `edit_doc` has always written by place. Only this handler
-    # still refused to name one, so `cheese doc set` 404ed for every 分身 doing
-    # the work while `cheese doc get` right above answered fine.
+    # still refused to name one, so `cheese_doc_set` 404ed for every 分身 doing
+    # the work while `cheese_doc_get` right above answered fine.
     place = await TopicService(db).place_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
     # The token is scoped to the place; the roster is the room's.
@@ -1742,7 +1742,7 @@ async def publish_chat_message(
 async def ask_options(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """芝士 asks an option question IN the chat (cheese ask): a message block
+    """芝士 asks an option question IN the chat (cheese_ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
     the answer comes back as data, never parsed from prose (spec §14.5).
 
@@ -1759,7 +1759,7 @@ async def ask_options(
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
     # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
-    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese ask` 只在 CHEESE_TURN
+    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
     # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
     # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
     # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
@@ -2035,7 +2035,7 @@ async def record_decision(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
+    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese_decision` tool."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     decision = (body.get("decision") or "").strip()
@@ -2160,7 +2160,7 @@ async def record_weekly(
 async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """给这个地方起/改标题 — used by both `cheese title` (AI-generated, naming an
+    """给这个地方起/改标题 — used by both `cheese_title` (AI-generated, naming an
     untitled place) and the frontend sidebar rename UI (dual-use, like doc/split).
 
     Names the THREAD when the id is a thread's. Resolving only rooms did not
@@ -2492,7 +2492,7 @@ async def tell_topic(
     resolver: ActorResolverDep,
 ) -> dict:
     """留话给一条活: write one message onto a thread this room dispatched
-    (`cheese tell`). See `app.domain.topic.relay` for why the comments endpoint
+    (`cheese_tell`). See `app.domain.topic.relay` for why the comments endpoint
     could not be this channel, and why nothing is woken.
 
     `topic_id` is the SENDER — the place whose turn is speaking, which is what

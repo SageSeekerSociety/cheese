@@ -2,54 +2,46 @@
   <div>
     <AccountHeading :title="t('account.resetPassword.title')" />
 
-    <v-alert v-if="myAlert.message" :type="myAlert.type" variant="tonal" density="comfortable" class="mb-6">
-      {{ myAlert.message }}
+    <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
+      {{ error }}
     </v-alert>
 
     <v-form @submit.prevent="submit">
-      <PasswordField
-        id="field-password"
-        v-model="password"
-        autocomplete="new-password"
-        name="password"
-        :label="t('account.field.newPassword')"
-        :hint="t('account.rule.passwordHint')"
-        persistent-hint
-        v-bind="passwordProps"
-        class="mb-2"
-      />
+      <!-- The account's name rides along, hidden, so a password manager files
+           the new password under the right account. -->
+      <input type="text" name="username" autocomplete="username" :value="username" hidden />
 
-      <PasswordField
-        id="field-confirmPassword"
-        v-model="confirmPassword"
-        autocomplete="new-password"
-        name="confirmPassword"
-        :label="t('account.field.confirmPassword')"
-        v-bind="confirmPasswordProps"
-        class="mb-2"
-      />
+      <AccountField :label="t('account.field.newPassword')" input-id="reset-password">
+        <PasswordField
+          id="reset-password"
+          v-model="password"
+          autocomplete="new-password"
+          name="password"
+          :hint="t('account.rule.passwordHint')"
+          persistent-hint
+          v-bind="passwordProps"
+        />
+      </AccountField>
 
-      <v-btn
-        block
-        color="primary"
-        size="large"
-        type="submit"
-        :loading="isSubmitting"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
-      >
+      <AccountField :label="t('account.field.confirmPassword')" input-id="reset-confirm-password">
+        <PasswordField
+          id="reset-confirm-password"
+          v-model="confirmPassword"
+          autocomplete="new-password"
+          name="confirmPassword"
+          v-bind="confirmPasswordProps"
+        />
+      </AccountField>
+
+      <v-btn block color="primary" size="large" type="submit" class="account-submit" :loading="isSubmitting">
         {{ t('account.resetPassword.submit') }}
       </v-btn>
 
-      <v-btn
-        variant="text"
-        color="primary"
-        to="/account/signin"
-        style="text-transform: none; padding: 0; min-width: auto"
-        class="text-decoration-none"
-      >
-        {{ t('account.backToSignIn') }}
-      </v-btn>
+      <p class="account-foot">
+        <router-link to="/account/signin" class="account-link account-link--quiet">
+          {{ t('account.backToSignIn') }}
+        </router-link>
+      </p>
     </v-form>
   </div>
 </template>
@@ -67,6 +59,7 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 
+import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
@@ -86,13 +79,7 @@ const username = computed(() => {
   }
 })
 
-const myAlert = ref<{
-  message: string | undefined
-  type: 'success' | 'info' | 'warning' | 'error' | undefined
-}>({
-  message: '',
-  type: 'error',
-})
+const error = ref('')
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: computed(() =>
@@ -121,8 +108,9 @@ const [confirmPassword, confirmPasswordProps] = defineField('confirmPassword', v
 const router = useRouter()
 
 const submit = handleSubmit(async (value) => {
+  error.value = ''
   if (!username.value) {
-    myAlert.value = { message: t('account.resetPassword.invalidLink'), type: 'error' }
+    error.value = t('account.resetPassword.invalidLink')
     return
   }
   try {
@@ -134,10 +122,7 @@ const submit = handleSubmit(async (value) => {
     const message: SignInNoticeKey = 'passwordReset'
     router.replace({ name: 'SignIn', query: { username: username.value, message } })
   } catch (e) {
-    myAlert.value = {
-      message: requestErrorMessage(e, t('account.resetPassword.failed')),
-      type: 'error',
-    }
+    error.value = requestErrorMessage(e, t('account.resetPassword.failed'))
   }
 })
 </script>

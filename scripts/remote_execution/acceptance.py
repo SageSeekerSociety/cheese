@@ -295,10 +295,8 @@ def case(folder, options):
                     "content": "Published 'literally'\n$(touch forbidden-publication)"
                 },
             },
-            # 平台那一侧只有 `platform_request` 这一个原始入口了：`cheese_api`
-            # 不在 MCP 表上，它是机器上 `cheese` 的一条子命令（结论 21、22），
-            # 跟文件和命令一起活在那台机器上。这一步问的是「会话直接够得到平台
-            # 吗」，`platform_request` 答的就是它。
+            # 这一步问的是「会话直接够得到平台吗」：`platform_request` 是会话侧
+            # 的原始入口，不经过那台机器（结论 63）。
             {
                 "name": "mcp__native__platform_request",
                 "input": {"method": "GET", "path": "/platform-fixture"},
@@ -522,7 +520,7 @@ def case(folder, options):
         if options.mode == "normal":
             isolated = results[-2]
             assert isolated.get("is_error"), isolated
-            assert "cheese split" in json.dumps(isolated), isolated
+            assert "cheese_task" in json.dumps(isolated), isolated
             # `.claude/` itself is the project's mirrored assets; an isolated
             # spawn would have added its worktree beneath it.
             assert not (center / ".claude/worktrees").exists()

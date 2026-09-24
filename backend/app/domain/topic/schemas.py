@@ -121,7 +121,7 @@ class ConclusionIn(BaseModel):
 
 
 class RelayIn(BaseModel):
-    """母子传话 (`cheese tell`): one message across the parent/child edge.
+    """母子传话 (`cheese_tell`): one message across the parent/child edge.
 
     ``target`` is a topic id, a ``<#id>`` reference token, or a title — resolved
     against the sender's parent + direct children only (app.domain.topic.relay).

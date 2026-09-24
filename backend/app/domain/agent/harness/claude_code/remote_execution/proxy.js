@@ -91,7 +91,7 @@ export function register(on) {
     // back to "worktree". Either way the spawn dies on EROFS, and the subagent
     // never exists. A subagent without it already runs its tools remotely.
     if (tool === "Agent" && args.isolation) {
-      return { deny: `Agent isolation "${args.isolation}" is unavailable: the project lives on the work machine, not here. Omit isolation (the subagent's file and shell tools already run on the work machine); for a separate checkout, run \`cheese split\` and give the subagent the directory it returns.` };
+      return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
     if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
       try {

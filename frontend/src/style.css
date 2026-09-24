@@ -190,6 +190,18 @@
      和圆角同一个道理，这两行只在 :root 写一次，不在深色块里重复。 */
   --lh-14-loose: 22px; /* 1.57 — .t-body-readable */
   --lh-15-reading: 24px; /* 1.60 — .t-reading */
+
+  /* ---- Motion ----
+     Four durations and three curves, shared by the whole product (design-system
+     §9.3). Things arrive decelerating and leave accelerating, and leaving is one
+     step faster than arriving. Theme-independent, so written once here. */
+  --dur-press: 100ms; /* the moment something is pressed */
+  --dur-quick: 150ms; /* hover colour; leaving, collapsing */
+  --dur-base: 220ms; /* arriving, expanding; indicators and reorders moving */
+  --dur-slow: 320ms; /* drawers, side panels, a card opening into its detail */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* arriving */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* leaving */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* changing in place */
 }
 
 /* ---------------------------------------------------------------------------

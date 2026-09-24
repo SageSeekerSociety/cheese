@@ -212,6 +212,7 @@ async def create_project(
         team_id=body.team_id,
         external_task_id=body.external_task_id,
         forge_kind=body.forge_kind,
+        intent=body.intent,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -954,7 +955,7 @@ async def _authorized_place(
     """Resolve and authorize the caller-named place, when present, and say
     who is calling — the pool a memory goes to is that caller's.
 
-    A place, not a room: `cheese remember` is run by whoever is doing the work,
+    A place, not a room: `cheese_remember` is run by whoever is doing the work,
     and that is usually a thread. Resolving only rooms answered 404 for the one
     caller this endpoint exists for.
 
@@ -984,7 +985,7 @@ async def _calling_agent(
     """Whose memory this call writes to and reads from.
 
     The AGENT, not the room: a room seats any number of teammates, and the one
-    running `cheese remember` is the one on the token, so its notes go to its
+    running `cheese_remember` is the one on the token, so its notes go to its
     own pool wherever it is working — the same 芝士 moving between rooms keeps
     one pool. A token that names no saved teammate (an older one, a DM's)
     writes as the place's default: the DM's own teammate, else the project's.
@@ -1095,7 +1096,7 @@ async def add_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
+    """记入记忆 — used by the `cheese_remember` tool. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that agent's view of that person, inside this project (结论 8).
     Called without a place, it is the project's own 芝士 writing.
@@ -1217,7 +1218,7 @@ async def search_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记忆检索 — used by the `cheese recall` CLI. Defaults to the pools this
+    """记忆检索 — used by the `cheese_recall` tool. Defaults to the pools this
     turn already reads; with scope="user"+owner it searches this agent's view
     of that one person. This is keyword matching ranked by query coverage, not
     semantic search — related, but not the same thing, which is why the CLI
@@ -1246,7 +1247,7 @@ async def search_memory(
             MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
         )
         return ok({"hits": [h.as_dict() for h in hits]})
-    # `cheese recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
+    # `cheese_recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
     # 不多一条不少。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
     # 却查不到」——而注入那句话的全部作用就是让人来 recall。项目共看的那份状态
     # 不在这里：它是总览的实况文档（结论 7），每一轮本来就整份进提示词。
@@ -1366,7 +1367,7 @@ async def save_forge_attribution(
 
 
 def _default_model_state(project_settings: dict | None) -> dict:
-    from app.domain.agent_instance.configuration import model_choices
+    from app.domain.agent_instance.configuration import model_choices, project_pool
 
     choices = model_choices(project_settings)
     chosen = (project_settings or {}).get("default_model")
@@ -1384,6 +1385,9 @@ def _default_model_state(project_settings: dict | None) -> dict:
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
+        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
+        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
+        "pool": project_pool(project_settings),
         "can_manage": False,  # 由路由层按权限填
     }
 

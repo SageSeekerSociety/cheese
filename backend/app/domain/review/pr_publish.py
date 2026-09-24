@@ -628,7 +628,7 @@ async def _pr_text(
     topic_id: uuid.UUID,
     branch: str,
 ) -> tuple[str, str]:
-    """PR title/body from the card's change summary (`cheese accept-request
+    """PR title/body from the card's change summary (`cheese_accept_request
     --subject/--body`), falling back to the topic title when the card was filed
     without one.
 

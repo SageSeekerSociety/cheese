@@ -1,9 +1,9 @@
 """Room executor transport shared by agent harnesses."""
 
+import base64
 import json
 import logging
 import os
-import re
 import select
 import shlex
 import subprocess
@@ -100,6 +100,95 @@ def _retry_connect(attempt: int, deadline: float) -> bool:
     return True
 
 
+class PlatformHTTPError(RuntimeError):
+    """The backend answered, and not with success. `status` is what a caller
+    branches on (a living doc's 409 is a merge to do, not a failure)."""
+
+    def __init__(self, status: int, body: str):
+        super().__init__(f"Platform HTTP {status}: {body}")
+        self.status = status
+        self.body = body
+
+
+def on_the_machine(invoke, command, request_id, *, timeout_ms=60000):
+    """One command's stdout, from the machine that holds the work.
+
+    The session's own host only sees a forwarded workspace, so a file there (or
+    a push of the work) is reached the way every other project operation is: a
+    command on the executor, through ``invoke`` — the caller's one exit to the
+    machine, which trips the unreachable breaker instead of each call waiting
+    out the executor's read timeout on its own.
+    """
+    receipt = invoke(
+        {"id": request_id, "tool": "Bash"},
+        {"command": command, "timeout": timeout_ms},
+    )
+    if "error" in receipt:
+        raise RuntimeError(receipt["error"])
+    value = receipt.get("value") or {}
+    stdout = value.get("stdout") or ""
+    if value.get("backgroundTaskId"):
+        raise RuntimeError("the command on the machine did not finish")
+    if stdout.startswith("Exit code"):
+        # A command that exits non-zero is not an executor failure; the build
+        # hands back its own error text as stdout, with the exit code on top.
+        raise RuntimeError(stdout.strip())
+    return stdout
+
+
+def stat_file_on_the_machine(invoke, path, request_id):
+    """The file's size on the machine, without walking its bytes across."""
+    stdout = on_the_machine(invoke, f"wc -c < {shlex.quote(path)}", request_id)
+    return int("".join(stdout.split()))
+
+
+def read_file_on_the_machine(invoke, path, request_id):
+    """One file's bytes, from the machine that holds them."""
+    stdout = on_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
+    return base64.b64decode("".join(stdout.split()), validate=True)
+
+
+class PlatformHost:
+    """What a platform tool (`PLATFORM_TOOLS` in `sandbox/cheese`) runs against
+    when the session is not on the machine (结论 63).
+
+    The backend is reached from here, directly — that is why the table is whole
+    while the machine is gone. The two things a tool can need from the machine
+    (a file's bytes, a task's commits pushed) go through ``invoke`` and so share
+    its breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
+    """
+
+    def __init__(self, client, invoke, call_id, doc_versions):
+        self.client = client
+        self.invoke = invoke
+        self.call_id = call_id
+        self.doc_versions = doc_versions
+        self.environ = dict(os.environ)
+
+    def request(self, plan):
+        stdout = self.client.platform_request(plan)["value"]["stdout"]
+        return json.loads(stdout) if stdout else {}
+
+    def read_file(self, path):
+        # The agent spells paths as it was shown them: the session's view of the
+        # workspace, or relative to it.
+        machine = self.client.remote_path(path)
+        workspace = (self.client.config.get("workspace") or "").rstrip("/")
+        if workspace and not machine.startswith("/"):
+            machine = f"{workspace}/{machine}"
+        return read_file_on_the_machine(self.invoke, machine, f"{self.call_id}-read")
+
+    def sync_task(self, task_id):
+        # Pushing can include uploading a backup bundle; the CLI's own ceiling for
+        # that upload is two minutes, the Bash tool's is ten.
+        on_the_machine(
+            self.invoke,
+            "cheese sync --task " + shlex.quote(str(uuid.UUID(task_id))),
+            f"{self.call_id}-sync",
+            timeout_ms=600000,
+        )
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -165,7 +254,7 @@ class RemoteClient:
                 response = connection.getresponse()
                 body = response.read().decode()
                 if not 200 <= response.status < 300:
-                    raise RuntimeError(f"Platform HTTP {response.status}: {body}")
+                    raise PlatformHTTPError(response.status, body)
             except Exception:
                 connection.close()
                 transport.transport.connection = None
@@ -175,7 +264,6 @@ class RemoteClient:
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup
         # independent of HTTP, TLS and proxy discovery imports.
-        import base64
         import http.client
         from urllib.request import getproxies, proxy_bypass
 
@@ -229,24 +317,6 @@ class RemoteClient:
                 self.transport.headers = headers
         self.transport.connection, self.transport.path = connection, path
         return connection, path
-
-    def publish_chat(self, payload, args):
-        if payload["tool"] != "Bash" or not isinstance(args.get("command"), str):
-            return None
-        command = args["command"].strip()
-        # Only literal inline messages: files and shell syntax belong to the device.
-        match = re.fullmatch(r"cheese\s+chat\s+send\s+(['\"])([^'\"\n]*)\1", command)
-        if not match or any(char in command for char in ";&|<>`$\\\r"):
-            return None
-        content = match[2]
-        if not content.strip() or content.startswith("-"):
-            return None
-        if not all(
-            os.environ.get(name)
-            for name in ("CHEESE_API", "CHEESE_TOPIC", "CHEESE_TOKEN")
-        ):
-            return None
-        return self.publish_message(payload, {"content": content})
 
     def publish_message(self, payload, args):
         with self.publication_lock:
@@ -369,7 +439,6 @@ class RemoteClient:
         if self.config.get("lease_path") and method in {
             "invoke",
             "mcp",
-            "cli",
             "project_tools",
         }:
             # Only a requested execution operation acquires hands. Bootstrap,

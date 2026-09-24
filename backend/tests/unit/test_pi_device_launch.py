@@ -492,7 +492,7 @@ def test_the_platform_extension_reaches_the_room(tmp_path):
         # Built here, from the CLI this launch just installed on this machine.
         spec = json.loads((entry.parent / "platform.json").read_text(encoding="utf-8"))
         assert not spec["unavailable"], spec["unavailable"]
-        assert {"cheese_chat_send", "cheese_doc_get"} <= {
+        assert {"chat_send", "cheese_doc_get", "cheese_worktree"} <= {
             tool["name"] for tool in spec["tools"]
         }
         assert spec["socket"] == _socket_of(state)

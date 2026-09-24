@@ -9,7 +9,7 @@ sensing side (settings.json's deny list) and the starting side (the argv's
 # AskUserQuestion ("向用户提问") is the one that bites: the interactive `claude`
 # draws its option picker INSIDE the screen, where no user can ever reach it —
 # the model then waits for a keypress that will never come and the turn hangs
-# until the wedged-turn safety net kills it. `cheese ask` is the platform's
+# until the wedged-turn safety net kills it. `cheese_ask` is the platform's
 # equivalent (real buttons in the conversation, the answer arrives on the next
 # turn), so the native tool is denied outright rather than left as a trap.
 PLATFORM_MANAGED_TOOLS = [

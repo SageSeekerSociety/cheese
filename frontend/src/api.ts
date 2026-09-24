@@ -653,6 +653,7 @@ export function createProject(
   teamId?: number,
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
+  intent?: string,
   agentName?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
@@ -665,6 +666,8 @@ export function createProject(
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
       forge_kind: forgeKind,
+      // 建项目时问的那一句「你打算做什么」。空串就是没答，服务端不写任何东西。
+      intent,
       agent_name: agentName,
     }),
   })
@@ -1681,7 +1684,7 @@ export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
 }
 
-// 选项问题 (cheese ask): one-click answer.
+// 选项问题 (cheese_ask): one-click answer.
 export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
     method: 'POST',

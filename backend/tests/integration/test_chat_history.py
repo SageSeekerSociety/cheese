@@ -1,7 +1,6 @@
 """Read complete conversation records without triggering agent work."""
 
 import asyncio
-import io
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -10,7 +9,7 @@ import pytest
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.integration.conftest import session_auth_headers
-from tests.unit.test_cheese_cli import _load
+from tests.unit.test_platform_tool_runner import cheese as tools
 
 
 def _room(client):
@@ -263,7 +262,7 @@ def test_invalid_query_is_rejected(client, params):
     assert client.get(f"/topics/{room}/history", params=params).status_code == 400
 
 
-def test_cli_reads_replies_through_the_real_route(client, monkeypatch, capsys):
+def test_the_replies_tool_reads_through_the_real_route(client):
     project, room = _room(client)
     parent, child = uuid.uuid4(), uuid.uuid4()
     _seed(
@@ -283,21 +282,22 @@ def test_cli_reads_replies_through_the_real_route(client, monkeypatch, capsys):
         ],
     )
     client.post(f"/blocks/{child}/reactions", json={"emoji": "👍", "author": "alice"})
-    cli = _load()
-    monkeypatch.setattr(cli, "TOPIC", room)
-    monkeypatch.setattr(cli, "API", "http://testserver")
 
-    def local_http(request, timeout):
-        response = client.get(request.full_url, headers=dict(request.header_items()))
-        assert response.status_code == 200, response.text
-        return io.BytesIO(response.content)
+    class Host:
+        """The session host, with this app as its backend."""
 
-    monkeypatch.setattr(cli.urllib.request, "urlopen", local_http)
-    monkeypatch.setattr(
-        cli.sys, "argv", ["cheese", "chat", "replies", str(parent), "--json"]
+        environ = {"CHEESE_TOPIC": room, "CHEESE_PROJECT": project}
+        doc_versions: dict = {}
+
+        def request(self, plan):
+            response = client.request(plan["method"], plan["path"])
+            assert response.status_code == 200, response.text
+            return response.json()
+
+    said = tools.run_platform_tool(
+        "cheese_chat_replies", {"message_id": str(parent), "json": True}, Host()
     )
-    cli.main()
-    result = json.loads(capsys.readouterr().out)
+    result = json.loads(said)
     assert result["reply_to"]["id"] == str(parent)
     reply = result["data"][0]
     assert reply["content"] == "uploads/spec.pdf"

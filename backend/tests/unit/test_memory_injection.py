@@ -118,14 +118,14 @@ def test_the_prompt_names_the_pool_it_did_not_bring():
 
     assert "记住这条" in prompt
     assert "9" in prompt
-    assert "cheese recall" in prompt
+    assert "cheese_recall" in prompt
 
 
 def test_no_notice_when_nothing_was_left_out():
     prompt = build_system_prompt("base", "", None, ["记住这条"])
 
     assert "记住这条" in prompt
-    assert "cheese recall" not in prompt
+    assert "cheese_recall" not in prompt
 
 
 def test_core_overflow_gets_its_own_warning():

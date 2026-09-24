@@ -655,15 +655,16 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     return False
 
 
-# A `cheese <sub>` command → the action card 芝士 files for it at the end of the
-# turn (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is
-# the job of the API handler that changed it (`announce_stale`), which knows the
-# change happened whoever called it.
-_CHEESE_RESOURCE = {
-    "decision": "decision",
-    "split": "topics",
-    "milestone": "milestone",
-    "notify": "notify",
+# A platform tool → the action card 芝士 files for it at the end of the turn
+# (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is the
+# job of the API handler that changed it (`announce_stale`), which knows the
+# change happened whoever called it. Keyed by the tool's short name
+# (`mcp__native__cheese_decision` → `cheese_decision`).
+_TOOL_ACTION = {
+    "cheese_decision": "decision",
+    "cheese_task": "topics",
+    "cheese_milestone": "milestone",
+    "cheese_notify": "notify",
 }
 
 
@@ -853,11 +854,6 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
         return None
 
 
-def _cheese_resource(command: str) -> str | None:
-    """Which action card a Bash `cheese <sub>` command files, else None."""
-    return _CHEESE_RESOURCE.get(cheese_subcommand(command))
-
-
 # Open (non-final) accept-card statuses, worth telling the agent about at turn
 # start — a card in one of these states usually implies "there is follow-up
 # work or a wait the agent should know it's in".
@@ -1011,7 +1007,7 @@ _SPECIAL_MENTIONS = frozenset({MENTION_ALL, MENTION_HERE})
 _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 
 # A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
-# it via `cheese title` (titles are AI-generated, never deterministically derived
+# it via `cheese_title` (titles are AI-generated, never deterministically derived
 # from human input or the agent's output — see CLAUDE.md).
 PLACEHOLDER_TITLE = "新话题"
 
@@ -2603,8 +2599,8 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
                     if state is not None and event.call_id:
                         state.steps[event.call_id] = uuid.UUID(payload["id"])
-                if name in SHELL_TOOLS and state is not None:
-                    resource = _cheese_resource(str(args.get("command", "")))
+                if state is not None:
+                    resource = _TOOL_ACTION.get(name)
                     if resource is not None and resource not in state.actions:
                         state.actions.append(resource)
         elif isinstance(event, AgentStepFailed):
@@ -5356,7 +5352,7 @@ class ChatService:
         )
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
-        # In a private chat, `cheese remember` targets the owner's personal memory
+        # In a private chat, `cheese_remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(
             project_id,
@@ -5653,9 +5649,9 @@ class ChatService:
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
-            "用 cheese 把 做了什么/定了什么/谁负责/下一步 设为本话题实况文档；"
-            "如果这是个关键节点就用 cheese 钉成里程碑；"
-            "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
+            "用 cheese_doc_set 把 做了什么/定了什么/谁负责/下一步 设为本话题实况文档；"
+            "如果这是个关键节点就用 cheese_milestone 钉成里程碑；"
+            "需要分派的待办用 cheese_notify 通知到人。\n\n---\n" + text
         )
         provider = self._compute.platform_work(compute_id)
         runtime = runtime_for(provider)
@@ -5766,7 +5762,7 @@ class ChatService:
         prompt = (
             "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
             "判断和理由（决策日志：看了什么、该催谁/该拆什么/有什么风险），"
-            "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
+            "然后只对真正需要的事用 cheese_notify 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
         provider = self._compute.platform_work(compute_id)
@@ -5854,7 +5850,7 @@ class ChatService:
                 fit_doc_to_budget(
                     overview_doc.strip(),
                     OVERVIEW_DOC_CHAR_BUDGET,
-                    full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+                    full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
                 )
                 if overview_doc.strip()
                 else "（暂无）"

@@ -192,14 +192,3 @@ export type OAuthBindUserResponse = {
 }
 
 // OAuth 绑定连接响应类型
-export interface OAuthConnection {
-  id: number
-  providerId: string
-  providerName: string
-  providerUserId: string
-  connectedAt: string
-}
-
-export type GetOAuthConnectionsResponse = {
-  connections: OAuthConnection[]
-}

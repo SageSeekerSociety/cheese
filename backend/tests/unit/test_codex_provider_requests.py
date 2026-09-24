@@ -12,7 +12,8 @@ import pytest
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.events import Assembler
-from app.domain.agent.harness.codex.runner import Runner, socket_path
+from app.domain.agent.harness.codex.runner import Runner
+from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from tests.support.harness_prompts import event_prompts, system_prompt
 

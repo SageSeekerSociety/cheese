@@ -1,239 +1,148 @@
 <template>
   <div>
-    <!-- 标题和用户信息结合区域 -->
-    <div class="mb-12">
-      <div class="d-flex align-center mb-4">
-        <v-avatar size="48" color="primary" class="me-4">
-          <span class="text-h6">{{ oauthState ? getInitials(oauthState.userInfo.name) : '' }}</span>
-        </v-avatar>
-        <div>
-          <h1 class="text-h3 font-weight-light mb-1" style="color: var(--ink); line-height: 1.2">
-            欢迎，{{ oauthState?.userInfo.name || '用户' }}
-          </h1>
-          <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
-            您已通过 {{ providerDisplayName }} 授权，请选择如何继续
-          </p>
-        </div>
-      </div>
-      <div v-if="oauthState?.userInfo.email || oauthState?.userInfo.preferredUsername" class="ml-16">
-        <p class="text-body-2" style="color: var(--faint)">
-          {{ oauthState.userInfo.email || oauthState.userInfo.preferredUsername }}
-        </p>
-      </div>
-    </div>
+    <v-progress-linear v-if="loading" indeterminate color="primary" height="2" />
 
-    <!-- Loading State -->
-    <div v-if="loading" class="text-center py-8">
-      <v-progress-circular indeterminate color="primary"></v-progress-circular>
-      <div class="text-body-2 mt-4 text-medium-emphasis">正在获取账户信息...</div>
-    </div>
+    <template v-else-if="oauthState">
+      <AccountHeading
+        :title="t('account.oauth.complete.title', { name: oauthState.userInfo.name || oauthState.suggestedNickname })"
+        :lede="t('account.oauth.complete.lede', { provider: providerName })"
+      />
 
-    <!-- Main Content -->
-    <div v-else-if="oauthState">
-      <!-- 选项选择 - 并排卡片 -->
-      <div class="mb-8">
-        <div class="d-flex flex-column flex-sm-row gap-4">
-          <!-- 创建新账户 -->
-          <v-card
-            variant="outlined"
-            :class="{ 'selected-card': selectedOption === 'create' }"
-            class="flex-1 option-card"
-            @click="selectedOption = 'create'"
-          >
-            <v-card-text class="text-center pa-6">
-              <v-icon size="32" color="primary" class="mb-3">mdi-account-plus</v-icon>
-              <div class="text-subtitle-1 font-weight-medium mb-2">创建新账户</div>
-              <div class="text-body-2 text-medium-emphasis">使用当前信息创建新账户</div>
-            </v-card-text>
-          </v-card>
+      <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-6">
+        {{ error }}
+      </v-alert>
 
-          <!-- 绑定现有账户 -->
-          <v-card
-            variant="outlined"
-            :class="{ 'selected-card': selectedOption === 'bind' }"
-            class="flex-1 option-card"
-            @click="selectedOption = 'bind'"
-          >
-            <v-card-text class="text-center pa-6">
-              <v-icon size="32" color="primary" class="mb-3">mdi-link-variant</v-icon>
-              <div class="text-subtitle-1 font-weight-medium mb-2">绑定现有账户</div>
-              <div class="text-body-2 text-medium-emphasis">绑定到已有的账户</div>
-            </v-card-text>
-          </v-card>
-        </div>
-      </div>
+      <v-btn-toggle
+        v-model="selectedOption"
+        mandatory
+        divided
+        variant="outlined"
+        color="on-surface"
+        class="oauth-choice"
+      >
+        <v-btn value="create">{{ t('account.oauth.complete.create') }}</v-btn>
+        <v-btn value="bind">{{ t('account.oauth.complete.bind') }}</v-btn>
+      </v-btn-toggle>
 
-      <!-- 创建账户表单 -->
-      <div v-if="selectedOption === 'create'">
-        <v-form ref="createFormRef" @submit.prevent="handleCreateAccount">
-          <div class="mb-4">
+      <transition name="account-page" mode="out-in">
+        <v-form
+          v-if="selectedOption === 'create'"
+          key="create"
+          ref="createFormRef"
+          @submit.prevent="handleCreateAccount"
+        >
+          <AccountField :label="t('account.field.username')" input-id="oauth-create-username">
             <v-text-field
-              id="field-createUsername"
+              id="oauth-create-username"
               v-model="createUsername"
               autocomplete="username"
               name="createUsername"
-              label="用户名"
-              variant="outlined"
               :rules="usernameRules"
-              class="mb-4"
-              hint="4-32个字符，可包含字母、数字、下划线、连字符"
+              :hint="t('account.rule.username')"
               persistent-hint
             />
+          </AccountField>
 
+          <AccountField :label="t('account.field.displayName')" input-id="oauth-create-nickname">
             <v-text-field
-              id="field-createNickname"
+              id="oauth-create-nickname"
               v-model="createNickname"
               autocomplete="nickname"
               name="createNickname"
-              label="昵称"
-              variant="outlined"
               :rules="nicknameRules"
-              class="mb-4"
-              hint="1-50个字符，显示名称"
-              persistent-hint
             />
+          </AccountField>
 
+          <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="oauth-create-invite">
             <v-text-field
-              v-if="requireInviteCode"
-              id="field-createInviteCode"
+              id="oauth-create-invite"
               v-model="createInviteCode"
               autocomplete="off"
               name="createInviteCode"
-              :label="t('account.invitationCode')"
-              variant="outlined"
               :rules="inviteCodeRules"
-              class="mb-4"
             />
+          </AccountField>
 
-            <!-- 密码选项 -->
-            <div class="mb-4">
-              <v-checkbox v-model="setPassword" density="compact" hide-details>
-                <template #label>
-                  <span class="text-body-2" style="color: var(--muted)">为账户设置密码（推荐）</span>
-                </template>
-              </v-checkbox>
-              <p class="text-body-2 mt-2" style="color: var(--faint)">
-                设置密码后可以使用用户名密码登录，不设置则只能通过第三方登录
-              </p>
-            </div>
+          <v-checkbox v-model="setPassword" density="compact" hide-details class="oauth-set-password">
+            <template #label>
+              <span class="oauth-set-password__label">{{ t('account.oauth.complete.setPassword') }}</span>
+            </template>
+          </v-checkbox>
+          <p class="account-hint">{{ t('account.oauth.complete.setPasswordHint') }}</p>
 
-            <!-- 密码输入字段 -->
-            <div v-if="setPassword" class="mb-4">
-              <v-text-field
-                id="field-createPassword"
+          <template v-if="setPassword">
+            <AccountField :label="t('account.field.password')" input-id="oauth-create-password">
+              <PasswordField
+                id="oauth-create-password"
                 v-model="createPassword"
                 autocomplete="new-password"
                 name="createPassword"
-                label="密码"
-                type="password"
-                variant="outlined"
                 :rules="newPasswordRules"
-                class="mb-4"
-                hint="至少8个字符"
+                :hint="t('account.rule.passwordHint')"
                 persistent-hint
               />
+            </AccountField>
 
-              <v-text-field
-                id="field-confirmPassword"
+            <AccountField :label="t('account.field.confirmPassword')" input-id="oauth-create-confirm">
+              <PasswordField
+                id="oauth-create-confirm"
                 v-model="confirmPassword"
                 autocomplete="new-password"
                 name="confirmPassword"
-                label="确认密码"
-                type="password"
-                variant="outlined"
                 :rules="confirmPasswordRules"
-                hint="请再次输入密码"
-                persistent-hint
               />
-            </div>
-          </div>
+            </AccountField>
+          </template>
 
-          <LegalConsent ref="consentRef" action-label="同意并创建账号" class="mb-4" />
+          <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
 
           <v-btn
             type="submit"
             block
             color="primary"
             size="large"
+            class="account-submit"
             :loading="creating"
             :disabled="!registrationConfigReady"
-            style="text-transform: none; font-weight: 500; height: 48px"
-            class="mb-4"
           >
-            创建账户
+            {{ t('account.signUp.submit') }}
           </v-btn>
         </v-form>
-      </div>
 
-      <!-- 绑定账户表单 -->
-      <div v-if="selectedOption === 'bind'">
-        <v-form ref="bindFormRef" @submit.prevent="handleBindAccount">
-          <div class="mb-4">
+        <v-form v-else key="bind" ref="bindFormRef" @submit.prevent="handleBindAccount">
+          <AccountField :label="t('account.field.username')" input-id="oauth-bind-username">
             <v-text-field
-              id="field-bindUsername"
+              id="oauth-bind-username"
               v-model="bindUsername"
               autocomplete="username"
               name="bindUsername"
-              label="用户名"
-              variant="outlined"
               :rules="bindUsernameRules"
-              class="mb-4"
             />
+          </AccountField>
 
-            <v-text-field
-              id="field-bindPassword"
+          <AccountField :label="t('account.field.password')" input-id="oauth-bind-password">
+            <PasswordField
+              id="oauth-bind-password"
               v-model="bindPassword"
               autocomplete="current-password"
               name="bindPassword"
-              label="密码"
-              type="password"
-              variant="outlined"
-              :rules="passwordRules"
+              :rules="bindPasswordRules"
             />
-          </div>
+          </AccountField>
 
-          <v-btn
-            type="submit"
-            block
-            color="primary"
-            size="large"
-            :loading="binding"
-            style="text-transform: none; font-weight: 500; height: 48px"
-            class="mb-4"
-          >
-            绑定账户
+          <v-btn type="submit" block color="primary" size="large" class="account-submit" :loading="binding">
+            {{ t('account.oauth.complete.bindSubmit') }}
           </v-btn>
         </v-form>
-      </div>
+      </transition>
+    </template>
 
-      <!-- 错误提示 -->
-      <div v-if="error" class="mb-6">
-        <v-alert type="error" variant="tonal" density="comfortable">
-          {{ error }}
-        </v-alert>
-      </div>
-
-      <!-- 底部链接 -->
-      <p class="text-body-2 text-center" style="color: var(--muted)">
-        遇到问题？<v-btn
-          variant="text"
-          color="primary"
-          to="/help"
-          size="small"
-          style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
-          class="text-decoration-none ml-1"
-          >联系支持</v-btn
-        >
-      </p>
-    </div>
-
-    <!-- Error State -->
-    <div v-else class="text-center py-8">
-      <v-icon size="64" color="error" class="mb-4">mdi-alert-circle-outline</v-icon>
-      <h2 class="text-h6 mb-2">无法获取账户信息</h2>
-      <p class="text-body-2 text-medium-emphasis mb-6">{{ error || '状态令牌无效或已过期' }}</p>
-      <v-btn color="primary" variant="outlined" :to="{ name: 'SignIn' }" style="text-transform: none"> 返回登录 </v-btn>
-    </div>
+    <template v-else>
+      <AccountHeading :title="t('account.oauth.complete.unavailable')" :lede="error" />
+      <v-btn block color="primary" size="large" :to="{ name: 'SignIn' }" class="account-submit">
+        {{ t('account.backToSignIn') }}
+      </v-btn>
+    </template>
   </div>
 </template>
 
@@ -245,7 +154,12 @@ import { useRoute } from 'vue-router'
 
 import { REGEX_PASSWORD, REGEX_USERNAME } from '@/utils/form'
 
+import { oauthProviderName } from './oauthProvider'
+
+import AccountField from '@/components/account/AccountField.vue'
+import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
+import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -278,55 +192,31 @@ const createFormRef = ref()
 const consentRef = ref<InstanceType<typeof LegalConsent> | null>(null)
 const bindFormRef = ref()
 
-// Validation rules
+// Validation rules — the same ones the sign-up form states.
 const usernameRules = [
-  (v: string) => !!v || '请输入用户名',
-  (v: string) => REGEX_USERNAME.test(v) || '用户名格式不正确',
+  (v: string) => !!v || t('account.rule.usernameRequired'),
+  (v: string) => REGEX_USERNAME.test(v) || t('account.rule.username'),
 ]
 
 // Binding names an account that already exists, so only presence is checked.
-const bindUsernameRules = [(v: string) => !!v || '请输入用户名']
+const bindUsernameRules = [(v: string) => !!v || t('account.rule.usernameRequired')]
+const bindPasswordRules = [(v: string) => !!v || t('account.rule.passwordRequired')]
 
 const nicknameRules = [
-  (v: string) => !!v || '请输入昵称',
-  (v: string) => (v.length >= 1 && v.length <= 50) || '昵称长度应为1-50个字符',
+  (v: string) => !!v || t('account.rule.displayNameRequired'),
+  (v: string) => /^[a-zA-Z0-9_\u4e00-\u9fa5]{1,50}$/.test(v) || t('account.rule.displayName'),
 ]
 
 const inviteCodeRules = [(v: string) => !!v?.trim() || t('account.enterAnInvitationCode')]
 
-const passwordRules = [(v: string) => !!v || '请输入密码', (v: string) => v.length >= 8 || '密码长度应至少8个字符']
-
-const newPasswordRules = [
-  ...passwordRules,
-  (v: string) => REGEX_PASSWORD.test(v) || t('account.yourPasswordMustContainALetterA'),
-]
+const newPasswordRules = [(v: string) => REGEX_PASSWORD.test(v) || t('account.rule.passwordInvalid')]
 
 const confirmPasswordRules = [
-  (v: string) => !!v || '请确认密码',
-  (v: string) => v === createPassword.value || '两次输入的密码不一致',
+  (v: string) => !!v || t('account.rule.confirmPasswordRequired'),
+  (v: string) => v === createPassword.value || t('account.rule.passwordsDoNotMatch'),
 ]
 
-// Computed
-const providerDisplayName = computed(() => {
-  if (!oauthState.value) return ''
-  const providerMap: Record<string, string> = {
-    github: 'GitHub',
-    google: 'Google',
-    ruc: '微人大认证',
-    microsoft: 'Microsoft',
-  }
-  return providerMap[oauthState.value.providerId] || oauthState.value.providerId
-})
-
-// Methods
-const getInitials = (name: string) => {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-}
+const providerName = computed(() => (oauthState.value ? oauthProviderName(oauthState.value.providerId) : ''))
 
 const handleCreateAccount = async () => {
   if (!createFormRef.value) return
@@ -359,9 +249,8 @@ const handleCreateAccount = async () => {
 
     // 直接提交表单，后端会重定向到成功或错误页面
     UserApi.createUserFromOAuth(requestData)
-  } catch (err: any) {
-    console.error('创建账户失败:', err)
-    error.value = '创建账户失败，请重试'
+  } catch {
+    error.value = t('account.oauth.error.creationFailed')
     creating.value = false
   }
 }
@@ -382,9 +271,8 @@ const handleBindAccount = async () => {
       username: bindUsername.value,
       password: bindPassword.value,
     })
-  } catch (err: any) {
-    console.error('绑定账户失败:', err)
-    error.value = '绑定账户失败，请检查用户名和密码'
+  } catch {
+    error.value = t('account.oauth.error.bindingFailed')
     binding.value = false
   }
 }
@@ -393,7 +281,7 @@ const loadOAuthState = async () => {
   const stateToken = route.query.stateToken as string
 
   if (!stateToken) {
-    error.value = '缺少状态令牌'
+    error.value = t('account.oauth.error.sessionExpired')
     loading.value = false
     return
   }
@@ -405,9 +293,8 @@ const loadOAuthState = async () => {
     // Pre-fill form fields with suggested values
     createUsername.value = response.data.suggestedUsername
     createNickname.value = response.data.suggestedNickname
-  } catch (err: any) {
-    console.error('获取OAuth状态失败:', err)
-    error.value = err.response?.data?.message || '无法获取OAuth状态信息'
+  } catch (err) {
+    error.value = requestErrorMessage(err, t('account.oauth.error.sessionExpired'))
   } finally {
     loading.value = false
   }
@@ -430,24 +317,27 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.option-card {
-  cursor: pointer;
-  transition:
-    border-color 0.12s ease,
-    background-color 0.12s ease;
-  min-height: 140px;
+.oauth-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  height: 40px;
+  margin-bottom: 24px;
+  border-color: var(--line-2);
 }
 
-.option-card:hover {
-  border-color: rgb(var(--v-theme-primary));
+.oauth-choice :deep(.v-btn--active) {
+  color: var(--ink);
+  background: var(--fill-2);
 }
 
-.selected-card {
-  border-color: rgb(var(--v-theme-primary)) !important;
-  background-color: rgba(var(--v-theme-primary), 0.04);
+.oauth-choice :deep(.v-btn--active .v-btn__overlay) {
+  opacity: 0;
 }
 
-.gap-4 {
-  gap: 16px;
+.oauth-set-password__label {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
 }
 </style>

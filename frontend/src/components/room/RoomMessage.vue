@@ -159,7 +159,7 @@ function renderPlain(text: string): string {
         <button type="button" class="outbox-act" @click="emit('retry')">重试</button>
         <button type="button" class="outbox-act" @click="emit('drop')">删除</button>
       </div>
-      <!-- 选项问题 (cheese ask): one-click answer buttons; answered
+      <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
          state shows the pick + who made it (everyone sees it). -->
       <div v-if="askOptions(block)" class="ask-row">
         <template v-if="!askAnswered(block)">
@@ -499,7 +499,7 @@ function renderPlain(text: string): string {
 .rx-pick:hover {
   background: var(--fill);
 }
-/* 选项问题 buttons (cheese ask): quiet outlined pills, amber on hover. */
+/* 选项问题 buttons (cheese_ask): quiet outlined pills, amber on hover. */
 .ask-row {
   display: flex;
   flex-wrap: wrap;

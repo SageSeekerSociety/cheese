@@ -5,13 +5,7 @@
       <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
         {{ error }}
       </v-alert>
-      <v-btn
-        block
-        color="primary"
-        size="large"
-        to="/account/signin"
-        style="text-transform: none; font-weight: 500; height: 48px"
-      >
+      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
       </v-btn>
     </template>
@@ -35,6 +29,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { rememberSignIn } from './lastSignIn'
 import { oauthProviderName } from './oauthProvider'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
@@ -78,10 +73,8 @@ onMounted(async () => {
         : t('account.oauth.success.signedIn', { provider: providerName.value })
     )
 
-    // 延迟跳转到主页
-    setTimeout(() => {
-      router.replace(takeOAuthRedirect())
-    }, 1500)
+    if (linked !== 'true' && provider) rememberSignIn(`oauth:${provider}`)
+    router.replace(takeOAuthRedirect())
   } catch (err) {
     processing.value = false
     error.value = t('account.oauth.success.failed')

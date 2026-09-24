@@ -7,7 +7,7 @@
 回填会把存量行冻结在导入那一刻的默认值上。
 
 Revision ID: b3a91c7e52f0
-Revises: 7c2e5d1a9b40
+Revises: 9c4e7a1b6d20
 """
 
 import sqlalchemy as sa
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b3a91c7e52f0"
-down_revision = "7c2e5d1a9b40"
+down_revision = "9c4e7a1b6d20"
 branch_labels = None
 depends_on = None
 

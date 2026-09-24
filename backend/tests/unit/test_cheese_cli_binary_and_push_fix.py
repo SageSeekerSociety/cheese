@@ -1,10 +1,9 @@
-"""两个新的 CLI 能力：二进制下载，和明确要求的重推。
+"""两个 CLI 能力：二进制下载，和明确要求的重推。
 
-`cheese api` used to decode every response as text. That is right for JSON and
-silently destructive for anything else: `decode(errors="replace")` maps each
-byte above 0x7f to U+FFFD, so a PNG comes back with its own signature mangled
-and nothing says so — the file simply does not open. Attachments were always
-reachable over that channel; only the printing was lossy.
+A download (a library file, a task backup) that decoded its response as text
+would be silently destroyed: `decode(errors="replace")` maps each byte above
+0x7f to U+FFFD, so a PNG comes back with its own signature mangled and nothing
+says so — the file simply does not open.
 
 `cheese push-fix` is the intentional half of the pair whose accidental half —
 a snapshot on every CI poll tick — was removed. See
@@ -45,7 +44,7 @@ class _Response:
 _PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4
 
 
-def test_api_writes_the_response_verbatim_as_bytes(monkeypatch, tmp_path, capsys):
+def test_a_download_is_written_verbatim_as_bytes(monkeypatch, tmp_path, capsys):
     cli = _load()
     monkeypatch.setattr(
         cli.urllib.request, "urlopen", lambda *_a, **_k: _Response(_PNG)
@@ -58,7 +57,7 @@ def test_api_writes_the_response_verbatim_as_bytes(monkeypatch, tmp_path, capsys
     assert "out.png" in capsys.readouterr().out
 
 
-def test_api_without_an_output_file_still_prints_text(monkeypatch, capsys):
+def test_a_request_without_an_output_file_prints_text(monkeypatch, capsys):
     cli = _load()
     body = json.dumps({"code": 200}).encode()
     monkeypatch.setattr(
@@ -68,24 +67,6 @@ def test_api_without_an_output_file_still_prints_text(monkeypatch, capsys):
     cli._raw_request("GET", "/topics/x/blocks", None)
 
     assert '"code": 200' in capsys.readouterr().out
-
-
-def test_api_output_flag_reaches_the_request(monkeypatch, tmp_path):
-    cli = _load()
-    captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        cli,
-        "_raw_request",
-        lambda m, p, d, o=None: captured.update(method=m, path=p, data=d, out=o),
-    )
-    target = str(tmp_path / "f.bin")
-    monkeypatch.setattr(
-        cli.sys,
-        "argv",
-        ["cheese", "api", "GET", "/topics/x/attachments/raw", "-o", target],
-    )
-    cli.main()
-    assert captured["out"] == target
 
 
 def test_push_fix_reports_where_it_pushed(monkeypatch, capsys):

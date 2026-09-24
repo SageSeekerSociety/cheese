@@ -29,7 +29,10 @@ if __package__:
     from app.domain.agent.executor_transport import (
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        PlatformHost,
         RemoteClient,
+        read_file_on_the_machine,
+        stat_file_on_the_machine,
     )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
@@ -38,7 +41,10 @@ else:
     from executor_transport import (
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        PlatformHost,
         RemoteClient,
+        read_file_on_the_machine,
+        stat_file_on_the_machine,
     )
 
 PINNED_VERSION = "2.1.277"
@@ -60,14 +66,14 @@ REMOTE_CONTROLS = {
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese doc set and publish artifacts "
+    "Save finished documents through cheese_doc_set and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
 
 
 def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.hooks_settings 的同款）：队友分身定义随会话启动
+    """发现层（session_launch.hooks_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
@@ -342,6 +348,11 @@ def prepare(
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        # Off, and not `auto`: model traffic may be routed by the metering proxy
+        # to Anthropic-compatible gateways (MiMo, Kimi, GLM, DeepSeek via
+        # LiteLLM) that do not support tool search's `tool_reference` /
+        # `defer_loading`. `auto` would switch deferral on only once a room's
+        # MCP definitions pass 10% of the window, and then fail there.
         "ENABLE_TOOL_SEARCH": "false",
         "CHEESE_EXECUTION_CONFIG": str(target_path),
     }
@@ -533,11 +544,6 @@ def shell(target_path, command):
     }
     if command in commands:
         os.execvp("sh", ["sh", "-c", command])
-    local_chat = _local_chat_send_argv(command)
-    if local_chat is not None:
-        result = _publish_chat_locally(local_chat)
-        if result is not None:
-            return result
     client = RemoteClient(target)
     command = command.replace(
         target["central_config"] + "/skills/", target["workspace"] + "/.claude/skills/"
@@ -569,119 +575,6 @@ def shell(target_path, command):
             sys.stderr.write(task["stderr"])
             return task["exit_code"] if task["exit_code"] is not None else 1
         time.sleep(0.1)
-
-
-def _local_chat_send_argv(command):
-    """Return argv for the safe, direct platform publication fast path.
-
-    ``cheese chat send`` is a platform action whose credentials are already in
-    the central session environment. Only a standalone invocation is eligible;
-    shell operators and expansions stay on the remote executor so this cannot
-    turn an appended command into a central-host escape.
-    """
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    try:
-        words = list(lexer)
-    except ValueError:
-        return None
-    if len(words) < 3 or words[:3] != ["cheese", "chat", "send"]:
-        return None
-    if any(token in {";", "&&", "||", "|", ">", ">>", "<", "<<"} for token in words):
-        return None
-    # These expansions are meaningful only to a shell. Running the CLI
-    # directly must preserve quoted message text and never reinterpret them.
-    quote = None
-    escaped = False
-    for _, char in enumerate(command):
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if quote is None and char in "'\"":
-            quote = char
-            continue
-        if quote is not None and char == quote:
-            quote = None
-            continue
-        if quote is None and (char in ";&|<>`\n$" or char == "\r"):
-            return None
-    if quote is not None or escaped:
-        return None
-    return words
-
-
-def _publish_chat_locally(argv):
-    """Publish an inline chat message using the session's scoped credentials.
-
-    File-backed messages remain remote because their path belongs to the
-    executor workspace. Returning ``None`` asks ``shell`` to use its normal
-    remote path for unsupported or incomplete local inputs.
-    """
-    if "--help" in argv or "--file" in argv:
-        return None
-    content = None
-    reply_to = None
-    request_id = None
-    index = 3
-    while index < len(argv):
-        value = argv[index]
-        if value in ("--reply-to", "--request-id"):
-            if index + 1 >= len(argv):
-                return None
-            if value == "--reply-to":
-                reply_to = argv[index + 1]
-            else:
-                request_id = argv[index + 1]
-            index += 2
-            continue
-        if value.startswith("-") or content is not None:
-            return None
-        content = value
-        index += 1
-    api = os.environ.get("CHEESE_API", "").rstrip("/")
-    token = os.environ.get("CHEESE_TOKEN", "")
-    topic = os.environ.get("CHEESE_TOPIC", "")
-    if not content or not content.strip() or not api or not token or not topic:
-        return None
-    try:
-        publication_id = str(uuid.UUID(request_id)) if request_id else str(uuid.uuid4())
-    except (ValueError, AttributeError):
-        return None
-    body = {"content": content, "request_id": publication_id}
-    if reply_to:
-        body["reply_to"] = reply_to
-    import urllib.error
-    import urllib.request
-
-    request = urllib.request.Request(
-        f"{api}/topics/{topic}/messages",
-        data=json.dumps(body).encode(),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Cheese-Token": token,
-            **(
-                {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
-                if os.environ.get("CHEESE_TURN")
-                else {}
-            ),
-        },
-    )
-    print(
-        f"[cheese] request_id={publication_id}；重试请带 --request-id {publication_id}",
-        file=sys.stderr,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            result = json.load(response)
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        print(f"[cheese] POST /topics/{topic}/messages 出错: {exc}", file=sys.stderr)
-        return 1
-    print(json.dumps(result["data"], ensure_ascii=False))
-    return 0
 
 
 def _publish_spooled_hook(command, payload):
@@ -807,44 +700,6 @@ def send_user_file_body(raw):
     reads it off `path`, so this and the room's table cannot drift.
     """
     return {"content_b64": base64.b64encode(raw).decode("ascii")}
-
-
-def _from_the_machine(invoke, command, request_id):
-    """One command's stdout, from the machine that holds the file.
-
-    The transport's own host only sees a forwarded workspace, so a private
-    container's file (or one over the plugin's read cap) is reached the same way
-    every other project file is: a command on the executor, through
-    `invoke_on_the_machine` — the one exit that trips the unreachable breaker
-    instead of each call waiting out the executor's read timeout on its own.
-    """
-    receipt = invoke(
-        {"id": request_id, "tool": "Bash"},
-        {"command": command, "timeout": 60000},
-    )
-    if "error" in receipt:
-        raise RuntimeError(receipt["error"])
-    value = receipt.get("value") or {}
-    stdout = value.get("stdout") or ""
-    if value.get("backgroundTaskId"):
-        raise RuntimeError("reading the file did not finish")
-    if stdout.startswith("Exit code"):
-        # A command that exits non-zero is not an executor failure; the build
-        # hands back its own error text as stdout, with the exit code on top.
-        raise RuntimeError(stdout.strip())
-    return stdout
-
-
-def stat_file_on_the_machine(invoke, path, request_id):
-    """The file's size on the machine, without walking its bytes across."""
-    stdout = _from_the_machine(invoke, f"wc -c < {shlex.quote(path)}", request_id)
-    return int("".join(stdout.split()))
-
-
-def read_file_on_the_machine(invoke, path, request_id):
-    """One file's bytes, from the machine that holds them."""
-    stdout = _from_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
-    return base64.b64decode("".join(stdout.split()), validate=True)
 
 
 def deliver_send_user_file(client, config, payload, args, invoke):
@@ -1014,7 +869,9 @@ def transport(config, target_path):
     # 命令调用会一个接一个各撞一次。第一次撞上之后，余下的当场答同一句话：机器够不
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
-    # 平台工具不看这个闸：它们从会话直接打后端，本来就不经过这台机器。
+    # 平台工具从会话直接打后端，不经过这台机器；只有要机器上一份东西的那两样
+    # （`cheese_doc_set` 读文件、`cheese_accept_request` 推提交）走这个出口，于是
+    # 也吃这个闸：当场说够不着，而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
     # 一次 502 之后机器回来了，而闸没有第二个开关。
@@ -1059,6 +916,20 @@ def transport(config, target_path):
             raise
         unreachable_since[0] = None
         return receipt
+
+    # 读到的是哪一版实况文档，写回时要出示（`sandbox/cheese` 的 `_doc_get`）。
+    # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
+    doc_versions: dict[str, int] = {}
+
+    def platform_tool(tool, args, call_id):
+        host = PlatformHost(client, invoke_on_the_machine, call_id, doc_versions)
+        try:
+            text = cheese.run_platform_tool(tool, args, host)
+        except MachineOutOfReach:
+            return {"error": MACHINE_OUT_OF_REACH}
+        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+            return {"error": str(exc)}
+        return {"value": {"stdout": text, "stderr": ""}}
 
     def handle(request):
         try:
@@ -1276,20 +1147,16 @@ def transport(config, target_path):
                         receipt = deliver_send_user_file(
                             client, config, payload, args, invoke_on_the_machine
                         )
+                    elif tool.startswith("cheese_"):
+                        receipt = platform_tool(tool, args, payload["id"])
                     else:
                         receipt = (
                             client.platform_request(args)
                             if tool == "platform_request"
-                            else client.platform_request(
-                                cheese.request_plan(tool, args, dict(os.environ))
-                            )
-                            if tool.startswith("cheese_")
                             else client.publish_message(payload, args)
                             if tool == "chat_send"
-                            else client.publish_chat(payload, args)
+                            else invoke_on_the_machine(payload, args)
                         )
-                        if receipt is None:
-                            receipt = invoke_on_the_machine(payload, args)
                     if "error" in receipt:
                         outcome = {"deny": receipt["error"]}
                     else:

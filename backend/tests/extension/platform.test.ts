@@ -43,23 +43,20 @@ describe("平台工具", () => {
     );
   });
 
-  it("chat_send 和 cheese_chat_send 都在，而且跑的是同一条命令", async () => {
-    // The room's system prompt says `chat_send` on every turn; the CLI catalog
-    // can only call the command what it is. Serving one of the two names is the
-    // instruction working for one teammate and failing for the other.
+  it("chat_send 以提示里的名字注册，调用送到 runner 的就是这个名字", async () => {
+    // The room's system prompt says `chat_send` on every turn, and the catalog
+    // carries the platform's tool under that name — one name, one tool.
     const socket = await runner(() => ({
       result: { status: 0, stdout: "sent", stderr: "" },
     }));
     const { pi } = await load({ socket: socket.address });
 
-    for (const name of ["chat_send", "cheese_chat_send"]) {
-      const answer = await pi.call(name, { content: "第一版好了" }, { cwd: "/work" });
-      assert.match(answer.content[0].text, /sent/);
-    }
+    const answer = await pi.call("chat_send", { content: "第一版好了" }, { cwd: "/work" });
+    assert.match(answer.content[0].text, /sent/);
+    assert.ok(!pi.tools.has("cheese_chat_send"), "no second name for the same tool");
     assert.deepEqual(
       socket.asked.map((request) => request.params.tool),
-      ["cheese_chat_send", "cheese_chat_send"],
-      "the alias has to run the command, not a command named after itself",
+      ["chat_send"],
     );
     assert.equal(socket.asked[0].params.cwd, "/work", "the checkout, not the runner's cwd");
     socket.close();
