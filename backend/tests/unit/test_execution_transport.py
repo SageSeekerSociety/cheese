@@ -572,6 +572,7 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
     assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
     assert [(tool, command.split()[0]) for _, tool, command in commands] == [
         ("Bash", "wc"),
+        ("Bash", "wc"),
         ("Bash", "base64"),
     ]
 
@@ -580,6 +581,38 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
 
     with pytest.raises(RuntimeError, match="machine is out of reach"):
         central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+
+
+def test_machine_file_read_past_single_bash_output_limit():
+    content = b"a" * 22304
+    commands = []
+
+    def invoke(payload, args):
+        command = args["command"]
+        commands.append(command)
+        if command.startswith("wc"):
+            return {"value": {"stdout": f"{len(content)}\n"}}
+        if command.startswith("dd"):
+            index = int(command.split("skip=", 1)[1].split()[0])
+            chunk = content[index * 16384 : (index + 1) * 16384]
+            return {"value": {"stdout": base64.b64encode(chunk).decode()}}
+        raise AssertionError(f"Whole-file output would be truncated: {command}")
+
+    assert central.read_file_on_the_machine(invoke, "/work/doc.md", "doc") == content
+    assert len([command for command in commands if command.startswith("dd")]) == 2
+
+
+def test_machine_file_read_rejects_a_silently_short_chunk():
+    def invoke(payload, args):
+        command = args["command"]
+        if command.startswith("wc"):
+            return {"value": {"stdout": "22304\n"}}
+        index = int(command.split("skip=", 1)[1].split()[0])
+        length = 16384 if index == 0 else 5919
+        return {"value": {"stdout": base64.b64encode(b"a" * length).decode()}}
+
+    with pytest.raises(RuntimeError, match="changed or its read was truncated"):
+        central.read_file_on_the_machine(invoke, "/work/doc.md", "doc")
 
 
 def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(

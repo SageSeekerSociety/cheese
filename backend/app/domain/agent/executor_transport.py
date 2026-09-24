@@ -1,6 +1,7 @@
 """Room executor transport shared by agent harnesses."""
 
 import base64
+import binascii
 import json
 import logging
 import os
@@ -143,9 +144,28 @@ def stat_file_on_the_machine(invoke, path, request_id):
 
 
 def read_file_on_the_machine(invoke, path, request_id):
-    """One file's bytes, from the machine that holds them."""
-    stdout = on_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
-    return base64.b64decode("".join(stdout.split()), validate=True)
+    """Read a file without overflowing the Bash tool's stdout limit."""
+    size = stat_file_on_the_machine(invoke, path, f"{request_id}-stat")
+    chunk_size = 16 * 1024
+    chunks = []
+    for index in range((size + chunk_size - 1) // chunk_size):
+        if size <= chunk_size:
+            command = f"base64 < {shlex.quote(path)}"
+        else:
+            command = (
+                f"dd if={shlex.quote(path)} bs={chunk_size} skip={index} "
+                "count=1 2>/dev/null | base64"
+            )
+        stdout = on_the_machine(invoke, command, f"{request_id}-chunk-{index}")
+        try:
+            chunk = base64.b64decode("".join(stdout.split()), validate=True)
+        except binascii.Error as exc:
+            raise RuntimeError("Machine file read returned incomplete data") from exc
+        expected = min(chunk_size, size - index * chunk_size)
+        if len(chunk) != expected:
+            raise RuntimeError("Machine file changed or its read was truncated")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class PlatformHost:
