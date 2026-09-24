@@ -1592,6 +1592,37 @@ def test_a_foreign_listener_on_the_recorded_port_is_never_adopted(tmp_path):
             _kill_helper(home)
 
 
+def test_a_live_pid_that_does_not_hold_the_recorded_port_is_not_adopted(tmp_path):
+    """After a reboot the recorded pid can name some unrelated process, and the
+    recorded port can be held by another room's helper. A live pid, a matching
+    stamp and an answering port are all true then, and none of them makes that
+    listener this room's. Adoption asks whether the pid holds the port."""
+    import socket
+
+    home, _up_script = _tunnel_up_home(tmp_path)
+    cheese = home / ".cheese"
+    unrelated = subprocess.Popen(["sleep", "30"])
+    try:
+        with socket.socket() as foreign:
+            foreign.bind(("127.0.0.1", 0))
+            foreign.listen(8)
+            taken = foreign.getsockname()[1]
+            (cheese / "cheese-tunnel.pid").write_text(f"{unrelated.pid}\n")
+            (cheese / "cheese-tunnel.stamp").write_text(f"{_stamp_of(home)}\n")
+            (cheese / "cheese-tunnel.port").write_text(f"{taken}\n")
+
+            port = _up(home)
+
+            assert port != taken, "adopted a listener the recorded pid does not hold"
+            assert _helper_pid(home) != unrelated.pid
+            assert _listening(port)
+            assert _listening(taken)
+    finally:
+        _kill_helper(home)
+        unrelated.kill()
+        unrelated.wait()
+
+
 def test_a_helper_it_already_started_is_adopted_on_its_port(tmp_path):
     """Runs before every agent start or claim. Restarting a working helper each
     time would reset every in-flight connection, and would move the port out from

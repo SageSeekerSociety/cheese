@@ -1001,11 +1001,11 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
 def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
     of thing that passes review and is wrong on the box. Run it for real: against
-    the port a room's port file records, it must say `up` while this test is
-    listening there and `down` once nothing holds it. A port is used rather than
-    the helper's pid because ConnectionRefused — what `claude` reports — is
-    precisely 'nothing is listening', and a lingering helper that still holds the
-    port is not this bug."""
+    the port a room's port file records, it must say `up` while the recorded
+    helper pid (this test) is listening there, `down` once nothing holds it, and
+    `down` when the port is held by a process other than the recorded helper —
+    the listener another room's helper becomes once the kernel hands it a dead
+    helper's port."""
     import socket
 
     if not os.access("/proc/net/tcp", os.R_OK):
@@ -1014,22 +1014,30 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
         pytest.skip("IPv6 is unavailable on this platform")
     family = socket.AF_INET6 if host == "::1" else socket.AF_INET
     port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    pid_file = port_file.with_name("cheese-tunnel.pid")
     port_file.parent.mkdir(parents=True)
 
-    def verdict(port: int) -> str:
+    def verdict(port: int, helper: int) -> str:
         port_file.write_text(f"{port}\n")
+        pid_file.write_text(f"{helper}\n")
         return _tunnel_probe(tmp_path)
 
-    with socket.socket(family) as live:
-        live.bind((host, 0))
-        live.listen(1)
-        listening = live.getsockname()[1]
-        assert verdict(listening) == "up"
+    stranger = subprocess.Popen(["sleep", "30"])
+    try:
+        with socket.socket(family) as live:
+            live.bind((host, 0))
+            live.listen(1)
+            listening = live.getsockname()[1]
+            assert verdict(listening, os.getpid()) == "up"
+            assert verdict(listening, stranger.pid) == "down"
+    finally:
+        stranger.kill()
+        stranger.wait()
 
     with socket.socket(family) as probe:  # bound, then released → nothing listening
         probe.bind((host, 0))
         free = probe.getsockname()[1]
-    assert verdict(free) == "down"
+    assert verdict(free, os.getpid()) == "down"
 
 
 def _tunnel_probe(machine_home: Path) -> str:
@@ -1058,6 +1066,16 @@ def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, conte
         port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
         port_file.parent.mkdir(parents=True)
         port_file.write_text(content)
+
+    assert _tunnel_probe(tmp_path) == "unknown"
+
+
+def test_a_room_without_a_recorded_helper_pid_is_unknown_not_down(tmp_path):
+    """Whose socket the port is can only be told from the pid the helper was
+    started as. Without that record the probe has no evidence either way."""
+    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file.parent.mkdir(parents=True)
+    port_file.write_text("40000\n")
 
     assert _tunnel_probe(tmp_path) == "unknown"
 

@@ -88,7 +88,8 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # Adopt-if-alive for the same reason the drainer does: a screen is reused across
 # turns, and restarting a working helper each time would reset every in-flight
 # connection. Adoption needs all four: the recorded pid alive, the stamp
-# matching the helper on disk, the port file present, and that port listening.
+# matching the helper on disk, the port file present, and that pid holding the
+# LISTEN socket on that port.
 # A pid that resolves proves only that SOME process holds that number — after a
 # reboot, or on a box that has burnt through the pid space, that is a
 # coincidence, and adopting on it leaves the port dead for the life of the
@@ -106,18 +107,39 @@ PIDF="$HOME/.cheese/cheese-tunnel.pid"
 STAMPF="$HOME/.cheese/cheese-tunnel.stamp"
 PORTF="$HOME/.cheese/cheese-tunnel.port"
 LOG="$HOME/.cheese/cheese-tunnel.log"
-# Is anything answering on this port? python3 rather than bash's /dev/tcp for
-# the same reason the readiness wait below uses it: /bin/sh is dash on the
-# machine images and dash has no /dev/tcp.
-tunnel_listening() {
-  python3 - "$1" <<'PROBEPY'
-import socket, sys
+# Does pid $1 itself hold the LISTEN socket on port $2? Something answering there
+# is not enough: after this room's helper died, the kernel may have handed its
+# port to another room's helper. Linux answers from /proc; elsewhere lsof does.
+# With neither, nothing is adopted and a helper of our own is started.
+tunnel_owned() {
+  python3 - "$1" "$2" <<'PROBEPY'
+import os, subprocess, sys
 
-try:
-    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.5).close()
-except OSError:
+pid, port = sys.argv[1], int(sys.argv[2])
+if os.path.isdir("/proc/%s" % pid) and os.path.exists("/proc/net/tcp"):
+    inodes = set()
+    for fd in os.listdir("/proc/%s/fd" % pid):
+        target = os.readlink("/proc/%s/fd/%s" % (pid, fd))
+        if target.startswith("socket:["):
+            inodes.add(target[len("socket:["):-1])
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        if not os.path.exists(table):
+            continue
+        with open(table) as handle:
+            for line in handle.readlines()[1:]:
+                cols = line.split()
+                local_port = int(cols[1].rsplit(":", 1)[1], 16)
+                if cols[3] == "0A" and local_port == port and cols[9] in inodes:
+                    raise SystemExit(0)
     raise SystemExit(1)
-raise SystemExit(0)
+try:
+    held = subprocess.run(
+        ["lsof", "-nP", "-a", "-p", pid, "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"],
+        capture_output=True, text=True, timeout=5,
+    ).stdout.split()
+except (OSError, subprocess.TimeoutExpired):
+    held = []
+raise SystemExit(0 if pid in held else 1)
 PROBEPY
 }
 # Adopt a live helper ONLY if it is running the helper we just wrote. The
@@ -131,11 +153,11 @@ PORT="$(cat "$PORTF" 2>/dev/null || true)"
 case "$PORT" in ''|*[!0-9]*) PORT="" ;; esac
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
   if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && [ -n "$PORT" ] \\
-    && tunnel_listening "$PORT"; then
+    && tunnel_owned "$PID" "$PORT" 2>/dev/null; then
     printf '%s\\n' "$PORT"
     exit 0
   fi
-  # Different code, or a pid that is alive without its port being served:
+  # Different code, or a pid that is alive without holding its port:
   # retire it. In-flight turns see one connection reset, which claude retries;
   # a permanently stale helper does not heal at all.
   kill "$PID" 2>/dev/null || true
