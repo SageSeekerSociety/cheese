@@ -157,7 +157,15 @@ const LEGACY_VERB: Record<string, string> = {
 // translated at DISPLAY time via the full toolLabels table — so a verb missing
 // from the table at write time is never frozen untranslated. Rows without meta
 // (pre-meta data) fall back to the baked content text.
+// 前端报错不是一次工具调用：正文是一整句「前端报错（页面地址）」，没有「动词\n参数」
+// 那道换行。原样当动词，整句就被塞进定宽、不折行的动词列，圆点单独占一行、字从右边
+// 溢出去。动词就是「前端报错」，参数是报错本身，和别的步骤同一个形状。
+function frontendError(b: Block): boolean {
+  return b.meta?.event_type === 'frontend_error'
+}
+
 export function eventVerb(b: Block): string {
+  if (frontendError(b)) return '前端报错'
   // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
@@ -166,6 +174,11 @@ export function eventVerb(b: Block): string {
 }
 
 export function eventArg(b: Block): string {
+  if (frontendError(b)) {
+    const stack = typeof b.meta?.stack === 'string' ? b.meta.stack : ''
+    const page = typeof b.meta?.page === 'string' ? b.meta.page : ''
+    return stack.split('\n')[0].trim() || page
+  }
   if (b.meta?.tool) return b.meta.arg ?? ''
   const nl = b.content.indexOf('\n')
   return nl >= 0 ? b.content.slice(nl + 1).trim() : ''

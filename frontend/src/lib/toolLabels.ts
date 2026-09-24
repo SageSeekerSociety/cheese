@@ -78,7 +78,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
-  cheese_show: '摆出一份东西',
+  cheese_show: '展示文件',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
   cheese_feedback_propose: '提交反馈提案',
@@ -105,7 +105,7 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[short] ?? short
 }
 
-// ---- 现场圆点分级: platform action (amber) vs plain work (neutral) ----
+// ---- 现场圆点分级: platform action (solid) vs plain work (faint) ----
 // Deterministic by construction — never inferred from natural language.
 
 // Structured event payload persisted on kind=event blocks (backend meta).

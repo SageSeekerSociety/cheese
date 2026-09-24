@@ -186,6 +186,13 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，
+// 落在等宽字体上会掉到别的字体、字距被拉开。路径和命令照旧等宽。
+const CJK = /[\u3400-\u9fff\uf900-\ufaff]/
+function argIsProse(b: Block): boolean {
+  return CJK.test(eventArg(b))
+}
+
 // 摊开这一行之后显示的那一份：参数原文，一个字都没剪。没有第二份时摊开的仍是
 // 这一行本身 —— 面板窄到把它省略掉时，展开是唯一能看全的办法。
 function eventDetail(b: Block): string {
@@ -194,7 +201,7 @@ function eventDetail(b: Block): string {
 function eventError(b: Block): string {
   return b.meta?.error ?? ''
 }
-// 圆点分级: amber = platform action, neutral = plain work (structured fields
+// 圆点分级: solid = platform action, faint = plain work (structured fields
 // only — never guessed from the content text).
 function eventPlatform(b: Block): boolean {
   return isPlatformEvent(b.meta, b.refs)
@@ -269,7 +276,10 @@ function isLive(index: number): boolean {
                 v-if="eventArg(b)"
                 type="button"
                 class="site-act__argtext"
-                :class="{ 'site-act__argtext--full': expandedSite.has(b.id) }"
+                :class="{
+                  'site-act__argtext--full': expandedSite.has(b.id),
+                  'site-act__argtext--prose': argIsProse(b),
+                }"
                 data-testid="site-act-arg"
                 :title="eventArg(b)"
                 @click="toggleSiteEntry(b.id)"
@@ -371,9 +381,10 @@ function isLive(index: number): boolean {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+/* 「3 步 · 2 分钟」里有中文，不走等宽：中文没有等宽字形，会掉到别的字体上。数字
+   靠 tabular-nums 对齐就够了。 */
 .turn__meta {
   margin-left: auto;
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .turn__live {
@@ -450,10 +461,7 @@ function isLive(index: number): boolean {
   opacity: 1;
 }
 /* 平台动作是这一轮的产出（交出一份成果、写文档、递验收卡），不该和 ls 长得
-   一样。 */
-.site-act--platform {
-  background: var(--accent-wash);
-}
+   一样——靠墨色和字重拉开，不靠琥珀：这一栏里没有主操作。 */
 /* 挂了的一步：圆点换成危险色。动词和参数照旧 —— 这一行说的还是它做了什么，
    变的只是它有没有做成。 */
 .site-act--failed .site-act__dot {
@@ -477,8 +485,7 @@ function isLive(index: number): boolean {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* 圆点分级: neutral = plain work (read/search/run), amber = platform action
-   (cheese tool / cheese CLI / doc edit). */
+/* 圆点分级：淡 = 普通的读、搜、跑；实 = 平台动作（cheese 工具、写文档）。 */
 .site-act__dot {
   flex: 0 0 auto;
   width: 5px;
@@ -489,7 +496,7 @@ function isLive(index: number): boolean {
   transform: translateY(-3px);
 }
 .site-act__dot--platform {
-  background: var(--accent);
+  background: var(--ink);
 }
 /* 4em = 四个汉字，绝大多数动词正好这么宽，参数因此对齐成一列。更长的那几个
    （平台动作）自己把这一行的参数推开，而它们本来就该显眼。 */
@@ -502,13 +509,16 @@ function isLive(index: number): boolean {
   white-space: nowrap;
 }
 .site-act--platform .site-act__verb {
-  color: var(--accent-ink);
+  color: var(--ink);
+  font-weight: 600;
 }
 /* 截断而不是折行：一条几百字符的命令折下来能占掉半屏，而这一列的用处是扫。
    点开这一行换成参数原文，整条摊开，不再截第二次。
    是个 button 而不是带 click 的 span：摊开是一个真的操作，键盘要够得着它。 */
+/* 起始宽度是 0，不是内容宽：这一行是可折行的 flex，按内容宽起算的话，一条长参数
+   量出来比剩下的空间宽，就整段掉到动词下面一行去，而不是在这一行里截断。 */
 .site-act__argtext {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -531,7 +541,10 @@ function isLive(index: number): boolean {
   word-break: break-word;
 }
 .site-act--platform .site-act__argtext {
-  color: var(--accent-ink);
+  color: var(--ink);
+}
+.site-act__argtext--prose {
+  font-family: var(--font-sans);
 }
 /* 时间悬停才出现：二十个同样的 20:28 占着最右边的强位置，却不说明任何事，这一
    轮的时间写在组头上。位置照留，不然一行会在鼠标划过时改变宽度。 */
@@ -548,7 +561,7 @@ function isLive(index: number): boolean {
    source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
 .site-msg__raw {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
