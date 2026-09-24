@@ -21,7 +21,9 @@ StateToken = Callable[..., str]
 @pytest.fixture
 def state_token(_portal) -> StateToken:
     """A stateToken issued the way the callback issues one — minted AND
-    reserved, so the endpoints that spend it can actually claim it."""
+    reserved, so the endpoints that spend it can actually claim it.
+    ``verifiedEmail`` stands for an address already proven on the decision
+    page (test_account_email.py covers proving it)."""
 
     def issue(provider: str = "ruc", **info) -> str:
         payload = {
@@ -31,6 +33,8 @@ def state_token(_portal) -> StateToken:
             "username": info.get("username"),
             "preferredUsername": info.get("preferredUsername", "provuser"),
         }
+        if "verifiedEmail" in info:
+            payload["verifiedEmail"] = info["verifiedEmail"]
         return _portal.call(_issue_oauth_state_token, provider, payload)
 
     return issue
@@ -107,17 +111,6 @@ class TestOAuthState:
         assert data["userInfo"]["id"] == "uid-state-1"
         assert data["suggestedUsername"].startswith("alice_prov")
         assert data["suggestedNickname"]
-        assert data["emailConflict"] is False
-
-    def test_state_reports_email_conflict(
-        self,
-        api_client: TestClient,
-        authenticated_user: CreatedUser,
-        state_token: StateToken,
-    ):
-        token = state_token(email=authenticated_user.email)
-        resp = api_client.get(f"/users/auth/oauth/state?token={token}")
-        assert resp.json()["data"]["emailConflict"] is True
 
     def test_state_rejects_garbage_token(self, api_client: TestClient):
         resp = api_client.get("/users/auth/oauth/state?token=garbage")
@@ -139,7 +132,7 @@ class TestOAuthCreate:
     def test_create_account_and_login_redirect(
         self, api_client: TestClient, state_token: StateToken
     ):
-        token = state_token(id="uid-create-1")
+        token = state_token(id="uid-create-1", verifiedEmail="uid-create-1@example.com")
         resp = api_client.post(
             "/users/oauth/create",
             data={
@@ -198,7 +191,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-plain"),
+                "stateToken": state_token(
+                    id="uid-create-plain", verifiedEmail="uid-create-plain@example.com"
+                ),
                 "username": "oauth_created_plain",
                 "nickname": "plain_user",
                 "passwordMode": "password",
@@ -223,7 +218,9 @@ class TestOAuthCreate:
     def test_create_refuses_a_password_before_spending_the_state_token(
         self, api_client: TestClient, state_token: StateToken, password: str
     ):
-        token = state_token(id="uid-create-weak")
+        token = state_token(
+            id="uid-create-weak", verifiedEmail="uid-create-weak@example.com"
+        )
         form = {
             "stateToken": token,
             "username": "oauth_created_weak",
@@ -255,7 +252,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-2"),
+                "stateToken": state_token(
+                    id="uid-create-2", verifiedEmail="uid-create-2@example.com"
+                ),
                 "username": authenticated_user.username,
                 "nickname": "x",
             },
@@ -270,7 +269,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-3"),
+                "stateToken": state_token(
+                    id="uid-create-3", verifiedEmail="uid-create-3@example.com"
+                ),
                 "username": "ab",  # too short
                 "nickname": "x",
             },
