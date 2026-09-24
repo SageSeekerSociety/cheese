@@ -42,6 +42,13 @@ ANTHROPIC_HOSTS = frozenset(
     {"api.anthropic.com", "console.anthropic.com", "platform.claude.com"}
 )
 
+# What a session carries when its host has no Claude login: enough for Claude
+# Code to boot, so a project on the API-key pool still runs. It authenticates
+# nothing, and a subscription request carrying it is refused here rather than
+# sent to Anthropic. The launch script writes the same value
+# (backend/app/domain/agent/harness/claude_code/device_launch.py).
+NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
+
 
 def proxy_basic_password(header_value: str) -> str:
     """The password of a ``Proxy-Authorization: Basic`` header, else "".
@@ -262,13 +269,6 @@ class Verdict:
     # this is the only thing that says which model the turn runs on. Empty means
     # the backend did not say, and the client's own choice is forwarded.
     model: str = ""
-    # `user:password` — which ccproxy identity to authenticate the upstream hop
-    # as for this project's turns. Present only when the backend knows the
-    # machine those turns run on; ccproxy scopes its fake→real ticket swap to
-    # the authenticated connection, so this is what lets the machine's own
-    # ticket be forwarded untouched instead of swapped for one the proxy holds.
-    # None = fall back to the deployment-wide identity, and to the swap.
-    upstream: str | None = None
     # True = NOBODY ANSWERED. This verdict was manufactured here — admission is
     # unconfigured, the project is unknown, or the backend could not be reached
     # — so every field on it is a default, `pool` included. Defaults to True so
@@ -306,7 +306,6 @@ def _post_admission(
     data = payload.get("data") or {}
     supply = data.get("supply") or {}
     pool = supply.get("pool")
-    upstream = supply.get("upstream")
     model = supply.get("model")
     kind = data.get("reason_kind")
     return Verdict(
@@ -316,15 +315,6 @@ def _post_admission(
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
         model=model if isinstance(model, str) else "",
-        # Shape-checked here rather than at use: a half credential ("m516:" or
-        # ":pw") would authenticate as nobody, and failing at the parse names
-        # the control plane as the source instead of surfacing as an upstream
-        # 407 several hops away.
-        upstream=upstream
-        if isinstance(upstream, str)
-        and len(upstream.split(":", 1)) == 2
-        and all(upstream.split(":", 1))
-        else None,
         # The backend answered; `pool` below is its word, not a default.
         fail_open=False,
     )
@@ -344,13 +334,10 @@ class AdmissionGate:
     had, rather than to a gateway whose per-project key it would not have.
 
     Cached per (project, topic), not per project. The budget half of the answer
-    is the project's, but the ``upstream`` half names ONE machine — the one that
-    topic's turns run on — and a project's topics can be spread over several. A
-    project-wide key hands the second topic the first one's machine identity for
-    the rest of the window, and ccproxy only honours a machine's ticket over that
-    machine's own connection, so the turn either 401s at the far edge or is
-    billed to the wrong machine. The extra key costs one admission call per topic
-    per window, which is what the endpoint was already sized for.
+    is the project's, but the model it binds comes from the topic's card, and a
+    project-wide key would hand the second topic the first one's binding for the
+    rest of the window. The extra key costs one admission call per topic per
+    window, which is what the endpoint was already sized for.
     """
 
     def __init__(
@@ -432,7 +419,7 @@ class AdmissionGate:
 # --- Claude Code's non-model startup endpoints -------------------------------
 #
 # 一个控制点（结论 46）。A machine is launched in one shape — no base URL, this
-# proxy on HTTPS_PROXY, a fake ticket — and that shape has to boot Claude Code
+# proxy on HTTPS_PROXY — and that shape has to boot Claude Code
 # on a deployment that owns no Anthropic subscription at all. Claude Code asks
 # for four things on its way up that have nothing to do with inference: who am
 # I, what are my settings, what is my policy, and here is my telemetry. Every
@@ -448,7 +435,7 @@ class AdmissionGate:
 # a second reader — cli/e2e scripts a stand-in Anthropic API from the same rows
 # and boots a REAL Claude Code against them, then fails on any non-model path
 # that real client asked for and this table did not answer 2xx. A row missing
-# here is a request that goes upstream on the platform's credential, and that
+# here is a request that goes upstream on the session's credential, and that
 # test is what finds one before a deployment does.
 
 TABLE_PATH = Path(__file__).resolve().with_name("control_answers.json")

@@ -68,8 +68,8 @@ def _machine(**kw):
         id=uuid.uuid4(),
         machine_id=207,
         status=MachineStatus.running,
-        ai_status=AiStatus.ready,
-        ai_mode="newapi",
+        ai_status=AiStatus.disabled,
+        ai_mode="none",
         ip="192.168.31.6",
         device_id="dev-1",
         last_seen_at=None,
@@ -126,7 +126,7 @@ async def test_an_unreachable_provider_does_not_condemn_a_healthy_machine():
 
     assert alive == [machine]
     assert machine.status == MachineStatus.running
-    assert machine.ai_status == AiStatus.ready
+    assert machine.ai_status == AiStatus.disabled
     # The attempt is still recorded, or a provider outage puts a provider
     # timeout on every single read.
     assert machine.last_seen_at is not None
@@ -139,9 +139,7 @@ async def test_a_still_provisioning_machine_reports_unknown_when_unreachable():
     widen: for a machine we were waiting on, `unknown` IS the honest answer."""
     from app.domain.machine.microcloud import MicroCloudError
 
-    machine = _machine(
-        status=MachineStatus.provisioning, ai_status=AiStatus.provisioning
-    )
+    machine = _machine(status=MachineStatus.provisioning, ai_status=AiStatus.unknown)
     repo = _Repo([machine])
     client = _Client(MicroCloudError("connection refused"))
     await _service(repo, client).list_for_project(uuid.uuid4())
@@ -149,73 +147,18 @@ async def test_a_still_provisioning_machine_reports_unknown_when_unreachable():
     assert machine.status == MachineStatus.unknown
 
 
-# --- enrolment waits for the AI channel to settle ---------------------------
-# Found live on 2026-08-14: machine 472 was enrolled while still at
-# `newapi/ready`, switched to ccproxy one step later, and can never have its
-# ccproxy identity read again — `mark_enrolled` erases the bootstrap key, so
-# that ssh session was the only chance. The order and the wait are both load
-# bearing, and neither leaves a trace when it regresses: the machine enrols
-# fine, the identity is simply absent forever.
-
-
-def test_the_ai_channel_is_converged_before_enrolment_not_after():
-    """Source order, because the failure it prevents is invisible at runtime:
-    every machine still enrols, and only the identity silently goes missing."""
-    from pathlib import Path
-
-    source = (
-        Path(__file__).resolve().parents[2] / "app" / "domain" / "machine" / "runner.py"
-    )
-    text = source.read_text()
-    reconcile = text.index("reconcile_ai_mode()")
-    enroll = text.index("enroll_pending()")
-    assert reconcile < enroll, "reconcile must run before enrolment"
-
-
-async def test_enrolment_asks_only_for_machines_whose_channel_has_settled(
-    monkeypatch,
-):
-    """The gate has to reach the QUERY, not just exist: enrolment is the one ssh
-    session, and a machine picked up before its channel settled loses its ccproxy
-    identity permanently. The grace is passed too — a machine whose channel never
-    settles must still become usable compute, just on the shared identity."""
-    from app.core.config import settings as app_settings
-    from app.domain.machine import services as machine_services
-
-    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "ccproxy")
-    seen: dict = {}
-
-    class _EnrolRepo:
-        async def list_awaiting_enrollment(self, limit, **kwargs):
-            seen.update(kwargs)
-            return []
-
-    service = MachineService.__new__(MachineService)
-    service._repo = _EnrolRepo()  # type: ignore[attr-defined]
-
-    await machine_services.MachineService.enroll_pending(service)
-
-    assert seen["desired_ai_mode"] == "ccproxy"
-    assert seen["settle_cutoff"] is not None, "an unbounded wait bricks a machine"
-
-
 async def test_the_sweep_refreshes_before_it_decides(monkeypatch):
-    """Both later steps read state that only a READ path ever updated. Machine
-    473 sat unenrolled for 13 minutes on 2026-08-14 while MicroCloud had it
-    `ready` the whole time — the sweep was deciding on a value nothing in the
-    sweep refreshes."""
+    """Enrolment reads state that only a READ path ever updated. Machine 473
+    sat unused for 13 minutes on 2026-08-14 while MicroCloud had it settled
+    the whole time — the sweep was deciding on a value nothing in the sweep
+    refreshes."""
     from pathlib import Path
 
     source = (
         Path(__file__).resolve().parents[2] / "app" / "domain" / "machine" / "runner.py"
     )
     text = source.read_text()
-    order = [
-        text.index("refresh_unsettled()"),
-        text.index("reconcile_ai_mode()"),
-        text.index("enroll_pending()"),
-    ]
-    assert order == sorted(order), "refresh → reconcile → enrol"
+    assert text.index("refresh_unsettled()") < text.index("enroll_pending()")
 
 
 async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
