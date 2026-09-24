@@ -485,6 +485,47 @@
   font-feature-settings: 'tnum';
 }
 
+/* 浮层菜单里的列表（「我」的菜单、帮助与反馈）：每一项只有一行字，不带图标。
+   Vuetify 的 compact 密度是 40px，这里再收到 36px；悬停与选中都是中性色（同
+   TopicSidebar 的 .nav-row），琥珀在导航里只留给左栏那一格「当前在哪」。
+   两个菜单共用这一份，各写一份的时候它们的行高和间距已经不一样过一次。 */
+/* 用 Vuetify 自己的 nav 形态（`<v-list nav>`）：列表左右 8px、每项左右 8px，字落在
+   离菜单边 16px 的地方，和偏好行、菜单头对齐；悬停底色是一块缩进的圆角。这里只收
+   上下的留白。 */
+.menu-list.menu-list {
+  padding-block: 4px;
+}
+
+/* 类名写两遍：Vuetify 的 .v-list-item--density-compact.v-list-item--one-line（40px）
+   和这里同特异度，而它的样式表在这份文件之后注入。 */
+.menu-list .v-list-item.v-list-item {
+  min-height: 36px;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.menu-list .v-list-item-title {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+.menu-list .v-list-item:hover {
+  background: var(--fill);
+}
+
+.menu-list .v-list-item--active {
+  background: var(--line-2);
+}
+
+.menu-list .v-list-item--active > .v-list-item__overlay {
+  opacity: 0;
+}
+
+.menu-list .v-list-item--active .v-list-item-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 /* 密集读数：13 / 19 / 600。**此前它被 5 个模板引用、却在 style.css 里没有任何
    定义** —— 于是每个引用它的组件都拿到了继承来的字重和字号，两块本该同规格的
    读数在屏幕上并不一样。这一档取自设计系统 §3.2 的字号阶梯里「密集正文」那一档

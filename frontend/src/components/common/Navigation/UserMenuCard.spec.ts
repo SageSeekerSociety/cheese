@@ -7,10 +7,12 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render } from '@testing-library/vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import UserMenuCard from './UserMenuCard.vue'
+
+import i18n, { setLocale } from '@/i18n'
 
 function fakeMenu(intro: string) {
   return {
@@ -34,7 +36,7 @@ async function mount(intro = '') {
       { path: '/', component: stub },
       { path: '/users/:id', name: 'UserDefault', component: stub },
       { path: '/devices', name: 'my-devices', component: stub },
-      { path: '/about', component: stub },
+      { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
     ],
   })
   await router.push('/')
@@ -45,12 +47,23 @@ async function mount(intro = '') {
 }
 
 describe('「我」的菜单', () => {
-  it('个人中心、我的设备、了解知是都在，并且能退出登录', async () => {
+  // 初始语言跟着浏览器（happy-dom 报 en-US），断言写的是中文，所以每条先定成中文。
+  beforeEach(() => setLocale('zh-CN'))
+
+  it('个人中心、个人设置、我的设备都在，并且能退出登录', async () => {
     const view = await mount()
     expect(view.getByText('个人中心').closest('a')?.getAttribute('href')).toBe('#/users/42')
+    // 上传头像的地方：以前菜单里没有这一项，得先进个人中心再点资料卡上的编辑。
+    expect(view.getByText('个人设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
     expect(view.getByText('我的设备').closest('a')?.getAttribute('href')).toBe('#/devices')
-    expect(view.getByText('了解知是').closest('a')?.getAttribute('href')).toBe('#/about')
     expect(view.getByText('退出登录')).toBeTruthy()
+  })
+
+  it('在菜单里切换界面语言', async () => {
+    const view = await mount()
+    await fireEvent.click(view.getByRole('radio', { name: 'English' }))
+    expect(i18n.global.locale.value).toBe('en')
+    expect(await view.findByText('Log out')).toBeTruthy()
   })
 
   it('没写简介时说「暂无个人简介」', async () => {
