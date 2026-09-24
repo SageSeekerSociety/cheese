@@ -104,10 +104,14 @@ echo "installed to $dest/cheesehost"
 case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
 # WS-stripping edge (e.g. a campus front proxy that only forwards HTTP): the
 # server baked a WS-capable control-channel URL above. Pre-write it into the
-# cli config's "ws" key — `cheesehost auth login` loads-then-saves, so it
+# cli config's "ws" key — the login loads-then-saves, so it
 # survives login. Login/approve/API/downloads all stay on ORIGIN.
 if [ -n "$WS_URL" ]; then
-  CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese"
+  # Where cheesehost reads it: Go's os.UserConfigDir, which on macOS ignores XDG.
+  case "$os" in
+    darwin) CFG_DIR="$HOME/Library/Application Support/cheese" ;;
+    *) CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese" ;;
+  esac
   CFG="$CFG_DIR/config.json"
   mkdir -p "$CFG_DIR"
   if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
@@ -128,7 +132,7 @@ PY
   fi
   echo "control channel pinned to $WS_URL (WS-stripping edge)"
 fi
-echo "next: cheesehost auth login $ORIGIN/connector"
+echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays connected)"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")
 
