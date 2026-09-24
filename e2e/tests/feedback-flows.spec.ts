@@ -250,6 +250,9 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   // 选完框里留的是 handle（`item-title="handle"`），不是昵称——旧版抽屉真出过
   // 「把昵称当 handle 发出去」这一类错。
   await expect(assignee).toHaveValue('alice');
+  // 输入框会先更新自己的 model；详情摘要只在 PATCH 返回、store 收下服务端详情后更新。
+  // 等这份服务端状态，再继续下一次管理写。
+  await expect(detail.locator('.qdet__main-who')).toContainText(/指派\s+alice/);
 
   // 内部备注：空草稿时那颗提交按钮是禁用的，写完才点得动。
   const submitNote = detail.locator('.qdet__submit');
