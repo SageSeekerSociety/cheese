@@ -1,7 +1,7 @@
 """平台那半边的启动脚本，用一个不是 Claude Code 的 harness 驱动。
 
 The point of ``machine_launcher`` is that a second harness can start on a device
-by filling five holes instead of copying a 559-line script. So these tests fill
+by filling four holes instead of copying a 559-line script. So these tests fill
 them with something emphatically not Claude Code — a shell script that writes a
 file — and assert the platform still did its whole job around it.
 
@@ -223,7 +223,6 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
     result = _run(
         tmp_path,
         env,
-        staging=f'printf "staging " >> "{order}"\n',
         # The session's home is exported by now, so a harness writes its files
         # under it without knowing where the machine put it.
         configure=f'printf "configure:$HOME " >> "{order}"\n',
@@ -238,14 +237,13 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
     assert result.returncode == 0, result.stderr
     stages = order.read_text().split()
     assert [stage.split(":")[0] for stage in stages] == [
-        "staging",
         "configure",
         "credentials",
         "prepare",
     ]
-    assert stages[1] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
-    assert stages[2].endswith("/.cheese/cheese-hook")
-    assert stages[3] == f"prepare:{work.resolve()}"
+    assert stages[0] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
+    assert stages[1].endswith("/.cheese/cheese-hook")
+    assert stages[2] == f"prepare:{work.resolve()}"
 
 
 def _skeleton() -> str:
@@ -281,7 +279,6 @@ def _skeleton() -> str:
         "cheese-system-prompt.md",
         "settings.json",
         "remote-execution",
-        "warm-native-runner",
     ],
 )
 def test_the_platform_half_names_no_harness(harness_only):

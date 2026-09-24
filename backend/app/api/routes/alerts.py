@@ -21,6 +21,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
+from app.domain.agent.runtime import announce_stale
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -92,6 +93,9 @@ async def create_notification(
         topic_id=topic_id,
         payload=body.payload,
     )
+    if topic_id is not None:
+        await db.commit()
+        await announce_stale(topic_id, "notify")
     return ok(page([_dump(row) for row in rows], len(rows)))
 
 

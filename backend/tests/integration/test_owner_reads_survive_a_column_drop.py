@@ -59,36 +59,15 @@ async def _without_column(db_session, table: str, column: str) -> None:
     await db_session.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
 
 
-def test_a_room_can_be_placed_when_a_column_it_never_used_is_gone(db_session, _portal):
-    async def ask():
-        project_id = await _project(db_session)
-        room_id = await _room(db_session, project_id)
-        await _without_column(db_session, "topics", "title")
-        return project_id, await owner_reads.place(db_session, room_id)
-
-    project_id, place = _portal.call(ask)
-    assert place is not None and place.project_id == project_id
-
-
 def test_a_project_can_be_checked_when_a_column_it_never_used_is_gone(
     db_session, _portal
 ):
     async def ask():
         project_id = await _project(db_session, handle="alice")
         await _without_column(db_session, "projects", "last_heartbeat_at")
-        return (
-            await owner_reads.project_exists(db_session, project_id),
-            await owner_reads.project_owner(db_session, project_id),
-        )
+        return await owner_reads.project_owner(db_session, project_id)
 
-    assert _portal.call(ask) == (True, "alice")
-
-
-def test_a_place_that_is_neither_a_room_nor_a_task_is_absent(db_session, _portal):
-    async def ask():
-        return await owner_reads.place(db_session, uuid.uuid4())
-
-    assert _portal.call(ask) is None
+    assert _portal.call(ask) == "alice"
 
 
 def test_loading_the_whole_room_is_what_the_incident_was(db_session, _portal):
@@ -108,17 +87,12 @@ def test_loading_the_whole_room_is_what_the_incident_was(db_session, _portal):
         _portal.call(ask_the_old_way)
 
 
-def test_device_auth_and_transcript_permissions_survive_unrelated_column_drops(
-    db_session, _portal
-):
-    from app.domain.device.models import DeviceTopicRow
+def test_device_auth_survives_unrelated_column_drops(db_session, _portal):
     from tests.integration.test_archive_retires_storage import _seed_device
 
     async def ask():
         project = await _project(db_session)
-        place = uuid.uuid4()
         await _seed_device(db_session, "allowed", project_id=project)
-        await _seed_device(db_session, "outsider")
         await _without_column(db_session, "device", "ccproxy_upstream")
         await _without_column(db_session, "device", "visibility")
         await _without_column(db_session, "hosted_device", "owner_user_id")
@@ -126,19 +100,6 @@ def test_device_auth_and_transcript_permissions_survive_unrelated_column_drops(
         assert identity == owner_reads.DeviceIdentity("allowed", "allowed")
         assert await owner_reads.device_for_token(db_session, "wrong") is None
         assert await owner_reads.device_for_token(db_session, "") is None
-        assert await owner_reads.device_ran_place(db_session, "allowed", project, place)
-        assert not await owner_reads.device_ran_place(
-            db_session, "outsider", project, place
-        )
-        db_session.add(DeviceTopicRow(topic_id=place, device_id="outsider"))
-        await db_session.flush()
-        await _without_column(db_session, "device_topic", "visibility")
-        assert await owner_reads.device_ran_place(
-            db_session, "outsider", project, place
-        )
-        assert not await owner_reads.device_ran_place(
-            db_session, "allowed", project, place
-        )
 
     _portal.call(ask)
 

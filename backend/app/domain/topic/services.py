@@ -741,7 +741,7 @@ class TopicService:
                 raise ConflictError("会话正在停止并保存记录，确认完成后即可取消归档")
             if operation.state == "pending":
                 operation.state = "cancelled"
-            elif operation.state in {"claimed", "complete"}:
+            elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()
                 await AgentSessionService(self._session).forget_room(topic.id)
                 from app.domain.machine.services import MachineService

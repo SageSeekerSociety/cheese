@@ -605,6 +605,13 @@ class ModelRewrite:
         # the model the card is bound to, and the exits are refuse or wait, not
         # run it on something else (I27). The caller reports the reason.
         self.missed = False
+        # 被替换前体里原样的 model 值（keep_haiku 放过的也算）——主对话这一
+        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：device 启动环境
+        # 不钉模型（结论 46），CC 写的是它自己的内建默认，准入在席位配置里
+        # 永远找不到它（2026-09-23 的事故）。``replaced`` 为 False 时这个值
+        # 是 haiku 放行，不是父会话的工作模型。
+        self.original: str | None = None
+        self.replaced = False
 
     def feed(self, chunk: bytes) -> bytes:
         """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
@@ -623,6 +630,10 @@ class ModelRewrite:
         span = top_level_model_span(self._buf)
         if span is not None:
             start, end = span
+            try:
+                self.original = json.loads(self._buf[start:end])
+            except ValueError:
+                self.original = None
             if self._keep_haiku and _is_haiku(self._buf[start:end]):
                 out = self._buf
             else:
@@ -631,6 +642,7 @@ class ModelRewrite:
                     + json.dumps(self._model).encode()
                     + self._buf[end:]
                 )
+                self.replaced = True
             self._done = True
             self._buf = b""
             return out

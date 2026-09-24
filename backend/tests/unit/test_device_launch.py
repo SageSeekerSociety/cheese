@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent import machine_launcher
-from app.domain.agent.harness.claude_code import device_launch, warm_session
+from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.launch import MachinePlace
 
@@ -53,274 +53,6 @@ def test_launch_timings_append_without_logging_credentials(tmp_path):
         ["sh", "-c", function + "cheese_launch_phase skipped"], env=env, check=True
     )
     assert "skipped" not in (directory / "test-room.timing").read_text()
-
-
-@pytest.mark.parametrize("adoption_exit", [0, 9])
-@pytest.mark.parametrize("stage_exit", [0, 13])
-def test_warm_adoption_waits_for_room_configuration(
-    tmp_path, monkeypatch, adoption_exit, stage_exit
-):
-    owner = tmp_path / "owner"
-    home = tmp_path / "room"
-    work = tmp_path / "work"
-    warm = owner / ".cheese/native-warm"
-    warm.mkdir(parents=True)
-    (warm / "state.json").write_text("{}")
-    (warm / "ready").touch()
-    (warm.parent / "warm-native-runner.py").write_text(
-        "import os, sys\nfrom pathlib import Path\n"
-        "def _native_alive(state):\n    return True\n"
-        "def stage(*args, **kwargs):\n"
-        f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
-        "def adopt_room(directory):\n"
-        "    assert (Path(os.environ['HOME']) / '.cheese/cheese-drain.env').exists()\n"
-        "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
-        f"    return {adoption_exit}\n"
-        "def connection(directory, project, topic):\n"
-        "    assert (Path(os.environ['HOME']) / 'adopted').exists()\n"
-        "    return {'command': ['tmux', '-S', '/test/warm.sock', "
-        "'attach-session', '-t', 'native-warm']}\n"
-    )
-    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
-    binary.chmod(0o700)
-    tmux = tmp_path / "tmux"
-    tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
-    tmux.chmod(0o700)
-    script = tmp_path / "launch.sh"
-    launch = device_launch.build_launch_script()
-    staged = launch.index("cheese_launch_phase warm_staged")
-    configured = launch.index('mv "$HOME/.cheese/cheese-drain.env.tmp"')
-    adopted = launch.index('if [ -n "$WARM_ROOT" ]; then', configured)
-    assert staged < configured < adopted
-    # Exercise the generated staging and adoption programs around the generated
-    # configuration write. The intervening launcher work has independent tests
-    # and made this ordering contract depend on the elapsed time of the complete launch.
-    prefix_end = launch.index("# The platform's own directory", staged)
-    config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
-    config_end = launch.index("\n", configured) + 1
-    adoption_end = launch.index("\nfi\n", adopted) + len("\nfi\n")
-    script.write_text(
-        launch[:prefix_end]
-        + 'mkdir -p "$HOME/.cheese"\n'
-        + launch[config_start:config_end]
-        + 'cd "$CHEESE_WORK"\n'
-        + launch[adopted:adoption_end]
-    )
-    with (tmp_path / "launcher.log").open("w") as output:
-        process = subprocess.Popen(
-            ["sh", str(script)],
-            env={
-                "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
-                "HOME": str(owner),
-                "CHEESE_HOME": str(home),
-                "CHEESE_WORK": str(work),
-                "CHEESE_PROJECT": str(uuid.uuid4()),
-                "CHEESE_TOPIC": str(uuid.uuid4()),
-                "CHEESE_RV_SOCK": str(tmp_path / "rv.sock"),
-                "CHEESE_RV_TOKEN_FILE": str(tmp_path / "rv.token"),
-                "TMUX": "/test/owner.sock,1,0",
-                "TMUX_PANE": "%0",
-            },
-            stdout=output,
-            stderr=output,
-        )
-        try:
-            if stage_exit:
-                assert process.wait(timeout=5) == stage_exit
-                assert not (work / "waiting").exists()
-                assert not (home / "adopted").exists()
-                return
-            assert process.wait(timeout=5) == adoption_exit
-            assert (home / "adopted").exists()
-            assert (home / "attached").exists() == (adoption_exit == 0)
-            assert not (work / ".git").exists()
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
-
-
-@pytest.mark.parametrize("ready", [False, True])
-def test_unavailable_spare_prepares_room_without_a_shared_checkout(
-    tmp_path, monkeypatch, ready
-):
-    owner = tmp_path / "owner"
-    warm = owner / ".cheese/native-warm"
-    warm.mkdir(parents=True)
-    (warm / "state.json").write_text("{}")
-    if ready:
-        (warm / "ready").touch()
-    (warm.parent / "warm-native-runner.py").write_text(
-        "def _native_alive(state):\n    return False\n"
-        "def stage(*args, **kwargs):\n    raise SystemExit(99)\n"
-    )
-    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
-    binary.chmod(0o700)
-    work = tmp_path / "work"
-    script = tmp_path / "launch.sh"
-    launch = device_launch.build_launch_script()
-    launch = launch[: launch.index("cheese_launch_phase files_written")]
-    script.write_text(launch + '\n[ -z "$WARM_ROOT" ]\n')
-    result = subprocess.run(
-        ["sh", str(script)],
-        env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(owner),
-            "CHEESE_HOME": str(tmp_path / "home"),
-            "CHEESE_WORK": str(work),
-            "CHEESE_PROJECT": str(uuid.uuid4()),
-            "CHEESE_TOPIC": str(uuid.uuid4()),
-        },
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stderr
-    assert work.is_dir()
-    assert not (work / ".git").exists()
-    assert not (warm / "binding.json").exists()
-
-
-def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    work = tmp_path / "work"
-    work.mkdir()
-    token = tmp_path / "rv-token"
-    token.write_text("fixture")
-    (tmp_path / "ready").touch()
-    (tmp_path / "environment.json").write_text(
-        json.dumps(
-            {
-                name: "http://old-provider"
-                for name in (
-                    "HTTPS_PROXY",
-                    "https_proxy",
-                    "HTTP_PROXY",
-                    "http_proxy",
-                    "ALL_PROXY",
-                    "all_proxy",
-                )
-            }
-        )
-    )
-    monkeypatch.setattr(warm_session, "_native_alive", lambda state: True)
-    frames = []
-    with tempfile.TemporaryDirectory(prefix="cw-") as sockets:
-        path = sockets + "/claim"
-        (tmp_path / "state.json").write_text(
-            json.dumps(
-                {
-                    "home": str(home),
-                    "workspace": str(work.resolve()),
-                    "rendezvous": sockets + "/rv",
-                    "token_file": str(token),
-                    "claim_socket": path,
-                    "claim_auth": "fixture",
-                }
-            )
-        )
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-            server.bind(path)
-            server.listen(1)
-            server.settimeout(3)
-
-            def receive():
-                connection, _ = server.accept()
-                with connection, connection.makefile("rb") as reader:
-                    frames.append(json.loads(reader.readline()))
-
-            receiver = threading.Thread(target=receive)
-            receiver.start()
-            warm_session.bind(
-                tmp_path,
-                project_id=str(uuid.uuid4()),
-                topic_id=str(uuid.uuid4()),
-                work=work,
-                system_prompt="fixture",
-                settings={
-                    "env": {"HTTPS_PROXY": "http://room-meter", "NO_PROXY": "localhost"}
-                },
-            )
-            receiver.join(timeout=3)
-            assert not receiver.is_alive()
-    persisted = json.loads((home / ".claude/settings.json").read_text())["env"]
-    for environment in (frames[0]["env"], persisted):
-        assert (
-            environment["HTTPS_PROXY"]
-            == environment["https_proxy"]
-            == "http://room-meter"
-        )
-        assert environment["HTTP_PROXY"] == environment["http_proxy"] == ""
-        assert environment["ALL_PROXY"] == environment["all_proxy"] == ""
-        assert environment["NO_PROXY"] == environment["no_proxy"] == "localhost"
-
-
-@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
-def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
-    directory = tmp_path / ".cheese/native-warm"
-    directory.mkdir(parents=True)
-    runner = directory.parent / "warm-native-runner.py"
-    shutil.copyfile(warm_session.__file__, runner)
-    topic = str(uuid.uuid4())
-    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
-    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
-        socket_path = socket_dir + "/s"
-
-        def tmux(*args):
-            return subprocess.check_output(
-                ["tmux", "-S", socket_path, *args], text=True
-            ).strip()
-
-        try:
-            pane = tmux(
-                "-f",
-                "/dev/null",
-                "new-session",
-                "-d",
-                "-P",
-                "-F",
-                "#{pane_id}",
-                "-s",
-                "native-warm",
-                "sleep 30",
-            )
-            (directory / "state.json").write_text(
-                json.dumps({"socket": socket_path, "pane": pane})
-            )
-            tmux(
-                "new-window",
-                "-d",
-                "-t",
-                "native-warm",
-                "-n",
-                "cheese-drain",
-                "sleep 30",
-            )
-
-            def probe():
-                return subprocess.check_output(
-                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
-                    text=True,
-                    env={
-                        **os.environ,
-                        "HOME": str(tmp_path),
-                        "CHEESE_ALIVE_TOPIC": topic,
-                    },
-                ).strip()
-
-            assert probe() == "alive"
-            tmux("kill-pane", "-t", pane)
-            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
-            assert probe() == "dead"
-        finally:
-            subprocess.run(
-                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
-            )
 
 
 @pytest.mark.parametrize("has_input", [True, False])
@@ -855,7 +587,6 @@ def _supervisor_block():
 
 def _spawn_supervisor(socket, env, body):
     import shlex
-    import shutil
 
     tmux = shutil.which("tmux")
     if (
@@ -936,12 +667,26 @@ def _stub_tmux_env(tmp_path):
         "esac\n"
     )
     stub.chmod(0o755)
+    # Every launch hands `claude` to the executor client, which needs an
+    # executor to prepare against. This one passes the command straight
+    # through, so what the launcher decided is what the agent receives.
+    python = shutil.which("python3")
+    client = bindir / "python3"
+    client.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in */remote-execution/client.py)\n'
+        '  [ "$2" = bootstrap ] && shift 3 && exec "$@" ;;\n'
+        "esac\n"
+        f'exec {shlex.quote(python)} "$@"\n'
+    )
+    client.chmod(0o755)
     env = {
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "HOME": str(home),
         "CHEESE_HOME": str(home),
         "CHEESE_WORK": str(work),
+        "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
         "CLAUDE": "claude --model x",
         "TMUX": f"{STUB_SOCK},1,0",
         "STUB_LOG": str(log),
@@ -1078,7 +823,6 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
 
 
 def _tmux_ge_30() -> bool:
-    import shutil
 
     if not shutil.which("tmux"):
         return False
@@ -1090,7 +834,6 @@ def _tmux_ge_30() -> bool:
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
 def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_path):
     import json
-    import shutil
     import sys
 
     from app.domain.agent import environment_runner
@@ -1166,7 +909,6 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     (the box's exact condition). A brand-new claude must boot carrying THIS
     launch's fresh token — proving the frozen-global inheritance (the 407 root
     cause) is overridden, not merely that a new process was spawned."""
-    import shutil
 
     real_tmux = shutil.which("tmux")
     # A short socket path: a unix socket path is capped near 104 chars, and
@@ -1398,7 +1140,6 @@ def _tunnel_up_home(tmp_path, name: str = "home"):
 
 
 def _listening(port: int) -> bool:
-    import socket
 
     try:
         socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
@@ -1485,7 +1226,6 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
     `cheese-tunnel.log` showing `tunnel listening` at the last launch's
     timestamp, one of them re-@'d four times in three hours without a single
     reply."""
-    import shutil
 
     home, _up_script = _tunnel_up_home(tmp_path)
     port_file = home / ".cheese" / "cheese-tunnel.port"
@@ -1563,7 +1303,6 @@ def test_a_foreign_listener_on_the_recorded_port_is_never_adopted(tmp_path):
     readiness check that asks only "does something answer there" hands this
     room's `claude` to that listener. The script must start a helper of its own
     somewhere else and report THAT port."""
-    import socket
 
     home, _up_script = _tunnel_up_home(tmp_path)
     cheese = home / ".cheese"
@@ -1597,7 +1336,6 @@ def test_a_live_pid_that_does_not_hold_the_recorded_port_is_not_adopted(tmp_path
     recorded port can be held by another room's helper. A live pid, a matching
     stamp and an answering port are all true then, and none of them makes that
     listener this room's. Adoption asks whether the pid holds the port."""
-    import socket
 
     home, _up_script = _tunnel_up_home(tmp_path)
     cheese = home / ".cheese"
@@ -1707,7 +1445,6 @@ def test_the_helper_reports_only_a_port_it_actually_bound(tmp_path):
     """The port file is the helper's proof that it holds the port. Written after
     the bind it is exactly that; a failed bind must leave none behind, or a
     reader would take the foreign listener on that port for this helper."""
-    import socket
 
     from app.domain.agent import machine_tunnel
 
@@ -1738,45 +1475,6 @@ def test_the_helper_reports_only_a_port_it_actually_bound(tmp_path):
     finally:
         process.kill()
         process.wait(timeout=5)
-
-
-def test_a_warm_claim_is_handed_the_port_its_helper_bound(tmp_path, monkeypatch):
-    """A claimed native process gets its environment at the claim, not from the
-    launcher, so the claim is what must carry the helper's port — the one the
-    machine gave the helper that this claim brought up."""
-    home, _up_script = _tunnel_up_home(tmp_path)
-    (home / ".claude" / "settings.json").write_text("{}")
-    (home / ".claude" / "cheese-system-prompt.md").write_text("prompt")
-    (tmp_path / "state.json").write_text(
-        json.dumps({"home": str(home), "socket": "/test/warm.sock", "pane": "%1"})
-    )
-    claims = []
-    monkeypatch.setattr(
-        warm_session, "bind", lambda directory, **claim: claims.append(claim)
-    )
-    monkeypatch.setattr(
-        warm_session,
-        "_tmux",
-        lambda state, *args: subprocess.CompletedProcess(args, 0, b"4242\n", b""),
-    )
-    monkeypatch.setattr(warm_session, "connection", lambda *args: None)
-    for name in ("HTTPS_PROXY", "https_proxy", "CHEESE_ENVIRONMENT"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("CHEESE_TUNNEL_URL", "ws://127.0.0.1:9/llm/tunnel")
-    monkeypatch.setenv("CHEESE_PROJECT", str(uuid.uuid4()))
-    monkeypatch.setenv("CHEESE_TOPIC", str(uuid.uuid4()))
-    monkeypatch.setenv("CHEESE_WORK", str(tmp_path))
-    try:
-        warm_session.adopt_room(tmp_path)
-
-        port = int((home / ".cheese" / "cheese-tunnel.port").read_text())
-        assert claims[0]["settings"]["env"]["HTTPS_PROXY"] == (
-            f"http://127.0.0.1:{port}"
-        )
-        assert _listening(port)
-    finally:
-        _kill_helper(home)
 
 
 def test_the_helper_is_verified_by_the_dash_syntax_check_too():
@@ -2227,7 +1925,6 @@ def _assert_exited(pid):
 
 @pytest.mark.parametrize("shell", ["sh", "dash"])
 def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, shell):
-    import shutil
 
     if shutil.which(shell) is None:
         pytest.skip(f"needs {shell}")
@@ -2255,8 +1952,6 @@ def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, 
 
 def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
     import shlex
-    import shutil
-    import tempfile
 
     tmux = shutil.which("tmux")
     if tmux is None:
@@ -2302,7 +1997,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     executor-backed screen at startup, and nothing else in the script would say
     why. Nothing exercises that branch in-process: it runs on the machine."""
     script = device_launch.build_launch_script(
-        remote_execution=True,
         system_prompt="x",
         resume_session_id=None,
         topic_id="t",

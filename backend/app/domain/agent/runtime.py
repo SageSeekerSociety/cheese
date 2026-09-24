@@ -392,6 +392,17 @@ def get_broker() -> InProcessBroker:
     return InProcessBroker()
 
 
+async def announce_stale(room_id: uuid.UUID, resource: str) -> None:
+    """Tell a room that one of its panels changed, so it reads that panel again.
+
+    Sent by the handler that changed the resource, once the change is
+    committed: that handler is the one place that knows the change happened,
+    whichever client asked for it (the CLI, `cheese api`, the page itself).
+    The frontend maps ``resource`` to the panel it reloads.
+    """
+    await get_broker().publish(str(room_id), {"type": "state", "resource": resource})
+
+
 class AgentWorkRunner:
     """Admit background work and publish its frames to the broker.
 

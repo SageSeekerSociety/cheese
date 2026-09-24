@@ -222,7 +222,7 @@ async def test_legacy_repository_migration_preserves_all_refs(
     monkeypatch.setattr(settings, "workspace_root", str(root))
     monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
     storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
-    monkeypatch.setattr(snapshots, "transcript_storage", lambda: storage)
+    monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     async with db_factory() as session:
         project = Project(name="Legacy repository migration test")
         session.add(project)

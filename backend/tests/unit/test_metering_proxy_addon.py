@@ -1516,6 +1516,160 @@ def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_p
     assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
 
 
+def test_a_subagent_echoing_the_parents_model_reads_as_inherit(monkeypatch, tmp_path):
+    """体里的模型 == 主对话被改写前的那个值 = CC 的「继承」长相,不是指定。
+
+    device 启动环境不钉模型,CC 回显的是它自己的内建默认 —— 这个名字在准入
+    的席位配置里不存在,送上去普通分身全被当成范围外指定(2026-09-23 事故)。
+    代理自己观察主对话的改写,认出回显,按未指定走。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    # 主对话:体里写着 CC 的内建默认,被改写成绑定模型 —— 改写前的值被记住。
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    assert callable(main.request.stream)
+    out = main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3", "main flow still gets bound"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    # 分身:体里回显同一个名字 —— 准入按「未指定」问,绑定照分身默认写回。
+    fork = _make_flow()
+    fork.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": "42",
+        }
+    )
+    asyncio.run(mod.requestheaders(fork))
+    fork.request.content = b'{"model":"claude-sonnet-5","messages":[]}'
+    asyncio.run(mod.request(fork))
+    assert calls[-1] == (True, "")
+    assert json.loads(fork.request.content)["model"] == "kimi-k3"
+
+
+def test_a_subagent_hint_header_echoing_the_parent_also_reads_as_inherit(
+    monkeypatch, tmp_path
+):
+    """hint 头（x-cheese-child-model）回显父模型 = 继承，不是显式指定。
+
+    CC 2.1.277 的 GATEWAY_HINT_HEADERS 对每个分身都打上它解析出的分身模
+    型：没指定时就是父会话（被改写前的）模型。快路若把它当显式送准入，
+    gateway 项目的普通分身全灭 —— 2026-09-23 事故换了个头卷土重来（当日
+    实测：review 分身被线上闸门 400 打死）。判据与推迟路的体回显一致：
+    == 主对话改写前的原模型即未指定。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(
+        project, topic, bearer, *, subagent=False, requested_model="", child_model=""
+    ):
+        calls.append((subagent, requested_model, child_model))
+        return _verdict(model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    # 主对话：体里写着 CC 的内建默认，被改写成绑定模型 —— 改写前的值被记住。
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    out = main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    # 分身：hint 头回显同一个名字 —— 不当显式送准入；照未指定的老路推迟，
+    # 体回显在 request 钩子里同样被认掉，准入按「未指定」问。
+    fork = _make_flow()
+    fork.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "x-cheese-child-model": "claude-sonnet-5",
+            "content-length": "42",
+        }
+    )
+    calls.clear()
+    asyncio.run(mod.requestheaders(fork))
+    assert calls == [], "回显不该在头部时刻就触发准入"
+    assert "x-cheese-child-model" not in fork.request.headers
+    fork.request.content = b'{"model":"claude-sonnet-5","messages":[]}'
+    asyncio.run(mod.request(fork))
+    assert calls[-1] == (True, "", "")
+    assert json.loads(fork.request.content)["model"] == "kimi-k3"
+
+
+def test_the_parents_haiku_background_requests_do_not_overwrite_the_record(
+    monkeypatch, tmp_path
+):
+    """CLI 自己的 haiku 后台请求（会话标题、路径建议）也走主对话路径；在
+    gateway 池上它们照样被改写（不留 haiku），replaced=True —— 但它们不是
+    父会话的工作模型。记进 PARENT_MODEL 就会把真回显盖掉,普通分身再次全灭。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    mod.GATEWAY_BASE = "http://gateway:4000"
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        return _verdict(pool="gateway", key="k", model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    title = _make_flow()
+    title.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(title))
+    out = title.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3", "haiku 请求照样被绑定改写"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5", "但不污染记录"
+
+
+def test_a_subagent_naming_a_different_model_is_still_a_specification(
+    monkeypatch, tmp_path
+):
+    """体里的模型 ≠ 主对话回显值:这才是主 agent 的指定,原样送上准入。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model=requested_model or "kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+
+    named = _make_flow()
+    named.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": "40",
+        }
+    )
+    asyncio.run(mod.requestheaders(named))
+    named.request.content = b'{"model":"mimo-v2.6-pro","messages":[]}'
+    asyncio.run(mod.request(named))
+    assert calls[-1] == (True, "mimo-v2.6-pro")
+
+
 def test_an_oversize_subagent_body_keeps_the_old_streamed_road(monkeypatch, tmp_path):
     """缓冲有上限：超过上限(或没说多大)的分身请求退回旧路 —— 头部时刻准入、
     流式放行、绑分身默认。上限是发现层的成本,不是资格,更不是拒绝的理由。"""

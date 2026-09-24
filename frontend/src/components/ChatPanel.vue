@@ -447,7 +447,7 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'state':
-      // cheese changed a platform resource → parent refreshes that panel live.
+      // A platform resource changed → parent refreshes that panel live.
       // The clickable record of the action is a persisted event_block (below).
       emit('state-changed', frame.resource)
       break

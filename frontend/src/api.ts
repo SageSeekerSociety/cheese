@@ -653,6 +653,7 @@ export function createProject(
   teamId?: number,
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
+  intent?: string,
   agentName?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
@@ -665,6 +666,8 @@ export function createProject(
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
       forge_kind: forgeKind,
+      // 建项目时问的那一句「你打算做什么」。空串就是没答，服务端不写任何东西。
+      intent,
       agent_name: agentName,
     }),
   })
