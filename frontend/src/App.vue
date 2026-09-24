@@ -60,6 +60,9 @@
     <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里 -->
     <ConsentGate />
 
+    <!-- 敏感操作前确认身份；withSudo 打开它 -->
+    <SudoDialog v-if="sudoWanted" />
+
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
@@ -213,10 +216,12 @@ import type { Project } from '@/cx_types'
 import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
+
+import { pendingSudo } from '@/utils/sudo'
 
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
@@ -288,6 +293,13 @@ router.isReady().then(async () => {
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
 // 面看到的是一屏永远不再刷新的旧数据。
 const keptAlivePages = ['ProjectDocsView', 'MemberView', 'CalendarView']
+
+// 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
+const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoDialog.vue'))
+const sudoWanted = ref(false)
+watch(pendingSudo, (request) => {
+  if (request) sudoWanted.value = true
+})
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar

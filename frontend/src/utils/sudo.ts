@@ -1,8 +1,53 @@
 import type { Router } from 'vue-router'
 import type { UserApi } from '@/network/api/users'
 
+import { shallowRef } from 'vue'
+
 import { SudoRequiredError } from '@/network/types/error'
 import { useSudoStore } from '@/stores/sudo'
+
+/**
+ * The person closed the confirmation instead of completing it. Nothing ran,
+ * and nothing went wrong, so callers let it pass without a message.
+ */
+export class SudoCancelledError extends Error {
+  constructor() {
+    super('Identity confirmation was cancelled')
+    this.name = 'SudoCancelledError'
+  }
+}
+
+export type SudoRequest = {
+  purpose: UserApi.SudoPurpose
+  /** A ticket completes the request; `null` cancels it. Only the first call counts. */
+  settle: (ticket: string | null) => void
+}
+
+/** The confirmation the identity dialog is showing, if any. */
+export const pendingSudo = shallowRef<SudoRequest | null>(null)
+
+/**
+ * Ask the person to confirm who they are, and resolve with the single-use
+ * ticket the server signs for `purpose`. Rejects with SudoCancelledError when
+ * they back out.
+ */
+export function confirmIdentity(purpose: UserApi.SudoPurpose): Promise<string> {
+  // One dialog at a time. A newer request takes its place, and the older one
+  // ends as cancelled rather than waiting on a dialog nobody can see.
+  pendingSudo.value?.settle(null)
+  return new Promise((resolve, reject) => {
+    const request: SudoRequest = {
+      purpose,
+      settle(ticket) {
+        if (pendingSudo.value !== request) return
+        pendingSudo.value = null
+        if (ticket) resolve(ticket)
+        else reject(new SudoCancelledError())
+      },
+    }
+    pendingSudo.value = request
+  })
+}
 
 // 存储最后一次需要重试的操作
 let lastOperation: (() => Promise<any>) | null = null

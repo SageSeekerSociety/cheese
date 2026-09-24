@@ -184,10 +184,15 @@
     }
   },
   "sudo": {
-    "title": "验证身份",
+    "title": "确认是你本人",
     "lede": "继续之前，请先验证身份",
-    "ledeFor": "{action}之前，请先验证身份",
+    "ledeFor": "{action}前，需要确认你的身份",
     "passkey": "使用通行密钥验证",
+    "otherMethods": "其他方式",
+    "method": {
+      "password": "输入密码",
+      "totp": "输入验证器中的验证码"
+    },
     "submit": "验证",
     "usePasskey": "改用通行密钥",
     "usePassword": "改用密码",
