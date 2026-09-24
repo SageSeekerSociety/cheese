@@ -6,8 +6,9 @@ import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 
-import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import { connectDevice, deviceProposedName, listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
+import { desktopBridge, downloadsForThisComputer } from '../lib/desktop'
 
 import accountService from '@/services/account'
 
@@ -64,6 +65,43 @@ async function copyInstall() {
   } catch {
     // Clipboard blocked (insecure context / permissions) — leave the command
     // visible so the user can still select and copy it by hand.
+  }
+}
+
+// Inside the desktop app (desktop/) this computer can be connected in place: the app
+// installs and starts cheesehost, and this page approves the login it starts with
+// the session it is already signed in with — no terminal, no link to open.
+const desktop = desktopBridge()
+const downloads = downloadsForThisComputer()
+const connecting = ref(false)
+const connectStep = ref('')
+const connectError = ref<string | null>(null)
+
+async function connectThisMachine() {
+  if (!desktop) return
+  connecting.value = true
+  connectError.value = null
+  connectStep.value = '正在准备'
+  try {
+    await desktop.connectThisMachine({
+      knownDeviceIds: devices.value.map((d) => d.device_id),
+      onStep: (text) => (connectStep.value = text),
+      approve: async (code) => {
+        const { device_name } = await deviceProposedName(code)
+        await connectDevice(code, device_name ?? undefined)
+      },
+    })
+    addDeviceOpen.value = false
+    // The service dials in a moment after it starts; list until it is online.
+    for (let i = 0; i < 10; i++) {
+      await load()
+      if (devices.value.some((d) => d.online)) break
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  } catch (e) {
+    connectError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    connecting.value = false
   }
 }
 
@@ -171,10 +209,21 @@ onMounted(load)
           <v-progress-circular indeterminate color="primary" />
         </div>
 
+        <div v-else-if="devices.length === 0 && desktop" class="empty-state text-center py-10">
+          <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
+          <div class="t-body c-muted mb-1">暂无已连接的设备</div>
+          <div class="t-caption c-muted mb-5">把这台电脑接入后，智能体就能在这里干活</div>
+          <v-btn color="primary" variant="flat" :loading="connecting" @click="connectThisMachine">接入这台电脑</v-btn>
+          <div v-if="connecting" class="t-caption c-muted mt-3">{{ connectStep }}</div>
+          <div v-if="connectError" class="t-caption c-danger mt-3">{{ connectError }}</div>
+        </div>
+
         <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
           <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
           <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-          <div class="t-caption c-muted mb-5">在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里</div>
+          <div class="t-caption c-muted mb-5">
+            Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面这条命令，按提示批准
+          </div>
 
           <!-- Copyable install one-liner, right in the empty-state so the user can
              act without hunting for a dialog. -->
@@ -281,6 +330,37 @@ onMounted(load)
           <v-spacer />
           <v-btn variant="text" icon="mdi-close" size="small" @click="addDeviceOpen = false" />
         </div>
+        <!-- In the desktop app this computer connects in place; in a browser a Mac or
+           Windows computer gets the app, and any other machine (a server, Linux)
+           keeps the terminal route. -->
+        <template v-if="desktop">
+          <div class="t-title mt-3 mb-1">这台电脑</div>
+          <div class="t-caption c-muted mb-3">自动安装连接程序并完成批准，不用打开终端</div>
+          <v-btn color="primary" variant="flat" :loading="connecting" @click="connectThisMachine">接入这台电脑</v-btn>
+          <div v-if="connecting" class="t-caption c-muted mt-2">{{ connectStep }}</div>
+          <div v-if="connectError" class="t-caption c-danger mt-2">{{ connectError }}</div>
+        </template>
+        <template v-else>
+          <div class="t-title mt-3 mb-1">Mac 或 Windows 电脑</div>
+          <div class="t-caption c-muted mb-3">下载桌面端，登录后点「接入这台电脑」，不用打开终端</div>
+          <div class="d-flex flex-wrap ga-2">
+            <v-btn
+              v-for="(d, i) in downloads"
+              :key="d.href"
+              :color="i === 0 ? 'primary' : undefined"
+              :variant="i === 0 ? 'flat' : 'outlined'"
+              prepend-icon="mdi-download"
+              :href="d.href"
+            >
+              {{ d.label }}
+            </v-btn>
+          </div>
+          <div class="t-caption c-muted mt-2">
+            第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」，Windows 点「更多信息 → 仍要运行」
+          </div>
+        </template>
+
+        <div class="t-title mt-6 mb-1">{{ desktop ? '其他机器' : '服务器或 Linux' }}</div>
         <div class="install-cmd mb-5">
           <code class="install-cmd__code">{{ installCommand }}</code>
           <v-btn

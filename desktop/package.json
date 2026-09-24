@@ -1,0 +1,12 @@
+{
+  "name": "cheese-desktop",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "icons": "tauri icon ../frontend/public/pwa-512x512.png -o src-tauri/icons"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  },
+  "packageManager": "pnpm@11.22.0"
+}
