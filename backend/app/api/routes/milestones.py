@@ -10,6 +10,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import NotFoundError
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.schemas import (
@@ -18,6 +19,7 @@ from app.domain.milestone.schemas import (
     MilestoneUpdate,
 )
 from app.domain.milestone.services import MilestoneService
+from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["milestones"])
 
@@ -31,9 +33,27 @@ async def create_milestone(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    # 重发幂等 (④). A milestone is project-scoped but `cheese milestone` is
+    # A room's token names its room, and is authorized there — the way every
+    # other write an agent makes from inside a room is. A person pinning one in
+    # the UI names no room and is authorized on the project.
+    actor = await resolver.resolve(
+        fallback_handle=None, project_id=project_id, topic_id=body.source_topic_id
+    )
+    if body.source_topic_id is not None:
+        await resolver.authorize_topic(
+            actor, project_id=project_id, topic_id=body.source_topic_id
+        )
+    else:
+        await resolver.authorize_project(actor, project_id=project_id)
+    # `source_topic_id` is a `topics` foreign key, and a thread is not a row in
+    # that table — so the room the place belongs to is what is recorded.
+    source = body.source_topic_id
+    if source is not None:
+        place = await TopicService(db).place_or_404(source)
+        if place.project_id != project_id:
+            raise NotFoundError("Topic not found")
+        source = place.room_id
+    # 重发幂等 (④). A milestone is project-scoped but `cheese_milestone` is
     # always run from inside a topic's turn, and that topic is what the body
     # carries as `source_topic_id` — so it is also what names the continuation
     # to dedup against. No source topic (a human pinning one in the UI) → no
@@ -58,7 +78,7 @@ async def create_milestone(
         title=body.title,
         description=body.description,
         due_date=body.due_date,
-        source_topic_id=body.source_topic_id,
+        source_topic_id=source,
         auto_pinned=body.auto_pinned,
     )
     out = MilestoneOut.model_validate(milestone).model_dump(mode="json")
