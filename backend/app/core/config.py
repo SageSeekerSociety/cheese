@@ -273,7 +273,9 @@ class Settings(BaseSettings):
     # The runtime model on the gateway this subscription feeds.
     subscription_linked_model_name: str = "gpt-codex-subscription"
     # The upstream identifier the linked model calls. May need a Responses-API
-    # form (e.g. openai/responses/…) pending the protocol spike.
+    # form (e.g. openai/responses/…) pending the protocol spike. This is the
+    # DEFAULT: a subscription row may carry its own explicit upstream_model
+    # (llm_subscriptions.upstream_model), which wins over this value.
     subscription_upstream_model: str = "openai/gpt-5.2-codex"
     # Estimated prices: they exist ONLY so max_budget braking and the spend
     # readout keep working for a flat-rate subscription (the mimo precedent) —
