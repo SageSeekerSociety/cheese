@@ -1,17 +1,15 @@
 //! Connects this computer as a device, doing what the 「我的设备」 page otherwise
-//! asks the user to do in a terminal: run the server's own install.sh, then
+//! asks the user to do in a terminal: install the server's own connector, then
 //! `cheesehost link connect`. Nothing here re-implements the connector — the
 //! binary, its login flow and its background service are the ones every other
-//! machine gets. What this adds is what a terminal user supplies by hand: a
-//! machine cheesehost can run on (platform::prepare), and a place to approve
-//! the login.
+//! machine gets. What this adds is what a terminal user supplies by hand
+//! (platform::prepare), and a place to approve the login.
 
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Mutex;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::platform;
 
@@ -27,42 +25,9 @@ pub fn approval_code(printed: &str) -> Option<String> {
     (complete && !code.is_empty()).then_some(code)
 }
 
-/// Starts `shell` — a `sh -s` somewhere — and hands it `script` on stdin. A
-/// script never travels as an argument: on Windows it would cross wsl.exe, which
-/// joins its arguments and lets the default shell split them again. Braces make
-/// sh read the whole script before running any of it, so a command inside that
-/// reads stdin gets end-of-file rather than the rest of the script.
-pub async fn spawn_script(mut shell: Command, script: &str) -> Result<Child, String> {
-    let mut child = shell
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(format!("{{\n{script}\n}}\n").as_bytes()).await.map_err(|e| e.to_string())?;
-    Ok(child)
-}
-
-/// Runs `script` in `shell` and returns what it printed, or that as the error.
-pub async fn run_script(shell: Command, script: &str) -> Result<String, String> {
-    let out = spawn_script(shell, script).await?.wait_with_output().await.map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
-    if out.status.success() {
-        Ok(text)
-    } else {
-        Err(text.trim().to_string())
-    }
-}
-
-/// Runs a script where cheesehost lives: on this Mac, or inside the Windows side's WSL distro.
-pub async fn sh(script: &str) -> Result<String, String> {
-    run_script(platform::shell(), &format!("{}{script}", platform::PRELUDE)).await
-}
-
 /// The device this computer's cheesehost is logged in as, if any.
 pub async fn stored_device_id() -> Option<String> {
-    let config = sh(&format!("cat \"{}\" 2>/dev/null || true", platform::CHEESEHOST_CONFIG)).await.ok()?;
+    let config = tokio::fs::read_to_string(platform::cheesehost_config()).await.ok()?;
     let config: serde_json::Value = serde_json::from_str(&config).ok()?;
     config.get("device_id")?.as_str().map(str::to_string)
 }
@@ -82,7 +47,7 @@ pub async fn connect(
     platform::prepare(resources, &step).await?;
 
     step("正在下载连接程序");
-    sh(&format!("curl -fsSL '{origin}/connector/install.sh' | sh"))
+    platform::install_connector(origin)
         .await
         .map_err(|e| format!("下载连接程序失败：{e}"))?;
 
@@ -90,16 +55,19 @@ pub async fn connect(
     // since, or someone else's) would connect as that device or be refused, so
     // it is dropped and the login runs again.
     if stored_device_id().await.is_some_and(|id| !known_device_ids.contains(&id)) {
-        let _ = sh("\"$HOME/.local/bin/cheesehost\" auth logout").await;
+        let _ = platform::cheesehost().args(["auth", "logout"]).output().await;
     }
 
+    // On Windows `link connect` also fetches the runtime the server's commands
+    // need, which is most of the wait the first time.
     step("正在接入");
-    let mut child = spawn_script(
-        platform::shell(),
-        &format!("{}exec \"$HOME/.local/bin/cheesehost\" link connect '{origin}/connector'", platform::PRELUDE),
-    )
-    .await
-    .map_err(|e| format!("cheesehost: {e}"))?;
+    let mut child = platform::cheesehost()
+        .args(["link", "connect", &format!("{origin}/connector")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cheesehost: {e}"))?;
     *running.0.lock().unwrap() = child.id();
 
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();

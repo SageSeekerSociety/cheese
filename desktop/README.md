@@ -13,12 +13,11 @@ What each platform needs before cheesehost can run (`src-tauri/src/platform/`):
   app carries one (`scripts/build-tmux.sh`, system libraries only) and places it
   where cheesehost looks for a private copy. git and python3 come from Apple's
   command line tools; the app asks macOS to install them when they are missing.
-- **Windows.** cheesehost needs tmux and a POSIX pty, so it runs in a WSL distro
-  of its own named `Cheese` (Ubuntu 24.04, imported from a mirror, apart from any
-  distro the user keeps), as user `cheese` with systemd on. WSL stops a distro
-  once nothing on the Windows side is attached to it, so the app starts one
-  `sleep infinity` in it now and at every login (`HKCU\…\Run\Cheese`). Turning
-  WSL itself on needs an administrator's yes and a restart.
+- **Windows.** cheesehost runs natively. The app downloads `cheesehost.exe`
+  into `%LOCALAPPDATA%\cheese\bin`, where it can update itself; at `link
+  connect` cheesehost fetches what the server's commands need (python3 and
+  Git for Windows' shell) from the server and keeps itself running with a
+  per-user login entry. No WSL and no administrator rights.
 
 ```bash
 pnpm install
