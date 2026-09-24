@@ -17,6 +17,8 @@ test, which counts SQL because "correct" and "correct without a hundred round
 trips" are separate claims and only one of them is visible in the JSON.
 """
 
+import uuid
+
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
@@ -26,6 +28,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.turn_log import close_turn, open_turn
 
 
 def _project(client, owner: str = "alice") -> str:
@@ -179,6 +182,37 @@ def test_an_unread_at_awaits_you_and_a_read_one_still_counts(client):
 
 
 # ---- the fields are per-caller, and per-topic ----------------------------
+
+
+def test_a_question_awaits_only_whoever_started_the_turn(client):
+    """芝士停在一道提问上：只有发起那一轮的人能回答，也只有他被等着。
+
+    名册上的其他人照旧看到这个房间，但不该被一道不归他答的题点亮 —— 否则一屋子
+    人的侧栏同时亮起同一个点，而能处理它的只有一个。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid, "问答", created_by="alice")
+    turn = client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(tid), author="bob")
+    )
+    r = client.post(
+        f"/topics/{tid}/ask",
+        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    # 芝士问完就收尾（`cheese_ask` 不等回答），这一轮随即关闭——题照样在等 bob。
+    client.portal.call(lambda: close_turn(client.test_request_factory, turn))
+
+    bob = _seen_by(client, pid, "bob")["问答"]
+    assert bob["awaits_me"] is True
+    assert bob["i_participate"] is True
+    assert _seen_by(client, pid, "alice")["问答"]["awaits_me"] is False
+    assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
+
+    header = client.get(f"/topics/{tid}", headers=session_auth_headers("bob"))
+    assert header.status_code == 200, header.text
+    assert header.json()["data"]["awaits_me"] is True
 
 
 def test_two_callers_see_different_answers_for_the_same_topics(client):

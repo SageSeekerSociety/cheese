@@ -401,12 +401,15 @@ class BlockRepository:
 
     async def tasks_awaiting_an_answer(
         self, task_ids: list[uuid.UUID]
-    ) -> set[uuid.UUID]:
-        """这些活里，哪几条停在一个未回答的提问上 —— 一次查完，看板用。
+    ) -> dict[uuid.UUID, str | None]:
+        """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
         判据是 #1084 定的那一条：**最近一条提问消息没有 `answered`**。不需要新增
         存储，因为回答本来就记在提问那一块上（`meta.answered`）。取「最近一条」而
         不是「有没有任何一条」：已回答的旧提问不该让这条活长期停留在待处理。
+
+        等谁也记在那一块上（`meta.asked`，提问那一刻写下的，见 `ask_options`）。
+        None 是「这道题指不到具体的人」。只关心停没停的调用方照样拿它做 `in`。
 
         每条活只取一行（`DISTINCT ON`），走 `ix_blocks_task_id_created_at`。
         """
@@ -414,7 +417,7 @@ class BlockRepository:
 
     async def rooms_awaiting_an_answer(
         self, topic_ids: list[uuid.UUID]
-    ) -> set[uuid.UUID]:
+    ) -> dict[uuid.UUID, str | None]:
         """同一个判据，问的是房间自己那条线（`task_id IS NULL`）。
 
         分成两个方法而不是一个带开关的：房间和活是两种东西，而「房间自己那条线」
@@ -426,9 +429,9 @@ class BlockRepository:
 
     async def _awaiting_an_answer(
         self, place_column, place_ids: list[uuid.UUID], *extra
-    ) -> set[uuid.UUID]:
+    ) -> dict[uuid.UUID, str | None]:
         if not place_ids:
-            return set()
+            return {}
         stmt = (
             select(place_column, Block.meta)
             .where(
@@ -444,7 +447,7 @@ class BlockRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {
-            place_id
+            place_id: (meta or {}).get("asked")
             for place_id, meta in rows
             if place_id is not None and not (meta or {}).get("answered")
         }

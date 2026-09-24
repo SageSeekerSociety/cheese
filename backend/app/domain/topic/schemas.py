@@ -56,7 +56,8 @@ class TopicOut(BaseModel):
     # `i_participate`: I'm in the topic's roster, OR I created it, OR a card
     # here is routed to me, OR I've been @'d in it.
     # `awaits_me`: it is waiting on ME right now — a card routed to me is still
-    # pending, or an @ at me is unread. This is the "永远不折叠" signal, and it
+    # pending, an @ at me is unread, or 芝士 is stopped on a question only I can
+    # answer (I started the turn). This is the "永远不折叠" signal, and it
     # implies `i_participate` (every way of being awaited is also a way of
     # participating), so the folding rule only ever reads one of the two.
     #

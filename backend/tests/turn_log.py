@@ -69,6 +69,13 @@ async def open_turn(
     return turn_id
 
 
+async def close_turn(factory, turn_id: uuid.UUID) -> None:
+    """End one interval the way the harness's Stop does."""
+    async with factory() as session:
+        await AgentTurnRepository(session).close([turn_id], datetime.now(UTC))
+        await session.commit()
+
+
 async def open_turn_ids(factory) -> set[uuid.UUID]:
     """Which intervals are still open. Empty means every turn has been accounted
     for — the assertion that used to read "the registry file is empty"."""
