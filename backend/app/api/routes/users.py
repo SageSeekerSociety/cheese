@@ -2065,13 +2065,15 @@ async def _mail_sign_in_code(email: str) -> None:
     from app.domain.user.verification_service import (
         EmailCodePurpose,
         EmailVerificationService,
+        Issued,
     )
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
-        if not await service.issue(email):
-            logger.warning("Sign-in code mail was not sent")
+        issued = await service.issue(email)
+        if issued is not Issued.SENT:
+            logger.warning("Sign-in code mail was not sent: %s", issued.value)
     finally:
         await redis.aclose()
 
@@ -2677,17 +2679,21 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     """Issue a reset token and mail it; runs after the response has gone.
 
     Off the request path so that the response takes as long for an unknown
-    address as for a known one. A failed send is only logged: the requester was
-    already told the same thing either way, and can ask again after the
-    cooldown.
+    address as for a known one. A failed send, or one the site's hourly
+    allowance refuses, is only logged: the requester was already told the same
+    thing either way, and can ask again after the cooldown.
     """
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
+    from app.domain.user.mail_quota import give_back_site_mail, take_site_mail
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
+        if not await take_site_mail(redis):
+            logger.warning("Password recovery mail to user %d: site limit", user_id)
+            return
         token = await PasswordResetService(redis).create_reset_token(
             user_id, email, username
         )
@@ -2713,6 +2719,11 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     )
     if not sent:
         logger.warning("Password recovery mail to user %d was not sent", user_id)
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            await give_back_site_mail(redis)
+        finally:
+            await redis.aclose()
 
 
 @router.post(
@@ -2730,7 +2741,7 @@ async def recover_password_request(
 
     from app.core.background import spawn
     from app.core.client_address import resolved_client_address
-    from app.domain.user.mail_quota import MailQuota, site_mail_limit_reached
+    from app.domain.user.mail_quota import MailQuota
 
     email = payload.email.strip()
 
@@ -2740,8 +2751,7 @@ async def recover_password_request(
 
     # The quota is spent before the account is looked up, so it counts unknown
     # addresses exactly as it counts known ones; a request over it answers with
-    # the same success body and simply sends nothing. Only the site-wide limit
-    # is said out loud: it is the same for every address.
+    # the same success body and simply sends nothing.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         claim = await MailQuota(redis, "password_recovery").claim(
@@ -2749,8 +2759,6 @@ async def recover_password_request(
         )
     finally:
         await redis.aclose()
-    if claim.site_full:
-        raise site_mail_limit_reached()
     if not claim.granted:
         return _RECOVERY_REQUESTED
 

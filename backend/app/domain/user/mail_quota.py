@@ -9,7 +9,9 @@ sent per purpose in an hour, whichever addresses they go to.
 
 Above all of those, the whole site may send at most ``MAIL_SITE_HOURLY_LIMIT``
 such mails in an hour, whatever the purpose: the per-address and per-source
-limits do not stop many sources each mailing many strangers a little.
+limits do not stop many sources each mailing many strangers a little. That
+allowance is taken only by a mail about to leave, never by a request, so it
+counts real mail to real mailboxes; see ``take_site_mail``.
 """
 
 import logging
@@ -30,24 +32,24 @@ MAIL_HOURLY_LIMIT = 5
 # bulk.
 MAIL_CLIENT_HOURLY_LIMIT = 200
 # Generous for the same reason: several classes signing up in the same hour,
-# each person asking for a code twice, stay well under it. Requests that name
-# an address nobody has an account at count too, as they must for the refusal
-# to say nothing about which addresses have accounts; so anyone willing to
-# make that many requests can stop mail for everyone until the hour ends. The
-# alert is what tells a person when that happens.
+# each person asking for a code twice, stay well under it. Only mail that
+# actually leaves counts, so a request naming an address nobody has an account
+# at, or a placeholder address, spends none of it: exhausting it takes real
+# mail to real mailboxes, which the per-address quota already bounds. Where
+# saying "refused" would tell whether an address has an account, the caller
+# answers as if the mail had gone and sends nothing.
 MAIL_SITE_HOURLY_LIMIT = 1000
 MAIL_SITE_KEY = f"{MAIL_QUOTA_PREFIX}site:hour"
 _HOUR = 60 * 60
 
 # Checked and counted in one script: done as separate calls, a burst of
 # simultaneous requests would all see a free slot before any of them took it.
-# KEYS: cooldown, address hour, site hour, and the requester's hour if known.
-# Returns {1, 0, 0} when claimed, or {0, seconds until the refusing limit
-# lifts, 1 for this address or requester | 2 for the whole site}.
+# KEYS: cooldown, address hour, and the requester's hour if known.
+# Returns {1, 0} when claimed, or {0, seconds until the refusing limit lifts}.
 _CLAIM_SCRIPT = """
 local cooling = redis.call('TTL', KEYS[1])
 if cooling > 0 then
-  return {0, cooling, 1}
+  return {0, cooling}
 end
 local sent = redis.call('INCR', KEYS[2])
 if sent == 1 then
@@ -55,35 +57,43 @@ if sent == 1 then
 end
 if sent > tonumber(ARGV[2]) then
   redis.call('DECR', KEYS[2])
-  return {0, math.max(redis.call('TTL', KEYS[2]), 1), 1}
+  return {0, math.max(redis.call('TTL', KEYS[2]), 1)}
 end
-if #KEYS == 4 then
-  local from_client = redis.call('INCR', KEYS[4])
+if #KEYS == 3 then
+  local from_client = redis.call('INCR', KEYS[3])
   if from_client == 1 then
-    redis.call('EXPIRE', KEYS[4], ARGV[3])
+    redis.call('EXPIRE', KEYS[3], ARGV[3])
   end
   if from_client > tonumber(ARGV[4]) then
-    redis.call('DECR', KEYS[4])
+    redis.call('DECR', KEYS[3])
     redis.call('DECR', KEYS[2])
-    return {0, math.max(redis.call('TTL', KEYS[4]), 1), 1}
+    return {0, math.max(redis.call('TTL', KEYS[3]), 1)}
   end
-end
-local site = redis.call('INCR', KEYS[3])
-if site == 1 then
-  redis.call('EXPIRE', KEYS[3], ARGV[3])
-end
-if site > tonumber(ARGV[5]) then
-  redis.call('DECR', KEYS[3])
-  if #KEYS == 4 then
-    redis.call('DECR', KEYS[4])
-  end
-  redis.call('DECR', KEYS[2])
-  return {0, math.max(redis.call('TTL', KEYS[3]), 1), 2}
 end
 if tonumber(ARGV[1]) > 0 then
   redis.call('SET', KEYS[1], '1', 'EX', ARGV[1])
 end
-return {1, 0, 0}
+return {1, 0}
+"""
+
+# One slot of the site's hourly allowance, for a mail about to leave.
+_SITE_SCRIPT = """
+local site = redis.call('INCR', KEYS[1])
+if site == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+if site > tonumber(ARGV[1]) then
+  redis.call('DECR', KEYS[1])
+  return 0
+end
+return 1
+"""
+
+_SITE_GIVE_BACK_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('DECR', KEYS[1])
+end
+return 1
 """
 
 _GIVE_BACK_SCRIPT = """
@@ -92,6 +102,13 @@ for i = 2, #KEYS do
   if redis.call('EXISTS', KEYS[i]) == 1 then
     redis.call('DECR', KEYS[i])
   end
+end
+return 1
+"""
+
+_SITE_GIVE_BACK_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('DECR', KEYS[1])
 end
 return 1
 """
@@ -113,9 +130,36 @@ class MailClaim:
     granted: bool
     #: Refused: how long until the limit that refused it lifts.
     retry_after_seconds: int = 0
-    #: Refused because the whole site has sent its hourly allowance, rather
-    #: than because of this address or this requester.
-    site_full: bool = False
+
+
+async def take_site_mail(redis: Redis) -> bool:
+    """Take one mail from the site's hourly allowance, right before sending
+    it; False when the allowance is spent and the mail must not go out.
+
+    The first refusal in an hour raises an alert, and later ones repeat it
+    only to the log.
+    """
+    taken = await redis.eval(  # type: ignore[misc]
+        _SITE_SCRIPT, 1, MAIL_SITE_KEY, MAIL_SITE_HOURLY_LIMIT, _HOUR
+    )
+    if taken == 1:
+        return True
+    logger.warning("Site-wide mail limit reached; a mail was not sent")
+    # One alert per hour however many mails are refused: the key makes every
+    # refusal the same problem.
+    alerting.send(
+        "发信数量已达全站上限",
+        [
+            f"一小时内最多发送 {MAIL_SITE_HOURLY_LIMIT} 封验证邮件，此后的邮件不再发出",
+        ],
+        key="mail:site-hourly-limit",
+    )
+    return False
+
+
+async def give_back_site_mail(redis: Redis) -> None:
+    """Return the slot of a mail that never left."""
+    await redis.eval(_SITE_GIVE_BACK_SCRIPT, 1, MAIL_SITE_KEY)  # type: ignore[misc]
 
 
 class MailQuota:
@@ -125,7 +169,7 @@ class MailQuota:
 
     def _keys(self, email: str, client: str | None) -> list[str]:
         base = f"{MAIL_QUOTA_PREFIX}{self._purpose}:{normalize_email(email)}"
-        keys = [f"{base}:cooldown", f"{base}:hour", MAIL_SITE_KEY]
+        keys = [f"{base}:cooldown", f"{base}:hour"]
         if client is not None:
             keys.append(f"{MAIL_QUOTA_PREFIX}{self._purpose}:from:{client}:hour")
         return keys
@@ -138,7 +182,7 @@ class MailQuota:
         leaves the per-client quota out rather than sharing one among all.
         """
         keys = self._keys(email, client)
-        granted, wait, refused_by = await self._redis.eval(  # type: ignore[misc]
+        granted, wait = await self._redis.eval(  # type: ignore[misc]
             _CLAIM_SCRIPT,
             len(keys),
             *keys,
@@ -146,27 +190,8 @@ class MailQuota:
             MAIL_HOURLY_LIMIT,
             _HOUR,
             MAIL_CLIENT_HOURLY_LIMIT,
-            MAIL_SITE_HOURLY_LIMIT,
         )
-        claim = MailClaim(
-            granted=granted == 1,
-            retry_after_seconds=int(wait),
-            site_full=refused_by == 2,
-        )
-        if claim.site_full:
-            logger.warning("Site-wide mail limit reached; refusing %s", self._purpose)
-            # One alert per hour however many requests are refused: the key
-            # makes every refusal the same problem.
-            alerting.send(
-                "发信数量已达全站上限",
-                [
-                    f"一小时内最多发送 {MAIL_SITE_HOURLY_LIMIT} 封验证邮件，"
-                    "此后的发信请求将被拒绝",
-                    f"约 {max(1, claim.retry_after_seconds // 60)} 分钟后恢复",
-                ],
-                key="mail:site-hourly-limit",
-            )
-        return claim
+        return MailClaim(granted=granted == 1, retry_after_seconds=int(wait))
 
     async def give_back(self, email: str, client: str | None = None) -> None:
         """Return a claim whose mail never left, so a retry need not wait."""

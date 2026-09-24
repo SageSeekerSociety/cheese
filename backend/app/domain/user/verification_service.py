@@ -2,7 +2,7 @@ import logging
 import secrets
 import string
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 from redis.asyncio import Redis
 
@@ -10,8 +10,10 @@ from app.core.email import get_email_sender
 from app.core.errors import BadRequestError, SystemBusyError
 from app.domain.user.mail_quota import (
     MailQuota,
+    give_back_site_mail,
     normalize_email,
     site_mail_limit_reached,
+    take_site_mail,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,16 @@ return 0
 """
 
 
+class Issued(Enum):
+    """What became of a code ``issue`` was asked to mail."""
+
+    SENT = "sent"
+    #: The configured sender failed; no code was kept.
+    FAILED = "failed"
+    #: The site had sent all the mail it may this hour; nothing was kept.
+    SITE_FULL = "site_full"
+
+
 def generate_verification_code(length: int = 6) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length))
 
@@ -111,8 +123,6 @@ class EmailVerificationService:
         ``client``: the requester's address, for ``MailQuota.claim``.
         """
         claim = await self._quota.claim(email, client)
-        if claim.site_full:
-            raise site_mail_limit_reached()
         if not claim.granted:
             raise BadRequestError(
                 "Please wait before requesting a new code",
@@ -122,12 +132,17 @@ class EmailVerificationService:
                 },
             )
 
-    async def issue(self, email: str) -> bool:
+    async def issue(self, email: str) -> Issued:
         """Replace any earlier code for ``email`` with a new one and mail it.
 
-        Returns False when a configured sender failed, leaving no code behind:
-        nobody received it. The quota is the caller's to have claimed.
+        The per-address quota is the caller's to have claimed; the site's
+        hourly allowance is taken here, by the mail itself. Unless the mail
+        is sent, no code is left behind: nobody received it.
         """
+        sending = self._sender.is_configured
+        if sending and not await take_site_mail(self._redis):
+            return Issued.SITE_FULL
+
         code = generate_verification_code()
         key = self._key(email)
 
@@ -157,13 +172,13 @@ class EmailVerificationService:
             mail.text.format(code=code) + "\nThis code will expire in 10 minutes."
         )
 
-        if not self._sender.is_configured:
+        if not sending:
             # A deployment without mail (local development) keeps the code in
             # Redis and carries on, so the flows stay usable there.
             logger.warning(
                 "Email not configured; %s code for %s was not sent", mail.quota, email
             )
-            return True
+            return Issued.SENT
 
         sent = await self._sender.send(
             to=email,
@@ -173,26 +188,32 @@ class EmailVerificationService:
         )
         if not sent:
             await self._redis.delete(key)
-            return False
+            await give_back_site_mail(self._redis)
+            return Issued.FAILED
 
         logger.info("%s code sent to %s", mail.quota, email)
-        return True
+        return Issued.SENT
 
     async def send_verification_code(
         self, email: str, client: str | None = None
     ) -> None:
         """Claim the quota and mail a code, all within the request.
 
+        Only for an address the requester may learn about anyway, since a
+        full site allowance is said out loud here.
+
         ``client``: the requester's address, for ``MailQuota.claim``.
         """
         await self.claim(email, client)
-        if not await self.issue(email):
-            # Nobody received this code, so it must not count against the
-            # resend quota either.
-            await self._quota.give_back(email, client)
-            raise SystemBusyError(
-                "Failed to send the verification email. Please try again"
-            )
+        issued = await self.issue(email)
+        if issued is Issued.SENT:
+            return
+        # Nobody received this code, so it must not count against the
+        # resend quota either.
+        await self._quota.give_back(email, client)
+        if issued is Issued.SITE_FULL:
+            raise site_mail_limit_reached()
+        raise SystemBusyError("Failed to send the verification email. Please try again")
 
     async def verify_code(self, email: str, code: str) -> bool:
         """Consume the code on a match. Each miss counts against the code, and

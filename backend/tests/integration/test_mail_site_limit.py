@@ -62,6 +62,14 @@ def _sign_up_code(client: TestClient, email: str):
     return client.post("/users/verify/email", json={"email": email})
 
 
+def _sign_in_code(client: TestClient, email: str):
+    return client.post("/users/auth/email-code", json={"email": email})
+
+
+def _recover(client: TestClient, email: str):
+    return client.post("/users/recover/password/request", json={"email": email})
+
+
 def _refused_for_the_site(resp) -> bool:
     return (
         resp.status_code == 503
@@ -69,11 +77,16 @@ def _refused_for_the_site(resp) -> bool:
     )
 
 
-def test_past_the_limit_nothing_more_is_sent_and_one_alert_goes_out(
+def _fill(client: TestClient, outbox: Outbox) -> None:
+    for _ in range(LIMIT):
+        assert _sign_up_code(client, _address()).status_code == 200
+    assert len(outbox.sent) == LIMIT
+
+
+def test_past_the_limit_a_sign_up_code_is_refused_and_one_alert_goes_out(
     api_client: TestClient, outbox: Outbox, alerts: _Alerts
 ):
-    for _ in range(LIMIT):
-        assert _sign_up_code(api_client, _address()).status_code == 200
+    _fill(api_client, outbox)
 
     refused = [_sign_up_code(api_client, _address()) for _ in range(3)]
 
@@ -83,38 +96,79 @@ def test_past_the_limit_nothing_more_is_sent_and_one_alert_goes_out(
     assert len(alerts.posted) == 1, alerts.posted
 
 
-def test_the_limit_is_shared_by_every_kind_of_mail(
+def test_requests_that_send_nothing_do_not_spend_the_allowance(
+    db_session,
+    _portal,
+    api_client: TestClient,
+    user_client: UserCreator,
+    outbox: Outbox,
+):
+    from sqlalchemy import update
+
+    from app.domain.user.models import User
+
+    placeholder = user_client.create_user()
+    placeholder_email = f"oauth-github-{uuid.uuid4().hex[:8]}@placeholder.internal"
+
+    async def make_placeholder() -> None:
+        await db_session.execute(
+            update(User)
+            .where(User.id == placeholder.user_id)
+            .values(email=placeholder_email)
+        )
+        await db_session.flush()
+
+    _portal.call(make_placeholder)
+
+    for _ in range(3):
+        assert _sign_in_code(api_client, _address()).status_code == 200
+        assert _recover(api_client, _address()).status_code == 200
+    assert _sign_in_code(api_client, placeholder_email).status_code == 200
+    outbox.settle(0)
+
+    _fill(api_client, outbox)
+
+
+def test_a_full_allowance_is_invisible_where_accounts_must_not_be_told_apart(
     api_client: TestClient,
     user_client: UserCreator,
     outbox: Outbox,
     alerts: _Alerts,
 ):
     user = user_client.create_user()
-    for _ in range(LIMIT):
-        _sign_up_code(api_client, _address())
+    _fill(api_client, outbox)
 
-    recovery = api_client.post(
-        "/users/recover/password/request", json={"email": user.email}
-    )
-    sign_in_known = api_client.post(
-        "/users/auth/email-code", json={"email": user.email}
-    )
-    sign_in_unknown = api_client.post(
-        "/users/auth/email-code", json={"email": _address()}
-    )
+    for ask in (_sign_in_code, _recover):
+        known = ask(api_client, user.email)
+        unknown = ask(api_client, _address())
+        assert known.status_code == 200, known.text
+        assert known.content == unknown.content
 
-    for resp in (recovery, sign_in_known, sign_in_unknown):
-        assert _refused_for_the_site(resp), resp.text
-    assert sign_in_known.content == sign_in_unknown.content
     outbox.settle(LIMIT)
+    alerts.settle()
+    assert len(alerts.posted) == 1, alerts.posted
 
 
-def test_a_refusal_for_one_address_does_not_spend_the_site_allowance(
+def test_a_sudo_code_is_refused_with_the_reason(
+    api_client: TestClient, authenticated_user, outbox: Outbox, alerts: _Alerts
+):
+    _fill(api_client, outbox)
+
+    resp = api_client.post(
+        "/users/me/sudo/email-code",
+        headers={"Authorization": f"Bearer {authenticated_user.token}"},
+    )
+
+    assert _refused_for_the_site(resp), resp.text
+    assert len(outbox.sent) == LIMIT
+
+
+def test_a_refusal_for_one_address_does_not_spend_the_allowance(
     api_client: TestClient, outbox: Outbox
 ):
     email = _address()
     assert _sign_up_code(api_client, email).status_code == 200
-    # Too soon for this address: refused before the site's count is touched.
+    # Too soon for this address: refused before any mail is sent.
     assert _sign_up_code(api_client, email).status_code == 400
 
     assert _sign_up_code(api_client, _address()).status_code == 200
