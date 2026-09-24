@@ -64,6 +64,37 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     assert seen == ["first", "rotated"]
 
 
+def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
+    token = tmp_path / "execution.token"
+    token.write_text("first")
+    client = executor_transport.RemoteClient({"token_file": str(token)})
+    seen = []
+
+    class Connection:
+        def request(self, method, path, *, body, headers):
+            seen.append(headers["X-Cheese-Token"])
+
+        def getresponse(self):
+            return self
+
+        status = 200
+
+        def read(self):
+            return b"{}"
+
+    def connection(self):
+        self.transport.headers = {}
+        return Connection(), ""
+
+    monkeypatch.setattr(executor_transport.RemoteClient, "connection", connection)
+    monkeypatch.setenv("CHEESE_API", "http://platform.test")
+    monkeypatch.setenv("CHEESE_TOKEN", "stale")
+    client.platform_request({"path": "/topics/room"})
+    token.write_text("rotated")
+    client.platform_request({"path": "/topics/room"})
+    assert seen == ["first", "rotated"]
+
+
 @pytest.fixture
 def executor(tmp_path, request):
     home = tmp_path / "session home"
