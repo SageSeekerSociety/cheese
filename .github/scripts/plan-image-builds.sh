@@ -12,12 +12,17 @@ ref_type="${REF_TYPE:-branch}"
 
 # A failed lookup leaves the baseline unknown. Stop before scheduling builds;
 # only an exhausted history without a success establishes a bootstrap.
+# Any successful build of this branch is a baseline, a manual one included: a
+# workflow_dispatch build rebuilds every image under its own commit's tag. When
+# the last push baseline has lost an image tag, a manual build is the only way
+# back, so a lookup that ignored it kept every later push failing on the same
+# missing tag.
 if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
   # The server's success filter has returned older runs while its completed
   # list included newer successes. Select the conclusion from that list.
   for page in {1..10}; do
     if ! runs="$(gh api \
-        "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=completed&event=push&per_page=100&page=$page" \
+        "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=completed&per_page=100&page=$page" \
         --jq '.workflow_runs | if type != "array" then error("workflow_runs must be an array") else .[] | [.conclusion, .head_sha] | @tsv end')"; then
       echo "::error::Could not query the previous successful image build; rerun this job when the API is available" >&2
       exit 1
