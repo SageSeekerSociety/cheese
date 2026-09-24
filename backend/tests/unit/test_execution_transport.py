@@ -538,26 +538,50 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
     the connection directly reintroduces the timeout storm the breaker exists
     to stop: every SendUserFile on a sandbox session takes this path.
     """
-    commands = []
+    tools = []
 
     def invoke(payload, args):
-        commands.append((payload["id"], payload["tool"], args["command"]))
+        tools.append(payload["tool"])
         if args["command"].startswith("wc"):
             return {"value": {"stdout": "2\n"}}
         return {"value": {"stdout": base64.b64encode(b"hi").decode("ascii")}}
 
     assert central.stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
     assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
-    assert [(tool, command.split()[0]) for _, tool, command in commands] == [
-        ("Bash", "wc"),
-        ("Bash", "base64"),
-    ]
+    assert set(tools) == {"Bash"}
 
     def refuse_invoke(payload, args):
         return {"error": "machine is out of reach"}
 
     with pytest.raises(RuntimeError, match="machine is out of reach"):
         central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+
+
+def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
+    """The build hands back at most 30000 characters of a command's stdout and
+    cuts the rest. A living doc or a SendUserFile of a few tens of kilobytes is
+    ordinary, and it must come back byte for byte, not as a truncated base64
+    that fails to decode."""
+    import os
+    import subprocess
+
+    original = os.urandom(100_000) + "尾巴".encode()
+    path = tmp_path / "doc.md"
+    path.write_bytes(original)
+    ids = []
+
+    def invoke(payload, args):
+        ids.append(payload["id"])
+        out = subprocess.run(
+            ["sh", "-c", args["command"]], capture_output=True, text=True, check=True
+        ).stdout
+        return {"value": {"stdout": out[:30000]}}
+
+    assert central.read_file_on_the_machine(invoke, str(path), "id-big") == original
+    assert len(ids) == len(set(ids)), "each command needs its own request id"
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    assert central.read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
 
 
 def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(

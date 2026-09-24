@@ -11,10 +11,11 @@
 处向执行器要清单，或者一个纯平台工具绕去了机器，这里就会红。
 """
 
-import base64
 import json
 import os
+import re
 import shlex
+import subprocess
 import sys
 import threading
 import uuid
@@ -234,14 +235,22 @@ DOC = "# 实况\n\n数据口径定为新版。\n"
 
 @pytest.fixture
 def machine_is_here(tmp_path):
-    """机器在：它上面有一份文档，推分支的那条命令答成功。"""
+    """机器在：它上面有一份文档，推分支的那条命令答成功。
+
+    读文件的命令在这里真的跑一遍（机器上的路径换成本地那份文档），所以测到的是
+    文件完整读回来了，不是某一种命令写法。"""
+    doc = tmp_path / "machine-doc.md"
+    doc.write_text(DOC)
 
     def executor(payload):
         command = payload["params"]["args"]["command"]
-        if command.startswith("base64 < "):
-            stdout = base64.b64encode(DOC.encode()).decode()
-        elif command == "cheese sync --task " + shlex.quote(TASK):
+        if command == "cheese sync --task " + shlex.quote(TASK):
             stdout = ""
+        elif re.search(r"/\S*/notes/doc\.md", command):
+            local = re.sub(r"/\S*/notes/doc\.md", str(doc), command)
+            stdout = subprocess.run(
+                ["sh", "-c", local], capture_output=True, text=True, check=True
+            ).stdout
         else:
             return 500, b""
         return 200, json.dumps({"value": {"stdout": stdout}}).encode()
@@ -348,8 +357,9 @@ def test_the_living_doc_is_read_off_the_machine(machine_is_here):
     # 没读过就写，出示的是 0 —— 只有还没有文档时平台才收。
     assert put["expected_version"] == 0
     # 相对路径锚在机器的工作区上，不是会话这一侧的哪个目录。
-    [read] = executor_calls
-    assert read["params"]["args"]["command"].endswith("/notes/doc.md")
+    assert executor_calls
+    for call in executor_calls:
+        assert "/notes/doc.md" in call["params"]["args"]["command"]
 
 
 def test_a_write_after_a_read_carries_the_version_it_read(machine_is_here):
