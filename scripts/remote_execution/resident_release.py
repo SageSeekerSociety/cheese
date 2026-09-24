@@ -126,7 +126,7 @@ def main():
         screen = HubScreen(
             "fixture", "fixture", [], "fixture", 1, "fixture", topic_id=uuid.uuid4()
         )
-        tmux = ["tmux", "-L", "cheese-acceptance-" + output.name]
+        tmux = acceptance.tmux_server(output)
         identity = tmux + ["display-message", "-p", "-t", "agent", "#{pane_pid}"]
         pid = acceptance.run(identity).strip()
 
