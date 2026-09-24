@@ -7,7 +7,9 @@ name: Claude Code build contracts
 # command's output landing at a path we read directly — so they are checked
 # here instead of being discovered during an upgrade. The headless
 # stream-json protocol the Claude Code driver speaks (#1606) is unpublished
-# too; headless_contract.py checks the parts of it the driver relies on.
+# too; headless_contract.py checks the parts of it the driver relies on,
+# including through the remote-execution plugin, so changes to the plugin and
+# its executor run it as well.
 
 on:
   workflow_call:
@@ -47,6 +49,10 @@ jobs:
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/pinned
+      - name: Install tmux
+        # The resume checks drive the interactive CLI in a tmux pane.
+        if: ${{ !cancelled() }}
+        run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -yq tmux; }
       - name: Headless stream-json contract
         # Runs even when the MCP checks failed, so one run reports both.
         if: ${{ !cancelled() }}
@@ -98,6 +104,10 @@ jobs:
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/latest
+      - name: Install tmux
+        # The resume checks drive the interactive CLI in a tmux pane.
+        if: ${{ !cancelled() }}
+        run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -yq tmux; }
       - name: Headless stream-json contract
         # Runs even when the MCP checks failed, so one run reports both.
         if: ${{ !cancelled() }}
