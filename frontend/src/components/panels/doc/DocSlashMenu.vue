@@ -94,7 +94,7 @@ watch(
 }
 .doc-slash__hint {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--faint);
 }
 </style>

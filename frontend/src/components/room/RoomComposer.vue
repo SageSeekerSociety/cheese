@@ -565,16 +565,16 @@ defineExpose({
 .composer-box:focus-within {
   border-color: var(--faint);
 }
-/* 拖着文件进来时，变的是输入框自己那圈边：提成琥珀的实线，再垫一层琥珀淡色。
+/* 拖着文件进来时，变的是输入框自己那圈边：加深成实线，再垫一层底色。
    虚线读起来像占位、像还没定，而这一刻要说的是「就是这儿」；描在这个盒子上而不是
    外面那层，是因为盒子本来就是那个控件，它的圆角也已经在那儿了。
    第二像素靠 box-shadow 加，不靠 border-width——后者会改盒子尺寸，把输入框顶一下。
    这条排在 :focus-within 后面：拖进来的时候光标通常就在输入框里，两条同权，后面
    的赢。 */
 .composer--drop .composer-box {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  background: var(--accent-wash);
+  border-color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--muted);
+  background: var(--fill);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
@@ -635,17 +635,18 @@ defineExpose({
 }
 /* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
    描边那一档太轻了——它和没开的状态只差一条 1px 的线，而这一行右边还站着一颗实心
-   的发送按钮，线根本抢不到注意力。所以开态是填充的，用 --accent-wash 那一档做底、
-   --accent-ink 写字（记号色 --accent 当文字在浅色下只有 2.34:1，读不动）。 */
+   的发送按钮，线根本抢不到注意力。所以开态是填充的：比 hover 深一档的底、墨色
+   加粗的字。不用琥珀——琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不
+   出该点哪个。 */
 .summon-btn--on {
   border-color: transparent;
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  background: var(--line-2);
+  color: var(--ink);
   font-weight: 600;
 }
 .summon-btn--on:hover:not(:disabled) {
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  background: var(--line-2);
+  color: var(--ink);
 }
 /* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
 @media (max-width: 480px) {
@@ -749,10 +750,8 @@ defineExpose({
   font-weight: 600;
   padding: 0 5px;
   border-radius: var(--radius-sm);
-  /* 记号色做文字对比度不够 (design-system §1.6): --accent 在白底上是 2.65:1,
-     远低于正文门槛 4.5;--accent-ink 是 5.76:1。 */
-  color: var(--accent-ink);
-  background: var(--accent-wash);
+  color: var(--muted);
+  background: var(--fill);
 }
 .mention-menu-sub {
   font-size: 12px;

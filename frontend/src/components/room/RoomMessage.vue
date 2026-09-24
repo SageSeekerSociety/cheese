@@ -179,7 +179,7 @@ function renderPlain(text: string): string {
           </button>
         </template>
         <div v-else class="ask-answered">
-          <v-icon size="13" color="primary">mdi-check-circle</v-icon>
+          <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
           {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
         </div>
       </div>
@@ -271,8 +271,8 @@ function renderPlain(text: string): string {
   cursor: pointer;
 }
 .summon-hint-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--faint);
+  color: var(--ink);
 }
 .summon-hint-btn:disabled {
   cursor: default;
@@ -297,7 +297,7 @@ function renderPlain(text: string): string {
   white-space: nowrap;
 }
 .im-replied:hover {
-  color: var(--accent-ink);
+  color: var(--ink);
 }
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
@@ -391,7 +391,7 @@ function renderPlain(text: string): string {
   margin-top: 4px;
   padding: 2px 8px;
   font-size: 12px;
-  color: var(--accent-ink);
+  color: var(--text);
   background: var(--fill);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-sm);
@@ -399,7 +399,7 @@ function renderPlain(text: string): string {
 }
 .im-upgraded:hover {
   background: var(--surface);
-  border-color: var(--accent);
+  border-color: var(--faint);
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {
@@ -537,8 +537,8 @@ function renderPlain(text: string): string {
   color: var(--muted);
 }
 
-/* Reaction chips under a message: emoji + count; own reactions get the amber
-   outline (Slack's "you reacted" affordance). */
+/* Reaction chips under a message: emoji + count; own reactions get a darker
+   outline and ground (Slack's "you reacted" affordance), not amber. */
 .rx-row {
   display: flex;
   flex-wrap: wrap;
@@ -561,11 +561,11 @@ function renderPlain(text: string): string {
   transition: border-color 0.12s ease;
 }
 .rx-chip:hover {
-  border-color: var(--accent);
+  border-color: var(--faint);
 }
 .rx-chip--mine {
-  border-color: var(--accent);
-  background: var(--surface);
+  border-color: var(--muted);
+  background: var(--line-2);
   color: var(--ink);
 }
 .rx-emoji {
