@@ -18,7 +18,7 @@ const browser = vi.hoisted(() => ({ webAuthn: true }))
 
 vi.mock('@/network/api/users', () => ({
   UserApi: {
-    getAuthMethods: vi.fn(),
+    getMyAuthMethods: vi.fn(),
     getPasskeyAuthenticationOptions: vi.fn(),
     verifySudoPasskey: vi.fn(),
     verifySudoPassword: vi.fn(),
@@ -48,12 +48,11 @@ afterEach(() => {
 })
 
 function accountWith(methods: { password?: boolean; passkey: boolean; twoFactor: boolean }) {
-  vi.mocked(UserApi.getAuthMethods).mockResolvedValue({
+  vi.mocked(UserApi.getMyAuthMethods).mockResolvedValue({
     data: {
-      supports_password: methods.password ?? true,
-      supports_passkey: methods.passkey,
-      supports_2fa: methods.twoFactor,
-      requires_2fa: methods.twoFactor,
+      password: methods.password ?? true,
+      passkey: methods.passkey,
+      twoFactor: methods.twoFactor,
     },
   } as never)
 }

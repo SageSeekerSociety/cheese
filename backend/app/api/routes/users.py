@@ -1612,6 +1612,40 @@ async def get_current_user(
 
 
 @router.get(
+    "/me/auth-methods",
+    summary="How the signed-in user can confirm their identity",
+)
+async def get_my_auth_methods(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """The ways ``/auth/sudo`` accepts from this account, for the caller only:
+    what an account has is nobody else's business."""
+    from app.domain.passkey.models import PasskeyCredential
+    from app.domain.user.login_security import TOTPService
+    from app.domain.user.models import User
+
+    user = await session.get(User, auth_user.user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    passkeys = await session.scalar(
+        select(func.count())
+        .select_from(PasskeyCredential)
+        .where(PasskeyCredential.user_id == user.id)
+    )
+    return {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            # An account created through a third-party sign-in may have none.
+            "password": bool(user.hashed_password),
+            "passkey": bool(passkeys),
+            "twoFactor": await TOTPService(session).is_2fa_enabled(user.id),
+        },
+    }
+
+
+@router.get(
     "/{userId}",
     summary="Get user by id",
 )
@@ -1682,64 +1716,6 @@ async def put_user_profile(
         avatar_id=payload.get("avatarId"),
     )
     return {"code": 200, "message": "Success", "data": {}}
-
-
-@router.get(
-    "/auth/methods/{username}",
-    summary="Get authentication methods for a user",
-    description="Returns which auth methods a user supports. Returns safe defaults for non-existent users.",  # noqa: E501
-    openapi_extra={"x-public": True},
-)
-async def get_auth_methods(
-    username: str,
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """Return supported auth methods without revealing whether the user exists."""
-    from app.domain.user.login_security import TOTPService
-
-    # An unknown name answers like the most common account, one with only a
-    # password, so the answer does not say whether the name exists.
-    default_response = {
-        "code": 200,
-        "message": "Authentication methods retrieved successfully.",
-        "data": {
-            "supports_password": True,
-            "supports_passkey": False,
-            "supports_2fa": False,
-            "requires_2fa": False,
-        },
-    }
-
-    from app.domain.user.models import User
-
-    result = await session.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if user is None:
-        return default_response
-
-    # Check passkeys
-    from app.domain.passkey.models import PasskeyCredential
-
-    passkey_result = await session.execute(
-        select(func.count())
-        .select_from(PasskeyCredential)
-        .where(PasskeyCredential.user_id == user.id)
-    )
-    passkey_count = passkey_result.scalar() or 0
-
-    has_2fa = await TOTPService(session).is_2fa_enabled(user.id)
-
-    return {
-        "code": 200,
-        "message": "Authentication methods retrieved successfully.",
-        "data": {
-            # An account created through a third-party sign-in may have none.
-            "supports_password": bool(user.hashed_password),
-            "supports_passkey": passkey_count > 0,
-            "supports_2fa": has_2fa,
-            "requires_2fa": has_2fa,
-        },
-    }
 
 
 async def _admit_login_attempt(delay: "LoginDelay", username: str) -> int:

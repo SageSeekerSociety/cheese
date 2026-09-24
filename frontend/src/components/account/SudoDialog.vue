@@ -129,7 +129,7 @@
  * whatever the person was doing. Mounted once at the app root; `withSudo`
  * opens it and waits for the ticket it gets from the server.
  */
-import type { AuthMethodsResponse } from '@/network/api/users/types'
+import type { MyAuthMethods } from '@/network/api/users/types'
 
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser'
@@ -171,7 +171,7 @@ const codeLabelId = useId()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const request = pendingSudo
-const methods = ref<Pick<AuthMethodsResponse, 'supports_password' | 'supports_passkey' | 'supports_2fa'> | null>(null)
+const methods = ref<MyAuthMethods | null>(null)
 const method = ref<Method>('password')
 const loading = ref(false)
 const password = ref('')
@@ -188,9 +188,9 @@ const lede = computed(() =>
 const available = computed<Method[]>(() => {
   if (!methods.value) return []
   const list: Method[] = []
-  if (webAuthnSupported && methods.value.supports_passkey) list.push('passkey')
-  if (methods.value.supports_password) list.push('password')
-  if (methods.value.supports_2fa) list.push('totp')
+  if (webAuthnSupported && methods.value.passkey) list.push('passkey')
+  if (methods.value.password) list.push('password')
+  if (methods.value.twoFactor) list.push('totp')
   return list
 })
 const primary = computed<Method>(() => available.value[0] ?? 'password')
@@ -209,9 +209,9 @@ watch(
     errorMessage.value = ''
     password.value = ''
     code.value = ''
-    let found = { supports_password: true, supports_passkey: false, supports_2fa: false }
+    let found: MyAuthMethods = { password: true, passkey: false, twoFactor: false }
     try {
-      if (currentUserName.value) found = (await UserApi.getAuthMethods(currentUserName.value)).data
+      found = (await UserApi.getMyAuthMethods()).data
     } catch {
       // Without the list, offer the password, the way most accounts have.
     }

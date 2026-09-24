@@ -1,7 +1,6 @@
 import type { User } from '@/types'
 import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
-  AuthMethodsResponse,
   FollowUserResponse,
   GetAnswerListResponse,
   GetOAuthProvidersResponse,
@@ -11,6 +10,7 @@ import type {
   GetRealNameInfoResponse,
   GetSessionsResponse,
   GetUserInfoResponse,
+  MyAuthMethods,
   OAuthBindUserRequest,
   OAuthBindUserResponse,
   OAuthCreateUserRequest,
@@ -415,10 +415,9 @@ export namespace UserApi {
       },
     })
 
-  // 获取认证方法
-  export const getAuthMethods = (username: string) =>
-    ApiInstance.request<AuthMethodsResponse>({
-      url: `/users/auth/methods/${username}`,
+  export const getMyAuthMethods = () =>
+    ApiInstance.request<MyAuthMethods>({
+      url: '/users/me/auth-methods',
       method: 'GET',
     })
 

@@ -60,11 +60,11 @@ export type GetSessionsResponse = {
   sessions: SessionInfo[]
 }
 
-export type AuthMethodsResponse = {
-  supports_password: boolean
-  supports_passkey: boolean
-  supports_2fa: boolean
-  requires_2fa: boolean
+/** The ways the signed-in account can confirm its identity. */
+export type MyAuthMethods = {
+  password: boolean
+  passkey: boolean
+  twoFactor: boolean
 }
 
 export interface TokenPayload {
