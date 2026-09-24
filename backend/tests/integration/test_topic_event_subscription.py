@@ -701,6 +701,8 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
                 "_eid": "late-stop-1",
             },
         )
+        # The consumer acknowledges each hook after persistence and broadcast.
+        await provider._subscriptions[topic_id].sink.queue.join()
         started = await asyncio.wait_for(room.get(), 1)
         progress = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
