@@ -55,3 +55,9 @@ func stopProcess(pid int) error {
 
 // removeSelf deletes the running binary; unlinking a running executable is fine here.
 func removeSelf(exe string) error { return os.Remove(exe) }
+
+// stopFootprintProcesses: unlinking what a running program was started from is
+// allowed here, so nothing has to stop before the footprint goes.
+func stopFootprintProcesses(string) {}
+
+func removeTree(dir string) error { return os.RemoveAll(dir) }

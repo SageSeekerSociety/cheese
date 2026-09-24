@@ -3,8 +3,10 @@ package daemoncmd
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -53,3 +55,35 @@ func removeSelf(exe string) error {
 }
 
 const createNoWindow = 0x08000000
+
+// stopFootprintProcesses ends every process started from a program under
+// root — the executor's python, claude, the shell and tools it placed. Windows
+// will not delete a file a running program was started from, so without this
+// uninstall stops halfway with the rooms still running.
+func stopFootprintProcesses(root string) {
+	// The root travels in the environment: -Command folds any argument after
+	// it into the script text.
+	script := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:CHEESE_FOOTPRINT + '\', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "CHEESE_FOOTPRINT="+root)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	_ = cmd.Run()
+	// Handles close a moment after the process is gone.
+	time.Sleep(time.Second)
+}
+
+// removeTree deletes dir. Git marks its objects read-only, and Windows will not
+// delete a read-only file, so what the first pass leaves is made writable and
+// the pass repeated; a handle still closing gets the same second chance.
+func removeTree(dir string) error {
+	err := os.RemoveAll(dir)
+	for attempt := 0; err != nil && attempt < 3; attempt++ {
+		_ = filepath.WalkDir(dir, func(path string, _ fs.DirEntry, _ error) error {
+			_ = os.Chmod(path, 0o666)
+			return nil
+		})
+		time.Sleep(500 * time.Millisecond)
+		err = os.RemoveAll(dir)
+	}
+	return err
+}

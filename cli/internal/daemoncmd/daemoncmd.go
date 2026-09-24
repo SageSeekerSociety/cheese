@@ -454,6 +454,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
 			}
+			stopFootprintProcesses(footprint)
 			if err := removeFootprint(config.Dir(), home); err != nil {
 				return err
 			}
@@ -482,7 +483,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 // installed that knew how to find them.
 func removeFootprint(configDir, home string) error {
 	for _, directory := range []string{configDir, filepath.Join(home, place.Root)} {
-		if err := os.RemoveAll(directory); err != nil {
+		if err := removeTree(directory); err != nil {
 			return fmt.Errorf("remove %s: %w", directory, err)
 		}
 	}
