@@ -65,6 +65,8 @@ export type MyAuthMethods = {
   password: boolean
   passkey: boolean
   twoFactor: boolean
+  /** A code mailed to the account; never alongside two-step verification. */
+  emailCode: boolean
 }
 
 export interface TokenPayload {

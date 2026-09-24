@@ -1633,6 +1633,7 @@ async def get_my_auth_methods(
         .select_from(PasskeyCredential)
         .where(PasskeyCredential.user_id == user.id)
     )
+    two_factor = await TOTPService(session).is_2fa_enabled(user.id)
     return {
         "code": 200,
         "message": "Success",
@@ -1640,9 +1641,66 @@ async def get_my_auth_methods(
             # An account created through a third-party sign-in may have none.
             "password": bool(user.hashed_password),
             "passkey": bool(passkeys),
-            "twoFactor": await TOTPService(session).is_2fa_enabled(user.id),
+            "twoFactor": two_factor,
+            "emailCode": _email_code_confirms(user.email, two_factor=two_factor),
         },
     }
+
+
+def _email_code_confirms(email: str | None, *, two_factor: bool) -> bool:
+    """Whether a code mailed to the account confirms its identity.
+
+    Not with two-step verification: the mailbox alone would then be enough to
+    turn it off. Not for a placeholder address, which nobody reads.
+    """
+    from app.domain.user.services import is_placeholder_email
+
+    return not two_factor and not is_placeholder_email(email)
+
+
+def _email_code_unavailable() -> ForbiddenError:
+    return ForbiddenError(
+        "An email code cannot confirm this account's identity",
+        {"reason": "email_code_unavailable"},
+    )
+
+
+@router.post(
+    "/me/sudo/email-code",
+    summary="Mail a code that confirms the signed-in user's identity",
+)
+async def request_sudo_email_code(
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Sent to the account's own address, under the same quotas as every
+    other mailed code. Refused where ``/auth/sudo`` would refuse the code."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import TOTPService
+    from app.domain.user.models import User
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    user = await session.get(User, auth_user.user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    two_factor = await TOTPService(session).is_2fa_enabled(user.id)
+    if not _email_code_confirms(user.email, two_factor=two_factor):
+        raise _email_code_unavailable()
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(
+            redis, EmailCodePurpose.SUDO
+        ).send_verification_code(user.email, resolved_client_address(request))
+    finally:
+        await redis.aclose()
+    return {"code": 200, "message": "Code sent.", "data": {"email": user.email}}
 
 
 @router.get(
@@ -2250,6 +2308,10 @@ async def sudo_auth(
 
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
 
     method = payload.method
     credentials = payload.credentials
@@ -2338,6 +2400,31 @@ async def sudo_auth(
             raise AuthenticationRequiredError("Passkey does not belong to this account")
 
         return await verified("Sudo mode activated via passkey.")
+
+    elif method == "email_code":
+        code = credentials.get("code")
+        if not code:
+            raise BadRequestError("code is required")
+
+        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        # Checked again here rather than trusted from when the code was sent:
+        # 2FA switched on since then must still shut the mailbox out.
+        two_factor = await TOTPService(session).is_2fa_enabled(user.id)
+        if not _email_code_confirms(user.email, two_factor=two_factor):
+            raise _email_code_unavailable()
+
+        # No attempt budget of its own: each code dies after a few wrong
+        # guesses, and a new one costs a mail from the address's quota.
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            service = EmailVerificationService(redis, EmailCodePurpose.SUDO)
+            matched = await service.verify_code(user.email, str(code).strip())
+        finally:
+            await redis.aclose()
+        if not matched:
+            raise _invalid_email_code()
+
+        return await verified("Sudo mode activated via email code.")
 
     else:
         raise BadRequestError(f"Unknown auth method: {method}")

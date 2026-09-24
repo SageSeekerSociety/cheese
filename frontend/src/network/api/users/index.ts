@@ -415,6 +415,24 @@ export namespace UserApi {
       },
     })
 
+  /** Mail a code that confirms the signed-in user's identity to their own address. */
+  export const requestSudoEmailCode = () =>
+    ApiInstance.request<{ email: string }>({
+      url: '/users/me/sudo/email-code',
+      method: 'POST',
+    })
+
+  export const verifySudoEmailCode = (code: string, purpose?: SudoPurpose) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'email_code',
+        credentials: { code },
+        purpose,
+      },
+    })
+
   export const getMyAuthMethods = () =>
     ApiInstance.request<MyAuthMethods>({
       url: '/users/me/auth-methods',

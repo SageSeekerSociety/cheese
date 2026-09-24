@@ -63,6 +63,52 @@
               </v-btn>
             </v-form>
 
+            <template v-else-if="method === 'email_code'">
+              <v-btn
+                v-if="!codeSentTo"
+                block
+                color="primary"
+                size="large"
+                class="sudo__submit"
+                :loading="sending"
+                @click="sendEmailCode"
+              >
+                <v-icon start icon="mdi-email-outline" size="20" />
+                {{ t('account.sudo.sendEmailCode') }}
+              </v-btn>
+              <v-form v-else @submit.prevent="verifyEmailCode">
+                <p :id="codeLabelId" class="sudo__label">
+                  {{ t('account.verifyEmail.sentTo', { email: codeSentTo }) }}
+                </p>
+                <v-otp-input
+                  v-model="code"
+                  length="6"
+                  type="number"
+                  class="sudo__otp"
+                  :aria-labelledby="codeLabelId"
+                  :disabled="loading"
+                  @finish="verifyEmailCode"
+                />
+                <v-btn
+                  block
+                  color="primary"
+                  size="large"
+                  type="submit"
+                  class="sudo__submit"
+                  :loading="loading"
+                  :disabled="code.length !== 6"
+                >
+                  {{ t('account.sudo.submit') }}
+                </v-btn>
+                <p class="sudo__resend">
+                  <span v-if="resendWait > 0">{{ t('account.verifyEmail.resendIn', { seconds: resendWait }) }}</span>
+                  <button v-else type="button" class="sudo__link" :disabled="sending" @click="sendEmailCode">
+                    {{ t('account.verifyEmail.resend') }}
+                  </button>
+                </p>
+              </v-form>
+            </template>
+
             <v-form v-else @submit.prevent="verifyTotp">
               <p :id="codeLabelId" class="sudo__label">{{ t('account.twoFactor.totpLede') }}</p>
               <v-otp-input
@@ -131,7 +177,7 @@
  */
 import type { MyAuthMethods } from '@/network/api/users/types'
 
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser'
 
 import { pendingSudo } from '@/utils/sudo'
@@ -142,15 +188,20 @@ import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { currentUserId, currentUserName } from '@/services/account'
+import { attemptMessage } from '@/views/account/attemptWait'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
-type Method = 'passkey' | 'password' | 'totp'
+type Method = 'passkey' | 'password' | 'totp' | 'email_code'
 
 const METHODS: Record<Method, { icon: string; label: string }> = {
   passkey: { icon: 'mdi-key-chain', label: 'account.sudo.passkey' },
   password: { icon: 'mdi-form-textbox-password', label: 'account.sudo.method.password' },
   totp: { icon: 'mdi-cellphone-key', label: 'account.sudo.method.totp' },
+  email_code: { icon: 'mdi-email-outline', label: 'account.sudo.method.emailCode' },
 }
+
+// The server refuses a new code within a minute of the last one.
+const RESEND_COOLDOWN_SECONDS = 60
 
 // Say what is being confirmed, so the interruption explains itself.
 const ACTIONS: Record<UserApi.SudoPurpose, string> = {
@@ -178,19 +229,30 @@ const password = ref('')
 const code = ref('')
 const errorMessage = ref('')
 const panel = ref<HTMLElement | null>(null)
+/** Where the last email code went, once one has been sent for this request. */
+const codeSentTo = ref('')
+const codeSentAt = ref(0)
+const sending = ref(false)
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+const resendWait = computed(() =>
+  Math.max(0, RESEND_COOLDOWN_SECONDS - Math.floor((now.value - codeSentAt.value) / 1000))
+)
 
 const lede = computed(() =>
   request.value ? t('account.sudo.ledeFor', { action: t(ACTIONS[request.value.purpose]) }) : ''
 )
 
 // The strongest way this account has comes first. An account created
-// through a third-party sign-in may have no password.
+// through a third-party sign-in may have no password, and then its email
+// may be the only way it has.
 const available = computed<Method[]>(() => {
   if (!methods.value) return []
   const list: Method[] = []
   if (webAuthnSupported && methods.value.passkey) list.push('passkey')
   if (methods.value.password) list.push('password')
   if (methods.value.twoFactor) list.push('totp')
+  if (methods.value.emailCode) list.push('email_code')
   return list
 })
 const primary = computed<Method>(() => available.value[0] ?? 'password')
@@ -209,7 +271,9 @@ watch(
     errorMessage.value = ''
     password.value = ''
     code.value = ''
-    let found: MyAuthMethods = { password: true, passkey: false, twoFactor: false }
+    codeSentTo.value = ''
+    codeSentAt.value = 0
+    let found: MyAuthMethods = { password: true, passkey: false, twoFactor: false, emailCode: false }
     try {
       found = (await UserApi.getMyAuthMethods()).data
     } catch {
@@ -229,6 +293,8 @@ function switchTo(next: Method) {
   errorMessage.value = ''
   password.value = ''
   code.value = ''
+  // Choosing it from the list is asking for the code.
+  if (next === 'email_code' && !codeSentTo.value) sendEmailCode()
 }
 
 function focusFirst() {
@@ -250,6 +316,31 @@ function cancel() {
   request.value?.settle(null)
 }
 
+async function sendEmailCode() {
+  const current = request.value
+  if (!current || sending.value) return
+  sending.value = true
+  errorMessage.value = ''
+  try {
+    const { data } = await UserApi.requestSudoEmailCode()
+    if (request.value !== current) return
+    codeSentTo.value = data.email
+    codeSentAt.value = now.value = Date.now()
+    clearInterval(ticker)
+    ticker = setInterval(() => (now.value = Date.now()), 1000)
+  } catch (error: unknown) {
+    if (request.value !== current) return
+    errorMessage.value = attemptMessage(error) ?? t('account.sudo.sendFailed')
+  } finally {
+    sending.value = false
+  }
+}
+
+watch(request, (current) => {
+  if (!current) clearInterval(ticker)
+})
+onBeforeUnmount(() => clearInterval(ticker))
+
 async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
   const current = request.value
   if (!current || loading.value) return
@@ -263,6 +354,7 @@ async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
     if (request.value !== current) return
     // The browser's own WebAuthn error text is English and names internals.
     errorMessage.value =
+      (method.value === 'email_code' ? attemptMessage(error) : null) ??
       passkeyWrongHostMessage(error, passkeyRpId) ??
       ((error as { name?: string } | null)?.name === 'NotAllowedError'
         ? t('account.sudo.passkeyCanceled')
@@ -298,6 +390,11 @@ function verifyPassword() {
 function verifyTotp() {
   if (code.value.length !== 6) return
   return verify(() => UserApi.verifySudoTOTP(code.value, request.value?.purpose))
+}
+
+function verifyEmailCode() {
+  if (code.value.length !== 6) return
+  return verify(() => UserApi.verifySudoEmailCode(code.value, request.value?.purpose))
 }
 </script>
 
@@ -361,6 +458,43 @@ function verifyTotp() {
 .sudo__otp {
   padding: 0;
   margin-bottom: 16px;
+}
+
+.sudo__resend {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--faint);
+}
+
+.sudo__link {
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  transition: text-decoration-color var(--dur-quick) var(--ease-standard);
+}
+
+.sudo__link:hover:not(:disabled) {
+  text-decoration-color: currentcolor;
+}
+
+.sudo__link:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.sudo__link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .sudo .v-btn--size-large {

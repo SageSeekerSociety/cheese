@@ -207,7 +207,8 @@
     "noMethod": "No way to confirm your identity is set up",
     "method": {
       "password": "Enter your password",
-      "totp": "Enter a code from your authenticator app"
+      "totp": "Enter a code from your authenticator app",
+      "emailCode": "Get a code by email"
     },
     "submit": "Confirm",
     "passwordRequired": "Enter your password",
@@ -224,7 +225,9 @@
       "unbindOAuthConnection": "unlink a connected account",
       "viewRealName": "view your full real-name information",
       "updateRealName": "change your real-name information"
-    }
+    },
+    "sendEmailCode": "Email me a code",
+    "sendFailed": "Couldn't send the code. Try again."
   },
   "security": {
     "title": "Password and security",

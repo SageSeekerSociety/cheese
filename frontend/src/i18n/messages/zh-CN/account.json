@@ -207,7 +207,8 @@
     "noMethod": "暂无可用于确认身份的方式",
     "method": {
       "password": "输入密码",
-      "totp": "输入验证器中的验证码"
+      "totp": "输入验证器中的验证码",
+      "emailCode": "接收邮箱验证码"
     },
     "submit": "验证",
     "passwordRequired": "请输入密码",
@@ -224,7 +225,9 @@
       "unbindOAuthConnection": "解除第三方账号关联",
       "viewRealName": "查看完整实名信息",
       "updateRealName": "修改实名信息"
-    }
+    },
+    "sendEmailCode": "发送邮箱验证码",
+    "sendFailed": "发送失败，请重试"
   },
   "security": {
     "title": "密码与安全",
