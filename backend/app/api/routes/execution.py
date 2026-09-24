@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,9 +42,13 @@ _NOT_ACCEPTED = "Request ID already belongs to different input"
 class ExecutionRequest(BaseModel):
     method: str
     params: dict = {}
+    timeout: float = Field(default=660, gt=0, le=660)
 
 
 @router.post("/topics/{topic_id}/execution/{resource_id}", include_in_schema=False)
+@router.post(
+    "/topics/{topic_id}/execution/session-{resource_id}", include_in_schema=False
+)
 async def execute(
     topic_id: uuid.UUID,
     resource_id: uuid.UUID,
@@ -52,6 +56,7 @@ async def execute(
     payload: ExecutionRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    deadline = time.monotonic() + payload.timeout
     trace_id = "execution-" + uuid.uuid4().hex
     logger.debug(
         "execution_timing stage=handler_start trace=%s mono_ns=%d method=%s tool_id=%s",
@@ -76,23 +81,31 @@ async def execute(
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
-    # The hands are the session's, so the lease is read per session — one room
-    # can hold several. The credential names a room and a generation and not a
-    # session, which is enough because the executor is still pinned per room
-    # (`resolve_pinned_device`): every session here leases the same hands. The
-    # day that stops being true, the credential has to say which session it
-    # belongs to.
-    lease = next(
-        (
-            hands
-            for where, hands in await owner_reads.session_places(db, topic_id)
-            if where.get("resource_id") == str(resource_id)
-            and (hands or {}).get("kind") == "device"
-        ),
-        None,
-    )
+    lease_generation = None
+    if "session" in claims:
+        try:
+            session_id = uuid.UUID(claims["session"])
+            lease_generation = uuid.UUID(claims["lease"])
+        except (KeyError, TypeError, ValueError):
+            raise AuthenticationRequiredError(
+                "An execution session is required"
+            ) from None
+        owned = await owner_reads.session_execution(db, topic_id, session_id)
+    else:
+        owned = await owner_reads.legacy_execution(db, topic_id)
+        session_id = owned.id if owned is not None else None
+    lease = owned.work_lease if owned is not None else None
     if (
-        lease is None
+        owned is None
+        or not lease
+        or lease.get("kind") != "device"
+        or lease.get("status", "ready") != "ready"
+        or (
+            lease_generation is not None
+            and lease.get("generation") != str(lease_generation)
+        )
+        or not owned.runtime_location
+        or owned.runtime_location.get("resource_id") != str(resource_id)
         or claims.get("r") != str(resource_id)
         or (room.resource_id or room.id) != resource_id
     ):
@@ -108,6 +121,10 @@ async def execute(
     }:
         raise ForbiddenError("This executor operation is not available to the session")
     target = lease
+    if not await owner_reads.execution_device_authorized(
+        db, target["device_id"], room.project_id
+    ):
+        raise ForbiddenError("Device no longer serves this project")
     # 发出**之前**写下这次派发，和上面那次 commit 一起落库（结论 57，6.5）。带 id
     # 的调用才记：那个 id 是执行器自己给这次副作用起的名字（``remote_execution/
     # runtime.py`` 的 ``invoke`` 按它判重），而不带 id 的调用按它自己的协议问两遍
@@ -131,6 +148,8 @@ async def execute(
             place_id=topic_id,
             key=str(key),
             tool=str(tool) if tool else payload.method,
+            session_id=session_id,
+            lease_generation=lease_generation,
         )
         if key
         else None
@@ -157,7 +176,11 @@ async def execute(
     # 出「那次调用没有被执行」的才结清。
     try:
         answer = await execution.call(
-            target, payload.method, payload.params, trace_id=trace_id
+            target,
+            payload.method,
+            payload.params,
+            trace_id=trace_id,
+            timeout=max(0.001, deadline - time.monotonic()),
         )
     except (DeviceUnreachable, DeviceNotReady):
         # 帧一个字节都没写出去：链路不在（``DeviceUnreachable``），或者链路在而这台

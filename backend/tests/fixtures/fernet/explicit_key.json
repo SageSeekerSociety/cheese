@@ -1,0 +1,16 @@
+{
+  "jwt_secret": "fixture-jwt-secret",
+  "realname_encryption_key": "o0Zhe0Hg6NXeOP3CakDiMo3aRCQ7x9oIsHzgYNeLRuk=",
+  "tokens": {
+    "张三": "gAAAAABqtBd5q0ZV56F4soMyolhX7go-hAiqc3D7qcy7L3vvo4lXsfTUPJTojqUe-82fj_RE3Bkqwj5fMZvKw9WKeVR-471TYQ==",
+    "2021000001": "gAAAAABqtBd5L0rB7bnjcFulvk6a5m4MsBjFxovTYBseQLP-ep8YyuTlA4bXgJfDWyFGEy7VP3IC-QiuV2QTDZtxSe_xt1FMiA==",
+    "2021": "gAAAAABqtBd5UwslFiglApasv_EfoZWupFuQUEuI43uUCSiYLFBZM6UkBvlpPNp0BUdt3QhT_QTkRnRMKLEk4Z8VTHdXPhC4yg==",
+    "计算机科学与技术": "gAAAAABqtBd5-3caVS5o_HcPMRXJK7FZFRArPk63Uc4vTvFTP14bEg8tThLCruY2IO9EfbDPeXhNfdhAzGTkP0Zr628zDYWwC4yoQotAn4bfko8-3xJkQ2k=",
+    "一班": "gAAAAABqtBd597y_mEhkjz--1BmhQoHvJ3Dw_NR-jF-IRERFTuyK4a6wtZATf9RA8iYDrqI1m4VzpErEghxB7QxrFOHb0gXMtQ==",
+    "forge-account-password": "gAAAAABqtBd5IlmRXG-5mARpZpw_Saj46ist_h-Y4nfLIM5srThi_cogSwLtodsYlrYjy2phk6sBUvW4njiXn7goyg0fW1Riz_oVsFInf3J3IYo0xu0zqDk=",
+    "forge-oauth-token": "gAAAAABqtBd5HT9rvdUyL-G4EVgSsMR7TlkadoosItQagwTCdVEzyk6NOovQKewAOIMU0yPWMquTFyhCXsGocqowenQa6YT9NlATzPW9THAw1KXwk5wNE7o=",
+    "gho_access_token": "gAAAAABqtBd5leIUDh5pg8R4wUyX7nW4XkZhzShV6y9i_CW1DbCGL_3HZ4ubEuxgIdtzk1J3DIlLnG75qg4zKuXV7kG2MD9rDppsE1zxaCR0_gjL9v-ZeuQ=",
+    "ghr_refresh_token": "gAAAAABqtBd5MMRolLF9b858TIn4DF6tRf6KiagCi1JIsyKBsMxBS-o52k0_0E97ckpOxIE8lHK1At4LnlnDN_diE8urWEVXg9S4c-1I5yPJhBERuX6RUGM=",
+    "": "gAAAAABqtBd5qnCb4HDXPU5r-kFH7lFQLB2q2wagNAD0HOuakKduoyUkd6grcJ89C3MmTSQIFUNWT7JlqyBsqRGJE85AR3RgMA=="
+  }
+}

@@ -136,6 +136,32 @@ def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
     )
 
 
+def test_native_child_selection_is_admitted_and_rewritten(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, child_model=""):
+        calls.append((subagent, child_model))
+        return _verdict(model="claude-opus-5" if subagent else "claude-sonnet-5")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+    flow = _make_flow()
+    flow.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "x-cheese-child-model": "claude-opus-5",
+        }
+    )
+    asyncio.run(mod.requestheaders(flow))
+    assert calls == [(True, "claude-opus-5")]
+    assert "x-cheese-child-model" not in flow.request.headers
+    assert flow.response is None
+    body = flow.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert json.loads(body)["model"] == "claude-opus-5"
+
+
 def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_path):
     """分身的 /v1/messages 推迟到 `request` 钩子才准入：主 agent 指定的模型
     在请求体里，头部时刻体还没到。准入拿到的指定随调用带上去，绑定用缓冲
@@ -189,6 +215,61 @@ def test_the_main_conversation_keeps_streaming_its_body(monkeypatch, tmp_path):
     # keep_haiku:主对话里 CLI 自己发给小快家族的请求留在 haiku。
     body = flow.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
     assert json.loads(body)["model"] == "claude-haiku-4-5"
+
+
+def test_inherited_and_explicit_child_models_do_not_share_admission():
+    calls = []
+
+    def admit(
+        url, bearer, timeout, *, subagent=False, requested_model="", child_model=""
+    ):
+        calls.append((requested_model, child_model))
+        return _verdict(model="claude-opus-5" if child_model else "claude-sonnet-5")
+
+    admission = core.AdmissionGate("http://fixture/admission", post=admit)
+    inherited = admission.check(
+        "p", "t", "token", subagent=True, requested_model="claude-opus-5"
+    )
+    explicit = admission.check(
+        "p", "t", "token", subagent=True, child_model="claude-opus-5"
+    )
+    assert inherited.model == "claude-sonnet-5"
+    assert explicit.model == "claude-opus-5"
+    assert calls == [("claude-opus-5", ""), ("", "claude-opus-5")]
+
+
+def test_recorded_native_child_choices_replay_through_proxy_admission(
+    monkeypatch, tmp_path
+):
+    fixture = json.loads(
+        (
+            REPO_ROOT
+            / "backend/tests/fixtures/provider-recordings"
+            / "claude-2.1.277-child-models.json"
+        ).read_text()
+    )
+    records = fixture["requests"]
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(canonical).hexdigest() == fixture["sha256"]
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    admitted = []
+
+    def admit(url, bearer, timeout, *, subagent=False, child_model=""):
+        assert subagent
+        admitted.append(child_model)
+        return _verdict(model=child_model)
+
+    mod.ADMISSION = core.AdmissionGate(mod.ADMISSION_URL, post=admit)
+    for record in records:
+        flow = _make_flow()
+        flow.request.headers.update({**record["headers"], "x-cheese-attr": "p/t"})
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        encoded = json.dumps(record["body"]).encode()
+        outgoing = flow.request.stream(encoded)
+        assert json.loads(outgoing)["model"] == record["body"]["model"]
+    assert set(admitted) == {"claude-sonnet-5", "claude-opus-5"}
 
 
 def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):

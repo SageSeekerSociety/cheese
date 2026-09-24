@@ -4,8 +4,10 @@ import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import event
 
 from app.core.config import settings
+from app.core.db import engine as app_engine
 from app.domain.agent.compute_configs import ComputeChoice, bind_room_device_choice
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -180,14 +182,28 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
     cloud = FakeMicroCloud()
 
     async def provision():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(tid), actor=Actor("config_member", member_id, "token")
             )
             await session.commit()
             return machine
 
-    machine = asyncio.run(provision())
+    # Startup progress opens its own application session, outside the session
+    # passed to MachineService. It must use the same loop as HTTP requests.
+    request_loop = client.portal.call(asyncio.get_running_loop)
+    progress_loops = []
+
+    def checked_out(*_args):
+        progress_loops.append(asyncio.get_running_loop())
+
+    event.listen(app_engine.sync_engine, "checkout", checked_out)
+    try:
+        machine = client.portal.call(provision)
+    finally:
+        event.remove(app_engine.sync_engine, "checkout", checked_out)
+    assert progress_loops
+    assert all(loop is request_loop for loop in progress_loops)
     assert (machine.cores, machine.memory_mb, machine.disk_gb) == (2, 4096, 32)
     assert (
         client.put(

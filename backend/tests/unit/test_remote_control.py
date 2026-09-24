@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from starlette.requests import Request
 
 from app.api.routes.remote_control import bootstrap_session, launch_claims
@@ -269,7 +270,6 @@ async def test_pending_question_and_result_survive_restart_and_upload_retry(rc):
     recovered = RemoteControl(service.redis)
     snapshot = await recovered.snapshot(await recovered.get(session["id"]))
     assert snapshot["pending"]["question"] == pending
-    assert len(await recovered.journal(session["id"], "0-0")) == 1
     response = {
         "type": "control_response",
         "uuid": "response-event",
@@ -479,7 +479,6 @@ async def test_stale_epoch_cannot_commit_events_or_acknowledge_answer(rc):
         await service.update(
             sid, {"worker": {"external_metadata": {"stale": True}}}, epoch=0
         )
-    assert len(await service.journal(sid, "0-0")) == 1
     assert await service.result(sid, "stop") is None
     assert "question" in (await service.snapshot(session))["pending"]
     assert "worker" not in await service.get(sid)
@@ -521,7 +520,8 @@ async def test_interrupted_upload_response_leaves_all_state_recoverable(
     assert (await recovered.snapshot(session))["pending"]["q"] == pending
     assert await recovered.result(sid, "r") == response
     await recovered.receive(sid, events, epoch=0)
-    assert len(await recovered.journal(sid, "0-0")) == 2
+    assert (await recovered.snapshot(session))["pending"]["q"] == pending
+    assert await recovered.result(sid, "r") == response
 
 
 async def test_invalid_batch_cannot_partially_commit(rc):
@@ -540,7 +540,6 @@ async def test_invalid_batch_cannot_partially_commit(rc):
     ]
     with pytest.raises(ValueError):
         await service.receive(session["id"], events, epoch=0)
-    assert not await service.journal(session["id"], "0-0")
     assert not (await service.snapshot(session))["pending"]
 
 
@@ -597,3 +596,118 @@ async def test_worker_stream_closes_cleanly_when_epoch_changes_while_reading(
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
     assert (await service.command(session["id"], "stop"))["status"] == "queued"
+
+
+async def test_events_that_change_no_state_leave_nothing_behind_in_redis(rc):
+    service, create = rc
+    session = await create()
+    before = {k async for k in service.redis.scan_iter(key(session["id"], "*"))}
+    chatter = [
+        {"type": "assistant", "uuid": "said", "message": {"content": []}},
+        {"type": "user", "uuid": "tool-result", "message": {"content": []}},
+        {"type": "system", "subtype": "compact_boundary", "uuid": "compacted"},
+    ]
+    await service.receive(
+        session["id"], [{"payload": payload} for payload in chatter], epoch=0
+    )
+    for batch in range(5):
+        progress = [
+            {
+                "payload": {
+                    "type": "system",
+                    "subtype": "thinking_tokens",
+                    "uuid": f"thinking-{batch}-{i}",
+                    "tokens": i,
+                }
+            }
+            for i in range(1000)
+        ]
+        await service.receive(session["id"], progress, epoch=0)
+    after = {k async for k in service.redis.scan_iter(key(session["id"], "*"))}
+    assert after == before
+
+
+async def test_a_replayed_question_stays_cancelled_and_is_forgotten_within_an_hour(
+    rc,
+):
+    service, create = rc
+    session = await create()
+    asked = {
+        "payload": {
+            "type": "control_request",
+            "uuid": "asked",
+            "request_id": "q",
+            "request": {"input": {"questions": []}},
+        }
+    }
+    cancelled = {
+        "payload": {
+            "type": "control_cancel_request",
+            "uuid": "cancelled",
+            "request_id": "q",
+        }
+    }
+    await service.receive(session["id"], [asked], epoch=0)
+    await service.receive(session["id"], [cancelled], epoch=0)
+    await service.receive(session["id"], [asked], epoch=0)
+    assert not (await service.snapshot(session))["pending"]
+    markers = [k async for k in service.redis.scan_iter(key(session["id"], "seen:*"))]
+    assert markers
+    for marker in markers:
+        assert 0 < await service.redis.ttl(marker) <= 3600
+
+
+async def test_worker_stream_retries_one_redis_timeout_without_losing_command(
+    rc, monkeypatch
+):
+    service, create = rc
+    session = await create()
+    bridge = await service.bridge(session)
+    session = await service.get(session["id"])
+    await service.enqueue(
+        session["id"],
+        {
+            "type": "control_request",
+            "request_id": "after-timeout",
+            "request": {"subtype": "interrupt"},
+        },
+        "alice",
+    )
+    original = service.redis.xread
+    reads = 0
+
+    async def timeout_once(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise RedisTimeoutError("transient read timeout")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(service.redis, "xread", timeout_once)
+    stream = service.worker_stream(session, bridge["worker_jwt"], "0-0")
+    assert await anext(stream) == ": connected\n\n"
+    event = await asyncio.wait_for(anext(stream), 2)
+    assert '"request_id": "after-timeout"' in event
+    assert reads == 2
+    await stream.aclose()
+
+
+async def test_worker_stream_reports_repeated_redis_timeouts(rc, monkeypatch):
+    service, create = rc
+    session = await create()
+    bridge = await service.bridge(session)
+    session = await service.get(session["id"])
+    reads = 0
+
+    async def timeout_read(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        raise RedisTimeoutError("persistent read timeout")
+
+    monkeypatch.setattr(service.redis, "xread", timeout_read)
+    stream = service.worker_stream(session, bridge["worker_jwt"], "0-0")
+    assert await anext(stream) == ": connected\n\n"
+    with pytest.raises(RedisTimeoutError):
+        await anext(stream)
+    assert reads == 2
+    await stream.aclose()

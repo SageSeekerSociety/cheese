@@ -183,7 +183,12 @@ class ContractHarness:
         return ContractBacklog(held)
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         held = self._held.get(topic_id)
         if held is None:

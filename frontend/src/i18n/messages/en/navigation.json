@@ -22,5 +22,12 @@
     "center": "Feedback center",
     "mine": "My feedback",
     "admin": "Admin console"
+  },
+  "admin": {
+    "queue": "Queue",
+    "dashboard": "Dashboard",
+    "models": "Models",
+    "spaces": "Space applications",
+    "members": "Members"
   }
 }

@@ -197,10 +197,25 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await expect(page.locator('.comparison-diff')).toHaveCount(0);
   });
 
-  test('登录页', async ({ page }) => {
-    await page.goto('/account/signin');
-    await page.getByLabel('用户名').waitFor();
-    expect(await fieldDefects(page.locator('body'))).toEqual([]);
+  test('账号页：登录、注册、找回密码，桌面与手机', async ({ page }) => {
+    // 注册页的字段带常驻提示（邮箱、密码规则），手机上提示会折行，是这几页里最容易
+    // 让下一个字段的浮动标签压上来的地方。
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      for (const [path, label] of [
+        ['/account/signin', '用户名'],
+        ['/account/signup', '用户名'],
+        ['/account/recover/password', '注册邮箱'],
+      ]) {
+        await page.goto(path);
+        await page.getByLabel(label, { exact: true }).waitFor();
+        expect(await fieldDefects(page.locator('body'))).toEqual([]);
+        expect(await textOverlaps(page.locator('body'))).toEqual([]);
+      }
+    }
   });
 
   test('「修改 AI 队友」对话框', async ({ page }) => {
@@ -270,6 +285,30 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(detail)).toEqual([]);
   });
 
+  test('管理后台 · 队列页宽档（1920 视口）', async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto('/admin/queue');
+    await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
+    await expect(page.locator('.qlist')).toBeVisible();
+
+    // 1440 封顶居中：1920 去掉 64 全局 rail 与 200 侧栏后可用 1656，这一档两侧
+    // 各留 108。量的参照物是 `.admin-shell__main`（它自己无 padding），不是按
+    // 264 这个常数反推——侧栏宽度将来再改，这条用例量的东西不变。
+    const box = await page.locator('.qpage__inner').boundingBox();
+    const main = await page.locator('.admin-shell__main').boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(1438);
+    expect(box!.width).toBeLessThanOrEqual(1442);
+    const left = box!.x - main!.x;
+    const right = main!.x + main!.width - (box!.x + box!.width);
+    expect(Math.abs(left - 108)).toBeLessThanOrEqual(2);
+    expect(Math.abs(right - 108)).toBeLessThanOrEqual(2);
+
+    // 宽档的意义是整行在 1440 里放得下，不是把横滚挪到更宽的屏上。
+    const noHScroll = await page.locator('.qlist').evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    expect(noHScroll).toBeTruthy();
+  });
+
   test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
     await login(page);
     await page.goto('/admin/members');
@@ -303,6 +342,19 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
+  test('管理后台 · 模型页的「导入订阅」对话框', async ({ page }) => {
+    await login(page);
+    await page.goto('/admin/models');
+
+    // 导入对话框在 start 态只有「备注名」一个字段（授权码那一段是点完「开始授权」
+    // 才画出来的）。量的就是这颗字段的浮动 label 几何 —— 它是这一档存在的理由。
+    await page.getByRole('button', { name: '导入订阅' }).first().click();
+    const dialog = page.locator('.v-overlay__content').filter({ hasText: '导入 ChatGPT 订阅' });
+    await dialog.waitFor();
+    await expect(dialog.getByLabel('备注名')).toBeVisible();
+    expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
     await login(page);
 
@@ -331,5 +383,33 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
         expect(await textOverlaps(page.locator('body')), `${size.width}px · ${tab}`).toEqual([]);
       }
     }
+  });
+
+  test('看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
+    await login(page);
+
+    // 宽度变档的回执：1920 视口下内容列曾经停在 1100（约 1/3 是死空白）。admin 档
+    // 是 1440，网格跟着容器查询升档 —— 这两条断言量的就是「宽出来的部分有人用」。
+    await page.setViewportSize({ width: 1920, height: 900 });
+    await page.goto('/admin/dashboard');
+    await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
+
+    // 三个分类的文字在宽档下也不压（宽档更容易出「网格升档后列数变了」的排版事故）。
+    for (const tab of ['反馈', '用量', '平台']) {
+      await page.getByRole('button', { name: tab, exact: true }).click();
+      await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
+      await expect(page.locator('.akpi__skel')).toHaveCount(0);
+      expect(await textOverlaps(page.locator('body')), `1920px · ${tab}`).toEqual([]);
+    }
+
+    // 内容列吃满 admin 档的 1440（侧栏展开时 1920 视口的可用宽是 1608，1440 居中）。
+    const innerWidth = await page.locator('.ad__inner').evaluate((el) => el.getBoundingClientRect().width);
+    expect(Math.round(innerWidth)).toBe(1440);
+    // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在「平台」类，
+    // 5 张卡）。
+    const tracks = await page
+      .locator('.ad__kpis')
+      .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
+    expect(tracks).toBeGreaterThanOrEqual(4);
   });
 });

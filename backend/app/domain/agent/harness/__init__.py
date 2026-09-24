@@ -331,7 +331,12 @@ class AgentRuntime(Protocol):
         ...
 
     async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        images: list[dict] | None = None,
+        *,
+        expected_work_id: uuid.UUID | None = None,
     ) -> bool:
         """Put text into a session that is already working, with no turn opened
         for it. True = it landed; False = there is no live session here.
@@ -614,14 +619,17 @@ HARNESSES: dict[str, Harness] = {
         "Claude Code",
         subagents={
             SubagentRequirement.SPAWNS_WITH_A_MODEL: (
-                "Task / Agent 工具起一条子线程，跑哪个模型由起它的那次调用按家族"
-                "（haiku / sonnet / opus）说。平台这边不在启动环境里定模型（结论 "
-                "46）：一台机器只有一种启动形状（`agent/provider_env.py` 的 "
-                "`subscription_provider`），`agent/device_provider.py` 的 "
-                "`_ensure_screen` 把调用方带进来的模型别名删掉；这条活绑的是哪个模"
-                "型在准入时解析（`room_task/binding.py` 的 `WorkBinding.wire_model`"
-                "），计量代理把它写进请求体——订阅池上放过子线程点名 haiku 家族的"
-                "那些请求，网关池上全部改写。"
+                "Agent(model=...) selects a native child model. The pinned-binary "
+                "test_claude_child_models verifies general-purpose children: explicit "
+                "selection overrides CLAUDE_CODE_SUBAGENT_MODEL, supplied from the "
+                "project child default or project main default. "
+                "`agent/harness/claude_code/session_launch.py` installs the preload "
+                "that carries the chosen model to backend admission. "
+                "Admission validates "
+                "the catalog and tier policy before either supply pool forwards it. "
+                "The pinned tool schema says forks inherit the parent model; the "
+                "tested startup rejects the fork agent type with a visible tool "
+                "error. Fork model selection is not claimed as supported."
             ),
             SubagentRequirement.LABELS_ITS_THREAD: (
                 "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识由"

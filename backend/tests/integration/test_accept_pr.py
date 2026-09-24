@@ -13,6 +13,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 import asyncio
 import subprocess
 import time
+import uuid
 import uuid as _uuid
 from datetime import UTC, datetime
 
@@ -632,7 +633,9 @@ def app_world(client, monkeypatch):
     # 房间通知（fire-and-forget 的 _notify_merge_result）写库走模块级
     # async_session_factory —— 测试 harness 把它绑在另一个库上，这里指回
     # 本测试的库，房间文本才断言得到。
-    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(
+        review_services, "async_session_factory", client.test_request_factory
+    )
 
     github_pr.set_default_client(fake)
     try:
@@ -1754,19 +1757,41 @@ def test_poll_never_merges_an_unarmed_card(client, app_world):
     assert _cards(client, tid)[0]["status"] == "pending"
 
 
+def _card_events(client, card_id):
+    """Read the card's attributed events, including expanded failure details."""
+    from sqlalchemy import select
+
+    from app.domain.block.models import Block
+    from app.domain.review.models import AcceptCard
+
+    async def read():
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, uuid.UUID(card_id))
+            blocks = list(
+                await session.scalars(
+                    select(Block).where(Block.task_id == card.task_id)
+                )
+            )
+            return "\n".join(
+                f"{b.content}\n{(b.meta or {}).get('detail', '')}" for b in blocks
+            )
+
+    return asyncio.run(read())
+
+
 def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
 
     _poll(client)
-    text = _room_settled(client, tid, "等 alice 采纳")
+    text = _card_events(client, cid)
     assert "等 alice 采纳" in text
     first = text.count("等 alice 采纳")
 
     _poll(client)  # 同一个 head：不重复
     wait_work_idle()
-    assert _room(client, tid).count("等 alice 采纳") == first
+    assert _card_events(client, cid).count("等 alice 采纳") == first
 
     new_sha = fake.push_new_commit(number)  # 新 head 转绿是新事实
     fake.check_state_by_sha[new_sha] = ("success", "全绿")
@@ -1774,12 +1799,12 @@ def test_poll_clean_notifies_the_reviewer_once_per_head(client, app_world):
     _poll(client)
     import time
 
-    text = _room(client, tid)
+    text = _card_events(client, cid)
     for _ in range(40):
         if text.count("等 alice 采纳") >= first + 1:
             break
         time.sleep(0.05)
-        text = _room(client, tid)
+        text = _card_events(client, cid)
     assert text.count("等 alice 采纳") == first + 1
 
 
@@ -1790,23 +1815,38 @@ def test_poll_red_checks_nudge_cheese_once_with_the_logs(client, app_world, stub
 
     _poll(client)
     wait_work_idle()
-    contents = _room(client, tid)
+    contents = _card_events(client, cid)
     assert "pytest: 3 failed" in contents
-    prompt = stub_hooks.last_prompt or ""
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+    from app.domain.review.models import AcceptCard
+
+    async def pending_instruction():
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, uuid.UUID(cid))
+            row = await session.scalar(
+                select(Delivery).where(Delivery.task_id == card.task_id)
+            )
+            assert row.state == "pending"
+            assert row.agent_instance_id is None  # parent has not been observed
+            return row.payload["content"]
+
+    prompt = asyncio.run(pending_instruction())
     assert "gh api repos/" in prompt
     assert f"repos/{REPO}/actions/jobs/" in prompt
     nudge_count = contents.count("pytest: 3 failed")
 
     _poll(client)  # 同一个失败：不重复
     wait_work_idle()
-    assert _room(client, tid).count("pytest: 3 failed") == nudge_count
+    assert _card_events(client, cid).count("pytest: 3 failed") == nudge_count
 
     # 新提交上同样的失败是新事实。
     new_sha = fake.push_new_commit(number)
     fake.check_state_by_sha[new_sha] = ("failure", "pytest: 1 failed now")
     _poll(client)
     wait_work_idle()
-    assert "pytest: 1 failed now" in _room(client, tid)
+    assert "pytest: 1 failed now" in _card_events(client, cid)
 
 
 def test_a_new_commit_dismisses_approvals_and_the_reviewer_is_told(client, app_world):
@@ -1821,14 +1861,14 @@ def test_a_new_commit_dismisses_approvals_and_the_reviewer_is_told(client, app_w
 
     card = _cards(client, tid)[0]
     assert card["approvals"] == []
-    assert "作废" in _room_settled(client, tid, "作废")
+    assert "作废" in _card_events(client, cid)
 
     # 没有可作废的东西时，head 移动不打扰任何人。
-    before = _room(client, tid).count("作废")
+    before = _card_events(client, cid).count("作废")
     fake.push_new_commit(number)
     _poll(client)
     wait_work_idle()
-    assert _room(client, tid).count("作废") == before
+    assert _card_events(client, cid).count("作废") == before
 
 
 def test_behind_base_gets_updated_not_merged(client, app_world):
@@ -2460,7 +2500,7 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -2587,7 +2627,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
         trees = await original(self)
 
         async def _merge_it() -> None:
-            async with client.test_factory() as s:
+            async with client.test_request_factory() as s:
                 svc = TaskService(s)
                 landed = await svc.get(task_id)
                 assert landed is not None
@@ -2599,7 +2639,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []
@@ -2693,6 +2733,30 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
     assert again.json()["data"]["ready"] is True
     assert again.json()["data"]["already"] is True
     assert len(sweeping["readied"]) == 1
+
+
+def test_ready_reports_github_installation_rate_limit_without_changing_pr(
+    client, sweeping, monkeypatch
+):
+    from app.domain.project import forge as project_forge
+    from app.domain.review.github_pr import GitHubPRRateLimited
+
+    _, tid = _room_with_work(client)
+    _sweep(client)
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
+
+    async def limited(_self, _number):
+        raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
+
+    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    response = _ready(client, tid)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["ready"] is False
+    assert "额度暂时用尽" in payload["reason"]
+    assert pr["draft"] is True
+    assert sweeping["readied"] == []
 
 
 def test_ready_never_opens_a_pr(client, sweeping):

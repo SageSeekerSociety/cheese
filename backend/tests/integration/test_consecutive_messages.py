@@ -23,7 +23,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, stub_compute
 
 
 class WorkingScreen(StubChannel):
@@ -95,14 +95,16 @@ def _service(factory, screen: WorkingScreen, tmp_path) -> ChatService:
 
 
 @pytest.mark.anyio
-async def test_an_unsummoned_message_reaches_the_turn_already_running(client, tmp_path):
+async def test_an_unsummoned_message_reaches_the_turn_already_running(
+    business_db_factory, tmp_path
+):
     """没 @ 的消息在一轮跑着的时候发出来，也得当场送进那一轮。
 
     修之前：`submit_message` 对 summon=False 直接落库就返回，什么都不递 ——
     这条消息要等到下一次**组装 prompt** 才会被 pending 窗口捡走，而话题一直在
     干活时那一刻永远不来。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
@@ -127,18 +129,20 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(client, tm
     ]
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()
 
 
 @pytest.mark.anyio
-async def test_a_bare_mention_after_a_message_carries_both_in_order(client, tmp_path):
+async def test_a_bare_mention_after_a_message_carries_both_in_order(
+    business_db_factory, tmp_path
+):
     """先说事、再补一个光秃秃的 @ —— 两条都要到，且按打字的顺序到。
 
     这是现场那两次丢消息的原样复现：09:57:04 的正文 + 2 秒后 09:57:07 的纯 @。
     修之前，屏幕上只会出现那个 @。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
@@ -163,19 +167,21 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(client, tmp_
     assert re.fullmatch(r"\[wangchangxin\]: <@cheese-[0-9a-f]+>", heads[1]), heads
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()
 
 
 @pytest.mark.anyio
-async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(client, tmp_path):
+async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(
+    business_db_factory, tmp_path
+):
     """话题闲着的时候，没 @ 的消息照旧只是落库 —— 不开轮次，也不写进任何会话。
 
     「所有消息 AI 都会收到」不等于「所有消息都值得烧一轮算力」：闲着的话题由
     下一次召唤的 pending 窗口把它捎上，那条路本来就是通的，不能被这次修改改成
     见人就递。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
@@ -194,9 +200,11 @@ async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(client, tmp
 
 
 @pytest.mark.anyio
-async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_path):
+async def test_the_next_prompt_still_carries_an_unsummoned_message(
+    business_db_factory, tmp_path
+):
     """闲着时攒下的那条没 @ 的消息，必须出现在下一轮的 prompt 里。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
@@ -215,5 +223,5 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_p
     assert re.search(r"<@cheese-[0-9a-f]+>", screen.prompts[0]), screen.prompts[0]
 
     screen.release.set()
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
     await runner.drain()

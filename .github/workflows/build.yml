@@ -39,6 +39,7 @@ jobs:
       office_render: ${{ steps.plan.outputs.office_render }}
       browser_render: ${{ steps.plan.outputs.browser_render }}
       gateway: ${{ steps.plan.outputs.gateway }}
+      metering_proxy: ${{ steps.plan.outputs.metering_proxy }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -76,7 +77,8 @@ jobs:
           steps.plan.outputs.frontend == 'false' ||
           steps.plan.outputs.office_render == 'false' ||
           steps.plan.outputs.browser_render == 'false' ||
-          steps.plan.outputs.gateway == 'false'
+          steps.plan.outputs.gateway == 'false' ||
+          steps.plan.outputs.metering_proxy == 'false'
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
@@ -93,7 +95,8 @@ jobs:
           steps.plan.outputs.frontend == 'false' ||
           steps.plan.outputs.office_render == 'false' ||
           steps.plan.outputs.browser_render == 'false' ||
-          steps.plan.outputs.gateway == 'false'
+          steps.plan.outputs.gateway == 'false' ||
+          steps.plan.outputs.metering_proxy == 'false'
         env:
           BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
           BUILD_SANDBOX: ${{ steps.plan.outputs.sandbox }}
@@ -101,6 +104,9 @@ jobs:
           BUILD_OFFICE_RENDER: ${{ steps.plan.outputs.office_render }}
           BUILD_BROWSER_RENDER: ${{ steps.plan.outputs.browser_render }}
           BUILD_GATEWAY: ${{ steps.plan.outputs.gateway }}
+          BUILD_METERING_PROXY: ${{ steps.plan.outputs.metering_proxy }}
+          BASE_SHA: ${{ steps.plan.outputs.base_sha }}
+          CURRENT_SHA: ${{ github.sha }}
           BASE_TAG: ${{ steps.plan.outputs.base_tag }}
           CURRENT_TAG: ${{ steps.plan.outputs.current_tag }}
         run: |
@@ -108,13 +114,15 @@ jobs:
           image_root="${REGISTRY}/${IMAGE_NAME,,}"
           promote() {
             image="$1"
+            source_tag="${2:-$BASE_TAG}"
+            target_tag="${3:-$CURRENT_TAG}"
             attempt=1
             while [ "$attempt" -le 4 ]; do
               if docker buildx imagetools create \
-                --tag "$image_root/$image:$CURRENT_TAG" \
-                "$image_root/$image:$BASE_TAG"; then
-                docker buildx imagetools inspect "$image_root/$image:$CURRENT_TAG" >/dev/null
-                echo "promoted $image:$BASE_TAG -> $CURRENT_TAG"
+                --tag "$image_root/$image:$target_tag" \
+                "$image_root/$image:$source_tag"; then
+                docker buildx imagetools inspect "$image_root/$image:$target_tag" >/dev/null
+                echo "promoted $image:$source_tag -> $target_tag"
                 return 0
               fi
               echo "promotion attempt $attempt failed for $image; retrying" >&2
@@ -135,6 +143,7 @@ jobs:
           [ "$BUILD_OFFICE_RENDER" = true ] || promote office-render
           [ "$BUILD_BROWSER_RENDER" = true ] || promote browser-render
           [ "$BUILD_GATEWAY" = true ] || promote gateway
+          [ "$BUILD_METERING_PROXY" = true ] || promote metering-proxy "$BASE_SHA" "$CURRENT_SHA"
 
       - name: Remove registry credentials
         if: always()
@@ -191,6 +200,54 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,version=2,scope=gateway
           cache-to: type=gha,version=2,scope=gateway,mode=max
+
+  build-metering-proxy:
+    needs: plan
+    if: needs.plan.outputs.metering_proxy == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/metering-proxy
+          tags: |
+            type=sha,prefix=,format=long
+
+      - name: Build and push metering-proxy image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        id: metering_proxy_build
+        with:
+          context: ./deploy/metering-proxy
+          file: ./deploy/metering-proxy/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=metering-proxy
+          cache-to: type=gha,version=2,scope=metering-proxy,mode=max
 
   build-backend:
     needs: plan

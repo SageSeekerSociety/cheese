@@ -224,6 +224,16 @@ class ProjectService:
         """Resolve quota ownership, including older personal-team projects."""
         return await self._repo.team_for_project(project_id)
 
+    async def teams_for_projects(
+        self, projects: list[Project]
+    ) -> dict[uuid.UUID, int | None]:
+        """`team_for_project` 的批量版（一条 JOIN 查回所有个人小队归属）。
+
+        给别的领域（usage 的批量额度汇总）调的门 —— 跨领域走 service，不摸
+        对方的 repository（架构守卫）。
+        """
+        return await self._repo.teams_for_projects(projects)
+
     async def people(self, project_id: uuid.UUID) -> list[dict]:
         """这个项目里的**人**：成员行、所属小队、所有者，合成的一张表。
 
@@ -232,6 +242,11 @@ class ProjectService:
         「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
         """
         return await self._repo.people(project_id)
+
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for someone not on the roster yet, by the same
+        rules a roster row follows."""
+        return await self._repo.person(handle)
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)

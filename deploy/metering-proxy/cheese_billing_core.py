@@ -128,13 +128,21 @@ class StreamingUsageExtractor:
             return
         try:
             evt = json.loads(raw[6:])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return
-        msg = evt.get("message") or {}
-        self.model = self.model or msg.get("model", "")
+        if not isinstance(evt, dict):
+            return
+        msg = evt.get("message")
+        if not isinstance(msg, dict):
+            msg = {}
+        model = msg.get("model")
+        if not self.model and isinstance(model, str):
+            self.model = model
         for src in (msg.get("usage"), evt.get("usage")):
             if isinstance(src, dict):
-                self.usage.update({k: v for k, v in src.items() if isinstance(v, int)})
+                self.usage.update(
+                    {k: v for k, v in src.items() if type(v) is int and v >= 0}
+                )
 
 
 def usage_from_sse(body: bytes) -> tuple[dict, str]:
@@ -279,11 +287,14 @@ def _post_admission(
     *,
     subagent: bool = False,
     requested_model: str = "",
+    child_model: str = "",
 ) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
     headers = {"Authorization": f"Bearer {bearer}"}
     if subagent:
         headers["X-Cheese-Subagent"] = "1"
+        if child_model:
+            headers["X-Cheese-Child-Model"] = child_model
         if requested_model:
             # 主 agent 开这个分身时指定的模型（从请求体顶层 model 成员读出的原
             # 样）。准入拿它决定「绑它」还是「拒绝并列出可选」——不带就是沿用
@@ -364,6 +375,7 @@ class AdmissionGate:
         *,
         subagent: bool = False,
         requested_model: str = "",
+        child_model: str = "",
     ) -> Verdict:
         if not self._url or not project_id:
             return Verdict(True, "admission not configured")
@@ -374,7 +386,8 @@ class AdmissionGate:
             topic_id,
             hashlib.sha256(bearer.encode()).hexdigest(),
             subagent,
-            requested_model,
+            requested_model if subagent else "",
+            child_model if subagent else "",
         )
         now = time.time()
         with self._lock:
@@ -384,6 +397,14 @@ class AdmissionGate:
         try:
             verdict = (
                 self._post(
+                    self._url,
+                    bearer,
+                    self._timeout,
+                    subagent=True,
+                    child_model=child_model,
+                )
+                if subagent and child_model
+                else self._post(
                     self._url,
                     bearer,
                     self._timeout,

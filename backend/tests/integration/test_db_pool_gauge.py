@@ -3,13 +3,96 @@
 import logging
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from fastapi import Depends, FastAPI
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool, QueuePool
 
-from app.core.db import pool_status, warn_when_pool_saturates
+from app.core.config import settings
+from app.core.db import get_db, pool_status, warn_when_pool_saturates
+from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.user.repositories import UserRepository
 from tests.conftest import TEST_DATABASE_URL
 
 pytestmark = pytest.mark.anyio
+
+
+def _assert_production_pool(engine) -> None:
+    pool = engine.pool
+    assert isinstance(pool, QueuePool)
+    assert pool.size() == settings.db_pool_size
+    assert pool._max_overflow == settings.db_max_overflow
+
+
+async def test_shared_application_engine_serves_requests_from_the_production_pool(
+    production_app_engine,
+):
+    _assert_production_pool(production_app_engine)
+    checkouts = []
+
+    @event.listens_for(production_app_engine.sync_engine, "checkout")
+    def _checked_out(*_args):
+        checkouts.append(True)
+
+    test_app = FastAPI()
+
+    @test_app.get("/read")
+    async def read(session: AsyncSession = Depends(get_db)):
+        return {"value": await session.scalar(text("SELECT 1"))}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app), base_url="http://test"
+    ) as test_client:
+        response = await test_client.get("/read")
+
+    assert response.json() == {"value": 1}
+    assert checkouts
+
+
+async def test_sync_client_requests_use_the_production_pool(client):
+    engine = client.test_app_engine
+    _assert_production_pool(engine)
+    assert client.test_request_factory.kw["bind"] is engine
+    assert isinstance(client.test_factory.kw["bind"].pool, NullPool)
+    checkouts = []
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def _checked_out(*_args):
+        checkouts.append(True)
+
+    assert client.get("/projects?team_id=999999").status_code == 200
+    assert checkouts
+
+
+async def test_async_integration_fixtures_use_the_production_pool(
+    db_factory, python_client
+):
+    fixture_engine = db_factory.kw["bind"]
+    request_engine = python_client.test_app_engine
+    _assert_production_pool(fixture_engine)
+    _assert_production_pool(request_engine)
+
+    async with db_factory() as session:
+        assert await session.scalar(text("SELECT 1")) == 1
+
+    checkouts = []
+
+    @event.listens_for(request_engine.sync_engine, "checkout")
+    def _checked_out(*_args):
+        checkouts.append(True)
+
+    assert (await python_client.get("/projects?team_id=999999")).status_code == 200
+    assert checkouts
+
+
+async def test_direct_business_fixture_keeps_the_client_identity_baseline(
+    business_db_factory,
+):
+    engine = business_db_factory.kw["bind"]
+    _assert_production_pool(engine)
+    async with business_db_factory() as session:
+        assert await UserRepository(session).get_by_handle(CHEESE_HANDLE) is not None
 
 
 async def test_gauge_counts_checked_out_connections_and_saturation_is_logged(

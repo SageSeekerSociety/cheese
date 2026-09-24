@@ -8,7 +8,7 @@ cd backend && uv run pytest tests/ -n 4 -q
 bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 ```
 
-- **Redis 是必须的,不是可选**——2FA/登录/会话状态都在里面,没有它 integration 套件直接报错。
+- **Redis 是必须的,不是可选**——登录限流、2FA 验证票据和会话状态都在里面,没有它 integration 套件直接报错。
 - 这两个 wheel **故意不是 backend 依赖**:`pgserver` 没有 cp313 wheel,而本项目 `requires-python >=3.13`,声明进去会让依赖解析失败。脚本自己钉住版本,并把它们跑在一个一次性的 3.12 解释器上;测试本身仍跑在 3.13。
 - `tests/unit/` 完全不需要服务器（`conftest.py` 只给主动要的测试建 schema）。`tests/unit/` 以外的一律是 DB-backed。
 - `check.sh --no-tests`（质量闸门用的那条）完全跳过 pytest——要真正跑套件就用上面的方子。

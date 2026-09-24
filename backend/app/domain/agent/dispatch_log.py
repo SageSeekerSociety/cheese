@@ -70,7 +70,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, select, update
+from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -114,6 +114,15 @@ class DispatchRow(UuidPk, Base):
     place_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True, index=True
+    )
+    lease_generation: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    confirmed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirmation_note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     #: 派出去的是哪一个工具（``invoke`` 载荷里的 ``params["tool"]``）。人要确认
     #: 「可能已经做过」的是什么，这是他能读到的唯一一句 —— 记调用方法名没有用，带 id
     #: 的调用只有 ``invoke`` 一种，那一栏于是每次都长成同一个常量。参数不进来：它们
@@ -152,7 +161,13 @@ def _read(row: DispatchRow) -> Dispatch:
 
 
 def record(
-    session: AsyncSession, *, place_id: uuid.UUID, key: str, tool: str
+    session: AsyncSession,
+    *,
+    place_id: uuid.UUID,
+    key: str,
+    tool: str,
+    session_id: uuid.UUID | None = None,
+    lease_generation: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """在**发出之前**记下这次派发，返回这一行的 id。
 
@@ -162,7 +177,14 @@ def record(
     id 在这里就定下来，不等 flush：调用方拿着它去发请求，而这一行要在那之前提交，
     两件事之间没有可以插进一次 flush 的位置。
     """
-    row = DispatchRow(id=uuid.uuid4(), place_id=place_id, key=key, tool=tool)
+    row = DispatchRow(
+        id=uuid.uuid4(),
+        place_id=place_id,
+        key=key,
+        tool=tool,
+        session_id=session_id,
+        lease_generation=lease_generation,
+    )
     session.add(row)
     return row.id
 

@@ -64,7 +64,7 @@ tasks:
     desc: Run vitest
     deps: [install]
     cmds:
-      - pnpm run test -- --run
+      - pnpm exec vitest run
   # `lint` above autofixes, which is right at a keyboard and wrong in a gate:
   # it can rewrite the file and exit 0 on a violation that CI (which never
   # passes --fix) still reports. Keeping the two apart is what makes

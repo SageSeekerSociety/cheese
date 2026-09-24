@@ -6,12 +6,14 @@
 """
 
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
-from app.domain.delivery.models import TimedDelivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
 from app.domain.delivery.timer import DELIVERED_AS_ASKED, deliver_due
 from tests.integration.conftest import session_auth_headers
@@ -56,7 +58,7 @@ def test_a_note_reaches_the_other_thread_of_the_same_handle(client, monkeypatch)
 
     handed = []
 
-    async def remember(self, topic_id, notice, *, blocks=()):
+    async def remember(self, topic_id, notice, *, blocks=(), recipient_seat=None):
         handed.append((str(topic_id), notice))
         return True
 
@@ -117,7 +119,7 @@ def test_a_note_to_another_agent_in_the_same_project_is_refused(client, monkeypa
 
     handed = []
 
-    async def remember(self, topic_id, notice, *, blocks=()):
+    async def remember(self, topic_id, notice, *, blocks=(), recipient_seat=None):
         handed.append(str(topic_id))
         return True
 
@@ -143,7 +145,7 @@ def test_a_note_to_another_project_is_refused(client, monkeypatch):
 
     handed = []
 
-    async def remember(self, topic_id, notice, *, blocks=()):
+    async def remember(self, topic_id, notice, *, blocks=(), recipient_seat=None):
         handed.append(str(topic_id))
         return True
 
@@ -184,10 +186,10 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
         def submit(self, chat, topic_id, **kwargs):
             submitted.append((str(topic_id), kwargs))
 
-    first = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    first = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
-    assert first == {"delivered": 1}
+    assert first == {"materialized": 1, "dispatched": 1}
 
     topic_id, kwargs = submitted[0]
     assert topic_id == room
@@ -197,14 +199,32 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
     # 房间里读得到这一轮的缘由（结论 14）：平台说的话署平台的名，那一行写着它是
     # 谁当初请来的，原话收在 detail 里。
     assert kwargs["author"] == "system"
-    assert kwargs["nudge_event"] == DELIVERED_AS_ASKED
-    assert kwargs["nudge_meta"]["detail"] == "回来看一眼那条 PR"
+    events = [b for b in _blocks(client, room) if b["content"] == DELIVERED_AS_ASKED]
+    assert len(events) == 1
+    assert events[0]["meta"]["detail"] == "回来看一眼那条 PR"
+
+    async def assert_receipt_boundary():
+        from app.domain.delivery.agent import begin_send, receive_attempt
+
+        timer_id = uuid.UUID(r.json()["data"]["id"])
+        async with client.test_factory() as session:
+            timer = await session.get(TimedDelivery, timer_id)
+            assert timer.materialized_at is not None
+            assert timer.delivered_at is None, "Scheduling is not a receiver receipt"
+        await begin_send(client.test_factory, kwargs["delivery_id"], kwargs["turn_id"])
+        async with client.test_factory() as session:
+            await receive_attempt(session, kwargs["turn_id"], datetime.now(UTC))
+            await session.commit()
+        async with client.test_factory() as session:
+            assert (await session.get(TimedDelivery, timer_id)).delivered_at is not None
+
+    asyncio.run(assert_receipt_boundary())
 
     # 递过的那一行不再递第二遍 —— 重启、重跑、两台机器同时扫都一样。
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
-    assert again == {"delivered": 0}
+    assert again == {"materialized": 0, "dispatched": 0}
 
 
 def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
@@ -229,24 +249,261 @@ def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
             submitted.append(str(topic_id))
 
     async def _while_another_scanner_holds_it():
-        async with client.test_factory() as holder:
+        async with client.test_request_factory() as holder:
             await holder.scalars(
                 select(TimedDelivery)
                 .where(TimedDelivery.delivered_at.is_(None))
                 .with_for_update()
             )
             skipped = await asyncio.wait_for(
-                deliver_due(client.test_factory, chat=object(), runner=Runner()),
+                deliver_due(
+                    client.test_request_factory, chat=object(), runner=Runner()
+                ),
                 timeout=20,
             )
             await holder.rollback()
         return skipped
 
-    assert asyncio.run(_while_another_scanner_holds_it()) == {"delivered": 0}
+    assert client.portal.call(lambda: _while_another_scanner_holds_it()) == {
+        "materialized": 0,
+        "dispatched": 0,
+    }
     assert submitted == [], "同一条被递了第二遍"
 
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
-    assert again == {"delivered": 1}
+    assert again == {"materialized": 1, "dispatched": 1}
     assert submitted == [room]
+
+
+def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
+    from app.api.deps import get_chat_service
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.main import app
+
+    project = _project(client, "credit refusal")
+    room = _room(client, project, "waiting")
+    response = client.post(
+        f"/topics/{room}/deliveries",
+        json={
+            "at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            "content": "keep this exact instruction",
+        },
+    )
+    assert response.status_code == 200
+    chat = app.dependency_overrides[get_chat_service]()
+
+    async def exhausted(topic_id):
+        return {
+            "project_id": project,
+            "credits_exhausted": True,
+            "max_concurrent_turns": 1,
+        }
+
+    monkeypatch.setattr(chat, "work_policy", exhausted)
+
+    async def run():
+        runner = AgentWorkRunner(InProcessBroker())
+        await deliver_due(client.test_request_factory, chat=chat, runner=runner)
+        await asyncio.gather(*runner._tasks)
+        async with client.test_request_factory() as session:
+            timer = await session.get(
+                TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+            )
+            delivery = await session.scalar(
+                select(Delivery).where(Delivery.event_id == timer.event_id)
+            )
+            assert timer.delivered_at is None
+            assert delivery.state == "pending"
+            assert delivery.payload["content"] == "keep this exact instruction"
+            delivery.retry_at = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+        submitted = []
+
+        class Recorder:
+            def submit(self, chat, topic_id, **kwargs):
+                submitted.append(kwargs)
+
+        result = await deliver_due(
+            client.test_request_factory, chat=chat, runner=Recorder()
+        )
+        assert result == {"materialized": 0, "dispatched": 1}
+        assert submitted[0]["content"] == "keep this exact instruction"
+
+    client.portal.call(lambda: run())
+
+
+def test_crash_after_possible_send_is_not_permission_to_reinject(client):
+    from app.domain.delivery.agent import begin_send
+
+    room = _room(client, _project(client, "uncertain"), "room")
+    response = client.post(
+        f"/topics/{room}/deliveries",
+        json={
+            "at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            "content": "side effect",
+        },
+    )
+    assert response.status_code == 200
+    attempts = []
+
+    class Recorder:
+        def submit(self, chat, topic_id, **kwargs):
+            attempts.append(kwargs)
+
+    async def run():
+        await deliver_due(client.test_factory, chat=object(), runner=Recorder())
+        attempt = attempts[0]
+        await begin_send(
+            client.test_factory, attempt["delivery_id"], attempt["turn_id"]
+        )
+        async with client.test_factory() as session:
+            row = await session.get(Delivery, attempt["delivery_id"])
+            row.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+        assert await deliver_due(
+            client.test_factory, chat=object(), runner=Recorder()
+        ) == {"materialized": 0, "dispatched": 0}
+        assert len(attempts) == 1
+        async with client.test_factory() as session:
+            assert (
+                await session.get(Delivery, attempt["delivery_id"])
+            ).state == "uncertain"
+
+    asyncio.run(run())
+
+
+def test_human_timer_reaches_the_mailbox_without_starting_agent_work(client):
+    from app.domain.notification.models import Notification
+    from tests.conftest import seed_user
+
+    token = seed_user(client, "timer-owner")
+    room = _room(
+        client, _project(client, "human timer", "timer-owner"), "room", "timer-owner"
+    )
+    response = client.post(
+        f"/topics/{room}/deliveries",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            "content": "human reminder",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    class NoAgentWork:
+        def submit(self, *args, **kwargs):
+            raise AssertionError("A human timer must not start an agent")
+
+    async def run():
+        await deliver_due(client.test_factory, chat=object(), runner=NoAgentWork())
+        await deliver_due(client.test_factory, chat=object(), runner=NoAgentWork())
+        async with client.test_factory() as session:
+            timer = await session.get(
+                TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+            )
+            assert timer.delivered_at is not None
+            notifications = list(
+                await session.scalars(
+                    select(Notification).where(
+                        Notification.delivery_key == f"{timer.event_id}:timer-owner",
+                    )
+                )
+            )
+            assert len(notifications) == 1
+            assert notifications[0].receiver_id == timer.receiver_id
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("native_receipt", [True, False])
+def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
+    client, stub_hooks, native_receipt, monkeypatch
+):
+    from app.api.deps import get_chat_service
+    from app.core.sandbox_auth import mint_scoped_token
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.main import app
+
+    project = _project(client, "addressed timer")
+    room = _room(client, project, "room")
+    created = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "reviewer", "display_name": "Reviewer"},
+    )
+    assert created.status_code == 200
+    target = created.json()["data"]
+    seat = target["seat_handle"]
+    assert (
+        client.post(
+            f"/topics/{room}/members",
+            json={"handle": seat, "role": "member"},
+            headers=session_auth_headers("user-1"),
+        ).status_code
+        == 200
+    )
+    token = mint_scoped_token(project_id=project, topic_id=room, agent_handle=seat)
+    response = client.post(
+        f"/topics/{room}/deliveries",
+        headers={"X-Cheese-Token": token},
+        json={
+            "at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            "content": "neutral scheduled input",
+        },
+    )
+    assert response.status_code == 200, response.text
+    chat = app.dependency_overrides[get_chat_service]()
+    received_by = []
+
+    def observe_receiver():
+        work = chat._active_turn_ids[uuid.UUID(room)]
+        received_by.append(chat._hook_work[(uuid.UUID(room), work)].acting_agent)
+
+    stub_hooks.on_start = observe_receiver
+    if not native_receipt:
+        monkeypatch.setattr(stub_hooks, "acknowledges", lambda *args: None)
+
+    async def run():
+        receipt_started = asyncio.Event()
+        release_receipt = asyncio.Event()
+        receipt_committed = asyncio.Event()
+        original_receipt = chat.confirm_prompt_receipt
+
+        async def observe_receipt(topic_id, prompt):
+            receipt_started.set()
+            await release_receipt.wait()
+            await original_receipt(topic_id, prompt)
+            receipt_committed.set()
+
+        chat._compute.bind_receipts(observe_receipt)
+        runner = AgentWorkRunner(InProcessBroker())
+        try:
+            await deliver_due(client.test_factory, chat=chat, runner=runner)
+            await asyncio.gather(*runner._tasks)
+            if native_receipt:
+                async with asyncio.timeout(5):
+                    await receipt_started.wait()
+                async with client.test_factory() as session:
+                    timer = await session.get(
+                        TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+                    )
+                    assert timer.delivered_at is None
+        finally:
+            release_receipt.set()
+        if native_receipt:
+            async with asyncio.timeout(5):
+                await receipt_committed.wait()
+        async with client.test_factory() as session:
+            timer = await session.get(
+                TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+            )
+            assert (timer.delivered_at is not None) == native_receipt
+            delivery = await session.scalar(
+                select(Delivery).where(Delivery.event_id == timer.event_id)
+            )
+            assert delivery.state == ("received" if native_receipt else "uncertain")
+
+    client.portal.call(run)
+    assert received_by == [seat]
+    assert "neutral scheduled input" in stub_hooks.last_prompt

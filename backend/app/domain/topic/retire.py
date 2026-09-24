@@ -102,6 +102,8 @@ print(json.dumps(collect_transcripts(script, values, flush=True)))
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
+    from app.domain.agent_session.models import AgentSession
+
     resource_ids = {str(operation.resource_id)}
     resource_ids.update(
         str(task.id)
@@ -110,6 +112,31 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
         )
     )
     entries = {}
+    sessions = list(
+        await session.scalars(
+            select(AgentSession).where(AgentSession.topic_id == operation.topic_id)
+        )
+    )
+    for conversation in sessions:
+        leases = [
+            *(conversation.execution_request or {}).get("retained_leases", []),
+            *([conversation.work_lease] if conversation.work_lease else []),
+        ]
+        for lease in leases:
+            resource_id = lease.get("resource_id")
+            device_id = lease.get("device_id")
+            if not resource_id or not device_id:
+                raise RuntimeError("session work lease has incomplete ownership")
+            resource_ids.add(resource_id)
+            if not device_hub.is_online(device_id) or device_id not in inventory:
+                raise RuntimeError(
+                    "session work device is offline or its inventory failed"
+                )
+            entries[(device_id, resource_id)] = {
+                "kind": "device",
+                "device_id": device_id,
+                "resource_id": resource_id,
+            }
     room = await session.get(Topic, operation.topic_id)
     places = (
         await AgentSessionService(session).places_in_room(operation.topic_id)
@@ -150,9 +177,23 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
                     "resource_id": resource,
                 }
     result = list(entries.values())
-    machine = await MachineService(session).topic_machine(operation.topic_id)
-    if machine is not None:
+    machines = await MachineService(session).list_active_for_topic(operation.topic_id)
+    other_sessions = list(
+        await session.scalars(
+            select(AgentSession).where(AgentSession.topic_id != operation.topic_id)
+        )
+    )
+    for machine in machines:
         if machine.device_id is not None:
+            if any(
+                lease.get("device_id") == machine.device_id
+                for conversation in other_sessions
+                for lease in [
+                    *(conversation.execution_request or {}).get("retained_leases", []),
+                    *([conversation.work_lease] if conversation.work_lease else []),
+                ]
+            ):
+                raise RuntimeError("Cloud machine has another room's session lease")
             if (
                 not device_hub.is_online(machine.device_id)
                 or machine.device_id not in inventory

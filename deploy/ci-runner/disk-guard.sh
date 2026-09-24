@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Reclaim a cheese-ci machine's disk when it is running out, called before a job.
 #
-# Nothing else reclaims here: a pool machine only ever adds — images pulled for
-# service containers, buildx layers, uv venvs. The weekly prune
-# cannot help, because it keeps `--filter until=168h` and what fills the disk is
-# what this week's jobs just pulled. Twice on 2026-09-15 a machine reached 100%
+# Pool machines accumulate images, buildx layers and uv venvs.
+# Twice on 2026-09-15 a machine reached 100%
 # and dropped out of the pool: the runner listener cannot write its own log file,
 # so it crash-loops and GitHub shows the machine offline while its service claims
 # to be active. CI then looks merely slow.
@@ -12,19 +10,13 @@
 # Triggered on free space rather than on a clock, so an idle machine pays a single
 # `df` and a busy one reclaims as often as it needs to.
 #
-# `prune -af` keeps every image a RUNNING container uses — but "not running yet"
-# is not the same as "not wanted". `remote-execution.yml` BUILDS
-# `cheese-private-executor` and runs it a few steps later; on 2026-09-15 a guard
-# firing in this machine's other slot deleted it in between, and the job died on
-# `docker run … exit status 125` with nothing to re-pull, because the image was
-# never fetched from anywhere. The grace period protects newly created images;
-# a cached build retains its original creation date. Jobs that need a local
-# image across steps hold a running container until their tests finish.
+# Never prune the shared Docker daemon here: another slot may be pulling an
+# image before it has a container. On 2026-09-23 a concurrent Docker cleanup
+# overlapped a pull whose layer, snapshot and lease then disappeared. The logs
+# establish the overlap, not the operation that deleted the content.
+# Docker reclamation requires maintenance with both runner slots drained.
 #
-# Docker alone is not enough, and the logs say so: on runner-2 at 9G free the
-# guard fired before every job and reported `9G -> 9G`, because /var/lib/docker
-# was 6G of a 29G-used disk and /home was 18G. So the tiers below walk out of
-# docker and into the home directory, cheapest first, and stop as soon as the
+# The tiers below reclaim host caches, cheapest first, and stop as soon as the
 # machine is over the floor — every tier deleted is one the next job pays to
 # rebuild, and a machine that is already clear has nothing to buy with that.
 #
@@ -36,14 +28,11 @@
 #   ~/.cache/ms-playwright   browser binaries; `pnpm exec playwright install`
 #                        refetches them, but nothing in e2e asks it to.
 #   ~/setup-pnpm         pnpm itself, installed by pnpm/action-setup.
-# A machine that stays under the floor after tier 5 needs a bigger disk, not a
+# A machine that stays under the floor after every tier needs a bigger disk, not a
 # deeper tier: MicroCloud cannot resize, so that means asking Lg for capacity.
 set -uo pipefail
 
 FREE_FLOOR_GB="${CHEESE_CI_FREE_FLOOR_GB:-10}"
-# Long enough to outlive any job on this pool (the longest timeout is 20 minutes),
-# short enough that yesterday's layers are still reclaimable.
-KEEP_NEWER_THAN="${CHEESE_CI_KEEP_NEWER_THAN:-2h}"
 # Runner logs are the one thing here nothing else writes, so a few days of them
 # are worth keeping: they are how a machine that dropped out of the pool gets
 # diagnosed after the fact.
@@ -77,11 +66,6 @@ tier() {
   echo "disk guard: $name -> $(free_gb)G free"
 }
 
-reclaim_docker() {
-  docker system prune -af --filter "until=$KEEP_NEWER_THAN"
-  docker volume prune -f
-}
-
 # The runner never rotates these. Seen on all three machines 2026-09-17: 3903
 # files spanning a month, ~780 MB per runner instance, two instances per box.
 reclaim_diag() {
@@ -110,7 +94,6 @@ reclaim_stale_work() {
   rm -rf "$HOME"/actions-runner*/_work/uv-venv
 }
 
-tier "docker" reclaim_docker
 tier "runner logs" reclaim_diag
 tier "apt" reclaim_apt
 tier "npm cache" reclaim_npm

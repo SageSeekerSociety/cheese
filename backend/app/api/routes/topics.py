@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -737,6 +737,32 @@ async def say_on_task(
         kind=BlockKind.message,
     )
     payload = BlockOut.model_validate(block).model_dump(mode="json")
+    members = TopicMemberService(db)
+    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
+    if relay_to_parent:
+        from app.domain.delivery.agent import record_task_instruction
+        from app.domain.delivery.ledger import DeliveryEvent
+        from app.domain.notification.models import NotificationType
+
+        await record_task_instruction(
+            db,
+            DeliveryEvent(
+                id=block.id,
+                type=NotificationType.ROOM_NOTICE,
+                payload={
+                    "projectId": str(place.project_id),
+                    "topicId": str(place.room_id),
+                },
+                occurred_at=block.created_at,
+            ),
+            task=task,
+            content=thread_relay_prompt(
+                task_id=task.id,
+                task_title=task.title,
+                author=actor.handle,
+                message=f"说：{content}",
+            ),
+        )
     # Visible before the turn that reads it — same ordering as the doc comment.
     await db.commit()
     # 卡下的实时帧走这条活自己的频道，因为块落在这条活上：发给房间的话，看着房间
@@ -744,26 +770,10 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    members = TopicMemberService(db)
-    if not await members.holds_an_agent_seat(place.room, actor.handle):
-        # 人在一条活上说了话，下一步在这个房间的芝士手上 —— 转达是它的事。点名的是
-        # 说话的那个人，平台只是把这条事件送到它席位上（I12）。
-        runner.submit(
-            chat,
-            place.room_id,
-            author="system",
-            content=thread_relay_prompt(
-                task_id=task.id,
-                task_title=task.title,
-                author=actor.handle,
-                message=f"说：{content}",
-            ),
-            addressed=addressed_to_agent(
-                await members.addressable_agent_handle(place.room_id)
-            ),
-            nudge_event=f"{actor.handle} 在一条活上说话了，芝士来转达",
-            provision_actor=actor,
-        )
+    if relay_to_parent:
+        from app.domain.delivery.agent import dispatch_pending
+
+        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(payload)
 
 
@@ -1326,7 +1336,7 @@ async def get_topic_compute_profile(
             ],
             "locked": bool(
                 await AgentSessionService(db).has_run(topic_id)
-                or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+                or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
             ),
             "inherited": topic.compute_profile is None,
             "profiles": [
@@ -1347,11 +1357,127 @@ async def get_topic_compute_profile(
     )
 
 
+class WorkLeaseRequest(BaseModel):
+    env: dict[str, str] = Field(default_factory=dict)
+    timeout: float = Field(default=660, gt=0, le=660)
+
+
+@router.get("/{topic_id}/sessions/work-leases")
+async def session_work_leases(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from sqlalchemy import select
+
+    from app.domain.agent_session.models import AgentSession
+    from app.domain.machine.session_work import presentation
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    rows = await db.scalars(
+        select(AgentSession)
+        .where(AgentSession.topic_id == topic_id)
+        .order_by(AgentSession.agent_handle)
+    )
+    return ok({"sessions": [presentation(row) for row in rows]})
+
+
+@router.put("/{topic_id}/sessions/{session_id}/work-choice")
+async def request_session_work_choice(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    from pydantic import ValidationError as SchemaError
+
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.agent.compute_configs import ComputeChoice
+    from app.domain.machine import session_work as work_lease
+
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    if actor.via == "cheese":
+        claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+        if (
+            claims.get("session") != str(session_id)
+            or claims.get("t") != str(topic_id)
+            or claims.get("r") != str(topic.resource_id or topic.id)
+        ):
+            raise ForbiddenError("Execution credential does not own this session")
+    elif actor.via != "token":
+        raise ForbiddenError("请先登录")
+    try:
+        choice = ComputeChoice.model_validate(body.get("choice"))
+    except SchemaError as exc:
+        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    return ok(
+        {
+            "session": await work_lease.request_choice(
+                db,
+                topic_id=topic_id,
+                session_id=session_id,
+                actor=actor,
+                choice=choice,
+            )
+        }
+    )
+
+
+@router.post("/{topic_id}/sessions/{session_id}/work-lease")
+async def acquire_session_work_lease(
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: WorkLeaseRequest,
+    request: Request,
+    db: DbSession,
+) -> dict:
+    from app.core.errors import AuthenticationRequiredError
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.machine import session_work as work_lease
+
+    token = request.headers.get("x-cheese-token", "")
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise AuthenticationRequiredError("A session execution credential is required")
+    from app.core.errors import GatewayTimeoutError
+
+    try:
+        async with asyncio.timeout(body.timeout):
+            return ok(
+                await work_lease.ensure(
+                    db,
+                    topic_id=topic_id,
+                    session_id=session_id,
+                    claims=claims,
+                    token=token,
+                    env=body.env,
+                )
+            )
+    except TimeoutError as exc:
+        raise GatewayTimeoutError("工作机器仍在准备，对话和平台工具仍可用") from exc
+
+
 @router.put("/{topic_id}/compute-profile")
 async def set_topic_compute_profile(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """Change only this room before its first resource allocation or session."""
+    """Room defaults before startup; signed running sessions request their own hands."""
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1371,22 +1497,23 @@ async def set_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     await ProjectMachineRepository(db).lock_topic(topic_id)
-    # 「开跑即锁定」锁的是**界面上那个人**：房间跑起来之后他再换一档，扔掉的是正在
-    # 跑的那条会话和它的工作区，而他从那个下拉框里看不见那边在干什么。
-    #
-    # 正在这个房间里跑的那一轮说的不是那件事。它说的是结论 23 的那一句——「这台机器
-    # 够不着了，我要另一台」——而那句话只可能在房间跑起来之后说出口。按开跑锁死，
-    # 这个工具在生产里一次也调不通，agent 收到的是一句「新建话题可另选算力」，而它
-    # 连新建话题都做不到。**但它换不成**：换成什么由下面那一段答（结论 23），这里
-    # 放它过的只是「说得出口」。
-    #
-    # 认的是**这个房间这一轮的那张令牌**，不是「说话的是个 agent」：项目级 agent
-    # 凭据也是 `via == "cheese"`，而它够得着这个项目里的每一个房间（`app/main.py`
-    # 上那句话），拿它当判据等于任何一张项目凭据都能动别人正跑着的房间。
-    asked_by_this_rooms_turn = resolver.speaks_for_this_rooms_turn(topic_id)
+    # A signed session selects only its own work destination. Project-wide
+    # credentials cannot name a running session through this room-default API.
+    from app.core.sandbox_auth import scoped_token_claims
+
+    claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+    scoped_session = claims.get("session") if actor.via == "cheese" else None
+    if scoped_session and (
+        claims.get("t") != str(topic_id)
+        or claims.get("r") != str(topic.resource_id or topic.id)
+    ):
+        raise ForbiddenError("Execution credential does not own this room generation")
+    asked_by_this_rooms_turn = bool(
+        scoped_session
+    ) or resolver.speaks_for_this_rooms_turn(topic_id)
     started = bool(
         await AgentSessionService(db).has_run(topic_id)
-        or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+        or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
     )
     if started and not asked_by_this_rooms_turn:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
@@ -1402,6 +1529,17 @@ async def set_topic_compute_profile(
         )
     except SchemaError as exc:
         raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+    if scoped_session:
+        from app.domain.machine import session_work as work_lease
+
+        result = await work_lease.request_choice(
+            db,
+            topic_id=topic_id,
+            session_id=uuid.UUID(scoped_session),
+            actor=actor,
+            choice=choice,
+        )
+        return ok({"session": result})
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")

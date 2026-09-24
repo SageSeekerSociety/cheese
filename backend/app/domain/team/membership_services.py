@@ -16,6 +16,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
+    Team,
     TeamMemberRole,
     TeamMembershipApplication,
 )
@@ -107,25 +108,35 @@ class TeamMembershipService:
         await self._app_repo.save(app)
         return app
 
-    async def create_team_join_request(
-        self,
-        *,
-        user_id: int,
-        team_id: int,
-        message: str | None,
-    ) -> TeamMembershipApplication:
-        team = await self._team_repo.get_by_id(team_id)
-        if team is None:
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "id": team_id}
-            )
+    async def join_status(self, team_id: int, user_id: int) -> str:
+        """``member``, ``pending`` (a request waits for approval) or ``none``."""
+        if await self._team_repo.is_team_member(team_id, user_id):
+            return "member"
+        if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
+            return "pending"
+        return "none"
 
-        await self._validate_user_can_apply_or_be_invited(user_id, team_id)
+    async def join(self, *, user_id: int, team: Team, message: str | None) -> str:
+        """Join ``team``, or ask to — whichever its ``join_approval`` says.
+
+        The caller has already decided ``user_id`` may see the team (by id, or
+        by holding its link); this only carries the join out. Asking twice, or
+        asking once already in, is not an error — the answer is where they stand.
+        """
+        status = await self.join_status(team.id, user_id)
+        if status != "none":
+            return status
+        if not team.join_approval:
+            from app.domain.team.services import check_team_locking_status
+
+            await check_team_locking_status(self._session, team.id)
+            await self._team_repo.add_member(team.id, user_id, TeamMemberRole.MEMBER)
+            return "member"
 
         now = datetime.now(UTC)
         app = TeamMembershipApplication(
             user_id=user_id,
-            team_id=team_id,
+            team_id=team.id,
             initiator_id=user_id,
             type=ApplicationType.REQUEST.value,
             status=ApplicationStatus.PENDING.value,
@@ -141,7 +152,7 @@ class TeamMembershipService:
 
         payload: dict[str, Any] = {
             "requester": {"type": "user", "id": str(user_id)},
-            "team": {"type": "team", "id": str(team_id)},
+            "team": {"type": "team", "id": str(team.id)},
             "application": {
                 "type": "team_membership_application",
                 "id": str(saved.id),
@@ -153,10 +164,9 @@ class TeamMembershipService:
             saved,
             type_=NotificationType.TEAM_JOIN_REQUEST,
             payload=payload,
-            handed_to=await self._team_repo.list_admin_and_owner_ids(team_id),
+            handed_to=await self._team_repo.list_admin_and_owner_ids(team.id),
         )
-
-        return saved
+        return "pending"
 
     async def cancel_my_join_request(self, *, user_id: int, request_id: int) -> None:
         app = await self._app_repo.find_pending_by_id_and_initiator_and_type(

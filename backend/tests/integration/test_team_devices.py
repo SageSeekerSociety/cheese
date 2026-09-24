@@ -47,6 +47,7 @@ def test_project_can_use_a_device_registered_for_its_team(client):
             await s.flush()
             team = Team(
                 name="Team Cheese",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
                 intro="i",
                 description="d",
                 avatar_id=0,
@@ -206,6 +207,7 @@ def test_personal_project_uses_owners_personal_team_devices(client):
         async with client.test_factory() as s:
             team = Team(
                 name="Shared",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
                 intro="i",
                 description="d",
                 avatar_id=0,

@@ -236,7 +236,9 @@ async def test_admission_tells_the_room_once_for_a_refused_turn_in_flight(client
     topic_id = client.post("/topics", json={"project_id": pid, "title": "T"}).json()[
         "data"
     ]["id"]
-    turn_id = await open_turn(client.test_factory, uuid.UUID(topic_id))
+    turn_id = client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(topic_id))
+    )
     await _exhaust(client, pid)
     token = mint_scoped_token(project_id=pid, topic_id=topic_id)
     headers = {"Authorization": f"Bearer {token}"}
@@ -420,6 +422,49 @@ async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
     assert body["supply"]["upstream"] == "m516:pw516"
+
+
+async def test_admission_names_a_placed_project_machines_identity(client):
+    """A placed session must read the enrolled machine's identity, not only
+    the device row (which does not store that identity)."""
+    from app.domain.agent.harness import deployment_harness
+    from app.domain.agent_session.services import AgentSessionService
+
+    pid = _make_project(client)
+    room_id = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Machine room", "created_by": "alice"},
+    ).json()["data"]["id"]
+    await _pin_topic_to_machine(
+        client,
+        project_id=pid,
+        topic_id=uuid.UUID(room_id),
+        machine_id=517,
+        upstream="m517:pw517",
+    )
+    async with client.test_factory() as session:
+        await AgentSessionService(session).remember_place(
+            topic_id=uuid.UUID(room_id),
+            agent_handle="agent",
+            work_lease={"kind": "device", "device_id": "dev-517"},
+            runtime_location={
+                "device_id": "dev-517",
+                "resource_id": room_id,
+                "channel": "device",
+            },
+            harness=deployment_harness(),
+        )
+        await session.commit()
+
+    response = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": "Bearer "
+            + mint_scoped_token(project_id=pid, topic_id=room_id)
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["supply"]["upstream"] == "m517:pw517"
 
 
 async def test_a_machine_without_a_recorded_identity_names_none(client, monkeypatch):

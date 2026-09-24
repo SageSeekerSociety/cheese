@@ -1,8 +1,9 @@
 """Claude's RC v2 transport, scoped to a Cheese place.
 
-Redis holds sessions and both event journals so a backend restart does not lose
-an outstanding permission request. Worker credentials grant access to one
-session and epoch; they cannot call the human control API.
+Redis holds sessions, the command queue and the state derived from worker events
+so a backend restart does not lose an outstanding permission request. Worker
+credentials grant access to one session and epoch; they cannot call the human
+control API.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ from typing import cast
 
 import jwt
 from redis.asyncio import Redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, ConflictError, NotFoundError
@@ -361,6 +363,16 @@ class RemoteControl:
                 payload["task_id"], str
             ):
                 raise ValueError("Invalid task id")
+            if not (
+                kind
+                in ("control_response", "control_request", "control_cancel_request")
+                or (kind == "system" and payload.get("subtype") in ("init", "status"))
+                or (kind == "system" and payload.get("task_id") is not None)
+            ):
+                # Nothing below would change for it — messages, tool events, the
+                # thinking-token count — so it is accepted and dropped, without
+                # a dedup marker of its own.
+                continue
             item: dict = {
                 "id": event_id,
                 "payload": payload,
@@ -380,7 +392,7 @@ class RemoteControl:
         committed = await self.redis.eval(
             _CHECK_EPOCH
             + """
-local prefix, ttl = ARGV[2], ARGV[3]
+local prefix, ttl, seen_ttl = ARGV[2], ARGV[3], ARGV[6]
 local function pending(id, encoded)
     local answer = redis.call('GET', prefix..'command:answer-'..id)
     if answer and cjson.decode(answer).status == 'processed' then return end
@@ -389,10 +401,8 @@ local function pending(id, encoded)
 end
 for _, event in ipairs(cjson.decode(ARGV[4])) do
     local p = event.payload
-    if redis.call('SET', prefix..'seen:'..event.id, '1', 'NX', 'EX', ttl) then
+    if redis.call('SET', prefix..'seen:'..event.id, '1', 'NX', 'EX', seen_ttl) then
         local encoded = event.encoded
-        redis.call('XADD', prefix..'out', 'MAXLEN', '~', 4096, '*', 'event', encoded)
-        redis.call('EXPIRE', prefix..'out', ttl)
         if p.type == 'control_response' then
             local response = p.response or {}
             local rid = response.request_id
@@ -446,6 +456,11 @@ return 1
             RETENTION,
             json.dumps(prepared),
             time.time(),
+            # A duplicate is a worker retrying a batch, which it can only do
+            # while its credential lives; the marker stops a replayed batch
+            # from bringing back a cancelled question or an older task state.
+            # Kept for RETENTION instead, one per event added up to millions.
+            WORKER_TTL,
         )
         if not committed:
             raise AuthenticationRequiredError("RC worker is no longer current")
@@ -516,15 +531,6 @@ return 1
             **groups,
         }
 
-    async def journal(self, sid: str, cursor: str) -> list[dict]:
-        rows = cast(
-            list[tuple[bytes, dict[bytes, bytes]]],
-            await self.redis.xrange(key(sid, "out"), min="(" + cursor, count=200),
-        )
-        return [
-            {"cursor": text(i), "payload": json.loads(v[b"event"])} for i, v in rows
-        ]
-
     async def worker_stream(self, session: dict, token: str, cursor: str):
         sid = session["id"]
         # The SSE cursor proves receipt, not processing. Revisit answers on each
@@ -536,16 +542,21 @@ return 1
                 await self.authenticate_worker(sid, token)
             except (AuthenticationRequiredError, NotFoundError):
                 return
-            rows = cast(
-                list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]],
-                await self.redis.xread(
-                    # Redis 8's default socket timeout is shorter than a long
-                    # SSE heartbeat interval. Leave room for the read to finish.
-                    {key(sid, "in"): cursor},
-                    block=1000,
-                    count=100,
-                ),
-            )
+            rows: list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]] = []
+            for attempt in range(2):
+                try:
+                    rows = cast(
+                        list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]],
+                        await self.redis.xread(
+                            {key(sid, "in"): cursor}, block=1000, count=100
+                        ),
+                    )
+                    break
+                except RedisTimeoutError:
+                    # Keep the cursor across one short Redis stall; a second
+                    # timeout still surfaces a persistent outage to the caller.
+                    if attempt:
+                        raise
             try:
                 await self.authenticate_worker(sid, token)
             except (AuthenticationRequiredError, NotFoundError):

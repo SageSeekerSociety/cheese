@@ -6,16 +6,18 @@
 // THIS team or the rest of the team never sees it.
 import type { Project } from '@/cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, inject, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { teamDataInjectionKey } from '@/keys'
 
-const route = useRoute()
 const router = useRouter()
-const teamId = computed(() => Number(route.params.teamId))
+// The URL names the team by handle; its id comes from the team the page loaded.
+const teamData = inject(teamDataInjectionKey, ref())
+const teamId = computed(() => teamData.value?.id ?? 0)
 
 const projects = ref<Project[]>([])
 const loading = ref(false)

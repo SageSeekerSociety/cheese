@@ -690,6 +690,8 @@ class AgentWorkRunner:
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         turn_id: uuid.UUID | None = None,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
         on_done: Callable[[], None] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
@@ -724,23 +726,30 @@ class AgentWorkRunner:
         id 写进自己那条记录里（环境修复把它写进事故 meta，之后靠 `turn_pending` 判断
         这一轮是不是还在排队）。不传就当场分配一个。"""
         turn_id = turn_id or uuid.uuid4()
+        work = self._run(
+            chat_service,
+            topic_id,
+            turn_id,
+            author=author,
+            content=content,
+            addressed=addressed,
+            reply_to=reply_to,
+            attachments=attachments,
+            is_resume=is_resume,
+            resume_reason=resume_reason,
+            nudge_event=nudge_event,
+            nudge_meta=nudge_meta,
+            continuation_id=continuation_id or turn_id,
+            provision_actor=provision_actor,
+            delivery_id=delivery_id,
+            recipient_instance_id=recipient_instance_id,
+        )
+        if delivery_id is not None:
+            from app.domain.delivery.agent import run_attempt
+
+            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
-            self._run(
-                chat_service,
-                topic_id,
-                turn_id,
-                author=author,
-                content=content,
-                addressed=addressed,
-                reply_to=reply_to,
-                attachments=attachments,
-                is_resume=is_resume,
-                resume_reason=resume_reason,
-                nudge_event=nudge_event,
-                nudge_meta=nudge_meta,
-                continuation_id=continuation_id or turn_id,
-                provision_actor=provision_actor,
-            ),
+            work,
             name=f"turn:{turn_id}",
         )
         self._tasks.add(task)
@@ -1303,6 +1312,22 @@ class AgentWorkRunner:
         （`dispatch_log.unsettled`）。"""
         async with chat_service.session_factory() as ledger:
             unknown = await dispatch_log.unsettled(ledger, topic_id, since=since)
+            from sqlalchemy import select
+
+            from app.domain.delivery.models import Delivery
+
+            delivery_attempts = set(
+                await ledger.scalars(
+                    select(Delivery.attempt_id).where(
+                        Delivery.attempt_id.in_([record.turn_id for record in entries])
+                    )
+                )
+            )
+        # Delivery owns retries and receipt uncertainty. A generic resend would
+        # lose its recipient and attempt identity, and could duplicate a send.
+        entries = [
+            record for record in entries if record.turn_id not in delivery_attempts
+        ]
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1795,6 +1820,8 @@ class AgentWorkRunner:
         # still pending admission and may instead merge into a live turn.
         landed_user_block_id: uuid.UUID | None = None,
         recipient_handle: str | None = None,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> None:
         channel = str(topic_id)
         # 一轮只有一种开法：converse。以前还有第二种 —— kickoff 把一条预制的帧流从
@@ -1872,6 +1899,8 @@ class AgentWorkRunner:
                 provision_actor=provision_actor,
                 frames=frames,
                 lifecycle=lifecycle,
+                delivery_id=delivery_id,
+                recipient_instance_id=recipient_instance_id,
             )
         finally:
             # Close what this turn opened, unless the session took over THIS
@@ -1948,6 +1977,8 @@ class AgentWorkRunner:
         # 自己跑一轮 converse。
         frames: AsyncIterator[Frame] | None = None,
         lifecycle: dict[str, bool] | None = None,
+        delivery_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> None:
         channel = str(topic_id)
         summon = _a_turn_was_addressed(addressed)
@@ -2116,6 +2147,16 @@ class AgentWorkRunner:
                         nudge_meta=nudge_meta,
                         continuation_id=continuation_id,
                         provision_actor=provision_actor,
+                        **(
+                            {"delivery_id": delivery_id}
+                            if delivery_id is not None
+                            else {}
+                        ),
+                        **(
+                            {"recipient_instance_id": recipient_instance_id}
+                            if recipient_instance_id is not None
+                            else {}
+                        ),
                     )
                 )
                 async for frame in turn_frames:

@@ -36,16 +36,16 @@ describe('项目的来路', () => {
   it('从项目外面走进来，记下来路', () => {
     recordEntry(
       at('workspace-project', { project: 'p1' }),
-      at('TeamsDetail', { params: { teamId: '7' }, title: TEAM }),
+      at('TeamsDetail', { params: { handle: 'zhishi' }, title: TEAM }),
       labelOf
     )
-    expect(readEntry('p1')).toEqual({ name: 'TeamsDetail', params: { teamId: '7' }, label: TEAM })
+    expect(readEntry('p1')).toEqual({ name: 'TeamsDetail', params: { handle: 'zhishi' }, label: TEAM })
   })
 
   // 从话题按 ← 回到话题列表也是一次跳转。它要是覆盖了入口，← 就指回你刚离开的
   // 那条话题——按一下原地弹回去，再也出不了这个项目。
   it('项目里怎么翻都不覆盖来路', () => {
-    const team = at('TeamsDetail', { params: { teamId: '7' }, title: TEAM })
+    const team = at('TeamsDetail', { params: { handle: 'zhishi' }, title: TEAM })
     recordEntry(at('workspace-project', { project: 'p1' }), team, labelOf)
     recordEntry(
       at('workspace-topic', { project: 'p1', params: { topicId: 't1' } }),
@@ -81,14 +81,14 @@ describe('项目的来路', () => {
   it('每个项目各记各的', () => {
     recordEntry(
       at('workspace-project', { project: 'p1' }),
-      at('TeamsDetail', { params: { teamId: '7' }, title: TEAM }),
+      at('TeamsDetail', { params: { handle: 'zhishi' }, title: TEAM }),
       labelOf
     )
     expect(readEntry('p2')).toBeNull()
   })
 
   it('目的地不在项目框里就不记', () => {
-    recordEntry(at('TeamsDetail', { params: { teamId: '7' } }), at('HomeSpaces', { title: '空间' }), labelOf)
+    recordEntry(at('TeamsDetail', { params: { handle: 'zhishi' } }), at('HomeSpaces', { title: '空间' }), labelOf)
     expect(sessionStorage.length).toBe(0)
   })
 
@@ -98,7 +98,7 @@ describe('项目的来路', () => {
   })
 
   it('忘掉一个项目的来路', () => {
-    writeEntry('p1', { name: 'TeamsDetail', params: { teamId: '7' }, label: TEAM })
+    writeEntry('p1', { name: 'TeamsDetail', params: { handle: 'zhishi' }, label: TEAM })
     forgetEntry('p1')
     expect(readEntry('p1')).toBeNull()
   })
@@ -109,7 +109,7 @@ describe('项目的来路', () => {
     })
 
     it('框外的层不属于任何项目', () => {
-      expect(projectFrameOf(at('TeamsDetail', { params: { teamId: '7' } }))).toBeNull()
+      expect(projectFrameOf(at('TeamsDetail', { params: { handle: 'zhishi' } }))).toBeNull()
     })
   })
 })

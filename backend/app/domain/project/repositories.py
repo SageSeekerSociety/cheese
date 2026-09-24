@@ -59,6 +59,35 @@ class ProjectRepository:
             .where(User.username == project.owner_handle, Team.deleted_at.is_(None))
         )
 
+    async def teams_for_projects(
+        self, projects: list[Project]
+    ) -> dict[uuid.UUID, int | None]:
+        """`team_for_project` 的批量版：一批项目 → 各自的所属小队。
+
+        `team_id` 非空的直接取值，不发查询；为空的那批（个人小队的旧项目）用
+        **一条** `Team JOIN User` 把 owner_handle → team_id 的映射一次查回，
+        而不是逐项目各发一条 —— 管理页的项目额度表靠它把整段查询从 2N+1
+        降到 3。
+        """
+        out: dict[uuid.UUID, int | None] = {}
+        orphan_handles: set[str] = set()
+        orphan_ids: dict[str, list[uuid.UUID]] = {}
+        for project in projects:
+            out[project.id] = project.team_id
+            if project.team_id is None and project.owner_handle:
+                orphan_handles.add(project.owner_handle)
+                orphan_ids.setdefault(project.owner_handle, []).append(project.id)
+        if orphan_handles:
+            rows = await self._session.execute(
+                select(User.username, Team.id)
+                .join(User, User.id == Team.personal_owner_user_id)
+                .where(User.username.in_(orphan_handles), Team.deleted_at.is_(None))
+            )
+            for username, team_id in rows.all():
+                for project_id in orphan_ids.get(username, []):
+                    out[project_id] = team_id
+        return out
+
     async def get_by_team(self, team_id: int) -> Project | None:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
         stmt = (
@@ -212,6 +241,8 @@ class ProjectRepository:
                 )
             )
         ).all()
+        team = await self._session.get(Team, project.team_id)
+        team_handle = team.handle if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
             if handle in explicit:
                 continue
@@ -223,10 +254,20 @@ class ProjectRepository:
                     "avatar_id": None if avatar_type == "default" else avatar_id,
                     "source": "team",
                     "team_id": project.team_id,
+                    "team_handle": team_handle,
                     "created_at": created_at.isoformat(),
                 }
             )
         return members
+
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for one handle, by the same rules as a roster row
+        in :meth:`people` — for someone who is not on the roster yet."""
+        name, avatar_id, avatar_type = await self._profile_of(handle)
+        return {
+            "name": name or handle,
+            "avatar_id": None if avatar_type == "default" else avatar_id,
+        }
 
     async def _profile_of(
         self, handle: str

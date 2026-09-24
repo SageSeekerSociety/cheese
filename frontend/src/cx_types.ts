@@ -17,6 +17,8 @@ export interface Project {
    * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
    */
   team_id?: number | null
+  /** 所属团队的 handle，团队页的地址（`/teams/<handle>`）。 */
+  team_handle?: string | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
@@ -408,6 +410,8 @@ export interface ProjectMemberRow {
   // 这个项目的 AI 队友。没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
   source?: 'team' | 'owner' | 'agent'
   team_id?: number
+  // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
+  team_handle?: string
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
@@ -987,6 +991,14 @@ export interface ComputeChoice {
   disk_gb: number | null
 }
 
+export interface SessionWorkLease {
+  id: string
+  agent_handle: string
+  harness: string
+  choice: ComputeChoice
+  lease: { device_id: string; generation: number; status: string; online: boolean } | null
+}
+
 export interface ProjectComputeConfigs {
   default: ComputeChoice
   favorites: ComputeChoice[]
@@ -1098,6 +1110,7 @@ export interface MyDevice {
 // 单人真团队), which the backend sorts first and flags `personal`.
 export interface MyTeam {
   id: number
+  handle: string
   name: string
   personal?: boolean
 }

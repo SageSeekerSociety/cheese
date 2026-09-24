@@ -3,7 +3,7 @@ from datetime import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.crypto import decrypt_text, encrypt_text
+from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
 from app.domain.user.repositories import (
@@ -11,6 +11,29 @@ from app.domain.user.repositories import (
     UserRealNameRepository,
     UserRepository,
 )
+
+
+def seal_realname_field(user_id: int, field: str, value: str) -> str:
+    """Encrypt one real-name column, bound to its owner and to the column."""
+    return encrypt(Purpose.REALNAME, value, bound_to=f"user:{user_id}:{field}")
+
+
+def open_realname_field(identity: UserRealNameIdentity, field: str) -> str:
+    """One real-name column as text, decrypting it when the row is encrypted."""
+    value: str = getattr(identity, field)
+    if not identity.encrypted or not value:
+        return value
+    return decrypt(Purpose.REALNAME, value, bound_to=f"user:{identity.user_id}:{field}")
+
+
+def realname_dict(identity: UserRealNameIdentity) -> dict:
+    return {
+        "realName": open_realname_field(identity, "real_name"),
+        "studentId": open_realname_field(identity, "student_id"),
+        "grade": open_realname_field(identity, "grade"),
+        "major": open_realname_field(identity, "major"),
+        "className": open_realname_field(identity, "class_name"),
+    }
 
 
 class UserRealNameService:
@@ -34,20 +57,6 @@ class UserRealNameService:
             )
         return user
 
-    def _identity_dict(self, identity: UserRealNameIdentity, *, decrypt: bool) -> dict:
-        def maybe(value: str) -> str:
-            if decrypt and identity.encrypted:
-                return decrypt_text(value)
-            return value
-
-        return {
-            "realName": maybe(identity.real_name),
-            "studentId": maybe(identity.student_id),
-            "grade": maybe(identity.grade),
-            "major": maybe(identity.major),
-            "className": maybe(identity.class_name),
-        }
-
     def _mask_name(self, real_name: str) -> str:
         if not real_name:
             return real_name
@@ -66,7 +75,7 @@ class UserRealNameService:
                 "user real name identity not found",
                 data={"type": "user_real_name_identity", "id": user_id},
             )
-        return self._identity_dict(identity, decrypt=True)
+        return realname_dict(identity)
 
     async def get_fuzzy_user_identity(self, user_id: int) -> dict:
         precise = await self.get_user_identity(user_id)
@@ -87,22 +96,16 @@ class UserRealNameService:
         await self._ensure_user_exists(user_id)
         if not all([real_name, student_id, grade, major, class_name]):
             raise BadRequestError("All real-name fields are required.")
-        encrypted_real_name = encrypt_text(real_name)
-        encrypted_student_id = encrypt_text(student_id)
-        encrypted_grade = encrypt_text(grade)
-        encrypted_major = encrypt_text(major)
-        encrypted_class_name = encrypt_text(class_name)
-
         identity = await self._realname_repo.upsert_identity(
             user_id=user_id,
-            real_name=encrypted_real_name,
-            student_id=encrypted_student_id,
-            grade=encrypted_grade,
-            major=encrypted_major,
-            class_name=encrypted_class_name,
+            real_name=seal_realname_field(user_id, "real_name", real_name),
+            student_id=seal_realname_field(user_id, "student_id", student_id),
+            grade=seal_realname_field(user_id, "grade", grade),
+            major=seal_realname_field(user_id, "major", major),
+            class_name=seal_realname_field(user_id, "class_name", class_name),
             encrypted=True,
         )
-        return self._identity_dict(identity, decrypt=True)
+        return realname_dict(identity)
 
     async def log_access(
         self,

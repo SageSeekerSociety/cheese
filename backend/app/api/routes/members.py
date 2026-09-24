@@ -26,7 +26,8 @@ from app.domain.membership.schemas import (
     InvitationCreate,
     InvitationOut,
     InvitationRespond,
-    JoinLinkOut,
+    JoinLinkSettings,
+    JoinThroughLink,
     MemberCreate,
     MemberOut,
     MemberRoleUpdate,
@@ -44,30 +45,31 @@ async def get_join_link(
 ) -> dict:
     actor = await resolver.require_verified_caller()
     link = await JoinLinkService(db).current(project_id, actor)
-    return ok(
-        JoinLinkOut.model_validate(link).model_dump(mode="json") if link else None
-    )
+    await db.commit()
+    return ok(link)
 
 
-@router.post("/projects/{project_id}/join-link")
-async def create_join_link(
+@router.patch("/projects/{project_id}/join-link")
+async def update_join_link(
+    project_id: uuid.UUID,
+    body: JoinLinkSettings,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    link = await JoinLinkService(db).set_approval(project_id, body.approval, actor)
+    await db.commit()
+    return ok(link)
+
+
+@router.post("/projects/{project_id}/join-link/reset")
+async def reset_join_link(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     actor = await resolver.require_verified_caller()
-    link = await JoinLinkService(db).create(project_id, actor)
-    result = JoinLinkOut.model_validate(link).model_dump(mode="json")
+    link = await JoinLinkService(db).reset(project_id, actor)
     await db.commit()
-    return ok(result)
-
-
-@router.delete("/projects/{project_id}/join-link")
-async def revoke_join_link(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    await JoinLinkService(db).revoke(project_id, actor)
-    await db.commit()
-    return ok({"deleted": True})
+    return ok(link)
 
 
 @router.get("/project-invites/{token}")
@@ -79,13 +81,52 @@ async def preview_join_link(
 
 
 @router.post("/project-invites/{token}/join")
-async def accept_join_link(
-    token: str, db: DbSession, resolver: ActorResolverDep
+async def join_through_link(
+    token: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    body: JoinThroughLink | None = None,
 ) -> dict:
     actor = await resolver.require_verified_caller()
-    result = await JoinLinkService(db).describe(token, actor, join=True)
+    result = await JoinLinkService(db).join(
+        token, actor, message=body.message if body else ""
+    )
     await db.commit()
     return ok(result)
+
+
+@router.get("/projects/{project_id}/join-requests")
+async def list_join_requests(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    return ok(await JoinLinkService(db).list_pending(project_id, actor))
+
+
+@router.post("/projects/{project_id}/join-requests/{request_id}/approve")
+async def approve_join_request(
+    project_id: uuid.UUID,
+    request_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    await JoinLinkService(db).decide(project_id, request_id, approve=True, actor=actor)
+    await db.commit()
+    return ok({"approved": True})
+
+
+@router.post("/projects/{project_id}/join-requests/{request_id}/reject")
+async def reject_join_request(
+    project_id: uuid.UUID,
+    request_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.require_verified_caller()
+    await JoinLinkService(db).decide(project_id, request_id, approve=False, actor=actor)
+    await db.commit()
+    return ok({"rejected": True})
 
 
 @router.post("/projects/{project_id}/members")

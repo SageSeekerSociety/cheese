@@ -61,15 +61,17 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     response = client.put(route, json={"configuration": {"model": "opus"}})
     assert response.status_code == 200, response.text
     chat = ChatService(
-        session_factory=client.test_factory,
+        session_factory=client.test_request_factory,
         compute=stub_compute(),
         base_system_prompt="Test",
         workspace_root=str(tmp_path / "ws"),
     )
-    kwargs, _ = await chat._model_kwargs(
-        uuid.UUID(pid),
-        ClaudeCodeRuntime(DeviceChannel()),
-        uuid.UUID(project["root_topic_id"]),
+    kwargs, _ = client.portal.call(
+        lambda: chat._model_kwargs(
+            uuid.UUID(pid),
+            ClaudeCodeRuntime(DeviceChannel()),
+            uuid.UUID(project["root_topic_id"]),
+        )
     )
     assert "opus" in kwargs["model"]
     assert kwargs["env"]["CLAUDE_CODE_GATEWAY_HINT_HEADERS"] == "1"
@@ -146,6 +148,157 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
     ).json()["data"]
     assert not result["allow"]
     assert result["reason_kind"] == "binding"
+
+
+@pytest.mark.anyio
+async def test_removed_main_is_refused_but_unused_defaults_do_not_block_overrides(
+    client, monkeypatch, tmp_path
+):
+    project = create(client)
+    pid = project["id"]
+    teammate = agents(client, pid)[0]
+    assert (
+        client.put(f"/projects/{pid}/default-model", json={"model": "opus"}).status_code
+        == 200
+    )
+    from app.core.errors import ValidationError
+    from app.domain.agent_instance import configuration
+
+    available = configuration.subscription_model_listings()
+    monkeypatch.setattr(
+        configuration,
+        "subscription_model_listings",
+        lambda: [item for item in available if item.id != "opus"],
+    )
+    token = mint_scoped_token(
+        project_id=pid,
+        topic_id=project["root_topic_id"],
+        agent_handle=teammate["seat_handle"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    for child in (False, True):
+        result = client.post(
+            "/llm/admission",
+            headers={**headers, **({"X-Cheese-Subagent": "1"} if child else {})},
+        ).json()["data"]
+        assert not result["allow"], result
+        assert result["reason_kind"] == "binding"
+    chat = ChatService(
+        session_factory=client.test_factory,
+        compute=stub_compute(),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    with pytest.raises(ValidationError, match="opus"):
+        await chat._model_kwargs(
+            uuid.UUID(pid),
+            ClaudeCodeRuntime(DeviceChannel()),
+            uuid.UUID(project["root_topic_id"]),
+        )
+    assert (
+        client.put(
+            f"/projects/{pid}/agents/{teammate['id']}",
+            json={"configuration": {"model": "sonnet"}},
+        ).status_code
+        == 200
+    )
+    main = client.post("/llm/admission", headers=headers).json()["data"]
+    assert main["allow"], main
+    assert "sonnet" in main["supply"]["model"]
+    kwargs, _ = await chat._model_kwargs(
+        uuid.UUID(pid),
+        ClaudeCodeRuntime(DeviceChannel()),
+        uuid.UUID(project["root_topic_id"]),
+    )
+    assert "sonnet" in kwargs["model"]
+    assert kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "opus"
+    assert (
+        client.put(
+            f"/projects/{pid}/default-model", json={"subagent_model": "sonnet"}
+        ).status_code
+        == 200
+    )
+    child = client.post(
+        "/llm/admission", headers={**headers, "X-Cheese-Subagent": "1"}
+    ).json()["data"]
+    assert child["allow"], child
+    assert "sonnet" in child["supply"]["model"]
+
+
+@pytest.mark.anyio
+async def test_explicit_native_child_models_are_validated_against_catalog_and_policy(
+    client,
+):
+    """child_model 显式指定走目录语义（与队友身份无关）：目录没有的名字拒绝
+    并列出目录可选；目录内（含项目显式配置的两个默认）绑定；主对话不能借
+    child 头走私模型；显式指定的模型照过 tier 策略闸。"""
+    project = create(client)
+    pid = project["id"]
+    teammate = agents(client, pid)[0]
+    assert (
+        client.put(
+            f"/projects/{pid}/default-model",
+            json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+        ).status_code
+        == 200
+    )
+    token = mint_scoped_token(
+        project_id=pid,
+        topic_id=project["root_topic_id"],
+        agent_handle=teammate["seat_handle"],
+    )
+    headers = {"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"}
+    # 目录里没有的名字：拒绝并列出目录可选 —— 不再是「队友的范围」。
+    unlisted = client.post(
+        "/llm/admission",
+        headers={**headers, "X-Cheese-Child-Model": "not-offered"},
+    ).json()["data"]
+    assert not unlisted["allow"], unlisted
+    assert unlisted["reason_kind"] == "binding"
+    assert "可指定" in unlisted["reason"]
+    # 项目显式配置的两个默认跨池也合法（供给跟着绑定走），目录内本名照绑。
+    for model in ("deepseek-flash", "sonnet"):
+        result = client.post(
+            "/llm/admission", headers={**headers, "X-Cheese-Child-Model": model}
+        ).json()["data"]
+        assert result["allow"], (model, result)
+    # A main request cannot smuggle a different model through the child hint.
+    result = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Cheese-Child-Model": "sonnet",
+        },
+    ).json()["data"]
+    assert result["supply"]["model"] == "deepseek-flash"
+    # 换到订阅池：claude-opus-5 在目录里（旧队友语义下没有队友绑它就吃拒
+    # 绝），目录语义直接绑得上 —— 但档位是 premium，过 tier 策略闸时被拒。
+    from app.domain.project.repositories import ProjectRepository
+
+    async with client.test_factory() as session:
+        orm_project = await ProjectRepository(session).get(uuid.UUID(pid))
+        assert orm_project is not None
+        orm_project.settings = {
+            **(orm_project.settings or {}),
+            "supply": "subscription",
+        }
+        await session.commit()
+    premium = client.post(
+        "/llm/admission", headers={**headers, "X-Cheese-Child-Model": "claude-opus-5"}
+    ).json()["data"]
+    assert premium["allow"], premium
+    assert (
+        client.put(
+            f"/projects/{pid}/tier-policy",
+            json={"allowed_tiers": ["included"], "over_tier": "deny"},
+        ).status_code
+        == 200
+    )
+    denied = client.post(
+        "/llm/admission", headers={**headers, "X-Cheese-Child-Model": "claude-opus-5"}
+    ).json()["data"]
+    assert not denied["allow"], denied
+    assert denied["reason_kind"] == "binding"
 
 
 # --- 开分身时指定模型（范围 = 项目模型目录，与队友身份无关） ------------------

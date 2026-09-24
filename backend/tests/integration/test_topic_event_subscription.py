@@ -1060,6 +1060,7 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
                 "_eid": "late-after-timeout-stop",
             },
         )
+        await subscription.sink.queue.join()
         late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
 
     assert [frame["type"] for frame in late_frames] == [
@@ -1070,6 +1071,8 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     ]
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
+    await settle_turn(service, topic_id)
+    assert provider._subscriptions[topic_id] is subscription
     await provider._close_topic(topic_id)
 
 

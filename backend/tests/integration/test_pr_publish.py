@@ -5,7 +5,6 @@ opener pushes the branch, opens the PR, and records pr_number/pr_url on the
 card; any failure leaves the card PR-less (the accept path then falls back).
 """
 
-import asyncio
 import uuid
 from unittest.mock import AsyncMock
 
@@ -139,9 +138,9 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),
@@ -182,9 +181,9 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),
@@ -201,9 +200,9 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
 
     # The push works again → a re-publish records the PR and clears the note.
     monkeypatch.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),
@@ -224,9 +223,9 @@ def test_project_without_a_forge_client_cannot_publish(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),
@@ -289,9 +288,9 @@ def test_submit_route_stays_quiet_when_app_not_configured(client, monkeypatch):
 def _publish(client, pid: str, tid: str, cid: str) -> dict:
     from app.domain.review import pr_publish
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),
@@ -362,7 +361,7 @@ def _forget_the_subject(client, card_id: str) -> None:
     from app.domain.review.models import AcceptCard
 
     async def _run() -> None:
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             await db.execute(
                 update(AcceptCard)
                 .where(AcceptCard.id == uuid.UUID(card_id))
@@ -370,7 +369,7 @@ def _forget_the_subject(client, card_id: str) -> None:
             )
             await db.commit()
 
-    asyncio.run(_run())
+    client.portal.call(lambda: _run())
 
 
 def test_a_legacy_card_still_gets_the_fallback_title(client, monkeypatch):
@@ -385,9 +384,9 @@ def test_a_legacy_card_still_gets_the_fallback_title(client, monkeypatch):
     cid = _make_card(client, tid)
     _forget_the_subject(client, cid)
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),

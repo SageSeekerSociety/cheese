@@ -7,6 +7,8 @@ does its own delivery with it.
 """
 
 import json
+import os
+import subprocess
 
 import pytest
 
@@ -114,6 +116,15 @@ def test_hooks_settings_sync_teammate_definitions_on_start_and_prompt():
             for hook in group["hooks"]
             if hook["type"] == "command"
         ]
-        assert "cheese sync-agents" in commands
+        assert "cheese sync-agents || true" in commands
     # 转发器仍然排在最前 —— 感知一个不能少。
     assert hooks["SessionStart"][0]["hooks"][0]["command"] == "cheese-hook"
+
+
+def test_sync_agents_hook_does_not_block_prompts_on_an_older_cli(tmp_path):
+    command = hooks_settings()["hooks"]["UserPromptSubmit"][1]["hooks"][0]["command"]
+    old_cli = tmp_path / "cheese"
+    old_cli.write_text("#!/bin/sh\nexit 2\n")
+    old_cli.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    assert subprocess.run(command, shell=True, env=env, check=False).returncode == 0

@@ -192,6 +192,37 @@ class CreateInviteCodeRequest(BaseModel):
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    """The refresh cookie lives as long as the token in it. Without a Max-Age
+    the browser drops it when the session ends while the access token in
+    localStorage survives, and the next refresh signs the user out."""
+    response.set_cookie(
+        "REFRESH_TOKEN",
+        refresh_token,
+        max_age=settings.refresh_token_expires_seconds,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_session_cookie(response: Response, session_id: str) -> None:
+    """Kept as long as the server-side session it names."""
+    from app.domain.user.login_security import SESSION_TTL
+
+    response.set_cookie(
+        "SESSION_ID",
+        session_id,
+        max_age=SESSION_TTL,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+
+
 logger = logging.getLogger(__name__)
 
 # Namespaces the single-use reservations that make a 2FA ticket redeemable
@@ -458,10 +489,10 @@ def _reject_overlong_password(password: str) -> None:
         raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
 
 
-# At least 8 characters, a letter and an ASCII symbol. The symbol class is the
-# web client's (REGEX_PASSWORD), so the form and the server agree on it.
+# At least 8 characters, a letter, a digit and an ASCII symbol: the web
+# client's rule (REGEX_PASSWORD), so the form and the server agree on it.
 _NEW_PASSWORD_PATTERN = re.compile(
-    r"^(?=.*[a-zA-Z])(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
+    r"^(?=.*[a-zA-Z])(?=.*\d)(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
 )
 
 
@@ -470,7 +501,8 @@ def _require_new_password(password: str) -> None:
     bcrypt can hold. Checked before anything single-use is spent."""
     if not _NEW_PASSWORD_PATTERN.match(password):
         raise UnprocessableEntityError(
-            "Password must be at least 8 characters and contain letters and special characters"  # noqa: E501
+            "Use at least 8 characters, with a letter, a number, "
+            "and a special character"
         )
     _reject_overlong_password(password)
 
@@ -612,41 +644,6 @@ async def follow_user(
         "message": "Follow user successfully.",
         "data": {
             "follow_count": follow_count,
-        },
-    }
-
-
-@router.post(
-    "/me/team-requests",
-    summary="Create team join request",
-)
-async def create_team_join_request(
-    body: dict,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-) -> dict:
-    team_id = body.get("teamId")
-    if not isinstance(team_id, int) or team_id <= 0:
-        raise BadRequestError("teamId must be a positive integer")
-    message = body.get("message")
-    app = await membership_service.create_team_join_request(
-        user_id=auth_user.user_id,
-        team_id=team_id,
-        message=message,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "application": {
-                "id": app.id,
-                "userId": app.user_id,
-                "teamId": app.team_id,
-                "type": app.type,
-                "status": app.status,
-                "role": app.role,
-                "message": app.message,
-            },
         },
     }
 
@@ -1437,14 +1434,7 @@ async def register_user(
     access_token = create_access_token(user.id, handle=user.username)
     refresh_token = create_refresh_token(user.id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, refresh_token)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1573,9 +1563,6 @@ async def get_auth_methods(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Return supported auth methods without revealing whether the user exists."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     default_response = {
@@ -1605,13 +1592,7 @@ async def get_auth_methods(
     )
     passkey_count = passkey_result.scalar() or 0
 
-    # Check 2FA
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-        has_2fa = await totp_service.is_2fa_enabled(user.id)
-    finally:
-        await redis.aclose()
+    has_2fa = await TOTPService(session).is_2fa_enabled(user.id)
 
     return {
         "code": 200,
@@ -1647,6 +1628,7 @@ async def user_login(
     request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -1683,7 +1665,7 @@ async def user_login(
         # spent. The second step has a budget of its own.
         await rate_limiter.clear_attempts(username)
 
-        totp_service = TOTPService(redis)
+        totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
 
         if requires_2fa:
@@ -1717,22 +1699,8 @@ async def user_login(
         access_token = create_access_token(user.id, handle=user.username)
         refresh_token = create_refresh_token(user.id)
 
-        response.set_cookie(
-            "REFRESH_TOKEN",
-            refresh_token,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
-        response.set_cookie(
-            "SESSION_ID",
-            session_id,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
+        _set_refresh_cookie(response, refresh_token)
+        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1761,6 +1729,7 @@ async def verify_2fa_login(
     payload: dict,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Second step of a 2FA login: exchange the short-lived ``2fa_pending``
     token from the password step plus a TOTP code (or a one-time backup
@@ -1819,7 +1788,7 @@ async def verify_2fa_login(
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        totp_service = TOTPService(redis)
+        totp_service = TOTPService(session)
         await _spend_2fa_attempt(
             redis,
             user_id,
@@ -1842,22 +1811,8 @@ async def verify_2fa_login(
         refresh_token = create_refresh_token(user.id)
         session_id = await SessionManager(redis).create_session(user.id)
 
-        response.set_cookie(
-            "REFRESH_TOKEN",
-            refresh_token,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
-        response.set_cookie(
-            "SESSION_ID",
-            session_id,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
-        )
+        _set_refresh_cookie(response, refresh_token)
+        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1917,14 +1872,7 @@ async def refresh_access_token(
     access_token = create_access_token(user_id, handle=user.username)
     new_refresh_token = create_refresh_token(user_id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        new_refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, new_refresh_token)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1973,6 +1921,7 @@ async def sudo_auth(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Re-prove who is at the keyboard, and hand back a ticket saying so.
 
@@ -2028,7 +1977,7 @@ async def sudo_auth(
 
         redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
         try:
-            totp_service = TOTPService(redis)
+            totp_service = TOTPService(session)
             if not await totp_service.is_2fa_enabled(auth_user.user_id):
                 raise AuthenticationRequiredError("2FA is not enabled")
             # Only TOTP is a step-up credential here: a backup code is never
@@ -2325,6 +2274,57 @@ async def revoke_all_sessions(
         await redis.aclose()
 
 
+# Every exit of the recovery request answers with this one body: unknown
+# address, rate-limited address and mailed address alike. Anything that differed
+# between them would tell the caller whether an account uses that address.
+_RECOVERY_REQUESTED = {
+    "code": 200,
+    "message": "If the email exists, a reset link has been sent.",
+}
+
+
+async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
+    """Issue a reset token and mail it; runs after the response has gone.
+
+    Off the request path so that the response takes as long for an unknown
+    address as for a known one. A failed send is only logged: the requester was
+    already told the same thing either way, and can ask again after the
+    cooldown.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.email import get_email_sender
+    from app.domain.user.login_security import PasswordResetService
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        token = await PasswordResetService(redis).create_reset_token(
+            user_id, email, username
+        )
+    finally:
+        await redis.aclose()
+
+    reset_url = f"{settings.frontend_url}/account/recover/password/verify?token={token}"
+    subject = "[Cheese] Password Reset Request"
+    body_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Password Reset</h2>
+        <p>You requested to reset your password. Click the link below:</p>
+        <p><a href="{reset_url}" style="color: #007bff;">{reset_url}</a></p>
+        <p>This link will expire in 30 minutes.</p>
+        <p style="color: #666; font-size: 12px;">
+          If you didn't request this, please ignore this email.
+        </p>
+    </div>
+    """
+    body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
+    sent = await get_email_sender().send(
+        to=email, subject=subject, body_html=body_html, body_text=body_text
+    )
+    if not sent:
+        logger.warning("Password recovery mail to user %d was not sent", user_id)
+
+
 @router.post(
     "/recover/password/request",
     summary="Request password recovery",
@@ -2337,57 +2337,33 @@ async def recover_password_request(
 
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.core.config import settings
-    from app.core.email import get_email_sender
-    from app.domain.user.login_security import PasswordResetService
+    from app.core.background import spawn
+    from app.domain.user.mail_quota import MailQuota
 
-    email = payload.email
+    email = payload.email.strip()
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
 
-    user = await auth_service.get_user_by_email(email)
-    if user is None:
-        return {
-            "code": 200,
-            "message": "If the email exists, a reset link has been sent.",
-        }
-
+    # The quota is spent before the account is looked up, so it counts unknown
+    # addresses exactly as it counts known ones; a request over it answers with
+    # the same success body and simply sends nothing.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        reset_service = PasswordResetService(redis)
-        token = await reset_service.create_reset_token(user.id, email, user.username)
-
-        sender = get_email_sender()
-        reset_url = (
-            f"{settings.frontend_url}/account/recover/password/verify?token={token}"
-        )
-        subject = "[Cheese] Password Reset Request"
-        body_html = f"""
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">Password Reset</h2>
-            <p>You requested to reset your password. Click the link below:</p>
-            <p><a href="{reset_url}" style="color: #007bff;">{reset_url}</a></p>
-            <p>This link will expire in 30 minutes.</p>
-            <p style="color: #666; font-size: 12px;">
-              If you didn't request this, please ignore this email.
-            </p>
-        </div>
-        """
-        body_text = (
-            f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-        )
-        await sender.send(
-            to=email, subject=subject, body_html=body_html, body_text=body_text
-        )
-
-        return {
-            "code": 200,
-            "message": "If the email exists, a reset link has been sent.",
-        }
+        allowed = await MailQuota(redis, "password_recovery").take(email)
     finally:
         await redis.aclose()
+    if not allowed:
+        return _RECOVERY_REQUESTED
+
+    user = await auth_service.get_user_by_email(email)
+    if user is not None:
+        spawn(
+            _send_recovery_mail(user.id, email, user.username),
+            name="password recovery mail",
+        )
+    return _RECOVERY_REQUESTED
 
 
 @router.post(
@@ -2700,6 +2676,7 @@ async def enable_user_2fa(
     payload: dict = Body(default={}),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Two-phase, reference contract: no code → generate a secret and hand it
     to the client; {secret, code} → verify the live code against that secret,
@@ -2709,9 +2686,6 @@ async def enable_user_2fa(
     it accepts only the secret the first phase offered, so reaching it at all
     means having re-authenticated.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
@@ -2720,54 +2694,50 @@ async def enable_user_2fa(
     secret = payload.get("secret")
     code = payload.get("code")
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
+    totp_service = TOTPService(session)
 
-        if await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise BadRequestError("2FA is already enabled")
+    if await totp_service.is_2fa_enabled(auth_user.user_id):
+        raise BadRequestError("2FA is already enabled")
 
-        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
-        account_name = user.email or user.username
+    user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+    account_name = user.email or user.username
 
-        if code:
-            if not secret:
-                raise BadRequestError("secret is required for confirmation")
-            ok = await totp_service.enable_2fa(auth_user.user_id, secret, code)
-            if not ok:
-                raise UnprocessableEntityError("Invalid or expired verification code")
-            backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
-            otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
-            return {
-                "code": 201,
-                "message": "2FA enabled successfully",
-                "data": {
-                    "secret": secret,
-                    "otpauth_url": otpauth_url,
-                    "qrcode": _qr_data_uri(otpauth_url),
-                    "backup_codes": backup_codes,
-                },
-            }
-
-        await _spend_sudo_ticket(
-            payload.get("sudoTicket"),
-            user_id=auth_user.user_id,
-            purpose=SudoPurpose.TWO_FA_ENABLE,
-        )
-        new_secret = await totp_service.offer_secret(auth_user.user_id)
-        otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
+    if code:
+        if not secret:
+            raise BadRequestError("secret is required for confirmation")
+        ok = await totp_service.enable_2fa(auth_user.user_id, secret, code)
+        if not ok:
+            raise UnprocessableEntityError("Invalid or expired verification code")
+        backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
+        otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
         return {
-            "code": 200,
-            "message": "TOTP secret generated successfully",
+            "code": 201,
+            "message": "2FA enabled successfully",
             "data": {
-                "secret": new_secret,
+                "secret": secret,
                 "otpauth_url": otpauth_url,
                 "qrcode": _qr_data_uri(otpauth_url),
-                "backup_codes": [],
+                "backup_codes": backup_codes,
             },
         }
-    finally:
-        await redis.aclose()
+
+    await _spend_sudo_ticket(
+        payload.get("sudoTicket"),
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.TWO_FA_ENABLE,
+    )
+    new_secret = await totp_service.offer_secret(auth_user.user_id)
+    otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
+    return {
+        "code": 200,
+        "message": "TOTP secret generated successfully",
+        "data": {
+            "secret": new_secret,
+            "otpauth_url": otpauth_url,
+            "qrcode": _qr_data_uri(otpauth_url),
+            "backup_codes": [],
+        },
+    }
 
 
 async def _notify_2fa_disabled(email: str | None, username: str) -> None:
@@ -2835,6 +2805,7 @@ async def disable_user_2fa(
     payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Turn the second factor off, against a ticket and not just a session.
 
@@ -2844,29 +2815,23 @@ async def disable_user_2fa(
     credential moments ago. A live session alone used to be enough, which made
     every other control on this account only as strong as the session cookie.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can disable 2FA.")
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
+    totp_service = TOTPService(session)
 
-        if not await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise BadRequestError("2FA is not enabled")
+    if not await totp_service.is_2fa_enabled(auth_user.user_id):
+        raise BadRequestError("2FA is not enabled")
 
-        await _spend_sudo_ticket(
-            payload.sudo_ticket,
-            user_id=auth_user.user_id,
-            purpose=SudoPurpose.TWO_FA_DISABLE,
-        )
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.TWO_FA_DISABLE,
+    )
 
-        await totp_service.disable_2fa(auth_user.user_id)
-    finally:
-        await redis.aclose()
+    await totp_service.disable_2fa(auth_user.user_id)
 
     user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
     await _notify_2fa_disabled(user.email, user.username)
@@ -2887,32 +2852,25 @@ async def get_user_2fa_status(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can view 2FA status.")
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-        enabled = await totp_service.is_2fa_enabled(user_id)
-        always_required = await totp_service.is_always_required(user_id)
-        passkeys = await PasskeyRepository(session).list_by_user(user_id)
+    totp_service = TOTPService(session)
+    enabled = await totp_service.is_2fa_enabled(user_id)
+    always_required = await totp_service.is_always_required(user_id)
+    passkeys = await PasskeyRepository(session).list_by_user(user_id)
 
-        return {
-            "code": 200,
-            "message": "Get 2FA status successfully",
-            "data": {
-                "enabled": enabled,
-                "has_passkey": len(passkeys) > 0,
-                "always_required": always_required,
-            },
-        }
-    finally:
-        await redis.aclose()
+    return {
+        "code": 200,
+        "message": "Get 2FA status successfully",
+        "data": {
+            "enabled": enabled,
+            "has_passkey": len(passkeys) > 0,
+            "always_required": always_required,
+        },
+    }
 
 
 @router.post(
@@ -2923,35 +2881,29 @@ async def regenerate_backup_codes(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can manage backup codes.")
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
+    totp_service = TOTPService(session)
 
-        if not await totp_service.is_2fa_enabled(user_id):
-            raise BadRequestError("2FA is not enabled")
+    if not await totp_service.is_2fa_enabled(user_id):
+        raise BadRequestError("2FA is not enabled")
 
-        await _spend_sudo_ticket(
-            payload.sudo_ticket,
-            user_id=auth_user.user_id,
-            purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
-        )
-        backup_codes = await totp_service.generate_backup_codes(user_id)
-        return {
-            "code": 201,
-            "message": "New backup codes generated successfully",
-            "data": {"backup_codes": backup_codes},
-        }
-    finally:
-        await redis.aclose()
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
+    )
+    backup_codes = await totp_service.generate_backup_codes(user_id)
+    return {
+        "code": 201,
+        "message": "New backup codes generated successfully",
+        "data": {"backup_codes": backup_codes},
+    }
 
 
 @router.put(
@@ -2962,10 +2914,8 @@ async def update_2fa_settings(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(default={}),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
@@ -2981,17 +2931,12 @@ async def update_2fa_settings(
         purpose=SudoPurpose.TWO_FA_SETTINGS,
     )
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-        await totp_service.set_always_required(user_id, always_required)
-        return {
-            "code": 200,
-            "message": "2FA settings updated successfully",
-            "data": {"success": True, "always_required": always_required},
-        }
-    finally:
-        await redis.aclose()
+    await TOTPService(session).set_always_required(user_id, always_required)
+    return {
+        "code": 200,
+        "message": "2FA settings updated successfully",
+        "data": {"success": True, "always_required": always_required},
+    }
 
 
 def _challenge_from_credential(credential: dict) -> str:
@@ -3200,22 +3145,8 @@ async def passkey_authenticate_verify(
     access_token = create_access_token(user_id, handle=user.username)
     refresh_token = create_refresh_token(user_id)
 
-    response.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
-    response.set_cookie(
-        "SESSION_ID",
-        session_id,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(response, refresh_token)
+    _set_session_cookie(response, session_id)
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -3494,23 +3425,20 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
 
 
 async def _oauth_login_redirect(
-    auth_service, user_id: int, provider_id: str, **extra: str | None
+    session: AsyncSession,
+    auth_service,
+    user_id: int,
+    provider_id: str,
+    **extra: str | None,
 ) -> RedirectResponse:
     """Issue tokens for a resolved OAuth login and land on the success page.
 
     An account with 2FA gets a 2FA ticket and the verify page instead, exactly
     as a password login would: the provider stands in for the password only.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
     from app.domain.user.login_security import TOTPService
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        requires_2fa = await TOTPService(redis).is_2fa_enabled(user_id)
-    finally:
-        await redis.aclose()
-    if requires_2fa:
+    if await TOTPService(session).is_2fa_enabled(user_id):
         return RedirectResponse(
             _oauth_frontend_url(
                 settings.frontend_2fa_verify_path,
@@ -3532,14 +3460,7 @@ async def _oauth_login_redirect(
         ),
         status_code=302,
     )
-    redirect.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
-    )
+    _set_refresh_cookie(redirect, refresh_token)
     return redirect
 
 
@@ -3691,7 +3612,7 @@ async def handle_oauth_callback(
         )
         if existing:
             return await _oauth_login_redirect(
-                auth_service, existing["userId"], provider_id
+                session, auth_service, existing["userId"], provider_id
             )
 
         info_dict = _oauth_user_info_dict(user_info)
@@ -3820,7 +3741,9 @@ async def _complete_oauth_binding(
         return _oauth_error_redirect(
             "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
-    return await _oauth_login_redirect(auth_service, user_id, provider_id, **extra)
+    return await _oauth_login_redirect(
+        session, auth_service, user_id, provider_id, **extra
+    )
 
 
 @router.post(

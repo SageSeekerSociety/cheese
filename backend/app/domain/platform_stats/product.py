@@ -26,7 +26,7 @@ token 曲线里猜产品好坏。
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -46,9 +46,13 @@ class ProductHealthRepository:
 
     async def snapshot(self, *, days: int) -> dict[str, Any]:
         since, until, buckets = utc_day_window(days)
+        # 上一个等长窗口（`[since-days, since)`）：北极星卡的环比差（delta）从这里出。
+        prev_since = since - timedelta(days=days)
         return {
             "days": days,
-            "north_star": await self.weekly_accepted(buckets=buckets),
+            "north_star": await self.weekly_accepted(
+                buckets=buckets, since=since, until=until, prev_since=prev_since
+            ),
             "rejection": await self.rejection_funnel(since=since, until=until),
             "usefulness": await self.proactive_usefulness(since=since, until=until),
             "unavailable": self._unavailable(),
@@ -56,14 +60,21 @@ class ProductHealthRepository:
 
     # ---- 北极星 -----------------------------------------------------------
 
-    async def weekly_accepted(self, *, buckets: list) -> dict[str, Any]:
-        """窗口内「被验收通过的 AI 成果」按天一条，外加总数。
+    async def weekly_accepted(
+        self, *, buckets: list, since: datetime, until: datetime, prev_since: datetime
+    ) -> dict[str, Any]:
+        """窗口内「被验收通过的 AI 成果」按天一条，外加总数与上一窗口合计。
 
         分桶用 `decided_at` —— 它是**最后一次**决议的时刻，
         `revoke()` 会覆写它。
         一张先采纳后撤销的卡会因此落进撤销那一周、甚至从采纳曲线里消失。这是今天
         能诚实给出的口径，页面上那句注脚说的就是这件事；要钉死「采纳那一刻」得
         加一列不可变的 `accepted_at`。
+
+        `total` 只数**窗口内**决议的卡（`[since, until)`）：卡片标签说的是
+        「{d} 日验收通过的成果」，而 series 也只画窗口里的日子 —— 一个全量合计
+        夹在两个窗口口径中间，三个数会各说各话。`prev_total` 是上一个等长窗口
+        （`[prev_since, since)`）的同一口径合计，环比差由前端去算。
         """
         day = utc_day(AcceptCard.decided_at)
         rows = await self._session.execute(
@@ -72,13 +83,32 @@ class ProductHealthRepository:
             .where(
                 AcceptCard.status == AcceptStatus.accepted,
                 AcceptCard.decided_at.is_not(None),
+                AcceptCard.decided_at >= since,
+                AcceptCard.decided_at < until,
             )
             .group_by(day)
         )
         created = {d.date(): int(n) for d, n in rows if d is not None}
         series = dense_series(buckets, {"accepted": created})
+        prev_total = int(
+            (
+                await self._session.execute(
+                    select(func.count())
+                    .select_from(AcceptCard)
+                    .join(Topic, Topic.id == AcceptCard.topic_id)
+                    .where(
+                        AcceptCard.status == AcceptStatus.accepted,
+                        AcceptCard.decided_at.is_not(None),
+                        AcceptCard.decided_at >= prev_since,
+                        AcceptCard.decided_at < since,
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
         return {
             "total": sum(created.values()),
+            "prev_total": prev_total,
             "series": series,
             "note_key": "product.northStarNote",
         }

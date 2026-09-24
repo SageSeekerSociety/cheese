@@ -1,6 +1,5 @@
 """Agent-authored proposals retain independently resolved human credits."""
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -38,12 +37,12 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
     assert removed.status_code == 200, removed.text
 
     async def read_credit():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             topic = await session.get(Topic, uuid.UUID(room))
             who = await identity.attribution(session, topic)
             return who, pr_trailers(topic, "alice", who)
 
-    who, trailers = asyncio.run(read_credit())
+    who, trailers = client.portal.call(lambda: read_credit())
     assert who.author == identity.agent_identity(acting)
     assert f"Cheese-Agent: {acting}\n" in trailers + "\n"
     assert f"Cheese-Agent: {default_seat}" not in trailers
@@ -57,7 +56,7 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     from app.domain.user.models import User
 
     async def seed():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             now = datetime.now(UTC)
             session.add_all(
                 [
@@ -72,7 +71,7 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
             )
             await session.commit()
 
-    asyncio.run(seed())
+    client.portal.call(lambda: seed())
     _, room = _project(client, owner="alice")
     result = client.post(
         f"/topics/{room}/split",
@@ -91,13 +90,13 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     assert task["contributor_handles"] == ["coder"]
 
     async def read_credit():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             place = await PlaceResolver(session).resolve(uuid.UUID(room))
             assert place is not None
             card = SimpleNamespace(delivered_task_ids=[task["id"]], task_id=None)
             return await identity.attribution(session, place.room, card=card)
 
-    credited = asyncio.run(read_credit())
+    credited = client.portal.call(lambda: read_credit())
     assert credited.reporters == (identity.platform_identity("reporter"),)
     assert credited.coauthors == (
         identity.platform_identity("alice"),
@@ -109,7 +108,7 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
         json={"contributor_handles": ["reporter"], "reporter_handle": None},
     )
     assert concluded.status_code == 200, concluded.text
-    credited = asyncio.run(read_credit())
+    credited = client.portal.call(lambda: read_credit())
     assert credited.reporters == ()
     assert credited.coauthors == (
         identity.platform_identity("alice"),
@@ -123,7 +122,7 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
         json={"contributor_handles": ["nobody-exists"]},
     )
     assert rejected.status_code == 422, rejected.text
-    assert asyncio.run(read_credit()).coauthors == credited.coauthors
+    assert client.portal.call(lambda: read_credit()).coauthors == credited.coauthors
     bad = client.post(
         f"/topics/{room}/split",
         json=dict(
@@ -223,9 +222,9 @@ def _card(client, topic_id: str) -> str:
 def _publish(client, pid: str, tid: str, cid: str) -> None:
     from app.domain.review import pr_publish
 
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(cid),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),

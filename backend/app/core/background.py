@@ -345,7 +345,6 @@ def periodic_jobs(
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import reconcile_repository_webhooks
-    from app.domain.project.upstream_sync import sweep as sync_forge_upstreams
     from app.domain.review import pr_poll
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
@@ -356,11 +355,6 @@ def periodic_jobs(
             "forge event subscriptions",
             300,
             lambda: reconcile_repository_webhooks(sessions),
-        ),
-        PeriodicRunner(
-            "forge upstream sync",
-            300,
-            lambda: sync_forge_upstreams(sessions),
         ),
         PeriodicRunner(
             "forge credential cache cleanup",

@@ -686,8 +686,7 @@ import type { JSONContent } from 'vuetify-pro-tiptap'
 import type { CreateKnowledgeRequest, Knowledge, KnowledgeType } from '@/types'
 import type { AudioMeta, FileMeta, ImageMeta, Material, MaterialType, VideoMeta } from '@/types/materials'
 
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
@@ -695,6 +694,7 @@ import dayjs from 'dayjs'
 import { getAvatarUrl } from '@/utils/materials'
 
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { teamDataInjectionKey } from '@/keys'
 import { KnowledgesApi } from '@/network/api/knowledges'
 import { MaterialsApi } from '@/network/api/materials'
 import { useDialog } from '@/plugins/dialog'
@@ -703,9 +703,10 @@ import { Page, parseKnowledgeContent, stringifyKnowledgeContent } from '@/types'
 import { KnowledgeContentData } from '@/types'
 
 // 状态
-const route = useRoute()
 const dialog = useDialog()
-const teamId = computed(() => Number(route.params.teamId))
+// The URL names the team by handle; its id comes from the team the page loaded.
+const teamData = inject(teamDataInjectionKey, ref())
+const teamId = computed(() => teamData.value?.id ?? 0)
 const loading = ref(true)
 const viewMode = ref('grid')
 const searchQuery = ref('')

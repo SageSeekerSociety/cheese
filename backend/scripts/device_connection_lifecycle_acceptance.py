@@ -1,22 +1,28 @@
 """Exercise a real executor task across a killed backend RPC process.
 
-This uses the production uvicorn owner, connector WebSocket protocol, and remote
-executor runtime. Device token lookup is replaced to avoid a Postgres dependency,
-and a Python connector harness relays frames in place of the packaged Go binary.
-An independent owner checkout exercises wire compatibility with a released
-version; dependencies and container entrypoints are outside this check.
+Image mode runs the published owner's deployed command and packaged Go connector
+against an isolated migrated database. Source mode keeps a faster protocol check:
+it replaces device authentication and uses a Python connector harness.
 """
 
 import argparse
 import asyncio
+import hashlib
 import json
 import multiprocessing
 import os
+import shlex
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -119,7 +125,13 @@ def connector_process(
     asyncio.run(connector(events, task_root, claude, port))
 
 
-def backend_waiter(results: multiprocessing.Queue, generation: int, port: int) -> None:
+def backend_waiter(
+    results: multiprocessing.Queue,
+    generation: int,
+    port: int,
+    state: str = "/acceptance/.claude/executor",
+    command: str | None = None,
+) -> None:
     from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
     async def collect():
@@ -141,15 +153,27 @@ def backend_waiter(results: multiprocessing.Queue, generation: int, port: int) -
                 assert screen is not None
                 assert screen.agent_handle == "acceptance-agent"
                 assert screen.execution_target == {"home": "/acceptance"}
+                try:
+                    await backend._call_owner("unrecognised-method", {})
+                except httpx.HTTPStatusError as exc:
+                    assert exc.response.status_code == 404
+                else:
+                    raise AssertionError("owner accepted an unknown RPC method")
+                assert backend.is_online("acceptance-machine")
+                retained = backend.screen("surviving-screen")
+                assert retained is not None
+                assert retained.agent_handle == screen.agent_handle
+                assert retained.execution_target == screen.execution_target
             return await backend.call_executor(
                 "acceptance-machine",
-                "/acceptance/.claude/executor",
+                state,
                 "invoke",
                 {
                     "id": "same-executor-request",
                     "tool": "Bash",
                     "args": {
-                        "command": (
+                        "command": command
+                        or (
                             "sleep 4; printf 'run\\n' >> execution-count; "
                             "printf owner-retained-result"
                         ),
@@ -195,6 +219,707 @@ def record(log, event: str, **values) -> None:
     log.flush()
 
 
+@contextmanager
+def image_owner(options, root: Path, *, start_runtime=True):
+    """Run the released owner and its packaged Go connector without code mounts."""
+    if not options.owner_revision or "@sha256:" not in options.owner_image:
+        raise ValueError("owner acceptance requires an image digest and revision")
+    os.environ["SANDBOX_TOKEN"] = SECRET
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + f"-{os.getpid()}"
+    work = root / "tmp" / f"owner-image-{stamp}"
+    work.mkdir(parents=True)
+    state = work / "executor"
+    state.mkdir()
+    log_dir = root / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_path = log_dir / f"device-connection-acceptance-image-{stamp}.jsonl"
+    network = f"cheese-owner-{stamp.lower()}"
+    resource_label = "cheese.owner-acceptance=" + "-".join(
+        os.environ.get(key, fallback)
+        for key, fallback in (
+            ("GITHUB_RUN_ID", network),
+            ("GITHUB_RUN_ATTEMPT", "local"),
+            ("GITHUB_JOB", "acceptance"),
+        )
+    )
+    database, owner_name, migration, cache = (
+        f"{network}-{suffix}" for suffix in ("db", "owner", "migrate", "redis")
+    )
+    containers = [migration, owner_name, database, cache]
+    children = []
+    connector_worker = None
+    runtime_started = False
+    headers = {"X-Device-Connection-Secret": SECRET}
+    url = f"http://127.0.0.1:{options.port}"
+
+    def docker(*args, check=True, timeout=120, input=None):
+        result = subprocess.run(
+            ["docker", *args],
+            input=input,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+        if check and result.returncode:
+            raise RuntimeError(
+                f"docker {args[0]} failed: {result.stderr}\n{result.stdout}"
+            )
+        return (result.stdout + (result.stderr if args[0] == "logs" else "")).strip()
+
+    env = {
+        "DATABASE_URL": f"postgresql+asyncpg://postgres:postgres@{database}:5432/cheese",
+        "DEVICE_CONNECTION_URL": "",
+        "DEVICE_CONNECTION_OWNER": "1",
+        "DEVICE_CONNECTION_SECRET": SECRET,
+        "DEPLOYED_VIA_COMPOSE": "1",
+        "JWT_SECRET": "isolated-owner-acceptance-jwt-secret",
+        # A deployment refuses to boot or migrate without a real data key.
+        "DATA_ENCRYPTION_KEY": "b3duZXItYWNjZXB0YW5jZS1kYXRhLWtleS0wMDAwMDE=",
+        # And a deployment's migration needs its Redis, to carry 2FA across.
+        "REDIS_URL": f"redis://{cache}:6379/0",
+        "SANDBOX_TOKEN": SECRET,
+        "PLATFORM_ADMIN_HANDLES": '["acceptance"]',
+        "DB_POOL_SIZE": "5",
+        "DB_MAX_OVERFLOW": "5",
+    }
+    env_args = [arg for key, value in env.items() for arg in ("-e", f"{key}={value}")]
+    with (
+        log_path.open("x") as log,
+        tempfile.TemporaryDirectory(prefix="owner-tmux-") as tmux_tmp,
+    ):
+        try:
+            record(
+                log,
+                "inputs",
+                owner_image=options.owner_image,
+                owner_revision=options.owner_revision,
+                port=options.port,
+                resource_label=resource_label,
+            )
+            started = time.monotonic()
+            record(
+                log,
+                "image_pull_started",
+                cached=bool(
+                    docker(
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{.Id}}",
+                        options.owner_image,
+                        check=False,
+                    )
+                ),
+            )
+            docker(
+                "pull", "--platform", "linux/amd64", options.owner_image, timeout=300
+            )
+            record(log, "image_pull_finished", elapsed_s=time.monotonic() - started)
+            docker("network", "create", "--label", resource_label, network)
+            docker(
+                "run",
+                "-d",
+                "--name",
+                database,
+                "--label",
+                resource_label,
+                "--network",
+                network,
+                "-p",
+                "127.0.0.1::5432",
+                "--tmpfs",
+                "/var/lib/postgresql/data:rw,size=1g",
+                "-e",
+                "POSTGRES_PASSWORD=postgres",
+                "-e",
+                "POSTGRES_DB=cheese",
+                "mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2",
+            )
+            docker(
+                "run",
+                "-d",
+                "--name",
+                cache,
+                "--label",
+                resource_label,
+                "--network",
+                network,
+                "-p",
+                "127.0.0.1::6379",
+                "mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9",
+            )
+            for _ in range(60):
+                if "accepting connections" in docker(
+                    "exec", database, "pg_isready", "-U", "postgres", check=False
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                raise RuntimeError("isolated Postgres did not start")
+            started = time.monotonic()
+            record(log, "released_migration_started")
+            migration_output = docker(
+                "run",
+                "--name",
+                migration,
+                "--label",
+                resource_label,
+                "--network",
+                network,
+                *env_args,
+                options.owner_image,
+                "alembic",
+                "upgrade",
+                "head",
+            )
+            (work / "migration.log").write_text(migration_output)
+            version_query = (
+                "exec",
+                database,
+                "psql",
+                "-U",
+                "postgres",
+                "-d",
+                "cheese",
+                "-At",
+                "-c",
+                "SELECT version_num FROM alembic_version ORDER BY version_num",
+            )
+            released_schema = docker(*version_query).splitlines()
+            record(
+                log,
+                "released_migration_finished",
+                heads=released_schema,
+                elapsed_s=time.monotonic() - started,
+            )
+            database_port = docker("port", database, "5432/tcp").rsplit(":", 1)[1]
+            cache_port = docker("port", cache, "6379/tcp").rsplit(":", 1)[1]
+            started = time.monotonic()
+            record(log, "current_migration_started")
+            upgraded = subprocess.run(
+                [sys.executable, "-m", "alembic", "upgrade", "head"],
+                cwd=root / "backend",
+                env={
+                    **os.environ,
+                    **env,
+                    "DATABASE_URL": f"postgresql+asyncpg://postgres:postgres@127.0.0.1:{database_port}/cheese",
+                    "REDIS_URL": f"redis://127.0.0.1:{cache_port}/0",
+                },
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            (work / "current-migration.log").write_text(
+                upgraded.stdout + upgraded.stderr
+            )
+            upgraded.check_returncode()
+            current_schema = docker(*version_query).splitlines()
+            record(
+                log,
+                "schema_upgraded",
+                released_heads=released_schema,
+                current_heads=current_schema,
+                elapsed_s=time.monotonic() - started,
+            )
+            # The deployed owner command does not migrate. Keep the upgraded
+            # schema while the old image performs its real device-token query.
+            docker(
+                "exec",
+                "-i",
+                database,
+                "psql",
+                "-U",
+                "postgres",
+                "-d",
+                "cheese",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-v",
+                "lease="
+                + json.dumps(
+                    {
+                        "kind": "device",
+                        "device_id": "acceptance-machine",
+                        "resource_id": "22222222-2222-2222-2222-222222222222",
+                        "home": str(work),
+                        "state": str(state),
+                    }
+                ),
+                input="""
+INSERT INTO "user" (id,username,email,created_at,updated_at)
+VALUES (42,'acceptance','acceptance@example.test',now(),now());
+INSERT INTO device (device_id,name,token,owner_user_id,created_at)
+VALUES ('acceptance-machine','acceptance','acceptance',42,now());
+INSERT INTO projects
+ (id,name,owner_handle,ai_mode,summary,settings,created_at,updated_at)
+VALUES ('11111111-1111-1111-1111-111111111111','Acceptance','acceptance',
+        'off','','{}',now(),now());
+INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
+VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
+        'Acceptance','room','active',false,now(),now());
+INSERT INTO agent_sessions
+ (id,topic_id,agent_handle,harness,runtime_location,work_lease,created_at,updated_at)
+VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222',
+        'acceptance-agent','claude-code',:'lease'::json,:'lease'::json,now(),now());
+""",
+            )
+            started = time.monotonic()
+            record(log, "owner_starting")
+            docker(
+                "run",
+                "-d",
+                "--init",
+                "--name",
+                owner_name,
+                "--label",
+                resource_label,
+                "--network",
+                network,
+                "-p",
+                f"127.0.0.1:{options.port}:8082",
+                *env_args,
+                options.owner_image,
+                "uvicorn",
+                "app.device_connection_app:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8082",
+            )
+            owner_identity = json.loads(docker("inspect", owner_name))[0]
+            image_env = owner_identity["Config"]["Env"]
+            actual_version = next(
+                item.split("=", 1)[1]
+                for item in image_env
+                if item.startswith("APP_VERSION=")
+            )
+            assert actual_version == options.owner_revision, (
+                actual_version,
+                options.owner_revision,
+            )
+            binary = work / "cheesehost"
+            docker(
+                "cp",
+                f"{owner_name}:/app/connector-dist/linux-amd64/cheesehost",
+                str(binary),
+            )
+            binary.chmod(0o755)
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            version = subprocess.check_output(
+                [str(binary), "--version"], text=True
+            ).strip()
+            record(
+                log,
+                "released_artifacts",
+                image_id=owner_identity["Image"],
+                owner_id=owner_identity["Id"],
+                owner_version=actual_version,
+                connector_sha256=digest,
+                connector_version=version,
+            )
+            wait_for_owner(options.port)
+            record(log, "owner_ready", elapsed_s=time.monotonic() - started)
+            assert (
+                httpx.get(
+                    url + "/internal/device-connection/snapshot",
+                    headers={"X-Device-Connection-Secret": "wrong"},
+                ).status_code
+                == 403
+            )
+
+            async def reject_device():
+                try:
+                    async with websockets.connect(
+                        f"ws://127.0.0.1:{options.port}/connector/agent?token=wrong"
+                    ):
+                        raise AssertionError("owner accepted an invalid device token")
+                except websockets.exceptions.InvalidStatus as exc:
+                    assert exc.response.status_code == 403
+
+            asyncio.run(reject_device())
+            record(
+                log, "authentication_rejected", internal_rpc=403, device_websocket=403
+            )
+            if start_runtime:
+                subprocess.run(
+                    [sys.executable, runtime.__file__, "start", "--state", str(state)],
+                    input=json.dumps(
+                        {
+                            "workspace": str(work),
+                            "env": {},
+                            "private": True,
+                            "claude": str(options.claude.resolve()),
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=30,
+                )
+                runtime_started = True
+            config = work / "connector.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "base": url,
+                        "token": "acceptance",
+                        "device_id": "acceptance-machine",
+                        "ws": f"ws://127.0.0.1:{options.port}/connector/agent",
+                    }
+                )
+            )
+            with (work / "connector.log").open("w") as connector_log:
+                connector_worker = subprocess.Popen(
+                    [str(binary), "run", "--config", str(config)],
+                    stdout=connector_log,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ, "TMPDIR": tmux_tmp},
+                )
+            for _ in range(100):
+                snapshot = httpx.get(
+                    url + "/internal/device-connection/snapshot", headers=headers
+                ).json()
+                if any(
+                    d["device_id"] == "acceptance-machine" and d["online"]
+                    for d in snapshot["devices"]
+                ):
+                    break
+                assert connector_worker.poll() is None, "Go connector exited"
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("Go connector did not attach")
+            yield SimpleNamespace(
+                work=work,
+                state=state,
+                log=log,
+                docker=docker,
+                owner_name=owner_name,
+                owner_identity=owner_identity,
+                connector_worker=connector_worker,
+                binary=binary,
+                digest=digest,
+                version_query=version_query,
+                current_schema=current_schema,
+                children=children,
+                url=url,
+            )
+        except BaseException as exc:
+            record(log, "acceptance_failed", error=repr(exc))
+            raise
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.kill()
+                child.join(timeout=5)
+            if connector_worker is not None:
+                connector_worker.terminate()
+                try:
+                    connector_worker.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    connector_worker.kill()
+                    connector_worker.wait(timeout=5)
+            try:
+                if runtime_started:
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            runtime.__file__,
+                            "stop",
+                            "--state",
+                            str(state),
+                        ],
+                        timeout=15,
+                        check=False,
+                    )
+            finally:
+                for name in containers:
+                    (work / f"{name}.log").write_text(docker("logs", name, check=False))
+                    docker("rm", "-f", name, check=False)
+                docker("network", "rm", network, check=False)
+    print(log_path)
+
+
+def refused_connection_acceptance(endpoint, token, work, log):
+    """Restore an actual HTTP listener only after the tool's connect is refused."""
+    from app.domain.agent.executor_transport import RemoteClient
+
+    refused = threading.Event()
+    requests = []
+
+    class Forward(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            requests.append(body)
+            response = httpx.post(
+                endpoint,
+                content=body,
+                headers={
+                    "X-Cheese-Token": self.headers["X-Cheese-Token"],
+                    "Content-Type": self.headers["Content-Type"],
+                },
+                timeout=30,
+            )
+            self.send_response(response.status_code)
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+    class ObservedClient(RemoteClient):
+        def connection(self):
+            connection, path = super().connection()
+            original = connection.request
+
+            def request(*args, **kwargs):
+                try:
+                    return original(*args, **kwargs)
+                except ConnectionRefusedError:
+                    refused.set()
+                    raise
+
+            connection.request = request
+            return connection, path
+
+    token_file = work / "refused-connect.token"
+    token_file.write_text(token)
+    token_file.chmod(0o600)
+    with ThreadingHTTPServer(
+        ("127.0.0.1", 0), Forward, bind_and_activate=False
+    ) as server:
+        # Choose a free port, then close it until the client observes the real
+        # refusal. A bound, unlistened socket can hang connects on macOS.
+        server.server_bind()
+        server.socket.close()
+        server.socket = socket.socket(server.address_family, server.socket_type)
+        client = ObservedClient(
+            {
+                "kind": "device",
+                "url": f"http://127.0.0.1:{server.server_port}/execution",
+                "token_file": str(token_file),
+            }
+        )
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            pending = workers.submit(
+                client.call,
+                "invoke",
+                {
+                    "id": "refused-connect-call",
+                    "tool": "Bash",
+                    "args": {
+                        "command": (
+                            "printf 'run\\n' >> refused-count; printf restored-endpoint"
+                        )
+                    },
+                },
+            )
+            if not refused.wait(5):
+                if pending.done():
+                    pending.result()
+                raise AssertionError("tool call never observed a refused connection")
+            server.server_bind()
+            server.server_activate()
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                result = pending.result(timeout=30)
+                assert result["value"]["stdout"] == "restored-endpoint"
+                assert len(requests) == 1
+                assert (work / "refused-count").read_text().splitlines() == ["run"]
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+    record(log, "refused_connection_recovered", requests_sent=1, execution_count=1)
+
+
+def image_acceptance(options, root: Path) -> int:
+    with image_owner(options, root) as owner:
+        # The context sets the signing secret before application imports cache it.
+        from app.core.sandbox_auth import mint_scoped_token
+        from app.domain.agent import execution
+        from app.domain.agent.device_hub import DeviceCallError
+        from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+
+        work = owner.work
+        state = owner.state
+        log = owner.log
+        docker = owner.docker
+        owner_name = owner.owner_name
+        owner_identity = owner.owner_identity
+        connector_worker = owner.connector_worker
+        binary = owner.binary
+        digest = owner.digest
+        version_query = owner.version_query
+        current_schema = owner.current_schema
+        children = owner.children
+        url = owner.url
+
+        async def recorded_state_roundtrip():
+            backend = RemoteDeviceHub(url, SECRET)
+            target = {
+                "device_id": "acceptance-machine",
+                "home": str(work),
+                "state": str(state),
+            }
+            try:
+                result = await execution.call(target, "ping", {}, hub=backend)
+                assert result["workspace"] == str(work)
+                assert not (work / ".cheese/executor").exists()
+                try:
+                    await execution.call(
+                        {key: value for key, value in target.items() if key != "state"},
+                        "ping",
+                        {},
+                        hub=backend,
+                    )
+                except DeviceCallError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "unrecorded executor state unexpectedly worked"
+                    )
+            finally:
+                await backend.close()
+
+        asyncio.run(recorded_state_roundtrip())
+        record(log, "recorded_state_passed", unrecorded_state_rejected=True)
+        started = time.monotonic()
+        record(log, "roundtrip_started")
+        topic = "22222222-2222-2222-2222-222222222222"
+        endpoint = f"{url}/topics/{topic}/execution/{topic}"
+        token = mint_scoped_token(
+            project_id="11111111-1111-1111-1111-111111111111",
+            topic_id=topic,
+            resource_id=topic,
+        )
+        wrong_project = mint_scoped_token(
+            project_id="44444444-4444-4444-4444-444444444444",
+            topic_id=topic,
+            resource_id=topic,
+        )
+        request = {
+            "method": "invoke",
+            "params": {
+                "id": "endpoint-authenticated-call",
+                "tool": "Bash",
+                "args": {"command": "printf endpoint-result"},
+            },
+        }
+        assert httpx.post(endpoint, json=request).status_code == 401
+        assert (
+            httpx.post(
+                endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
+            ).status_code
+            == 403
+        )
+        # An unrelated Topic column disappeared while this owner stayed on its
+        # released schema model (#1259). Authorization must not select it.
+        docker(
+            *version_query[:-1], "ALTER TABLE topics RENAME title TO acceptance_title"
+        )
+        try:
+            response = httpx.post(
+                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
+            )
+        finally:
+            docker(
+                *version_query[:-1],
+                "ALTER TABLE topics RENAME acceptance_title TO title",
+            )
+        response.raise_for_status()
+        assert response.json()["value"]["stdout"] == "endpoint-result"
+        record(
+            log,
+            "execution_endpoint_passed",
+            missing_credential=401,
+            wrong_project=403,
+            authenticated_call=200,
+            unrelated_topic_column_absent=True,
+            recorded_state=str(state),
+            inferred_state=str(work / ".cheese/executor"),
+        )
+        refused_connection_acceptance(endpoint, token, work, log)
+        # The sentinel proves Bash started before the HTTP waiter is killed.
+        command = (
+            f"printf started > {shlex.quote(str(work / 'started'))}; "
+            f"while [ ! -e {shlex.quote(str(work / 'continue'))} ]; "
+            "do sleep 0.1; done; "
+            "printf 'run\\n' >> execution-count; printf owner-retained-result"
+        )
+        results: multiprocessing.Queue = multiprocessing.Queue()
+        for generation in (1, 2):
+            child = multiprocessing.Process(
+                target=backend_waiter,
+                args=(results, generation, options.port, str(state), command),
+            )
+            children.append(child)
+            child.start()
+            if generation == 1:
+                for _ in range(200):
+                    if (work / "started").exists():
+                        break
+                    assert child.is_alive(), "first backend exited before Bash started"
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("Bash did not start")
+
+                async def reject_busy_drain():
+                    backend = RemoteDeviceHub(url, SECRET)
+                    try:
+                        await backend._request(
+                            "POST", "/internal/device-connection/release-drain"
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        assert exc.response.status_code == 409
+                        assert "X-Device-Id" not in exc.response.headers
+                        assert (
+                            exc.response.json()["error"]["message"]
+                            == "device calls are active"
+                        )
+                    else:
+                        raise AssertionError(
+                            "owner accepted drain during an active call"
+                        )
+                    finally:
+                        await backend.close()
+
+                asyncio.run(reject_busy_drain())
+                record(log, "unexpected_conflict_preserved", status=409)
+                child.kill()
+                child.join(timeout=5)
+                record(log, "backend_stopped", generation=1, exit_code=child.exitcode)
+            else:
+                (work / "continue").write_text("replacement started\n")
+        result = results.get(timeout=30)
+        children[-1].join(timeout=5)
+        value = result["body"]["result"]["value"]
+        assert result["generation"] == 2 and children[-1].exitcode == 0
+        assert value["stdout"] == "owner-retained-result" and value["stderr"] == ""
+        assert value["interrupted"] is False
+        assert (work / "execution-count").read_text().splitlines() == ["run"]
+        after = json.loads(docker("inspect", owner_name))[0]
+        assert after["Id"] == owner_identity["Id"] and after["State"]["Running"]
+        assert after["State"]["StartedAt"] == owner_identity["State"]["StartedAt"]
+        assert after["RestartCount"] == 0 and connector_worker.poll() is None
+        assert hashlib.sha256(binary.read_bytes()).hexdigest() == digest
+        assert docker(*version_query).splitlines() == current_schema
+        record(
+            log,
+            "acceptance_passed",
+            execution_count=1,
+            session_restored=True,
+            owner_id=after["Id"],
+            connector_pid=connector_worker.pid,
+            elapsed_s=time.monotonic() - started,
+            **result,
+        )
+    return 0
+
+
 def main() -> int:
     multiprocessing.set_start_method("spawn")
     root = Path(__file__).resolve().parents[2]
@@ -203,7 +928,16 @@ def main() -> int:
     parser.add_argument("--owner-revision")
     parser.add_argument("--claude", type=Path, required=True)
     parser.add_argument("--port", type=int, default=18783)
+    parser.add_argument(
+        "--owner-image", help="Published backend image pinned by digest"
+    )
     options = parser.parse_args()
+    if options.owner_image:
+        if not options.owner_revision or "@sha256:" not in options.owner_image:
+            parser.error(
+                "image mode requires --owner-revision and an owner image digest"
+            )
+        return image_acceptance(options, root)
     owner_source = options.owner_source.resolve()
     owner_revision = subprocess.check_output(
         ["git", "-C", str(owner_source), "rev-parse", "HEAD"], text=True

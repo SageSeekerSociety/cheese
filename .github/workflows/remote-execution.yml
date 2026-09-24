@@ -197,6 +197,13 @@ jobs:
           retention-days: 3
   acceptance:
     runs-on: [self-hosted, cheese-ci]
+    env:
+      ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:b5fc0a2172b3eb0a398af31321526a7f3a0ba654a3d448b4c860b8ac59207732
+      ACCEPTANCE_OWNER_REVISION: fbb08b0f874ba3bdb5b567efffcbcb83156ff144
+      ACCEPTANCE_COMMIT: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: read
     # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
     # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
     # ~2m of tests ran, twice in a row, and a job killed by its own budget
@@ -228,6 +235,15 @@ jobs:
           done
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
           uv sync --project backend --locked
+      - name: Prepare the released owner image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/owner-image-registry
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          echo "ACCEPTANCE_OWNER_PORT=$((18783 + ${CHEESE_CI_SLOT:-0}))" >> "$GITHUB_ENV"
       - name: Run acceptance
         id: run_acceptance
         run: >-
@@ -235,32 +251,40 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --redis "$PWD/tmp/remote-execution/deps/usr/bin/redis-server"
           --output "tmp/remote-execution/ci-${{ github.run_id }}-${{ github.run_attempt }}"
-      - name: Check out the released connection owner
-        id: checkout_owner
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # Released by release-device-connection run 35770200245.
-          ref: fbb08b0f874ba3bdb5b567efffcbcb83156ff144
-          path: tmp/owner-compat-baseline
-      - name: Current backend collects a call from the released owner
+      - name: Current backend recovers through the released owner image and Go connector
         id: owner_compat
-        timeout-minutes: 3
+        timeout-minutes: 10
         env:
           ACCEPTANCE_COMMIT: ${{ github.sha }}
           OPENAI_API_KEY: test-openai-key
           ANTHROPIC_AUTH_TOKEN: test-anthropic-token
-        run: >-
-          backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py
-          --owner-source tmp/owner-compat-baseline
-          --owner-revision fbb08b0f874ba3bdb5b567efffcbcb83156ff144
-          --claude scripts/remote_execution/node_modules/.bin/claude
-          --port "$((18783 + ${CHEESE_CI_SLOT:-0}))"
+        # Published by release-device-connection run 35770200245. Extract its
+        # connector too: the owner checks binary digests and updates mismatches.
+        run: |
+          backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py \
+            --owner-image "$ACCEPTANCE_OWNER_IMAGE" \
+            --owner-revision "$ACCEPTANCE_OWNER_REVISION" \
+            --claude scripts/remote_execution/node_modules/.bin/claude \
+            --port "$ACCEPTANCE_OWNER_PORT"
       - name: Verify ordinary room turns through the connector
         id: ordinary_terminal
         run: >-
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --ordinary --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/ordinary-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Clean up this job's owner compatibility resources
+        id: owner_cleanup
+        if: always()
+        # Cancellation can stop Python before its finally block runs.
+        run: |
+          set -euo pipefail
+          label="cheese.owner-acceptance=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          docker ps --all --quiet --filter "label=$label" | while read -r container; do
+            docker rm --force "$container"
+          done
+          docker network ls --quiet --filter "label=$label" | while read -r network; do
+            docker network rm "$network"
+          done
       # The receipts go to the job log as well as to an artifact: when the
       # account's artifact storage is full (2026-09-16, again 2026-09-18) the
       # upload below is the only copy and it silently produces nothing, which
@@ -297,8 +321,8 @@ jobs:
           --tested-sha "$GITHUB_SHA"
           --steps-json "$CI_STEPS_JSON"
           --require-step run_acceptance
-          --require-step checkout_owner
           --require-step owner_compat
+          --require-step owner_cleanup
           --require-step ordinary_terminal
       - name: Upload remote-acceptance CLEAN evidence
         if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
@@ -341,4 +365,5 @@ jobs:
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
             logs/device-connection-acceptance-*.jsonl
+            tmp/owner-image-*/*.log
           retention-days: 3

@@ -32,6 +32,11 @@ export function getEntity(notification: Notification, role: string): EntityInfo 
   return notification.entities[role] || null
 }
 
+/** A team entity's handle, read off the link the backend resolved for it (`/teams/<handle>`). */
+export function teamHandle(team: EntityInfo): string {
+  return decodeURIComponent((team.url ?? '').replace(/^\/teams\//, '').split('/')[0])
+}
+
 /**
  * 从通知中提取元数据
  * @param notification 通知对象

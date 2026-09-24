@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.summary import team_summary
 from app.domain.team_project.models import Project, ProjectMemberRole, ProjectMembership
 from app.domain.team_project.repositories import (
     ProjectMembershipRepository,
@@ -99,12 +100,7 @@ class TeamProjectService:
                     "startDate": _ms(p.start_date),
                     "endDate": _ms(p.end_date),
                     "leader": users[p.leader_id],
-                    "team": {
-                        "id": p.team_id,
-                        "name": team.name if team else "",
-                        "intro": team.intro if team else "",
-                        "avatarId": team.avatar_id if team else None,
-                    },
+                    "team": team_summary(team, fallback_id=p.team_id),
                     "parentId": p.parent_id,
                     "externalTaskId": p.external_task_id,
                     "githubRepo": p.github_repo,

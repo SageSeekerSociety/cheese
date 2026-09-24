@@ -21,7 +21,6 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.crypto import decrypt_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.space.repositories import SpaceCategoryRepository, SpaceRepository
@@ -32,6 +31,7 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
+from app.domain.user.realname_services import realname_dict
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # --- Enums / constants -------------------------------------------------------
@@ -1224,18 +1224,7 @@ class SpaceAnalyticsViewService:
 
     @staticmethod
     def _decode_identity(identity: UserRealNameIdentity) -> dict:
-        def maybe(value: str) -> str:
-            if identity.encrypted and value:
-                return decrypt_text(value)
-            return value
-
-        return {
-            "realName": maybe(identity.real_name),
-            "studentId": maybe(identity.student_id),
-            "grade": maybe(identity.grade),
-            "major": maybe(identity.major),
-            "className": maybe(identity.class_name),
-        }
+        return realname_dict(identity)
 
     # ------------------------------------------------------------------
     # Aggregations: participants

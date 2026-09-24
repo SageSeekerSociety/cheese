@@ -11,13 +11,24 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import SessionPlace
+from app.domain.agent_session.models import AgentSession, SessionPlace
 from app.domain.agent_session.repositories import AgentSessionRepository
 
 
 class AgentSessionService:
     def __init__(self, session: AsyncSession):
         self._repo = AgentSessionRepository(session)
+
+    async def ensure(
+        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
+    ) -> AgentSession:
+        """Create the conversation identity before any machine is acquired."""
+        return await self._repo.ensure(topic_id, agent_handle, harness)
+
+    async def by_id(
+        self, session_id: uuid.UUID, *, lock: bool = False
+    ) -> AgentSession | None:
+        return await self._repo.by_id(session_id, lock=lock)
 
     async def resume_token(
         self, topic_id: uuid.UUID, agent_handle: str, *, harness: str

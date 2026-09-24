@@ -9,11 +9,13 @@ Covers:
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.crypto import DecryptionError
 from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
+from app.domain.user.realname_services import realname_dict, seal_realname_field
 from app.domain.user.services import UserAuthService, UserProfileService, UserService
 
 # ---------------------------------------------------------------------------
@@ -598,12 +600,10 @@ class TestUserRealNameService:
         with pytest.raises(NotFoundError, match="Resource user not found"):
             await service._ensure_user_exists(999)
 
-    # --- _identity_dict ---
+    # --- stored identity fields ---
 
-    def test_identity_dict_no_decrypt(self, service) -> None:
-        ident = _identity(encrypted=False)
-        result = service._identity_dict(ident, decrypt=False)
-        assert result == {
+    def test_unencrypted_identity_reads_as_stored(self) -> None:
+        assert realname_dict(_identity(user_id=1, encrypted=False)) == {
             "realName": "Zhang San",
             "studentId": "2024001",
             "grade": "2024",
@@ -611,33 +611,26 @@ class TestUserRealNameService:
             "className": "Class-1",
         }
 
-    @patch(
-        "app.domain.user.realname_services.decrypt_text",
-        side_effect=lambda v: f"DEC({v})",
-    )
-    def test_identity_dict_decrypt_encrypted(self, mock_decrypt, service) -> None:
-        ident = _identity(
-            encrypted=True,
-            real_name="enc_name",
-            student_id="enc_sid",
-            grade="enc_grade",
-            major="enc_major",
-            class_name="enc_class",
-        )
-        result = service._identity_dict(ident, decrypt=True)
-        assert result == {
-            "realName": "DEC(enc_name)",
-            "studentId": "DEC(enc_sid)",
-            "grade": "DEC(enc_grade)",
-            "major": "DEC(enc_major)",
-            "className": "DEC(enc_class)",
+    def test_encrypted_identity_reads_back_as_plaintext(self) -> None:
+        fields = {
+            "real_name": "张三",
+            "student_id": "2024001",
+            "grade": "2024",
+            "major": "CS",
+            "class_name": "Class-1",
         }
+        sealed = {k: seal_realname_field(1, k, v) for k, v in fields.items()}
+        assert not set(sealed.values()) & set(fields.values())
+        ident = _identity(user_id=1, encrypted=True, **sealed)
+        assert realname_dict(ident)["realName"] == "张三"
+        assert realname_dict(ident)["className"] == "Class-1"
 
-    def test_identity_dict_decrypt_not_encrypted(self, service) -> None:
-        """When decrypt=True but identity.encrypted=False, raw values are returned."""
-        ident = _identity(encrypted=False)
-        result = service._identity_dict(ident, decrypt=True)
-        assert result["realName"] == "Zhang San"
+    def test_encrypted_fields_do_not_move_between_users_or_columns(self) -> None:
+        sealed = seal_realname_field(1, "real_name", "张三")
+        with pytest.raises(DecryptionError):
+            realname_dict(_identity(user_id=2, encrypted=True, real_name=sealed))
+        with pytest.raises(DecryptionError):
+            realname_dict(_identity(user_id=1, encrypted=True, major=sealed))
 
     # --- _mask_name ---
 
@@ -717,47 +710,37 @@ class TestUserRealNameService:
     # --- create_or_update_user_identity ---
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.user.realname_services.encrypt_text",
-        side_effect=lambda v: f"ENC({v})",
-    )
-    async def test_create_or_update_identity_success(
-        self, mock_enc, service, user_repo, realname_repo
+    async def test_create_or_update_identity_stores_ciphertext(
+        self, service, user_repo, realname_repo
     ) -> None:
         user_repo.get_by_id.return_value = _user()
-        returned_ident = _identity(
-            encrypted=True,
-            real_name="ENC(Zhang San)",
-            student_id="ENC(2024001)",
-            grade="ENC(2024)",
-            major="ENC(CS)",
-            class_name="ENC(Class-1)",
-        )
-        realname_repo.upsert_identity.return_value = returned_ident
+        stored: dict = {}
 
-        with patch(
-            "app.domain.user.realname_services.decrypt_text",
-            side_effect=lambda v: v.replace("ENC(", "").rstrip(")"),
-        ):
-            result = await service.create_or_update_user_identity(
-                user_id=1,
-                real_name="Zhang San",
-                student_id="2024001",
-                grade="2024",
-                major="CS",
-                class_name="Class-1",
-            )
+        async def upsert_identity(**row):
+            stored.update(row)
+            return _identity(**row)
 
-        realname_repo.upsert_identity.assert_awaited_once_with(
+        realname_repo.upsert_identity.side_effect = upsert_identity
+
+        result = await service.create_or_update_user_identity(
             user_id=1,
-            real_name="ENC(Zhang San)",
-            student_id="ENC(2024001)",
-            grade="ENC(2024)",
-            major="ENC(CS)",
-            class_name="ENC(Class-1)",
-            encrypted=True,
+            real_name="Zhang San",
+            student_id="2024001",
+            grade="2024",
+            major="CS",
+            class_name="Class-1",
         )
-        assert "realName" in result
+
+        assert stored["encrypted"] is True
+        assert "Zhang San" not in stored.values()
+        assert "2024001" not in stored.values()
+        assert result == {
+            "realName": "Zhang San",
+            "studentId": "2024001",
+            "grade": "2024",
+            "major": "CS",
+            "className": "Class-1",
+        }
 
     @pytest.mark.anyio
     async def test_create_or_update_identity_user_missing(

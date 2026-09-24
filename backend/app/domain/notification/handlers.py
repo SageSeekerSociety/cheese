@@ -1,11 +1,9 @@
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from redis.asyncio import Redis
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,57 +73,6 @@ class InAppNotificationHandler:
             .on_conflict_do_nothing(index_elements=["delivery_key"])
         )
         await self._session.flush()
-
-
-class RedisEmailQueueNotificationHandler:
-    """Batch notifications into a Redis list for async email delivery."""
-
-    name = "redis-email-queue"
-
-    def __init__(
-        self,
-        redis_client: Redis | None,
-        *,
-        queue_key: str,
-        batch_size: int = 100,
-    ) -> None:
-        self._redis = redis_client
-        self._queue_key = queue_key
-        self._batch_size = max(1, batch_size)
-
-    async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None:
-        if not deliveries or self._redis is None:
-            return
-
-        chunks: list[str] = []
-        dispatched_at = int(datetime.now(UTC).timestamp() * 1000)
-
-        for delivery in deliveries:
-            payload = {
-                "recipientId": delivery.recipient_id,
-                "type": delivery.type.value,
-                "payload": delivery.payload,
-                "dispatchedAt": dispatched_at,
-            }
-            chunks.append(json.dumps(payload, separators=(",", ":")))
-
-            if len(chunks) >= self._batch_size:
-                await self._flush(chunks)
-                chunks.clear()
-
-        if chunks:
-            await self._flush(chunks)
-
-    async def _flush(self, items: list[str]) -> None:
-        if not items or self._redis is None:
-            return
-        try:
-            await self._redis.rpush(self._queue_key, *items)  # type: ignore[misc]
-        except Exception:
-            logger.exception(
-                "Failed to enqueue notification batch into Redis queue %s",
-                self._queue_key,
-            )
 
 
 class NotificationEventHandler:

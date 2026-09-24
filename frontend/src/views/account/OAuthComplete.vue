@@ -432,21 +432,19 @@ onMounted(() => {
 <style scoped>
 .option-card {
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease;
   min-height: 140px;
 }
 
 .option-card:hover {
   border-color: rgb(var(--v-theme-primary));
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-1);
 }
 
 .selected-card {
   border-color: rgb(var(--v-theme-primary)) !important;
   background-color: rgba(var(--v-theme-primary), 0.04);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(var(--v-theme-primary), 0.2);
 }
 
 .gap-4 {

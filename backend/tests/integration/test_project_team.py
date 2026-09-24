@@ -7,6 +7,7 @@ rows so pre-existing projects stay visible.
 """
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
 from app.domain.team.models import Team
@@ -78,6 +79,7 @@ def test_explicit_team_id_sticks_and_unknown_owner_stays_null(client):
         async with client.test_factory() as s:
             team = Team(
                 name="Proj Owners",
+                handle=f"t-{uuid.uuid4().hex[:12]}",
                 intro="i",
                 description="d",
                 avatar_id=0,
@@ -94,6 +96,8 @@ def test_explicit_team_id_sticks_and_unknown_owner_stays_null(client):
 
     shared = _create(client, "shared-proj", "nobody-here", team_id=tid)
     assert shared["team_id"] == tid
+    # Links to the owning team go by its handle, so the project carries it.
+    assert shared["team_handle"].startswith("t-")
 
     # owner_handle that is no real user → legacy NULL (agent handles, fixtures).
     orphan = _create(client, "orphan-proj", "ghost-agent-42")

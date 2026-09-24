@@ -2,6 +2,7 @@
 """Exercise release ordering against a real commit graph and a fake Docker host."""
 
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -174,11 +175,27 @@ class CandidateCI(unittest.TestCase):
                 "status": "completed", "conclusion": "success", **changes}
 
     def ready(self, build, ci):
-        def command(*args):
-            records = build if "/build.yml/" in args[-1] else ci
-            return json.dumps([{"workflow_runs": records}])
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=command):
+        def workflow_runs(_repository, workflow, _candidate):
+            return build if workflow == "build.yml" else ci
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
             return GUARD.ci_ready(self.candidate)
+
+    def test_workflow_runs_use_authenticated_http_and_read_all_pages(self):
+        first = [{"id": number} for number in range(100)]
+        second = [{"id": 100}]
+        responses = [io.BytesIO(json.dumps({"workflow_runs": page}).encode())
+                     for page in (first, second)]
+        with patch.dict(os.environ, {"GH_TOKEN": "test-token"}), patch.object(
+            GUARD, "urlopen", side_effect=responses
+        ) as urlopen:
+            runs = GUARD.workflow_runs("example/app", "build.yml", self.candidate)
+        self.assertEqual(len(runs), 101)
+        self.assertEqual(urlopen.call_count, 2)
+        for number, call in enumerate(urlopen.call_args_list, start=1):
+            request = call.args[0]
+            self.assertIn(f"page={number}", request.full_url)
+            self.assertIn(f"head_sha={self.candidate}", request.full_url)
+            self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
 
     def test_both_completion_orders_require_both_successes(self):
         done = [self.run_record()]
@@ -215,8 +232,8 @@ class CandidateCI(unittest.TestCase):
         self.assertFalse(self.ready([self.run_record(), pending], [self.run_record()]))
 
     def test_api_failure_stops_eligibility(self):
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "command", side_effect=subprocess.CalledProcessError(1, "gh")):
-            with self.assertRaises(subprocess.CalledProcessError):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=OSError("API unavailable")):
+            with self.assertRaises(OSError):
                 GUARD.ci_ready(self.candidate)
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):

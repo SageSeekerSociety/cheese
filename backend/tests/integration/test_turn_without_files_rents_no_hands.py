@@ -43,7 +43,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
-from tests.conftest import StubChannel, settle_turn
+from tests.conftest import StubChannel, finish_turn, settle_turn
 from tests.integration.conftest import session_auth_headers
 
 pytestmark = pytest.mark.anyio
@@ -75,7 +75,7 @@ def central_over_offline_hands(client, monkeypatch):
         call_executor=AsyncMock(return_value={"generation": "fixture", "entries": {}}),
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INSTALLED)}),
     )
-    executor = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     executor.precheck = AsyncMock(
         side_effect=ScreenSetupError("没有在线的绑定设备可运行本轮")
     )
@@ -94,7 +94,7 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     central = central_over_offline_hands(client, monkeypatch)
     session = SessionRef(project, topic, "cheese", harness="claude-code")
 
-    resolved = await central.precheck(session, needs_place=False)
+    resolved = client.portal.call(lambda: central.precheck(session, needs_place=False))
 
     central.executor.precheck.assert_not_awaited()
     # 「这一轮租没租手」就说在这一位上，下游读它；机器是这条会话自己的那台，
@@ -103,13 +103,16 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     assert resolved.machine == "center"
     assert resolved.agent_user_id and looks_like_agent_handle(resolved.agent_handle)
 
-    # 同一条会话、同一台离线的工作机，要手的一轮照旧被挡下来。
-    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
-        await central.precheck(session, needs_place=True)
+    # The same ordinary room can receive input while work tools are unavailable.
+    offline = client.portal.call(lambda: central.precheck(session, needs_place=True))
+    assert offline.machine == "center"
+    assert offline.rented is False
+    assert offline.deferred is True
+    central.executor.precheck.assert_not_awaited()
 
 
 async def test_a_channel_nobody_wraps_answers_the_question_too(
-    client, room, monkeypatch
+    business_db_factory, room, monkeypatch
 ):
     """pi 不被 ``CentralChannel`` 包着，所以这一问它自己也要答得出来。
 
@@ -119,7 +122,7 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(is_online=lambda device: device == "center")
-    channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     session = SessionRef(project, topic, "cheese", harness="pi")
 
     resolved = await channel.precheck(session, needs_place=False)
@@ -139,12 +142,14 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     project, topic = room
     central = central_over_offline_hands(client, monkeypatch)
 
-    await central.ensure_ready(
-        session=SessionRef(project, topic, "cheese", harness="claude-code"),
-        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
-        env={},
-        launch=ClaudeLaunch("System"),
-        precheck=Placement("center", 1, "cheese-x", rented=False),
+    client.portal.call(
+        lambda: central.ensure_ready(
+            session=SessionRef(project, topic, "cheese", harness="claude-code"),
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=Placement("center", 1, "cheese-x", rented=False),
+        )
     )
 
     opened = central._ensure_screen.await_args.kwargs
@@ -156,8 +161,32 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     central._hub.exec.assert_not_awaited()
 
 
-async def test_the_hands_decide_the_workspace_not_the_memory_scope(
+async def test_ordinary_room_opens_without_executing_on_the_session_host(
     client, room, monkeypatch
+):
+    project, topic = room
+    central = central_over_offline_hands(client, monkeypatch)
+    ref = SessionRef(project, topic, "cheese", harness="claude-code")
+
+    async def open_room():
+        await central.ensure_ready(
+            session=ref,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref, needs_place=True),
+        )
+
+    client.portal.call(open_room)
+    opened = central._ensure_screen.await_args.kwargs
+    target = json.loads(opened["env"]["CHEESE_EXECUTION_TARGET"])
+    assert opened["device_id"] == "center"
+    assert target["kind"] == "deferred"
+    central._hub.exec.assert_not_awaited()
+
+
+async def test_the_hands_decide_the_workspace_not_the_memory_scope(
+    business_db_factory, room, monkeypatch
 ):
     """开在草稿区还是项目工作区，由「租到手没有」决定；记忆算谁的只管记忆。
 
@@ -167,7 +196,7 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
     """
     project, topic = room
     hub: Any = SimpleNamespace(is_online=lambda device: True)
-    channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     channel._existing_screen = lambda *args: None
     channel._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     session = SessionRef(project, topic, "cheese", harness="pi")
@@ -234,8 +263,8 @@ class _Tracked:
         return await self._session.__aexit__(*exc)
 
 
-async def test_the_session_machine_check_lets_go_before_asking_for_hands(
-    client, room, monkeypatch
+async def test_session_host_check_releases_connection_without_acquiring_hands(
+    business_db_factory, room, monkeypatch
 ):
     """要手的一轮不持着一条连接去要第二条 (#1312)。
 
@@ -245,7 +274,7 @@ async def test_the_session_machine_check_lets_go_before_asking_for_hands(
     """
     project, topic = room
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
-    counter = CountsConnections(client.test_factory)
+    counter = CountsConnections(business_db_factory)
     hub: Any = SimpleNamespace(is_online=lambda device: True)
     executor = DeviceChannel(hub=hub, session_factory=counter)
     central: Any = CentralChannel(executor)
@@ -258,11 +287,14 @@ async def test_the_session_machine_check_lets_go_before_asking_for_hands(
     executor.precheck = hands
 
     resolved = await central.precheck(
-        SessionRef(project, topic, "cheese", harness="claude-code"), needs_place=True
+        SessionRef(project, topic, "cheese", harness="claude-code"),
+        needs_place=True,
     )
 
-    assert resolved.rented is True
-    assert held_when_asked == [0], "问执行机的时候手里不该还攥着一条连接"
+    assert resolved.rented is False
+    assert resolved.deferred is True
+    assert held_when_asked == [], "Opening a conversation must not acquire hands"
+    assert counter.open == 0
     assert counter.peak == 1
 
 
@@ -283,10 +315,10 @@ class HandsRefused(StubChannel):
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """I2：工作机全部离线，私聊里问一句「刚才那个结论是什么」，照样有回复。"""
-    factory = client.test_factory
+    factory = business_db_factory
     channel = HandsRefused()
     svc = ChatService(
         session_factory=factory,
@@ -307,7 +339,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
         topic_id=topic_id, author="u", content="刚才那个结论是什么", summon=True
     ):
         pass
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert channel.asked == [False], "私聊这一轮不该去要手"
     async with factory() as session:
@@ -320,9 +352,9 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     ), [(b.author, b.kind, b.content) for b in blocks]
 
 
-async def test_a_room_turn_still_waits_for_its_hands(client, tmp_path):
+async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_path):
     """反面：房间里的一轮照样要手，要不到就说出来——不是所有轮次都放行。"""
-    factory = client.test_factory
+    factory = business_db_factory
     channel = HandsRefused()
     svc = ChatService(
         session_factory=factory,
@@ -401,7 +433,9 @@ def _release_private_room_pins():
     return module.release_private_room_pins
 
 
-async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, room):
+async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(
+    business_db_factory, room
+):
     """私聊不占机器（结论 19），所以 ``device_topic`` 上不该有它的行。
 
     删掉写这一行的那条分支只挡住「以后不再写」；库里已经写下的旧行没有人再维护，
@@ -412,7 +446,7 @@ async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, 
     project, work_room = room
     private_room = uuid.uuid4()
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         owner = User(
             username="pin-owner",
             email="pin-owner@example.io",
@@ -451,7 +485,7 @@ async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, 
     release = _release_private_room_pins()
 
     async def _run() -> dict:
-        async with client.test_factory() as session:
+        async with business_db_factory() as session:
             report = await session.run_sync(lambda conn: release(conn))
             await session.commit()
             return report
@@ -459,7 +493,7 @@ async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, 
     report = await _run()
     assert report == {"before": 1, "deleted": 1, "after": 0}
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         pinned = set(
             (await session.execute(sql("SELECT topic_id FROM device_topic")))
             .scalars()

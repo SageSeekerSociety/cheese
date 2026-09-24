@@ -32,23 +32,18 @@ class ScreenSetupError(Exception):
 
 
 class Placement(NamedTuple):
-    """``precheck`` 的答案：这一轮落在哪台机器上、以这个房间的哪个分身，以及这台
-    机器是不是为这一轮租来的一双手 (结论 19)。
+    """The session host and authenticated actor admitted for this turn.
 
-    ``rented`` 是「这一轮要不要一双手」这一问的答案本身，落在解析的产物上，下游
-    读它而不是各自再推一遍：没租手的一轮跑在这条会话自己的草稿区里，租到手的一轮
-    跑在项目的工作区里。房间是不是私聊、记忆算谁的，都是另外的事实，谁也不兼这一
-    份差。
-
-    ``machine`` 在中心通道上是租来的那台执行机，在别的通道上就是开屏的那一台；
-    没租手时三条通道给的都是这条会话自己的机器。哪一种都解析得出一台在线的机器，
-    解析不出来这一轮就已经带着原因停了，所以这里没有「没有机器」这一档。
+    Direct channels can rent execution together with the session. Central
+    channels set ``deferred`` for project work: this machine is the session
+    host, and a tool acquires the independent work lease later.
     """
 
     machine: str
     agent_user_id: int
     agent_handle: str
     rented: bool
+    deferred: bool = False
 
 
 class PromptSocketUnavailable(ScreenSetupError):
@@ -102,6 +97,7 @@ class Channel:
     # transport gets the same waiting room without the platform learning its
     # name.
     provisions_machine: bool = False
+    deferred_work: bool = False
 
     # Does this channel assemble the machine's model environment itself? True
     # means the platform sends the model CHOICE and nothing else: no base_url,

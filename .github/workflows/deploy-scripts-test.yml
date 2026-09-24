@@ -68,6 +68,8 @@ jobs:
 
       - name: Gateway release and image planning
         run: |
+          python3 deploy/tests/test_metering_release.py
+          python3 deploy/tests/test_metering_health.py
           python3 deploy/tests/test_gateway_release.py
           python3 deploy/tests/test_gateway_health_workflow.py
           python3 backend/scripts/test_gateway_supply_probe.py
@@ -95,6 +97,8 @@ jobs:
 
       - name: CI runner disk guard
         run: bash deploy/tests/test-ci-runner-disk-guard.sh
+      - name: CI runner scheduled prune retirement
+        run: bash deploy/tests/test-ci-runner-prune-retirement.sh
 
       - name: Dev-box cache reclaim
         run: bash deploy/tests/test-dev-box-disk-cleanup.sh

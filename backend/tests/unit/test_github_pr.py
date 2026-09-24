@@ -16,6 +16,7 @@ from app.domain.review.github_pr import (
     GitHubPRClient,
     GitHubPRError,
     GitHubPRMergeBlocked,
+    GitHubPRRateLimited,
     parse_github_repo,
 )
 
@@ -266,6 +267,27 @@ async def test_open_pr_uses_the_app_identity():
 
 
 # ---- unreachable GitHub ------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_pr_view_distinguishes_installation_rate_limit_from_permission_403():
+    limited = _client(
+        lambda _request: httpx.Response(
+            403,
+            json={"message": "API rate limit exceeded for installation ID 152342238."},
+        )
+    )
+    with pytest.raises(GitHubPRRateLimited):
+        await limited.pr_view(7)
+
+    forbidden = _client(
+        lambda _request: httpx.Response(
+            403, json={"message": "Resource not accessible"}
+        )
+    )
+    with pytest.raises(GitHubPRError) as error:
+        await forbidden.pr_view(7)
+    assert type(error.value) is GitHubPRError
 
 
 def _unreachable(request: httpx.Request) -> httpx.Response:

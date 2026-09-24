@@ -51,11 +51,11 @@ def test_a_join_request_no_channel_took_is_resent(
         ledger_module, "build_notification_event_handler", channels_refuse
     )
     resp = api_client.post(
-        f"/teams/{team_id}/requests",
+        f"/teams/{team_id}/join",
         json={"message": "让我进来"},
         headers={"Authorization": f"Bearer {requester.token}"},
     )
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 200, resp.text
     monkeypatch.undo()
 
     async def owners_inbox() -> list[Notification]:

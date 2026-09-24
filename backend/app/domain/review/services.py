@@ -46,7 +46,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -82,7 +81,6 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -701,6 +699,7 @@ class AcceptService:
         await announce(
             self._session,
             place_id=topic.id,
+            task_id=task.id,
             content=(f"《{artifact}》的这次更新已提交，待 {card.reviewer_handle} 验收"),
             meta=notice(
                 EVENT_CARD_FILED,
@@ -2136,7 +2135,18 @@ class AcceptService:
         client = await self._app_pr_client(topic)
         if client is None:
             return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
-        view = await client.pr_view(task.pr_number)
+        from app.domain.review.github_pr import GitHubPRRateLimited
+
+        try:
+            view = await client.pr_view(task.pr_number)
+        except GitHubPRRateLimited:
+            return {
+                "ready": False,
+                "reason": (
+                    "GitHub API 请求额度暂时用尽，PR 尚未标记为可评审；"
+                    "额度恢复后请重试。"
+                ),
+            }
         if view.get("draft"):
             node_id = str(view.get("node_id") or "")
             if not node_id:
@@ -2694,6 +2704,7 @@ class AcceptService:
         await announce(
             self._session,
             place_id=topic.id,
+            task_id=card.task_id,
             content=content,
             meta={"source": "accept", **meta},
             author="accept",
@@ -2923,6 +2934,35 @@ class AcceptService:
             ),
         )
 
+    async def _record_task_nudge(self, *, topic, task, content, headline, meta):
+        """Commit the task event and parent delivery with the source state."""
+        from app.domain.delivery.agent import record_task_instruction
+        from app.domain.delivery.ledger import DeliveryEvent
+        from app.domain.notification.models import NotificationType
+
+        block = await announce(
+            self._session,
+            place_id=topic.id,
+            task_id=task.id if task is not None else None,
+            content=headline,
+            meta=meta,
+        )
+        if block is not None and task is not None and task.status == TaskStatus.open:
+            await record_task_instruction(
+                self._session,
+                DeliveryEvent(
+                    id=block.id,
+                    type=NotificationType.ROOM_NOTICE,
+                    payload={
+                        "projectId": str(topic.project_id),
+                        "topicId": str(topic.id),
+                    },
+                    occurred_at=block.created_at,
+                ),
+                task=task,
+                content=content,
+            )
+
     async def _note_merge_blocked(
         self,
         *,
@@ -2959,7 +2999,10 @@ class AcceptService:
         # `pr_signals.sanitize_external`）。
         reason = pr_signals.sanitize_external(reason)
         note = f"PR #{card.pr_number} GitHub 拒绝合并：{reason}"
-        if card.note == note:
+        current_note = await self._session.scalar(
+            select(AcceptCard.note).where(AcceptCard.id == card.id).with_for_update()
+        )
+        if current_note == note:
             return
         notes.record(card, notes.NoteCode.merge_refused, note)
         logger.warning("PR merge refused for card %s: %s", card.id, reason)
@@ -2977,31 +3020,17 @@ class AcceptService:
             if actionable
             else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
         )
-        runner.submit(
-            chat_service,
-            topic.id,
-            author="system",
+        await self._record_task_nudge(
+            topic=topic,
+            task=task,
             content=(
                 f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
                 "被 GitHub 拒绝合并：\n"
                 f"```\n{reason[:1500]}\n```\n"
                 f"{action}"
             ),
-            # 合不上这件事点的是芝士的名：活还开着，改在它手上。活关了就谁也没点到，
-            # 房间里照样看得见这一行，只是不会有人被叫起来（I13）。
-            addressed=addressed_to_agent(
-                await TopicMemberService(self._session).addressable_agent_handle(
-                    topic.id
-                )
-                if actionable
-                else None
-            ),
-            # 平台提示统一契约: the room gets one line; GitHub's own words ride in
-            # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
-            # the same 1500-char bound the message body always used). `content`
-            # above is unchanged and still goes to 芝士 as the prompt.
-            nudge_event=f"PR #{card.pr_number} 被 GitHub 拒绝合并",
-            nudge_meta=notice(
+            headline=f"PR #{card.pr_number} 被 GitHub 拒绝合并",
+            meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
                 who=WHO_CHEESE,
@@ -3187,19 +3216,18 @@ class AcceptService:
         chat_service,
         runner,
     ) -> None:
-        """把这一轮排好的待发，一条不落地发出去。
+        """Lock the card, then record each new event and parent intent.
 
-        三条顺序上的讲究，每一条都是踩出来的：
-
-        - **每条各自去重。** 一条待发的签名和账本上记着的一样就跳过它，**只跳过它
-          自己** —— 一条 CI 失败被去重掉，不能顺手把同一轮的评审意见也带走。
-        - **卡面只留优先级最高的那一句**（`pr_signals.NOTE_PRIORITY`）。卡面是一
-          行，而消息不是：被排掉的那条照样发出去了，只是没占住卡上那一行。
-        - **先发，再改内存，最后落盘。** 落盘失败最多让芝士被多叫一次；反过来（先
-          落盘再发、中间崩了）会**静默丢掉一条真的通知** —— 账本上写着「说过了」，
-          而房间里一个字都没有。多说一次是噪音，少说一次是事故。
+        Signatures, task events and recipient intent commit together. A failed
+        producer transaction leaves none of them; the next poll may recreate
+        the event. Only committed intent can reach a native session.
         """
-        ledger = pr_signals.NudgeLedger.load(card.nudge_state)
+        saved_state = await self._session.scalar(
+            select(AcceptCard.nudge_state)
+            .where(AcceptCard.id == card.id)
+            .with_for_update()
+        )
+        ledger = pr_signals.NudgeLedger.load(saved_state)
         fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
         if not fresh:
             return
@@ -3207,18 +3235,12 @@ class AcceptService:
             await TaskService(self._session).get(card.task_id) if card.task_id else None
         )
         actionable = task is not None and task.status == TaskStatus.open
-        seat = (
-            await TopicMemberService(self._session).addressable_agent_handle(topic.id)
-            if actionable
-            else None
-        )
         for nudge in fresh:
             if nudge.capped:
                 continue
-            runner.submit(
-                chat_service,
-                topic.id,
-                author="system",
+            await self._record_task_nudge(
+                topic=topic,
+                task=task,
                 content=(
                     f"任务 {card.task_id}："
                     f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
@@ -3226,9 +3248,8 @@ class AcceptService:
                     else f"{nudge.event}。原任务已关闭或不存在；"
                     "如需继续修改，请由新任务承接。"
                 ),
-                addressed=addressed_to_agent(seat),
-                nudge_event=nudge.event,
-                nudge_meta=notice(
+                headline=nudge.event,
+                meta=notice(
                     nudge.event_type,
                     severity=SEVERITY_ERROR,
                     who=WHO_CHEESE,

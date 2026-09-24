@@ -57,8 +57,8 @@ def checkout_after_the_round(room):
             b"attachment bytes",
             home=home,
             name="uploads/acceptance/图.png",
-            hub=room,
-            device_id="executor",
+            hub=room.wire,
+            device_id=room.target["device_id"],
             screen="screen",
             execution_target=room.target,
         )
@@ -401,20 +401,48 @@ def main():
         checkout = None
         if room:
             checkout = checkout_after_the_round(room)
+            assert room.snapshots, "room turns did not upload a task snapshot"
+            snapshot = next(reversed(room.snapshots.values()))
+            recovered = folder / "snapshot-recovered"
+            subprocess.run(
+                ["git", "clone", "-q", room.remote, str(recovered)], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(recovered),
+                    "fetch",
+                    snapshot["bundle"],
+                    f"refs/cheese/snapshots/{room.task}",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            restored = subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(recovered),
+                    "show",
+                    "FETCH_HEAD:backend/startup-result",
+                ],
+                text=True,
+            )
+            assert restored == "executor-env", restored
+            dump(folder / "snapshot-receipts.json", list(room.snapshots.values()))
+        server.assert_healthy()
         dump(folder / "provider-requests.json", requests)
         terminal()
-        dump(
-            folder / "summary.json",
-            {
-                "passed": True,
-                "turns": len(platform_events),
-                "platform_system_exact": True,
-                "platform_events": list(event_prompts()),
-                "model_requests": len(server.state["requests"]),
-                "central_file_unchanged": True,
-                **({"checkout_after_the_round": checkout} if checkout else {}),
-            },
-        )
+        summary = {
+            "passed": True,
+            "turns": len(platform_events),
+            "platform_system_exact": True,
+            "platform_events": list(event_prompts()),
+            "model_requests": len(server.state["requests"]),
+            "central_file_unchanged": True,
+            **({"checkout_after_the_round": checkout} if checkout else {}),
+        }
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
         if room:
@@ -426,12 +454,16 @@ def main():
                 # See acceptance.py: a dead mount is the one that has to go, and
                 # it is the one `os.path.ismount` reports as nothing at all.
                 assert execution_release.release_mount(mountpoint), mountpoint
-        server.shutdown()
-        server.server_close()
-        if room:
-            room.close()
-        else:
-            release(config)
+        try:
+            if room:
+                room.close()
+            else:
+                release(config)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    dump(folder / "summary.json", summary)
 
 
 if __name__ == "__main__":

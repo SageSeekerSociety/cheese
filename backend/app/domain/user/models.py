@@ -1,6 +1,19 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, Sequence, String, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    Sequence,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -148,4 +161,54 @@ class UserRealNameAccessLog(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class UserTwoFactor(Base):
+    """A user's TOTP second factor, and the setup waiting to be confirmed.
+
+    Both secrets are sealed with ``app.core.crypto`` under their own purposes,
+    bound to the user. The factor is enabled exactly when ``secret`` is set.
+    """
+
+    __tablename__ = "user_two_factor"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    always_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    pending_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class UserBackupCode(Base):
+    """One unused 2FA backup code, as a keyed digest; using it deletes the row."""
+
+    __tablename__ = "user_backup_code"
+    __table_args__ = (
+        UniqueConstraint("user_id", "key_id", "digest", name="uq_user_backup_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    key_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    digest: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

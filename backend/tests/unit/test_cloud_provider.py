@@ -152,7 +152,10 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
         SessionRef(project_id, topic_id, "ada", harness="claude-code"), needs_place=True
     )
 
-    assert resolved == ("own-cloud", 8, "ada-seat", True)
+    assert resolved.machine == "own-cloud"
+    assert resolved.agent_user_id == 8
+    assert resolved.agent_handle == "ada-seat"
+    assert resolved.rented is True
     devices.bind_topic_device.assert_awaited_once()
 
 

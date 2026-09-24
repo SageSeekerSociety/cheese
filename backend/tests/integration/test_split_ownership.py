@@ -14,7 +14,6 @@ trailer stopped appearing on ordinary single-person rooms — it used to name th
 commit's own author, and a room has one git identity.
 """
 
-import asyncio
 import uuid
 from unittest.mock import AsyncMock
 
@@ -115,7 +114,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
     from app.domain.project.models import ProjectRole
 
     async def _add() -> None:
-        async with client.test_factory() as s:
+        async with client.test_request_factory() as s:
             await MemberService(s).add(
                 project_id=uuid.UUID(project_id),
                 user_handle=handle,
@@ -124,7 +123,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
             )
             await s.commit()
 
-    asyncio.run(_add())
+    client.portal.call(lambda: _add())
 
 
 def _split(client, parent_id: str, *, by: str) -> dict:
@@ -163,9 +162,9 @@ def _pr_body(client, pid: str, tid: str) -> str:
         },
     )
     assert card.status_code == 200, card.text
-    asyncio.run(
-        pr_publish._run(
-            client.test_factory,
+    client.portal.call(
+        lambda: pr_publish._run(
+            client.test_request_factory,
             card_id=uuid.UUID(card.json()["data"]["id"]),
             topic_id=uuid.UUID(tid),
             project_id=uuid.UUID(pid),

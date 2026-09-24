@@ -12,11 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.crypto import decrypt_text, encrypt_text
 from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
-from app.domain.agent.forgejo_tokens import ForgejoTokens
+from app.domain.agent.forgejo_tokens import (
+    ForgejoTokens,
+    forge_password,
+    seal_forge_password,
+)
 from app.domain.agent.github_app import GitHubAppTokens, github_app_tokens_for_project
 from app.domain.project.models import Project, ProjectForge
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
@@ -58,7 +61,7 @@ async def ensure_author_email(
     if not binding.account_password:
         raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
     endpoint = binding.api_url.rstrip("/") + "/user/emails"
-    auth = (binding.repo.split("/", 1)[0], decrypt_text(binding.account_password))
+    auth = (binding.repo.split("/", 1)[0], forge_password(binding))
     async with httpx.AsyncClient(transport=transport, timeout=30, auth=auth) as client:
         response = await client.get(endpoint)
         if response.status_code != 200:
@@ -242,7 +245,7 @@ async def provision_repository(
         url=f"{public}/{username}/project.git",
         api_url=api,
         default_branch=data.get("default_branch") or "main",
-        account_password=encrypt_text(password),
+        account_password=seal_forge_password(project_id, password),
     )
     session.add(binding)
     await session.flush()
@@ -280,7 +283,7 @@ async def ensure_repository_webhook(
     }
     if binding.account_password is None:
         raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
-    auth = (binding.repo.split("/", 1)[0], decrypt_text(binding.account_password))
+    auth = (binding.repo.split("/", 1)[0], forge_password(binding))
     async with httpx.AsyncClient(transport=transport, timeout=30, auth=auth) as client:
         matching = []
         page = 1

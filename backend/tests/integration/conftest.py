@@ -67,6 +67,25 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
+def ask_to_join(
+    api_client: "TestClient", team_id: int, token: str, message: str
+) -> int:
+    """Ask to join a team the way its profile page does; return the request id."""
+    resp = api_client.post(
+        f"/teams/{team_id}/join",
+        json={"message": message},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["team"]["joinStatus"] == "pending"
+    mine = api_client.get(
+        "/users/me/team-requests",
+        params={"status": "PENDING"},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()["data"]["requests"]
+    return next(r["id"] for r in mine if r["teamId"] == team_id)
+
+
 def create_approved_space(client, **kwargs):
     """Provision an approved space for tests of tasks and space management."""
     from app.core.config import settings

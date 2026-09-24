@@ -24,6 +24,16 @@ class AgentConfiguration(BaseModel):
     model: str | None = None
 
 
+def project_pool(project_settings: dict | None) -> str:
+    """这个项目跑哪个池。
+
+    ``resolve_pool`` 对目录消费者的唯一出口：「这轮走哪条供给」只能有一个
+    答案来源（P34 的守卫按模块数引用），要池的调用方拿这里，不许自己再
+    import supply。
+    """
+    return resolve_pool(project_settings)
+
+
 def model_choices(project_settings: dict | None) -> list[dict]:
     """Every model this project can be pointed at.
 
@@ -99,14 +109,9 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     if running is None:
         return []
     choices = [item for item in choices if _drives(running, item)]
-    # An explicit, available project model overrides the pool default. Otherwise
-    # use settings.agent_model unless the project explicitly chose subscription.
-    # Unknown historical selections leave that default in place. The room's main
-    # conversation reads this same default through binding.resolve(None, ...).
-    #
-    # 按骨架筛之后才问，所以「目录里有」问的是筛完的目录：项目挑了一个自己这个
-    # 骨架指不到的模型，就按没设处理走部署兜底，而不是把一条派出去才会失败的绑定
-    # 标成默认。
+    # Mark the available selection for presentation. Runtime callers pass the
+    # saved value explicitly to binding.resolve so an unavailable selection is
+    # refused rather than silently becoming this catalog's deployment default.
     chosen = (project_settings or {}).get("default_model")
     known_ids = {item["id"] for item in choices}
     if isinstance(chosen, str) and chosen in known_ids:
