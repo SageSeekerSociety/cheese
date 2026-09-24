@@ -286,8 +286,7 @@ onMounted(async () => {
       <!-- 一个项目都没有（新账号）：给出唯一有意义的下一步，而不是一屏空白。
            空间那一排还在上面——那是他还没加入任何空间时唯一看得见的东西。 -->
       <v-sheet v-if="settled && groups.length === 0" border rounded="lg" class="my-work__empty pa-4">
-        <h2 class="t-title mb-1">{{ t('work.emptyTitle') }}</h2>
-        <p class="t-body c-muted mb-3">{{ t('work.emptyBody', { project: termParams(DEFAULT_SHELL).project }) }}</p>
+        <h2 class="t-title mb-3">{{ t('work.emptyTitle', { project: termParams(DEFAULT_SHELL).project }) }}</h2>
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="showNewProjectDialog()">
           {{ t('navigation.newProject', { project: termParams(DEFAULT_SHELL).project }) }}
         </v-btn>
