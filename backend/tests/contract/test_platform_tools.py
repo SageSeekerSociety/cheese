@@ -19,12 +19,16 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
+from app.domain.agent.compute_configs import ComputeChoice
 from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.agent.market import compute_listings
 
 #: 平台的 MCP 上的全部（结论 21）。写死在用例里，不从被测模块读回来 —— 从表里读一
 #: 遍再断言它等于自己，删掉一整行也是绿的。
@@ -294,3 +298,35 @@ def test_a_project_tool_says_the_machine_is_gone_instead_of_waiting(machine_is_g
         outcome = json.loads(read_a_file()["content"][0]["text"])
         assert outcome["deny"] == MACHINE_OUT_OF_REACH, outcome
     assert len(executor_calls) == 1, f"后面几次又去撞了一遍：{executor_calls}"
+
+
+def test_cheese_machine_declares_exactly_the_profiles_the_backend_accepts(
+    machine_is_gone,
+):
+    """`cheese_machine` 的 schema 是 agent 手上唯一的契约：`profile` 能填什么，要写在
+    `enum` 里，而且要和后端的算力目录是同一组。
+
+    以前它只写了「算力档位名」，agent 连猜 default、standard、small 几次，每次拿回
+    422，最后去问人「档位名是什么」。
+    """
+    process, _, _ = machine_is_gone
+    profile = _tools_by_name(process)["cheese_machine"]["inputSchema"]["properties"][
+        "profile"
+    ]
+    declared = profile["enum"]
+
+    catalog = {
+        pool.id
+        for pool in compute_listings(
+            SimpleNamespace(microcloud_base_url="", microcloud_tenant_secret=""),
+            device_online=True,
+        )
+    }
+    assert set(declared) == catalog
+
+    for value in declared:
+        ComputeChoice.model_validate({"name": "契约", "profile": value})
+    for guess in ("default", "standard", "cheese-box", "small", "medium"):
+        assert guess not in declared
+        with pytest.raises(ValidationError):
+            ComputeChoice.model_validate({"name": "契约", "profile": guess})
