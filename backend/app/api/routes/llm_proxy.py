@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
 from app.core.config import settings
+from app.core.db import release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
@@ -209,22 +210,6 @@ async def admission(
         limit=None if summary["unlimited"] else summary["credits_total"],
     )
     decision = decide(state)
-    if not decision.allow:
-        # Tell the room NOW, from the place that actually knows why (#715) —
-        # rather than let Claude Code retry ten times into a `StopFailure` it
-        # reads as a bad API key. `t` is the PLACE claim (room or thread); a
-        # token minted without one (project-wide capabilities) has nothing to
-        # tell, and a place with no turn running is the turn-start refusal
-        # path's job, not this one's.
-        place = claims.get("t")
-        if isinstance(place, str) and place:
-            try:
-                place_uuid = uuid.UUID(place)
-            except ValueError:
-                place_uuid = None
-            if place_uuid is not None:
-                await chat.note_credits_refusal(place_uuid)
-
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -334,12 +319,6 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
-    if pool == GATEWAY and decision.allow:
-        # Minted lazily and cached on the project; the proxy never holds a
-        # provider key of its own, so a project whose key cannot be provisioned
-        # gets no key here and the proxy refuses rather than falling back to a
-        # shared credential (which would bill every project to one bucket).
-        supply["key"] = await chat.project_gateway_key(project_uuid)
     if decision.allow:
         # Which identity the proxy should authenticate as on its ccproxy hop.
         # ccproxy scopes its ticket swap to the authenticated connection, so
@@ -364,6 +343,26 @@ async def admission(
                 ).ccproxy_upstream_for_place(place_uuid)
                 if upstream:
                     supply["upstream"] = upstream
+
+    # The calls below may wait on the gateway lock and open another database
+    # session. Returning this read connection first prevents concurrent
+    # admissions from exhausting the pool while they wait.
+    await release_read_session(db)
+    if not decision.allow:
+        # Tell the running room when credits run out (#715); the room write
+        # uses its own database session.
+        place = claims.get("t")
+        if isinstance(place, str) and place:
+            try:
+                place_uuid = uuid.UUID(place)
+            except ValueError:
+                place_uuid = None
+            if place_uuid is not None:
+                await chat.note_credits_refusal(place_uuid)
+    if pool == GATEWAY and decision.allow:
+        # Minted lazily and cached on the project; never keep the admission
+        # read connection checked out while waiting for the gateway.
+        supply["key"] = await chat.project_gateway_key(project_uuid)
 
     return ok(
         {

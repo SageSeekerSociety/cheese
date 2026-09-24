@@ -980,6 +980,12 @@ class BehindReleaseHub(DeadTunnelHub):
         self.envs.append(kw.get("env"))
         return await super().open_screen(device_id, command, **kw)
 
+    async def call_executor(
+        self, device_id, state, method, params, *, trace_id=None, timeout=660
+    ) -> dict:
+        assert method == "context_fs" and params == {"operation": "tree"}
+        return {"generation": "current", "entries": []}
+
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
@@ -1022,7 +1028,11 @@ def _executor_screen_arguments(topic_id: uuid.UUID) -> dict:
         project_id=uuid.uuid4(),
         topic_id=topic_id,
         token="tok",
-        env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})},
+        env={
+            "CHEESE_EXECUTION_TARGET": json.dumps(
+                {"device_id": "executor", "state": "/executor"}
+            )
+        },
         launch=ClaudeLaunch(system_prompt="", resume_session_id="conversation"),
     )
 
