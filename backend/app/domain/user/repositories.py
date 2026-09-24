@@ -141,6 +141,15 @@ class UserRepository:
             await self._session.flush()
         return user
 
+    async def update_email(self, user: User, email: str) -> None:
+        """Raises ``IntegrityError`` when a live account already holds it
+        (``uq_user_email_lower``); the session stays usable."""
+        async with self._session.begin_nested():
+            user.email = email
+            user.email_domain = email.split("@", 1)[1].lower()
+            user.updated_at = datetime.now(UTC)
+            await self._session.flush()
+
     async def update_password(self, user_id: int, hashed_password: str) -> None:
         stmt: Select[tuple[User]] = select(User).where(User.id == user_id)
         result = await self._session.execute(stmt)

@@ -773,9 +773,9 @@ class OAuthService:
         """
         from sqlalchemy import select
 
+        from app.core.email import is_placeholder_email
         from app.domain.passkey.services import PasskeyService
         from app.domain.user.models import User
-        from app.domain.user.services import is_placeholder_email
 
         conn = await self._repo.get(connection_id)
         if conn is None or conn.user_id != user_id:

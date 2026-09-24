@@ -2,7 +2,7 @@ import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlsplit
 
@@ -32,6 +32,7 @@ from app.common.auth import (
     get_current_session_id,
 )
 from app.core.config import GATEWAY_MOUNT, settings
+from app.core.email import is_placeholder_email
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -95,6 +96,25 @@ class SendEmailCodeRequest(BaseModel):
 
     email: str = Field(..., min_length=1)
     invite_code: str | None = Field(default=None, alias="inviteCode")
+
+
+class AddEmailCodeRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class AddEmailRequest(AddEmailCodeRequest):
+    code: str = Field(..., min_length=1)
+
+
+class OAuthEmailCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    state_token: str = Field(..., alias="stateToken", min_length=1)
+    email: str = Field(..., min_length=1)
+
+
+class OAuthEmailVerifyRequest(OAuthEmailCodeRequest):
+    code: str = Field(..., min_length=1)
 
 
 class SignupConsent(BaseModel):
@@ -1361,6 +1381,68 @@ async def get_user_answers(
     }
 
 
+_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
+def _own_email(raw: str) -> str:
+    """An address an account may hold: well formed, and one mail can reach."""
+    email = raw.strip()
+    if not _EMAIL_FORMAT.match(email) or is_placeholder_email(email):
+        raise UnprocessableEntityError(
+            "Invalid email address format", {"reason": "invalid_email"}
+        )
+    return email
+
+
+def _email_taken() -> ConflictError:
+    return ConflictError("Email already registered", {"reason": "email_taken"})
+
+
+async def _send_email_code(request: Request, email: str) -> None:
+    """Mail a code proving ownership of ``email``: the sign-up code, with its
+    per-address quota, the site's mail allowance and its limit on wrong
+    guesses."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.verification_service import EmailVerificationService
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(redis).send_verification_code(
+            email.lower(), resolved_client_address(request)
+        )
+    finally:
+        await redis.aclose()
+
+
+async def _check_email_code(request: Request, email: str, code: str) -> None:
+    """Spend ``code`` against ``email``, counted like the sign-up check."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import ClientFailureBudget
+    from app.domain.user.verification_service import EmailVerificationService
+
+    client = resolved_client_address(request)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        budget = ClientFailureBudget(redis, "email_code")
+        wait = await budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        if not await EmailVerificationService(redis).verify_code(
+            email.lower(), code.strip()
+        ):
+            raise UnprocessableEntityError(
+                "Invalid or expired verification code",
+                {"reason": "invalid_email_code"},
+            )
+        await budget.refund(client)
+    finally:
+        await redis.aclose()
+
+
 @router.post(
     "/verify/email",
     summary="Send registration email verification code",
@@ -1611,6 +1693,104 @@ async def get_current_user(
     }
 
 
+# How recent the sign-in behind a request must be for it to add the account's
+# first email. That address is what the account is recovered through, so a
+# session taken from its owner must not be able to attach one of its own; and
+# an account without an address usually has nothing else to confirm with.
+ADD_EMAIL_SIGN_IN_WINDOW = timedelta(minutes=15)
+
+
+async def _account_without_email(
+    auth_user: AuthUserInfo,
+    auth_service: UserAuthService,
+    session: AsyncSession,
+    session_id: uuid.UUID | None,
+):
+    """The caller's account, refused once it holds an address of its own
+    (replacing one is a different operation, with its own confirmation), or
+    when the caller did not sign in within ``ADD_EMAIL_SIGN_IN_WINDOW``.
+    Refreshing does not count as signing in: it keeps the session's start."""
+    try:
+        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+    except ValueError:
+        raise NotFoundError("User not found") from None
+    if not is_placeholder_email(user.email):
+        raise ConflictError(
+            "This account already has an email address", {"reason": "email_present"}
+        )
+    started = None
+    if session_id is not None:
+        started = await session.scalar(
+            select(UserSession.created_at).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user.id,
+                UserSession.revoked_at.is_(None),
+            )
+        )
+    if started is None or datetime.now(UTC) - started > ADD_EMAIL_SIGN_IN_WINDOW:
+        raise ForbiddenError(
+            "Sign in again to add an email address", {"reason": "reauth_required"}
+        )
+    return user, profile
+
+
+@router.post(
+    "/me/email/code",
+    summary="Send a code to the address an account without one is adding",
+)
+async def send_add_email_code(
+    payload: AddEmailCodeRequest,
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
+) -> dict:
+    await _account_without_email(auth_user, auth_service, session, session_id)
+    email = _own_email(payload.email)
+    if await auth_service.get_user_by_email(email) is not None:
+        raise _email_taken()
+    await _send_email_code(request, email)
+    return {"code": 200, "message": "Verification code sent."}
+
+
+@router.post(
+    "/me/email",
+    summary="Add a verified email to an account that has none",
+)
+async def add_email(
+    payload: AddEmailRequest,
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
+) -> dict:
+    from sqlalchemy.exc import IntegrityError
+
+    user, profile = await _account_without_email(
+        auth_user, auth_service, session, session_id
+    )
+    email = _own_email(payload.email)
+    # Before the code is spent: an address that cannot be taken should not
+    # cost the person their code.
+    if await auth_service.get_user_by_email(email) is not None:
+        raise _email_taken()
+    await _check_email_code(request, email, payload.code)
+    try:
+        await UserRepository(session=session).update_email(user, email)
+    except IntegrityError:
+        raise _email_taken() from None
+    user_dto = await auth_service.build_user_dto(
+        user=user, profile=profile, viewer_id=user.id
+    )
+    return {
+        "code": 200,
+        "message": "Email added.",
+        "data": {"user": user_dto},
+    }
+
+
 @router.get(
     "/me/auth-methods",
     summary="How the signed-in user can confirm their identity",
@@ -1653,7 +1833,6 @@ def _email_code_confirms(email: str | None, *, two_factor: bool) -> bool:
     Not with two-step verification: the mailbox alone would then be enough to
     turn it off. Not for a placeholder address, which nobody reads.
     """
-    from app.domain.user.services import is_placeholder_email
 
     return not two_factor and not is_placeholder_email(email)
 
@@ -2097,7 +2276,6 @@ async def request_sign_in_code(
 
     from app.core.background import spawn
     from app.core.client_address import resolved_client_address
-    from app.domain.user.services import is_placeholder_email
     from app.domain.user.verification_service import (
         EmailCodePurpose,
         EmailVerificationService,
@@ -2139,7 +2317,6 @@ async def verify_sign_in_code(
 
     from app.core.client_address import resolved_client_address
     from app.domain.user.login_security import ClientFailureBudget, TOTPService
-    from app.domain.user.services import is_placeholder_email
     from app.domain.user.verification_service import (
         EmailCodePurpose,
         EmailVerificationService,
@@ -3724,6 +3901,14 @@ def _decode_oauth_state_token(token: str) -> tuple[str, dict, str]:
     return str(claims["provider"]), dict(claims["info"]), jti
 
 
+def _reissue_oauth_state_token(token: str, **info: str) -> str:
+    """The same stateToken — same ``jti``, same expiry — with ``info`` added
+    to its userInfo. Spending either one spends both."""
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims["info"] = {**claims["info"], **info}
+    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
+
+
 async def _redeem_oauth_state_token(jti: str) -> bool:
     """Spend a decoded stateToken. True exactly once; fails closed."""
     from app.core.single_use_state import SingleUseUnavailableError, claim
@@ -3812,6 +3997,32 @@ async def _pop_oauth_pending(session_id: str) -> dict | None:
         return json.loads(raw) if raw else None
     finally:
         await redis.aclose()
+
+
+async def _start_oauth_ownership(
+    provider_id: str, user_info: dict, owner
+) -> dict[str, str]:
+    """Hand an identity whose email belongs to ``owner`` to the verify page,
+    where the person proves they hold that account before it is linked —
+    never linked on the email alone. Returns the verify page's query."""
+    import secrets
+    import time
+
+    session_id = (
+        f"oauth_password_{provider_id}_{user_info.get('id')}_"
+        f"{int(time.time() * 1000)}_{secrets.token_hex(4)}"
+    )
+    await _store_oauth_pending(
+        session_id,
+        {
+            "type": "password",
+            "providerId": provider_id,
+            "userInfo": user_info,
+            "userId": owner.id,
+            "username": owner.username,
+        },
+    )
+    return {"type": "password", "email": owner.username, "sessionId": session_id}
 
 
 async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
@@ -4058,29 +4269,12 @@ async def handle_oauth_callback(
             conflict_user = await auth_service.get_user_by_email(user_info.email)
 
         if conflict_user is not None:
-            import secrets as _secrets
-            import time as _time
-
-            session_id = (
-                f"oauth_password_{provider_id}_{user_info.id}_"
-                f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"
-            )
-            await _store_oauth_pending(
-                session_id,
-                {
-                    "type": "password",
-                    "providerId": provider_id,
-                    "userInfo": info_dict,
-                    "userId": conflict_user.id,
-                    "username": conflict_user.username,
-                },
-            )
             return RedirectResponse(
                 _oauth_frontend_url(
                     settings.frontend_oauth_verify_path,
-                    type="password",
-                    email=conflict_user.username,
-                    sessionId=session_id,
+                    **await _start_oauth_ownership(
+                        provider_id, info_dict, conflict_user
+                    ),
                 ),
                 status_code=302,
             )
@@ -4119,11 +4313,6 @@ async def get_oauth_state(
     suggested_username, suggested_nickname = await _suggest_oauth_identity(
         auth_service, user_info
     )
-    email_conflict = False
-    if user_info.get("email"):
-        email_conflict = (
-            await auth_service.get_user_by_email(user_info["email"]) is not None
-        )
     return {
         "code": 200,
         "message": "Get OAuth state successfully.",
@@ -4132,7 +4321,57 @@ async def get_oauth_state(
             "userInfo": user_info,
             "suggestedUsername": suggested_username,
             "suggestedNickname": suggested_nickname,
-            "emailConflict": email_conflict,
+        },
+    }
+
+
+@router.post(
+    "/auth/oauth/email/code",
+    summary="Send a code to the email a new OAuth account will hold",
+)
+async def send_oauth_email_code(
+    payload: OAuthEmailCodeRequest, request: Request
+) -> dict:
+    _decode_oauth_state_token(payload.state_token)
+    await _send_email_code(request, _own_email(payload.email))
+    return {"code": 200, "message": "Verification code sent."}
+
+
+@router.post(
+    "/auth/oauth/email/verify",
+    summary="Verify the email a new OAuth account will hold",
+)
+async def verify_oauth_email(
+    payload: OAuthEmailVerifyRequest,
+    request: Request,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Answers with either the stateToken again, now carrying the verified
+    address that account creation requires, or — when the address belongs to
+    an account already — the verify page where that account is proven and
+    linked, exactly as for a provider email that matches one."""
+    provider_id, user_info, jti = _decode_oauth_state_token(payload.state_token)
+    email = _own_email(payload.email)
+    await _check_email_code(request, email, payload.code)
+
+    owner = await auth_service.get_user_by_email(email)
+    if owner is None:
+        return {
+            "code": 200,
+            "message": "Email verified.",
+            "data": {
+                "stateToken": _reissue_oauth_state_token(
+                    payload.state_token, verifiedEmail=email
+                )
+            },
+        }
+    if not await _redeem_oauth_state_token(jti):
+        raise AuthenticationRequiredError("Invalid or expired OAuth state token")
+    return {
+        "code": 200,
+        "message": "Email belongs to an existing account.",
+        "data": {
+            "ownership": await _start_oauth_ownership(provider_id, user_info, owner)
         },
     }
 
@@ -4250,6 +4489,11 @@ async def oauth_create_user(
         provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    # Set only by /auth/oauth/email/verify: every account starts with an
+    # address it can be recovered through, proven by a code sent to it.
+    email = user_info.get("verifiedEmail")
+    if not email:
+        return _oauth_error_redirect("EMAIL_UNVERIFIED", "Email not verified")
 
     if not is_valid_username(username):
         return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
@@ -4307,12 +4551,18 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
+    # Registered by someone else since it was verified.
+    owner = await auth_service.get_user_by_email(email)
+    if owner is not None:
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_oauth_verify_path,
+                **await _start_oauth_ownership(provider_id, user_info, owner),
+            ),
+            status_code=302,
+        )
 
     try:
-        email = (
-            user_info.get("email")
-            or f"oauth-{provider_id}-{user_info.get('id')}@placeholder.internal"
-        )
         try:
             user, _profile = await auth_service.register_oauth_decision(
                 email=email,
