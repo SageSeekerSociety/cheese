@@ -83,6 +83,62 @@ def test_exited_session_with_retained_terminal_allows_transfer(
         socket.unlink(missing_ok=True)
 
 
+def test_a_running_session_is_asked_to_stop_before_its_history_moves(
+    tmp_path, monkeypatch, capsys
+):
+    """The pane's program is told to stop; the transfer waits until it has."""
+    from app.domain.agent.harness.claude_code.remote_execution.session_transfer import (
+        transfer,
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    session_home = tmp_path / ".cheese/home" / project / resource
+    (session_home / ".cheese").mkdir(parents=True)
+    (session_home / ".claude").mkdir()
+    work = session_home / "room"
+    checksum = subprocess.check_output(["cksum"], input=str(work).encode())
+    session = "cheese_" + checksum.decode().split()[0]
+    socket = Path("/tmp") / ("cheese-transfer-" + uuid.uuid4().hex[:12] + ".sock")
+    config = tmp_path / "tmux.conf"
+    config.write_text("set -g remain-on-exit on\n")
+    stopped = tmp_path / "stopped"
+    command = ["tmux", "-S", str(socket)]
+    subprocess.run(
+        [
+            *command,
+            "-f",
+            str(config),
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            f"trap 'touch {stopped}; exit 0' TERM; while :; do sleep 0.1; done",
+        ],
+        check=True,
+    )
+    (session_home / ".cheese/environment-session.json").write_text(
+        json.dumps([str(socket), session])
+    )
+    payload = {"project": project, "resource": resource, "action": "stop"}
+    try:
+        transfer(payload)
+        assert json.loads(capsys.readouterr().out) == {"stopped": False}
+        deadline = time.monotonic() + 5
+        while not stopped.exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        while True:
+            transfer(payload)
+            if json.loads(capsys.readouterr().out) == {"stopped": True}:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+    finally:
+        subprocess.run([*command, "kill-server"], check=False, capture_output=True)
+        socket.unlink(missing_ok=True)
+
+
 @pytest.mark.anyio
 async def test_history_transfer_preserves_large_transcripts_and_subagents(tmp_path):
     project, resource, resume = uuid.uuid4(), uuid.uuid4(), str(uuid.uuid4())

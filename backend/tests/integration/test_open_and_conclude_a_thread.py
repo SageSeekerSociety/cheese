@@ -13,7 +13,7 @@ names another room's work, a thread that already finished.
 import uuid
 
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, session_token
+from tests.integration.conftest import chat_ws_url, post_project, session_token
 
 
 def _bearer(handle: str) -> dict:
@@ -21,9 +21,7 @@ def _bearer(handle: str) -> dict:
 
 
 def _room(client, owner: str = "alice") -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -115,11 +113,11 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
             pass
     _wait_work_idle()
     stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
-    stub_hooks.hook(
+    _reports_back(
+        stub_hooks,
         uuid.UUID(room_id),
-        hook_event_name="SubagentStop",
         agent_id="worker-1",
-        last_assistant_message="索引加好了，慢查询从 2.1s 降到 40ms",
+        summary="索引加好了，慢查询从 2.1s 降到 40ms",
     )
     _pump(client, room_id)
 
@@ -158,6 +156,19 @@ def test_closing_something_that_is_not_a_thread_is_refused(client):
 # —— 看板上的这条活 ——————————————————————————————————————————————
 
 
+def _reports_back(stub, topic_id, *, agent_id: str, summary: str) -> None:
+    """一个分身报「做完了」：它那条任务的 task_notification，收尾话在 summary 里。"""
+    stub.record(
+        topic_id,
+        type="system",
+        subtype="task_notification",
+        task_id=agent_id,
+        tool_use_id="call-1",
+        status="completed",
+        summary=summary,
+    )
+
+
 def _shown(client, room_id: str, task_id: str) -> dict:
     listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
         "data"
@@ -168,8 +179,7 @@ def _shown(client, room_id: str, task_id: str) -> dict:
 def _pump(client, room_id: str, rounds: int = 20) -> None:
     """把 TestClient 那条事件循环叫醒几次。
 
-    钩子是从测试这条线程塞进它队列里的，塞的时候唤不醒它（跨线程 `put_nowait` 叫
-    不动等在那儿的 waiter）；它下一次醒来是因为有请求进来。
+    记录落进房间是读者那条循环的事；测试这边只能一边问一边等它。
     """
     import time
 
@@ -195,11 +205,11 @@ def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
 
 def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     """一个分身可以报好几次完成（把长命令丢进自己的后台再停下来等也算一次），而且
-    还会飘来来路不明的完成通知。所以一条 SubagentStop 落在这条活的时间线上之后，
+    还会飘来来路不明的完成通知。所以一条分身的完成通知落在这条活的时间线上之后，
     看板绝不能把它翻成「已收工」—— 只有房间验过货、落了结论才算。"""
     _, room_id = _room(client)
     task = _split(client, room_id)
-    # 一轮普通的轮次，房间因此有了一块活着的屏幕（也才有钩子可以推）。
+    # 一轮普通的轮次，房间因此有了一个活着的会话（分身的记录才有地方来）。
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
@@ -210,11 +220,11 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     _pump(client, room_id)
     assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
 
-    stub_hooks.hook(
+    _reports_back(
+        stub_hooks,
         uuid.UUID(room_id),
-        hook_event_name="SubagentStop",
         agent_id="worker-1",
-        last_assistant_message="我这边跑完了",
+        summary="我这边跑完了",
     )
     _pump(client, room_id)
 
@@ -240,8 +250,8 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
     Both halves are measured behaviour, not preference. A worker stops more than
     once — parking a long command in its own background reads as finishing —
     so an early "跑起来了" must not stand as the answer. And after the session's
-    own Stop, a SubagentStop arrives from something inside Claude Code,
-    and a fragment of a prompt where the closing message should be — a worker
+    own result, a task notification arrives from something inside Claude Code,
+    with a fragment of a prompt where the closing message should be — a worker
     this session never spawned. Letting that land would put a stranger's
     half-sentence on somebody's card.
     """
@@ -255,19 +265,18 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
 
     stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     for message in ("测试跑起来了，我等它", "全绿，3617 passed"):
-        stub_hooks.hook(
+        _reports_back(
+            stub_hooks,
             uuid.UUID(room_id),
-            hook_event_name="SubagentStop",
             agent_id="worker-1",
-            last_assistant_message=message,
+            summary=message,
         )
         _pump(client, room_id)
-    stub_hooks.hook(
+    _reports_back(
+        stub_hooks,
         uuid.UUID(room_id),
-        hook_event_name="SubagentStop",
         agent_id="a-stranger",
-        agent_type="general-purpose",
-        last_assistant_message="…请用一句话概括",
+        summary="…请用一句话概括",
     )
     _pump(client, room_id)
 

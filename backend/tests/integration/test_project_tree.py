@@ -6,12 +6,12 @@ import uuid
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, **kw) -> dict:
     body = {"name": "P", **kw}
-    return client.post("/projects", json=body).json()["data"]
+    return post_project(client, json=body).json()["data"]
 
 
 def test_project_create_autocreates_root_topic(client):
@@ -109,13 +109,13 @@ def _card_messages(client, room_id: str, task_id: str) -> list[dict]:
 def _record_screens(stub_hooks) -> list[str]:
     """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
     seen: list[str] = []
-    original = stub_hooks.ensure_ready
+    original = stub_hooks.ensure
 
-    async def _spy(**kw):
-        seen.append(str(kw["session"].topic_id))
-        return await original(**kw)
+    async def _spy(session, opening):
+        seen.append(str(session.topic_id))
+        return await original(session, opening)
 
-    stub_hooks.ensure_ready = _spy
+    stub_hooks.ensure = _spy
     return seen
 
 

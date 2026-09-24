@@ -12,7 +12,6 @@ harness. What a harness puts IN the holes is that harness's own test.
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 import time
@@ -42,7 +41,6 @@ def _machine(tmp_path):
             "CHEESE_WORK": str(work),
             "CHEESE_TOPIC": "11111111-1111-1111-1111-111111111111",
             "CHEESE_PROJECT": "22222222-2222-2222-2222-222222222222",
-            "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
             "CHEESE_TOKEN": "scoped-token",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
         },
@@ -103,13 +101,8 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
         "PIP_CACHE_DIR": str(store / "pip-cache"),
     }
     # And the platform put its own half on the machine around it.
-    for name in ("cheese", "cheese-hook", "cheese-drain", "cheese-environment.py"):
+    for name in ("cheese", "gh", "fj", "cheese-environment.py", "cheese-tunnel.py"):
         assert (home / ".cheese" / name).is_file(), name
-    drain = dict(
-        line.split("=", 1)
-        for line in (home / ".cheese/cheese-drain.env").read_text().splitlines()
-    )
-    assert drain["CHEESE_TOKEN"] == '"scoped-token"'
 
 
 def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
@@ -120,7 +113,7 @@ def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
         env,
         prepare=_harness(
             tmp_path,
-            f'command -v cheese > "{seen}"\ncommand -v cheese-hook >> "{seen}"\n',
+            f'command -v cheese > "{seen}"\ncommand -v gh >> "{seen}"\n',
         ),
         command="$AGENT",
     )
@@ -128,7 +121,7 @@ def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
     assert result.returncode == 0, result.stderr
     assert seen.read_text().split() == [
         str(home / ".cheese/cheese"),
-        str(home / ".cheese/cheese-hook"),
+        str(home / ".cheese/gh"),
     ]
 
 
@@ -141,53 +134,6 @@ def test_the_agents_exit_status_is_the_launchers(tmp_path):
         command="$AGENT",
     )
     assert result.returncode == 17, result.stderr
-
-
-def test_a_slow_drainer_cannot_delay_the_agents_exit(tmp_path):
-    _home, _work, env = _machine(tmp_path)
-    drain = tmp_path / "drain.pid"
-    prepare = (
-        _harness(
-            tmp_path,
-            f'i=0\nwhile [ ! -s "{drain}" ] && [ "$i" -lt 100 ]; do '
-            "sleep 0.01; i=$((i + 1)); done\n"
-            f'[ -s "{drain}" ] || exit 99\nexit 17\n',
-        )
-        + f"""cat > "$HOME/.cheese/cheese-drain" <<'SH'
-trap '' TERM
-printf '%s' "$$" > "{drain}"
-while kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null; do sleep 0.05; done
-SH
-"""
-    )
-
-    drain_pid = None
-    drain_gone = False
-    try:
-        result = _run(tmp_path, env, prepare=prepare, command="$AGENT", timeout=2)
-
-        assert result.returncode == 17, result.stderr
-        drain_pid = int(drain.read_text())
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            try:
-                os.kill(drain_pid, 0)
-            except ProcessLookupError:
-                drain_gone = True
-                break
-            time.sleep(0.02)
-        else:
-            pytest.fail("the tethered drainer outlived its launcher")
-    finally:
-        if drain_pid is None and drain.exists():
-            drain_pid = int(drain.read_text())
-        if drain_pid is not None and not drain_gone:
-            try:
-                os.kill(drain_pid, 0)
-            except ProcessLookupError:
-                pass
-            else:
-                os.kill(drain_pid, signal.SIGKILL)
 
 
 def test_the_environment_runner_wraps_whichever_harness_was_asked_for(tmp_path):
@@ -227,7 +173,7 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         # under it without knowing where the machine put it.
         configure=f'printf "configure:$HOME " >> "{order}"\n',
         # The platform CLI is on PATH by now, so this hole can report itself.
-        credentials=f'printf "credentials:$(command -v cheese-hook) " >> "{order}"\n',
+        credentials=f'printf "credentials:$(command -v cheese) " >> "{order}"\n',
         # And by `prepare` the cwd is the workdir the agent will run in.
         prepare=f'printf "prepare:$(pwd) " >> "{order}"\n'
         + _harness(tmp_path, "true\n"),
@@ -242,14 +188,14 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         "prepare",
     ]
     assert stages[0] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
-    assert stages[1].endswith("/.cheese/cheese-hook")
+    assert stages[1].endswith("/.cheese/cheese")
     assert stages[2] == f"prepare:{work.resolve()}"
 
 
 def _skeleton() -> str:
     """The launcher's own shell, without the files it merely carries.
 
-    A heredoc body is a payload — the platform CLI, the drainer, the tunnel
+    A heredoc body is a payload — the platform CLI, the forge CLI, the tunnel
     helper — and what those say about any harness is their own business. What
     this module must not know is in the lines around them.
     """
@@ -272,10 +218,10 @@ def _skeleton() -> str:
     [
         "CLAUDE_BIN",
         "CLAUDE_CONFIG_DIR",
-        "CLAUDE_BG_RENDEZVOUS_SOCK",
+        "CHEESE_CLAUDE_COMMAND",
+        "CLAUDE_RUNNER",
         "--append-system-prompt-file",
         "--resume",
-        "--dangerously-skip-permissions",
         "cheese-system-prompt.md",
         "settings.json",
         "remote-execution",
@@ -335,7 +281,6 @@ def test_one_channel_carries_whichever_harness_it_was_handed(plan):
     command, env = machine_launcher.screen_launch(
         place,
         plan.on(place),
-        hook_url="https://cheese.example/api/hooks/T",
         token="tok",
     )
     assert command[:2] == ["bash", "-lc"]
@@ -346,7 +291,7 @@ def test_one_channel_carries_whichever_harness_it_was_handed(plan):
     assert env["CHEESE_API"] == place.api_base
     assert env["GIT_COMMITTER_NAME"] == "芝士"
     # And the platform's own half of the script, whoever filled the holes.
-    for written in ("cheese-environment.py", "cheese-hook", "cheese-drain"):
+    for written in ("cheese-environment.py", "cheese", "gh"):
         assert f'cat > "$HOME/.cheese/{written}"' in command[2]
 
 
@@ -364,7 +309,7 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
         topic_id="",
         agent_handle="",
     )
-    env = machine_launcher.screen_env(bare, hook_url="http://h", token="t")
+    env = machine_launcher.screen_env(bare, token="t")
     assert not {
         "CHEESE_API",
         "CHEESE_PROJECT",
@@ -374,7 +319,7 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
     } & set(env)
     assert "CHEESE_EXECUTION_TARGET" not in env
 
-    placed = machine_launcher.screen_env(_place(), hook_url="http://h", token="t")
+    placed = machine_launcher.screen_env(_place(), token="t")
     assert placed["CHEESE_TOPIC"] == "T"
 
 
@@ -623,7 +568,6 @@ def _room(tmp_path, project: str, room: str, store: str | None = "$HOME"):
         "CHEESE_WORK": str(work),
         "CHEESE_TOPIC": room,
         "CHEESE_PROJECT": project,
-        "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
         "CHEESE_TOKEN": "scoped-token",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
     }
@@ -665,7 +609,7 @@ def _installer_env(env, dump):
         f'printf "%s=%s\\n" {name} "${name}" >> "{dump}"\n' for name in _STORE_VARS
     )
     # Exercise the synchronous store contract without starting unrelated
-    # drainer and detached maintenance processes.
+    # detached maintenance processes.
     result = subprocess.run(
         ["sh", "-c", f'REAL_HOME="$HOME"\n{launcher[start:end]}{probe}'],
         env=env,
@@ -836,7 +780,6 @@ def test_a_machine_owners_own_caches_are_never_swept(tmp_path):
         "CHEESE_STORE": str(tmp_path / "store"),
         "CHEESE_TOPIC": "t",
         "CHEESE_PROJECT": "p",
-        "CHEESE_HOOK_URL": "http://127.0.0.1:1/hooks",
         "CHEESE_TOKEN": "scoped-token",
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
     }

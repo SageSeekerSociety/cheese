@@ -46,7 +46,8 @@
     "usernameRequired": "请输入用户名",
     "displayNameRequired": "请输入显示名称",
     "passwordRequired": "请输入密码",
-    "confirmPasswordRequired": "请再次输入密码"
+    "confirmPasswordRequired": "请再次输入密码",
+    "emailInvalid": "请输入有效的邮箱地址"
   },
   "signIn": {
     "title": "登录",
@@ -98,7 +99,18 @@
     "resent": "验证码已重新发送",
     "resendFailed": "发送失败，请稍后重试",
     "accountCreated": "注册成功",
-    "failed": "验证失败，请重试"
+    "failed": "验证失败，请重试",
+    "changeEmail": "更换邮箱"
+  },
+  "addEmail": {
+    "title": "添加邮箱",
+    "lede": "邮箱用于找回账号和登录",
+    "send": "发送验证码",
+    "submit": "验证并继续",
+    "added": "邮箱已添加",
+    "signOut": "退出登录",
+    "signInAgain": "请重新登录后再添加邮箱",
+    "emailTaken": "该邮箱已被其他账号使用"
   },
   "recover": {
     "title": "找回密码",
@@ -121,6 +133,7 @@
     "totpLede": "输入身份验证器应用中的 6 位验证码",
     "backupLede": "输入一个 8 位备用码",
     "lockout": "连续输错 5 次将锁定 15 分钟",
+    "trustDevice": "在这台设备上 30 天内不再询问",
     "totpSubmit": "验证",
     "backupSubmit": "验证备用码",
     "totpRequired": "请输入 6 位数字验证码",
@@ -168,7 +181,8 @@
       "usernameReserved": "该用户名为平台保留，请换一个",
       "usernameTaken": "该用户名已被使用",
       "verificationFailed": "身份验证失败，请重试",
-      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号"
+      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号",
+      "emailUnverified": "请先验证邮箱"
     },
     "success": {
       "processing": "正在登录",
@@ -197,7 +211,8 @@
       "setPassword": "同时设置密码",
       "setPasswordHint": "设置后也可以用用户名和密码登录",
       "bindSubmit": "关联并登录",
-      "unavailable": "无法继续登录"
+      "unavailable": "无法继续登录",
+      "emailBelongsToAccount": "该邮箱已被现有账号使用"
     }
   },
   "sudo": {
@@ -219,7 +234,6 @@
       "initTOTP": "开启两步验证",
       "disableTOTP": "关闭两步验证",
       "generateBackupCodes": "生成新的备用码",
-      "update2FASettings": "修改两步验证设置",
       "addPasskey": "添加通行密钥",
       "deletePasskey": "删除通行密钥",
       "changePassword": "修改密码",
@@ -271,6 +285,7 @@
     "methodBackupCode": "备用码登录",
     "methodSignup": "注册后登录",
     "methodOAuth": "{provider} 登录",
+    "trusted": "已信任",
     "signOutDevice": "退出",
     "signOutOthers": "退出其他设备",
     "signOutOthersTitle": "退出其他设备",

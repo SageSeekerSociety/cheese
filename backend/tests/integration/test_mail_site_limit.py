@@ -173,3 +173,31 @@ def test_a_refusal_for_one_address_does_not_spend_the_allowance(
 
     assert _sign_up_code(api_client, _address()).status_code == 200
     assert len(outbox.sent) == LIMIT
+
+
+def test_codes_for_an_accounts_first_email_count_against_the_allowance(
+    _portal, api_client: TestClient, user_client: UserCreator, outbox: Outbox
+):
+    from app.api.routes.users import _issue_oauth_state_token
+
+    placeholder = user_client.create_user(
+        email=f"oauth-ruc-{uuid.uuid4().hex[:8]}@placeholder.internal"
+    )
+    token = user_client.login(api_client, placeholder.username, placeholder.password)
+    state = _portal.call(
+        _issue_oauth_state_token, "ruc", {"id": uuid.uuid4().hex, "email": None}
+    )
+    _fill(api_client, outbox)
+
+    new_account = api_client.post(
+        "/users/auth/oauth/email/code", json={"stateToken": state, "email": _address()}
+    )
+    adding = api_client.post(
+        "/users/me/email/code",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": _address()},
+    )
+
+    assert _refused_for_the_site(new_account), new_account.text
+    assert _refused_for_the_site(adding), adding.text
+    assert len(outbox.sent) == LIMIT

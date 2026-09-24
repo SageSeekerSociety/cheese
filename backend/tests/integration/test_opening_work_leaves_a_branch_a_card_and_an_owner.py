@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 
 from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.models import AgentSession
+from tests.integration.conftest import post_project
 
 _LEASE = {
     "kind": "device",
@@ -31,7 +32,7 @@ def _room_with_a_session_on_a_machine(client) -> tuple[str, str]:
     先让它有一条，后面「不多行、不多份」才说得出话 —— 从零行开始的话，写侧坏成
     什么样这条测试都是绿的。
     """
-    project = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
     project_id = project.json()["data"]["id"]
     room_id = client.post(
         "/topics",

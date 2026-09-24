@@ -4,12 +4,16 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _rooms(client):
-    project = client.post(
-        "/projects", json={"name": "Permissions", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Permissions", "owner_handle": "alice"}
     ).json()["data"]
     other = client.post(
         "/topics",
@@ -151,32 +155,22 @@ def test_removing_all_credentials_cannot_bypass_membership(client):
 
 
 @pytest.mark.parametrize("is_agent", [False, True])
-def test_project_role_controls_management_for_both_identities(client, is_agent):
+def test_team_standing_controls_management_for_both_identities(client, is_agent):
+    """Managing the project is being an owner or admin of its team — the same
+    rule for a person and for an agent's credential."""
     project, origin, _ = _rooms(client)
     handle = _seated_agent(client, origin) if is_agent else "bob"
     auth = _agent(client, project, origin) if is_agent else session_auth_headers(handle)
-    roster = f"/projects/{project['id']}/members"
-    owner = session_auth_headers("alice")
-    added = client.post(roster, json={"user_handle": handle}, headers=owner)
-    assert added.status_code == 200, added.text
+    invitations = f"/projects/{project['id']}/invitations"
+    join_project_team(client, project["id"], handle)
+    join_project_team(client, project["id"], "carol")
     assert (
-        client.post(roster, json={"user_handle": "carol"}, headers=auth).status_code
+        client.post(invitations, json={"user_handle": "dave"}, headers=auth).status_code
         == 403
     )
+    _promote(client, project["id"], handle)
     assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "lead"}, headers=auth
-        ).status_code
-        == 403
-    )
-    assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "lead"}, headers=owner
-        ).status_code
-        == 200
-    )
-    assert (
-        client.post(roster, json={"user_handle": "carol"}, headers=auth).status_code
+        client.post(invitations, json={"user_handle": "dave"}, headers=auth).status_code
         == 200
     )
     assert (
@@ -187,13 +181,35 @@ def test_project_role_controls_management_for_both_identities(client, is_agent):
         ).status_code
         == 200
     )
-    assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "member"}, headers=auth
-        ).status_code
-        == 200
-    )
-    assert client.delete(f"{roster}/carol", headers=auth).status_code == 403
+
+
+def _promote(client, pid: str, handle: str) -> None:
+    """Make ``handle`` an admin of the project's team."""
+    import asyncio
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            project = await session.get(Project, uuid.UUID(pid))
+            user = await UserRepository(session).get_by_username(handle)
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.user_id == user.id,
+                    TeamUserRelation.deleted_at.is_(None),
+                )
+                .values(role=TeamMemberRole.ADMIN)
+            )
+            await session.commit()
+
+    asyncio.run(_go())
 
 
 def test_revoked_room_membership_also_closes_agent_write_gate(client):
@@ -296,6 +312,7 @@ def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
     auth = _agent(client, project, origin)
     handle = _seated_agent(client, origin)
     endpoint = f"/topics/{origin}/members"
+    join_project_team(client, project["id"], "bob")
     assert (
         client.post(endpoint, json={"handle": "bob", "actor": "alice"}).status_code
         == 401
@@ -323,14 +340,9 @@ def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(cli
     project, origin, _ = _rooms(client)
     endpoint = f"/projects/{project['id']}/agent-credential"
     owner = session_auth_headers("alice")
-    assert (
-        client.post(
-            f"/projects/{project['id']}/members",
-            json={"user_handle": _seated_agent(client, origin), "role": "lead"},
-            headers=owner,
-        ).status_code
-        == 200
-    )
+    # The agent answers for the project the same way a person would: as an
+    # admin of its team.
+    join_project_team(client, project["id"], _seated_agent(client, origin), admin=True)
     issued = client.post(endpoint, json={}, headers=_agent(client, project, origin))
     auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
     second = client.post(endpoint, json={}, headers=auth)
@@ -356,24 +368,16 @@ def test_turn_memory_remains_available_with_just_its_room_membership(client):
     assert response.status_code == 200, response.text
 
 
-def test_cloud_management_requires_role_even_with_an_agent_credential(client):
+def test_cloud_management_requires_team_standing_even_with_an_agent_credential(
+    client,
+):
     project, origin, _ = _rooms(client)
     auth = _agent(client, project, origin)
     endpoint = f"/projects/{project['id']}/machines"
-    owner = session_auth_headers("alice")
     handle = _seated_agent(client, origin)
-    roster = f"/projects/{project['id']}/members"
-    assert (
-        client.post(roster, json={"user_handle": handle}, headers=owner).status_code
-        == 200
-    )
+    join_project_team(client, project["id"], handle)
     assert client.post(endpoint, json={}, headers=auth).status_code == 403
-    assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "lead"}, headers=owner
-        ).status_code
-        == 200
-    )
+    _promote(client, project["id"], handle)
     # No provider is configured in this harness. Reaching that check proves the
     # management grant passed without making an external provisioning request.
     assert client.post(endpoint, json={}, headers=auth).status_code == 422
@@ -381,14 +385,7 @@ def test_cloud_management_requires_role_even_with_an_agent_credential(client):
 
 def test_room_only_credential_cannot_use_project_management_roles(client):
     project, origin, _ = _rooms(client)
-    assert (
-        client.post(
-            f"/projects/{project['id']}/members",
-            json={"user_handle": _seated_agent(client, origin), "role": "lead"},
-            headers=session_auth_headers("alice"),
-        ).status_code
-        == 200
-    )
+    join_project_team(client, project["id"], _seated_agent(client, origin), admin=True)
     auth = _agent(client, project, origin, scope="topic")
     for path, body in (
         ("members", {"user_handle": "bob"}),

@@ -1,52 +1,24 @@
-"""The Claude Code adapter — 第一个 harness，和它的全部私有内部。
+"""The Claude Code adapter, and the whole of what is private to it.
 
-What is inside this package is how ONE harness happens to work, and none of it
-is a fact about running an agent: a spool of hook files because Claude Code has
-no event API, a message assembler because MessageDisplay fires per flush rather
-than per message, a rendezvous socket pinned to one undocumented build, a
-launch script that pre-accepts three first-run dialogs so the first prompt is
-not eaten by a modal. Every one of those is a cost paid to drive a TUI written
-for a person, and the next harness pays none of them.
+What is inside this package is how ONE harness happens to work: a runner that
+holds a headless ``claude -p`` by its stream-json pipes, the translation of its
+records into the room's events, the launcher that pins the build and isolates
+its config, and the remote-execution plugin that sends its tools to the room's
+executor. None of it is a fact about running an agent.
 
 So the boundary is the point. ``tests/unit/test_harness_boundary.py`` holds it:
 outside this package you import from HERE, never from a submodule, and this
 file's export list is the ledger of everything that still crosses. The list is
 a ratchet — adding to it goes red, and so does forgetting to delete a line you
 paid off.
-
-What the list says today, honestly: the transports (tmux / device / cloud) are
-``Channel`` implementations, so they import that one seam and the errors it
-raises. That is the whole crossing — one runtime driven over any channel — and
-what still shows up next to it (a ledger row taking this adapter's names,
-or the hook env a transport still wires by hand) is Claude Code knowledge that
-has not made it across the seam yet.
 """
 
 from app.domain.agent.harness.claude_code.behaviour import declaration
+from app.domain.agent.harness.claude_code.channel import ClaudeCodeChannel
 from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
-    DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
-)
-from app.domain.agent.harness.claude_code.hook_events import (
-    HookRouter,
-    MessageAssembler,
-    hook_router,
-)
-from app.domain.agent.harness.claude_code.hooks_substrate import (
-    SESSION_TOKEN_TTL_S,
-    ActivityTracker,
-    ClaudeCodeRuntime,
-    SpoolBacklog,
-    TopicSubscription,
-    acknowledge_log,
-    drop_device_subscriptions,
-    drop_screen_subscriptions,
-    drop_topic_subscriptions,
-    expire_log,
-    log_cursor,
-    read_log,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
     launch as executor_launch,
@@ -54,46 +26,19 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
-from app.domain.agent.harness.claude_code.remote_execution.client import (
-    REMOTE_CONTROLS,
-)
 from app.domain.agent.harness.claude_code.remote_execution.private import (
     target as private_execution_target,
 )
-from app.domain.agent.harness.claude_code.session_launch import (
-    HARNESS_ENV,
-    build_session_launch,
-    harness_of,
-    hooks_settings,
-)
+from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 
 __all__ = [
-    "executor_launch",
-    "resident_release",
-    "REMOTE_CONTROLS",
-    "private_execution_target",
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
-    "DEVICE_ALIVE_PROBE",
     "DEVICE_TUNNEL_PROBE",
-    "HARNESS_ENV",
-    "SESSION_TOKEN_TTL_S",
-    "ActivityTracker",
+    "ClaudeCodeChannel",
     "ClaudeCodeRuntime",
-    "HookRouter",
-    "MessageAssembler",
-    "SpoolBacklog",
-    "TopicSubscription",
-    "acknowledge_log",
-    "build_session_launch",
     "declaration",
-    "drop_device_subscriptions",
-    "drop_screen_subscriptions",
-    "drop_topic_subscriptions",
-    "expire_log",
-    "harness_of",
-    "hooks_settings",
-    "hook_router",
-    "log_cursor",
-    "read_log",
+    "executor_launch",
+    "private_execution_target",
+    "resident_release",
 ]

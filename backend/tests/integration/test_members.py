@@ -1,121 +1,72 @@
-"""Project membership CRUD over HTTP.
+"""Project membership over HTTP: external members in, and out.
 
-Every write here goes out as the project OWNER: the three write routes are
-authorized against a verified token (see test_members_authz.py), so a call
-without one is a 403 rather than a CRUD result.
+People from the project's team are on its roster because they are on the team;
+someone from outside it comes in as an external member by accepting an
+invitation, and is the one kind of person a manager can take out of the project.
 """
+
+from tests.integration.conftest import add_external_member, new_project
 
 OWNER = "owner-1"
 MISSING_PROJECT = "00000000-0000-0000-0000-000000000000"
 
 
 def _create_project(client, name: str = "Demo") -> str:
-    r = client.post("/projects", json={"name": name, "owner_handle": OWNER})
-    assert r.status_code == 200
-    return r.json()["data"]["id"]
+    return new_project(client, name=name, owner=OWNER)["id"]
 
 
 def _people(client, project_id: str) -> list[dict]:
-    """名册上**人**那些行。
-
-    这一组测的是「谁能被加进项目、改角色、移出去」，那是人的成员表。名册上还有这个
-    项目的 AI 队友（一张名册，队友也在上面），它们不是任何一次写的结果。
-    """
+    """名册上**人**那些行（AI 队友也在名册上，这一组不看它们）。"""
     rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
     return [m for m in rows if not m["agent"]]
 
 
-def test_add_and_list_members(client, bearer):
+def test_external_members_are_listed_after_the_owner(client):
     project_id = _create_project(client)
+    add_external_member(client, project_id, "alice", by=OWNER)
+    add_external_member(client, project_id, "bob", by=OWNER)
 
-    r = client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "alice", "role": "lead"},
-        headers=bearer(OWNER),
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["code"] == 200
-    assert body["data"]["user_handle"] == "alice"
-    assert body["data"]["role"] == "lead"
-    assert body["data"]["project_id"] == project_id
-
-    # role defaults to member when omitted
-    r = client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "bob"},
-        headers=bearer(OWNER),
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["role"] == "member"
-
-    # 名册 = 加进来的人 + 项目所有者（他不是成员表里的一行，见
-    # test_new_project_roster.py），所有者排在最前面。
-    handles = [m["user_handle"] for m in _people(client, project_id)]
-    assert handles == [OWNER, "alice", "bob"]
+    rows = [(m["user_handle"], m["source"]) for m in _people(client, project_id)]
+    assert rows[0] == (OWNER, "owner")
+    assert sorted(rows[1:]) == [("alice", "external"), ("bob", "external")]
 
 
-def test_duplicate_member_rejected(client, bearer):
+def test_a_second_invitation_to_the_same_person_is_rejected(client, bearer):
     project_id = _create_project(client)
-    client.post(
-        f"/projects/{project_id}/members",
+    first = client.post(
+        f"/projects/{project_id}/invitations",
         json={"user_handle": "alice"},
         headers=bearer(OWNER),
     )
+    assert first.status_code == 200
+    again = client.post(
+        f"/projects/{project_id}/invitations",
+        json={"user_handle": "alice"},
+        headers=bearer(OWNER),
+    )
+    assert again.status_code == 422
+
+
+def test_someone_already_in_the_project_is_not_invited(client, bearer):
+    project_id = _create_project(client)
+    add_external_member(client, project_id, "alice", by=OWNER)
     r = client.post(
-        f"/projects/{project_id}/members",
+        f"/projects/{project_id}/invitations",
         json={"user_handle": "alice"},
         headers=bearer(OWNER),
     )
     assert r.status_code == 422
 
 
-def test_update_member_role(client, bearer):
+def test_delete_external_member(client, bearer):
     project_id = _create_project(client)
-    client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "alice", "role": "member"},
-        headers=bearer(OWNER),
-    )
-
-    r = client.put(
-        f"/projects/{project_id}/members/alice",
-        json={"role": "mentor"},
-        headers=bearer(OWNER),
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["role"] == "mentor"
-
-    rows = {
-        m["user_handle"]: m
-        for m in client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    }
-    assert rows["alice"]["role"] == "mentor"
-
-
-def test_update_missing_member_404(client, bearer):
-    project_id = _create_project(client)
-    r = client.put(
-        f"/projects/{project_id}/members/ghost",
-        json={"role": "lead"},
-        headers=bearer(OWNER),
-    )
-    assert r.status_code == 404
-
-
-def test_delete_member(client, bearer):
-    project_id = _create_project(client)
-    client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "alice"},
-        headers=bearer(OWNER),
-    )
+    add_external_member(client, project_id, "alice", by=OWNER)
 
     r = client.delete(f"/projects/{project_id}/members/alice", headers=bearer(OWNER))
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
 
-    # 移出的是 alice；所有者留在名册上——移出成员碰不到他，他不在那张表里。
+    # 移出的是 alice；所有者留在名册上——他不是一条可以移出的记录。
     assert [m["user_handle"] for m in _people(client, project_id)] == [OWNER]
 
 
@@ -129,20 +80,13 @@ def test_endpoints_require_existing_project(client, bearer):
     """A missing project reads as 404 for everyone — the existence check runs
     before the authorization one, so this stays a 404 rather than a 403."""
     r = client.post(
-        f"/projects/{MISSING_PROJECT}/members",
+        f"/projects/{MISSING_PROJECT}/invitations",
         json={"user_handle": "alice"},
         headers=bearer(OWNER),
     )
     assert r.status_code == 404
 
     r = client.get(f"/projects/{MISSING_PROJECT}/members")
-    assert r.status_code == 404
-
-    r = client.put(
-        f"/projects/{MISSING_PROJECT}/members/alice",
-        json={"role": "lead"},
-        headers=bearer(OWNER),
-    )
     assert r.status_code == 404
 
     r = client.delete(
@@ -155,8 +99,8 @@ def test_roster_carries_nickname_and_avatar(client, bearer):
     """聊天面板拿名册渲染作者的名字和头像，所以列表必须带上这两样。
 
     消息里存的 author 是登录 handle（后端有意固定成这个防伪造），前端只能靠这个
-    名册把 handle 换成昵称、把 avatar_id 换成头像图。名册背后没有 fusion 用户档案
-    的 handle（机器人、还没注册的人）拿到的是 avatar_id=null —— 前端据此退回彩色
+    名册把 handle 换成昵称、把 avatar_id 换成头像图。名册上没有用户档案
+    的人拿到的是 avatar_id=null —— 前端据此退回彩色
     首字母，而不是给陌生人配一张默认脸。
     """
     import asyncio
@@ -191,14 +135,7 @@ def test_roster_carries_nickname_and_avatar(client, bearer):
 
     project_id = _create_project(client)
     for handle in ("alice", "nobody"):
-        assert (
-            client.post(
-                f"/projects/{project_id}/members",
-                json={"user_handle": handle},
-                headers=bearer(OWNER),
-            ).status_code
-            == 200
-        )
+        add_external_member(client, project_id, handle, by=OWNER)
 
     rows = {
         m["user_handle"]: m
@@ -206,7 +143,7 @@ def test_roster_carries_nickname_and_avatar(client, bearer):
     }
     assert rows["alice"]["name"] == "爱丽丝"
     assert rows["alice"]["avatar_id"] == 4242
-    # 名册上有、但背后没有用户档案：名字退回 handle，头像为 null。
+    # 有账号、但没有用户档案：名字退回 handle，头像为 null。
     assert rows["nobody"]["name"] == "nobody"
     assert rows["nobody"]["avatar_id"] is None
 
@@ -271,14 +208,7 @@ def test_roster_reports_the_global_default_avatar_as_no_avatar(client, bearer):
 
     project_id = _create_project(client)
     for handle in picks:
-        assert (
-            client.post(
-                f"/projects/{project_id}/members",
-                json={"user_handle": handle},
-                headers=bearer(OWNER),
-            ).status_code
-            == 200
-        )
+        add_external_member(client, project_id, handle, by=OWNER)
 
     rows = {
         m["user_handle"]: m

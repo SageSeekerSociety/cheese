@@ -5,12 +5,12 @@ that trusted override is tested separately from anonymous access. Requests
 with a participant identity still undergo normal membership checks.
 """
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project_with_a_secret(client) -> tuple[str, str]:
     """A project owned by alice, whose root topic holds one sensitive line."""
-    p = client.post("/projects", json={"name": "薪资", "owner_handle": "alice"}).json()[
+    p = post_project(client, json={"name": "薪资", "owner_handle": "alice"}).json()[
         "data"
     ]
     tid = p["root_topic_id"]

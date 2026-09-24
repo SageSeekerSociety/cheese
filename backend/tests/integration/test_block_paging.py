@@ -12,10 +12,11 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from tests.integration.conftest import post_project
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]

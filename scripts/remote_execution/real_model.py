@@ -1,15 +1,13 @@
-"""Smoke-test the native terminal using an existing Claude subscription."""
+"""Smoke-test a room's session, held by the runner, on an existing Claude subscription."""
 
 import argparse
 import json
 import os
-import shlex
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
-from acceptance import client, run, setup, tmux_server
+from acceptance import execution_release, run, setup
 from model_fixture import dump, log
 
 
@@ -24,19 +22,21 @@ def main():
     options = parser.parse_args()
     folder = options.output.resolve()
     folder.mkdir(parents=True)
-    executor, target = setup(folder, options)
-    tmux = tmux_server(folder)
+    # No platform API here: nothing in this smoke reaches it.
+    executor, target = setup(folder, options, "http://127.0.0.1:9")
+    home = folder / "home"
+    center = home / ".cheese/remote-session/forwarded-project"
+    center.mkdir(parents=True)
+    session = None
+    center_fd = None
     try:
-        launch = client.prepare(
-            folder / "central",
-            target,
-            claude=options.claude,
-            extra_args=[
-                "--model",
-                "claude-sonnet-4-6",
-                "--dangerously-skip-permissions",
-            ],
-        )
+        import runner_fixture
+
+        # Written beneath the mount before there is one, and read back through
+        # a descriptor held from before it, so a write that lands centrally
+        # instead of on the executor shows.
+        (center / "target.txt").write_text("CENTER_SENTINEL\n")
+        center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
         credentials_file = Path.home() / ".claude/.credentials.json"
         if credentials_file.exists():
             credentials = json.loads(credentials_file.read_text())
@@ -68,13 +68,10 @@ def main():
             )
         }
         env.update(
-            launch["env"],
-            TERM="xterm-256color",
+            runner_fixture.room_home(home, target),
             CLAUDE_CODE_OAUTH_TOKEN=oauth["accessToken"],
             CLAUDE_CODE_OAUTH_SCOPES=" ".join(oauth.get("scopes", [])),
         )
-        center = Path(launch["cwd"])
-        (center / "target.txt").write_text("CENTER_SENTINEL\n")
         prompt = (
             "Run this acceptance test with the named native tools. "
             "Read target.txt, then Edit BEFORE_EDIT to AFTER_REAL_MODEL. "
@@ -93,38 +90,20 @@ def main():
             },
         )
         log(folder / "progress.jsonl", {"item": "real-model", "status": "started"})
-        run(
-            tmux
-            + [
-                "new-session",
-                "-d",
-                "-s",
-                "agent",
-                "-x",
-                "120",
-                "-y",
-                "40",
-                "-c",
-                str(center),
-                shlex.join(launch["command"]),
-            ],
-            env=env,
+        command = runner_fixture.room_command(
+            home, options.claude, ["--model", "claude-sonnet-4-6"]
         )
-        time.sleep(5)
-        run(tmux + ["send-keys", "-t", "agent", "-l", prompt])
-        run(tmux + ["send-keys", "-t", "agent", "Enter"])
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            terminal = run(tmux + ["capture-pane", "-p", "-t", "agent", "-S", "-300"])
-            (folder / "terminal.txt").write_text(terminal)
-            # The response follows the prompt, which also contains the marker.
-            if "⏺ REAL_MODEL_DONE" in terminal:
-                break
-            time.sleep(1)
+        session = runner_fixture.Session.start(folder, command, env, home)
+        ended = session.turn(prompt, 180)
+        assert "REAL_MODEL_DONE" in (ended.get("result") or ""), ended
+        with open(os.open("target.txt", os.O_RDONLY, dir_fd=center_fd)) as central:
+            assert central.read() == "CENTER_SENTINEL\n"
+        try:
+            os.close(os.open("new.txt", os.O_RDONLY, dir_fd=center_fd))
+        except FileNotFoundError:
+            pass
         else:
-            raise RuntimeError("Real model did not finish; see terminal.txt")
-        assert (center / "target.txt").read_text() == "CENTER_SENTINEL\n"
-        assert not (center / "new.txt").exists()
+            raise AssertionError("Write landed in the central workspace")
         for name, expected in (
             ("target.txt", "AFTER_REAL_MODEL"),
             ("new.txt", "REAL_MODEL_WRITE"),
@@ -134,7 +113,7 @@ def main():
             result = executor.control({"subtype": "read_file", "path": name})
             assert expected in result["contents"], result
         assert "REMOTE_SKILL_SENTINEL" in "".join(
-            p.read_text() for p in (folder / "central/config/projects").rglob("*.jsonl")
+            p.read_text() for p in (home / ".claude/projects").rglob("*.jsonl")
         )
         dump(
             folder / "summary.json",
@@ -148,7 +127,11 @@ def main():
         log(folder / "progress.jsonl", {"item": "real-model", "status": "passed"})
         print(json.dumps({"passed": True, "output": str(folder)}), flush=True)
     finally:
-        subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
+        if center_fd is not None:
+            os.close(center_fd)
+        if session is not None:
+            session.stop(folder / "journal.jsonl")
+        assert execution_release.release_mount(center), center
         subprocess.run(executor.command("stop"), capture_output=True, timeout=20)
 
 

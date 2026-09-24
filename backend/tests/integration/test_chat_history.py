@@ -8,14 +8,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.unit.test_platform_tool_runner import cheese as tools
 
 
 def _room(client):
-    response = client.post(
-        "/projects", json={"name": "History", "owner_handle": "alice"}
-    )
+    response = post_project(client, json={"name": "History", "owner_handle": "alice"})
     assert response.status_code == 200, response.text
     project = response.json()["data"]
     return project["id"], project["root_topic_id"]

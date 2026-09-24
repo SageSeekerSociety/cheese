@@ -9,10 +9,11 @@
 """
 
 from app.domain.memory import redundant
+from tests.integration.conftest import post_project
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "Repo memory"}).json()["data"]["id"]
+    return post_project(client, json={"name": "Repo memory"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str) -> str:

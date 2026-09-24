@@ -1,12 +1,13 @@
 """Project scripts: human stewardship, room pinning, and explicit application."""
 
 from tests.conftest import seed_user
+from tests.integration.conftest import join_project_team, post_project
 
 
 def project(client):
     headers = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
-    response = client.post(
-        "/projects", json={"name": "Environment", "owner_handle": "alice"}
+    response = post_project(
+        client, json={"name": "Environment", "owner_handle": "alice"}
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"], headers
@@ -60,13 +61,8 @@ def test_a_room_that_has_not_picked_a_machine_says_so_instead_of_preparing(clien
 def test_only_human_stewards_can_change_scripts_and_members_can_read(client):
     project_id, owner = project(client)
     base = f"/projects/{project_id}/environment"
-    for handle, role in (("bob", "member"), ("carol", "lead")):
-        response = client.post(
-            f"/projects/{project_id}/members",
-            json={"user_handle": handle, "role": role},
-            headers=owner,
-        )
-        assert response.status_code == 200, response.text
+    join_project_team(client, project_id, "bob")
+    join_project_team(client, project_id, "carol", admin=True)
     for handle, read, write in (
         ("bob", 200, 403),
         ("carol", 200, 200),

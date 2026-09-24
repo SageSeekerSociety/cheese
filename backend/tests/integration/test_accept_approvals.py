@@ -9,7 +9,7 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import _make_card as _remote_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -24,7 +24,7 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

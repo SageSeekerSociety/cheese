@@ -50,7 +50,7 @@
 
 ### 今天 self-hosted 档的实况比 issue 描述的更重
 
-<&backend/app/domain/agent/harness/claude_code/device_launch.py> 里，设备屏幕跑的是 `bash -lc` 写一份 `~/.claude` 然后 `exec claude --dangerously-skip-permissions`——**裸在宿主上，以设备属主的身份，且预先接受了权限门**。所以这一档不是「能看见宿主」，是**以属主身份对这台机器有完全读写权**。UI 上那句实话必须按这个事实写，不是按「能看见」写。
+<&backend/app/domain/agent/harness/claude_code/device_launch.py> 里，设备屏幕跑的是 `bash -lc` 启动器，它起 runner，runner 再起 `claude -p … --permission-mode bypassPermissions`——**裸在宿主上，以设备属主的身份，且预先接受了权限门**。所以这一档不是「能看见宿主」，是**以属主身份对这台机器有完全读写权**。UI 上那句实话必须按这个事实写，不是按「能看见」写。
 
 ---
 
@@ -201,7 +201,7 @@ UPDATE device SET supply='cloud'
 
 ## 四、界面上那句实话
 
-按第一节查到的事实（`--dangerously-skip-permissions`，属主身份，裸在宿主上）写，不加软化词：
+按第一节查到的事实（`bypassPermissions`，属主身份，裸在宿主上）写，不加软化词：
 
 > **这一档不在容器里跑。芝士会以这台机器属主的身份，直接读写整台机器——包括同机器上其他房间的工作树，以及进入它们的容器。选它意味着你信任这台机器上的所有协作者，也意味着他们的活可能被你的房间影响。**
 

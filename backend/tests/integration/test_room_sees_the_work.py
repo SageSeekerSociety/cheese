@@ -17,7 +17,7 @@ import pytest
 from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
 --- a/backend/app/x.py
@@ -39,13 +39,7 @@ class SubagentScreen(StubChannel):
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.uses(topic_id, "Task", description="查分页接口现状")
-        self.returns(
-            topic_id,
-            "Task",
-            "结论：分页用的是 offset，\n改动点在路由层",
-            eid="sub-1",
-            description="查分页接口现状",
-        )
+        self.returns(topic_id, "Task", "结论：分页用的是 offset，\n改动点在路由层")
         self.stops(topic_id, "查完了")
 
 
@@ -63,7 +57,7 @@ def _chat(client, topic_id: str) -> None:
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     room = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},

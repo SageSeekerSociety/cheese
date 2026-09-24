@@ -46,7 +46,6 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
@@ -129,23 +128,9 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        team_id = await self._projects.team_for_project(project_id)
-        if team_id is not None:
-            await self.require_team_create_authority(
-                team_id, actor, conceal_nonmember=True
-            )
-            return
-        # Legacy team-less project. An outsider must not learn that it exists, let
-        # alone that it has a machine inventory — so a non-member is concealed as
-        # 404 here, the same as the team branch above. `require_manager` alone
-        # answers 403, which is right for roster writes (you can see the project,
-        # you just may not manage it) and wrong here.
-        members = MemberService(self._session)
-        if project.owner_handle != actor.handle:
-            roster, _ = await members.list_for_project(project_id)
-            if not any(m.user_handle == actor.handle for m in roster):
-                raise NotFoundError("Project not found")
-        await members.require_manager(project_id, actor)
+        await self.require_team_create_authority(
+            project.team_id, actor, conceal_nonmember=True
+        )
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Team membership authorizes room execution within the team's quota.
@@ -168,12 +153,10 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        team_id = await self._projects.team_for_project(project_id)
-        if team_id is not None:
-            if not await team_service(self._session).is_team_member(team_id, user_id):
-                raise ForbiddenError("只有团队成员可以使用团队云额度")
-        else:
-            await MemberService(self._session).require_manager(project_id, actor)
+        if not await team_service(self._session).is_team_member(
+            project.team_id, user_id
+        ):
+            raise ForbiddenError("只有团队成员可以使用团队云额度")
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
@@ -723,12 +706,7 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("project not found")
-        team_id = project.team_id
-        if team_id is None:
-            team_id = await self._projects.team_for_project(project_id)
-        if team_id is None:
-            raise ValidationError("请先将项目关联到团队，再分配云资源")
-        return team_id
+        return project.team_id
 
     async def quota_machines(self, team_id: int) -> list[ProjectMachine]:
         """Inventory counted by both admission and the allocation notice."""

@@ -890,29 +890,6 @@ class Executor:
                     "args": {"command": "cheese-sync"},
                 }
             )
-        if kind == "stage_file":
-            # Under this executor's own `HOME`, which is the whole rule here.
-            # `HOME` is whatever the launcher chose as the platform's directory
-            # for this session: the room's home on a machine we borrow, where
-            # the checkout is the sibling `room/`; or `/work/.home` inside a
-            # private chat's container, where the workspace is scratch and there
-            # is no repository at all. This used to resolve against `self.root`,
-            # which on a room executor IS the hosted checkout — so every
-            # attachment left an untracked file in somebody's repository
-            # (结论 49，不变量 I21b).
-            #
-            # The receiver does not also re-derive where the checkout is. It
-            # cannot: `self.root` is a repository in one of those two cases and
-            # scratch in the other, and a check that treated them alike would
-            # refuse every private chat's attachments. Which `HOME` sits where
-            # is the launcher's choice, and the caller that picks the
-            # destination (`agent/place.py`) is where the checkout is ruled out.
-            home = Path.home().resolve()
-            path = (home / params["path"]).resolve()
-            path.relative_to(home)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(base64.b64decode(params["data"], validate=True))
-            return {"path": str(path)}
         if kind == "read_file":
             path = Path(params["path"])
             if not path.is_absolute():

@@ -23,6 +23,7 @@ def _create(api_client: TestClient, _portal, uid: str, username: str, **extra: s
         {
             "id": uid,
             "email": None,
+            "verifiedEmail": f"{uid}@example.com",
             "name": "Prov User",
             "username": None,
             "preferredUsername": "provuser",

@@ -104,7 +104,12 @@ class TestOAuthSignup:
         token = portal.call(
             _issue_oauth_state_token,
             "ruc",
-            {"id": uid, "name": "Prov", "preferredUsername": uid},
+            {
+                "id": uid,
+                "name": "Prov",
+                "preferredUsername": uid,
+                "verifiedEmail": f"{uid}@example.com",
+            },
         )
         return api_client.post(
             "/users/oauth/create",

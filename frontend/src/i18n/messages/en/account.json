@@ -46,7 +46,8 @@
     "usernameRequired": "Enter a username",
     "displayNameRequired": "Enter a display name",
     "passwordRequired": "Enter your password",
-    "confirmPasswordRequired": "Enter the password again"
+    "confirmPasswordRequired": "Enter the password again",
+    "emailInvalid": "Enter a valid email address"
   },
   "signIn": {
     "title": "Sign in",
@@ -98,7 +99,18 @@
     "resent": "Code sent again",
     "resendFailed": "Couldn't send the code. Please try again later.",
     "accountCreated": "Account created",
-    "failed": "Couldn't verify. Please try again."
+    "failed": "Couldn't verify. Please try again.",
+    "changeEmail": "Use another address"
+  },
+  "addEmail": {
+    "title": "Add an email address",
+    "lede": "Your email is used to recover your account and to sign in",
+    "send": "Send code",
+    "submit": "Verify and continue",
+    "added": "Email address added",
+    "signOut": "Sign out",
+    "signInAgain": "Sign in again to add an email address",
+    "emailTaken": "This email is used by another account"
   },
   "recover": {
     "title": "Reset password",
@@ -121,6 +133,7 @@
     "totpLede": "Enter the 6-digit code from your authenticator app",
     "backupLede": "Enter one of your 8-character backup codes",
     "lockout": "Five wrong codes in a row lock verification for 15 minutes",
+    "trustDevice": "Don't ask again on this device for 30 days",
     "totpSubmit": "Verify",
     "backupSubmit": "Verify backup code",
     "totpRequired": "Enter the 6-digit code",
@@ -168,7 +181,8 @@
       "usernameReserved": "This username is reserved. Please choose another.",
       "usernameTaken": "This username is taken",
       "verificationFailed": "Verification failed. Please try again.",
-      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account"
+      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account",
+      "emailUnverified": "Verify your email address first"
     },
     "success": {
       "processing": "Signing in",
@@ -197,7 +211,8 @@
       "setPassword": "Also set a password",
       "setPasswordHint": "You can then sign in with your username and password too",
       "bindSubmit": "Link and sign in",
-      "unavailable": "Cannot continue signing in"
+      "unavailable": "Cannot continue signing in",
+      "emailBelongsToAccount": "This email is used by an existing account"
     }
   },
   "sudo": {
@@ -219,7 +234,6 @@
       "initTOTP": "turn on two-step verification",
       "disableTOTP": "turn off two-step verification",
       "generateBackupCodes": "generate new backup codes",
-      "update2FASettings": "change two-step verification settings",
       "addPasskey": "add a passkey",
       "deletePasskey": "delete a passkey",
       "changePassword": "change your password",
@@ -271,6 +285,7 @@
     "methodBackupCode": "Backup code",
     "methodSignup": "Signed up",
     "methodOAuth": "{provider} sign-in",
+    "trusted": "Trusted",
     "signOutDevice": "Sign out",
     "signOutOthers": "Sign out other devices",
     "signOutOthersTitle": "Sign out other devices",

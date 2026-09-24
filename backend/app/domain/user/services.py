@@ -5,6 +5,7 @@ from datetime import date, datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.email import is_placeholder_email
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
@@ -92,6 +93,15 @@ async def usernames_by_ids(
     return {uid: user.username for uid, user in users.items()}
 
 
+async def lookup_account(session: AsyncSession, q: str) -> dict | None:
+    """``{handle, name, avatar_id}`` for an exact username or email, or None."""
+    found = await UserRepository(session).lookup_account(q)
+    if found is None:
+        return None
+    handle, name, avatar_id = found
+    return {"handle": handle, "name": name, "avatar_id": avatar_id}
+
+
 async def search_accounts(
     session: AsyncSession, q: str, limit: int
 ) -> Sequence[tuple[str, str]]:
@@ -140,12 +150,6 @@ async def chosen_avatars_by_handle(
 def is_valid_username(username: str) -> bool:
     """The one username rule every registration entry point applies."""
     return _USERNAME_RE.fullmatch(username) is not None
-
-
-def is_placeholder_email(email: str | None) -> bool:
-    """An address a third-party sign-up made up because the provider gave
-    none. Nobody reads it, so it is never mailed and never proves anything."""
-    return not email or email.strip().lower().endswith("@placeholder.internal")
 
 
 async def faces_by_handle(
@@ -479,6 +483,10 @@ class UserAuthService:
                 followee_id=user.id,
             )
         stats = await self._stats_repo.aggregate(user.id)
+        if viewer_id == user.id:
+            # Only the owner is told: an account without an address of its own
+            # must add one before it can be recovered.
+            base["emailMissing"] = is_placeholder_email(user.email)
 
         base.update(
             {

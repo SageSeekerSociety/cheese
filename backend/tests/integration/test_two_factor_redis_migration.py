@@ -1,9 +1,9 @@
 """2FA set up while it lived in Redis keeps working after the move (#1482).
 
-Seeds Redis the way the previous code wrote it — the TOTP secret in the clear,
-backup codes as SHA-256 digests, the "always required" flag as a key — runs the
-real ``alembic upgrade`` into Postgres, and then signs in through the service:
-the same authenticator and the same backup codes must still work. A deployment
+Seeds Redis the way the previous code wrote it — the TOTP secret in the clear
+and backup codes as SHA-256 digests — runs the real ``alembic upgrade`` into
+Postgres, and then signs in through the service: the same authenticator and
+the same backup codes must still work. A deployment
 that cannot reach Redis must stop instead of dropping everyone's factor.
 """
 
@@ -27,10 +27,7 @@ from app.core.config import settings
 from app.domain.user.login_security import TOTPService
 from tests.conftest import (
     _PG_BASE,
-    _TEMPLATE_DB,
     _admin_recreate_db,
-    _clone_db,
-    _db_exists,
 )
 
 _REVISION = "2a88bca6e12e"
@@ -79,12 +76,10 @@ async def _seed_user(db_name: str) -> None:
 @pytest.fixture
 def db_before_the_migration(_pg_schema):
     db_name = f"cheesex_2fa_{uuid.uuid4().hex[:8]}"
-    if asyncio.run(_db_exists(_TEMPLATE_DB)):
-        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
-        step = _alembic(db_name, "downgrade", _PREVIOUS)
-    else:
-        asyncio.run(_admin_recreate_db(db_name))
-        step = _alembic(db_name, "upgrade", _PREVIOUS)
+    # Built up from empty rather than walked down from the head template: the
+    # head is past 4b8e1f6c2a93, which cannot be downgraded.
+    asyncio.run(_admin_recreate_db(db_name))
+    step = _alembic(db_name, "upgrade", _PREVIOUS)
     assert step.returncode == 0, step.stderr
     asyncio.run(_seed_user(db_name))
     try:
@@ -124,7 +119,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
         f"cheese:totp_backup:{_USER}",
         *[hashlib.sha256(code.encode()).hexdigest() for code in codes],
     )
-    old_redis.set(f"cheese:totp_always:{_USER}", b"1")
     # A key for an account that no longer exists is not an error.
     old_redis.set(f"cheese:totp_secret:{_GONE}", pyotp.random_base32())
 
@@ -136,7 +130,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
 
     async def check(totp: TOTPService):
         assert await totp.is_2fa_enabled(_USER) is True
-        assert await totp.is_always_required(_USER) is True
         assert await totp.verify_2fa(_USER, pyotp.TOTP(secret).now()) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is False

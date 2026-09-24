@@ -1,8 +1,10 @@
 """Living doc: docs-out display + docs-in edit (evals B1/B2)."""
 
+from tests.integration.conftest import post_project
+
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "话题"}).json()[
         "data"
     ]
@@ -129,14 +131,9 @@ def test_document_save_pushes_persisted_notice_and_refresh_to_teammates(
 def test_doc_canonicalizes_friendly_mentions(client, bearer):
     """A + backstop: friendly "@handle / @话题名" in doc content is rewritten to
     structured tokens on PUT, same as chat replies (裸名 stays untouched)."""
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
-    client.post(
-        f"/projects/{p['id']}/members",
-        json={"user_handle": "user-1"},
-        headers=bearer("user-1"),  # the project owner
-    )
     t = client.post("/topics", json={"project_id": p["id"], "title": "主话题"}).json()[
         "data"
     ]

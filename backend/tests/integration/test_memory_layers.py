@@ -15,13 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory.models import MemoryLayer, MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore, recall_pools
+from tests.integration.conftest import post_project
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "Mem layers"})
+    r = post_project(client, json={"name": "Mem layers"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

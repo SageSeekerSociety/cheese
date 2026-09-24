@@ -15,10 +15,11 @@ import pytest
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.usage.repositories import UsageRepository
+from tests.integration.conftest import post_project
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(

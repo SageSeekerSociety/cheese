@@ -4,13 +4,14 @@ from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
 from app.domain.project.services import ProjectService
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, registered, session_auth_headers
 
 
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Agents", forge_kind="github_app"
+            owner_handle="owner", name="Agents", forge_kind="github_app"
         )
         service = AgentInstanceService(db_session)
         first = await service.create(
@@ -53,7 +54,7 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
 def test_a_saved_agent_can_override_model_but_not_harness(client):
     """A teammate can select a model while execution settings remain project-owned."""
     retired = {"harness", "effort"}
-    pid = client.post("/projects", json={"name": "Models"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "Models"}).json()["data"]["id"]
     default = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
     assert not retired & set(default["configuration"])
     assert default["configuration"]["model"] is None
@@ -75,7 +76,7 @@ def test_a_saved_agent_can_override_model_but_not_harness(client):
 
 
 def test_room_switch_preserves_the_selected_agents_role(client):
-    pid = client.post("/projects", json={"name": "Rooms"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "Rooms"}).json()["data"]["id"]
     agent = client.post(
         f"/projects/{pid}/agents",
         json={"display_name": "Reviewer", "configuration": {"body": "Review"}},

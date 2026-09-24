@@ -1,11 +1,10 @@
 <script setup lang="ts">
-// 现场 tab: 芝士 干活的实况 —— 优先接真实终端（跑这一轮的机器上的
-// screen 通道），接不上就渲染重建出来的 transcript 时间线。
-import type { Block, Topic } from '../../cx_types'
+// 现场 tab: 芝士 干活的实况 —— 会话的控制条，加上重建出来的 transcript 时间线。
+import type { AgentControlState, Block, Topic } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { isAgentBlock } from '../../lib/authorship'
 import {
   countLines,
@@ -23,7 +22,6 @@ import { isPlatformEvent } from '../../lib/toolLabels'
 import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
-import DeviceLiveViewer from '../DeviceLiveViewer.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -37,8 +35,10 @@ const props = withDefaults(
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
+    // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
+    agentControl?: AgentControlState | null
   }>(),
-  { active: false, memberNames: () => ({}), working: false }
+  { active: false, memberNames: () => ({}), working: false, agentControl: null }
 )
 
 const loading = ref(false)
@@ -118,35 +118,19 @@ function scrollSiteToTail(): void {
   nextTick(() => requestAnimationFrame(pin))
 }
 
-// 现场实时终端: when a machine has this topic's screen open, 现场 embeds the real
-// pane instead of the rebuilt timeline. The probe hands back the screen
-// WebSocket path, and 现场 embeds DeviceLiveViewer on it.
-const screenSid = ref<string | null>(null)
-
 async function load() {
   const tid = props.topic?.id
   if (!tid) return
   loading.value = true
   errorMsg.value = null
   try {
-    // Prefer the real pane on the machine running the turn; fall back to the
-    // rebuilt timeline. The terminal probe must never break 现场 — on any error
-    // it just stays null and the timeline renders.
-    const [tx, term] = await Promise.all([
-      getTranscript(tid, { limit: SITE_PAGE_SIZE }),
-      getTerminal(tid).catch(() => null),
-    ])
+    const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
     if (props.topic?.id !== tid) return
     transcript.value = tx.data
     hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means.
     scrollSiteToTail()
-    // `available` is the backend's own probe (credential + an open screen), so
-    // a false here means the timeline below is the honest thing to show. The
-    // sid out of the ws path ("/connector/session/{sid}/screen") is all
-    // DeviceLiveViewer needs — it builds the socket URL itself.
-    screenSid.value = (term?.available && term.ws?.match(/\/session\/([^/]+)\/screen/)?.[1]) || null
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -163,13 +147,12 @@ watch(
   { immediate: true }
 )
 
-// Topic switch: drop the previous topic's terminal so it can't flash in the new
-// 现场, and its transcript with it.
+// Topic switch: drop the previous topic's transcript so it can't flash in the new
+// 现场.
 watch(
   () => props.topic?.id,
   () => {
     transcript.value = []
-    screenSid.value = null
     expandedSite.value = new Set()
     errorMsg.value = null
     if (props.active) void load()
@@ -223,20 +206,9 @@ function isLive(index: number): boolean {
       {{ errorMsg }}
     </v-alert>
 
-    <!-- 设备上的话题: the machine screen's REAL terminal, byte-for-byte over the
-         screen WebSocket, and INTERACTIVE — typing here reaches the pane (the
-         backend gates input by the same authorization as watching). -->
-    <div v-else-if="screenSid" class="term-wrap">
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" />
-      <div class="term-bar text-caption px-3 py-1">
-        <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
-        实时终端 · 机器上的 Claude Code，可直接输入
-      </div>
-      <DeviceLiveViewer :sid="screenSid" />
-    </div>
-
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
@@ -577,31 +549,5 @@ function isLive(index: number): boolean {
 .site-msg__more:hover {
   color: var(--text);
   text-decoration: underline;
-}
-/* 实时终端: the embedded pane fills the tab height. */
-.term-wrap {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.term-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-}
-.term-bar__dot {
-  color: var(--ok);
-}
-.term-frame {
-  flex: 1 1 auto;
-  width: 100%;
-  border: none;
-  /* Theme-invariant on purpose: this is the backing behind the pane, whose
-     terminal paints its own black ground in both themes. A token here would
-     flash a light slab under a black terminal during load. */
-  /* stylelint-disable-next-line color-no-hex -- see the reason above */
-  background: #000;
 }
 </style>

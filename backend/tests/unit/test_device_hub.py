@@ -22,7 +22,7 @@ class FakeDeviceTransport:
 
 
 @pytest.mark.parametrize("code", [None, "prompt_socket_unavailable"])
-async def test_prompt_failure_classification_survives_owner_http_boundary(code):
+async def test_call_failure_classification_survives_owner_http_boundary(code):
     import httpx
     from fastapi import FastAPI
 
@@ -30,28 +30,12 @@ async def test_prompt_failure_classification_survives_owner_http_boundary(code):
     from app.domain.agent.device_hub import DeviceCallError
     from app.domain.agent.device_hub_rpc import _device_call_failure
 
-    hub = DeviceHub()
-    await hub.attach_device("dev", FakeDeviceTransport())
-    call = asyncio.create_task(hub.await_call("dev", "prompt-1"))
-    await asyncio.sleep(0)
-    await hub.on_device_message(
-        "dev",
-        {
-            "t": "rpc.result",
-            "id": "prompt-1",
-            "error": "socket unavailable",
-            "value": {"failure_code": code} if code else None,
-        },
-    )
-    with pytest.raises(DeviceCallError) as failure:
-        await call
-    assert failure.value.failure_code == code
     app = FastAPI()
     register_exception_handlers(app)
 
     @app.get("/failure")
     async def owner_failure():
-        raise failure.value
+        raise DeviceCallError("socket unavailable", failure_code=code)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://owner"
@@ -100,43 +84,6 @@ async def test_close_waits_for_confirmation_and_retries_after_disconnect():
     )
     assert await closing is True
     assert hub.screen(screen.sid) is None
-
-
-@pytest.mark.parametrize("owner", [False, True])
-async def test_local_hub_only_runs_subscription_cleanup_for_business_role(
-    monkeypatch, owner
-):
-    from unittest.mock import AsyncMock
-
-    from app.core.config import settings
-
-    drop_device = AsyncMock()
-    drop_screen = AsyncMock()
-    monkeypatch.setattr(settings, "device_connection_owner", owner)
-    monkeypatch.setattr(
-        "app.domain.agent.harness.claude_code.drop_device_subscriptions", drop_device
-    )
-    monkeypatch.setattr(
-        "app.domain.agent.harness.claude_code.drop_screen_subscriptions", drop_screen
-    )
-    hub = DeviceHub()
-    transport = FakeDeviceTransport()
-    await hub.attach_device("dev", transport)
-    screen = hub.adopt_screen("dev", "screen", token="token", **_screen_args())
-
-    await hub.detach_device("dev", transport)
-
-    assert drop_device.await_count == (0 if owner else 1)
-    assert drop_screen.await_count == (0 if owner else 1)
-
-    await hub.attach_device("dev", transport)
-    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
-    await asyncio.sleep(0)
-    await hub.on_device_message(
-        "dev", {"t": "session.result", "id": transport.sent[-1]["id"]}
-    )
-    assert await closing is True
-    assert drop_screen.await_count == (0 if owner else 2)
 
 
 async def test_inventory_accepts_a_reply_during_send():
@@ -392,61 +339,6 @@ async def test_screen_data_fans_out_to_viewers_only():
         },
     )
     assert viewer.bytes_ == [b"px"]
-
-
-async def test_call_screen_await_resolved_by_rpc_result():
-    hub = DeviceHub()
-    t = FakeDeviceTransport()
-    await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
-    call_id = await hub.call_screen("dev1", screen.sid, "prompt", ["hi"])
-    assert t.sent[-1] == {
-        "t": "rpc.call",
-        "sid": screen.sid,
-        "id": call_id,
-        "name": "prompt",
-        "args": ["hi"],
-    }
-    # The device answers → await_call resolves with the value.
-    import asyncio
-
-    fut = asyncio.ensure_future(hub.await_call("dev1", call_id, timeout=2))
-    await asyncio.sleep(0)
-    await hub.on_device_message(
-        "dev1",
-        {"t": "rpc.result", "sid": screen.sid, "id": call_id, "value": {"ok": True}},
-    )
-    assert await fut == {"ok": True}
-
-
-async def test_put_file_waits_for_device_file_result():
-    hub = DeviceHub()
-    transport = FakeDeviceTransport()
-    await hub.attach_device("dev1", transport)
-    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
-
-    import asyncio
-
-    pending = asyncio.create_task(
-        hub.put_file("dev1", screen.sid, "uploads/img-a.png", b"\x89PNG\r\n\x1a\n")
-    )
-    await asyncio.sleep(0)
-    request = transport.sent[-1]
-    assert request["t"] == "file.put"
-    assert request["sid"] == screen.sid
-    assert request["path"] == "uploads/img-a.png"
-    assert base64.b64decode(request["data"]) == b"\x89PNG\r\n\x1a\n"
-
-    await hub.on_device_message(
-        "dev1",
-        {
-            "t": "file.result",
-            "sid": screen.sid,
-            "id": request["id"],
-            "value": {"ok": True},
-        },
-    )
-    assert await pending == {"ok": True}
 
 
 async def test_screens_in_project_only_counts_online():

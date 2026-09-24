@@ -64,6 +64,11 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# How long a sign-in, once it has proved a credential, may get sudo tickets
+# without proving one again.
+SUDO_WINDOW = timedelta(minutes=10)
+
+
 def _idle_cutoff(now: datetime) -> datetime:
     return now - timedelta(seconds=settings.refresh_idle_timeout_seconds)
 
@@ -73,9 +78,17 @@ class SessionService:
         self._db = db
 
     async def start(
-        self, user_id: int, login_method: str, *, ip: str, user_agent: str
+        self,
+        user_id: int,
+        login_method: str,
+        *,
+        ip: str,
+        user_agent: str,
+        two_factor_skipped: bool = False,
+        sudo: bool = False,
     ) -> Started:
-        """Open a session and hand back its first refresh token."""
+        """Open a session and hand back its first refresh token. ``sudo``
+        opens its sudo window from now."""
         token = secrets.token_urlsafe(32)
         now = _now()
         row = UserSession(
@@ -83,9 +96,11 @@ class SessionService:
             user_id=user_id,
             current_hash=_digest(token),
             login_method=login_method,
+            two_factor_skipped=two_factor_skipped,
             user_agent=user_agent[:1024],
             ip=ip[:512],
             last_used_at=now,
+            sudo_until=now + SUDO_WINDOW if sudo else None,
             expires_at=now + timedelta(seconds=settings.refresh_token_expires_seconds),
         )
         self._db.add(row)
@@ -188,6 +203,33 @@ class SessionService:
             )
         )
         return len(result.all())
+
+    async def open_sudo(self, user_id: int, session_id: uuid.UUID) -> None:
+        """Open the session's sudo window from now, if it is still live."""
+        now = _now()
+        await self._db.execute(
+            update(UserSession)
+            .where(
+                UserSession.id == session_id,
+                UserSession.user_id == user_id,
+                *_live_clauses(now),
+            )
+            .values(sudo_until=now + SUDO_WINDOW)
+        )
+
+    async def in_sudo(self, user_id: int, session_id: uuid.UUID) -> bool:
+        """Whether the session is live and inside its sudo window. Revoking
+        the session ends the window with it."""
+        now = _now()
+        found = await self._db.scalar(
+            select(UserSession.id).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user_id,
+                UserSession.sudo_until > now,
+                *_live_clauses(now),
+            )
+        )
+        return found is not None
 
     async def live(self, user_id: int) -> list[UserSession]:
         """The user's sessions that can still refresh, most recent first."""

@@ -14,13 +14,13 @@ which stacked five zombie turns on one topic in a single day. The contract now:
 - one topic gets at most one remedial prompt, however many orphans it holds.
 
 Whether the screen survived used to be unanswerable, so the sweep inferred it:
-an AI block bearing the turn's id, an unread hook in the topic's spool. The
+an AI block bearing the turn's id, an unread record the session left. The
 platform can ask now. What is left of the old evidence is one narrow backstop —
 a process dying between the transport accepting the write and the record of it.
 
 None of this is announced any more. It used to be, because a restart left the
 room looking dead — the backend half died and the session's output only
-resurfaced later out of the spool. Retiring the turn (#508) removed that: the
+resurfaced later. Retiring the turn (#508) removed that: the
 subscription lives with the screen and reattaches, so the room keeps showing
 芝士 working. The bar for speaking is not "was there an interruption" but "will
 this still be broken after the platform finishes" — so what remains announced is
@@ -41,7 +41,7 @@ from tests.turn_log import a_topic, open_turn, open_turn_ids
 
 class _Chat:
     """ChatService stand-in for sweep flows: serves the evidence probe, records
-    events, settle scheduling, and any turn the sweep actually submits."""
+    events, and any turn the sweep actually submits."""
 
     def __init__(self, factory, *, delivered=(), live_screen=False, probe_error=False):
         # The sweep reads and closes turn intervals through this, the same way
@@ -53,7 +53,6 @@ class _Chat:
         self.events: list[tuple[uuid.UUID, str]] = []
         # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
         self.notices: list[tuple[uuid.UUID, str]] = []
-        self.settled: list[uuid.UUID] = []
         self.converse_calls: list[dict] = []
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -68,9 +67,6 @@ class _Chat:
         if self._probe_error:
             raise RuntimeError("probe blew up")
         return {t for t in turn_ids if str(t) in self._delivered}
-
-    def schedule_spool_settle(self, topic_id, delay_s=2.0):
-        self.settled.append(topic_id)
 
     async def converse(self, **kw):
         self.converse_calls.append(kw)
@@ -114,7 +110,6 @@ async def test_a_turn_that_produced_something_is_never_reprompted(
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []  # no new prompt of any kind
-    assert chat.settled == [topic]  # the settle collects what claude sends
     # Nothing is said: the subscription reattaches on restart (#508), so the
     # survivor's output keeps landing in the room on its own and there is no
     # break for the room to explain.
@@ -132,19 +127,18 @@ async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
 
     The transport accepted the write, so that fact was recorded when it
     happened. The second-hand evidence cannot see it — claude had no time to
-    write a block and its first hooks had not arrived — so judging by that
+    write a block and its first records had not arrived — so judging by that
     alone re-sends a prompt 芝士 was already working on, and the person gets
     answered twice."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
     await open_turn(db_factory, topic, age_s=90, delivered=True)
-    chat = _Chat(db_factory)  # no AI block, empty spool: the old evidence sees nothing
+    chat = _Chat(db_factory)  # no AI block: the old evidence sees nothing
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []  # NOT re-sent
-    assert chat.settled == [topic]  # attached instead
     assert chat.events == []
 
 
@@ -169,7 +163,6 @@ async def test_a_surviving_screen_is_adopted_rather_than_swept(db_factory, monke
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []
-    assert chat.settled == []  # nothing was interrupted, so nothing to collect
     assert chat.events == []
     assert await open_turn_ids(db_factory) == {first, second}
 
@@ -199,7 +192,7 @@ async def test_a_surviving_screen_that_never_heard_the_prompt_is_not_adopted(
 
 @pytest.mark.anyio
 async def test_zero_evidence_resends_the_original_prompt_once(db_factory, monkeypatch):
-    """No block, no spool trace → the task never arrived. The re-sent turn
+    """No block, no trace → the task never arrived. The re-sent turn
     carries the ORIGINAL text (is_resume, so it can never chain further)."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
@@ -214,7 +207,6 @@ async def test_zero_evidence_resends_the_original_prompt_once(db_factory, monkey
     assert call["content"] == "修一下登录页"  # 原文, not a "接着干" nudge
     assert call["author"] == "system"
     assert call["is_resume"] is True
-    assert chat.settled == []  # nothing to attach to
     # The re-send happens, and says nothing: it lands in the same session the
     # person was already talking to, so it is indistinguishable from them
     # asking again — there is no anomaly to narrate.
@@ -253,7 +245,6 @@ async def test_probe_failure_is_treated_as_evidence(db_factory, monkeypatch):
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []
-    assert chat.settled == [topic]
     assert chat.events == []  # the platform handled it; nothing to explain
 
 
@@ -261,8 +252,8 @@ async def test_probe_failure_is_treated_as_evidence(db_factory, monkeypatch):
 async def test_delivered_and_undelivered_split_gets_both_remedies(
     db_factory, monkeypatch
 ):
-    """A running turn (delivered) plus a queued human message (never sent, spool
-    clean): the delivered one is attached, the undelivered one is re-sent —
+    """A running turn (delivered) plus a queued human message (never sent,
+    no trace): the delivered one is attached, the undelivered one is re-sent —
     still one prompt total."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
@@ -273,7 +264,6 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
-    assert chat.settled == [topic]
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["content"] == "新消息"
     assert chat.events == []

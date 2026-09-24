@@ -16,10 +16,12 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
+from tests.integration.conftest import registered
 
 
 async def _seed(factory, credits: float | None = 100.0):
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

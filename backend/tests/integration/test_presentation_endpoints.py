@@ -15,6 +15,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import LOST_SIGNAL_AFTER
 from app.domain.topic.models import Topic, TopicKind
+from tests.integration.conftest import a_team
 
 
 def _seeded(client, stub_hooks=None) -> dict[str, str]:
@@ -27,7 +28,7 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             room = Topic(project_id=project.id, title="房间", kind=TopicKind.topic)
@@ -101,7 +102,7 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
 
     asyncio.run(_seed())
     if stub_hooks is not None:
-        stub_hooks.runtime._live[uuid.UUID(ids["room"])] = "screen"
+        stub_hooks.runtime.live[uuid.UUID(ids["room"])] = "screen"  # type: ignore[assignment]
     return ids
 
 

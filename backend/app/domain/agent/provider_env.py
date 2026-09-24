@@ -14,8 +14,7 @@ a property of the machine at all.
 The session authenticates with its host's own Claude login; the proxy forwards
 that credential to Anthropic untouched, replaces it with the project's virtual
 key on the way to the gateway, and writes the resolved model name into the
-request body. RC-enabled sessions additionally
-route control traffic to Cheese; see docs/remote-control.md.
+request body.
 """
 
 from dataclasses import dataclass

@@ -37,6 +37,8 @@ vi.mock('@/api', async () => {
 
 import PanelCard from './PanelCard.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = PanelCard as unknown as Component
 
 function block(over: Partial<Block> = {}): Block {
@@ -93,6 +95,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 卡上的标题走文案目录，而 happy-dom 起步是英文。
+  setLocale('zh-CN')
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
   getAcceptCards.mockReset()

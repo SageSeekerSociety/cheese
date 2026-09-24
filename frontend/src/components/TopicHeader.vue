@@ -21,6 +21,7 @@ import { useDisplay } from 'vuetify'
 import { getProjectUsage, getTopicUsage } from '@/api'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
+import { t } from '@/i18n'
 import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
@@ -98,6 +99,17 @@ watch(
 // 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
 const machineNotice = ref<string | null>(null)
 
+// 一行一个范围：次数 · token · 费用。输入 / 输出的拆分和费用的说明放在 title 里，
+// 原来那十个大格子里有八个在一个新话题上都是 0。
+function usageLine(u: UsageStats): string {
+  return t('work.room.menu.usageLine', { turns: fmtNum(u.turns), tokens: fmtNum(u.total_tokens), cost: costLabel(u) })
+}
+function usageTitle(u: UsageStats): string {
+  const split = t('work.room.menu.usageSplit', { input: fmtNum(u.input_tokens), output: fmtNum(u.output_tokens) })
+  const note = costNote(u)
+  return note ? `${split}\n${note}` : split
+}
+
 function toggleFocus() {
   usageOpen.value = false
   emit('toggle-focus')
@@ -138,14 +150,15 @@ function toggleFocus() {
         size="small"
         variant="text"
         class="topic-header__on"
-        title="退出专注模式"
-        aria-label="退出专注模式"
+        :title="t('work.room.menu.exitFocus')"
+        :aria-label="t('work.room.menu.exitFocus')"
         @click="emit('toggle-focus')"
       />
 
-      <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的：编号、用量、
-           算力（首轮之后就锁死了）、专注模式。eager：算力选择器要在菜单合着的时候
-           就挂上，才能说出「整台机器」。 -->
+      <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
+           改一项设置 / 看一个数」分成三段：专注模式、运行环境、用量，编号垫在最底下。
+           连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。
+           eager：算力选择器要在菜单合着的时候就挂上，才能说出「整台机器」。 -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end" eager>
         <template #activator="{ props: menuProps }">
           <v-btn
@@ -154,68 +167,45 @@ function toggleFocus() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="更多"
-            aria-label="更多"
+            :title="t('work.room.menu.more')"
+            :aria-label="t('work.room.menu.more')"
           />
         </template>
-        <v-card min-width="280" class="usage-card">
-          <div class="usage-details">
-            <span v-if="isWorkTopic" class="t-meta" :title="topic.id">#{{ shortId }}</span>
-            <span class="t-meta">{{ connected ? '已连接' : '未连接' }}</span>
-          </div>
-          <!-- 算力：这个话题的轮次在哪儿跑。它是话题的属性（发完第一条就锁死），
-               不是某条消息的动作，所以不在输入区。 -->
-          <div v-if="isWorkTopic" class="menu-row">
-            <span class="t-meta">运行环境</span>
-            <TopicComputePicker :key="topic.id" :topic-id="topic.id" @machine-access="machineNotice = $event" />
-          </div>
+        <v-card min-width="300" class="room-menu">
           <!-- 专注模式：面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
                永远只有一个窗格，没有第二栏可以让开。 -->
-          <button v-if="mdAndUp" type="button" class="menu-row menu-row--action" @click="toggleFocus">
+          <button v-if="mdAndUp" type="button" class="room-menu__row room-menu__row--action" @click="toggleFocus">
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
-            <span>{{ focus ? '退出专注模式' : '专注模式' }}</span>
+            <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>
-          <div v-if="usageLoading" class="d-flex justify-center py-6">
-            <v-progress-circular indeterminate color="primary" size="24" />
+          <!-- 算力：这个话题的轮次在哪儿跑。它是话题的属性（发完第一条就锁死），
+               不是某条消息的动作，所以不在输入区。 -->
+          <div v-if="isWorkTopic" class="room-menu__row">
+            <span class="room-menu__label">{{ t('work.room.menu.compute') }}</span>
+            <TopicComputePicker :key="topic.id" :topic-id="topic.id" @machine-access="machineNotice = $event" />
           </div>
-          <div v-else class="pa-3">
-            <div
-              v-for="row in [
-                { label: '本话题', u: topicUsage },
-                { label: '全项目', u: projectUsage },
-              ]"
-              :key="row.label"
-              class="mb-4"
-            >
-              <div class="t-eyebrow mb-2">{{ row.label }}</div>
-              <div v-if="row.u" class="usage-grid">
-                <div class="usage-cell">
-                  <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
-                  <div class="t-meta">运行次数</div>
-                </div>
-                <div class="usage-cell">
-                  <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
-                  <div class="t-meta">总 token</div>
-                </div>
-                <div class="usage-cell">
-                  <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
-                  <div class="t-meta">输入</div>
-                </div>
-                <div class="usage-cell">
-                  <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
-                  <div class="t-meta">输出</div>
-                </div>
-                <div class="usage-cell">
-                  <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
-                  <div class="t-meta">费用</div>
-                </div>
-              </div>
-              <div v-else class="t-meta">暂无数据</div>
-              <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
-                {{ costNote(row.u) }}
-              </div>
+          <div class="room-menu__usage">
+            <div class="room-menu__label">{{ t('work.room.menu.usage') }}</div>
+            <div v-if="usageLoading" class="d-flex justify-center py-2">
+              <v-progress-circular indeterminate color="primary" size="20" />
             </div>
+            <template v-else>
+              <div
+                v-for="row in [
+                  { label: t('work.room.menu.thisTopic'), u: topicUsage },
+                  { label: t('work.room.menu.wholeProject'), u: projectUsage },
+                ]"
+                :key="row.label"
+                class="usage-row"
+                :title="row.u ? usageTitle(row.u) : undefined"
+              >
+                <span>{{ row.label }}</span>
+                <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
+                <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
+              </div>
+            </template>
           </div>
+          <div v-if="isWorkTopic" class="room-menu__foot t-meta" :title="topic.id">#{{ shortId }}</div>
         </v-card>
       </v-menu>
     </div>
@@ -330,54 +320,63 @@ function toggleFocus() {
   color: var(--faint);
   background: var(--fill);
 }
-.usage-card {
-  border: 1px solid var(--line);
+/* ⋯ 菜单。一行一件事，行高和别处的菜单一样（36px），分段靠一条 --line。 */
+.room-menu {
+  padding-block: 4px;
 }
-.usage-details {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
-}
-.menu-row {
+.room-menu__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  padding: 8px 12px;
+  min-height: 36px;
+  padding: 4px 16px;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: var(--lh-14);
   text-align: left;
 }
-.menu-row--action {
+.room-menu__row--action {
   justify-content: flex-start;
   gap: 8px;
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
-.menu-row--action:hover {
+.room-menu__row--action:hover {
   background: var(--fill);
 }
-.usage-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.room-menu__label {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.room-menu__usage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+}
+.usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 12px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
-.usage-cell {
-  background: var(--fill);
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-.usage-num {
-  font-family: var(--font-mono);
-  font-size: 1.15rem;
-  font-weight: 600;
-  color: var(--ink);
+.usage-row__value {
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+.room-menu__foot {
+  padding: 8px 16px 4px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
 }
 </style>

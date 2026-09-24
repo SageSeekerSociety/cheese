@@ -11,11 +11,11 @@ import pytest
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
 def room(client):
-    project = client.post("/projects", json={"name": "Publication"}).json()["data"]
+    project = post_project(client, json={"name": "Publication"}).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
@@ -26,8 +26,8 @@ def room(client):
 
 def private_room(client):
     """一个成员和项目队友的私聊，外加那个队友的凭据。"""
-    project = client.post(
-        "/projects", json={"name": "Publication", "owner_handle": "user-1"}
+    project = post_project(
+        client, json={"name": "Publication", "owner_handle": "user-1"}
     ).json()["data"]
     topic = client.get(
         f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}

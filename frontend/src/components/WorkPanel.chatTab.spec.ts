@@ -77,8 +77,7 @@ describe('对话作为工作面板的一格', () => {
   })
 
   it('桌面上没有这一格', async () => {
-    const { queryByRole } = mount({ withChat: false, working: true })
-    // 有两格以上 tab 栏才出现，所以给一个「现场」让它显形，再确认没有「对话」。
+    const { queryByRole } = mount({ withChat: false })
     expect(queryByRole('tab', { name: /现场/ })).toBeTruthy()
     expect(queryByRole('tab', { name: /对话/ })).toBeNull()
   })

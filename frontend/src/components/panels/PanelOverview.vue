@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 总览 —— 一个房间的右半边，从上到下：Task Progress，然后是房间文档。
+// 总览 —— 一个房间的右半边，从上到下：看板、上一轮的进度清单，然后是房间文档。
 //
 // 在它之前这是两个平级 tab（文档 / 任务）。合成一个不是为了少一格：它们回答的是
 // 同一个问题的两半——「这个房间在干什么」——而分成两格意味着看完一半得先想起来
@@ -14,6 +14,7 @@ import { ref } from 'vue'
 
 import PanelCard from './PanelCard.vue'
 import PanelDoc from './PanelDoc.vue'
+import PanelProgress from './PanelProgress.vue'
 import TaskProgress from './TaskProgress.vue'
 
 const props = withDefaults(
@@ -70,6 +71,7 @@ defineExpose({
           :refresh-tick="props.refreshTick"
           @open-card="emit('open-card', $event)"
         />
+        <PanelProgress :topic="props.topic" :refresh-tick="props.refreshTick" />
         <PanelDoc
           ref="docRef"
           class="panel-overview__doc"

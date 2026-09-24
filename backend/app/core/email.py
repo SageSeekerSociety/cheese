@@ -9,6 +9,18 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Domains the platform once wrote into accounts that had no address of their
+# own. Nothing can receive mail there, and an account holding one has no
+# address it can be recovered through.
+PLACEHOLDER_EMAIL_DOMAINS = frozenset({"placeholder.internal", "oauth.ruc.local"})
+
+
+def is_placeholder_email(email: str | None) -> bool:
+    """An address nobody reads: never mailed, and never proof of anything."""
+    if not email or "@" not in email:
+        return True
+    return email.rsplit("@", 1)[1].strip().lower() in PLACEHOLDER_EMAIL_DOMAINS
+
 
 class EmailSender:
     def __init__(
@@ -47,6 +59,12 @@ class EmailSender:
             return False
 
         recipients = [to] if isinstance(to, str) else list(to)
+        # Every mail leaves through here, so this is the one place that keeps
+        # a placeholder address from ever being handed to the SMTP server.
+        dropped = [r for r in recipients if is_placeholder_email(r)]
+        if dropped:
+            logger.warning("Not sending to placeholder addresses %s", dropped)
+            recipients = [r for r in recipients if r not in dropped]
         if not recipients:
             return False
 

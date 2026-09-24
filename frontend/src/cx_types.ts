@@ -14,13 +14,15 @@ export interface Project {
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
   owner_handle?: string | null
-  /**
-   * 这个项目归哪个小队（项目归团队 v4）。历史遗留的行是 null——新建项目一律会落到
-   * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
-   */
+  /** 这个项目归哪个团队。顶栏那颗 ← 在没记到来路时拿它当兜底。 */
   team_id?: number | null
   /** 所属团队的 handle，团队页的地址（`/teams/<handle>`）。 */
   team_handle?: string | null
+  /**
+   * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
+   * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
+   */
+  can_manage_members?: boolean
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
@@ -328,31 +330,26 @@ export type WsServerFrame =
   | { type: 'block_updated'; block: Block }
   // Answer to the client's liveness ping; carries nothing.
   | { type: 'pong' }
-  // The room's session state moved: the agent asked something, a session
-  // appeared, went quiet or came back. Carries what the platform's own store
-  // knows. The machine's background-task list is NOT in here — nothing tells
-  // the platform when that changes — so the panel that shows it still reads it
-  // over HTTP.
+  // The room's session state moved: a task started or finished (the harness's
+  // own, or a command the executor runs), or the session reported its model.
+  // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
-
-export interface AgentControlRequest {
-  request_id: string
-  request: {
-    subtype: string
-    tool_name?: string
-    input?: Record<string, unknown>
-  }
-}
 
 export interface AgentControlState {
   id: string | null
+  agent_handle?: string | null
   connected: boolean
-  title?: string
   controls?: string[]
-  pending?: Record<string, AgentControlRequest>
   tasks?: Record<
     string,
-    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+    {
+      task_id: string
+      description?: string
+      status?: string
+      subtype?: string
+      tool_use_id?: string
+      task_type?: string
+    }
   >
   state?: Record<string, Record<string, unknown>>
 }
@@ -406,11 +403,10 @@ export interface ProjectMember {
 // 再自己把「人」和「队友」两份拼起来——拼出来的那份就是第二份声明。
 export interface ProjectMemberRow {
   user_handle: string
-  role: string
-  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人、项目的
-  // 所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据），或者它是
-  // 这个项目的 AI 队友。没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
-  source?: 'team' | 'owner' | 'agent'
+  // 这个人是怎么在项目里的：项目的所有者、所属团队的成员，或者被邀请进来的外部成员
+  // （团队以外、只参与这一个项目的人）。只有外部成员能从项目里移出——团队成员的去
+  // 留在团队里定。AI 队友那几行是 `agent`。
+  source?: 'owner' | 'team' | 'external' | 'agent'
   team_id?: number
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
@@ -439,7 +435,6 @@ export interface ProjectInvitation {
   project_id: string
   invitee_handle: string
   inviter_handle: string
-  role: string
   status: 'pending' | 'accepted' | 'declined' | 'revoked'
   created_at: string
   responded_at?: string | null
@@ -532,7 +527,8 @@ export interface MemberTopic {
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
   handle: string
-  role: string
+  /** 他在这个项目里的来路：所有者、团队成员、外部成员；查不到是 null。 */
+  source?: 'owner' | 'team' | 'external' | null
   topics_started: MemberTopic[]
   topics_active?: MemberTopic[]
   weekly_contributions?: number
@@ -546,7 +542,6 @@ export interface MemberSummary {
 export interface ProfileProject {
   project_id: string
   name: string
-  role: string
   topics_started: number
   contributions: number
 }

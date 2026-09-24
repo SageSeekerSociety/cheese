@@ -4,13 +4,13 @@
       <v-card-title class="pa-4 pb-3">
         <div class="d-flex align-center">
           <v-icon color="primary" class="mr-3" size="28">mdi-account-group</v-icon>
-          <span class="text-h5 font-weight-medium">选择参与小队</span>
+          <span class="text-h5 font-weight-medium">选择参与团队</span>
         </div>
       </v-card-title>
       <v-divider></v-divider>
       <v-card-text class="pa-0">
         <div class="px-4 pt-4 pb-2">
-          <div class="text-body-1">请选择一个小队代表参与此题目</div>
+          <div class="text-body-1">请选择一个团队代表参与此题目</div>
         </div>
 
         <div v-if="loading" class="d-flex justify-center my-8">
@@ -22,12 +22,12 @@
             <!-- 状态色底上的反白图标：warning 深色下是 #F0A94A（更亮），白色压不住 -->
             <v-icon icon="mdi-alert-circle-outline" color="surface" size="36"></v-icon>
           </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">暂无可用小队</div>
+          <div class="text-h6 font-weight-medium mb-2">暂无可用团队</div>
           <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">
             {{
               taskData?.requireRealName
-                ? '请确保您的小队所有成员都已完成实名认证，或创建一个新的小队'
-                : '您可能需要创建一个小队或加入一个小队才能参与此题目'
+                ? '请确保您的团队所有成员都已完成实名认证，或创建一个新的团队'
+                : '您可能需要创建一个团队或加入一个团队才能参与此题目'
             }}
           </div>
         </div>
@@ -48,7 +48,7 @@
                 </v-avatar>
                 <div>
                   <div class="text-subtitle-2 font-weight-medium mb-1">实名认证要求</div>
-                  <p class="text-body-2 mb-0">此题目要求实名参与，只有所有成员都已完成实名认证的小队才能参与</p>
+                  <p class="text-body-2 mb-0">此题目要求实名参与，只有所有成员都已完成实名认证的团队才能参与</p>
                 </div>
               </div>
             </v-card-text>

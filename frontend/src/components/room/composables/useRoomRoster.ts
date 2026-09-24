@@ -14,6 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 import { listTopicMembers } from '../../../api'
 import { isAgentBlock } from '../../../lib/authorship'
+import { isExternalMember } from '../../../lib/externalMembers'
 import { getAvatarUrl } from '../../../utils/materials'
 
 export function useRoomRoster(options: {
@@ -112,6 +113,7 @@ export function useRoomRoster(options: {
       handle: m.member_handle,
       label: m.name || m.member_handle,
       agent: !!m.agent,
+      external: isExternal(m.member_handle),
     }))
     const inRoom = new Set(room.map((r) => r.handle))
     // 项目名册上的 AI 队友也 @ 得到：它坐的是自己的那个 handle（房间席位用的是同一
@@ -121,9 +123,19 @@ export function useRoomRoster(options: {
     const rest = options
       .members()
       .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
-      .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
+      .map((m) => ({
+        handle: m.user_handle,
+        label: m.name || m.user_handle,
+        agent: !!m.agent,
+        external: isExternalMember(m),
+      }))
     return [...room, ...rest]
   })
+  // 这个 handle 在项目里是不是外部成员——聊天署名、@ 候选挂「外部」那个标用。问的是
+  // 项目名册（房间名册上没有来路这一栏）。
+  function isExternal(handle: string): boolean {
+    return isExternalMember(memberByHandle.value.get(handle))
+  }
   // handle → 名册行。**不要**改用 mentionNames：那张表额外塞了 all/here 两个保留
   // 键（渲染成「所有人」「在线成员」），一个恰好叫 all 的用户会被显示成「所有人」。
   const memberByHandle = computed(() => {
@@ -181,6 +193,7 @@ export function useRoomRoster(options: {
     seatByHandle,
     agentDisplayName,
     displayName,
+    isExternal,
     avatarSrc,
     onAvatarError,
     myName,

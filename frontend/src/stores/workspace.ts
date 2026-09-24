@@ -19,6 +19,7 @@ import {
 } from '@/api'
 import { ApiError } from '@/api'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
+import { externalHandles } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
 
 // 项目级状态 (P0 架构): 话题树、成员、未读、排序、栏宽——一份，供项目框架下的
@@ -58,6 +59,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectsSettled = ref(false)
   const topics = ref<Topic[]>([])
   const members = ref<ProjectMemberRow[]>([])
+  // 名册上的外部成员（团队以外、被邀请进这个项目的人）。聊天署名、@ 候选、房间名册
+  // 都拿它来挂「外部」那个标，所以放在 store 里算一次，谁问都是同一份。
+  const externals = computed(() => externalHandles(members.value))
+  function isExternal(handle: string | null | undefined): boolean {
+    return !!handle && externals.value.has(handle)
+  }
   const loadingTopics = ref(false)
   let projectEpoch = 0
   let topicRevision = 0
@@ -428,6 +435,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     accessDenied,
     topics,
     members,
+    isExternal,
     loadingTopics,
     unreadMap,
     privateUnreadMap,

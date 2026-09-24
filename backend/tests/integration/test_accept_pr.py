@@ -25,7 +25,7 @@ from app.domain.review.github_pr import OpenedPR
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import room_text, session_auth_headers
+from tests.integration.conftest import post_project, room_text, session_auth_headers
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -33,9 +33,7 @@ REPO = "acme/widgets"
 
 
 def _make_project(client) -> str:
-    r = client.post(
-        "/projects", json={"name": "P"}, headers=session_auth_headers("alice")
-    )
+    r = post_project(client, json={"name": "P"}, headers=session_auth_headers("alice"))
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

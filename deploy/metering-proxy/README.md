@@ -7,11 +7,6 @@ turn its project cannot afford (backend `/llm/admission`, plus a rolling token
 cap as backstop). Design context: issue #218 and
 `docs/plans/2026-08-10-usage-unification-design.md`.
 
-For RC-enabled device sessions, the addon also routes native control requests
-to Cheese, consumes the intercepted telemetry, and enables the RC feature flags.
-See [terminal controls](../../docs/remote-control.md) for the API, deployment order,
-recovery behavior and provider-visibility limits.
-
 ## Files
 
 - `billing_addon.py` — the mitmproxy addon (glue only).

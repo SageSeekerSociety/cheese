@@ -14,11 +14,11 @@ from datetime import UTC, datetime
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicKind
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import a_team, post_project, session_auth_headers
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str = "运维") -> str:
@@ -127,7 +127,7 @@ def test_a_card_that_kept_its_old_topic_id_still_renders(client):
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             room = Topic(project_id=project.id, title="老房间", kind=TopicKind.topic)

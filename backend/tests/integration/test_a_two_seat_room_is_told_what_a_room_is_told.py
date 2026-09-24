@@ -29,6 +29,7 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -52,6 +53,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         if private:
             topic = await TopicService(session).get_or_create_private(

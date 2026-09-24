@@ -5,6 +5,7 @@ POST /attachments 把字节收进项目的资料库，并在这个房间的文�
 里的 Read 能看图）。资料库本身见 test_library.py。
 """
 
+import uuid
 from urllib.parse import quote
 
 import pytest
@@ -16,6 +17,7 @@ from app.main import app
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
     chat_ws_url,
+    post_project,
     room_agent_seat,
     session_auth_headers,
 )
@@ -29,7 +31,7 @@ PNG_1PX = bytes.fromhex(
 
 def _create_project_and_topic(client) -> tuple[str, str]:
     client.headers.update(session_auth_headers("user-1"))
-    pr = client.post("/projects", json={"name": "Demo"})
+    pr = post_project(client, json={"name": "Demo"})
     project_id = pr.json()["data"]["id"]
     tr = client.post(
         "/topics",
@@ -314,9 +316,12 @@ def test_image_only_message_allowed(client, stub_hooks):
 
     user_frames = [f["block"] for f in frames if f["type"] == "user_block"]
     assert [b["kind"] for b in user_frames] == ["message", "attachment"]
-    # Twice, and both are load-bearing: the line that tells 芝士 what was
-    # posted, and the @-mention the screen resolves into the image itself.
-    assert (stub_hooks.last_prompt or "").count(att["path"]) == 2
+    # The line that tells 芝士 what was posted names the file, and the image
+    # itself rides in the same message the session is handed.
+    assert att["path"] in (stub_hooks.last_prompt or "")
+    session = stub_hooks.sessions[uuid.UUID(topic_id)]
+    handed = [m for m in session.written if m.get("type") == "user"][-1]
+    assert any(block.get("type") == "image" for block in handed["message"]["content"])
 
     # The execution record retains the attachment as its input anchor.
     assistant = next(f for f in frames if f["type"] == "event_block")["block"]
@@ -331,10 +336,14 @@ def test_image_only_message_allowed(client, stub_hooks):
 
 
 class _NoEmbedScreen(StubChannel):
-    """The same screen, declaring it cannot carry image bytes."""
+    """The same screen, whose runtime declares it cannot carry image bytes."""
 
     name = "no-embed"
-    embeds_images = False
+
+    def __init__(self, **policy: float) -> None:
+        super().__init__(**policy)
+        # The capability is the provider's, and the provider is the runtime.
+        self.runtime.embeds_images = False
 
 
 def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:

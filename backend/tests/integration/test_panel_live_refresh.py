@@ -20,7 +20,7 @@ from app.domain.agent.runtime import get_broker
 from app.main import app
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task_id
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 from tests.integration.test_accept_pr import app_world as app_world
 
 
@@ -40,7 +40,7 @@ def frames(monkeypatch) -> list[tuple[str, dict]]:
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(

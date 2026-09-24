@@ -12,13 +12,14 @@ import pytest
 
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import post_project
 from tests.integration.test_accept_pr import app_world as app_world
 
 pytestmark = pytest.mark.usefixtures("app_world")
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

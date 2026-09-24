@@ -20,6 +20,7 @@ from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
+from tests.integration.conftest import registered
 
 
 class RecordingScreen(StubChannel):
@@ -36,30 +37,35 @@ class RecordingScreen(StubChannel):
         self.release = asyncio.Event()
         self._answering: set[asyncio.Task] = set()
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del images
+    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+        prompt = _said(message)
         self.prompts.append(prompt)
         self.last_prompt = prompt
-        first = len(self.prompts) == 1
-        if first:
+        if self._answering:
+            # Said to the turn already running: the session reads it at its
+            # next tool boundary and echoes it, inside that turn.
+            self.acknowledges(topic_id, prompt)
+            return
+        nth = len(self.prompts)
+        self.acknowledges(topic_id, prompt)
+        if nth == 1:
             self.started.set()
         task = asyncio.get_running_loop().create_task(
-            self._answer(screen, prompt, len(self.prompts), wait=first)
+            self._answer(topic_id, nth, wait=nth == 1)
         )
         self._answering.add(task)
         task.add_done_callback(self._answering.discard)
-        return True
 
-    async def _answer(
-        self, topic_id: uuid.UUID, prompt: str, nth: int, *, wait: bool
-    ) -> None:
+    async def _answer(self, topic_id: uuid.UUID, nth: int, *, wait: bool) -> None:
         if wait:
             await self.release.wait()
-        self.starts(topic_id, session_id="s-window")
-        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, f"回复 {nth}")
         self.stops(topic_id, f"回复 {nth}", session_id="s-window")
+
+
+def _said(message: dict) -> str:
+    content = message["message"]["content"]
+    return content if isinstance(content, str) else content[0]["text"]
 
 
 async def _service(factory, agent: StubChannel, tmp_path) -> ChatService:
@@ -73,6 +79,7 @@ async def _service(factory, agent: StubChannel, tmp_path) -> ChatService:
 
 async def _new_topic(factory) -> uuid.UUID:
     async with factory() as session:
+        await registered(session, "u0")
         project = await ProjectService(session).create(name="P", owner_handle="u0")
         topic = await TopicService(session).create(
             project_id=project.id, title="话题", created_by="u0"
@@ -96,6 +103,21 @@ async def _post_and_queue(svc, topic_id, *, author: str, content: str):
     first = await gen.__anext__()
     assert first["type"] == "user_block"
     return asyncio.create_task(_drain(gen))
+
+
+async def _until_written(agent: StubChannel, topic_id: uuid.UUID, inputs: int) -> None:
+    """Wait until the running session has been handed ``inputs`` messages.
+
+    A summon posted mid-turn is handed to the session by the request that
+    posted it, after its first frame; releasing the turn before that happens
+    would test a turn that had already ended instead of one still running.
+    """
+    for _ in range(500):
+        written = agent.sessions[topic_id].written
+        if sum(message.get("type") == "user" for message in written) >= inputs:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"the session was never handed {inputs} inputs")
 
 
 @pytest.mark.anyio
@@ -164,10 +186,10 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
         )
     )
     await asyncio.wait_for(agent.started.wait(), 5)
-
     turn2 = await _post_and_queue(
         svc, topic_id, author="u2", content="顺便把 README 也更了"
     )
+    await _until_written(agent, topic_id, 2)
 
     agent.release.set()
     await asyncio.wait_for(turn1, 5)
@@ -208,6 +230,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(
 
     turn1 = await _post_and_queue(svc, topic_id, author="u1", content="A 怎么办")
     turn2 = await _post_and_queue(svc, topic_id, author="u2", content="B 也一起")
+    await _until_written(agent, topic_id, 3)
 
     agent.release.set()
     await asyncio.wait_for(turn0, 5)

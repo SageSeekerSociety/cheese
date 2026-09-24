@@ -4,9 +4,11 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from tests.integration.conftest import post_project
+
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "git 项目"}).json()["data"]["id"]
+    return post_project(client, json={"name": "git 项目"}).json()["data"]["id"]
 
 
 def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):

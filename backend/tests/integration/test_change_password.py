@@ -101,7 +101,7 @@ class TestChangePassword:
         assert self._password_login(self.user.password).status_code == 200
 
     def test_a_ticket_for_something_else_does_not_change_it(self):
-        refused = self._change("a-brand-new-password-1", self._ticket("2fa:settings"))
+        refused = self._change("a-brand-new-password-1", self._ticket("2fa:disable"))
         assert refused.status_code == 403, refused.text
 
         assert self._password_login(self.user.password).status_code == 200

@@ -91,9 +91,9 @@ class BlockRepository:
         # 才算那一轮自己的产出；人说的话不论有没有轮次号都是输入。
         #
         # `own_output` 是调用方直接给出的答案，给那种「署名是 agent、平台这边却
-        # 填不出轮次号」的写入端用：远程控制里芝士问出口的那句话由平台代写进房间
-        # （`api/routes/remote_control.py` 的 `voice_pending`），而问话的那一轮跑
-        # 在机器上，平台没有它的轮次号。它在等**人**回答，不是在等自己读一遍。
+        # 填不出轮次号」的写入端用：`cheese ask` 问出口的那句话由平台代写进房间
+        # （`api/routes/topics.py`），而问话的那一轮跑在机器上，平台没有它的轮次号。
+        # 它在等**人**回答，不是在等自己读一遍。
         if (
             not own_output
             and is_participant(author_type)

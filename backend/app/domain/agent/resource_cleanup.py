@@ -28,8 +28,7 @@ FOOTPRINT_ROOT = ".cheese"
 
 # The checkout inside a room's home — a copy of `place.CHECKOUT_DIR`, held to it
 # by test_footprint_root.py. The teardown has to look in the same directory the
-# launcher built, and this is also the directory `place.write` refuses: the one
-# name serves both, so a rename that reaches only one of them cannot happen.
+# launcher built, so a rename that reaches only one of them cannot happen.
 CHECKOUT_DIR = "room"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
@@ -51,8 +50,8 @@ TRANSCRIPTS_ROOT = "transcripts"
 PLATFORM_DIRS = (FOOTPRINT_ROOT, ".claude")
 
 # How long an archived room's processes get to leave on their own before the
-# cleanup ends them. The graceful path below — `/exit` typed into the agent's
-# terminal, the executor asked to stop — is what the first attempts do, and a
+# cleanup ends them. The graceful path below — the session's launcher asked to
+# stop, the executor asked to stop — is what the first attempts do, and a
 # room whose agent is between tool calls is gone within a minute of it. What
 # it cannot reach is everything else the room spawned: a dev server the agent
 # started, a viewer still attached to the terminal, an agent wedged inside a
@@ -283,14 +282,16 @@ def request_exit(home: Path, work: Path, lock_fd: int) -> None:
             "-t",
             "=" + name + ":",
             "-F",
-            "#{pane_id} #{pane_dead}",
+            "#{pane_id} #{pane_dead} #{pane_pid}",
         ],
         pass_fds=(lock_fd,),
     )
     if panes.returncode or not panes.stdout.strip():
         raise RuntimeError("could not inspect the resource's terminal panes")
     live = [
-        line.split()[0] for line in panes.stdout.splitlines() if line.split()[1] != "1"
+        line.split()[2]
+        for line in panes.stdout.splitlines()
+        if len(line.split()) == 3 and line.split()[1] != "1"
     ]
     if not live:
         # remain-on-exit preserves the terminal after every agent has exited.
@@ -301,14 +302,13 @@ def request_exit(home: Path, work: Path, lock_fd: int) -> None:
         if closed.returncode:
             raise RuntimeError("could not close the exited resource terminal")
         return
-    for pane in live:
-        for keys in (["-l", "/exit"], ["Enter"]):
-            sent = run_command(
-                ["tmux", "-S", socket, "send-keys", "-t", pane, *keys],
-                pass_fds=(lock_fd,),
-            )
-            if sent.returncode:
-                raise RuntimeError("could not request a graceful session exit")
+    # The pane's program is the launcher, which traps TERM, stops the session's
+    # runner, and the runner stops the agent. Sent by a child that holds the
+    # stop lock, like every other command here, so a retry after this process
+    # dies cannot run beside it.
+    sent = run_command(["kill", "-TERM", *live], pass_fds=(lock_fd,))
+    if sent.returncode:
+        raise RuntimeError("could not request a graceful session exit")
     raise StillRunning("waiting for the agent to exit and finish transcript writes")
 
 
@@ -330,11 +330,6 @@ def resource_paths(
             if parent.is_symlink():
                 raise RuntimeError("resource path is a symlink")
     return paths[0], paths[1]
-
-
-def check_events_delivered(home: Path) -> None:
-    if any((home / ".cheese/cheese-spool").glob("[0-9]*")):
-        raise RuntimeError("hook events still await backend acknowledgement")
 
 
 def retained_transcripts(machine_home: Path, project: str, room: str, resource: str):
@@ -510,8 +505,6 @@ def main() -> None:
         check_no_writers([home, work])
         if executor is None:
             check_resource_publication(home, work)
-        if home.exists():
-            check_events_delivered(home)
         if executor is not None and executor["kind"] == "private":
             helper = runpy.run_path(
                 str(platform_dir(home) / "remote-execution/private.py")

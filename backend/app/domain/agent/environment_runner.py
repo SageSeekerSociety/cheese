@@ -47,12 +47,11 @@ def tool_prefix():
     this machine — or None when the machine has no store.
 
     The setup script's only addressable output is `$HOME`, and a room's `$HOME`
-    has to be its own (hook events spool under it, and the drainer ships that
-    spool with whichever token the last screen start wrote). Those two facts
-    together are why every room of a project downloaded and kept its own copy of
-    the same toolchain: measured on dev 2026-09-17, one Node 22 per room,
-    ~254MB each across 228 rooms, and five rooms fetching the same 54MB tarball
-    within three hours.
+    has to be its own (the session's config, transcripts and credentials live
+    under it). Those two facts together are why every room of a project
+    downloaded and kept its own copy of the same toolchain: measured on dev
+    2026-09-17, one Node 22 per room, ~254MB each across 228 rooms, and five
+    rooms fetching the same 54MB tarball within three hours.
 
     So the script gets a HOME of its own instead. It is the platform's to give:
     `HOME` is already a reserved variable a project may not set

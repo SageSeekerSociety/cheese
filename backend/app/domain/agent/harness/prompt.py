@@ -11,8 +11,7 @@
 3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
    的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
    prompt 交给它，而它**在启动时读一次**那个文件
-   （`claude_code/session_launch.py` 的模块注释，`hooks_substrate` 里
-   「reads a system prompt exactly once — at launch」）。文件每轮都重写，重写是
+   （`claude_code/session_launch.py` 的模块注释）。文件每轮都重写，重写是
    给**下一次**冷启动看的。
 
    所以「第 3 周改成了第 4 周」这件事，一个正在跑的会话当天听不到。这是有意接受
@@ -32,6 +31,17 @@ from app.domain.task.teaching import TeachingContext
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
 )
+
+
+# How a roster row is in the project, in the words the agent reads. An external
+# member is someone from outside the team taking part in this one project.
+_STANDING = {"owner": "项目所有者", "team": "团队成员", "external": "外部成员"}
+
+
+def _standing(member: dict) -> str:
+    if member.get("agent"):
+        return "AI 队友"
+    return _STANDING.get(member.get("source") or "", "成员")
 
 
 def chipify_paths(fact: str) -> str:
@@ -306,7 +316,7 @@ def build_system_prompt(
             )
     if roster:
         lines = "\n".join(
-            f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
+            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
         )
         parts.append(
             "## 项目成员 & 怎么点名\n"

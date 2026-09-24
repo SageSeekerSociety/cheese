@@ -20,6 +20,7 @@ import type {
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
   UserList,
+  VerifyOAuthEmailResponse,
 } from './types'
 
 import { API_BASE_URL } from '../../utils'
@@ -286,13 +287,24 @@ export namespace UserApi {
     | '2fa:enable'
     | '2fa:disable'
     | '2fa:backup-codes'
-    | '2fa:settings'
     | 'passkey:add'
     | 'passkey:delete'
     | 'password:change'
     | 'oauth:unbind'
     | 'realname:view'
     | 'realname:update'
+
+  /**
+   * A ticket for `purpose` without proving anything again, granted only while
+   * this sign-in is within its sudo window; refused with SudoRequiredError
+   * otherwise.
+   */
+  export const requestSudoTicket = (purpose: SudoPurpose) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: { purpose },
+    })
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse>({
@@ -341,7 +353,8 @@ export namespace UserApi {
   }
 
   // TOTP 验证相关
-  export const verify2FA = (data: { temp_token: string; code: string }) =>
+  /** `trust_device` trusts this browser to skip the step for 30 days. */
+  export const verify2FA = (data: { temp_token: string; code: string; trust_device: boolean }) =>
     ApiInstance.request<TOTPAuthResponseDataType>({
       url: '/users/auth/verify-2fa',
       method: 'POST',
@@ -381,12 +394,6 @@ export namespace UserApi {
   export interface Get2FAStatusResponseDataType {
     enabled: boolean
     has_passkey: boolean
-    always_required: boolean
-  }
-
-  export interface Update2FASettingsResponseDataType {
-    success: boolean
-    always_required: boolean
   }
 
   // 获取 2FA 状态
@@ -394,14 +401,6 @@ export namespace UserApi {
     ApiInstance.request<Get2FAStatusResponseDataType>({
       url: `/users/${userId}/2fa/status`,
       method: 'GET',
-    })
-
-  // 添加更新 2FA 设置的方法
-  export const update2FASettings = (userId: number, alwaysRequired: boolean, sudoTicket: string) =>
-    ApiInstance.request<Update2FASettingsResponseDataType>({
-      url: `/users/${userId}/2fa/settings`,
-      method: 'PUT',
-      data: { always_required: alwaysRequired, sudoTicket },
     })
 
   export const verifySudoTOTP = (code: string, purpose?: SudoPurpose) =>
@@ -527,6 +526,36 @@ export namespace UserApi {
     ApiInstance.request<GetOAuthStateResponse>({
       url: `/users/auth/oauth/state?token=${encodeURIComponent(stateToken)}`,
       method: 'GET',
+    })
+
+  // The address a new third-party account will hold is proven with a code.
+  export const sendOAuthEmailCode = (data: { stateToken: string; email: string }) =>
+    ApiInstance.request({
+      url: '/users/auth/oauth/email/code',
+      method: 'POST',
+      data,
+    })
+
+  export const verifyOAuthEmail = (data: { stateToken: string; email: string; code: string }) =>
+    ApiInstance.request<VerifyOAuthEmailResponse>({
+      url: '/users/auth/oauth/email/verify',
+      method: 'POST',
+      data,
+    })
+
+  // An account without an address of its own adds one.
+  export const sendAddEmailCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/me/email/code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const addEmail = (data: { email: string; code: string }) =>
+    ApiInstance.request<{ user: User }>({
+      url: '/users/me/email',
+      method: 'POST',
+      data,
     })
 
   // 从 OAuth 创建新用户 (通过表单提交，会重定向)

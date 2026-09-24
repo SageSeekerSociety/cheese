@@ -4,12 +4,12 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def test_task_metadata_does_not_create_a_backend_workspace_descriptor(client):
     client.headers.update(session_auth_headers("alice"))
-    project = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
     room = client.post("/topics", json={"project_id": project, "title": "room"}).json()[
         "data"
     ]["id"]
