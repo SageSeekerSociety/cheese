@@ -182,7 +182,10 @@ jobs:
           POSTGRES_DB: cheese_test
         ports:
           - 5442:5432
+        # Use tmpfs for the ephemeral integration DB to reduce observed sync I/O.
+        # Bound tmpfs to 4 GiB on 16 GiB runners; sample filesystem and RAM below.
         options: >-
+          ${{ matrix.layer == 'integration' && '--tmpfs /var/lib/postgresql/data:rw,size=4g' || '' }}
           --health-cmd "pg_isready -U postgres" --health-interval 10s
           --health-timeout 5s --health-retries 5
       valkey:
@@ -299,6 +302,19 @@ jobs:
         if: matrix.layer == 'search'
         timeout-minutes: 2
         run: curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 http://localhost:7700/health
+
+      - name: Verify integration PostgreSQL storage
+        if: matrix.layer == 'integration'
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker inspect --format '{{json .HostConfig.Tmpfs}}' "$POSTGRES_CONTAINER"
+          pid=$(docker inspect --format '{{.State.Pid}}' "$POSTGRES_CONTAINER")
+          data="/proc/$pid/root/var/lib/postgresql/data"
+          test "$(sudo -n stat -f -c %T "$data")" = tmpfs
+          read -r block_size blocks < <(sudo -n stat -f -c '%S %b' "$data")
+          test "$((block_size * blocks))" = 4294967296
+          echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
 
       - name: Run the selected layer partition
         timeout-minutes: ${{ matrix.timeout }}

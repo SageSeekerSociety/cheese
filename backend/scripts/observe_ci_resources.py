@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,6 +22,7 @@ def record(stream, **fields):
 async def sample_postgres():
     import asyncpg
 
+    settings_recorded = False
     # Connection details stay in the environment, never in the evidence.
     while True:
         connection = None
@@ -34,6 +36,9 @@ async def sample_postgres():
                 command_timeout=3,
                 server_settings={"application_name": "cheese-ci-resource-observer"},
             )
+            if not settings_recorded:
+                record(sys.stdout, fsync=await connection.fetchval("SHOW fsync"))
+                settings_recorded = True
             rows = await connection.fetch(
                 "SELECT backend_type, wait_event_type, wait_event, count(*) AS count "
                 "FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
@@ -46,6 +51,34 @@ async def sample_postgres():
             if connection is not None:
                 await connection.close(timeout=1)
         await asyncio.sleep(5)
+
+
+def storage_snapshot(data, meminfo):
+    usage = os.statvfs(data)
+    available_kb = next(
+        int(line.split()[1])
+        for line in meminfo.read_text().splitlines()
+        if line.startswith("MemAvailable:")
+    )
+    return {
+        "filesystem_total_bytes": usage.f_blocks * usage.f_frsize,
+        "filesystem_used_bytes": (usage.f_blocks - usage.f_bfree) * usage.f_frsize,
+        "filesystem_available_bytes": usage.f_bavail * usage.f_frsize,
+        "mem_available_bytes": available_kb * 1024,
+    }
+
+
+def sample_storage(postgres_pid):
+    data = Path(f"/proc/{postgres_pid}/root/var/lib/postgresql/data")
+    record(sys.stdout, event="sampler_started", pid=os.getpid(), interval_seconds=5)
+    # Samples cover the entire data filesystem, including WAL.
+    # Peaks between samples are unknown.
+    while True:
+        try:
+            record(sys.stdout, **storage_snapshot(data, Path("/proc/meminfo")))
+        except Exception as error:
+            record(sys.stdout, error=type(error).__name__)
+        time.sleep(5)
 
 
 def stop(process):
@@ -107,6 +140,20 @@ def observe(output, command):
                     ],
                 )
             ]
+            if postgres_pid := os.environ.get("CHEESE_CI_POSTGRES_PID"):
+                commands.append(
+                    (
+                        "storage",
+                        [
+                            "sudo",
+                            "-n",
+                            "/usr/bin/python3",
+                            str(Path(__file__).resolve()),
+                            "--sample-storage",
+                            postgres_pid,
+                        ],
+                    )
+                )
             if vmstat:
                 commands.append(("vmstat", [vmstat, "-t", "1"]))
             else:
@@ -155,11 +202,14 @@ def observe(output, command):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample-postgres", action="store_true")
+    parser.add_argument("--sample-storage", type=int)
     parser.add_argument("--output", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.sample_postgres:
         asyncio.run(sample_postgres())
+    elif args.sample_storage:
+        sample_storage(args.sample_storage)
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         raise SystemExit(observe(args.output, command))
