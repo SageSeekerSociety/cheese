@@ -395,7 +395,7 @@ def test_the_project_files_close_with_the_same_key(client):
 def test_a_teammate_reads_the_files_like_any_other_door(client):
     """2026-09-04 那个 bug 的另一半：队友在侧栏看得见项目，点进去文件却 403。
 
-    文件与实时终端各自那份拷贝漏了「项目所属小队」，合并成一个判断之后它们和
+    文件那份拷贝漏了「项目所属小队」，合并成一个判断之后它和
     ``/projects/{id}`` 给同一个答案。
     """
     team_id = _team(client, owner="alice", members=("bob",))
@@ -404,8 +404,6 @@ def test_a_teammate_reads_the_files_like_any_other_door(client):
 
     assert client.get(f"/projects/{pid}", headers=who).status_code == 200
     assert client.get(f"/projects/{pid}/files", headers=who).status_code == 200
-    terminal = client.get(f"/topics/{root}/terminal", headers=who)
-    assert terminal.status_code == 200
 
 
 # --- 4. AI 摘要：同一个判断，没有旁路 ----------------------------------------

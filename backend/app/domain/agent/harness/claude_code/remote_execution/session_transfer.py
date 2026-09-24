@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import uuid
 from pathlib import Path
@@ -56,53 +57,39 @@ def transfer(payload):
             if probe.returncode == 0:
                 # The connector retains exited panes for terminal inspection.
                 # Their session still exists after Claude has flushed and exited.
-                panes = subprocess.check_output(
-                    [
-                        "tmux",
-                        "-S",
-                        socket,
-                        "list-panes",
-                        "-s",
-                        "-t",
-                        session,
-                        "-F",
-                        "#{pane_dead}",
-                    ],
-                    text=True,
-                ).splitlines()
-                if panes and all(dead == "1" for dead in panes):
+                panes = [
+                    line.split()
+                    for line in subprocess.check_output(
+                        [
+                            "tmux",
+                            "-S",
+                            socket,
+                            "list-panes",
+                            "-s",
+                            "-t",
+                            session,
+                            "-F",
+                            "#{pane_dead} #{pane_pid}",
+                        ],
+                        text=True,
+                    ).splitlines()
+                    if line.split()
+                ]
+                if panes and all(pane[0] == "1" for pane in panes):
                     print(json.dumps({"stopped": True}))
                     return
-            if probe.returncode == 0 and payload.get("request_exit", True):
-                subprocess.run(
-                    [
-                        "tmux",
-                        "-S",
-                        socket,
-                        "send-keys",
-                        "-t",
-                        session + ":0.0",
-                        "-l",
-                        "/exit",
-                    ],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [
-                        "tmux",
-                        "-S",
-                        socket,
-                        "send-keys",
-                        "-t",
-                        session + ":0.0",
-                        "Enter",
-                    ],
-                    check=True,
-                    capture_output=True,
-                )
-                print(json.dumps({"stopped": False}))
-                return
+                if payload.get("request_exit", True):
+                    # The pane's program is the launcher: it traps TERM, stops
+                    # the session's runner, and the runner stops the agent,
+                    # which leaves its conversation files complete.
+                    for pane in panes:
+                        if pane[0] != "1" and len(pane) > 1:
+                            try:
+                                os.kill(int(pane[1]), signal.SIGTERM)
+                            except ProcessLookupError:
+                                pass
+                    print(json.dumps({"stopped": False}))
+                    return
             if probe.returncode == 0:
                 print(json.dumps({"stopped": False}))
                 return

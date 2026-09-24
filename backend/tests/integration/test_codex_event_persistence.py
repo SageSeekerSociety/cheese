@@ -7,7 +7,7 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
+from app.domain.agent.harness.codex.backlog import CodexBacklog
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.subscription import Subscription
 from app.domain.agent_session.services import AgentSessionService
@@ -145,6 +145,24 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
         },
     ).json()["data"]
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+
+    async def teammate() -> str:
+        from app.domain.agent_instance.services import AgentInstanceService
+        from app.domain.identity.handles import agent_instance_handle
+
+        async with client.test_factory() as session:
+            instance = await AgentInstanceService(session).create(
+                project_id=project_id,
+                handle="original-teammate",
+                type_name=None,
+                display_name="Original teammate",
+            )
+            await session.commit()
+            return agent_instance_handle(instance.id)
+
+    # The session authored under its teammate's seat; the pointer belongs to
+    # that teammate, whoever the room's current agent is.
+    seat = client.portal.call(teammate)
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="fixture",
@@ -155,7 +173,7 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
         {
             "method": "thread/started",
             "params": {"thread": {"id": "old-thread"}},
-            "cheese": {"agent_handle": "original-teammate", "harness": "codex"},
+            "cheese": {"agent_handle": seat, "harness": "codex"},
         }
     )[0]
     client.portal.call(
@@ -210,6 +228,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
         uuid.UUID(project["id"]), uuid.UUID(topic["id"]), harness="codex"
     )
     path = tmp_path / "events.sqlite"
+    work = str(uuid.uuid4())
     remote = AsyncMock(
         return_value={
             "events": [
@@ -226,10 +245,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
                                 "text": "One durable reply",
                             },
                         },
-                        "cheese": {
-                            "work_id": str(uuid.uuid4()),
-                            "agent_handle": "original-agent",
-                        },
+                        "cheese": {"work_id": work, "agent_handle": "original-agent"},
                     },
                 }
             ]
@@ -266,8 +282,8 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
     assert len(replies) == 1
     assert replies[0].meta["eid"] == "codex:thread:reply"
     assert replies[0].author == "original-agent"
-    # A different model item with the same text must survive the platform's
-    # general recovery path, which also supports legacy Stop/display echoes.
+    # A different model item with the same text is a second reply, not a
+    # duplicate of the first: it lands too.
     remote.return_value = {
         "events": [
             {
@@ -283,29 +299,12 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
                             "text": "One durable reply",
                         },
                     },
-                    "cheese": {"agent_handle": "original-agent"},
+                    "cheese": {"work_id": work, "agent_handle": "original-agent"},
                 },
             }
         ]
     }
-    await receive(path, remote)
-    compute = Mock()
-    compute.backlog.side_effect = lambda _: CodexBacklog(path)
-    recovery = service(compute)
-
-    async def reconcile():
-        return [
-            frame
-            async for frame in recovery._reconcile_spool(
-                session.project_id,
-                session.topic_id,
-                None,
-                harness=session.harness,
-            )
-        ]
-
-    frames = client.portal.call(reconcile)
-    assert len(frames) == 1
+    assert client.portal.call(lambda: restarted.drain()) == 1
     async with client.test_factory() as db:
         blocks = await BlockRepository(db).list_for_topic(session.topic_id)
     replies = [block for block in blocks if block.content == "One durable reply"]

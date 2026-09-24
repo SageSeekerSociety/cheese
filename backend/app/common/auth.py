@@ -149,7 +149,6 @@ class SudoPurpose(StrEnum):
     TWO_FA_ENABLE = "2fa:enable"
     TWO_FA_DISABLE = "2fa:disable"
     TWO_FA_BACKUP_CODES = "2fa:backup-codes"
-    TWO_FA_SETTINGS = "2fa:settings"
     PASSKEY_ADD = "passkey:add"
     PASSKEY_DELETE = "passkey:delete"
     PASSWORD_CHANGE = "password:change"

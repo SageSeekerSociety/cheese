@@ -1,0 +1,46 @@
+{
+  "verb": "backlog",
+  "why": "A turn the model API refused is a turn that ended, and it ended in failure: the room has to hear both, once. The build reports the refusal on the turn's result (`is_error`), after its own line about it, and that line is not something 芝士 said. How the refusal is worded rides in the result's text, where the room reads whether a key was rejected or a balance ran out.",
+  "readers": [
+    "python"
+  ],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "type": "assistant",
+          "uuid": "rec_1",
+          "session_id": "session-1",
+          "error": "authentication_failed",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Invalid API key · Fix external API key"
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success",
+          "uuid": "rec_2",
+          "session_id": "session-1",
+          "is_error": true,
+          "result": "Invalid API key · Fix external API key",
+          "terminal_reason": "api_error",
+          "api_error_status": 401
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "kind": "result",
+      "text": "Invalid API key · Fix external API key（authentication_failed）",
+      "session_id": "session-1",
+      "is_error": true
+    }
+  ]
+}

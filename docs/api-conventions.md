@@ -54,9 +54,8 @@ read it off the request:
 - a `url` field the frontend will put in an iframe.
 
 Build those with `app.api.proxy.browser_path()`, never from `request.url.path` —
-that is the stripped one, and a cookie scoped to it is silently never sent. Two
-places need this today, the 施工现场 terminal and the app preview
-(`app/api/routes/terminal.py`, `app_preview.py`).
+that is the stripped one, and a cookie scoped to it is silently never sent. The
+app preview needs this today (`app/api/routes/app_preview.py`).
 
 This is a smaller trap than the one it replaced, but it is sharper: it fails only
 in a browser, behind the gateway, and never in a test that talks to the backend
@@ -106,9 +105,8 @@ it directly rather than through the app origin. Nothing else is special-cased.
   from a route file gives you a path nothing serves.
 - **A base that must reach the backend root ends in `/api`.**
   `settings.connector_public_base` already carries this requirement: an enrolled
-  device POSTs hooks to `{base}/sandbox/hooks/…`, and with the `/api` missing that
-  lands on the SPA, which answers 200 and drops every agent event. That failure
-  cost a day on dev (2026-08-08) — the machine worked, the platform saw nothing.
+  device calls the backend at `{base}/…`, and with the `/api` missing that lands on
+  the SPA, which answers 200 to a request nothing served.
 - **The sandbox CLI's base is the opposite case**: `settings.sandbox_api_base` is
   handed to a tool that appends its own paths, so a stale `/api` suffix on it now
   double-counts. `settings.agent_api_base()` normalizes it away and the backend

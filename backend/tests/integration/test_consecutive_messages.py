@@ -42,25 +42,29 @@ class WorkingScreen(StubChannel):
         self.delivered: list[str] = []
         self._answering: set[asyncio.Task] = set()
 
-    async def send_prompt(  # type: ignore[override]
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del images
+    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+        prompt = _said(message)
         if self._answering:
             self.delivered.append(prompt)
-            return True
+            return
         self.prompts.append(prompt)
         self.last_prompt = prompt
+        self.starts(topic_id, session_id="s1")
+        self.acknowledges(topic_id, prompt)
         self.started.set()
-        task = asyncio.get_running_loop().create_task(self._answer(screen))
+        task = asyncio.get_running_loop().create_task(self._answer(topic_id))
         self._answering.add(task)
         task.add_done_callback(self._answering.discard)
-        return True
 
     async def _answer(self, topic_id: uuid.UUID) -> None:
         await self.release.wait()
-        self.starts(topic_id, session_id="s1")
+        self.says(topic_id, "done")
         self.stops(topic_id, "done", session_id="s1")
+
+
+def _said(message: dict) -> str:
+    content = message["message"]["content"]
+    return content if isinstance(content, str) else content[0]["text"]
 
 
 async def _until(cond, timeout: float = 5.0) -> None:

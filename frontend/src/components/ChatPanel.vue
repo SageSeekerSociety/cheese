@@ -49,14 +49,9 @@ import { useRoomSocket } from './room/composables/useRoomSocket'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
-import AgentControls from './AgentControls.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
-
-// The room's session state as the socket last reported it. Null until the first
-// frame lands, and passing it at all is what puts AgentControls on the frames.
-const agentControl = ref<AgentControlState | null>(null)
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage and happens in the row components; here we only fill the
@@ -126,6 +121,8 @@ const emit = defineEmits<{
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
+  // 会话控制状态（任务、模型）动了：socket 上的这一帧转给现场那格的控制条。
+  (e: 'agent-control', state: AgentControlState): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -514,7 +511,7 @@ function handleFrame(frame: WsServerFrame) {
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'agent_control':
-      agentControl.value = frame.state
+      emit('agent-control', frame.state)
       break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
@@ -1404,7 +1401,6 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" :pushed="agentControl" questions-only />
       <RoomComposer
         v-if="showComposer"
         ref="composerRef"

@@ -7,7 +7,7 @@
 * 性能：接口很快、投递却发不出去 —— 用户什么都没收到，p95 还是绿的。
 * 平台：磁盘写满会让所有房间一起死，而账号曲线纹丝不动。
 
-**口径上四条硬事实**（每条都写在对应方法上，这里只点名）：
+**口径上三条硬事实**（每条都写在对应方法上，这里只点名）：
 
 1. `compute_grants` **没有**扣减账本 —— `credits_used` 只是一个只增计数器。所以
    「燃烧速率」只能从 `resource_usage` 推，不能读余额差分（新发放一到账，差分就是
@@ -15,15 +15,12 @@
 2. 「unlimited」**不是一列**，它是**没有适用的 grant**（`summary()['unlimited']`）。
    没有 grant 的项目默认不计量 —— 所以「已耗尽 / <10% / unlimited」是三个互斥集合，
    要分别数。
-3. `event_spool` 是**宿主机本地文件系统**，而且「读不等于消费」。原始未读文件数会
-   高估真实滞后（已经落库但还没写游标的也算未读）。
-4. `_disk_snapshot` 只覆盖**后端这台机器**的 `workspace_root`。远端设备和云主机有各
+3. `_disk_snapshot` 只覆盖**后端这台机器**的 `workspace_root`。远端设备和云主机有各
    自的磁盘，这里看不见 —— 页面上写的是「这台后端」，不是「全平台」。
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -189,12 +186,7 @@ class GapRepository:
     # ---- 性能：投递与事件积压 ----------------------------------------------
 
     async def reliability(self) -> dict[str, Any]:
-        """投递账本的积压与死信 + 本机 hook 事件 spool 的未读。
-
-        spool 那半是**宿主机本地文件系统**（模块 docstring 第 3 条）：后端只看得见
-        自己这张盘上的 spool，设备上的那些不进来。而且「读不等于消费」，所以原始未
-        读数是**上界**而不是真实滞后。
-        """
+        """投递账本的积压与死信。"""
         from app.domain.delivery.ledger import MAX_ATTEMPTS
         from app.domain.delivery.models import Delivery
 
@@ -223,48 +215,6 @@ class GapRepository:
         return {
             "delivery_unsent": unsent,
             "delivery_dead_letters": dead,
-            "spool": self._spool_lag(),
-        }
-
-    @staticmethod
-    def _spool_lag() -> dict[str, Any]:
-        root = os.environ.get("CHEESE_HOOK_SPOOL", "")
-        if not root or not Path(root).is_dir():
-            return {
-                "available": False,
-                "unread": 0,
-                "oldest_age_seconds": None,
-                "spools": 0,
-                "note_key": "perf.spoolMissing",
-            }
-        from app.domain.agent import event_spool
-
-        unread = 0
-        oldest_age: float | None = None
-        spools = 0
-        for spool in Path(root).iterdir():
-            if not spool.is_dir():
-                continue
-            spools += 1
-            try:
-                cursor = event_spool.read_cursor(spool)
-                # 「读不等于消费」：游标之后的都算未读，
-                # 其中一部分可能已经落库了。
-                # `spool_entries(after=...)` 只省掉已经读过的那一段，不删除任何东西。
-                entries = event_spool.spool_entries(spool, after=cursor)
-            except OSError:
-                continue
-            unread += len(entries)
-            for path, _eid, _payload in entries:
-                age = event_spool.age_s(path)
-                if oldest_age is None or age > oldest_age:
-                    oldest_age = age
-        return {
-            "available": True,
-            "unread": unread,
-            "oldest_age_seconds": oldest_age,
-            "spools": spools,
-            "note_key": "perf.spoolNote",
         }
 
     # ---- 平台：磁盘 / 预览 / 机器普查 ---------------------------------------

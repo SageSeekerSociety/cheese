@@ -54,37 +54,6 @@ def test_unknown_finished_task_does_not_hold_idle_upgrade(tmp_path):
     assert executor.upgrading is True
 
 
-def test_acceptance_cleanup_leaves_another_runs_same_named_case_alive(
-    tmp_path, monkeypatch
-):
-    scripts = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
-    monkeypatch.syspath_prepend(str(scripts))
-    acceptance_spec = importlib.util.spec_from_file_location(
-        "acceptance_isolation", scripts / "acceptance.py"
-    )
-    acceptance = importlib.util.module_from_spec(acceptance_spec)
-    acceptance_spec.loader.exec_module(acceptance)
-    cases = [tmp_path / name / "native-terminal-rc-1" for name in ("run-a", "run-b")]
-    servers = [acceptance.tmux_server(folder) for folder in cases]
-    # Keep even the deliberately broken negative control away from other runs.
-    with tempfile.TemporaryDirectory(prefix="ci-tmux-", dir="/tmp") as sockets:
-        monkeypatch.setenv("TMUX_TMPDIR", sockets)
-        try:
-            for server in servers:
-                acceptance.run(
-                    server + ["new-session", "-d", "-s", "agent", "sleep 300"]
-                )
-            identity = ["display-message", "-p", "-t", "agent", "#{pane_pid}"]
-            second_pid = acceptance.run(servers[1] + identity).strip()
-            acceptance.run(servers[0] + ["kill-server"])
-            assert acceptance.run(servers[1] + identity).strip() == second_pid
-        finally:
-            for server in servers:
-                subprocess.run(
-                    server + ["kill-server"], capture_output=True, timeout=10
-                )
-
-
 def _proxy_source() -> str:
     return (
         (RUNTIME.parent / "proxy.js")
@@ -1055,8 +1024,8 @@ def test_executor_upgrade_retries_after_installer_failure(
     try:
         bootstrap.configure(payload)
         original = json.loads(capsys.readouterr().out)
-        old_hook = payload["files"]["cheese-hook"]
-        payload["files"]["cheese-hook"] = base64.b64encode(b"# next release\n").decode()
+        old_sync = payload["files"]["cheese-sync"]
+        payload["files"]["cheese-sync"] = base64.b64encode(b"# next release\n").decode()
 
         def fail_stop(command, **kwargs):
             if "stop" in command:
@@ -1075,7 +1044,7 @@ def test_executor_upgrade_retries_after_installer_failure(
                 {"id": "late", "tool": "Bash", "args": {"command": "touch late"}},
             )
         if rollback:
-            payload["files"]["cheese-hook"] = old_hook
+            payload["files"]["cheese-sync"] = old_sync
         bootstrap.configure(payload)
         updated = json.loads(capsys.readouterr().out)
         assert updated["pid"] != original["pid"]
@@ -1233,7 +1202,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             next_binary.symlink_to(claude_binary())
             monkeypatch.setattr(bootstrap, "binary", lambda *_: str(next_binary))
         else:
-            payload["files"]["cheese-hook"] = base64.b64encode(b"# new hook\n").decode()
+            payload["files"]["cheese-sync"] = base64.b64encode(b"# new sync\n").decode()
         payload["files"]["remote-execution/runtime.py"] = base64.b64encode(
             changed
         ).decode()

@@ -1,10 +1,17 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
+import contextlib
 import json
 import os
+import shlex
+import signal
 import subprocess
+import sys
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -14,6 +21,7 @@ import pytest
 from sqlalchemy import text
 
 from app import device_connection_app
+from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
@@ -23,16 +31,21 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.bundle import build
+from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
+from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
+from app.main import app as fastapi_app
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
+from tests.pinned_claude import claude_binary
 from tests.support import wire
 
 AGENT = "agent"
@@ -236,7 +249,6 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
                     topic_id=str(topic),
                     agent_handle=screen["agent_handle"],
                 ),
-                hook_url="http://fixture/hooks",
                 token=screen["token"],
             )
         assert captured["CHEESE_AUTHOR"] == "other-teammate"
@@ -312,18 +324,15 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
             "alive": True,
         }
         assert await codex.discover("center") == [handle]
-        # 中心通道同时被 Claude Code 和 Codex 两个 runtime 包着
-        # （``build_compute_pool``），
-        # 所以它答不出哪一条会话是谁的，也不该答：它把落在自己这儿的会话原样交出来，
-        # 骨架的名字当 ``running`` 一起交（``Channel.discover`` 的契约）。
-        central.restore_screens = AsyncMock(
-            side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
-        )
-        central.executor.discover = AsyncMock(return_value=[])
-        assert await central.discover("center") == [(project, topic, None, "codex")]
+        # 中心通道同时被几个骨架的 runtime 包着（``build_compute_pool``），
+        # 所以它答不出哪一条会话是谁的，也不该答：它只把落在自己这儿的屏认回来。
+        central.restore_screens = AsyncMock()
+        await central.restore("center")
+        central.restore_screens.assert_awaited_once_with([(project, topic, "center")])
         # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
         # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
-        assert await ClaudeCodeRuntime(central).recover("center") == []
+        claude = ClaudeCodeRuntime(ClaudeCodeChannel(central))
+        assert await claude.recover("center") == []
 
     client.portal.call(exercise)
 
@@ -661,7 +670,7 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
 
 
 @pytest.mark.anyio
-async def test_scoped_execution_and_rc_use_platform_owned_target(
+async def test_scoped_execution_and_controls_use_platform_owned_target(
     client, room, monkeypatch
 ):
     project, topic = room
@@ -681,7 +690,6 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     token = mint_scoped_token(
         project_id=str(project),
         topic_id=str(topic),
-        remote_control=True,
         resource_id=str(resource),
     )
     headers = {"X-Cheese-Token": token}
@@ -718,41 +726,42 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
         ).status_code
         == 401
     )
-    created = client.post(
-        "/v1/code/sessions",
-        headers=headers,
-        json={"execution": {"device_id": "attacker"}},
+    # A room's live session, as the controls see it: reading a file is the
+    # executor's to answer, so it goes to the lease the platform recorded.
+    session = SimpleNamespace(
+        controls=("read_file",),
+        executor_controls=frozenset({"read_file"}),
+        control_state=lambda _topic: {"id": "session-1", "tasks": {}},
     )
-    assert created.status_code == 200, created.text
-    rc = created.json()["session"]
-    assert rc["execution"] == {"resource_id": str(resource), "execution": target}
-    result = client.post(
-        f"/topics/{topic}/agent/control",
-        headers=session_auth_headers("alice"),
-        json={
-            "session_id": rc["id"],
-            "request": {"subtype": "read_file", "path": "draft.md"},
-        },
+    fastapi_app.dependency_overrides[get_chat_service] = lambda: SimpleNamespace(
+        session_controls=lambda _topic: session
     )
-    assert result.status_code == 200, result.text
-    assert call.await_args is not None
-    assert call.await_args.args[0] == target
-    async with client.test_factory() as db:
-        stored = await TopicService(db).get_or_404(topic)
-        stored.resource_id = uuid.uuid4()
-        await db.commit()
-    assert client.post(endpoint, headers=headers, json=payload).status_code == 409
-    stale = client.post(
-        f"/topics/{topic}/agent/control",
-        headers=session_auth_headers("alice"),
-        json={
-            "session_id": rc["id"],
-            "request": {"subtype": "read_file", "path": "draft.md"},
-        },
-    )
-    assert stale.status_code == 409, stale.text
-    stale_bootstrap = client.post("/v1/code/sessions", headers=headers, json={})
-    assert stale_bootstrap.status_code == 409, stale_bootstrap.text
+    request = {
+        "session_id": "session-1",
+        "request": {"subtype": "read_file", "path": "draft.md"},
+    }
+    try:
+        result = client.post(
+            f"/topics/{topic}/agent/control",
+            headers=session_auth_headers("alice"),
+            json=request,
+        )
+        assert result.status_code == 200, result.text
+        assert call.await_args.args == (target, "control", request["request"])
+        async with client.test_factory() as db:
+            stored = await TopicService(db).get_or_404(topic)
+            stored.resource_id = uuid.uuid4()
+            await db.commit()
+        assert client.post(endpoint, headers=headers, json=payload).status_code == 409
+        # The lease belongs to the generation the room has left behind.
+        stale = client.post(
+            f"/topics/{topic}/agent/control",
+            headers=session_auth_headers("alice"),
+            json=request,
+        )
+        assert stale.status_code == 409, stale.text
+    finally:
+        fastapi_app.dependency_overrides.pop(get_chat_service, None)
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         new_resource = stored.resource_id
@@ -761,3 +770,182 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     # Changing the URL must not let the old credential reach the replacement.
     new_endpoint = f"/topics/{topic}/execution/{new_resource}"
     assert client.post(new_endpoint, headers=headers, json=payload).status_code == 409
+
+
+class SaysDone(BaseHTTPRequestHandler):
+    """A Messages API that ends every turn by saying "done"."""
+
+    def log_message(self, *_):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if "/count_tokens" in self.path:
+            return self._send("application/json", {"input_tokens": 10})
+        message = {
+            "id": "msg_fixture",
+            "type": "message",
+            "role": "assistant",
+            "model": body.get("model"),
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        if not body.get("stream"):
+            message.update(
+                content=[{"type": "text", "text": "done"}], stop_reason="end_turn"
+            )
+            return self._send("application/json", message)
+        text = {"type": "text_delta", "text": "done"}
+        events = [
+            ("message_start", {"type": "message_start", "message": message}),
+            (
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            (
+                "content_block_delta",
+                {"type": "content_block_delta", "index": 0, "delta": text},
+            ),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            (
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "usage": {"output_tokens": 5},
+                },
+            ),
+            ("message_stop", {"type": "message_stop"}),
+        ]
+        stream = "".join(
+            f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events
+        )
+        self._send("text/event-stream", stream)
+
+    def _send(self, content_type, payload):
+        encoded = (
+            payload if isinstance(payload, str) else json.dumps(payload)
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
+@pytest.mark.anyio
+async def test_a_room_session_is_the_runner_its_screen_started(
+    client, room, monkeypatch, tmp_path
+):
+    """The room reaches its session through the runner, and finds it again.
+
+    The runner archive and the pinned build are the real ones; only the model
+    and the machine's connector are stand-ins. The connector's part is small:
+    expand the recorded state directory on the machine and relay one line to
+    the socket the runner derives from it. So what the channel recorded is
+    what a later process dials — at the start, and after a restart.
+    """
+    project, topic = room
+    model = ThreadingHTTPServer(("127.0.0.1", 0), SaysDone)
+    threading.Thread(target=model.serve_forever, daemon=True).start()
+    home = tmp_path / "host"
+    (home / ".claude").mkdir(parents=True)
+    work = tmp_path / "work"
+    work.mkdir()
+    archive = tmp_path / "runner.pyz"
+    archive.write_bytes(build())
+    runners: list[subprocess.Popen] = []
+
+    def on_machine(state: str) -> Path:
+        return Path(state.replace("$HOME", str(home)))
+
+    async def call_executor(device_id, state, method, params, timeout=None):
+        assert device_id == "center"
+        reader, writer = await asyncio.open_unix_connection(
+            socket_path(on_machine(state))
+        )
+        try:
+            writer.write(json.dumps({"method": method, "params": params}).encode())
+            writer.write(b"\n")
+            await writer.drain()
+            answer = json.loads(await reader.readline())
+        finally:
+            writer.close()
+        if "error" in answer:
+            raise RuntimeError(answer["error"])
+        return answer["result"]
+
+    async def open_screen(**kwargs):
+        place = await session_place(client.test_request_factory, topic)
+        command = [claude_binary(), "--model", "claude-sonnet-4-5", *LAUNCH_ARGS]
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(home),
+            "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{model.server_address[1]}",
+            "ANTHROPIC_API_KEY": "fixture-not-a-real-key",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "DISABLE_AUTOUPDATER": "1",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CHEESE_AUTHOR": kwargs["agent_handle"],
+            "CHEESE_CLAUDE_COMMAND": shlex.join(command),
+        }
+        state = on_machine(place.runtime["state"])
+        runners.append(
+            subprocess.Popen(
+                [sys.executable, str(archive), "--state", str(state)],
+                cwd=work,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=(tmp_path / "runner.log").open("ab"),
+                start_new_session=True,
+            )
+        )
+        return SimpleNamespace(device_id="center")
+
+    central = channel(client, monkeypatch)
+    central._hub.call_executor = call_executor
+    central._ensure_screen = open_screen
+    claude = ClaudeCodeChannel(central)
+
+    async def exercise():
+        session = ref(project, topic)
+        handle = await claude.ensure(session, Opening("System"))
+        place = await session_place(client.test_request_factory, topic)
+        assert place.runtime["state"] == handle.state
+        assert handle.session_id
+
+        sent = {"input_id": "message-1", "text": "hello", "work_id": str(uuid.uuid4())}
+        assert await claude.call(handle, "send", sent) == {"input_id": "message-1"}
+        async with asyncio.timeout(60):
+            while True:
+                records = [
+                    entry["record"]
+                    for entry in (await claude.call(handle, "events", {}))["events"]
+                ]
+                if any(record.get("type") == "result" for record in records):
+                    break
+                await asyncio.sleep(0.2)
+        result = next(record for record in records if record.get("type") == "result")
+        assert result["is_error"] is False, result
+        assert result["session_id"] == handle.session_id
+
+        # A backend that restarted knows the session only by its row.
+        central.restore_screens = AsyncMock()
+        assert await ClaudeCodeChannel(central).discover("center") == [handle]
+
+    try:
+        client.portal.call(exercise)
+    finally:
+        for runner in runners:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(runner.pid, signal.SIGTERM)
+            runner.wait(timeout=30)
+        model.shutdown()
+        model.server_close()

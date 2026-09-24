@@ -501,19 +501,6 @@ class TOTPService:
         await self._session.commit()
         return True
 
-    # --- always_required flag (surfaced in /2fa/status and /2fa/settings).
-    # With no trusted-device feature, login asks for 2FA whenever it is
-    # enabled, so the flag currently only affects what the UI reports. ---
-
-    async def is_always_required(self, user_id: int) -> bool:
-        factor = await self._factor(user_id)
-        return factor is not None and factor.always_required
-
-    async def set_always_required(self, user_id: int, value: bool) -> None:
-        factor = await self._factor_for_update(user_id)
-        factor.always_required = value
-        await self._session.flush()
-
 
 class PasswordResetService:
     def __init__(self, redis: Redis) -> None:

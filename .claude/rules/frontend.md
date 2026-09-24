@@ -66,8 +66,8 @@ that get written wrong on turn one:
   lists — a sidebar of dozens of topics, a chat of dozens of messages, a board
   column of a dozen cards. Lift each row 2px under the pointer and what a person
   sees is the column jumping, not which row they are on; the background change
-  already said that. (The community half does lift, in ~33 files. It is the side
-  that has to come off it, not this one.)
+  already said that. The community half still lifts; it is the side that has to
+  change, not this one.
 - **Never `transition: all`** — it drags `width`/`height`/`padding` along, so the
   browser relayouts every frame inside a list, and nobody can tell what the line
   was meant to animate. Name the properties.
@@ -98,16 +98,16 @@ avoid a white flash before first paint. Change the storage key
 ## Scales
 
 - Radius: `--radius-sm` 6 / `--radius-md` 8 / `--radius-lg` 12 / `--radius-pill`
-  999. Nothing else. (The tree currently holds 15 distinct values.)
+  999. Nothing else.
 - Font size: prefer the `.t-page-title` / `.t-title` / `.t-body` / `.t-eyebrow` /
   `.t-meta` utility classes. Hand-written sizes are limited to 12/13/14/15/18/23
-  px, and **13px is the floor for anything readable** — there are 29 sites at
-  10–11px and they are not a precedent to follow.
+  px, and **13px is the floor for anything readable** — the 10–11px sizes
+  already in the tree are not a precedent.
 - Line height: `--lh-12` 18 / `--lh-13` 19 / `--lh-14` 20 / `--lh-15` 21 /
   `--lh-18` 26 / `--lh-23` 33 — one per font size, and the size picks it. The
   utility classes already carry it, so a bare `line-height` in new CSS is almost
-  always the mistake: the tree holds 21 hand-picked values (1.2 → 1.9) and none
-  of them is a ladder. Token, never a ratio.
+  always the mistake: the hand-picked values already in the tree are not a
+  ladder to copy. Token, never a ratio.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
 ## A field's label sits OUTSIDE its box, and that is what collides
@@ -186,7 +186,7 @@ wrong on turn one:
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
 gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
-same reason: a rule that goes red on 251 existing sites gets switched off.
+same reason: a rule that goes red on hundreds of existing sites gets switched off.
 
 ```bash
 cd frontend

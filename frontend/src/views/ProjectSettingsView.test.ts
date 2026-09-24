@@ -15,8 +15,8 @@ const router = vi.hoisted(() => ({
 }))
 
 vi.mock('../api')
-vi.mock('../utils/sudo', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../utils/sudo')>()),
+vi.mock('../utils/sudo', () => ({
+  SudoCancelledError: class SudoCancelledError extends Error {},
   withSudo: vi.fn(),
 }))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({

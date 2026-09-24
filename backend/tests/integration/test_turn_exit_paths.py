@@ -50,44 +50,38 @@ SESSION_ID = "sess-exit-path"
 
 
 class _Screen(StubChannel):
-    """Announces its session id on SessionStart and then ends the turn the way
-    this test wants it to end."""
+    """A session started as SESSION_ID, which then ends the turn the way this
+    test wants it to end."""
+
+    new_session_id = SESSION_ID
 
     def __init__(self, *, mode: str) -> None:
-        # Squeezed watchdog: the `provider_error` case is a session that goes
-        # quiet, and that is what the watchdog is for. This screen announces
-        # itself first, so `delivered` is true, and the ceiling rather than the
-        # delivery deadline is what ends that turn.
-        #
-        # The ceiling this number becomes is the OUTER one, in runtime.py: a
-        # backend's `hard_ceiling_s` is sent out as a `turn_ceiling` frame and
-        # the outer wall-clock wrap is what acts on it first. Sub-second values
-        # used to race the setup path there, because that clock started before
-        # the screen was reached: the deadline was spent before there was
-        # anything to watch, the monitor saw an expired ceiling on its first
-        # pass, and the verdict reached nobody, so the socket read blocked until
-        # pytest-timeout killed the run. Same trap cost test_replay_visibility
-        # ~40% of its CI runs. `ceiling_deadline` now measures from
-        # `prompt_delivered` and refuses a moment already past, so setup is out
-        # of the race; this stays a few seconds anyway, because what it has to
-        # outlast is the monitor's own polling, not the setup.
-        super().__init__(idle_suspect_s=0.2, hard_ceiling_s=3.0, delivery_timeout_s=0.2)
+        super().__init__()
         self._mode = mode
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del images
-        self.last_prompt = prompt
-        if self.on_start is not None:
-            self.on_start()
-        self.starts(screen, session_id=SESSION_ID)
-        if self._mode == "raise":
+    async def call(self, handle, method: str, params: dict) -> dict:
+        if method == "send" and self._mode == "raise":
+            # The session was up and had said who it is; the write of this
+            # input then failed.
+            self.starts(handle.session.topic_id, session_id=SESSION_ID)
             raise RuntimeError("provider exploded mid-write")
-        if self._mode != "provider_error":
-            asyncio.get_running_loop().call_soon(self.stops, screen, "done", SESSION_ID)
-        # `provider_error` / `hang`: nothing more is ever said.
-        return True
+        return await super().call(handle, method, params)
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        self.starts(topic_id, session_id=SESSION_ID)
+        self.acknowledges(topic_id, prompt)
+        if self._mode == "normal":
+            self.stops(topic_id, "done", SESSION_ID)
+        elif self._mode == "provider_error":
+            self.record(
+                topic_id,
+                type="result",
+                subtype="success",
+                is_error=True,
+                result="API Error: 500",
+                session_id=SESSION_ID,
+            )
+        # `hang`: the session keeps working; nothing more is said yet.
 
 
 def _seed_topic(client) -> str:
@@ -141,9 +135,14 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
                 await task  # 异常中断 — the assertion is about the pointer
         # The pointer is written by the SUBSCRIPTION, on its own task: the call
         # that started the turn returns long before. Waiting for the session's
-        # hooks to be consumed is what makes this a test of the write and not
+        # records to be consumed is what makes this a test of the write and not
         # of the ordering.
         await drain_hooks(screen, uuid.UUID(topic_id))
+        if mode == "hang":
+            # Asserted after this returns; the session finishing afterwards
+            # changes nothing about what was committed before it did.
+            screen.stops(uuid.UUID(topic_id), "done", SESSION_ID)
+            await drain_hooks(screen, uuid.UUID(topic_id))
 
     async def _drain(agen) -> None:
         async for _ in agen:
@@ -190,9 +189,10 @@ _CHILD = textwrap.dedent(
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
 
     class A(StubChannel):
-        async def send_prompt(self, screen, prompt):
-            self.starts(screen, session_id=SID)
-            return True
+        new_session_id = SID
+
+        def emit_turn(self, topic_id, prompt, reply):
+            self.starts(topic_id, session_id=SID)
 
     async def main():
         engine = create_async_engine(DSN, poolclass=NullPool)
@@ -208,7 +208,7 @@ _CHILD = textwrap.dedent(
             topic_id=uuid.UUID(TOPIC), author="u", content="做事", summon=True
         ):
             pass
-        # The SessionStart above is consumed off the subscription, so wait for
+        # The init record above is consumed off the subscription, so wait for
         # the pointer to actually be in the DB before saying "ready": the marker
         # is what tells the parent it may kill us, and killing us early would
         # test nothing.
@@ -299,21 +299,18 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
 
 
 class _SilentScreen(StubChannel):
-    """A screen that dies before announcing anything — the one case where there
-    genuinely is no session to point at."""
+    """A session that never comes up — the one case where there genuinely is
+    no session to point at."""
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del screen, prompt, images
-        raise RuntimeError("died before SessionStart")
+    async def ensure(self, session, opening):
+        raise RuntimeError("the session never started")
 
 
 def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
     """The complement of every assertion above, and the reason they are not
     vacuous: the pointer is written because a session was ANNOUNCED, not
-    because the turn happened to touch the topic row. A turn that dies before
-    SessionStart must leave NULL — there is nothing to resume, and a pointer to
+    because the turn happened to touch the topic row. A turn whose session never
+    started must leave NULL — there is nothing to resume, and a pointer to
     a session that does not exist would send the next turn to `--resume` a
     transcript that was never written."""
     topic_id = _seed_topic(client)

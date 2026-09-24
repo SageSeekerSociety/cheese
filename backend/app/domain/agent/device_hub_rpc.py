@@ -1,7 +1,6 @@
 """HTTP boundary between rolling backends and the stable device connection owner."""
 
 import asyncio
-import base64
 import dataclasses
 import logging
 import time
@@ -64,7 +63,6 @@ def screen_to_json(screen: HubScreen) -> dict[str, Any]:
         "project_id": str(screen.project_id) if screen.project_id else None,
         "topic_id": str(screen.topic_id) if screen.topic_id else None,
         "resource_id": str(screen.resource_id) if screen.resource_id else None,
-        "hook_key": screen.hook_key,
         "credential_expires": screen.credential_expires,
         "agent_configuration": screen.agent_configuration,
         "execution_target": screen.execution_target,
@@ -116,12 +114,6 @@ class RemoteDeviceHub:
         self._online_callback: Callable[[str], Coroutine[Any, Any, object]] | None = (
             None
         )
-        self._drop_device_callback: (
-            Callable[[str], Coroutine[Any, Any, object]] | None
-        ) = None
-        self._drop_screen_callback: (
-            Callable[[HubScreen], Coroutine[Any, Any, object]] | None
-        ) = None
 
     async def start(self) -> None:
         if self._client is None:
@@ -172,7 +164,6 @@ class RemoteDeviceHub:
 
     async def refresh(self) -> None:
         previous_devices = self._devices
-        previous_screens = self._screens
         response = await self._request("GET", "/internal/device-connection/snapshot")
         payload = response.json()
         self._devices = {item["device_id"]: item for item in payload["devices"]}
@@ -188,24 +179,9 @@ class RemoteDeviceHub:
             and previous.get("connection_generation")
             != current.get("connection_generation")
         }
-        for device_id, old in previous_devices.items():
-            current = self._devices.get(device_id)
-            if old["online"] and (
-                current is None or not current["online"] or device_id in replaced
-            ):
-                if self._drop_screen_callback is not None:
-                    for screen in previous_screens.values():
-                        if screen.device_id == device_id:
-                            await self._drop_screen_callback(screen)
-                if self._drop_device_callback is not None:
-                    await self._drop_device_callback(device_id)
-        for sid, screen in previous_screens.items():
-            if sid not in self._screens and self._drop_screen_callback is not None:
-                await self._drop_screen_callback(screen)
         if self._online_callback is not None:
             for device_id in self.online_device_ids():
                 previous = previous_devices.get(device_id)
-                current = self._devices[device_id]
                 if previous is None or not previous["online"] or device_id in replaced:
                     task = asyncio.create_task(self._online_callback(device_id))
                     task.add_done_callback(_log_callback_failure)
@@ -214,15 +190,6 @@ class RemoteDeviceHub:
         self, callback: Callable[[str], Coroutine[Any, Any, object]]
     ) -> None:
         self._online_callback = callback
-
-    def set_subscription_cleanup_callbacks(
-        self,
-        *,
-        drop_device: Callable[[str], Coroutine[Any, Any, object]],
-        drop_screen: Callable[[HubScreen], Coroutine[Any, Any, object]],
-    ) -> None:
-        self._drop_device_callback = drop_device
-        self._drop_screen_callback = drop_screen
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         if self._client is None:
@@ -388,36 +355,6 @@ class RemoteDeviceHub:
 
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await self._call("list_screens", {"device_id": device_id})
-
-    async def call_screen(
-        self, device_id: str, sid: str, name: str, args: list[Any]
-    ) -> str:
-        return await self._call(
-            "call_screen",
-            {"device_id": device_id, "sid": sid, "name": name, "args": args},
-        )
-
-    async def await_call(
-        self, device_id: str, call_id: str, *, timeout: float = 30
-    ) -> Any:
-        return await self._call(
-            "await_call",
-            {"device_id": device_id, "call_id": call_id, "timeout": timeout},
-        )
-
-    async def put_file(
-        self, device_id: str, sid: str, path: str, data: bytes, *, timeout: float = 30
-    ) -> Any:
-        return await self._call(
-            "put_file",
-            {
-                "device_id": device_id,
-                "sid": sid,
-                "path": path,
-                "data": base64.b64encode(data).decode(),
-                "timeout": timeout,
-            },
-        )
 
     async def exec(
         self,

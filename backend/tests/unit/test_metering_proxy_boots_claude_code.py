@@ -35,8 +35,8 @@ PROJECT = "11111111-1111-1111-1111-111111111111"
 TOPIC = "22222222-2222-2222-2222-222222222222"
 
 
-def _answer(path: str, host: str = "api.anthropic.com", rc: bool = True):
-    return core.control_answer(host, path, PROJECT, TOPIC, rc=rc)
+def _answer(path: str, host: str = "api.anthropic.com"):
+    return core.control_answer(host, path, PROJECT, TOPIC)
 
 
 # —— 应答表：每条路径一条断言（状态码 + 必需字段）————————————————————
@@ -70,41 +70,29 @@ def test_settings_are_answered_empty_rather_than_fetched():
     assert answer.body == b""
 
 
-def test_policy_allows_the_remote_control_the_platform_drives_every_turn_through():
+def test_policy_limits_are_answered_with_no_restriction():
     answer = _answer("/api/claude_code/policy_limits")
     assert answer.status == 200
-    body = json.loads(answer.body)
-    assert body["restrictions"]["allow_remote_control"]["allowed"] is True
+    assert json.loads(answer.body) == {"restrictions": {}}
 
 
-def test_feature_evaluation_turns_on_the_bridge_cheese_needs():
+def test_feature_evaluation_is_answered_here_and_turns_nothing_on():
+    """Cheese supplies no feature flags of its own; the evaluation is answered
+    so that it never reaches Anthropic on the platform's credential."""
     answer = _answer("/api/eval/anything?client=cli")
-    assert answer.status == 200
-    features = json.loads(answer.body)["features"]
-    assert features["tengu_ccr_bridge"]["defaultValue"] is True
-    assert features["tengu_ccr_v2_bridge_create_cli"]["defaultValue"] is True
-    assert features["tengu_ccr_v2_session_crud_cli"]["defaultValue"] is True
-
-
-def test_a_session_without_rc_is_still_answered_here_but_told_nothing_is_on():
-    """Answered either way — the table is what boots the process, and nothing
-    on it may reach Anthropic. What differs is the content: the bridge flags
-    are what make Claude Code open `/v1/code/…`, and a session whose token
-    carries no rc claim has no Cheese route for those to take."""
-    answer = _answer("/api/eval/anything?client=cli", rc=False)
     assert answer.status == 200
     assert json.loads(answer.body)["features"] == {}
 
 
 def test_telemetry_is_consumed_here_whichever_host_it_was_sent_to():
-    """RC payloads carry control-session identifiers; forwarding them would take
-    both the payload and an upstream credential past this boundary."""
+    """Forwarding telemetry would take both the payload and an upstream
+    credential past this boundary."""
     for host, path in (
         ("api.anthropic.com", "/api/event_logging/v2/batch"),
         ("api.statsig.com", "/v1/rgstr"),
         ("statsig.anthropic.com", "/v1/initialize"),
     ):
-        answer = core.control_answer(host, path, PROJECT, TOPIC, rc=True)
+        answer = core.control_answer(host, path, PROJECT, TOPIC)
         assert answer is not None, (host, path)
         assert answer.status == 200
         assert json.loads(answer.body) == {}
@@ -147,7 +135,7 @@ def test_the_login_hosts_are_not_answered_from_the_boot_table(host):
         "/api/eval/anything",
         "/api/event_logging/v2/batch",
     ):
-        assert core.control_answer(host, path, PROJECT, TOPIC, rc=True) is None, path
+        assert core.control_answer(host, path, PROJECT, TOPIC) is None, path
 
 
 def test_a_row_that_names_no_host_answers_the_boot_host_only():

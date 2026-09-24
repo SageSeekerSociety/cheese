@@ -50,7 +50,6 @@ def test_asking_pi_for_the_same_page_again_lands_nothing_twice(tmp_path):
 def test_nothing_is_ever_half_arrived(tmp_path):
     backlog, _ = drain(mirrored(tmp_path))
     assert backlog.unfinished() == set()
-    assert backlog.give_up() == []
 
 
 def test_a_reader_that_died_midway_resumes_and_still_bills_the_whole_turn(tmp_path):

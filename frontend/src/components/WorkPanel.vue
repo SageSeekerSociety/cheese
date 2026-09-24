@@ -21,7 +21,7 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
-import type { PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -43,6 +43,8 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
+    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    agentControl?: AgentControlState | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -64,6 +66,7 @@ const props = withDefaults(
   }>(),
   {
     working: false,
+    agentControl: null,
     topicList: () => [],
     openCardId: null,
     memberNames: () => ({}),
@@ -641,6 +644,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :active="active === 'site'"
           :member-names="memberNames"
           :working="working"
+          :agent-control="agentControl"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

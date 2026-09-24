@@ -1,23 +1,20 @@
 """``DeviceHub`` — the server end of the frozen ``link.Msg`` protocol (P3).
 
 One long-lived control channel per connected device, over which the server opens
-*screens* (each a hosted ``claude``), hands a screen its next prompt, relays a
-screen's raw terminal bytes to browser viewers (the 现场 — relayed, never parsed),
-and runs one-shot ``exec`` on the device. The wire shape is the ``cli/``
-``link.Msg`` contract (``device_link``).
+*screens* (each running a harness's runner), relays a screen's raw terminal
+bytes to browser viewers (relayed, never parsed), reaches a screen's runner
+(``call_executor``), and runs one-shot ``exec`` on the device. The wire shape is
+the ``cli/`` ``link.Msg`` contract (``device_link``).
 
 Ported from the reference ``app/agent/hub.py`` and kept I/O-free: it depends only on
 two tiny transport Protocols, so it is exercised with in-process fakes — no
-WebSocket, no device, no DB. Perception of what the agent *does* flows through our
-Claude Code hooks (``hook_events``), NOT through reading the screen, so the raw
-screen channel here serves only the human viewer.
+WebSocket, no device, no DB. What the agent *does* is read from its runner's
+journal, NOT from the screen, so the raw screen channel here serves only the
+human viewer.
 
 Our adaptations vs the reference:
   * a screen carries our identity shape — ``agent_user_id: uuid`` + ``agent_handle``
-    (the authorship key) — plus its ``project_id``/``topic_id`` and a ``hook_key``
-    (the token the device's ``cheese-hook`` posts under, so hooks route to the turn);
-  * ``call_screen`` returns the call id so the caller (DeviceChannel) can correlate
-    an ``rpc.result`` (used to await a ``prompt`` acknowledgement).
+    (the authorship key) — plus its ``project_id``/``topic_id``.
 """
 
 import asyncio
@@ -107,19 +104,6 @@ def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
         future.exception()
 
 
-def configure_subscription_cleanup(remote_hub: Any) -> None:
-    """Wire business subscription cleanup without coupling the RPC transport."""
-    from app.domain.agent.harness.claude_code import (
-        drop_device_subscriptions,
-        drop_screen_subscriptions,
-    )
-
-    remote_hub.set_subscription_cleanup_callbacks(
-        drop_device=drop_device_subscriptions,
-        drop_screen=drop_screen_subscriptions,
-    )
-
-
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 
@@ -147,13 +131,12 @@ class HubScreen:
     token: str  # the CHEESE_SCREEN value injected into the screen
     # A screen *is* an agent (一个 agent 是一个屏幕): it acts as one agent-user in its
     # project/topic. Attribution of the screen's cheese-api calls keys on
-    # agent_user_id; hooks route by hook_key (see DeviceChannel).
+    # agent_user_id.
     agent_user_id: int
     agent_handle: str
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
     resource_id: uuid.UUID | None = None
-    hook_key: str = ""
     # UNIX expiry of the model credential the screen's `claude` was LAUNCHED with
     # (its `CHEESE_TOKEN_EXPIRES`). A bare `claude` reads that credential — the
     # HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN — ONCE at startup and
@@ -196,16 +179,12 @@ class HubDevice:
     last_seen: float = 0.0
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
-    call_seq: int = 0
-    file_seq: int = 0
     # 本机目录授权: one counter for both directions of the localfs channel (a grant
     # push and a read/write/list op), since they share one result future map.
     local_fs_seq: int = 0
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
-    call_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
-    file_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
         default_factory=dict
     )
@@ -279,16 +258,8 @@ class DeviceHub:
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._devices.get(device_id)
-        if device is not None and device.drop_transport(transport):
-            if not settings.device_connection_owner:
-                from app.domain.agent.harness.claude_code import (
-                    drop_device_subscriptions,
-                    drop_screen_subscriptions,
-                )
-
-                for screen in list(device.screens.values()):
-                    await drop_screen_subscriptions(screen)
-                await drop_device_subscriptions(device_id)
+        if device is not None:
+            device.drop_transport(transport)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -320,7 +291,6 @@ class DeviceHub:
         agent_handle: str,
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
-        hook_key: str = "",
         env: dict[str, str] | None = None,
         cols: int = 120,
         rows: int = 32,
@@ -340,7 +310,6 @@ class DeviceHub:
             agent_handle=agent_handle,
             project_id=project_id,
             topic_id=topic_id,
-            hook_key=hook_key,
         )
         device.screens[sid] = screen
         self._screens[sid] = screen
@@ -373,8 +342,7 @@ class DeviceHub:
         knows nothing about this sid until a create makes it re-adopt), or the
         original create may not have been delivered at all (``open_screen``
         registers before an unacknowledged send).
-        The cli silently drops ``rpc.call`` for a sid it does not know, so prompting
-        a lost screen strands the turn in a bare timeout. An adopt-create is
+        An adopt-create is
         idempotent on the device: a live session keeps running untouched; a lost one
         is respawned under the SAME sid + screen token, so viewers and attribution
         stay intact."""
@@ -403,7 +371,6 @@ class DeviceHub:
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
         resource_id: uuid.UUID | None = None,
-        hook_key: str = "",
         credential_expires: int | None = None,
         agent_configuration: str = "",
         execution_target: dict | None = None,
@@ -439,7 +406,6 @@ class DeviceHub:
             project_id=project_id,
             topic_id=topic_id,
             resource_id=resource_id,
-            hook_key=hook_key,
             credential_expires=credential_expires,
             agent_configuration=agent_configuration,
             execution_target=execution_target,
@@ -481,12 +447,6 @@ class DeviceHub:
         device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        if not settings.device_connection_owner:
-            from app.domain.agent.harness.claude_code import (
-                drop_screen_subscriptions,
-            )
-
-            await drop_screen_subscriptions(screen)
         return True
 
     async def session_request(
@@ -527,54 +487,6 @@ class DeviceHub:
     def screens_for_topic(self, topic_id: uuid.UUID) -> list[HubScreen]:
         """Include offline screens so a close can remain pending until reconnect."""
         return [s for s in self._screens.values() if s.topic_id == topic_id]
-
-    async def call_screen(
-        self, device_id: str, sid: str, name: str, args: list[Any]
-    ) -> str:
-        """Server→screen call (``prompt``). Returns the call id so the caller may
-        await the matching ``rpc.result`` via ``await_call``."""
-        device = self._device(device_id)
-        device.call_seq += 1
-        call_id = f"srv{device.call_seq}"
-        await device.send(device_link.rpc_call(sid, call_id, name, args))
-        return call_id
-
-    async def await_call(
-        self, device_id: str, call_id: str, *, timeout: float = 30
-    ) -> Any:
-        """Await the screen's ``rpc.result`` for a prior ``call_screen``. Raises on
-        device error or timeout."""
-        device = self._device(device_id)
-        fut: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        device.call_pending[call_id] = fut
-        try:
-            return await asyncio.wait_for(fut, timeout=timeout)
-        finally:
-            device.call_pending.pop(call_id, None)
-
-    async def put_file(
-        self,
-        device_id: str,
-        sid: str,
-        path: str,
-        data: bytes,
-        *,
-        timeout: float = 30,
-    ) -> Any:
-        """Atomically write one server-sent file under the machine's footprint
-        root and await the ack, which carries the absolute path the machine
-        resolved it to. Not the screen's work directory: that is the hosted
-        checkout, which the platform never writes into (结论 49)."""
-        device = self._device(device_id)
-        device.file_seq += 1
-        file_id = f"f{device.file_seq}"
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        device.file_pending[file_id] = future
-        try:
-            await device.send(device_link.file_put(sid, file_id, path, data))
-            return await asyncio.wait_for(future, timeout=timeout)
-        finally:
-            device.file_pending.pop(file_id, None)
 
     # -- 本机目录授权 (server -> device, awaited) ---------------------------
 
@@ -796,9 +708,9 @@ class DeviceHub:
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
-            # pending future to fail — the turn discovers the loss when its prompt
-            # times out — but dropping the one frame that says WHY turns that
-            # timeout into a blank error, so at least keep the reason in the log.
+            # pending future to fail — the turn discovers the loss when its runner
+            # never answers — but dropping the one frame that says WHY turns that
+            # into a blank error, so at least keep the reason in the log.
             logger.warning(
                 "device %s screen %s reported session.error: %s",
                 device_id,
@@ -858,26 +770,8 @@ class DeviceHub:
         if msg.t == "screen.data" and screen is not None:
             await self._fan_out_screen_data(screen, msg.decoded_data())
             return
-        if msg.t == "rpc.result":
-            fut = device.call_pending.get(msg.id)
-            if fut is not None and not fut.done():
-                if msg.error:
-                    code = (
-                        msg.value.get("failure_code")
-                        if isinstance(msg.value, dict)
-                        else None
-                    )
-                    fut.set_exception(DeviceCallError(msg.error, failure_code=code))
-                else:
-                    fut.set_result(msg.value)
-            return
-        if msg.t in ("file.result", "session.result"):
-            pending = (
-                device.file_pending
-                if msg.t == "file.result"
-                else device.session_pending
-            )
-            fut = pending.get(msg.id)
+        if msg.t == "session.result":
+            fut = device.session_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
                     fut.set_exception(DeviceCallError(msg.error))
@@ -919,11 +813,10 @@ class DeviceHub:
         Nothing else closes the gap between what the server sends and what the
         far end can receive. A connector drops a frame it does not recognise
         without answering it, so drift surfaces as a timeout somewhere
-        unrelated — an image that never arrived, a call that never returned —
-        and no error anywhere names a version. Left to a person to notice, a
-        machine stays behind for as long as nobody looks: one ran a build from
-        the day before ``file.put`` merged for two weeks, and every image
-        attached to any topic on it was staged into a twenty-second silence.
+        unrelated — a call that never returned — and no error anywhere names a
+        version. Left to a person to notice, a machine stays behind for as long
+        as nobody looks: one ran a build two weeks older than a frame it was
+        being sent, and every one of those frames went into a silence.
 
         Only ever on a definite answer. A connector that identifies itself but
         whose bytes we cannot compare is left alone — telling it to update on a

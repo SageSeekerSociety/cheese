@@ -67,7 +67,7 @@ vi.mock('../../api', async () => {
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getTerminal: vi.fn().mockResolvedValue({ available: false, backend: 'none' }),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     getPreview: vi.fn().mockResolvedValue(null),

@@ -9,7 +9,7 @@
         <div class="ml-3">
           <div class="text-h6 team-name">{{ teamData?.name }}</div>
           <div class="text-caption text-medium-emphasis">
-            {{ teamData?.personal ? '你的个人小队' : teamData?.intro }}
+            {{ teamData?.personal ? '你的个人团队' : teamData?.intro }}
           </div>
         </div>
       </div>

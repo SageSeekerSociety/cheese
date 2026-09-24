@@ -39,7 +39,12 @@ class CodexRuntime(DrivenRuntime[Handle]):
         self, handle: Handle, call: Callable[[str, dict], Awaitable[dict]]
     ) -> Subscription:
         return Subscription(
-            handle.session, handle.mirror, call, self._consume, self._activity
+            handle.session,
+            handle.mirror,
+            call,
+            self._consume,
+            self._activity,
+            pulse=self.pulse,
         )
 
     def backlog(self, session: SessionRef) -> CodexBacklog:

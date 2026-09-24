@@ -102,7 +102,7 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
 
     asyncio.run(_seed())
     if stub_hooks is not None:
-        stub_hooks.runtime._live[uuid.UUID(ids["room"])] = "screen"
+        stub_hooks.runtime.live[uuid.UUID(ids["room"])] = "screen"  # type: ignore[assignment]
     return ids
 
 

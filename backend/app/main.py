@@ -68,11 +68,7 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.agent.device_hub import (
-        DeviceOffline,
-        configure_subscription_cleanup,
-        device_hub,
-    )
+    from app.domain.agent.device_hub import DeviceOffline, device_hub
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
@@ -80,7 +76,6 @@ async def lifespan(_: FastAPI):
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
-        configure_subscription_cleanup(hub_runtime)
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.

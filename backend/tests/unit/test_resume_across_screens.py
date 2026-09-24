@@ -4,243 +4,151 @@ A screen is retired and reopened for reasons that have nothing to do with what
 was said on it: the credential it was launched with expired, its `claude` died,
 the machine-local tunnel helper went away. The conversation itself is not gone —
 Claude Code wrote it to a transcript on that machine's disk, and it is still
-there. Until the launch started asking for it, every one of those gates reset
-the topic's agent to a blank slate.
+there.
 
-The decision cannot be made on this side. `--resume <id>` whose transcript is
-absent does not degrade to a fresh session — claude exits and the pane never
-draws an input box — so it has to be guarded by looking at the file, and the
-file is on a machine behind NAT that the backend cannot stat. So the launcher
-carries the guard, and these tests drive the generated shell with a recording
-agent to check what it decides, plus one turn through the real channel to check
-the pointer reaches it at all.
+The decision cannot be made on the backend's side: `--resume <id>` whose
+transcript is absent does not degrade to a fresh session, it exits, and the file
+is on a machine the backend cannot stat. So the runner makes it when it starts
+the session, and these tests drive the real runner with a stand-in `claude` that
+records how it was started.
 """
 
 import asyncio
 import json
-import subprocess
-import time
+import shlex
+import sys
 import uuid
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.claude_code import device_launch
-from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from tests.unit.test_device_launch import _stub_tmux_env
-from tests.unit.test_device_provider import FakeHub, _provider
+from app.domain.agent.harness.claude_code.runner import Runner
+
+pytestmark = pytest.mark.anyio
 
 SESSION_ID = "9f1c0d3e-2b4a-4c6e-8d10-7a5b3c9e1f20"
 
+# Records its argv, then either dies before answering (a transcript it cannot
+# continue) or reports `init` and holds the session until stdin closes.
+STAND_IN = """\
+import json, os, sys
+with open(os.environ["STAND_IN_ARGS"], "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+if os.environ["STAND_IN_MODE"] == "fail":
+    sys.exit(1)
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "x"}), flush=True)
+sys.stdin.read()
+"""
 
-def _resume_deciding_block() -> str:
-    """Run the resume decision and the resulting agent command."""
-    script = device_launch.build_launch_script()
-    start = script.index('CLAUDE="\\"$CLAUDE_BIN\\"')
-    return "set -e\n" + script[start:]
+
+@pytest.fixture
+def machine(tmp_path):
+    config = tmp_path / "home/.claude"
+    config.mkdir(parents=True)
+    stand_in = tmp_path / "claude.py"
+    stand_in.write_text(STAND_IN)
+    return tmp_path, config, stand_in
 
 
-def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
-    """A device home with a stub tmux, and (by default) a transcript of an
-    earlier conversation sitting where Claude Code left it."""
-    home, env, log = _stub_tmux_env(tmp_path)
-    # The slice below starts after the platform made its own directory.
-    (home / ".cheese").mkdir(exist_ok=True)
-    config_dir = home / ".claude"
-    if transcript_for is not None:
-        slug = config_dir / "projects" / "-home-agent-work"
-        slug.mkdir(parents=True)
-        (slug / f"{transcript_for}.jsonl").write_text('{"type":"user"}\n')
-    agent = tmp_path / "claude-stub"
-    agent.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, os, sys\n"
-        'with open(os.environ["AGENT_ARGS"], "a") as output:\n'
-        '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+def _transcript(config, session_id=SESSION_ID, content='{"type":"user"}\n'):
+    slug = config / "projects/-home-agent-work"
+    slug.mkdir(parents=True, exist_ok=True)
+    (slug / f"{session_id}.jsonl").write_text(content)
+
+
+async def _start(machine, *, resume=SESSION_ID, mode="init") -> list[str]:
+    """One screen's life: the runner starts the session, and it ends.
+
+    ``init`` sessions are ended by us once they have answered; ``fail`` ones
+    exit by themselves before answering. Returns the argv the stand-in got.
+    """
+    root, config, stand_in = machine
+    args = root / "args.jsonl"
+    runner = Runner(root / "state")
+    await runner.start(
+        command=f"{shlex.quote(sys.executable)} {shlex.quote(str(stand_in))}",
+        env={
+            "PATH": "/usr/bin:/bin",
+            "CLAUDE_CONFIG_DIR": str(config),
+            "STAND_IN_ARGS": str(args),
+            "STAND_IN_MODE": mode,
+        },
+        resume=resume,
+        agent_handle="agent",
     )
-    agent.chmod(0o755)
-    env = {
-        **env,
-        "CLAUDE_CONFIG_DIR": str(config_dir),
-        "CLAUDE_BIN": str(agent),
-        "AGENT_ARGS": str(tmp_path / "agent-args.jsonl"),
-        "CHEESE_TUNNEL_URL": "",
-        "CHEESE_PREVIEW_URL": "",
-        "CLAUDE_MODEL": "",
-    }
-    env.pop("TMUX", None)
-    env.pop("CLAUDE", None)  # this block builds it; it must not be inherited
-    return home, env, log
-
-
-def _launch(env, *, resume: str | None = SESSION_ID):
-    """Run the launcher's decision span once, as a turn would."""
-    full = {
-        **env,
-        "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
-    }
-    if resume is not None:
-        full["CHEESE_RESUME_SESSION"] = resume
-    # A file, not `sh -c`: the block carries the executor client's sources,
-    # which is more than Linux accepts as one argument.
-    block = Path(env["HOME"]).parent / "resume-block.sh"
-    block.write_text(_resume_deciding_block())
-    proc = subprocess.run(
-        ["sh", str(block)],
-        env=full,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode == 0, proc.stderr
-    return proc
-
-
-def _launched_commands(env) -> list[str]:
-    """Arguments received by the agent process itself."""
-    return [" ".join(json.loads(line)) for line in open(env["AGENT_ARGS"])]
-
-
-def _hook(env, event):
-    subprocess.run(
-        ["sh", "-c", device_launch._CHEESE_HOOK_SCRIPT],
-        input=json.dumps({"hook_event_name": event}),
-        text=True,
-        env={**env, "CHEESE_HOOK_SPOOL_ONLY": "1", "CHEESE_HOOK_SPOOL": ""},
-        check=True,
-    )
-
-
-def test_a_reopened_screen_picks_the_conversation_back_up(tmp_path):
-    """The whole point: the transcript of this topic's conversation is on this
-    machine, so the fresh `claude` is told to continue it."""
-    _home, env, _log = _machine(tmp_path)
-
-    _launch(env)
-
-    hosted = _launched_commands(env)
-    assert len(hosted) == 1, hosted
-    assert f"--resume {SESSION_ID}" in hosted[0], (
-        "a screen reopened over a transcript that is right there started from "
-        f"nothing: {hosted[0]}"
-    )
-
-
-def test_a_conversation_the_machine_no_longer_has_starts_clean(tmp_path):
-    """The boundary that decides whether this feature is safe. A machine whose
-    disk was wiped (or a topic that moved to a different machine) has no
-    transcript to continue — and `--resume` there would exit instead of
-    starting. The launch must fall back to a NEW conversation, never to a
-    screen that fails to come up."""
-    _home, env, _log = _machine(tmp_path, transcript_for=None)
-
-    _launch(env)
-
-    hosted = _launched_commands(env)
-    assert len(hosted) == 1, "the topic must still get a claude"
-    assert "--resume" not in hosted[0], (
-        f"asked to continue a conversation this machine does not have: {hosted[0]}"
-    )
-
-
-def test_an_empty_transcript_is_not_a_conversation(tmp_path):
-    """A file claude created and never wrote to is the same absence, and reads
-    the same way to a glob."""
-    home, env, _log = _machine(tmp_path, transcript_for=None)
-    slug = home / ".claude" / "projects" / "-home-agent-work"
-    slug.mkdir(parents=True)
-    (slug / f"{SESSION_ID}.jsonl").write_text("")
-
-    _launch(env)
-
-    assert "--resume" not in _launched_commands(env)[0]
-
-
-def test_a_resume_that_killed_the_screen_is_not_tried_twice(tmp_path):
-    """The wedge this must not become. A transcript that is present but that
-    claude cannot read kills the pane; a dead pane is (correctly) grounds to
-    retire the session; and if the relaunch asked for the same transcript again
-    the topic would never get a working screen. The second launch starts clean
-    instead."""
-    _home, env, _log = _machine(tmp_path)
-
-    _launch(env)  # resumes...
-    _hook(env, "SessionStart")  # Startup alone does not prove resume worked.
-    _launch(env)  # ...and its pane is dead: retire and relaunch
-
-    hosted = _launched_commands(env)
-    assert len(hosted) == 2, hosted
-    assert f"--resume {SESSION_ID}" in hosted[0]
-    assert "--resume" not in hosted[1], (
-        f"the transcript that broke the screen was handed to it again: {hosted[1]}"
-    )
-
-
-@pytest.mark.parametrize("event", ["UserPromptSubmit", "Stop"])
-def test_a_resume_that_worked_can_be_used_again_later(tmp_path, event):
-    """A confirmed resumed conversation can be resumed again after retirement."""
-    _home, env, _log = _machine(tmp_path)
-
-    _launch(env)  # resumes
-    _hook(env, event)
-    _launch(env)  # much later: the credential died, say
-
-    hosted = _launched_commands(env)
-    assert len(hosted) == 2, hosted
-    assert f"--resume {SESSION_ID}" in hosted[1], (
-        f"a proven-good conversation was dropped on the next reopen: {hosted[1]}"
-    )
-
-
-async def test_a_turn_hands_the_machine_the_conversation_to_continue(monkeypatch):
-    """The other half. The platform already works out which conversation this
-    place resumes by; that answer has to reach the machine, and the screen env
-    is where the launcher reads it. Dropped here, every guard above is dead
-    code."""
-    from app.domain.agent.device_provider import DeviceChannel
-
-    async def public_base(self, _device_id):
-        return self._public_base
-
-    monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
-
-    async def active_room(_self, topic_id):
-        return SimpleNamespace(id=topic_id, resource_id=None)
-
-    monkeypatch.setattr(
-        "app.domain.topic.services.TopicService.lock_for_execution", active_room
-    )
-    opened = asyncio.Event()
-
-    class RecordingHub(FakeHub):
-        async def open_screen(self, *args, **kwargs):
-            screen = await super().open_screen(*args, **kwargs)
-            opened.set()
-            return screen
-
-    hub = RecordingHub()
-    runtime = _provider(hub, HookRouter(), uuid.uuid4())
-
-    async def drain():
-        async for _event in runtime.run_turn(
-            session_agent="agent",
-            project_id=uuid.uuid4(),
-            topic_id=uuid.uuid4(),
-            prompt="hi",
-            system_prompt="",
-            resume_session_id=SESSION_ID,
-        ):
-            pass
-
-    task = asyncio.create_task(drain())
     try:
-        await asyncio.wait_for(opened.wait(), timeout=5)
+        assert runner.process is not None
+        if mode == "fail":
+            await asyncio.wait_for(runner.process.wait(), 10)
+        else:
+            async with asyncio.timeout(10):
+                while not runner.proven:
+                    await asyncio.sleep(0.02)
     finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        await runner.close()
+    return json.loads(args.read_text().splitlines()[-1])
 
-    assert hub.envs, "no screen was ever opened"
-    assert (hub.envs[0] or {}).get("CHEESE_RESUME_SESSION") == SESSION_ID, (
-        "the turn knew which conversation to continue and the machine was never "
-        f"told: {hub.envs}"
-    )
+
+def _session_id(argv: list[str]) -> str:
+    assert argv[0] == "--session-id", argv
+    return str(uuid.UUID(argv[1]))
+
+
+async def test_a_reopened_screen_picks_the_conversation_back_up(machine):
+    """The whole point: the transcript is on this machine, so the new session
+    continues it."""
+    _transcript(machine[1])
+
+    assert await _start(machine) == ["--resume", SESSION_ID]
+
+
+async def test_a_conversation_the_machine_no_longer_has_starts_clean(machine):
+    """A machine whose disk was wiped, or a topic that moved to another one, has
+    no transcript to continue — and `--resume` there would exit instead of
+    starting. The session starts a NEW conversation, never a screen that fails
+    to come up."""
+    argv = await _start(machine)
+
+    assert _session_id(argv) != SESSION_ID
+
+
+async def test_an_empty_transcript_is_not_a_conversation(machine):
+    """A file claude created and never wrote to is the same absence."""
+    _transcript(machine[1], content="")
+
+    assert await _start(machine) != ["--resume", SESSION_ID]
+
+
+async def test_a_resume_that_died_before_answering_is_not_tried_twice(machine):
+    """The wedge this must not become. A transcript that is present but that
+    claude cannot continue kills the session before it answers; if the next
+    screen asked for the same transcript again the topic would never get a
+    working session. The second start begins afresh instead."""
+    _transcript(machine[1])
+
+    assert await _start(machine, mode="fail") == ["--resume", SESSION_ID]
+    assert _session_id(await _start(machine)) != SESSION_ID
+
+
+async def test_a_resume_that_worked_can_be_used_again_later(machine):
+    _transcript(machine[1])
+
+    assert await _start(machine) == ["--resume", SESSION_ID]
+    assert await _start(machine) == ["--resume", SESSION_ID]
+
+
+async def test_the_session_it_started_last_time_is_the_one_it_continues(machine):
+    """Nothing offered: the runner's own record of the session it started is the
+    candidate, and a fresh session gets the id it will later be resumed by."""
+    first = _session_id(await _start(machine, resume=None))
+    _transcript(machine[1], session_id=first)
+
+    assert await _start(machine, resume=None) == ["--resume", first]
+
+
+async def test_a_session_that_never_wrote_keeps_its_id(machine):
+    """A session that ended before writing a transcript has nothing to resume,
+    and its id is still free: the next start claims it again rather than
+    leaving the backend holding an id no session will ever have."""
+    first = _session_id(await _start(machine, resume=None))
+
+    assert _session_id(await _start(machine, resume=None)) == first

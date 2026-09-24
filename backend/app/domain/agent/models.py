@@ -15,8 +15,7 @@ invisible to any other backend process. Worse, it was a registry of the LIVING
 — an entry existed only while a turn ran and was deleted at the end — so the
 question "did this prompt ever reach the session" was answerable for thirty
 seconds and then gone forever, which is why the orphan sweep reconstructed it
-from forensics (does any block carry this turn id, is there anything in the
-spool) instead of reading it.
+from forensics (does any block carry this turn id) instead of reading it.
 
 Rows are closed, never deleted. A turn id lives on in every block it produced,
 and an interval that ends by being erased is one nobody can ask about afterwards.

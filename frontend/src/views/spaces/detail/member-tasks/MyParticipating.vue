@@ -128,7 +128,7 @@
         <v-empty-state
           icon="mdi-account-check-outline"
           title="还没有参与记录"
-          text="你在这个题目板里还没有参与任何题目，可以先去全部题目里挑一个开始。"
+          text="你在这个空间里还没有参与任何题目，可以先去全部题目里挑一个开始。"
         />
         <div class="empty-actions">
           <v-btn

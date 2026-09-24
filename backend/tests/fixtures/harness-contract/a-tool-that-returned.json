@@ -1,16 +1,28 @@
 {
   "verb": "backlog",
   "why": "The other side of the same rule. A tool that worked produces no event at all: its return is already visible through its effect, and a Read's return is the whole file. Surfacing every return would double the timeline to say what the effect already said.",
-  "readers": ["python", "extension"],
+  "readers": [
+    "python",
+    "extension"
+  ],
   "harnesses": {
     "claude-code": {
       "records": [
         {
-          "hook_event_name": "PostToolUse",
-          "tool_name": "Bash",
-          "tool_use_id": "toolu_1",
-          "tool_input": { "command": "pytest -q" },
-          "tool_response": "42 passed"
+          "type": "user",
+          "uuid": "rec_1",
+          "session_id": "session-1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "42 passed",
+                "is_error": false
+              }
+            ]
+          }
         }
       ]
     },
@@ -23,7 +35,12 @@
             "role": "toolResult",
             "toolCallId": "toolu_1",
             "toolName": "bash",
-            "content": [{ "type": "text", "text": "42 passed" }],
+            "content": [
+              {
+                "type": "text",
+                "text": "42 passed"
+              }
+            ],
             "isError": false,
             "timestamp": 1789326099229
           }
@@ -40,7 +57,9 @@
               "type": "dynamicToolCall",
               "id": "toolu_1",
               "tool": "bash",
-              "arguments": { "command": "pytest -q" }
+              "arguments": {
+                "command": "pytest -q"
+              }
             }
           }
         }

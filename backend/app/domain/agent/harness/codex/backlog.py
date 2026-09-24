@@ -79,9 +79,6 @@ class CodexBacklog:
     def unfinished(self) -> set[str]:
         return set(self.assembler.pending)
 
-    def give_up(self):
-        return self.assembler.give_up()
-
     def landed(self, *, through: str) -> None:
         assert self.path is not None
         journal = Journal(self.path)

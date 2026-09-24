@@ -1085,7 +1085,7 @@ async def enroll_in_course(
             # Answer before redeeming: a link for another board must not join
             # this person to a board the link never named.
             raise BadRequestError(
-                "This invite code is for a different 题目板",
+                "This invite code is for a different space",
                 data={"type": "inviteCode", "id": invite.id},
             )
         await service.join_space(code=code, user_id=auth_user.user_id)

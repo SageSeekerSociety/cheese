@@ -208,7 +208,6 @@ const ACTIONS: Record<UserApi.SudoPurpose, string> = {
   '2fa:enable': 'account.sudo.action.initTOTP',
   '2fa:disable': 'account.sudo.action.disableTOTP',
   '2fa:backup-codes': 'account.sudo.action.generateBackupCodes',
-  '2fa:settings': 'account.sudo.action.update2FASettings',
   'passkey:add': 'account.sudo.action.addPasskey',
   'passkey:delete': 'account.sudo.action.deletePasskey',
   'password:change': 'account.sudo.action.changePassword',

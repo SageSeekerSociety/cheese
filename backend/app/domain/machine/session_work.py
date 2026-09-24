@@ -261,7 +261,6 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
         "CHEESE_AUTHOR": actor_handle,
         "CHEESE_PREVIEW_URL": _preview_ws_url(api),
         "CHEESE_RESOURCE_ID": work_resource,
-        "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
         "GIT_AUTHOR_NAME": actor_handle,
         "GIT_AUTHOR_EMAIL": f"{actor_handle}@agent.cheese.local",
     }

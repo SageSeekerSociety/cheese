@@ -19,6 +19,7 @@ from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 
 _FLAG = "--append-system-prompt-file"
+_STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
 _PROMPT = "你是芝士，一个 cheese 平台上的正式成员。\n平台事件通过 cheese CLI 到达。\n"
 
 
@@ -27,7 +28,7 @@ def _heredoc_body(script: str) -> str:
 
 
 def test_device_launch_embeds_the_system_prompt():
-    script = device_launch.build_launch_script(system_prompt=_PROMPT)
+    script = device_launch.build_launch_script(state=_STATE, system_prompt=_PROMPT)
     assert _heredoc_body(script) == _PROMPT
     assert f'{_FLAG} \\"$CHEESE_SP\\"' in script
 
@@ -37,14 +38,14 @@ def test_device_launch_keeps_hostile_prompt_text_inert():
     and $() must land in the file verbatim, not execute. The quoted heredoc is
     what guarantees that — and `sh -n` proves the script still parses."""
     hostile = 'a "quote" `tick` $(reboot) $HOME\n'
-    script = device_launch.build_launch_script(system_prompt=hostile)
+    script = device_launch.build_launch_script(state=_STATE, system_prompt=hostile)
     assert _heredoc_body(script) == hostile
     proc = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
 
 
 def test_device_launch_without_prompt_writes_an_empty_file():
-    script = device_launch.build_launch_script()
+    script = device_launch.build_launch_script(state=_STATE)
     assert _heredoc_body(script) == ""
     # The flag is guarded by [ -s ]: an empty file means stock claude.
     assert '[ -s "$CHEESE_SP" ]' in script
@@ -84,7 +85,6 @@ class _RecordingHub:
             agent_handle=kw["agent_handle"],
             project_id=kw["project_id"],
             topic_id=kw["topic_id"],
-            hook_key=kw.get("hook_key", ""),
         )
         self.opened.append(screen)
         return screen
@@ -140,5 +140,5 @@ def test_device_launch_turns_off_claude_codes_own_feedback_tool():
     我第一版把断言写在 `build_launch_script()` 的输出上，红得莫名其妙 —— 那句话本来就
     不该在那儿。
     """
-    holes = device_launch.launch_holes(system_prompt=_PROMPT)
+    holes = device_launch.launch_holes(state=_STATE, system_prompt=_PROMPT)
     assert holes.env["DISABLE_FEEDBACK_COMMAND"] == "1"

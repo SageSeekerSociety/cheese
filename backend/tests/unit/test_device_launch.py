@@ -1,4 +1,4 @@
-"""Device screen launcher: hooks settings + self-contained launch command."""
+"""Device launcher: the isolated config, the pinned build, and the runner it starts."""
 
 import contextlib
 import json
@@ -19,12 +19,47 @@ import pytest
 
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import device_launch
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS, LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.session_launch import (
+    ClaudeLaunch,
+    session_settings,
+)
 from app.domain.agent.harness.launch import MachinePlace
+
+PIN = device_launch.CLAUDE_PINNED_VERSION
+STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
+
+
+def _script(**named) -> str:
+    named.setdefault("state", STATE)
+    return device_launch.build_launch_script(**named)
+
+
+def _tmux_ge_30() -> bool:
+    if not shutil.which("tmux"):
+        return False
+    out = subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout
+    m = re.search(r"(\d+)\.(\d+)", out)
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= (3, 0)
+
+
+def _clean_environ() -> dict[str, str]:
+    """The test runner's environment, minus what would steer a launch.
+
+    A developer running this inside tmux carries TMUX, and the launcher asks
+    that server which session it is in.
+    """
+    env = dict(os.environ)
+    for key in ("TMUX", "TMUX_PANE", "CLAUDE_CONFIG_DIR", "CHEESE_API"):
+        env.pop(key, None)
+    for key in list(env):
+        if key.lower() in ("https_proxy", "http_proxy", "all_proxy"):
+            env.pop(key)
+    return env
 
 
 def test_launch_timings_append_without_logging_credentials(tmp_path):
-    script = device_launch.build_launch_script()
+    script = _script()
     start = script.index("cheese_launch_phase() {")
     end = script.index("cheese_launch_phase started", start)
     function = script[start:end]
@@ -55,242 +90,85 @@ def test_launch_timings_append_without_logging_credentials(tmp_path):
     assert "skipped" not in (directory / "test-room.timing").read_text()
 
 
-@pytest.mark.parametrize("has_input", [True, False])
-def test_liveness_probe_distinguishes_the_input_session_from_a_child(
-    tmp_path, has_input
-):
-    executable = tmp_path / "claude"
-    # A symlink keeps Python's libraries reachable under the process name.
-    # Renamed Nix sleep and copied macOS system binaries can exit immediately.
-    executable.symlink_to(sys.executable)
-    topic = str(uuid.uuid4())
-    environment = {**os.environ, "CHEESE_TOPIC": topic}
-    environment.pop("CLAUDE_BG_RENDEZVOUS_SOCK", None)
-    if has_input:
-        environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
-    process = subprocess.Popen(
-        [str(executable), "-c", "import time; time.sleep(30)"],
-        env=environment,
-    )
-
-    def probe():
-        return subprocess.check_output(
-            ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
-            env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
-            text=True,
-        ).strip()
-
-    try:
-        assert probe() == ("alive" if has_input else "dead")
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-    assert probe() == "dead"
-
-
-@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("CHEESE_TOPIC", "{topic}-other"),
-        ("CHEESE_TOPIC", "other-{topic}"),
-        ("OTHER", "CHEESE_TOPIC={topic}"),
-    ],
-)
-def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key, value):
-    executable = tmp_path / "claude"
-    executable.symlink_to(sys.executable)
-    topic = str(uuid.uuid4())
-    environment = {**os.environ, key: value.format(topic=topic)}
-    environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
-    if key != "CHEESE_TOPIC":
-        environment.pop("CHEESE_TOPIC", None)
-    process = subprocess.Popen(
-        [str(executable), "-c", "import time; time.sleep(30)"], env=environment
-    )
-    try:
-        result = subprocess.check_output(
-            ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
-            env={**os.environ, "HOME": str(tmp_path), "CHEESE_ALIVE_TOPIC": topic},
-            text=True,
-        )
-        assert result.strip() == "dead"
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-
-def _alive_probe(topic):
-    return subprocess.check_output(
-        ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
-        env={**os.environ, "CHEESE_ALIVE_TOPIC": topic},
-        text=True,
-    ).strip()
-
-
-@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
-@pytest.mark.parametrize(
-    "relative", [".cheese/claude/versions/9.9.9", ".local/bin/claude"]
-)
-def test_liveness_probe_matches_a_session_by_its_own_executable(tmp_path, relative):
-    """The two install layouts a screen is launched from: the pin at
-    `~/.cheese/claude/versions/<v>`, and `~/.local/bin/claude`."""
-    executable = tmp_path / relative
-    executable.parent.mkdir(parents=True)
-    executable.symlink_to(sys.executable)
-    topic = str(uuid.uuid4())
-    process = subprocess.Popen(
-        [str(executable), "-c", "import time; time.sleep(30)"],
-        env={
-            **os.environ,
-            "CHEESE_TOPIC": topic,
-            "CLAUDE_BG_RENDEZVOUS_SOCK": str(tmp_path / "input.sock"),
-        },
-    )
-    try:
-        assert _alive_probe(topic) == "alive"
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-    assert _alive_probe(topic) == "dead"
-
-
-@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="Linux procfs")
-def test_liveness_probe_ignores_a_helper_that_merely_carries_a_claude_path(tmp_path):
-    """The remote-execution helpers run as `<python> .../.claude/remote-execution/
-    forwarded_fs.py` and inherit the screen's CHEESE_TOPIC. Matching the `claude`
-    substring anywhere in a command line adopted such a helper as the session
-    itself: the room was reported alive with its claude long gone, so every
-    message sent to it was delivered to nobody and timed out, instead of the
-    platform retiring the dead screen and opening a new one."""
-    script = tmp_path / ".claude/remote-execution/forwarded_fs.py"
-    script.parent.mkdir(parents=True)
-    script.write_text("import time\ntime.sleep(30)\n")
-    topic = str(uuid.uuid4())
-    process = subprocess.Popen(
-        [sys.executable, str(script)], env={**os.environ, "CHEESE_TOPIC": topic}
-    )
-    try:
-        # The helper really is running; only a session is missing.
-        assert process.poll() is None
-        assert _alive_probe(topic) == "dead"
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-
-def test_hooks_settings_wire_command_hook_to_forwarder():
-    s = device_launch.hooks_settings()
-    assert s["skipDangerousModePermissionPrompt"] is True
-    # Every perception hook forwards via the `cheese-hook` COMMAND hook.
-    events = (
-        "SessionStart",
-        "PreToolUse",
-        "PostToolUse",
-        "MessageDisplay",
-        "SubagentStart",
-        "SubagentStop",
-        "Stop",
-    )
-    for event in events:
-        entry = s["hooks"][event][0]
-        assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-    # The remote user cannot reach the terminal's native option picker.
-    assert set(s["permissions"]["deny"]) == {
-        "AskUserQuestion",
-        "TodoWrite",
-        "TaskCreate",
-        "TaskUpdate",
-        "TaskList",
-        "TaskGet",
-        "CronCreate",
-        "CronDelete",
-        "CronList",
-        "ScheduleWakeup",
-    }
-
-
-def _screen_launch(
+def _place(
     *,
-    hook_url="http://h/sandbox/hooks/T",
-    hook_token="tok",
     home_dir="/dev/home",
     work_dir="/dev/work",
-    resume_session_id=None,
-    extra_env=None,
     topic_id="",
     execution_target=None,
-    remote_control=False,
     ca_pem="",
-) -> tuple[list[str], dict[str, str]]:
-    """What the device channel now does: say where, ask the plan what to run.
-
-    A helper here rather than in the product, because assembling the two halves
-    is the CHANNEL's job — this is how a test reaches the same result without
-    standing up a device.
-    """
-    place = MachinePlace(
+) -> MachinePlace:
+    return MachinePlace(
         home=home_dir,
         workdir=work_dir,
         store="$HOME/.cheese/store/P",
-        state="$HOME/.cheese/harness/p/r/claude-code/deadbeef",
+        state=STATE,
         api_base="http://h",
         project_id="P",
         topic_id=topic_id,
         agent_handle="ops",
         execution_target=execution_target,
-        remote_control=remote_control,
         ca_pem=ca_pem,
     )
-    plan = ClaudeLaunch(system_prompt="", resume_session_id=resume_session_id)
-    command, env = machine_launcher.screen_launch(
-        place, plan.on(place), hook_url=hook_url, token=hook_token
+
+
+def _screen_launch(
+    *,
+    token="tok",
+    resume_session_id=None,
+    extra_env=None,
+    system_prompt="",
+    **place,
+) -> tuple[list[str], dict[str, str]]:
+    """What the device channel does: say where, ask the plan what to run.
+
+    A helper here rather than in the product, because assembling the two halves
+    is the CHANNEL's job — this is how a test reaches the same result without
+    standing up a device.
+    """
+    where = _place(**place)
+    plan = ClaudeLaunch(
+        system_prompt=system_prompt, resume_session_id=resume_session_id
     )
+    command, env = machine_launcher.screen_launch(where, plan.on(where), token=token)
     env.update(extra_env or {})
     return command, env
 
 
 def test_build_screen_launch_shapes_command_and_env():
     command, env = _screen_launch(
-        hook_url="http://h/sandbox/hooks/T",
-        hook_token="scoped-tok",
-        home_dir="/dev/home",
-        work_dir="/dev/work",
-        extra_env={"ANTHROPIC_BASE_URL": "http://gw"},
+        token="scoped-tok", extra_env={"ANTHROPIC_BASE_URL": "http://gw"}
     )
     assert command[0] == "bash" and command[1] == "-lc"
     script = command[2]
-    # Self-contained launcher: writes settings + forwarder, spools+drains hooks, then
-    # hosts claude in a persistent tmux session (direct exec if tmux is absent).
-    assert 'cat > "$HOME/.claude/settings.json"' in script
-    assert '"enableArtifact": false' in script
-    assert "cheese-hook" in script
-    # The binary is resolved (pin → ~/.local/bin → PATH) rather than taken from
-    # PATH blindly, so the flags ride on $CLAUDE_BIN.
-    assert '\\"$CLAUDE_BIN\\" --dangerously-skip-permissions' in script
-    # A remote screen is just as unreachable for AskUserQuestion's in-terminal
-    # picker as the local pane is — same deny, carried on the launch line.
-    assert "--disallowedTools AskUserQuestion" in script
-    assert "CHEESE_HOOK_SPOOL" in script
-    # Env carries the hook wiring and home/work — no model (结论 46: the binding
-    # is resolved at admission and written into the request body by the proxy).
-    assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
+    assert 'cat > "$CLAUDE_CONFIG_DIR/settings.json"' in script
+    # What the screen runs is the runner; claude is the command it is handed.
+    assert script.rstrip().endswith('exit "$RESULT"')
+    assert 'eval "exec $ENVIRONMENT_CMD"$CLAUDE_RUNNER""' in script
+    assert 'export CHEESE_CLAUDE_COMMAND="$CLAUDE"' in script
     assert env["CHEESE_TOKEN"] == "scoped-tok"
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
+    assert env["CHEESE_AUTHOR"] == "ops"
+    # 结论 46: the binding is resolved at admission, never carried on the screen.
     assert "CLAUDE_MODEL" not in env
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
-    assert "CHEESE_CLAUDE_GATES" not in env
+    assert "CHEESE_RESUME_SESSION" not in env
+
+
+def test_a_resume_is_offered_to_the_runner_through_the_environment():
+    _, env = _screen_launch(resume_session_id="11111111-2222-3333-4444-555555555555")
+    assert env["CHEESE_RESUME_SESSION"] == "11111111-2222-3333-4444-555555555555"
+
+
+def test_the_contract_is_the_argv_a_live_session_cannot_adopt():
+    holes = device_launch.launch_holes(state=STATE)
+    assert holes.command == '"$CLAUDE_RUNNER"'
+    assert shlex.split(holes.contract) == LAUNCH_ARGS
 
 
 def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
-    import os
-    import subprocess
-
     _, env = _screen_launch(
-        hook_url="http://h/hooks",
-        hook_token="test",
-        home_dir=str(tmp_path),
-        work_dir=str(tmp_path),
+        token="test", home_dir=str(tmp_path), work_dir=str(tmp_path)
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -312,24 +190,17 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
 def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
     # A piece of work IS a subagent of the room's session, so the room's two
     # structural limits are these env vars and nothing else enforces them.
-    _, env = _screen_launch(
-        hook_url="http://h/sandbox/hooks/T",
-        hook_token="tok",
-        home_dir="/dev/home",
-        work_dir="/dev/work",
-    )
+    _, env = _screen_launch()
     # 深度的默认值。
     assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
     # How many pieces of work a room runs at once, sharing one tree.
     assert env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "4"
+    # The build's own feedback tool would send a report nowhere the platform reads.
+    assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
 
 
 def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
-    """深度是部署设的，不是写死的设计约束（结论 33）。
-
-    活在房间里是平的、谁都能开活，所以这个数字挡的只是一台机器上的进程层数。部署
-    把它抬高，启动环境里就该是抬高后的那个值 —— 写死的时候，改它得改代码。
-    """
+    """深度是部署设的，不是写死的设计约束（结论 33）。"""
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "claude_code_max_subagent_spawn_depth", 3)
@@ -337,15 +208,6 @@ def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
     _, env = _screen_launch()
 
     assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "3"
-
-
-def test_forwarder_posts_hook_json_with_token():
-    script = device_launch.build_launch_script()
-    assert "X-Cheese-Token: $CHEESE_TOKEN" in script
-    assert "--data-binary @-" in script
-    # Per-project trust is pre-accepted for the RESOLVED work dir (canonicalized).
-    assert "pwd -P" in script
-    assert '"hasTrustDialogAccepted":true' in script
 
 
 def _commands_in(script: str) -> list[str]:
@@ -377,20 +239,9 @@ def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     """A machine whose `claude` is the native binary has no node.
 
     MicroCloud's Debian image is exactly that, and the script runs under `set -e`
-    — so building the first-launch gates with node aborted the whole launch. The
-    screen opened, claude never started, and the turn hung with nothing anywhere
-    saying why.
+    — so a node step aborts the whole launch with nothing saying why.
     """
-    script = device_launch.build_launch_script()
-    # Only executable lines matter — the comment above the replacement explains
-    # why node is gone and would match a naive substring check.
-    assert not any(c.startswith("node ") for c in _commands_in(script))
-    assert "mktrust" not in script
-    # The gates still land — inside CLAUDE_CONFIG_DIR, where claude reads them
-    # once the config dir is set — with the work dir the shell resolved.
-    assert 'cat > "$CLAUDE_CONFIG_DIR/.claude.json"' in script
-    assert '"bypassPermissionsModeAccepted":true' in script
-    assert '"$CHEESE_WORK"' in script
+    assert not any(c.startswith("node ") for c in _commands_in(_script()))
 
 
 def test_the_proxy_ca_rides_the_script_and_names_its_real_path():
@@ -399,7 +250,7 @@ def test_the_proxy_ca_rides_the_script_and_names_its_real_path():
     script, and the script itself exports NODE_EXTRA_CA_CERTS at the real
     (post-substitution) location."""
     pem = "-----BEGIN CERTIFICATE-----\nDEVCA\n-----END CERTIFICATE-----"
-    script = device_launch.build_launch_script(ca_pem=pem)
+    script = _script(ca_pem=pem)
     assert "cat > \"$HOME/.claude/proxy-ca.pem\" <<'CHEESECA'" in script
     assert "DEVCA" in script
     assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' in script
@@ -408,268 +259,49 @@ def test_the_proxy_ca_rides_the_script_and_names_its_real_path():
 def test_no_ca_means_no_ca_block():
     """The gateway path must not write a stray cert file or export a CA path
     that points at nothing (an empty NODE_EXTRA_CA_CERTS breaks TLS wholesale)."""
-    script = device_launch.build_launch_script()
+    script = _script()
     assert "CHEESECA" not in script
     assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' not in script
 
 
 def test_build_screen_launch_threads_the_ca_through():
     command, _env = _screen_launch(
-        hook_url="http://h/sandbox/hooks/T",
-        hook_token="t",
-        home_dir="/h",
-        work_dir="/w",
-        ca_pem="-----BEGIN CERTIFICATE-----\nDEVCA\n-----END CERTIFICATE-----",
+        ca_pem="-----BEGIN CERTIFICATE-----\nDEVCA\n-----END CERTIFICATE-----"
     )
     assert "DEVCA" in command[2]
 
 
-# --- the spool drainer's lifecycle (it must live and die with claude) --------
+# --- the prepare hole, run for real -------------------------------------------
+# What it decides — which binary, whether it is new enough, what argv the runner
+# is handed — is only ever evaluated by a shell on the machine.
 
 
-def _drain_body() -> str:
-    """The cheese-drain script exactly as the launcher writes it to the device."""
-    script = device_launch.build_launch_script()
-    return script.split("<<'DRAIN'\n", 1)[1].split("\nDRAIN\n", 1)[0] + "\n"
-
-
-def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
-    """An adopted drainer outlives the turn that started it, so it must deliver
-    with the CURRENT turn's token/URL: the launcher rewrites the config file
-    atomically on every run, and the loop re-sources it on every pass."""
-    script = device_launch.build_launch_script()
-    tmp = '"$HOME/.cheese/cheese-drain.env.tmp"'
-    assert f"cat > {tmp}" in script, "config must be staged to a tmp file"
-    assert f"mv {tmp}" in script, "and moved into place atomically"
-    for line in (
-        'CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"',
-        'CHEESE_HOOK_URL="$CHEESE_HOOK_URL"',
-        'CHEESE_TOKEN="$CHEESE_TOKEN"',
-    ):
-        assert line in script
-
-
-def _write_drainer(tmp_path, *, curl_response: str) -> tuple:
-    """Materialize the generated drain script + its config + a stub curl."""
-    drain = tmp_path / "cheese-drain"
-    drain.write_text(_drain_body())
-    spool = tmp_path / "spool"
-    spool.mkdir()
-    (tmp_path / "cheese-drain.env").write_text(
-        f'CHEESE_HOOK_SPOOL="{spool}"\n'
-        'CHEESE_HOOK_URL="http://backend.test/hooks"\n'
-        'CHEESE_TOKEN="tok"\n'
-    )
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    (bindir / "curl").write_text(f"#!/bin/sh\necho '{curl_response}'\n")
-    (bindir / "curl").chmod(0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
-    return drain, spool, env
-
-
-def test_drainer_delivers_the_spool_and_deletes_only_on_code_200(tmp_path):
-    """Run the REAL generated script: a spooled event is posted and removed on
-    a durable ack, and the pid file (the relaunch idempotence handle) appears."""
-    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
-    event = spool / "1700000000.ev1"
-    event.write_text('{"hook_event_name":"Stop"}')
-    proc = subprocess.Popen(["sh", str(drain)], env=env)
-    try:
-        deadline = time.monotonic() + 10
-        while event.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert not event.exists(), "the drainer never delivered the spooled event"
-        assert (tmp_path / "cheese-drain.pid").exists()
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
-
-
-@pytest.mark.parametrize("response", ['{"code":500}', '{"code":2000}', "invalid"])
-def test_drainer_keeps_an_unacknowledged_event(tmp_path, response):
-    drain, spool, env = _write_drainer(tmp_path, curl_response=response)
-    event = spool / "1700000000.ev1"
-    event.write_text('{"hook_event_name":"Stop"}')
-    proc = subprocess.Popen(["sh", str(drain)], env=env)
-    try:
-        time.sleep(1.0)  # a couple of passes
-        assert event.exists(), "an unacknowledged event must stay spooled"
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
-
-
-def test_running_drainer_uses_rotated_delivery_configuration(tmp_path):
-    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
-    calls = tmp_path / "calls"
-    (tmp_path / "bin/curl").write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{calls}"\necho \'{{"code":200}}\'\n'
-    )
-    proc = subprocess.Popen(["sh", str(drain)], env=env)
-    try:
-        for token in ("first-token", "rotated-token"):
-            staged = tmp_path / "config.new"
-            staged.write_text(
-                f'CHEESE_HOOK_SPOOL="{spool}"\n'
-                f'CHEESE_HOOK_URL="http://backend.test/{token}"\n'
-                f'CHEESE_TOKEN="{token}"\n'
-            )
-            staged.replace(tmp_path / "cheese-drain.env")
-            event = spool / f"0000000000000000001.{token}"
-            event.write_text("{}")
-            deadline = time.monotonic() + 5
-            while event.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert not event.exists()
-            assert f"X-Cheese-Token: {token}" in calls.read_text()
-            assert f"http://backend.test/{token}" in calls.read_text()
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
-
-
-def test_drainer_prunes_only_claims_and_keeps_unacknowledged_events(tmp_path):
-    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
-    expired = [spool / ".n0000000000000000001"]
-    unacknowledged = spool / "0000000000000000001.old"
-    sequence = spool / ".seq"
-    for path in [*expired, sequence, unacknowledged]:
-        path.write_text("1")
-        os.utime(path, (time.time() - 90000, time.time() - 90000))
-    fresh = spool / "0000000000000000002.fresh"
-    fresh.write_text("{}")
-    proc = subprocess.Popen(["sh", str(drain)], env=env)
-    try:
-        deadline = time.monotonic() + 5
-        while any(path.exists() for path in expired) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert all(not path.exists() for path in expired)
-        assert unacknowledged.exists()
-        assert fresh.exists()
-        assert sequence.read_text() == "1"
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
-
-
-def test_a_revived_drainer_exits_when_its_tether_dies(tmp_path):
-    """The revival path runs the drainer in its own tmux window; the tether is
-    what stops that window from keeping the session alive after claude exits."""
-    drain, _spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
-    corpse = subprocess.Popen(["sh", "-c", "exit 0"])
-    corpse.wait()
-    env["CHEESE_DRAIN_TETHER"] = str(corpse.pid)
-    proc = subprocess.Popen(["sh", str(drain)], env=env)
-    assert proc.wait(timeout=5) == 0
-
-
-def test_the_gates_written_are_valid_json():
-    """The file claude reads must parse — a heredoc makes that easy to get wrong."""
-    import json as _json
-    import re
-
-    script = device_launch.build_launch_script()
-    body = re.search(
-        r'cat > "\$CLAUDE_CONFIG_DIR/\.claude\.json" <<JSON\n(.*?)\nJSON', script, re.S
-    )
-    assert body, "the gates heredoc is not where the launcher writes it"
-    parsed = _json.loads(body.group(1).replace("$CHEESE_WORK", "/w"))
-    assert parsed["bypassPermissionsModeAccepted"] is True
-    assert parsed["projects"]["/w"]["hasTrustDialogAccepted"] is True
-
-
-def _supervisor_block():
-    script = device_launch.build_launch_script()
-    marker = "# The connector owns the terminal session."
-    return "set -e\n" + marker + script.split(marker, 1)[1]
-
-
-def _spawn_supervisor(socket, env, body):
-    import shlex
-
-    tmux = shutil.which("tmux")
-    if (
-        subprocess.run(
-            [tmux, "-S", socket, "has-session", "-t", "=screen"], capture_output=True
-        ).returncode
-        == 0
-    ):
-        return
-    keys = (
-        "PATH",
-        "HOME",
-        "CHEESE_WORK",
-        "CLAUDE",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "CHEESE_HOOK_SPOOL",
-        "CHEESE_TOKEN_EXPIRES",
-        "CHEESE_ENVIRONMENT",
-    )
-    command = shlex.join(
-        [
-            "env",
-            *[f"{k}={env[k]}" for k in keys if k in env],
-            "sh",
-            "-c",
-            'cd "$CHEESE_WORK"; ' + body,
-        ]
-    )
-    subprocess.run(
-        [tmux, "-S", socket, "new-session", "-d", "-s", "screen", command], check=True
-    )
-
-
-STUB_SOCK = "/tmp/cheese-test-connector.sock"
-
-
-def _stub_tmux_env(tmp_path):
-    """A home + a stub `tmux` that records kill/new/window to a log and toggles a
-    has-session marker, so a run's session-lifecycle decisions are observable.
-
-    The stub distinguishes the two servers a launch can talk to: one named with
-    `-S` (ours) and the machine owner's DEFAULT one (no `-S`). Calls against the
-    default server are logged with a `default:` prefix so a test can assert we
-    never host anything there."""
-    home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    work = home / "work"
-    work.mkdir()
-    log = tmp_path / "tmux.log"
-    mark = tmp_path / "session.mark"
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "tmux"
-    stub.write_text(
+def _stand_in_claude(path: Path, *, version: str = PIN) -> Path:
+    """A `claude` that answers `--version` and otherwise records how it was run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         "#!/bin/sh\n"
-        'sock=""\n'
-        'if [ "$1" = "-S" ]; then sock="$2"; shift 2; fi\n'
-        'cmd="$1"; shift\n'
-        'if [ -z "$sock" ]; then\n'
-        '  printf \'default:%s\\n\' "$cmd" >> "$STUB_LOG"\n'
-        '  case "$cmd" in\n'
-        '    has-session) [ -f "$STUB_OWNER_MARK" ] ;;\n'
-        '    kill-session) rm -f "$STUB_OWNER_MARK" ;;\n'
-        "    *) : ;;\n"
-        "  esac\n"
-        "  exit\n"
-        "fi\n"
-        'printf \'%s\\n\' "$sock" >> "$STUB_SOCKS"\n'
-        'case "$cmd" in\n'
-        '  has-session) [ -f "$STUB_MARK" ] ;;\n'
-        '  kill-session) printf \'kill\\n\' >> "$STUB_LOG"; rm -f "$STUB_MARK" ;;\n'
-        "  new-session) printf 'new\\n' >> \"$STUB_LOG\";"
-        ' printf \'%s\\n\' "$@" >> "$STUB_ARGS"; : > "$STUB_MARK" ;;\n'
-        "  new-window) printf 'window\\n' >> \"$STUB_LOG\" ;;\n"
-        "  list-panes) printf '%s\\n' \"${STUB_PANES:-12345}\" ;;\n"
-        "  attach) printf 'attach\\n' >> \"$STUB_LOG\" ;;\n"
-        "  *) : ;;\n"
-        "esac\n"
+        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; exit 0; fi\n'
+        'out="$(dirname "$0")/ran"\n'
+        'printf "%s\\n" "$@" > "$out.args"\n'
+        'printf "%s" "$CLAUDE_CONFIG_DIR" > "$out.config"\n'
+        'printf "%s" "${BUN_OPTIONS:-}" > "$out.bun"\n'
+        'printf "%s" "${CLAUDE_CODE_OAUTH_TOKEN:-}" > "$out.token"\n'
+        'printf "%s" "${CLAUDE_SECURESTORAGE_CONFIG_DIR:-}" > "$out.store"\n'
     )
-    stub.chmod(0o755)
-    # Every launch hands `claude` to the executor client, which needs an
-    # executor to prepare against. This one passes the command straight
-    # through, so what the launcher decided is what the agent receives.
+    path.chmod(0o755)
+    return path
+
+
+def _bootstrap_passthrough(bindir: Path) -> None:
+    """A `python3` whose executor-client `bootstrap` runs the command it wraps.
+
+    Every launch hands `claude` to the executor client, which needs an executor
+    to prepare against; this one passes the command straight through, so what the
+    launcher decided is what the stand-in receives. Everything else reaches the
+    real interpreter.
+    """
+    bindir.mkdir(parents=True, exist_ok=True)
     python = shutil.which("python3")
     client = bindir / "python3"
     client.write_text(
@@ -680,66 +312,318 @@ def _stub_tmux_env(tmp_path):
         f'exec {shlex.quote(python)} "$@"\n'
     )
     client.chmod(0o755)
+
+
+def _run_prepare(tmp_path, *, api: str = "", system_prompt: str = "", curl=None):
+    """The prepare hole alone, in `sh`, as the launcher reaches it: with the
+    session home, the owner's home and the executor target already set."""
+    owner = tmp_path / "owner"
+    session = owner / ".cheese/home/room"
+    session.mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    _bootstrap_passthrough(bindir)
+    if curl is not None:
+        (bindir / "curl").write_text(curl)
+        (bindir / "curl").chmod(0o755)
+    holes = device_launch.launch_holes(state=STATE, system_prompt=system_prompt)
+    if system_prompt:
+        (session / ".claude").mkdir()
+        (session / ".claude/cheese-system-prompt.md").write_text(system_prompt)
+    script = (
+        "set -e\ncheese_launch_phase() { :; }\n"
+        + holes.prepare
+        + 'printf "%s\\n" "$CHEESE_CLAUDE_COMMAND" > "$HOME/command"\n'
+        + 'printf "%s\\n" "$CLAUDE_RUNNER" > "$HOME/runner"\n'
+    )
     env = {
-        **os.environ,
-        "PATH": f"{bindir}:{os.environ['PATH']}",
-        "HOME": str(home),
-        "CHEESE_HOME": str(home),
-        "CHEESE_WORK": str(work),
+        **_clean_environ(),
+        "PATH": f"{bindir}:/usr/bin:/bin",
+        "HOME": str(session),
+        "REAL_HOME": str(owner),
         "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
-        "CLAUDE": "claude --model x",
-        "TMUX": f"{STUB_SOCK},1,0",
-        "STUB_LOG": str(log),
-        "STUB_MARK": str(mark),
-        "STUB_OWNER_MARK": str(tmp_path / "owner-session.mark"),
-        "STUB_SOCKS": str(tmp_path / "sockets.seen"),
-        "STUB_ARGS": str(tmp_path / "newsession.args"),
     }
-    return home, env, log
+    if api:
+        env["CHEESE_API"] = api
+    # A file, not `sh -c`: the hole carries the runner archive, and Linux caps
+    # one argument far below it.
+    runnable = tmp_path / "prepare.sh"
+    runnable.write_text(script)
+    result = subprocess.run(
+        ["sh", str(runnable)], env=env, capture_output=True, text=True, timeout=30
+    )
+    return owner, session, result
+
+
+def _argv(command: str, *, cwd: Path) -> list[str]:
+    """What the runner's `sh -c "exec <command>"` would hand exec."""
+    return subprocess.check_output(
+        ["sh", "-c", 'eval "set -- $1"; printf "%s\\n" "$@"', "sh", command],
+        text=True,
+        cwd=cwd,
+    ).splitlines()
+
+
+def test_the_runner_is_handed_the_pinned_build_behind_the_executor_client(tmp_path):
+    owner = tmp_path / "owner"
+    claude = _stand_in_claude(owner / ".local/bin/claude")
+    _, session, result = _run_prepare(tmp_path, system_prompt="be kind\n")
+
+    assert result.returncode == 0, result.stderr
+    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    assert argv[:4] == [
+        "python3",
+        f"{session}/.cheese/remote-execution/client.py",
+        "bootstrap",
+        f"{session}/.cheese/remote-target.json",
+    ]
+    assert argv[4:] == [
+        str(claude),
+        *LAUNCH_ARGS,
+        "--append-system-prompt-file",
+        f"{session}/.claude/cheese-system-prompt.md",
+    ]
+    # None of the flags the terminal launch needed survives the move to `-p`.
+    assert "--dangerously-skip-permissions" not in argv
+    assert "--remote-control" not in argv
+    assert json.loads((session / ".cheese/remote-target.json").read_text()) == {
+        "kind": "deferred"
+    }
+
+
+def test_an_empty_system_prompt_adds_no_flag(tmp_path):
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    _, session, result = _run_prepare(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    command = (session / "command").read_text()
+    assert "--append-system-prompt-file" not in command
+
+
+def test_the_runner_keeps_its_state_in_the_owners_home(tmp_path):
+    """The state is the CONNECTOR's `$HOME/...`: the owner's, which outlives the
+    session home a relaunch rebuilds, and whose path the backend derives the
+    socket from."""
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    owner, session, result = _run_prepare(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    state = owner / STATE.removeprefix("$HOME/")
+    assert state.is_dir()
+    assert oct(state.stat().st_mode & 0o777) == "0o700"
+    (artifact,) = state.glob("runner-*.pyz")
+    assert artifact.read_bytes() == device_launch.build()
+    line = (session / "runner").read_text().strip()
+    assert _argv(line, cwd=tmp_path) == [
+        "python3",
+        "-I",
+        "-S",
+        str(artifact),
+        "--state",
+        str(state),
+    ]
+    # Its own stderr is kept where the pane's death cannot take it.
+    assert line.endswith(f'2>>"{state}/runner.log"')
+
+
+def test_a_live_runners_archive_is_never_overwritten(tmp_path):
+    """The archive is named by its digest: a launch that ships the same runner
+    writes nothing, and one that ships a new one leaves the old file in place
+    for the runner still importing from it."""
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    owner, _, first = _run_prepare(tmp_path)
+    assert first.returncode == 0, first.stderr
+    state = owner / STATE.removeprefix("$HOME/")
+    (artifact,) = state.glob("runner-*.pyz")
+    stamp = artifact.stat().st_mtime_ns
+    live = state / "runner-0000.pyz"
+    live.write_bytes(b"in use")
+
+    shutil.rmtree(owner / ".cheese/home")
+    _, _, second = _run_prepare(tmp_path)
+
+    assert second.returncode == 0, second.stderr
+    assert artifact.stat().st_mtime_ns == stamp
+    assert live.read_bytes() == b"in use"
+
+
+def test_a_build_under_the_floor_is_refused_by_name(tmp_path):
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude", version="2.1.100")
+    _, session, result = _run_prepare(tmp_path)
+
+    assert result.returncode == 1
+    assert f"claude 2.1.100 at {tmp_path}/owner/.local/bin/claude is older" in (
+        result.stderr
+    )
+    assert not (session / "command").exists()
+
+
+def test_no_claude_anywhere_is_named_not_started(tmp_path):
+    _, session, result = _run_prepare(tmp_path)
+
+    assert result.returncode == 1
+    assert "cheese-launch: no claude binary found" in result.stderr
+    assert not (session / "command").exists()
+
+
+def _fetching_curl(log: Path, version: str = PIN) -> str:
+    """A `curl` that logs its URL and writes a stand-in claude to `-o`."""
+    return (
+        "#!/bin/sh\n"
+        'dest=""; url=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) shift; dest="$1" ;; http*) url="$1" ;; esac\n'
+        "  shift\n"
+        "done\n"
+        f'echo "$url" >> {shlex.quote(str(log))}\n'
+        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
+        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
+        "AGENT\n"
+    )
+
+
+def test_a_missing_pin_is_fetched_from_the_platform_and_preferred(tmp_path):
+    """A pin bump reaches a machine enrolled under the old pin at its next
+    launch: the pinned build is placed from the platform and wins over whatever
+    the machine has on its own."""
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    log = tmp_path / "curl.log"
+    owner, session, result = _run_prepare(
+        tmp_path, api="https://platform.invalid/", curl=_fetching_curl(log)
+    )
+
+    assert result.returncode == 0, result.stderr
+    pin = owner / ".cheese/claude/versions" / PIN
+    assert pin.is_file() and os.access(pin, os.X_OK)
+    (url,) = log.read_text().splitlines()
+    assert re.fullmatch(
+        rf"https://platform\.invalid/connector/claude/{re.escape(PIN)}/"
+        r"(linux|darwin)-(x64|arm64)(-musl)?/claude",
+        url,
+    )
+    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    assert argv[4] == str(pin)
+
+
+def test_a_failed_fetch_falls_back_to_the_machines_own_build(tmp_path):
+    claude = _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    owner, session, result = _run_prepare(
+        tmp_path, api="https://platform.invalid", curl="#!/bin/sh\nexit 22\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"could not fetch claude {PIN}" in result.stderr
+    assert not list((owner / ".cheese/claude/versions").iterdir())
+    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    assert argv[4] == str(claude)
+
+
+def test_a_present_pin_is_not_fetched_again(tmp_path):
+    owner = tmp_path / "owner"
+    pin = _stand_in_claude(owner / ".cheese/claude/versions" / PIN)
+    log = tmp_path / "curl.log"
+    _, session, result = _run_prepare(
+        tmp_path, api="https://platform.invalid", curl=_fetching_curl(log)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not log.exists()
+    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    assert argv[4] == str(pin)
+
+
+# --- the whole launcher, run for real ------------------------------------------
+
+
+def _machine(tmp_path, *, api: str = ""):
+    """An owner's home with a stand-in claude, a project, and the launch env."""
+    owner = tmp_path / "owner"
+    (owner / ".claude").mkdir(parents=True)
+    work = tmp_path / "project"
+    work.mkdir()
+    session = owner / ".cheese/home/room"
+    bindir = tmp_path / "bin"
+    _bootstrap_passthrough(bindir)
+    claude = _stand_in_claude(owner / ".local/bin/claude")
+    env = {
+        **_clean_environ(),
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "HOME": str(owner),
+        "CHEESE_HOME": str(session),
+        "CHEESE_WORK": str(work),
+        "CHEESE_TOPIC": "room",
+        "CHEESE_AUTHOR": "ops",
+        "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
+    }
+    if api:
+        env["CHEESE_API"] = api
+        # Keep the detached document-tool fetch from starting after the test.
+        chain = owner / ".cheese/toolchain"
+        for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
+            target = chain / (
+                "fonts/" + machine_launcher.toolchain.fonts_pin()
+                if kind == "font"
+                else f"{tool}/{version}"
+            )
+            target.mkdir(parents=True, exist_ok=True)
+            (target / name).write_text("fixture")
+            (target / name).chmod(0o755)
+    return owner, session, work, claude, env
+
+
+def _launch(tmp_path, env, **named):
+    # Devices execute a shipped file; Linux rejects this script's size in argv.
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text(_script(**named))
+    return subprocess.run(
+        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=60
+    )
+
+
+def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
+    """The real archive, started the way the screen starts it, starting the
+    stand-in with the argv the launcher decided and a session id of its own."""
+    owner, session, _work, claude, env = _machine(tmp_path)
+    env["CHEESE_RESUME_SESSION"] = "no-such-transcript"
+
+    result = _launch(tmp_path, env, system_prompt="be kind")
+
+    state = owner / STATE.removeprefix("$HOME/")
+    assert result.returncode == 0, result.stderr + (
+        (state / "runner.log").read_text() if (state / "runner.log").exists() else ""
+    )
+    args = (claude.parent / "ran.args").read_text().splitlines()
+    assert args[: len(LAUNCH_ARGS)] == LAUNCH_ARGS
+    assert args[len(LAUNCH_ARGS) : len(LAUNCH_ARGS) + 2] == [
+        "--append-system-prompt-file",
+        f"{session}/.claude/cheese-system-prompt.md",
+    ]
+    # The offered transcript is not on this disk, so the session starts afresh.
+    assert args[-2] == "--session-id"
+    uuid.UUID(args[-1])
+    assert (claude.parent / "ran.config").read_text() == f"{session}/.claude"
+    assert (session / ".claude/cheese-system-prompt.md").read_text() == "be kind\n"
+    assert (state / "records.sqlite").is_file()
 
 
 def test_full_launcher_installs_platform_cli_without_network(tmp_path):
-    home, env, _log = _stub_tmux_env(tmp_path)
-    bindir = tmp_path / "bin"
+    _owner, session, _work, claude, env = _machine(tmp_path)
     network = tmp_path / "network.calls"
-    curl = bindir / "curl"
+    curl = tmp_path / "bin/curl"
     curl.write_text(f'#!/bin/sh\necho attempted >> "{network}"\nexit 1\n')
     curl.chmod(0o755)
-    claude = home / ".local/bin/claude"
-    claude.parent.mkdir(parents=True)
-    claude.write_text(
-        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
-        'else printf "%s" "$BUN_OPTIONS" > "$HOME/bun-options"; fi\n'
-    )
-    claude.chmod(0o755)
-    env["CHEESE_TOKEN_EXPIRES"] = str(int(time.time()) + 3600)
-    # Devices execute a shipped file; Linux rejects this script's size in argv.
-    launcher = tmp_path / "launch.sh"
-    launcher.write_text(device_launch.build_launch_script())
-    result = subprocess.run(
-        ["sh", str(launcher)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+
+    result = _launch(tmp_path, env)
+
     assert result.returncode == 0, result.stderr
     assert not network.exists(), "room startup must not fetch the platform CLI"
-    transport = home / ".claude/webfetch_transport.cjs"
+    transport = session / ".claude/webfetch_transport.cjs"
     assert (
         transport.read_bytes()
-        == (
-            device_launch.Path(device_launch.__file__).with_name(
-                "webfetch_transport.cjs"
-            )
-        ).read_bytes()
+        == Path(device_launch.__file__).with_name("webfetch_transport.cjs").read_bytes()
     )
-    assert (home / "bun-options").read_text() == f'"--preload={transport}"'
-    installed = home / ".cheese/cheese"
-    source = (
-        device_launch.Path(device_launch.__file__).resolve().parents[5]
-        / "sandbox/cheese"
-    )
+    assert (claude.parent / "ran.bun").read_text() == f'"--preload={transport}"'
+    installed = session / ".cheese/cheese"
+    source = Path(device_launch.__file__).resolve().parents[5] / "sandbox/cheese"
     assert installed.read_bytes() == source.read_bytes()
     result = subprocess.run(
         [str(installed), "--help"], env=env, capture_output=True, text=True, timeout=5
@@ -748,9 +632,20 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     assert "usage:" in result.stdout
 
 
+def test_the_settings_file_written_is_the_sessions_settings(tmp_path):
+    _owner, session, _work, _claude, env = _machine(tmp_path)
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    written = json.loads((session / ".claude/settings.json").read_text())
+    assert written == session_settings()
+
+
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
-    owner, env, _log = _stub_tmux_env(tmp_path)
-    work = tmp_path / "project"
+    owner, session, work, _claude, env = _machine(
+        tmp_path, api="https://fixture.invalid"
+    )
     config = work / ".claude"
     config.mkdir(parents=True)
     protected = [
@@ -768,232 +663,39 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     before = {path: path.read_bytes() for path in protected}
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
-    session = owner / ".cheese/home/room"
     previous_chat_skill = session / ".claude/skills/cheese-chat/SKILL.md"
     previous_chat_skill.parent.mkdir(parents=True)
     previous_chat_skill.write_text("Previous generated chat guide\n")
-    env.update(
-        CHEESE_HOME=str(session),
-        CHEESE_WORK=str(work),
-        CHEESE_API="https://fixture.invalid",
-        CHEESE_TOKEN_EXPIRES=str(int(time.time()) + 3600),
-    )
-    # Keep this skills/Claude contract from starting the independent detached
-    # document-tool fetch after the assertions have finished.
-    chain = owner / ".cheese/toolchain"
-    for tool, version, kind, name in machine_launcher.toolchain.PLACEMENTS:
-        target = chain / (
-            "fonts/" + machine_launcher.toolchain.fonts_pin()
-            if kind == "font"
-            else f"{tool}/{version}"
-        )
-        target.mkdir(parents=True, exist_ok=True)
-        (target / name).write_text("fixture")
-        (target / name).chmod(0o755)
-    curl_calls = tmp_path / "curl.calls"
-    curl = tmp_path / "bin/curl"
-    curl.write_text(
-        f'#!/bin/sh\necho call >> "{curl_calls}"\nwhile [ "$#" -gt 0 ]; do\n'
-        'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
-        "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
-        'else printf "%s\\n" "$@" "$CLAUDE_CONFIG_DIR" > "$HOME/agent.args"; '
-        "fi\nAGENT\n"
-    )
-    curl.chmod(0o755)
-    launcher = tmp_path / "launch.sh"
-    launcher.write_text(device_launch.build_launch_script())
-    result = subprocess.run(
-        ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=15
-    )
+    log = tmp_path / "curl.log"
+    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
+    (tmp_path / "bin/curl").chmod(0o755)
+
+    result = _launch(tmp_path, env)
+
     assert result.returncode == 0, result.stderr
-    assert curl_calls.read_text().splitlines() == ["call"]
+    assert len(log.read_text().splitlines()) == 1
     assert {path: path.read_bytes() for path in protected} == before
-    assert set(owner.iterdir()) - original_entries == {owner / ".cheese"}
+    assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
-    assert (
-        owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
-    ).is_file()
+    assert (owner / ".cheese/claude/versions" / PIN).is_file()
     for name in ("cheese-docs",):
         assert (session / ".claude/skills" / name / "SKILL.md").is_file()
     assert not previous_chat_skill.exists()
-    args = (session / "agent.args").read_text()
-    assert "--dangerously-skip-permissions" in args
-    assert f"{session}/.claude" in args
 
 
-def _tmux_ge_30() -> bool:
+def test_the_session_the_runner_starts_logs_in_with_the_hosts_own_store(tmp_path):
+    """The credentials step runs before the runner, and what it chose is what the
+    session the runner starts carries: the host user's store, and no token of
+    its own that would win over it."""
+    owner, _session, _work, claude, env = _machine(tmp_path)
+    (owner / ".claude/.credentials.json").write_text('{"claudeAiOauth": {}}')
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = "stale-inherited-token"
 
-    if not shutil.which("tmux"):
-        return False
-    out = subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout
-    m = re.search(r"(\d+)\.(\d+)", out)
-    return bool(m) and (int(m.group(1)), int(m.group(2))) >= (3, 0)
+    result = _launch(tmp_path, env)
 
-
-@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
-def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_path):
-    import json
-    import sys
-
-    from app.domain.agent import environment_runner
-    from app.domain.project.environment import EnvironmentConfig
-
-    socket = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
-    home = tmp_path / "home"
-    helpers = home / ".cheese"
-    helpers.mkdir(parents=True)
-    work = tmp_path / "work"
-    subprocess.run(["git", "init", "-q", str(work)], check=True)
-    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
-    (helpers / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
-    agent = tmp_path / "fake agent.sh"
-    agent.write_text(
-        "#!/bin/sh\ntest -f setup || exit 1\necho agent >> agents\nexec sleep 60\n"
-    )
-    agent.chmod(0o755)
-    config = EnvironmentConfig(
-        setup_script="echo setup >> setup",
-        startup_script="cd backend\necho startup >> startup",
-    )
-    env = {
-        **os.environ,
-        "HOME": str(home),
-        "CHEESE_WORK": str(work),
-        "TMUX": f"{socket},1,0",
-        "CLAUDE": f'"{agent}"',
-        "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
-        "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
-    }
-
-    def attach():
-        # The supervisor carries the environment wrapper itself, so the block
-        # below is the whole of what a launch runs after the harness's own half.
-        _spawn_supervisor(socket, env, _supervisor_block())
-
-    def wait_agents(count):
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if (work / "agents").exists() and len(
-                (work / "agents").read_text().splitlines()
-            ) == count:
-                return
-            time.sleep(0.05)
-        pytest.fail("agent did not start after preparation")
-
-    try:
-        attach()
-        wait_agents(1)
-        attach()
-        assert not (work / "startup").exists()
-        reset = subprocess.run(
-            [sys.executable, str(helpers / "cheese-environment.py"), "reset"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert reset.returncode == 0, reset.stderr
-        assert (work / "agents").exists()
-        attach()
-        wait_agents(2)
-        assert (work / "setup").read_text() == "setup\n"
-        assert not (work / "startup").exists()
-    finally:
-        subprocess.run(["tmux", "-S", socket, "kill-server"], capture_output=True)
-
-
-@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
-def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
-    """End-to-end against a REAL tmux server whose GLOBAL env holds a stale token
-    (the box's exact condition). A brand-new claude must boot carrying THIS
-    launch's fresh token — proving the frozen-global inheritance (the 407 root
-    cause) is overridden, not merely that a new process was spawned."""
-
-    real_tmux = shutil.which("tmux")
-    # A short socket path: a unix socket path is capped near 104 chars, and
-    # pytest's tmp_path alone already blows past it on macOS.
-    sock = f"/tmp/ct{os.getpid()}.sock"  # noqa: S108 — ephemeral, kill-server'd below
-    home = tmp_path / "home"
-    for name in (".claude", ".cheese"):
-        (home / name).mkdir(parents=True, exist_ok=True)
-    work = home / "work"
-    work.mkdir()
-    (home / ".cheese" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
-    token_out = tmp_path / "claude_token.out"
-    fake_claude = tmp_path / "fakeclaude.sh"
-    # Write-then-rename: the waiter below keys on the file EXISTING, and a plain
-    # `> file` creates it empty before printenv writes — on a loaded CI runner
-    # the reader wins that race and sees ''. The rename makes it appear complete.
-    # HOME and PATH ride along: the seed server's global env froze the test
-    # runner's real values, so if -e does not carry them the inner claude leaks
-    # the first-launcher's identity (the cross-topic hook mis-routing of
-    # 2026-08-15 — topic B's claude running with topic A's HOME and PATH).
-    # CHEESE_HOOK_SPOOL stands in for the UNLISTED vars: it is not on the -e
-    # list, so only the sourced env dump can carry it — the seed server global
-    # holds another topic's spool (the exact 2026-08-16 failure, where topic
-    # E's hooks landed in topic F's spool and shipped under F's identity).
-    fake_claude.write_text(
-        f"#!/bin/sh\n{{ printenv CLAUDE_CODE_OAUTH_TOKEN; printenv HOME;\n"
-        f'  printenv PATH; printenv CHEESE_HOOK_SPOOL; }} > "{token_out}.tmp"\n'
-        f'mv "{token_out}.tmp" "{token_out}"\nsleep 3\n'
-    )
-    fake_claude.chmod(0o755)
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    # PATH leads with a dir of our own so the assertion below can tell THIS
-    # launch's PATH from the one frozen into the seed server's global env.
-    (bindir / "keep").write_text("")
-    try:
-        subprocess.run(
-            [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
-            env={
-                **os.environ,
-                "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token",
-                "CHEESE_HOOK_SPOOL": "/stale/other-topics/spool",
-            },
-            check=True,
-        )
-        env = {
-            **os.environ,
-            "PATH": f"{bindir}:{os.environ['PATH']}",
-            "HOME": str(home),
-            "CHEESE_WORK": str(work),
-            "CLAUDE": f"sh {fake_claude}",
-            "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
-            "CHEESE_HOOK_SPOOL": f"{home}/.cheese/cheese-spool",
-            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
-            # What a pane of the connector's own tmux sees. The launcher reads
-            # the socket out of it, so the seeded server IS the one it hosts in
-            # — no wrapper pinning it there.
-            "TMUX": f"{sock},1,0",
-        }
-        _spawn_supervisor(sock, env, _supervisor_block())
-        deadline = time.monotonic() + 8
-        while not token_out.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert token_out.exists(), "the inner claude never launched"
-        got = token_out.read_text().splitlines()
-        assert got and got[0] == "FRESH-live-token", (
-            "the new claude booted on the STALE server-global token, not this "
-            f"launch's fresh one — the frozen-global 407 is not fixed: {got}"
-        )
-        assert got[1:2] == [str(home)], (
-            f"the inner claude's HOME is not this launch's isolated home: {got}"
-        )
-        assert got[2:] and got[2].startswith(str(bindir)), (
-            f"the inner claude's PATH does not lead with this launch's: {got}"
-        )
-        assert got[3:] == [f"{home}/.cheese/cheese-spool"], (
-            "an UNLISTED var (CHEESE_HOOK_SPOOL) did not survive into the inner "
-            f"claude — the sourced env dump is not reaching the session: {got}"
-        )
-    finally:
-        subprocess.run([real_tmux, "-S", sock, "kill-server"], capture_output=True)
-        try:
-            os.unlink(sock)
-        except OSError:
-            pass
+    assert result.returncode == 0, result.stderr
+    assert (claude.parent / "ran.store").read_text() == f"{owner}/.claude"
+    assert (claude.parent / "ran.token").read_text() == ""
 
 
 # --- the tunnel branch ------------------------------------------------------
@@ -1010,13 +712,7 @@ def _launch_with_tunnel(**overrides):
         "CLAUDE_CODE_OAUTH_TOKEN": "scoped.session.token",
     }
     env.update(overrides)
-    command, _env = _screen_launch(
-        hook_url="http://h/sandbox/hooks/T",
-        hook_token="scoped-tok",
-        home_dir="/dev/home",
-        work_dir="/dev/work",
-        extra_env=env,
-    )
+    command, _env = _screen_launch(token="scoped-tok", extra_env=env)
     return command[2]
 
 
@@ -1264,9 +960,8 @@ def test_rooms_launched_together_each_get_their_own_helper(tmp_path):
     """~50 rooms share one host, and a port chosen by anything but the machine
     lands two of them on one number. When that happened the second helper died,
     the first answered the readiness check in its place, and the second room's
-    `claude` ran every request — its Remote Control registration included — on
-    the first room's credential. Each room must get a port that its OWN helper
-    holds, even when they all start at once."""
+    `claude` ran every request on the first room's credential. Each room must
+    get a port that its OWN helper holds, even when they all start at once."""
     homes = [_tunnel_up_home(tmp_path, f"room-{index}")[0] for index in range(6)]
     results: dict[int, subprocess.CompletedProcess] = {}
 
@@ -1493,7 +1188,7 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
 
 def _run_credentials_step(real_home, *, inherited_token: str | None = None) -> dict:
     """Run the shipped credentials step under sh; return the env it leaves."""
-    script = device_launch.build_launch_script()
+    script = _script()
     start = script.index("# The session's Claude login is its host's own.")
     end = script.index("cheese_launch_phase credentials_selected")
     step = script[start:end]
@@ -1562,7 +1257,7 @@ def test_the_tunnel_password_stays_the_scoped_token():
     """The helper's token proves which project may open a tunnel — the scoped
     cheese token's job. A Claude login in CLAUDE_CODE_OAUTH_TOKEN is a different
     credential, and stamping it as the CONNECT password would 407 every tunnel."""
-    script = device_launch.build_launch_script()
+    script = _script()
     start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
     written = script[start : script.index("\nTUNNELTOK", start)]
 
@@ -1581,13 +1276,10 @@ def test_the_tunnel_password_stays_the_scoped_token():
         assert result.stdout.strip() == connect
 
 
-def test_the_launcher_exports_the_config_dir_and_passes_it_into_tmux():
-    """CLAUDE_CONFIG_DIR is the isolation boundary itself: exported for the
-    direct-exec path, and explicitly -e'd into the tmux session (tmux seeds a
-    new session's env from the SERVER's global env, which predates this launch
-    — same reasoning as the credential below it)."""
-    script = device_launch.build_launch_script()
-    assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in script
+def test_the_launcher_exports_the_config_dir():
+    """CLAUDE_CONFIG_DIR is the isolation boundary itself, exported before the
+    runner starts so the session it launches inherits it."""
+    assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in _script()
 
 
 # --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
@@ -1671,38 +1363,47 @@ def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
     assert (tmp_path / ".cheese/cheese-preview.port").read_text() == "5173\n"
 
 
+# --- the settings a session starts with ----------------------------------------
+
+
+def test_nothing_in_the_settings_observes_the_session():
+    """The runner reads what the session does from its stdout. A hook left here
+    to report it would be a second, racing account of the same turn."""
+    hooks = session_settings()["hooks"]
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit"}
+    for entries in hooks.values():
+        (entry,) = entries
+        assert [hook["command"] for hook in entry["hooks"]] == [
+            "cheese sync-agents || true"
+        ]
+
+
+def test_the_settings_refuse_what_the_argv_refuses():
+    settings = session_settings()
+    assert settings["permissions"]["deny"] == DISALLOWED_TOOLS
+    assert LAUNCH_ARGS[LAUNCH_ARGS.index("--disallowedTools") + 1 :] == DISALLOWED_TOOLS
+    assert "AskUserQuestion" in DISALLOWED_TOOLS
+    assert settings["attribution"] == {"sessionUrl": False}
+    assert settings["enableArtifact"] is False
+
+
 def test_no_mcp_server_is_planted_in_a_sandbox():
-    """The platform plants NO MCP server, on either delivery path.
+    """The platform plants NO MCP server.
 
     An earlier revision planted `mcp-server-fetch` to get a fetch path a
     deadline could reach. Measured against the same pages, that server extracts
-    badly where it matters (a list-style page yields 622 characters against
-    24,000+ from a converter that does not guess at "main content") and returns
-    the raw page instead of an answer (33k tokens for one Wikipedia article,
-    against tens of tokens from WebFetch's own summarisation). Claude Code's own
-    tool description also tells the model to PREFER an MCP fetch tool whenever
-    one exists, so planting one does not add a fallback — it replaces the better
-    default. Fetching moves to a platform-side service instead.
+    badly where it matters and returns the raw page instead of an answer, and
+    Claude Code's own tool description tells the model to PREFER an MCP fetch
+    tool whenever one exists — so planting one replaces the better default.
     """
-    script = device_launch.build_launch_script(
-        sync_on_stop=True, system_prompt="", ca_pem=""
-    )
-    assert "mcpServers" not in _claude_json_from(script)
-
-    from app.domain.agent.harness.claude_code.session_launch import (
-        build_session_launch,
-    )
-
-    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
-    container = json.loads(
-        next(f.content for f in spec.files if f.name == ".claude.json")
-    )
-    assert "mcpServers" not in container
+    assert "mcpServers" not in session_settings()
+    assert "mcp-server-fetch" not in _script()
+    assert "--mcp-config" not in LAUNCH_ARGS
 
 
 def test_a_summarisation_stream_that_stalls_is_bounded():
     """Keep the model-stream watchdog enabled alongside page-fetch handling."""
-    assert device_launch.hooks_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
+    assert session_settings()["env"]["CLAUDE_ENABLE_STREAM_WATCHDOG"]
 
 
 def test_the_stream_watchdog_cannot_cut_a_turn_before_the_platform_does():
@@ -1712,57 +1413,32 @@ def test_the_stream_watchdog_cannot_cut_a_turn_before_the_platform_does():
     first-party API — which this deployment is, since `ANTHROPIC_BASE_URL` is
     deliberately unset — and no hop writes a keepalive byte, so a thinking
     window looks exactly like a dead connection and the turn is killed
-    mid-stream. Setting the variable is what leaves that 180 s branch; the value
-    has to sit above the platform's own silence gates so the CLI cannot cut
-    first, on less information, with a number nobody here chose.
+    mid-stream.
     """
     from app.core.config import settings
 
-    env = device_launch.hooks_settings()["env"]
+    env = session_settings()["env"]
     assert int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > 180_000, (
         "still on the CLI's firstParty default"
     )
     assert (
-        int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"]) > settings.agent_idle_suspect_s * 1000
+        int(env["CLAUDE_STREAM_IDLE_TIMEOUT_MS"])
+        > settings.agent_first_output_timeout_s * 1000
     )
 
 
-def _claude_json_from(script: str) -> dict:
-    """The `.claude.json` the launch script writes, as the shell would leave it."""
-    line = next(x for x in script.splitlines() if "hasCompletedOnboarding" in x)
-    return json.loads(line.replace("$CHEESE_WORK", "/work"))
+def test_repaired_webfetch_is_offered_with_its_transport():
+    """The native tool stays available; the launch preloads its transport (the
+    preload reaching claude is checked by the full launch above)."""
+    assert "WebFetch" not in DISALLOWED_TOOLS
+    assert "WebFetch" not in session_settings()["permissions"]["deny"]
+    assert 'cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"' in _script()
 
 
-def test_repaired_webfetch_is_available_on_both_delivery_paths():
-    """Both launch methods expose the native tool with its transport preload."""
-    from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-    from app.domain.agent.harness.claude_code.session_launch import (
-        build_session_launch,
-    )
-
-    assert "WebFetch" not in CLAUDE_BASE_CMD
-
-    spec = build_session_launch(config_dir="/cfg", workdir="/work", system_prompt="x")
-    settings = json.loads(
-        next(f.content for f in spec.files if f.name == "settings.json")
-    )
-    assert "WebFetch" not in settings["permissions"]["deny"]
-    assert shlex.split(spec.env["BUN_OPTIONS"]) == [
-        "--preload=/cfg/webfetch_transport.cjs"
-    ]
+# --- the supervisor: the shell the screen runs, around the runner --------------
 
 
 def _supervised_program(tmp_path):
-    import shlex
-    import sys
-
-    home = tmp_path / "home"
-    config = home / ".cheese"
-    config.mkdir(parents=True)
-    (config / "cheese-drain").write_text(_drain_body())
-    spool = config / "spool"
-    spool.mkdir()
-    (config / "cheese-drain.env").write_text(f'CHEESE_HOOK_SPOOL="{spool}"\n')
     agent = tmp_path / "agent.py"
     agent.write_text(
         "import os, pathlib, sys, time\n"
@@ -1772,19 +1448,20 @@ def _supervised_program(tmp_path):
         "    sys.exit(7)\n"
         "time.sleep(60)\n"
     )
-    body = device_launch.build_launch_script().split(
-        "# The connector owns the terminal session.", 1
-    )[1]
+    marker = "# The connector owns the terminal session."
+    body = _script().split(marker, 1)[1]
     script = tmp_path / "supervise.sh"
-    script.write_text("set -e\n# The connector owns the terminal session." + body)
+    script.write_text("set -e\n" + marker + body)
+    home = tmp_path / "home"
+    (home / ".cheese").mkdir(parents=True)
     env = {
-        **os.environ,
+        **_clean_environ(),
         "HOME": str(home),
-        "CLAUDE": f"{shlex.quote(sys.executable)} {shlex.quote(str(agent))}",
+        "CLAUDE_RUNNER": f"{shlex.quote(sys.executable)} {shlex.quote(str(agent))}",
         "CHEESE_TUNNEL_URL": "",
         "CHEESE_PREVIEW_URL": "",
     }
-    return script, env, config / "cheese-drain.pid", tmp_path / "agent.pid"
+    return script, env, tmp_path / "agent.pid"
 
 
 def _wait_file(path):
@@ -1810,11 +1487,13 @@ def _assert_exited(pid):
 
 
 @pytest.mark.parametrize("shell", ["sh", "dash"])
-def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, shell):
-
+def test_supervisor_preserves_input_and_exit_status(tmp_path, shell):
+    """The runner holds claude's stdin for the session's life, so the screen's
+    input has to reach it through the backgrounded `exec`, and its exit status
+    is the screen's."""
     if shutil.which(shell) is None:
         pytest.skip(f"needs {shell}")
-    script, env, drain_file, agent_file = _supervised_program(tmp_path)
+    script, env, agent_file = _supervised_program(tmp_path)
     proc = subprocess.Popen(
         [shell, str(script)],
         env={**env, "WAIT_FOR_INPUT": "1"},
@@ -1823,12 +1502,10 @@ def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, 
         text=True,
     )
     try:
-        drainer = _wait_file(drain_file)
         agent = _wait_file(agent_file)
         out, _ = proc.communicate("hello\n", timeout=5)
         assert out.strip() == "hello"
         assert proc.returncode == 7
-        _assert_exited(drainer)
         _assert_exited(agent)
     finally:
         if proc.poll() is None:
@@ -1836,13 +1513,11 @@ def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, 
             proc.wait(timeout=5)
 
 
-def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
-    import shlex
-
+def test_closing_real_tmux_ends_the_runner(tmp_path):
     tmux = shutil.which("tmux")
     if tmux is None:
         pytest.skip("needs tmux")
-    script, env, drain_file, agent_file = _supervised_program(tmp_path)
+    script, env, agent_file = _supervised_program(tmp_path)
     with tempfile.TemporaryDirectory(prefix="cs-life-", dir="/tmp") as runtime:
         sock = runtime + "/t.sock"
 
@@ -1863,30 +1538,113 @@ def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
                 == 0
             )
             agent = _wait_file(agent_file)
-            drainer = _wait_file(drain_file)
             assert (
                 run("list-sessions", "-F", "#{session_name}").stdout.strip() == "screen"
             )
             assert run("kill-session", "-t", "=screen").returncode == 0
             _assert_exited(agent)
-            _assert_exited(drainer)
         finally:
             run("kill-server")
+
+
+@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
+def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_path):
+    from app.domain.agent import environment_runner
+    from app.domain.project.environment import EnvironmentConfig
+
+    socket_path = f"/tmp/ce{os.getpid()}.sock"  # noqa: S108 — test-owned tmux socket
+    home = tmp_path / "home"
+    helpers = home / ".cheese"
+    helpers.mkdir(parents=True)
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    agent = tmp_path / "fake agent.sh"
+    agent.write_text(
+        "#!/bin/sh\ntest -f setup || exit 1\necho agent >> agents\nexec sleep 60\n"
+    )
+    agent.chmod(0o755)
+    config = EnvironmentConfig(
+        setup_script="echo setup >> setup",
+        startup_script="cd backend\necho startup >> startup",
+    )
+    env = {
+        **_clean_environ(),
+        "HOME": str(home),
+        "CHEESE_WORK": str(work),
+        "TMUX": f"{socket_path},1,0",
+        "CLAUDE_RUNNER": f'"{agent}"',
+        "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+    }
+    marker = "# The connector owns the terminal session."
+    body = "set -e\n" + marker + _script().split(marker, 1)[1]
+
+    def attach():
+        # The supervisor carries the environment wrapper itself, so the block
+        # below is the whole of what a launch runs after the harness's own half.
+        tmux = shutil.which("tmux")
+        if (
+            subprocess.run(
+                [tmux, "-S", socket_path, "has-session", "-t", "=screen"],
+                capture_output=True,
+            ).returncode
+            == 0
+        ):
+            return
+        keys = ("PATH", "HOME", "CHEESE_WORK", "CLAUDE_RUNNER", "CHEESE_ENVIRONMENT")
+        command = shlex.join(
+            [
+                "env",
+                *[f"{k}={env[k]}" for k in keys],
+                "sh",
+                "-c",
+                'cd "$CHEESE_WORK"; ' + body,
+            ]
+        )
+        subprocess.run(
+            [tmux, "-S", socket_path, "new-session", "-d", "-s", "screen", command],
+            check=True,
+        )
+
+    def wait_agents(count):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if (work / "agents").exists() and len(
+                (work / "agents").read_text().splitlines()
+            ) == count:
+                return
+            time.sleep(0.05)
+        pytest.fail("agent did not start after preparation")
+
+    try:
+        attach()
+        wait_agents(1)
+        attach()
+        assert not (work / "startup").exists()
+        reset = subprocess.run(
+            [sys.executable, str(helpers / "cheese-environment.py"), "reset"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert reset.returncode == 0, reset.stderr
+        assert (work / "agents").exists()
+        attach()
+        wait_agents(2)
+        assert (work / "setup").read_text() == "setup\n"
+        assert not (work / "startup").exists()
+    finally:
+        subprocess.run(["tmux", "-S", socket_path, "kill-server"], capture_output=True)
 
 
 def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     """The client hands `claude` its config directory, and reads that directory
     from the environment rather than deriving it from where it was installed —
-    the platform's files and the harness's config are two different places now,
-    and only the launcher knows both. It is a plain environment lookup, so a
-    launcher that invoked the client before exporting it would fail every
-    executor-backed screen at startup, and nothing else in the script would say
-    why. Nothing exercises that branch in-process: it runs on the machine."""
-    script = device_launch.build_launch_script(
-        system_prompt="x",
-        resume_session_id=None,
-        topic_id="t",
-    )
+    only the launcher knows both. A launcher that invoked the client before
+    exporting it would fail every executor-backed screen at startup, and nothing
+    else in the script would say why."""
+    script = _script(system_prompt="x")
 
     assert script.index('export CLAUDE_CONFIG_DIR="$HOME/.claude"') < script.index(
         'CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap'
