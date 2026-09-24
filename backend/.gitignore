@@ -20,8 +20,6 @@ __pycache__/
 .cheesed-workspaces/
 .testmondata
 
-# Raw Claude session files uploaded from device homes (settings.transcripts_dir)
-.transcripts/
 
 # self-hosted connector binaries (built artifacts, not source; see
 # scripts/build-connector.sh). The cli source is vendored at the repo root cli/.

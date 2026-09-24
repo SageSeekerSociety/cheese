@@ -13,7 +13,6 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-import anyio
 from anyio.to_thread import run_sync
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,9 +30,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.project import artifacts, forge
 from app.domain.review.models import AcceptCard
-from app.domain.room_task.models import Task
-from app.domain.topic import transcript_stream
-from app.domain.topic.models import RawTranscript, Topic
+from app.domain.topic.models import Topic
 
 
 def _json(path: Path, value) -> None:
@@ -41,13 +38,13 @@ def _json(path: Path, value) -> None:
     path.write_text(json.dumps(value, default=str, ensure_ascii=False, indent=2) + "\n")
 
 
-def _copy_tree(source: Path, target: Path, pattern: str = "*") -> None:
+def _copy_tree(source: Path, target: Path) -> None:
     if not source.exists():
         return
     if source.is_symlink():
         raise GatewayUnavailableError("Export cannot include symbolic links")
     root = source.resolve()
-    for path in sorted(source.rglob(pattern)):
+    for path in sorted(source.rglob("*")):
         # Do not package a symlink which could point outside the authorized root.
         if path.is_symlink():
             raise GatewayUnavailableError("Export cannot include symbolic links")
@@ -190,13 +187,6 @@ async def create_archive(
             actor, project_id=project_id, topic_id=topic.id
         ):
             visible.append(topic.id)
-    tasks = list(
-        await db.scalars(
-            select(Task).where(Task.project_id == project_id, Task.room_id.in_(visible))
-        )
-    )
-    task_places = {task.id: task.room_id for task in tasks}
-    transcript_places = visible + list(task_places)
     binding = await forge.binding_for_project(project_id, db)
     minter = await forge.tokens_for_project(project_id, db) if binding else None
     repo = (
@@ -243,15 +233,6 @@ async def create_archive(
         }
         for row in documents
     ]
-    transcripts = [
-        (row.id, row.topic_id, row.source, row.size, list(row.chunks))
-        for row in await db.scalars(
-            select(RawTranscript).where(
-                RawTranscript.project_id == project_id,
-                RawTranscript.topic_id.in_(transcript_places),
-            )
-        )
-    ]
     allowed_cards = set(
         await db.scalars(select(AcceptCard.id).where(AcceptCard.topic_id.in_(visible)))
     )
@@ -281,7 +262,7 @@ async def create_archive(
             else:
                 version["offline_bytes"] = False
         catalog.append(row)
-    # All database reads end before credential renewal, Git or object storage I/O.
+    # All database reads end before credential renewal or Git I/O.
     await db.commit()
     workspace = Path(settings.workspace_root)
     scratch = workspace / ".exports"
@@ -295,16 +276,16 @@ async def create_archive(
             "project_id": str(project_id),
             "created_at": datetime.now(UTC).isoformat(),
             "scope": (
-                "Caller-visible current rooms (including archived), their retained "
-                "transcripts and documents; project library and published artifact "
-                "catalog. Not an atomic project snapshot."
+                "Caller-visible current rooms (including archived) and their "
+                "documents; project library and published artifact catalog. "
+                "Not an atomic project snapshot."
             ),
             "excluded": [
                 "memory",
                 "personal profiles",
                 "inaccessible or deleted rooms",
                 "external link bytes",
-                "live device files not yet uploaded",
+                "agent session transcripts",
             ],
             "rooms": [str(t) for t in visible],
         }
@@ -328,19 +309,6 @@ async def create_archive(
                 workspace / ".room-files" / str(project_id) / str(topic_id),
                 output / "rooms" / str(topic_id) / "files",
             )
-            await run_sync(
-                _copy_tree,
-                Path(settings.transcripts_dir) / str(project_id) / str(topic_id),
-                output / "transcripts" / str(topic_id) / "legacy",
-                "*.tar.gz",
-            )
-        for task_id, room_id in task_places.items():
-            await run_sync(
-                _copy_tree,
-                Path(settings.transcripts_dir) / str(project_id) / str(task_id),
-                output / "transcripts" / str(room_id) / "legacy-tasks" / str(task_id),
-                "*.tar.gz",
-            )
         _json(output / "documents.json", docs)
         for doc in docs:
             if doc["kind"] != BlockKind.doc_node:
@@ -362,35 +330,6 @@ async def create_archive(
             target = output / dest
             target.parent.mkdir(parents=True, exist_ok=True)
             await run_sync(shutil.copyfile, source, target)
-        transcript_index = []
-        for file_id, topic_id, source, size, chunks in transcripts:
-            relative = f"transcripts/{topic_id}/{file_id}.jsonl"
-            target = output / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            total = 0
-            try:
-                async with await anyio.open_file(target, "wb") as handle:
-                    async for chunk in transcript_stream.contents(chunks):
-                        await handle.write(chunk)
-                        total += len(chunk)
-            except RuntimeError as exc:
-                raise GatewayUnavailableError(
-                    "A transcript chunk is missing or corrupt; no archive was returned"
-                ) from exc
-            if total != size:
-                raise GatewayUnavailableError(
-                    "Transcript size mismatch; no archive was returned"
-                )
-            transcript_index.append(
-                {
-                    "id": file_id,
-                    "topic_id": topic_id,
-                    "source": source,
-                    "path": relative,
-                    "size": size,
-                }
-            )
-        _json(output / "transcripts.json", transcript_index)
         archive = work / "project.tar"
         await run_sync(_finish, output, archive, manifest)
         return archive, work

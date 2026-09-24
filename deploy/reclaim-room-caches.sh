@@ -28,7 +28,7 @@
 #                     symlink and `pyvenv.cfg`'s `home =` names it; removing it
 #                     strands every venv in the room until a plain `uv run`.
 #   .claude           transcripts. Deleting a room's conversation is archival's
-#                     job, and archival verifies the backend holds it first
+#                     job, and archival keeps a copy for a while first
 #                     (`agent/resource_cleanup.py`). Never here.
 #   .cheese           the platform's own state: this room's hook spool, its
 #                     drain credential, its tmux session pointer.

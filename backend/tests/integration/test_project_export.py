@@ -14,13 +14,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.storage import LocalStorageBackend
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.library.service import artifact_snapshot_path, write_library_file
 from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
-from app.domain.topic import transcript_stream
-from app.domain.topic.models import RawTranscript
 from app.domain.topic.repositories import TopicRepository
 from tests.conftest import seed_user
 
@@ -38,9 +35,6 @@ def exported_project(client, monkeypatch, tmp_path):
     pid = uuid.UUID(response.json()["data"]["id"])
     workspace = tmp_path / "workspace"
     monkeypatch.setattr(settings, "workspace_root", str(workspace))
-    monkeypatch.setattr(settings, "transcripts_dir", str(tmp_path / "legacy"))
-    storage = LocalStorageBackend(str(tmp_path / "objects"), "/unused")
-    monkeypatch.setattr(transcript_stream, "transcript_storage", lambda: storage)
     source = tmp_path / "source"
     source.mkdir()
     git(source, "init", "-b", "main")
@@ -107,42 +101,13 @@ def exported_project(client, monkeypatch, tmp_path):
             )
             db.add(card)
             await db.commit()
-            file_id = uuid.uuid4()
-            await transcript_stream.append(
-                db,
-                project_id=pid,
-                topic_id=room.id,
-                file_id=file_id,
-                source=".claude/projects/p/session.jsonl",
-                offset=0,
-                content=b'{"text":"original"}\n',
-                storage=storage,
-            )
-            await transcript_stream.append(
-                db,
-                project_id=pid,
-                topic_id=private.id,
-                file_id=uuid.uuid4(),
-                source=".claude/projects/p/private.jsonl",
-                offset=0,
-                content=b"PRIVATE-SECRET",
-                storage=storage,
-            )
             snapshot = artifact_snapshot_path(pid, card.id, "report.txt")
             snapshot.parent.mkdir(parents=True)
             snapshot.write_bytes(b"Retained artifact\n")
-            return room.id, private.id, file_id, doc.id, snapshot
+            return room.id, private.id, doc.id, snapshot
 
-    room, private, file_id, doc, snapshot = asyncio.run(seed())
+    room, private, doc, snapshot = asyncio.run(seed())
     write_library_file(pid, "source data.csv", b"a,b\n1,2\n")
-    legacy = tmp_path / "legacy" / str(pid) / str(room)
-    legacy.mkdir(parents=True)
-    with tarfile.open(legacy / "saved.tar.gz", "w:gz") as archive:
-        content = b"legacy transcript\n"
-        info = tarfile.TarInfo(".claude/projects/p/old.jsonl")
-        info.size = len(content)
-        archive.addfile(info, io.BytesIO(content))
-    (legacy / "incomplete.part").write_bytes(b"UNFINISHED")
     # Memory stays outside the exported classes even though it shares the workspace.
     (workspace / "private-memory-marker").write_text("MEMORY-SECRET")
     return dict(
@@ -150,13 +115,11 @@ def exported_project(client, monkeypatch, tmp_path):
         headers=headers,
         room=room,
         private=private,
-        file=file_id,
         doc=doc,
         snapshot=snapshot,
         source=source,
         head=head,
         workspace=workspace,
-        storage=storage,
     )
 
 
@@ -167,7 +130,6 @@ def test_http_export_is_offline_readable_and_checksums_match(
     response = client.get(f"/projects/{data['pid']}/export", headers=data["headers"])
     assert response.status_code == 200, response.text[:500]
     assert response.headers["cache-control"] == "no-store"
-    assert b"UNFINISHED" not in response.content
     assert b"PRIVATE-SECRET" not in response.content
     assert b"MEMORY-SECRET" not in response.content
     assert b"fixture-secret-do-not-export" not in response.content
@@ -179,7 +141,6 @@ def test_http_export_is_offline_readable_and_checksums_match(
     # This is the key boundary: the HTTP result must not depend on any live source.
     shutil.rmtree(data["source"])
     shutil.rmtree(data["workspace"])
-    shutil.rmtree(tmp_path / "objects")
     manifest = json.loads((offline / "manifest.json").read_text())
     assert manifest["repository"]["head"] == data["head"]
     assert manifest["library"]["status"] == "directory_present"
@@ -187,12 +148,6 @@ def test_http_export_is_offline_readable_and_checksums_match(
         content = (offline / row["path"]).read_bytes()
         assert len(content) == row["size"]
         assert hashlib.sha256(content).hexdigest() == row["sha256"]
-    with tarfile.open(
-        offline / "transcripts" / str(data["room"]) / "legacy" / "saved.tar.gz"
-    ) as old:
-        original = old.extractfile(".claude/projects/p/old.jsonl")
-        assert original is not None
-        assert original.read() == b"legacy transcript\n"
     clone = tmp_path / "clone"
     git(tmp_path, "clone", str(offline / "repository.bundle"), str(clone))
     assert git(clone, "rev-parse", "HEAD") == data["head"]
@@ -202,9 +157,10 @@ def test_http_export_is_offline_readable_and_checksums_match(
         offline / "documents" / f"{data['doc']}.md"
     ).read_text() == "# Offline document\n"
     assert (offline / "library" / "source data.csv").read_bytes() == b"a,b\n1,2\n"
-    assert (
-        offline / "transcripts" / str(data["room"]) / f"{data['file']}.jsonl"
-    ).read_bytes() == b'{"text":"original"}\n'
+    # Agent session transcripts are not part of a project export.
+    assert not (offline / "transcripts").exists()
+    assert not (offline / "transcripts.json").exists()
+    assert "agent session transcripts" in manifest["excluded"]
     catalog = json.loads((offline / "artifacts.json").read_text())
     assert (
         offline / catalog[0]["versions"][0]["path"]
@@ -226,7 +182,7 @@ def test_export_requires_real_project_access_even_with_dev_auth_off(
 
 @pytest.mark.parametrize(
     "failure",
-    ["missing_artifact", "corrupt_chunk", "lfs", "submodule", "missing_git_object"],
+    ["missing_artifact", "lfs", "submodule", "missing_git_object"],
 )
 def test_incomplete_source_never_returns_an_archive(client, exported_project, failure):
     data = exported_project
@@ -245,7 +201,7 @@ def test_incomplete_source_never_returns_an_archive(client, exported_project, fa
             f"160000,{data['head']},child",
         )
         git(data["source"], "commit", "-m", "Gitlink without gitmodules fixture")
-    elif failure == "lfs":
+    else:
         (data["source"] / "large.bin").write_text(
             "version https://git-lfs.github.com/spec/v1\noid sha256:"
             + "a" * 64
@@ -253,17 +209,6 @@ def test_incomplete_source_never_returns_an_archive(client, exported_project, fa
         )
         git(data["source"], "add", ".")
         git(data["source"], "commit", "-m", "LFS fixture")
-    else:
-
-        async def corrupt():
-            async with client.test_factory() as db:
-                row = await db.get(RawTranscript, data["file"])
-                chunks = [dict(c) for c in row.chunks]
-                chunks[0]["sha256"] = "0" * 64
-                row.chunks = chunks
-                await db.commit()
-
-        asyncio.run(corrupt())
     response = client.get(f"/projects/{data['pid']}/export", headers=data["headers"])
     assert response.status_code == 503, response.text
     assert response.headers["content-type"].startswith("application/json")

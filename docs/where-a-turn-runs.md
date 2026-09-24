@@ -215,35 +215,27 @@ absence from the database never grants deletion permission.
 Cleanup first requests a graceful agent exit and verifies that no process holds the
 resource open. Stop commands share a device lock and durable completion receipt,
 including subprocesses that could outlive a timed-out caller. Unpublished source or
-an unconfirmed transcript keeps cleanup pending. The platform does not create a
+undelivered hook events keep cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
-Raw `.claude/projects/**/*.jsonl` files, including subagent files, are collected as
-original byte ranges during execution by the hook sender. Hooks wake collection;
-reconciliation every five seconds catches missed hooks and delayed writes. Byte-range
-receipts follow object storage and database commits. Final cleanup reconciles the
-file set, drains outstanding hook events, and has the backend reread and verify the
-complete stored contents one bounded chunk at a time. Verification progress survives
-a worker restart; a new cleanup operation verifies all chunks again. It checks the
-files again immediately before removal.
-`TRANSCRIPT_S3_BUCKET` must name a private bucket; the public uploads bucket is never
-used implicitly. Existing S3 connection credentials are reused. Immutable source
-identity records accompany the raw chunks so their database index can be rebuilt
-after restoring an older database backup.
+Transcripts are not uploaded; the platform keeps no copy of them. Claude Code runs
+on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files,
+subagent files included, are in its home there. Removing that home first
+compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
+the same host. The same cleanup operation deletes the archive 30 days later, for
+the reason given beside `TRANSCRIPT_RETENTION` in `topic/retire.py`: they are kept
+for debugging after the fact, and handing the work on needs only the room's chat,
+living doc and action timeline.
 
-Authorized room participants can list and download original readable files through
-`GET /topics/{id}/transcripts` and `GET /topics/{id}/transcripts/{file_id}`. This does
-not automatically inject transcript history into later prompts. Existing tar
-archives remain under `TRANSCRIPTS_DIR` and retain their hourly additive R2 mirror.
-The old recurring tar-copy collector is removed.
-
-Before cleanup takes ownership of deletion, unarchive cancels it and reuses retained
-resources. If a stop or worktree move has an unresolved outcome, unarchive reports
+Before cleanup takes ownership of deletion, unarchive cancels it and reuses the
+room's resources. If a stop or worktree move has an unresolved outcome, unarchive reports
 that it must finish confirmation first. Once deletion is claimed, reopening allocates
 a new resource UUID and drops only obsolete session-resume pointers. Published Git
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
 replacement. Cloud machines are deleted by their recorded allocation ID.
+Reopening restores no transcripts: the new generation starts new sessions, and a
+retained archive of the old one still expires on schedule.
 
 `GET /topics/{id}/cleanup` reports the deadline, stage, progress and pending reason.
 Installation and storage configuration are described in

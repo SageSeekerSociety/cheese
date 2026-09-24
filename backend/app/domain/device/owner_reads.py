@@ -18,8 +18,8 @@ here is one question the owner asks, answered by the fewest columns that answer
 it; a column dropped from anywhere else in those tables cannot reach it.
 
 `app/api/routes/execution.py` asks its one question through this module too.
-Device authentication, transcript authorization and viewer membership also
-read only the fields needed for those decisions. Changes to these fields still
+Device authentication and viewer membership also read only the fields
+needed for those decisions. Changes to these fields still
 require a coordinated owner release; unrelated columns do not.
 
 Outliving the app cuts the other way as well: a release that moves a read onto
@@ -36,12 +36,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.device.models import DeviceRow, DeviceTopicRow, HostedDeviceRow
+from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import binding_visibility, has_runnable_transport
 from app.domain.project.models import Project, ProjectMember
-from app.domain.room_task.models import Task
-from app.domain.topic.models import Topic, TopicMembership
+from app.domain.topic.models import TopicMembership
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,24 +58,6 @@ async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity 
         )
     ).one_or_none()
     return DeviceIdentity(row.device_id, row.name) if row is not None else None
-
-
-async def device_ran_place(
-    session: AsyncSession, device_id: str, project_id: uuid.UUID, place_id: uuid.UUID
-) -> bool:
-    pinned = await session.scalar(
-        select(DeviceTopicRow.device_id).where(DeviceTopicRow.topic_id == place_id)
-    )
-    if pinned is not None:
-        return pinned == device_id
-    hosted = await session.scalar(
-        select(HostedDeviceRow.device_id).where(HostedDeviceRow.device_id == device_id)
-    )
-    if hosted is None:
-        return False
-    return device_id in await SqlDeviceRepository(session).device_ids_by_project(
-        project_id
-    )
 
 
 async def execution_device_authorized(
@@ -121,44 +102,10 @@ async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) 
     )
 
 
-@dataclass(frozen=True, slots=True)
-class Place:
-    """A room or a task, as the owner needs it: whose project, and what it runs on."""
-
-    project_id: uuid.UUID
-    #: The session machines this place's conversations are sitting on. A room
-    #: seats several agents and each holds its own session, so this is a set and
-    #: not one machine.
-    session_machines: frozenset[str]
-
-
-async def project_exists(session: AsyncSession, project_id: uuid.UUID) -> bool:
-    return (
-        await session.scalar(select(Project.id).where(Project.id == project_id))
-    ) is not None
-
-
 async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | None:
     return await session.scalar(
         select(Project.owner_handle).where(Project.id == project_id)
     )
-
-
-async def session_places(
-    session: AsyncSession, place_id: uuid.UUID
-) -> list[tuple[dict, dict | None]]:
-    """Every session sitting in this place: where its process runs, and the
-    hands it rented. A room seats several agents, so this is a list.
-    """
-    located = (
-        await session.execute(
-            select(AgentSession.runtime_location, AgentSession.work_lease).where(
-                AgentSession.topic_id == place_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-        )
-    ).all()
-    return [(row.runtime_location, row.work_lease) for row in located]
 
 
 async def legacy_execution(session: AsyncSession, place_id: uuid.UUID):
@@ -198,25 +145,3 @@ async def session_execution(
             .with_for_update()
         )
     ).one_or_none()
-
-
-async def place(session: AsyncSession, place_id: uuid.UUID) -> Place | None:
-    """The room with this id, or the task with it — a place is either."""
-    room = (
-        await session.execute(select(Topic.project_id).where(Topic.id == place_id))
-    ).one_or_none()
-    if room is not None:
-        return Place(
-            project_id=room.project_id,
-            session_machines=frozenset(
-                where["device_id"]
-                for where, _lease in await session_places(session, place_id)
-                if where.get("device_id")
-            ),
-        )
-    task = (
-        await session.execute(select(Task.project_id).where(Task.id == place_id))
-    ).one_or_none()
-    if task is None:
-        return None
-    return Place(project_id=task.project_id, session_machines=frozenset())
