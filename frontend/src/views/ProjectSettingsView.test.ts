@@ -31,7 +31,6 @@ vi.mock('vue-router', () => ({
 beforeEach(() => {
   vi.resetAllMocks()
   me.id = null
-  vi.mocked(api.getProject).mockResolvedValue({ name: 'Example' } as Awaited<ReturnType<typeof api.getProject>>)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
@@ -49,7 +48,8 @@ async function openSettings() {
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
   app.mount(element)
-  await vi.waitFor(() => expect(element.querySelector('.t-eyebrow')?.textContent).toContain('Example'))
+  // 设置读完之后才画出各组；「运行环境」那一组标题出现，就是这一页可以操作了。
+  await vi.waitFor(() => expect(element.textContent).toContain('运行环境'))
   return { element, unmount: () => app.unmount() }
 }
 

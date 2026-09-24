@@ -11,6 +11,9 @@ export interface RouteMetaTitle {
   icon?: RouteIcon
   isDynamic?: boolean
   getDynamicTitle?: (route: RouteLocationNormalized) => string
+  /** 一条没有名字的记录（比如项目这个框）用哪个键去取动态标题。有名字的记录用
+   *  自己的名字，不需要它。 */
+  dynamicTitleKey?: string
   disableBreadcrumbLink?: boolean
   isFullPage?: boolean
   backTo?: string

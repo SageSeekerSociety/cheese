@@ -12,7 +12,9 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
+import { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
@@ -49,15 +51,7 @@ const TITLES: Record<Kind, string> = {
   weeklies: '周报集',
   memory: '记忆',
 }
-const OVERLINES: Record<Kind, string> = {
-  charter: '项目文档',
-  decisions: '项目文档',
-  weeklies: '项目文档',
-  memory: '芝士记住的事',
-}
-
 interface DocsPayload {
-  projectName: string
   rootTopicId: string | null
   decisions: Block[]
   weeklies: Block[]
@@ -70,7 +64,6 @@ const { data, loading, error } = useCachedResource(
   async (): Promise<DocsPayload> => {
     const project = await getProject(props.projectId)
     const payload: DocsPayload = {
-      projectName: project.name,
       // DocEditor loads/persists the doc itself once rootTopicId is set.
       rootTopicId: project.root_topic_id ?? null,
       decisions: [],
@@ -90,7 +83,6 @@ const { data, loading, error } = useCachedResource(
   }
 )
 
-const projectName = computed<string>(() => data.value?.projectName ?? '')
 const decisions = computed<Block[]>(() => data.value?.decisions ?? [])
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
@@ -180,193 +172,174 @@ function topicTo(topicId: string | null | undefined) {
 </script>
 
 <template>
-  <div class="docs-page fill-height overflow-y-auto">
-    <v-container class="py-6 page-container">
-      <div class="mb-4">
-        <div class="t-eyebrow mb-1">{{ OVERLINES[kind] }}</div>
-        <div class="d-flex align-center flex-wrap ga-3">
-          <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
-          <span v-if="projectName" class="t-meta">{{ projectName }}</span>
-          <template v-if="kind === 'charter'">
-            <v-spacer />
-            <v-btn v-if="rootTopicId" :to="topicTo(rootTopicId)" variant="text" size="small" prepend-icon="mdi-history"
-              >修改记录</v-btn
-            >
-            <span v-if="saving" class="t-meta">保存中…</span>
-            <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">
-              <span class="status-dot status-dot--ok" />已保存
-            </span>
-            <span v-else-if="charterDirty" class="t-meta">未保存</span>
-          </template>
-          <template v-else-if="kind === 'weeklies' && weeklies.length > 0">
-            <v-spacer />
-            <v-btn
-              v-if="rootTopicId"
-              :to="topicTo(rootTopicId)"
-              variant="text"
-              size="small"
-              class="text-none"
-              append-icon="mdi-arrow-right"
-              >去项目房间请它写</v-btn
-            >
-          </template>
-        </div>
-        <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
-      </div>
-
+  <ProjectPage class="docs-page" :title="t('navigation.project.docs')">
+    <template v-if="kind === 'charter'" #meta>
+      <span v-if="saving">保存中…</span>
+      <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
+        <span class="status-dot status-dot--ok" />已保存
+      </span>
+      <span v-else-if="charterDirty">未保存</span>
+    </template>
+    <template v-if="rootTopicId && (kind === 'charter' || (kind === 'weeklies' && weeklies.length > 0))" #actions>
+      <v-btn v-if="kind === 'charter'" :to="topicTo(rootTopicId)" prepend-icon="mdi-history">修改记录</v-btn>
+      <v-btn v-else :to="topicTo(rootTopicId)" append-icon="mdi-arrow-right">去项目房间请它写</v-btn>
+    </template>
+    <div class="mb-6">
       <v-tabs
         :model-value="kind"
         density="compact"
-        color="primary"
-        class="docs-tabs mb-6"
+        color="on-surface"
+        slider-color="primary"
+        class="docs-tabs"
         @update:model-value="openKind"
       >
         <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ TITLES[k] }}</v-tab>
       </v-tabs>
+      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">改了就等于给芝士下指令</p>
+    </div>
 
-      <div v-if="loading" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-      <v-alert v-if="errorMessage" type="error" density="comfortable" class="mb-4">
-        {{ errorMessage }}
-      </v-alert>
+    <div v-if="loading" class="d-flex justify-center py-10">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
+    <v-alert v-if="errorMessage" type="error" density="comfortable" class="mb-4">
+      {{ errorMessage }}
+    </v-alert>
 
-      <!-- A save error must not unmount the editor holding the local draft. -->
-      <template v-if="!loading && !error">
-        <!-- ===== 记忆: what 芝士 remembers, human-prunable ===== -->
-        <template v-if="kind === 'memory'">
-          <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
-            <div>暂无记忆</div>
-            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里</div>
-          </div>
-          <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
-            <div class="d-flex align-start ga-3 pa-3">
-              <v-icon size="16" class="c-muted mt-1">
-                {{ e.scope === 'user' ? 'mdi-account-outline' : 'mdi-source-repository' }}
-              </v-icon>
-              <div class="flex-grow-1">
-                <div class="memory-card__content">{{ e.content }}</div>
-                <div class="t-meta c-muted mt-1">
-                  {{ e.scope === 'user' ? '个人记忆' : '项目记忆' }} · {{ relTime(e.created_at) }}
-                </div>
+    <!-- A save error must not unmount the editor holding the local draft. -->
+    <template v-if="!loading && !error">
+      <!-- ===== 记忆: what 芝士 remembers, human-prunable ===== -->
+      <template v-if="kind === 'memory'">
+        <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
+          <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
+          <div>暂无记忆</div>
+          <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里</div>
+        </div>
+        <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
+          <div class="d-flex align-start ga-3 pa-3">
+            <v-icon size="16" class="c-muted mt-1">
+              {{ e.scope === 'user' ? 'mdi-account-outline' : 'mdi-source-repository' }}
+            </v-icon>
+            <div class="flex-grow-1">
+              <div class="memory-card__content">{{ e.content }}</div>
+              <div class="t-meta c-muted mt-1">
+                {{ e.scope === 'user' ? '个人记忆' : '项目记忆' }} · {{ relTime(e.created_at) }}
               </div>
-              <v-btn
-                icon="mdi-delete-outline"
-                size="x-small"
-                variant="text"
-                color="medium-emphasis"
-                class="memory-card__del"
-                title="删除这条记忆"
-                @click="removeMemory(e.id)"
-              />
             </div>
-          </v-card>
-        </template>
+            <v-btn
+              icon="mdi-delete-outline"
+              size="x-small"
+              variant="text"
+              color="medium-emphasis"
+              class="memory-card__del"
+              title="删除这条记忆"
+              @click="removeMemory(e.id)"
+            />
+          </div>
+        </v-card>
+      </template>
 
-        <!-- ===== 章程: project root doc, read/edit with the rich tiptap
+      <!-- ===== 章程: project root doc, read/edit with the rich tiptap
              editor — the SAME editing experience as the workspace doc panel
              (drag handle, tables, task lists, code highlighting), persisted via
              the same getDoc/putDoc API. ===== -->
-        <template v-else-if="kind === 'charter'">
-          <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
+      <template v-else-if="kind === 'charter'">
+        <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
                白卡片只是给白底加了个轮廓。直接铺在页面上。 -->
-          <div class="charter-body">
-            <DocEditor
-              v-if="rootTopicId"
-              :topic-id="rootTopicId"
-              :editable="true"
-              placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
-              @saving="onCharterSaving"
-              @saved="onCharterSaved"
-              @dirty="onCharterDirty"
-              @error="onCharterError"
-            />
-            <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
-          </div>
-        </template>
+        <div class="charter-body">
+          <DocEditor
+            v-if="rootTopicId"
+            :topic-id="rootTopicId"
+            :editable="true"
+            placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
+            @saving="onCharterSaving"
+            @saved="onCharterSaved"
+            @dirty="onCharterDirty"
+            @error="onCharterError"
+          />
+          <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
+        </div>
+      </template>
 
-        <!-- ===== 决策记录 ===== -->
-        <template v-else-if="kind === 'decisions'">
-          <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            <div>暂无决策记录</div>
-            <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
-          </div>
-          <div v-else class="d-flex flex-column ga-3">
-            <!-- 一条决策是列表里真正可拿起的对象（有自己的日期、正文和「来自
+      <!-- ===== 决策记录 ===== -->
+      <template v-else-if="kind === 'decisions'">
+        <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
+          <div>暂无决策记录</div>
+          <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
+        </div>
+        <div v-else class="d-flex flex-column ga-3">
+          <!-- 一条决策是列表里真正可拿起的对象（有自己的日期、正文和「来自
                  话题」入口），所以卡片形态保留。左侧那条 3px 竖条删掉：区块强调
                  不用左条纹，卡片自己的 --line 描边已经把边界说清楚了。 -->
-            <v-card v-for="d in decisions" :key="d.id" class="decision-card">
-              <div class="pa-4">
-                <div class="d-flex align-center ga-2 mb-2">
-                  <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
-                  <span class="t-meta">{{ fmtDate(d.created_at) }}</span>
-                  <v-spacer />
-                  <v-btn
-                    v-if="d.topic_id"
-                    :to="topicTo(d.topic_id)"
-                    size="x-small"
-                    variant="text"
-                    color="medium-emphasis"
-                    append-icon="mdi-arrow-top-right"
-                  >
-                    来自话题
-                  </v-btn>
-                </div>
-                <div class="md-content text-body-2" v-html="renderMarkdown(d.content)" />
+          <v-card v-for="d in decisions" :key="d.id" class="decision-card">
+            <div class="pa-4">
+              <div class="d-flex align-center ga-2 mb-2">
+                <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
+                <span class="t-meta">{{ fmtDate(d.created_at) }}</span>
+                <v-spacer />
+                <v-btn
+                  v-if="d.topic_id"
+                  :to="topicTo(d.topic_id)"
+                  size="x-small"
+                  variant="text"
+                  color="medium-emphasis"
+                  append-icon="mdi-arrow-top-right"
+                >
+                  来自话题
+                </v-btn>
               </div>
-            </v-card>
-          </div>
-        </template>
+              <div class="md-content text-body-2" v-html="renderMarkdown(d.content)" />
+            </div>
+          </v-card>
+        </div>
+      </template>
 
-        <!-- ===== 周报集 ===== -->
-        <template v-else>
-          <!-- 空态说实话。以前这里写「周报由芝士定期产出」——平台既没有生成器，
+      <!-- ===== 周报集 ===== -->
+      <template v-else>
+        <!-- 空态说实话。以前这里写「周报由芝士定期产出」——平台既没有生成器，
                也没有任何定期的东西，那句话是句承诺而不是一句描述。现在周报真的
                由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
-          <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            <div>暂无周报</div>
-            <div class="text-caption mt-1">在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里</div>
-            <v-btn
-              v-if="rootTopicId"
-              :to="topicTo(rootTopicId)"
-              variant="text"
-              size="small"
-              class="mt-2 text-none"
-              append-icon="mdi-arrow-right"
-            >
-              去项目房间
-            </v-btn>
-          </div>
-          <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
+        <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
+          <div>暂无周报</div>
+          <div class="text-caption mt-1">在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里</div>
+          <v-btn
+            v-if="rootTopicId"
+            :to="topicTo(rootTopicId)"
+            variant="text"
+            size="small"
+            class="mt-2 text-none"
+            append-icon="mdi-arrow-right"
+          >
+            去项目房间
+          </v-btn>
+        </div>
+        <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
                还有「写在哪」。所以整卡摊开，和决策记录同一套语法。 -->
-          <div v-else class="d-flex flex-column ga-3">
-            <v-card v-for="w in weeklies" :key="w.id" class="weekly-card">
-              <div class="pa-4">
-                <div class="d-flex align-center ga-2 mb-2">
-                  <v-icon size="17" class="c-faint">mdi-calendar-week-outline</v-icon>
-                  <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
-                  <span class="t-meta">{{ fmtDate(w.created_at) }} 记录</span>
-                  <v-spacer />
-                  <v-btn
-                    v-if="w.topic_id"
-                    :to="topicTo(w.topic_id)"
-                    size="x-small"
-                    variant="text"
-                    color="medium-emphasis"
-                    append-icon="mdi-arrow-top-right"
-                  >
-                    来自话题
-                  </v-btn>
-                </div>
-                <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
+        <div v-else class="d-flex flex-column ga-3">
+          <v-card v-for="w in weeklies" :key="w.id" class="weekly-card">
+            <div class="pa-4">
+              <div class="d-flex align-center ga-2 mb-2">
+                <v-icon size="17" class="c-faint">mdi-calendar-week-outline</v-icon>
+                <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
+                <span class="t-meta">{{ fmtDate(w.created_at) }} 记录</span>
+                <v-spacer />
+                <v-btn
+                  v-if="w.topic_id"
+                  :to="topicTo(w.topic_id)"
+                  size="x-small"
+                  variant="text"
+                  color="medium-emphasis"
+                  append-icon="mdi-arrow-top-right"
+                >
+                  来自话题
+                </v-btn>
               </div>
-            </v-card>
-          </div>
-        </template>
+              <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
+            </div>
+          </v-card>
+        </div>
       </template>
-    </v-container>
-  </div>
+    </template>
+  </ProjectPage>
 </template>
 
 <style scoped>
