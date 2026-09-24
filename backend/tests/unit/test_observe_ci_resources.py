@@ -6,10 +6,38 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def isolate_storage_observer(monkeypatch):
+    monkeypatch.delenv("CHEESE_CI_POSTGRES_PID", raising=False)
+
+
+def test_storage_sample_counts_whole_filesystem_and_available_memory(
+    tmp_path, monkeypatch
+):
+    from scripts.observe_ci_resources import storage_snapshot
+
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal: 16384 kB\nMemFree: 512 kB\nMemAvailable: 4096 kB\n")
+    monkeypatch.setattr(
+        os,
+        "statvfs",
+        lambda _: SimpleNamespace(
+            f_blocks=1000, f_bfree=700, f_bavail=600, f_frsize=4096
+        ),
+    )
+    assert storage_snapshot(tmp_path, meminfo) == {
+        "filesystem_total_bytes": 4096000,
+        "filesystem_used_bytes": 1228800,
+        "filesystem_available_bytes": 2457600,
+        "mem_available_bytes": 4194304,
+    }
 
 
 def test_sigterm_stops_command_and_monitors(tmp_path):
