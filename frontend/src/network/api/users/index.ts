@@ -4,7 +4,6 @@ import type {
   AuthMethodsResponse,
   FollowUserResponse,
   GetAnswerListResponse,
-  GetOAuthConnectionsResponse,
   GetOAuthProvidersResponse,
   GetOAuthStateResponse,
   GetPasskeysResponse,
@@ -497,11 +496,4 @@ export namespace UserApi {
     document.body.appendChild(form)
     form.submit()
   }
-
-  // 获取用户 OAuth 连接列表
-  export const getOAuthConnections = (userId: number) =>
-    ApiInstance.request<GetOAuthConnectionsResponse>({
-      url: `/users/${userId}/oauth/connections`,
-      method: 'GET',
-    })
 }

@@ -8,7 +8,7 @@
 |---|---|
 | [`agent-principles.md`](agent-principles.md) | 已经拍板、不再重新讨论的判断 |
 | [`api-conventions.md`](api-conventions.md) | 调 API 该发什么 URL：`/api` 挂载点、路由裸路径与浏览器路径的差别 |
-| [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪 |
+| [`design-system.md`](design-system.md) | 前端视觉与文案的唯一规范：风格、设计原则，以及由原则推出的颜色、排版、尺度、文案、动效规则 |
 | [`i18n.md`](i18n.md) | 界面字符串怎么存、怎么命名、缺翻译怎么办；**加界面文案或改 `frontend/src/i18n/` 前必读** |
 | [`i18n-glossary.md`](i18n-glossary.md) | 核心术语的中英对照；**写英文译文前先查它**，防止同一个中文词译出两个英文词 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |

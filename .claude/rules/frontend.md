@@ -57,7 +57,7 @@ the parts no gate can see.
 If you find yourself writing `:root[data-theme='dark'] .thing { ... }`, stop:
 nine times out of ten the real fix is that `.thing` picked the wrong token.
 
-## Motion: still is the default
+## Motion: it moves only to explain a change
 
 Full rules: [`docs/design-system.md` §9](../../docs/design-system.md#9-动效). The three
 that get written wrong on turn one:
@@ -77,9 +77,11 @@ that get written wrong on turn one:
   `@media (prefers-reduced-motion: reduce) { animation: none }` next to it, and
   make sure the thing still says what it meant with the animation off.
 
-Durations are 0.12s (answering the pointer) / 0.2s (appearing, disappearing) /
-0.3s (a whole panel moving in or out). Easing is `ease`; `ease-in-out` for loops;
-`linear` only for genuinely constant motion.
+Durations and easing are tokens in `style.css`: `--dur-press` / `--dur-quick` /
+`--dur-base` / `--dur-slow`, and `--ease-out` for arriving, `--ease-in` for
+leaving, `--ease-standard` for changing in place. Leaving is one step faster
+than arriving. `linear` only for genuinely constant motion. Old literal
+durations and plain `ease` fold to the tokens as you touch them (§9.3).
 
 ## Colours live in two files and must be changed in both
 

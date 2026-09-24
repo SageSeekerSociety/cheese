@@ -1,123 +1,79 @@
 <template>
   <div>
-    <!-- 标题区域 -->
-    <div class="mb-12">
-      <div class="d-flex align-center mb-3">
-        <v-icon color="primary" size="28" class="mr-3">mdi-shield-account</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">安全验证</h1>
-      </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">为保护您的账户安全，请完成身份核验</p>
-    </div>
+    <AccountHeading :title="t('account.sudo.title')" :lede="lede" />
 
-    <!-- 错误提示区域 -->
-    <div v-if="errorMessage" class="mb-8">
-      <v-alert type="error" variant="tonal" density="comfortable">
-        {{ errorMessage }}
-      </v-alert>
-    </div>
+    <v-alert v-if="errorMessage" type="error" variant="tonal" density="comfortable" class="mb-6">
+      {{ errorMessage }}
+    </v-alert>
 
-    <!-- 加载状态 -->
-    <div v-if="isInitializing" class="d-flex justify-center align-center py-12">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
+    <v-progress-linear v-if="isInitializing" indeterminate color="primary" height="2" />
 
-    <!-- 验证内容区域 -->
-    <v-fade-transition v-else mode="out-in">
-      <div :key="activeMethod" class="mb-8">
-        <!-- 通行密钥验证 -->
-        <div v-if="activeMethod === 'passkey'">
+    <template v-else>
+      <transition name="sudo-method" mode="out-in">
+        <div :key="activeMethod">
           <v-btn
+            v-if="activeMethod === 'passkey'"
             block
             color="primary"
             size="large"
+            class="account-submit"
             :loading="loading"
-            style="text-transform: none; font-weight: 500; height: 48px"
-            class="mb-6"
             @click="handlePasskeyVerify"
           >
-            <v-icon start>mdi-key-chain</v-icon>
-            使用通行密钥验证
+            <v-icon start icon="mdi-key-chain" size="20" />
+            {{ t('account.sudo.passkey') }}
           </v-btn>
-        </div>
 
-        <!-- 密码验证 -->
-        <div v-if="activeMethod === 'password'">
-          <v-form @submit.prevent="handlePasswordVerify">
-            <v-text-field
-              id="field-password"
-              v-model="password"
-              autocomplete="current-password"
-              name="password"
-              label="账户密码"
-              :type="showPassword ? 'text' : 'password'"
-              variant="outlined"
-              :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
-              class="mb-6"
-              @click:append-inner="showPassword = !showPassword"
-            />
+          <v-form v-else-if="activeMethod === 'password'" @submit.prevent="handlePasswordVerify">
+            <AccountField :label="t('account.field.password')" input-id="sudo-password">
+              <PasswordField
+                id="sudo-password"
+                v-model="password"
+                autocomplete="current-password"
+                name="password"
+                autofocus
+              />
+            </AccountField>
+            <v-btn block color="primary" size="large" type="submit" class="account-submit" :loading="loading">
+              {{ t('account.sudo.submit') }}
+            </v-btn>
+          </v-form>
 
+          <v-form v-else @submit.prevent="handleTOTPVerify">
+            <v-otp-input v-model="totpCode" length="6" type="number" class="account-otp" @finish="handleTOTPVerify" />
             <v-btn
               block
               color="primary"
               size="large"
               type="submit"
+              class="account-submit"
               :loading="loading"
-              style="text-transform: none; font-weight: 500; height: 48px"
-              class="mb-6"
+              :disabled="totpCode.length !== 6"
             >
-              验证密码
+              {{ t('account.sudo.submit') }}
             </v-btn>
           </v-form>
         </div>
+      </transition>
 
-        <!-- TOTP验证 -->
-        <div v-if="activeMethod === 'totp'">
-          <v-form @submit.prevent="handleTOTPVerify">
-            <v-otp-input v-model="totpCode" length="6" variant="outlined" class="mb-6" @input="handleTOTPInput" />
-
-            <v-btn
-              block
-              color="primary"
-              size="large"
-              type="submit"
-              :loading="loading"
-              style="text-transform: none; font-weight: 500; height: 48px"
-              class="mb-6"
-            >
-              验证动态码
-            </v-btn>
-          </v-form>
-        </div>
-
-        <!-- 切换验证方式 -->
-        <div v-if="!isInitializing && hasAlternativeMethods">
-          <p class="text-body-2 mb-4" style="color: var(--muted)">或使用其他方式验证</p>
-
-          <div class="d-flex flex-column" style="gap: 8px">
-            <template v-for="method in availableMethods" :key="method.id">
-              <v-btn
-                v-if="method.visible && method.id !== activeMethod"
-                variant="outlined"
-                size="large"
-                :disabled="loading || method.disabled"
-                style="
-                  text-transform: none;
-                  font-weight: 400;
-                  height: 48px;
-                  justify-content: flex-start;
-                  padding-left: 16px;
-                  border-color: var(--line-2);
-                "
-                @click="activeMethod = method.id"
-              >
-                <v-icon start :icon="method.icon" size="20" />
-                {{ method.label }}
-              </v-btn>
-            </template>
-          </div>
-        </div>
+      <div class="account-foot account-foot--split">
+        <span v-if="otherMethods.length" class="sudo-others">
+          <button
+            v-for="method in otherMethods"
+            :key="method.id"
+            type="button"
+            class="account-link"
+            :disabled="loading"
+            @click="switchTo(method.id)"
+          >
+            {{ method.label }}
+          </button>
+        </span>
+        <button type="button" class="account-link account-link--quiet" @click="cancel">
+          {{ t('account.cancel') }}
+        </button>
       </div>
-    </v-fade-transition>
+    </template>
   </div>
 </template>
 
@@ -128,181 +84,161 @@ import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/br
 
 import { sudoPurposeFor } from '@/utils/sudo'
 
+import AccountField from '@/components/account/AccountField.vue'
+import AccountHeading from '@/components/account/AccountHeading.vue'
+import PasswordField from '@/components/account/PasswordField.vue'
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { currentUserId, currentUserName } from '@/services/account'
 import { useSudoStore } from '@/stores/sudo'
+
+type Method = 'passkey' | 'password' | 'totp'
 
 const router = useRouter()
 const sudoStore = useSudoStore()
 
 // 这次验证是为哪一件事做的。服务端把它签进票里，所以为「添加通行密钥」验的
 // 那一次，换不来一张能关掉两步验证的票。
-const purpose = computed(() => sudoPurposeFor(sudoStore.retryOperation?.opKey))
+const opKey = computed(() => sudoStore.retryOperation?.opKey)
+const purpose = computed(() => sudoPurposeFor(opKey.value))
 
-const activeMethod = ref('passkey')
+// Say what is being confirmed, so the interruption explains itself.
+const ACTIONS: Record<string, string> = {
+  initTOTP: 'account.sudo.action.initTOTP',
+  disableTOTP: 'account.sudo.action.disableTOTP',
+  generateBackupCodes: 'account.sudo.action.generateBackupCodes',
+  update2FASettings: 'account.sudo.action.update2FASettings',
+  addPasskey: 'account.sudo.action.addPasskey',
+  deletePasskey: 'account.sudo.action.deletePasskey',
+  changePassword: 'account.sudo.action.changePassword',
+  unbindOAuthConnection: 'account.sudo.action.unbindOAuthConnection',
+}
+const lede = computed(() => {
+  const key = opKey.value && ACTIONS[opKey.value]
+  return key ? t('account.sudo.ledeFor', { action: t(key) }) : t('account.sudo.lede')
+})
+
+const activeMethod = ref<Method>('password')
 const loading = ref(false)
 const password = ref('')
-const showPassword = ref(false)
 const totpCode = ref('')
 const errorMessage = ref('')
-const webAuthnSupported = ref(false)
-
-// 在 SudoVerify.vue 中添加认证方法相关的状态
-const authMethods = ref<{
-  supports_passkey: boolean
-  supports_2fa: boolean
-  requires_2fa: boolean
-}>({
-  supports_passkey: false,
-  supports_2fa: false,
-  requires_2fa: false,
-})
-
-// 添加初始化状态
 const isInitializing = ref(true)
+const webAuthnSupported = browserSupportsWebAuthn()
+const authMethods = ref({ supports_passkey: false, supports_2fa: false })
 
-// 添加计算属性判断是否有其他可选的验证方式
-const hasAlternativeMethods = computed(() => {
-  return availableMethods.value.some((method) => method.visible && method.id !== activeMethod.value)
+const METHOD_LABELS: Record<Method, string> = {
+  passkey: 'account.sudo.usePasskey',
+  password: 'account.sudo.usePassword',
+  totp: 'account.sudo.useTotp',
+}
+
+const available = computed<Method[]>(() => {
+  const list: Method[] = []
+  if (webAuthnSupported && authMethods.value.supports_passkey) list.push('passkey')
+  if (authMethods.value.supports_2fa) list.push('totp')
+  list.push('password')
+  return list
 })
 
-// 通行密钥验证
-const handlePasskeyVerify = async () => {
+const otherMethods = computed(() =>
+  available.value.filter((m) => m !== activeMethod.value).map((id) => ({ id, label: t(METHOD_LABELS[id]) }))
+)
+
+function switchTo(method: Method) {
+  activeMethod.value = method
+  errorMessage.value = ''
+  password.value = ''
+  totpCode.value = ''
+}
+
+async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
   loading.value = true
   errorMessage.value = ''
   try {
-    // 获取验证选项
-    const optionsResponse = await UserApi.getPasskeyAuthenticationOptions(currentUserId.value)
-    const optionsJSON = optionsResponse.data.options
-
-    // 开始验证
-    const asseResp = await startAuthentication({ optionsJSON })
-
-    // 验证结果
-    const response = await UserApi.verifySudoPasskey(asseResp, purpose.value)
-
-    // 验证成功，返回原页面
-    await handleVerifySuccess(response.data.sudoTicket)
+    const response = await run()
+    // 把服务端签的票交给待重试的操作，回到原来的页面
+    sudoStore.setVerified(response.data.sudoTicket)
+    router.replace(sudoStore.returnPath || '/')
   } catch (error: any) {
-    if (error.name === 'NotAllowedError') {
-      errorMessage.value = '操作被取消'
-    } else {
-      errorMessage.value = error.message || '验证失败'
-    }
+    // The browser's own WebAuthn error text is English and names internals.
+    errorMessage.value =
+      error?.name === 'NotAllowedError'
+        ? t('account.sudo.passkeyCanceled')
+        : requestErrorMessage(error, t('account.sudo.failed'))
+    totpCode.value = ''
   } finally {
     loading.value = false
   }
 }
 
-// 密码验证
-const handlePasswordVerify = async () => {
+const handlePasskeyVerify = () =>
+  verify(async () => {
+    const { data } = await UserApi.getPasskeyAuthenticationOptions(currentUserId.value)
+    const assertion = await startAuthentication({ optionsJSON: data.options })
+    return UserApi.verifySudoPasskey(assertion, purpose.value)
+  })
+
+const handlePasswordVerify = () => {
   if (!password.value) {
-    errorMessage.value = '请输入密码'
+    errorMessage.value = t('account.sudo.passwordRequired')
     return
   }
-
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const response = await UserApi.verifySudoPassword(password.value, purpose.value)
-    await handleVerifySuccess(response.data.sudoTicket)
-  } catch (error: any) {
-    errorMessage.value = error.message || '验证失败'
-  } finally {
-    loading.value = false
-  }
+  verify(() => UserApi.verifySudoPassword(password.value, purpose.value))
 }
 
-// TOTP 验证
-const handleTOTPVerify = async () => {
-  if (!totpCode.value) {
-    errorMessage.value = '请输入验证码'
-    return
-  }
-
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const response = await UserApi.verifySudoTOTP(totpCode.value, purpose.value)
-
-    // 验证成功，返回原页面
-    await handleVerifySuccess(response.data.sudoTicket)
-  } catch (error: any) {
-    errorMessage.value = error.message || '验证失败'
-  } finally {
-    loading.value = false
-  }
+const handleTOTPVerify = () => {
+  if (loading.value || totpCode.value.length !== 6) return
+  verify(() => UserApi.verifySudoTOTP(totpCode.value, purpose.value))
 }
 
-// TOTP 输入处理
-const handleTOTPInput = (value: string) => {
-  if (value.length === 6) {
-    handleTOTPVerify()
-  }
+// Backing out drops the pending operation, so nothing retries behind the
+// person's back later.
+function cancel() {
+  const back = sudoStore.returnPath || '/'
+  sudoStore.clearRetryState()
+  router.replace(back)
 }
 
-// 验证成功后的处理
-const handleVerifySuccess = async (sudoTicket?: string) => {
-  // 设置验证成功标志，并把服务端签的票交给待重试的操作
-  sudoStore.setVerified(sudoTicket)
-
-  if (sudoStore.returnPath) {
-    router.replace(sudoStore.returnPath)
-  } else {
-    router.replace('/')
-  }
-}
-
-// 修改 availableMethods 计算属性
-const availableMethods = computed(() => [
-  {
-    id: 'passkey',
-    label: '使用通行密钥验证',
-    icon: 'mdi-key-chain',
-    visible: webAuthnSupported.value && authMethods.value.supports_passkey,
-    disabled: false,
-  },
-  {
-    id: 'password',
-    label: '使用账户密码验证',
-    icon: 'mdi-form-textbox-password',
-    visible: true,
-    disabled: false,
-  },
-  {
-    id: 'totp',
-    label: '使用动态验证码',
-    icon: 'mdi-clock-outline',
-    visible: authMethods.value.supports_2fa,
-    disabled: false,
-  },
-])
-
-// 修改 onMounted
 onMounted(async () => {
   try {
-    webAuthnSupported.value = browserSupportsWebAuthn()
-
-    // 获取认证方法
     if (currentUserName.value) {
-      const response = await UserApi.getAuthMethods(currentUserName.value)
-      authMethods.value = response.data
-
-      // 根据认证方法设置默认验证方式
-      if (webAuthnSupported.value && authMethods.value.supports_passkey) {
-        activeMethod.value = 'passkey'
-      } else if (authMethods.value.supports_2fa) {
-        activeMethod.value = 'totp'
-      } else {
-        activeMethod.value = 'password'
-      }
+      const { data } = await UserApi.getAuthMethods(currentUserName.value)
+      authMethods.value = data
     }
-  } catch (error) {
-    console.error('获取认证方法失败:', error)
-    // 如果获取失败，默认使用密码验证
-    activeMethod.value = 'password'
+  } catch {
+    // Without the list, the password is the way every account has.
   } finally {
+    activeMethod.value = available.value[0]
     isInitializing.value = false
   }
 })
 </script>
+
+<style scoped>
+.sudo-others {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.sudo-method-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.sudo-method-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+
+.sudo-method-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.sudo-method-leave-to {
+  opacity: 0;
+}
+</style>

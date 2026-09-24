@@ -15,8 +15,7 @@
         v-model="totpCode"
         length="6"
         type="number"
-        variant="outlined"
-        class="mb-2"
+        class="account-otp"
         @update:model-value="handleTOTPInput"
       />
 
@@ -25,44 +24,31 @@
         v-model="backupCode"
         length="8"
         type="text"
-        variant="outlined"
-        class="mb-2"
+        class="account-otp"
         @update:model-value="handleBackupInput"
       />
 
-      <p class="text-body-2 mb-6" style="color: var(--faint)">{{ t('account.twoFactor.lockout') }}</p>
+      <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
 
       <v-btn
         block
         color="primary"
         size="large"
         type="submit"
+        class="account-submit"
         :loading="loading"
         :disabled="!validateCode(codeType === 'totp' ? totpCode : backupCode)"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
       >
         {{ codeType === 'totp' ? t('account.twoFactor.totpSubmit') : t('account.twoFactor.backupSubmit') }}
       </v-btn>
 
-      <div class="d-flex align-center justify-space-between flex-wrap" style="gap: 8px">
-        <v-btn
-          variant="text"
-          color="primary"
-          style="text-transform: none; padding: 0; min-width: auto"
-          class="text-decoration-none"
-          @click="toggleCodeType"
-        >
+      <div class="account-foot account-foot--split">
+        <button type="button" class="account-link" @click="toggleCodeType">
           {{ codeType === 'totp' ? t('account.twoFactor.useBackup') : t('account.twoFactor.useTotp') }}
-        </v-btn>
-        <v-btn
-          variant="text"
-          color="primary"
-          :to="backToSignIn()"
-          style="text-transform: none; padding: 0; min-width: auto"
-        >
+        </button>
+        <router-link :to="backToSignIn()" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </v-btn>
+        </router-link>
       </div>
     </v-form>
 
@@ -70,10 +56,10 @@
       <v-card :title="t('account.twoFactor.backupUsedTitle')">
         <v-card-text>{{ t('account.twoFactor.backupUsedBody') }}</v-card-text>
         <v-card-actions class="justify-end">
-          <v-btn variant="text" style="text-transform: none" @click="handleLater">
+          <v-btn variant="text" @click="handleLater">
             {{ t('account.twoFactor.later') }}
           </v-btn>
-          <v-btn color="primary" style="text-transform: none" @click="handleGoToSecurity">
+          <v-btn color="primary" variant="flat" @click="handleGoToSecurity">
             {{ t('account.twoFactor.regenerate') }}
           </v-btn>
         </v-card-actions>

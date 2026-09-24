@@ -2,13 +2,13 @@
   <div>
     <v-checkbox v-model="agreed" density="compact" hide-details>
       <template #label>
-        <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
+        <span class="legal-consent__label">
           {{ t('account.iAgreeToThe') }}
           <LegalLinks />
         </span>
       </template>
     </v-checkbox>
-    <p v-if="loadError" class="text-body-2 mt-1" style="color: rgb(var(--v-theme-error))">{{ loadError }}</p>
+    <p v-if="loadError" class="legal-consent__error">{{ loadError }}</p>
 
     <v-dialog v-model="prompting" max-width="420" persistent>
       <v-card>
@@ -84,3 +84,18 @@ async function confirm(): Promise<{ documents: AcceptedDocuments; method: Consen
 
 defineExpose({ confirm })
 </script>
+
+<style scoped>
+.legal-consent__label {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.legal-consent__error {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger-ink);
+}
+</style>
