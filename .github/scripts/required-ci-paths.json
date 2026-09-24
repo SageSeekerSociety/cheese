@@ -55,8 +55,17 @@
   "mcp": [
     "scripts/remote_execution/package-lock.json",
     "scripts/remote_execution/mcp_contract.py",
+    "scripts/remote_execution/headless_contract.py",
+    "scripts/remote_execution/model_fixture.py",
+    "scripts/remote_execution/custom_mcp.py",
+    "scripts/remote_execution/acceptance.py",
+    "scripts/remote_execution/rc_fixture.py",
+    "scripts/remote_execution/seed.py",
     "scripts/remote_execution/package.json",
-    "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+    "backend/app/domain/agent/harness/claude_code/remote_execution/*",
+    "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/cli_worker.py",
+    "backend/sandbox/cheese",
     ".github/workflows/mcp-contract.yml"
   ]
 }

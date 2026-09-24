@@ -246,7 +246,7 @@ def sql_log(client):
     def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
         statements.append(statement)
 
-    engine = client.test_factory.kw["bind"].sync_engine
+    engine = client.test_request_factory.kw["bind"].sync_engine
     event.listen(engine, "before_cursor_execute", record)
     try:
         yield statements

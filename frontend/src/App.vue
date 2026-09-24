@@ -80,6 +80,21 @@
             :disabled="creatingProject"
             @keyup.enter="advanceNewProject"
           />
+          <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
+               所以这不是必填项，标签里就写着「可选」。 -->
+          <v-textarea
+            v-model="newProjectIntent"
+            autocomplete="off"
+            label="你打算做什么（可选）"
+            placeholder="例如：帮我把这学期的课程材料整理成一份大纲"
+            variant="outlined"
+            color="primary"
+            rows="2"
+            auto-grow
+            hide-details
+            class="mt-3"
+            :disabled="creatingProject"
+          />
           <v-select
             v-model="newProjectTeamId"
             autocomplete="off"
@@ -203,7 +218,7 @@ import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
-import { defaultTeamFor, teamIdInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import ConsentGate from './components/account/ConsentGate.vue'
@@ -400,11 +415,14 @@ const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
-const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
+const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
 const newProjectStep = ref(1)
 const newProjectAgentName = ref('')
 const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
+// 这个项目打算做什么——建项目时问的那一句（#946 片 C）。问题只在人愿意答的时候
+// 才有价值，所以它是可选的：空着就和从前一样，只建一个空房间。
+const newProjectIntent = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
 // 所属小队: which team the project belongs to decides who can see it. Without
@@ -418,7 +436,7 @@ const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
 
 function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
-  showNewProjectDialog(teamIdInPath(currentRoute.path))
+  showNewProjectDialog(teamHandleInPath(currentRoute.path))
 }
 
 async function loadProjectTeams() {
@@ -437,7 +455,7 @@ async function loadProjectTeams() {
   } finally {
     loadingTeams.value = false
   }
-  newProjectTeamId.value = defaultTeamFor(presetTeamId.value, newProjectTeams.value)
+  newProjectTeamId.value = defaultTeamFor(presetTeam.value, newProjectTeams.value)
 }
 
 watch(newProjectDialog, (opened) => {
@@ -446,6 +464,9 @@ watch(newProjectDialog, (opened) => {
   newProjectStep.value = 1
   newProjectAgentName.value = randomTeammateName()
   newProjectForgeKind.value = 'forgejo'
+  // 上一次开的对话框留下的答案不该跟到这一次——那会让第二个项目凭空继承第一个
+  // 项目的说明，而人根本没说过。
+  newProjectIntent.value = ''
   newProjectError.value = null
   void loadProjectTeams()
 })
@@ -469,6 +490,7 @@ async function confirmNewProject() {
       newProjectTeamId.value,
       sourceTask.value?.id,
       newProjectForgeKind.value,
+      newProjectIntent.value.trim(),
       newProjectAgentName.value.trim()
     )
     await loadCxProjects()

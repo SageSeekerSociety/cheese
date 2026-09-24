@@ -1,10 +1,11 @@
 """Protect original bytes and keep late subprocesses away from reused work."""
 
-import hashlib
+import gzip
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import uuid
@@ -220,6 +221,7 @@ with (root / "delivered").open("a") as output:
         project,
         resource,
         operation,
+        "-",
     ]
     receipt = tmp_path / ".cheese/cleanup" / operation / (resource + ".ready")
     with (tmp_path / "process.log").open("wb") as log:
@@ -270,6 +272,7 @@ def test_a_room_that_will_not_leave_is_ended_once_the_grace_has_run_out(tmp_path
         project,
         resource,
         operation,
+        "-",
     ]
     receipt = tmp_path / ".cheese/cleanup" / operation / (resource + ".ready")
     try:
@@ -317,7 +320,15 @@ def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
         json.dumps(["/dev/null", "cheese_0"])
     )
     refused = subprocess.run(
-        [sys.executable, cleanup.__file__, "prepare", project, resource, operation],
+        [
+            sys.executable,
+            cleanup.__file__,
+            "prepare",
+            project,
+            resource,
+            operation,
+            "-",
+        ],
         env={**os.environ, "HOME": str(tmp_path), "CHEESE_CLEANUP_FORCE_AFTER_S": "0"},
         capture_output=True,
         text=True,
@@ -330,57 +341,116 @@ def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
     ).exists()
 
 
-def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
-    home = tmp_path / "home"
-    original = home / ".claude/projects/p/session.jsonl"
-    original.parent.mkdir(parents=True)
-    original.write_bytes(b"original\n")
-    receipts = [
-        {
-            "source": str(original.relative_to(home)),
-            "size": 9,
-            "sha256": hashlib.sha256(b"original\n").hexdigest(),
+def run_cleanup(machine_home, action, project, resource, room="-"):
+    return subprocess.run(
+        [
+            sys.executable,
+            cleanup.__file__,
+            action,
+            project,
+            resource,
+            str(uuid.uuid4()),
+            room,
+        ],
+        env={**os.environ, "HOME": str(machine_home)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.fixture
+def room_home(tmp_path):
+    """A room's home on the session host, with a main and a subagent transcript."""
+    project, resource, room = (str(uuid.uuid4()) for _ in range(3))
+    home, _work = cleanup.resource_paths(tmp_path, project, resource)
+    sessions = home / ".claude/projects/-room"
+    (sessions / "77d3f6bc/subagents").mkdir(parents=True)
+    (sessions / "77d3f6bc.jsonl").write_bytes(b'{"main":1}\n')
+    (sessions / "77d3f6bc/subagents/agent-a.jsonl").write_bytes(b'{"sub":1}\n')
+    archive = tmp_path / ".cheese/transcripts" / project / room / (resource + ".tar.gz")
+    return project, resource, room, home, archive
+
+
+def archived_files(archive):
+    with tarfile.open(archive) as bundle:
+        return {
+            member.name: bundle.extractfile(member).read()
+            for member in bundle.getmembers()
+            if member.isfile()
         }
-    ]
-    cleanup.check_transcripts(home, receipts)
-    original.write_bytes(b"original\nlate result\n")
-    with pytest.raises(RuntimeError, match="changed"):
-        cleanup.check_transcripts(home, receipts)
-    assert original.read_bytes().endswith(b"late result\n")
 
 
-def test_a_linked_subagent_transcript_is_not_a_second_transcript(tmp_path):
-    """Claude Code links a resumed session's subagent transcript to the original
-    session's file. The uploader skips links, so the receipts never name one;
-    the check must skip the same links, or a room that ever resumed a session
-    with subagents can never be cleaned up."""
-    home = tmp_path / "home"
-    original = home / ".claude/projects/p/77d3f6bc/subagents/agent-a.jsonl"
-    original.parent.mkdir(parents=True)
-    original.write_bytes(b"original\n")
-    linked = home / ".claude/projects/p/32a0b25e/subagents/agent-a.jsonl"
-    linked.parent.mkdir(parents=True)
-    linked.symlink_to(original)
-    receipts = [
-        {
-            "source": str(original.relative_to(home)),
-            "size": 9,
-            "sha256": hashlib.sha256(b"original\n").hexdigest(),
-        }
-    ]
-    cleanup.check_transcripts(home, receipts)
+def test_removal_keeps_the_rooms_transcripts_compressed_on_the_host(
+    tmp_path, room_home
+):
+    project, resource, room, home, archive = room_home
+    removed = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert removed.returncode == 0, removed.stderr
+    assert not home.exists()
+    assert archive.stat().st_mode & 0o777 == 0o600
+    assert archived_files(archive) == {
+        "projects/-room/77d3f6bc.jsonl": b'{"main":1}\n',
+        "projects/-room/77d3f6bc/subagents/agent-a.jsonl": b'{"sub":1}\n',
+    }
 
 
-def test_a_link_to_a_transcript_outside_the_home_is_still_not_read(tmp_path):
-    outside = tmp_path / "elsewhere/session.jsonl"
-    outside.parent.mkdir(parents=True)
-    outside.write_bytes(b"secret\n")
-    home = tmp_path / "home"
-    linked = home / ".claude/projects/p/session.jsonl"
-    linked.parent.mkdir(parents=True)
-    linked.symlink_to(outside)
-    # Nothing was uploaded, nothing is found: the link is neither read nor hashed.
-    cleanup.check_transcripts(home, [])
+def test_a_link_in_the_transcripts_is_kept_as_a_link_and_never_followed(
+    tmp_path, room_home
+):
+    project, resource, room, home, archive = room_home
+    outside = tmp_path / "elsewhere/secret.jsonl"
+    outside.parent.mkdir()
+    outside.write_bytes(b"SECRET-OUTSIDE-THE-HOME\n")
+    (home / ".claude/projects/-room/linked.jsonl").symlink_to(outside)
+    removed = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert removed.returncode == 0, removed.stderr
+    assert b"SECRET-OUTSIDE-THE-HOME" not in gzip.decompress(archive.read_bytes())
+    assert outside.read_bytes() == b"SECRET-OUTSIDE-THE-HOME\n"
+
+
+def test_removal_on_a_device_that_keeps_no_transcripts_keeps_nothing(
+    tmp_path, room_home
+):
+    project, resource, _room, home, _archive = room_home
+    removed = run_cleanup(tmp_path, "remove", project, resource)
+    assert removed.returncode == 0, removed.stderr
+    assert not home.exists()
+    assert not (tmp_path / ".cheese/transcripts").exists()
+
+
+def test_expiry_deletes_only_that_generations_transcripts(tmp_path, room_home):
+    project, resource, room, _home, archive = room_home
+    assert run_cleanup(tmp_path, "remove", project, resource, room).returncode == 0
+    # The same room, reopened and archived again: a second generation beside it.
+    later = str(uuid.uuid4())
+    later_home, _work = cleanup.resource_paths(tmp_path, project, later)
+    (later_home / ".claude/projects/-room").mkdir(parents=True)
+    (later_home / ".claude/projects/-room/new.jsonl").write_bytes(b"{}\n")
+    assert run_cleanup(tmp_path, "remove", project, later, room).returncode == 0
+    second = archive.with_name(later + ".tar.gz")
+    assert second.exists()
+
+    expired = run_cleanup(tmp_path, "expire", project, resource, room)
+    assert expired.returncode == 0, expired.stderr
+    assert not archive.exists()
+    assert second.exists()
+    assert run_cleanup(tmp_path, "expire", project, later, room).returncode == 0
+    assert not (tmp_path / ".cheese/transcripts" / project).exists()
+    # Expiring again, as a retried sweep would, finds nothing and succeeds.
+    assert run_cleanup(tmp_path, "expire", project, later, room).returncode == 0
+
+
+def test_removal_waits_for_undelivered_hook_events(tmp_path, room_home):
+    project, resource, room, home, archive = room_home
+    spool = home / ".cheese/cheese-spool"
+    spool.mkdir(parents=True)
+    (spool / "0001").write_text("{}")
+    refused = run_cleanup(tmp_path, "remove", project, resource, room)
+    assert refused.returncode != 0
+    assert "hook events" in refused.stderr
+    assert (home / ".claude/projects/-room/77d3f6bc.jsonl").exists()
+    assert not archive.exists()
 
 
 @pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])

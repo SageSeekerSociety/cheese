@@ -186,8 +186,8 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
         def submit(self, chat, topic_id, **kwargs):
             submitted.append((str(topic_id), kwargs))
 
-    first = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    first = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert first == {"materialized": 1, "dispatched": 1}
 
@@ -221,8 +221,8 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
     asyncio.run(assert_receipt_boundary())
 
     # 递过的那一行不再递第二遍 —— 重启、重跑、两台机器同时扫都一样。
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert again == {"materialized": 0, "dispatched": 0}
 
@@ -249,27 +249,29 @@ def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
             submitted.append(str(topic_id))
 
     async def _while_another_scanner_holds_it():
-        async with client.test_factory() as holder:
+        async with client.test_request_factory() as holder:
             await holder.scalars(
                 select(TimedDelivery)
                 .where(TimedDelivery.delivered_at.is_(None))
                 .with_for_update()
             )
             skipped = await asyncio.wait_for(
-                deliver_due(client.test_factory, chat=object(), runner=Runner()),
+                deliver_due(
+                    client.test_request_factory, chat=object(), runner=Runner()
+                ),
                 timeout=20,
             )
             await holder.rollback()
         return skipped
 
-    assert asyncio.run(_while_another_scanner_holds_it()) == {
+    assert client.portal.call(lambda: _while_another_scanner_holds_it()) == {
         "materialized": 0,
         "dispatched": 0,
     }
     assert submitted == [], "同一条被递了第二遍"
 
-    again = asyncio.run(
-        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    again = client.portal.call(
+        lambda: deliver_due(client.test_request_factory, chat=object(), runner=Runner())
     )
     assert again == {"materialized": 1, "dispatched": 1}
     assert submitted == [room]
@@ -303,9 +305,9 @@ def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
 
     async def run():
         runner = AgentWorkRunner(InProcessBroker())
-        await deliver_due(client.test_factory, chat=chat, runner=runner)
+        await deliver_due(client.test_request_factory, chat=chat, runner=runner)
         await asyncio.gather(*runner._tasks)
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             timer = await session.get(
                 TimedDelivery, uuid.UUID(response.json()["data"]["id"])
             )
@@ -323,11 +325,13 @@ def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
             def submit(self, chat, topic_id, **kwargs):
                 submitted.append(kwargs)
 
-        result = await deliver_due(client.test_factory, chat=chat, runner=Recorder())
+        result = await deliver_due(
+            client.test_request_factory, chat=chat, runner=Recorder()
+        )
         assert result == {"materialized": 0, "dispatched": 1}
         assert submitted[0]["content"] == "keep this exact instruction"
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
 
 
 def test_crash_after_possible_send_is_not_permission_to_reinject(client):
@@ -461,9 +465,35 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
         monkeypatch.setattr(stub_hooks, "acknowledges", lambda *args: None)
 
     async def run():
+        receipt_started = asyncio.Event()
+        release_receipt = asyncio.Event()
+        receipt_committed = asyncio.Event()
+        original_receipt = chat.confirm_prompt_receipt
+
+        async def observe_receipt(topic_id, prompt):
+            receipt_started.set()
+            await release_receipt.wait()
+            await original_receipt(topic_id, prompt)
+            receipt_committed.set()
+
+        chat._compute.bind_receipts(observe_receipt)
         runner = AgentWorkRunner(InProcessBroker())
-        await deliver_due(client.test_factory, chat=chat, runner=runner)
-        await asyncio.gather(*runner._tasks)
+        try:
+            await deliver_due(client.test_factory, chat=chat, runner=runner)
+            await asyncio.gather(*runner._tasks)
+            if native_receipt:
+                async with asyncio.timeout(5):
+                    await receipt_started.wait()
+                async with client.test_factory() as session:
+                    timer = await session.get(
+                        TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+                    )
+                    assert timer.delivered_at is None
+        finally:
+            release_receipt.set()
+        if native_receipt:
+            async with asyncio.timeout(5):
+                await receipt_committed.wait()
         async with client.test_factory() as session:
             timer = await session.get(
                 TimedDelivery, uuid.UUID(response.json()["data"]["id"])

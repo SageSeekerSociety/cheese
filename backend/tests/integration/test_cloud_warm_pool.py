@@ -37,7 +37,7 @@ from tests.unit.test_machine_service import FakeMicroCloud
 async def _sessions_for_cloud(client, topic_id):
     from app.domain.topic.models import Topic
 
-    async with client.test_factory() as db:
+    async with client.test_request_factory() as db:
         topic = await db.get(Topic, uuid.UUID(topic_id))
         result = []
         for handle in ("cloud-a", "cloud-b"):
@@ -65,7 +65,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         first, second = await _sessions_for_cloud(client, topics[0])
 
         async def ensure(session_id):
-            async with client.test_factory() as db:
+            async with client.test_request_factory() as db:
                 machine = await MachineService(db, cloud).ensure_session_machine(
                     session_id, actor=actor, choice=choice
                 )
@@ -79,7 +79,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         assert a[0] != b[0] and a[1] != b[1] and a[2] != b[2]
         assert len(cloud.created) == 1 and len(cloud.claims) == 1
         assert cloud.claims[0][1]["claimKey"] in {str(a[0]), str(b[0])}
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             assert await service.topic_machine(uuid.UUID(topics[0])) is None
             rows = await service.list_active_for_topic(uuid.UUID(topics[0]))
@@ -95,7 +95,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
             assert not await service.list_active_for_topic(uuid.UUID(topics[0]))
             assert cloud.deleted == []
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(warm_case):
@@ -104,7 +104,7 @@ def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(war
 
     async def run():
         first, _ = await _sessions_for_cloud(client, topics[0])
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             machine = await service.ensure_session_machine(
                 first, actor=actor, choice=choice
@@ -117,7 +117,7 @@ def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(war
                 )
             assert len(cloud.created) + len(cloud.claims) == 1
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
@@ -128,7 +128,7 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
 
     async def run():
         first, _ = await _sessions_for_cloud(client, topics[0])
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             old = await service.ensure_session_machine(
                 first, actor=actor, choice=choice
@@ -162,7 +162,7 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
             assert cloud.deleted == []
             assert len(cloud.created) == 1 and len(cloud.claims) == 1
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 @pytest.mark.anyio
@@ -241,7 +241,7 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             service = MachineService(session, cloud)
             machine = await service.ensure_topic_machine(
                 uuid.UUID(topics[0]), actor=actor
@@ -265,7 +265,7 @@ def test_central_cloud_compute_enrolls_and_wakes_without_provider_login(
                 "warm-test",
             ) in await repo.list_ready_topic_devices()
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
 
 
 def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypatch):
@@ -274,7 +274,7 @@ def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypa
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             await WarmPoolService(session, cloud)._new()
             rows = (
                 await session.scalars(
@@ -284,14 +284,14 @@ def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypa
             assert len(rows) == 1
             assert rows[0].create_request["aiMode"] == "none"
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
 
 
 def test_failed_cloud_creation_is_failed_environment_not_permanent_pending(warm_case):
     client, topics, actor, cloud = warm_case
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[1]), actor=actor
             )
@@ -310,7 +310,7 @@ def test_failed_cloud_creation_is_failed_environment_not_permanent_pending(warm_
                 await session.delete(binding)
                 await session.commit()
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     token = seed_user(client, "owner")
     topic = client.get(f"/topics/{topics[1]}").json()["data"]
     response = client.get(
@@ -331,7 +331,7 @@ def test_a_cloud_machine_still_being_created_is_a_room_that_really_is_preparing(
     client, topics, actor, cloud = warm_case
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[1]), actor=actor
             )
@@ -349,7 +349,7 @@ def test_a_cloud_machine_still_being_created_is_a_room_that_really_is_preparing(
                 await session.delete(binding)
                 await session.commit()
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     token = seed_user(client, "owner")
     topic = client.get(f"/topics/{topics[1]}").json()["data"]
     response = client.get(
@@ -390,18 +390,18 @@ def test_device_api_route_follows_cloud_enrollment(
     client, _, _, _ = warm_case
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             device = await session.get(DeviceRow, "warm-test")
             device.supply = supply
             device.cloud_control_private = direct
             await session.commit()
         channel = DeviceChannel(
-            session_factory=client.test_factory,
+            session_factory=client.test_request_factory,
             public_base="https://public.example/api",
         )
         assert await channel._device_api_base("warm-test") == expected
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
 
 
 @pytest.fixture
@@ -420,7 +420,7 @@ def warm_case(client, monkeypatch):
     ]
 
     async def seed():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             user = await UserRepository(session).get_by_handle("owner")
             owner = await IdentityService(session).ensure_agent_user(
                 handle="cheese-warm-pool"
@@ -456,7 +456,7 @@ def warm_case(client, monkeypatch):
             await session.commit()
             return Actor("owner", user.id, "token")
 
-    actor = asyncio.run(seed())
+    actor = client.portal.call(lambda: seed())
     return client, topics, actor, ClaimCloud()
 
 
@@ -464,7 +464,7 @@ def test_concurrent_rooms_take_one_warm_machine_and_create_one_cold(warm_case):
     client, topics, actor, cloud = warm_case
 
     async def ensure(topic):
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topic), actor=actor
             )
@@ -476,7 +476,7 @@ def test_concurrent_rooms_take_one_warm_machine_and_create_one_cold(warm_case):
             ensure(topics[0]), ensure(topics[0]), ensure(topics[1])
         )
 
-    results = asyncio.run(run())
+    results = client.portal.call(lambda: run())
     assert results[0] == results[1]
     assert len({result[0] for result in results}) == 2
     assert len(cloud.claims) == 1
@@ -501,7 +501,7 @@ def test_second_admission_waits_for_the_claim_without_deadlock(warm_case):
     cloud.claim_warm_machine = slow_claim
 
     async def ensure():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[0]), actor=actor
             )
@@ -516,7 +516,7 @@ def test_second_admission_waits_for_the_claim_without_deadlock(warm_case):
         release.set()
         return await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
 
-    results = asyncio.run(run())
+    results = client.portal.call(lambda: run())
     assert results[0] == results[1] == (200, "warm-test")
     assert len(cloud.claims) == 1
 
@@ -546,21 +546,22 @@ def test_timeout_keeps_quota_reserved_and_retry_finishes_same_claim(
                 uuid.UUID(topics[index]), actor=actor
             )
 
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             first = await ensure(session, 0)
             assert first.device_id is None
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             with pytest.raises(ValidationError, match="1 / 1"):
                 await ensure(session, 1)
         cloud.fail_claim = False
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             retried = await ensure(session, 0)
+
             assert retried.machine_id == 200
             assert retried.device_id == "warm-test"
             assert len((await session.scalars(select(ProjectMachine))).all()) == 1
             assert len((await session.scalars(select(DeviceTeamRow))).all()) == 1
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     assert cloud.claims[0] == cloud.claims[1]
     assert cloud.created == []
 
@@ -569,7 +570,7 @@ def test_nonmember_cannot_claim_and_unassigned_device_has_no_team(warm_case):
     client, topics, _, cloud = warm_case
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             assert (await session.scalars(select(DeviceTeamRow))).all() == []
             with pytest.raises(ForbiddenError):
                 await MachineService(session, cloud).ensure_topic_machine(
@@ -577,7 +578,7 @@ def test_nonmember_cannot_claim_and_unassigned_device_has_no_team(warm_case):
                     actor=Actor("outsider", 999999, "token"),
                 )
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     assert cloud.claims == []
     assert cloud.created == []
 
@@ -594,7 +595,7 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
     monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             row = await session.scalar(select(WarmMachine))
             row.state = "preparing"
             row.machine_id = None
@@ -620,11 +621,11 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
             assert row.enrolled_at is not None
             assert (await session.scalars(select(DeviceTeamRow))).all() == []
 
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             device = await session.get(DeviceRow, "warm-test")
             assert device.cloud_control_private is direct
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     bootstrap.assert_awaited_once()
 
 
@@ -633,13 +634,13 @@ def test_disabling_pool_deletes_only_unused_capacity(warm_case, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 0)
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             await WarmPoolService(session, cloud).sweep()
             row = await session.scalar(select(WarmMachine))
             assert row.state == "deleted"
             assert await session.get(DeviceRow, "warm-test") is None
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     assert cloud.deleted == [200]
 
 
@@ -650,7 +651,7 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch
     cloud.fail_claim = True
 
     async def run():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[0]), actor=actor
             )
@@ -671,5 +672,5 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch
             assert row.state == "claimed"
             assert not machine.warm_claim_pending
 
-    asyncio.run(run())
+    client.portal.call(lambda: run())
     assert cloud.created == []

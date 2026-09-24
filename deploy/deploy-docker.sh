@@ -16,8 +16,6 @@
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
 #                      enrolling machines (same treatment; default in compose)
-#   TRANSCRIPTS_HOST_PATH  host dir holding the transcript archives uploaded
-#                      from device homes (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
 #   ACTIVE_FRONTEND_DIR  optional api-front active directory. Enable only after
 #                      ingress targets FRONTEND_PROXY_PORT (default 18080).
@@ -626,11 +624,6 @@ mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
 # And the pi builds, which the backend serves to the same machines.
 PI_CACHE_PATH="${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}"
 mkdir -p "$PI_CACHE_PATH" || fail "cannot create $PI_CACHE_PATH"
-# And for the transcript archives uploaded from device homes before those are
-# deleted: the backend writes them, they must outlive the container, and once
-# the home is gone nothing else holds them.
-TRANSCRIPTS_PATH="${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}"
-mkdir -p "$TRANSCRIPTS_PATH" || fail "cannot create $TRANSCRIPTS_PATH"
 
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
@@ -639,7 +632,6 @@ OWNERSHIP_PATHS=(
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
   "$CLAUDE_CACHE_PATH"
   "$PI_CACHE_PATH"
-  "$TRANSCRIPTS_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
 log "checking workspace/uploads ownership…"

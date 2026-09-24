@@ -9,7 +9,7 @@
 
 钉住的三条要害：
 
-1. **凭据绝不露面**。库里是 Fernet 密文（可解密还原）；审计的
+1. **凭据绝不露面**。库里是密文（可解密还原）；审计的
    before/after/detail 与全部 API 响应里一个明文字母都没有。
 2. **每一次状态转变都落审计行**（含失败），actor 是操作者 handle。
 3. **失败语义不混**：连接性 503、上游判死凭据 502、不存在 404、状态不对
@@ -30,12 +30,15 @@ from sqlalchemy import select
 from app.api.routes.admin_models import get_gateway_admin
 from app.api.routes.admin_subscriptions import get_openai_oauth
 from app.core.config import settings
-from app.core.crypto import decrypt_text, encrypt_text
 from app.domain.agent import gateway_catalog, gateway_models
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.models import GatewayAdminAudit
 from app.domain.subscription.models import LlmSubscription
 from app.domain.subscription.openai_codex import OpenAICodexOAuth
+from app.domain.subscription.services import (
+    open_subscription_token,
+    seal_subscription_token,
+)
 from tests.integration.conftest import session_auth_headers
 
 #: 放进管理员名单的那个 handle（与 test_admin_models.py 同一做法）。
@@ -284,16 +287,22 @@ def _seed_active(
 
     async def _go() -> uuid.UUID:
         async with client.test_factory() as session:
+            row_id = uuid.uuid4()
             row = LlmSubscription(
+                id=row_id,
                 provider="openai_codex",
                 label="团队的 ChatGPT",
                 status="active",
                 account_email="admin@example.com",
                 chatgpt_account_id=account,
                 id_token_subject=subject,
-                access_token_enc=encrypt_text(ACCESS),
-                refresh_token_enc=encrypt_text(refresh_token),
-                id_token_enc=encrypt_text(ID_TOKEN),
+                access_token_enc=seal_subscription_token(
+                    row_id, "access_token_enc", ACCESS
+                ),
+                refresh_token_enc=seal_subscription_token(
+                    row_id, "refresh_token_enc", refresh_token
+                ),
+                id_token_enc=seal_subscription_token(row_id, "id_token_enc", ID_TOKEN),
                 token_expires_at=datetime.now(UTC) + timedelta(hours=1),
                 linked_model_name=linked,
                 quota_snapshot=snapshot,
@@ -420,8 +429,8 @@ def test_import_full_chain(client, as_admin, rig):
     assert row.status == "active"
     assert row.access_token_enc != ACCESS
     assert row.flow_device_auth_id is None  # flow 进行态已清
-    assert decrypt_text(row.access_token_enc) == ACCESS
-    assert decrypt_text(row.refresh_token_enc) == REFRESH
+    assert open_subscription_token(row, "access_token_enc") == ACCESS
+    assert open_subscription_token(row, "refresh_token_enc") == REFRESH
 
     # 网关收到一次新建：api_key 是 access_token，extra_headers 三件套齐全。
     news = [c for c in rig.gateway_calls if c.url.path == "/model/new"]
@@ -559,8 +568,8 @@ def test_refresh_success_rotates_and_pushes_to_gateway(client, as_admin, rig):
     assert r.json()["data"]["status"] == "active"
 
     rows = _subs_rows(client)
-    assert decrypt_text(rows[0].access_token_enc) == "at-rotated-value"
-    assert decrypt_text(rows[0].refresh_token_enc) == "rt-rotated-value"
+    assert open_subscription_token(rows[0], "access_token_enc") == "at-rotated-value"
+    assert open_subscription_token(rows[0], "refresh_token_enc") == "rt-rotated-value"
 
     patches = [
         c
@@ -600,7 +609,7 @@ def test_refresh_unreachable_gateway_is_a_503(client, as_admin, rig):
     rows = _subs_rows(client)
     # token 已换新且可还原 —— 丢了这个等于把这条订阅弄丢。
     assert rows[0].status == "active"
-    assert decrypt_text(rows[0].access_token_enc) == ACCESS
+    assert open_subscription_token(rows[0], "access_token_enc") == ACCESS
 
 
 # --- 额度读数 -----------------------------------------------------------------

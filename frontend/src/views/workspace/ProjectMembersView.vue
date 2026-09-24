@@ -17,6 +17,7 @@
 // 就是「我和这个项目的关系」唯一说得清的地方；项目头上另有一份看得见的入口，
 // 名册本身也回到了侧栏（#6：这一页曾被壳收进 ⋯ 菜单，按钮跟着藏了两层深，
 // 没注意到那个 ⋯ 的人连怎么退出都找不到）。
+import type { ProjectJoinRequest } from '@/api'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -25,9 +26,11 @@ import { useRouter } from 'vue-router'
 import { getAvatarUrl } from '@/utils/materials'
 
 import {
+  decideProjectJoinRequest,
   inviteProjectMember,
   listProjectAgents,
   listProjectInvitations,
+  listProjectJoinRequests,
   removeProjectMember,
   revokeInvitation,
   updateProjectMemberRole,
@@ -119,6 +122,39 @@ async function takeBack(inv: ProjectInvitation) {
   }
 }
 
+// 拿着邀请链接递进来的申请——链接开着「加入需要审批」时，人点了申请就停在这里，
+// 等组长点头。和上面那段方向相反：那是我们请人进来、等对方答复，这是人想进来、等
+// 我们答复。只有管得了的人拉得到，所以只对他们出现。
+const joinRequests = ref<ProjectJoinRequest[]>([])
+const deciding = ref<string | null>(null)
+async function refreshJoinRequests() {
+  const pid = props.projectId
+  if (!canManage.value) {
+    joinRequests.value = []
+    return
+  }
+  try {
+    const rows = await listProjectJoinRequests(pid)
+    if (props.projectId === pid) joinRequests.value = rows
+  } catch {
+    // 同上：拿不到就不显示这一段，名册照常。
+  }
+}
+
+async function decide(req: ProjectJoinRequest, decision: 'approve' | 'reject') {
+  deciding.value = req.id
+  error.value = null
+  try {
+    await decideProjectJoinRequest(props.projectId, req.id, decision)
+    await refreshJoinRequests()
+    if (decision === 'approve') await store.refreshMembers()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : decision === 'approve' ? '批准失败' : '拒绝失败'
+  } finally {
+    deciding.value = null
+  }
+}
+
 const query = ref('')
 const busyHandle = ref<string | null>(null)
 const error = ref<string | null>(null)
@@ -155,6 +191,7 @@ const groups = computed(() =>
 
 const myRole = computed(() => store.members.find((m) => m.user_handle === me.value)?.role ?? null)
 const canManage = computed(() => me.value === ownerHandle.value || myRole.value === 'lead')
+watch(() => [props.projectId, canManage.value] as const, refreshJoinRequests, { immediate: true })
 
 // 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而自己是
 // 不是要走由本人决定 —— 那颗按钮在右上角，带着一次确认（后端也会拒掉所有者：他
@@ -392,7 +429,10 @@ async function submitInvite() {
                 <span v-else-if="m.user_handle === me" class="chip-neutral">我</span>
               </div>
               <div class="t-meta c-muted">@{{ m.user_handle }}</div>
-              <router-link v-if="m.source === 'team'" :to="`/teams/${m.team_id}`" class="t-meta"
+              <router-link
+                v-if="m.source === 'team' && m.team_handle"
+                :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
+                class="t-meta"
                 >来自小队 · 在小队中管理</router-link
               >
             </div>
@@ -458,6 +498,39 @@ async function submitInvite() {
             <v-spacer />
             <v-btn v-if="canManage" variant="text" size="small" :loading="revoking === inv.id" @click="takeBack(inv)">
               撤回
+            </v-btn>
+          </div>
+        </v-card>
+      </div>
+
+      <div v-if="joinRequests.length" class="mb-6">
+        <div class="t-eyebrow mb-2">申请加入 · {{ joinRequests.length }}</div>
+        <v-card v-for="req in joinRequests" :key="req.id" class="mb-2" variant="outlined">
+          <div class="d-flex align-center pa-3">
+            <UserAvatar
+              :name="req.name || req.requester_handle"
+              :avatar="req.avatar_id == null ? '' : getAvatarUrl(req.avatar_id)"
+              :size="36"
+              class="mr-3"
+            />
+            <div class="min-w-0">
+              <span class="t-title text-truncate">{{ req.name || req.requester_handle }}</span>
+              <div class="t-meta c-muted">@{{ req.requester_handle }} · 通过邀请链接申请</div>
+              <div v-if="req.message" class="t-body mt-1">{{ req.message }}</div>
+            </div>
+            <v-spacer />
+            <v-btn variant="text" size="small" :disabled="deciding === req.id" @click="decide(req, 'reject')">
+              拒绝
+            </v-btn>
+            <v-btn
+              color="primary"
+              variant="flat"
+              size="small"
+              class="ms-2"
+              :loading="deciding === req.id"
+              @click="decide(req, 'approve')"
+            >
+              批准
             </v-btn>
           </div>
         </v-card>

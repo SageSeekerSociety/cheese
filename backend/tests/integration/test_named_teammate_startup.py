@@ -44,7 +44,7 @@ async def test_invited_teammate_is_the_startup_identity(
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub = SimpleNamespace(is_online=lambda host: host in {"center", "executor"})
-    device = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    device = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
     async with client.test_factory() as db:
         default = await IdentityService(db).ensure_room_agent_user(room_id)
         default_id, default_handle = default.id, default.username
@@ -53,9 +53,11 @@ async def test_invited_teammate_is_the_startup_identity(
         return_value=("executor", default_id, default_handle)
     )
     channel = device if harness == "pi" else CentralChannel(device)
-    placement = await channel.precheck(
-        SessionRef(project_id, room_id, "reviewer", harness=harness),
-        needs_place=needs_place,
+    placement = client.portal.call(
+        lambda: channel.precheck(
+            SessionRef(project_id, room_id, "reviewer", harness=harness),
+            needs_place=needs_place,
+        )
     )
     assert placement.agent_handle == seat
     assert placement.agent_user_id != default_id
@@ -71,7 +73,7 @@ async def test_invited_teammate_is_the_startup_identity(
         hub.call_executor = AsyncMock(
             return_value={"alive": True, "session_id": "trial"}
         )
-        handle = await PiChannel(device).ensure(ref, opening)
+        handle = client.portal.call(lambda: PiChannel(device).ensure(ref, opening))
         assert handle.agent_handle == seat
         assert (
             token_agent_handle(device.ensure_ready.await_args.kwargs["token"]) == seat
@@ -99,6 +101,8 @@ async def test_invited_teammate_is_the_startup_identity(
         hub.exec = AsyncMock(
             return_value={"exit": 0, "stdout": '{"thread_id":"trial"}'}
         )
-        handle = await CodexChannel(channel, SimpleNamespace()).ensure(ref, opening)
+        handle = client.portal.call(
+            lambda: CodexChannel(channel, SimpleNamespace()).ensure(ref, opening)
+        )
         assert handle.agent_handle == seat
         assert token_agent_handle(launched[0]["token"]) == seat

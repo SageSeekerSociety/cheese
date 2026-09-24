@@ -19,7 +19,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 
 
 class RecordingScreen(StubChannel):
@@ -100,10 +100,10 @@ async def _post_and_queue(svc, topic_id, *, author: str, content: str):
 
 @pytest.mark.anyio
 async def test_message_posted_mid_turn_is_not_lost_from_the_next_prompt(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """症状一：轮次运行中到达的消息，**缺席**下一轮的 prompt。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     agent = RecordingScreen()
     svc = await _service(factory, agent, tmp_path)
     topic_id = await _new_topic(factory)
@@ -138,7 +138,7 @@ async def test_message_posted_mid_turn_is_not_lost_from_the_next_prompt(
         ),
         5,
     )
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2
     # 断言就是「在不在」：旧窗口从 turn1 的 AI 回复起算，这句被切掉且永不再来。
@@ -150,10 +150,10 @@ async def test_message_posted_mid_turn_is_not_lost_from_the_next_prompt(
 
 @pytest.mark.anyio
 async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
-    client, tmp_path
+    business_db_factory, tmp_path
 ):
     """症状二：真人插话被当成平台指令 —— 内容对了，**标签**错了。"""
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     agent = RecordingScreen()
     svc = await _service(factory, agent, tmp_path)
     topic_id = await _new_topic(factory)
@@ -172,6 +172,7 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     agent.release.set()
     await asyncio.wait_for(turn1, 5)
     await asyncio.wait_for(turn2, 5)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2
     second = agent.prompts[1]
@@ -184,13 +185,15 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
 
 
 @pytest.mark.anyio
-async def test_two_simultaneous_summons_run_one_turn_not_two(client, tmp_path):
+async def test_two_simultaneous_summons_run_one_turn_not_two(
+    business_db_factory, tmp_path
+):
     """症状三：两人同时 @，第二轮**白跑** —— 数轮数，不看内容。
 
     会话还在干活的时候，后来的话是**塞进那个会话**的，不是另开一轮。所以两句都
     到了，到的是同一个会话，而只有最先那一轮真正开了工。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     agent = RecordingScreen()
     svc = await _service(factory, agent, tmp_path)
     topic_id = await _new_topic(factory)
@@ -211,7 +214,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(client, tmp_path):
     await settle_turn(svc, topic_id)
     frames1 = await asyncio.wait_for(turn1, 5)
     frames2 = await asyncio.wait_for(turn2, 5)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     # 两句都到了，各一次，顺序就是说话的顺序。
     assert [p.split("\n\n", 1)[0] for p in agent.prompts] == [
@@ -228,14 +231,14 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_resume_turn_still_speaks_as_the_platform(client, tmp_path):
+async def test_resume_turn_still_speaks_as_the_platform(business_db_factory, tmp_path):
     """边界守卫：真的没人说话的轮次，兜底**必须**保留。
 
     上面三条修的是「有人说过话，却被当成平台指令」。反过来的一半不能跟着改掉：
     resume / kickoff / 结论回流本来就没有人类块，pending 空是正常状态，既不该被
     症状三的早退当成冗余轮吞掉，也仍旧要顶着平台抬头交给芝士。
     """
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
     agent = RecordingScreen()
     agent.release.set()  # 这条不需要卡住轮次
     svc = await _service(factory, agent, tmp_path)
@@ -264,7 +267,7 @@ async def test_resume_turn_still_speaks_as_the_platform(client, tmp_path):
         5,
     )
     await asyncio.gather(*agent._answering)
-    await settle_turn(svc, topic_id)
+    await finish_turn(svc, topic_id)
 
     assert len(agent.prompts) == 2, "没人说话的轮次不是冗余轮，不能被吞掉"
     resumed = agent.prompts[1]

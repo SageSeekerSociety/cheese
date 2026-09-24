@@ -57,6 +57,16 @@ async def users_by_handle(
     return await UserRepository(session).get_by_handles(sorted(wanted))
 
 
+async def handle_is_taken(session: AsyncSession, handle: str) -> bool:
+    """Whether a user or a team already holds ``handle`` — one namespace."""
+    return await UserRepository(session).is_username_taken(handle)
+
+
+def handle_is_available_shape(handle: str) -> bool:
+    """A handle anyone may take: a username's alphabet, and no reserved name."""
+    return is_valid_username(handle) and not is_reserved_username(handle)
+
+
 async def handles_by_ids(
     session: AsyncSession, user_ids: Iterable[int]
 ) -> tuple[str, ...]:
@@ -72,6 +82,14 @@ async def handles_by_ids(
     ids = list(dict.fromkeys(int(i) for i in user_ids if int(i) > 0))
     users = await UserRepository(session).get_by_ids(ids)
     return tuple(users[i].username for i in ids if i in users)
+
+
+async def usernames_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> dict[int, str]:
+    """用户 id -> handle, keyed, for callers that need to look each one up."""
+    users = await UserRepository(session).get_by_ids(list(set(user_ids)))
+    return {uid: user.username for uid, user in users.items()}
 
 
 async def search_accounts(

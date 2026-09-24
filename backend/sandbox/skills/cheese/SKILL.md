@@ -172,7 +172,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
-| `cheese_machine(profile, device_id?)` | 为自己的会话选择工作机器：可直接切换到项目已授权的设备或 Cloud，下次执行操作时使用新机器。旧机器和工作区保留，文件不会自动迁移，会话进程所在机器不变。资源权限和额度限制照常检查，不创建待审批提议 |
+| `cheese_machine(profile, device_id?)` | 为自己的会话选择工作机器：`profile` 只有 `cloud`（平台开的云端机器）和 `device`（项目授权的自托管设备）两个值，`device_id` 只配 `device` 用、指定哪一台，不填就自动选一台在线的。可直接切换到项目已授权的设备或 Cloud，下次执行操作时使用新机器。旧机器和工作区保留，文件不会自动迁移，会话进程所在机器不变。资源权限和额度限制照常检查，不创建待审批提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，如实回 `delivered: false`。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
 | `cheese_feedback_propose(title, kind?, why?, what_happened?, expectation?, repro?, evidence?, user_said, summary?, problem?, visibility?, attach_logs?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |
@@ -214,7 +214,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese fetch <网址> [--prompt <问题>]` | 读取网页。原生 WebFetch 也可用；需要浏览器抓取等方式时用它。带上 `prompt` 返回提问的答案，不带则返回网页内容。抓取失败会报告失败阶段 |
 | `cheese push-fix [--task <活>] [--drop-dependency]` | 将该任务已提交的修订立即推送到现有 PR，并刷新卡；`drop_dependency=true` 将 PR 改到项目默认分支并清除依赖和旧批准，先按上文整理和验证独立改动；CI 轮询只读提交，不替你提交工作文件 |
 | `cheese status` | 平台状态快照:本轮运行状态(正常运行中/接近硬顶)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先调它,别去轮询原始 API |
-| `cheese sync-agents` | 把项目活跃 AI 队友写成本会话的分身定义(`$CLAUDE_CONFIG_DIR/agents/mate-<handle>.md`:名字、一句话描述、model=队友绑的模型),退休的一并清掉。挂在会话钩子上自动跑,一般不用手调——你在 Agent 工具的可用清单里看到的队友就是它写的。起队友分身:Agent 工具的 `subagent_type` 填队友 handle;指定的模型超出项目 AI 队友范围时准入会拒绝并列出可选 |
+| `cheese sync-agents` | 把项目模型目录写成本会话的分身定义(`$CLAUDE_CONFIG_DIR/agents/model-<id>.md`:名字、一句话描述、model=目录 id),不再可指定的一并清掉。挂在会话钩子上自动跑,一般不用手调——你在 Agent 工具的可用清单里看到的模型分身就是它写的。起指定模型的分身:Agent 工具的 `subagent_type` 填目录里的模型 id;指定的模型不在项目模型目录时准入会拒绝并列出可选 |
 | `cheese library ls` | 列出资料库里的文件(用户给这个项目的文件,最近给的在前) |
 | `cheese library get <名字> [--out <路径>]` | 取一份资料到你自己 home 下的 `~/attachments/library/<名字>`——和随消息发来的那份同一个位置,不写进工作目录。用户提到一份你手上没有的就用它,别请他重传 |
 | `cheese show <路径> [--as html 或 svg]` | 把工作区里的一份东西摆到房间里给人看,渲染进右侧预览窗口；`as_` 取 html 或 svg。摆出来的东西留在这个房间里；人可以按「保存到资料库」把其中一份留下来供以后各房间取用 |

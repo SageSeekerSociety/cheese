@@ -633,7 +633,9 @@ def app_world(client, monkeypatch):
     # 房间通知（fire-and-forget 的 _notify_merge_result）写库走模块级
     # async_session_factory —— 测试 harness 把它绑在另一个库上，这里指回
     # 本测试的库，房间文本才断言得到。
-    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
+    monkeypatch.setattr(
+        review_services, "async_session_factory", client.test_request_factory
+    )
 
     github_pr.set_default_client(fake)
     try:
@@ -2498,7 +2500,7 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -2625,7 +2627,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
         trees = await original(self)
 
         async def _merge_it() -> None:
-            async with client.test_factory() as s:
+            async with client.test_request_factory() as s:
                 svc = TaskService(s)
                 landed = await svc.get(task_id)
                 assert landed is not None
@@ -2637,7 +2639,7 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = asyncio.run(pr_publish.sweep_draft_prs(client.test_factory))
+    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []
@@ -2731,6 +2733,30 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
     assert again.json()["data"]["ready"] is True
     assert again.json()["data"]["already"] is True
     assert len(sweeping["readied"]) == 1
+
+
+def test_ready_reports_github_installation_rate_limit_without_changing_pr(
+    client, sweeping, monkeypatch
+):
+    from app.domain.project import forge as project_forge
+    from app.domain.review.github_pr import GitHubPRRateLimited
+
+    _, tid = _room_with_work(client)
+    _sweep(client)
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
+
+    async def limited(_self, _number):
+        raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
+
+    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    response = _ready(client, tid)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["ready"] is False
+    assert "额度暂时用尽" in payload["reason"]
+    assert pr["draft"] is True
+    assert sweeping["readied"] == []
 
 
 def test_ready_never_opens_a_pr(client, sweeping):

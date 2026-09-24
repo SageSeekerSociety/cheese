@@ -1,4 +1,7 @@
+import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -234,3 +237,47 @@ def test_a_layer_can_hit_its_own_ceiling_before_the_job_hits_its_own():
     assert step["timeout-minutes"] == "${{ matrix.timeout }}"
     for partition in test_job["strategy"]["matrix"]["include"]:
         assert partition["timeout"] < test_job["timeout-minutes"], partition
+
+
+def test_e2e_service_ports_stay_outside_the_pool_ephemeral_range():
+    """Long-lived listeners must not compete with outbound client sockets.
+
+    All three Linux pool machines use 32768-60999 for ephemeral ports. Execute
+    the workflow's real scoping step for both configured runner slots and keep
+    every fixed service listener outside that range.
+    """
+    step = step_named(
+        load_workflow("e2e.yml")["jobs"]["e2e"], "Scope this run to its runner slot"
+    )
+    observed: list[dict[str, str]] = []
+    for slot in ("0", "1"):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "github-env"
+            env = {
+                **os.environ,
+                "CHEESE_CI_SLOT": slot,
+                "GITHUB_ENV": str(output),
+                "GITHUB_RUN_ID": "fixture-run",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "RUNNER_TEMP": temp,
+            }
+            subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", step["run"]], env=env, check=True
+            )
+            observed.append(
+                dict(line.split("=", 1) for line in output.read_text().splitlines())
+            )
+
+    ephemeral = range(32768, 61000)
+    listeners = (
+        "E2E_BACKEND_PORT",
+        "E2E_FRONTEND_PORT",
+        "E2E_STUB_GATEWAY_PORT",
+        "FORGEJO_TEST_PORT",
+        "FORGEJO_TEST_S3_PORT",
+    )
+    for scoped in observed:
+        for name in listeners:
+            assert int(scoped[name]) not in ephemeral, (name, scoped[name])
+    for name in listeners:
+        assert observed[0][name] != observed[1][name], name

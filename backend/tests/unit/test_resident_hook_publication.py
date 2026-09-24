@@ -150,7 +150,7 @@ def test_emitted_helpers_publish_without_the_backend_package(
     hook_environment, tmp_path
 ):
     _, spool = hook_environment
-    launcher = device_launch.build_launch_script(remote_execution=True)
+    launcher = device_launch.build_launch_script()
     start = launcher.index('mkdir -p "$HOME/.cheese/remote-execution"')
     end = launcher.index(
         'EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"', start

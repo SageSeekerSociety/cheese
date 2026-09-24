@@ -17,7 +17,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
-import { getEntity, getStringMetadata } from './NotificationRenderUtils'
+import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import { TeamsApi } from '@/network/api/teams'
 
@@ -53,7 +53,7 @@ const routerLink = computed(() => {
   if (team.value) {
     return {
       name: 'TeamsDetailMembers',
-      params: { teamId: team.value.id },
+      params: { handle: teamHandle(team.value) },
       query: {
         tab: 'requests',
         applicationId: applicationId.value || undefined,

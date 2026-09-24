@@ -7,11 +7,11 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.core.crypto import encrypt_text
 from app.domain.agent.forgejo_tokens import (
     ForgejoTokenError,
     ForgejoTokens,
     purge_expired_tokens,
+    seal_forge_password,
 )
 from app.domain.project.models import ForgeToken, ProjectForge
 
@@ -19,13 +19,14 @@ pytestmark = pytest.mark.anyio
 
 
 def binding():
+    project_id = uuid.uuid4()
     return ProjectForge(
-        project_id=uuid.uuid4(),
+        project_id=project_id,
         kind="forgejo",
         repo="project-bot/project",
         api_url="https://forge.invalid/api/v1",
         url="https://forge.invalid/project.git",
-        account_password=encrypt_text("backend-password"),
+        account_password=seal_forge_password(project_id, "backend-password"),
         default_branch="main",
     )
 

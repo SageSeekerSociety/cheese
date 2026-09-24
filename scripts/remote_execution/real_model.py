@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from acceptance import client, run, setup
+from acceptance import client, run, setup, tmux_server
 from model_fixture import dump, log
 
 
@@ -25,7 +25,7 @@ def main():
     folder = options.output.resolve()
     folder.mkdir(parents=True)
     executor, target = setup(folder, options)
-    tmux = ["tmux", "-L", "cheese-real-model-" + folder.name]
+    tmux = tmux_server(folder)
     try:
         launch = client.prepare(
             folder / "central",

@@ -13,11 +13,12 @@ import tempfile
 import threading
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 
 from app.domain.agent import machine_launcher
-from app.domain.agent.harness.claude_code import device_launch, warm_session
+from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.launch import MachinePlace
 
@@ -52,274 +53,6 @@ def test_launch_timings_append_without_logging_credentials(tmp_path):
         ["sh", "-c", function + "cheese_launch_phase skipped"], env=env, check=True
     )
     assert "skipped" not in (directory / "test-room.timing").read_text()
-
-
-@pytest.mark.parametrize("adoption_exit", [0, 9])
-@pytest.mark.parametrize("stage_exit", [0, 13])
-def test_warm_adoption_waits_for_room_configuration(
-    tmp_path, monkeypatch, adoption_exit, stage_exit
-):
-    owner = tmp_path / "owner"
-    home = tmp_path / "room"
-    work = tmp_path / "work"
-    warm = owner / ".cheese/native-warm"
-    warm.mkdir(parents=True)
-    (warm / "state.json").write_text("{}")
-    (warm / "ready").touch()
-    (warm.parent / "warm-native-runner.py").write_text(
-        "import os, sys\nfrom pathlib import Path\n"
-        "def _native_alive(state):\n    return True\n"
-        "def stage(*args, **kwargs):\n"
-        f"    if {stage_exit}: raise SystemExit({stage_exit})\n"
-        "def adopt_room(directory):\n"
-        "    assert (Path(os.environ['HOME']) / '.cheese/cheese-drain.env').exists()\n"
-        "    (Path(os.environ['HOME']) / 'adopted').touch()\n"
-        f"    return {adoption_exit}\n"
-        "def connection(directory, project, topic):\n"
-        "    assert (Path(os.environ['HOME']) / 'adopted').exists()\n"
-        "    return {'command': ['tmux', '-S', '/test/warm.sock', "
-        "'attach-session', '-t', 'native-warm']}\n"
-    )
-    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
-    binary.chmod(0o700)
-    tmux = tmp_path / "tmux"
-    tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
-    tmux.chmod(0o700)
-    script = tmp_path / "launch.sh"
-    launch = device_launch.build_launch_script()
-    staged = launch.index("cheese_launch_phase warm_staged")
-    configured = launch.index('mv "$HOME/.cheese/cheese-drain.env.tmp"')
-    adopted = launch.index('if [ -n "$WARM_ROOT" ]; then', configured)
-    assert staged < configured < adopted
-    # Exercise the generated staging and adoption programs around the generated
-    # configuration write. The intervening launcher work has independent tests
-    # and made this ordering contract depend on the elapsed time of the complete launch.
-    prefix_end = launch.index("# The platform's own directory", staged)
-    config_start = launch.index('cat > "$HOME/.cheese/cheese-drain.env.tmp"')
-    config_end = launch.index("\n", configured) + 1
-    adoption_end = launch.index("\nfi\n", adopted) + len("\nfi\n")
-    script.write_text(
-        launch[:prefix_end]
-        + 'mkdir -p "$HOME/.cheese"\n'
-        + launch[config_start:config_end]
-        + 'cd "$CHEESE_WORK"\n'
-        + launch[adopted:adoption_end]
-    )
-    with (tmp_path / "launcher.log").open("w") as output:
-        process = subprocess.Popen(
-            ["sh", str(script)],
-            env={
-                "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
-                "HOME": str(owner),
-                "CHEESE_HOME": str(home),
-                "CHEESE_WORK": str(work),
-                "CHEESE_PROJECT": str(uuid.uuid4()),
-                "CHEESE_TOPIC": str(uuid.uuid4()),
-                "CHEESE_RV_SOCK": str(tmp_path / "rv.sock"),
-                "CHEESE_RV_TOKEN_FILE": str(tmp_path / "rv.token"),
-                "TMUX": "/test/owner.sock,1,0",
-                "TMUX_PANE": "%0",
-            },
-            stdout=output,
-            stderr=output,
-        )
-        try:
-            if stage_exit:
-                assert process.wait(timeout=5) == stage_exit
-                assert not (work / "waiting").exists()
-                assert not (home / "adopted").exists()
-                return
-            assert process.wait(timeout=5) == adoption_exit
-            assert (home / "adopted").exists()
-            assert (home / "attached").exists() == (adoption_exit == 0)
-            assert not (work / ".git").exists()
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
-
-
-@pytest.mark.parametrize("ready", [False, True])
-def test_unavailable_spare_prepares_room_without_a_shared_checkout(
-    tmp_path, monkeypatch, ready
-):
-    owner = tmp_path / "owner"
-    warm = owner / ".cheese/native-warm"
-    warm.mkdir(parents=True)
-    (warm / "state.json").write_text("{}")
-    if ready:
-        (warm / "ready").touch()
-    (warm.parent / "warm-native-runner.py").write_text(
-        "def _native_alive(state):\n    return False\n"
-        "def stage(*args, **kwargs):\n    raise SystemExit(99)\n"
-    )
-    binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
-    binary.chmod(0o700)
-    work = tmp_path / "work"
-    script = tmp_path / "launch.sh"
-    launch = device_launch.build_launch_script()
-    launch = launch[: launch.index("cheese_launch_phase files_written")]
-    script.write_text(launch + '\n[ -z "$WARM_ROOT" ]\n')
-    result = subprocess.run(
-        ["sh", str(script)],
-        env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(owner),
-            "CHEESE_HOME": str(tmp_path / "home"),
-            "CHEESE_WORK": str(work),
-            "CHEESE_PROJECT": str(uuid.uuid4()),
-            "CHEESE_TOPIC": str(uuid.uuid4()),
-        },
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stderr
-    assert work.is_dir()
-    assert not (work / ".git").exists()
-    assert not (warm / "binding.json").exists()
-
-
-def test_native_claim_replaces_all_provider_proxy_variants(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    (home / ".claude").mkdir(parents=True)
-    work = tmp_path / "work"
-    work.mkdir()
-    token = tmp_path / "rv-token"
-    token.write_text("fixture")
-    (tmp_path / "ready").touch()
-    (tmp_path / "environment.json").write_text(
-        json.dumps(
-            {
-                name: "http://old-provider"
-                for name in (
-                    "HTTPS_PROXY",
-                    "https_proxy",
-                    "HTTP_PROXY",
-                    "http_proxy",
-                    "ALL_PROXY",
-                    "all_proxy",
-                )
-            }
-        )
-    )
-    monkeypatch.setattr(warm_session, "_native_alive", lambda state: True)
-    frames = []
-    with tempfile.TemporaryDirectory(prefix="cw-") as sockets:
-        path = sockets + "/claim"
-        (tmp_path / "state.json").write_text(
-            json.dumps(
-                {
-                    "home": str(home),
-                    "workspace": str(work.resolve()),
-                    "rendezvous": sockets + "/rv",
-                    "token_file": str(token),
-                    "claim_socket": path,
-                    "claim_auth": "fixture",
-                }
-            )
-        )
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-            server.bind(path)
-            server.listen(1)
-            server.settimeout(3)
-
-            def receive():
-                connection, _ = server.accept()
-                with connection, connection.makefile("rb") as reader:
-                    frames.append(json.loads(reader.readline()))
-
-            receiver = threading.Thread(target=receive)
-            receiver.start()
-            warm_session.bind(
-                tmp_path,
-                project_id=str(uuid.uuid4()),
-                topic_id=str(uuid.uuid4()),
-                work=work,
-                system_prompt="fixture",
-                settings={
-                    "env": {"HTTPS_PROXY": "http://room-meter", "NO_PROXY": "localhost"}
-                },
-            )
-            receiver.join(timeout=3)
-            assert not receiver.is_alive()
-    persisted = json.loads((home / ".claude/settings.json").read_text())["env"]
-    for environment in (frames[0]["env"], persisted):
-        assert (
-            environment["HTTPS_PROXY"]
-            == environment["https_proxy"]
-            == "http://room-meter"
-        )
-        assert environment["HTTP_PROXY"] == environment["http_proxy"] == ""
-        assert environment["ALL_PROXY"] == environment["all_proxy"] == ""
-        assert environment["NO_PROXY"] == environment["no_proxy"] == "localhost"
-
-
-@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
-def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
-    directory = tmp_path / ".cheese/native-warm"
-    directory.mkdir(parents=True)
-    runner = directory.parent / "warm-native-runner.py"
-    shutil.copyfile(warm_session.__file__, runner)
-    topic = str(uuid.uuid4())
-    (directory / "binding.json").write_text(json.dumps({"topic_id": topic}))
-    with tempfile.TemporaryDirectory(prefix="cw-") as socket_dir:
-        socket_path = socket_dir + "/s"
-
-        def tmux(*args):
-            return subprocess.check_output(
-                ["tmux", "-S", socket_path, *args], text=True
-            ).strip()
-
-        try:
-            pane = tmux(
-                "-f",
-                "/dev/null",
-                "new-session",
-                "-d",
-                "-P",
-                "-F",
-                "#{pane_id}",
-                "-s",
-                "native-warm",
-                "sleep 30",
-            )
-            (directory / "state.json").write_text(
-                json.dumps({"socket": socket_path, "pane": pane})
-            )
-            tmux(
-                "new-window",
-                "-d",
-                "-t",
-                "native-warm",
-                "-n",
-                "cheese-drain",
-                "sleep 30",
-            )
-
-            def probe():
-                return subprocess.check_output(
-                    ["sh", "-c", device_launch.DEVICE_ALIVE_PROBE],
-                    text=True,
-                    env={
-                        **os.environ,
-                        "HOME": str(tmp_path),
-                        "CHEESE_ALIVE_TOPIC": topic,
-                    },
-                ).strip()
-
-            assert probe() == "alive"
-            tmux("kill-pane", "-t", pane)
-            assert tmux("list-panes", "-a", "-F", "#{pane_dead}") == "0"
-            assert probe() == "dead"
-        finally:
-            subprocess.run(
-                ["tmux", "-S", socket_path, "kill-server"], capture_output=True
-            )
 
 
 @pytest.mark.parametrize("has_input", [True, False])
@@ -854,7 +587,6 @@ def _supervisor_block():
 
 def _spawn_supervisor(socket, env, body):
     import shlex
-    import shutil
 
     tmux = shutil.which("tmux")
     if (
@@ -935,12 +667,26 @@ def _stub_tmux_env(tmp_path):
         "esac\n"
     )
     stub.chmod(0o755)
+    # Every launch hands `claude` to the executor client, which needs an
+    # executor to prepare against. This one passes the command straight
+    # through, so what the launcher decided is what the agent receives.
+    python = shutil.which("python3")
+    client = bindir / "python3"
+    client.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in */remote-execution/client.py)\n'
+        '  [ "$2" = bootstrap ] && shift 3 && exec "$@" ;;\n'
+        "esac\n"
+        f'exec {shlex.quote(python)} "$@"\n'
+    )
+    client.chmod(0o755)
     env = {
         **os.environ,
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "HOME": str(home),
         "CHEESE_HOME": str(home),
         "CHEESE_WORK": str(work),
+        "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
         "CLAUDE": "claude --model x",
         "TMUX": f"{STUB_SOCK},1,0",
         "STUB_LOG": str(log),
@@ -1077,7 +823,6 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
 
 
 def _tmux_ge_30() -> bool:
-    import shutil
 
     if not shutil.which("tmux"):
         return False
@@ -1089,7 +834,6 @@ def _tmux_ge_30() -> bool:
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
 def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_path):
     import json
-    import shutil
     import sys
 
     from app.domain.agent import environment_runner
@@ -1165,7 +909,6 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     (the box's exact condition). A brand-new claude must boot carrying THIS
     launch's fresh token — proving the frozen-global inheritance (the 407 root
     cause) is overridden, not merely that a new process was spawned."""
-    import shutil
 
     real_tmux = shutil.which("tmux")
     # A short socket path: a unix socket path is capped near 104 chars, and
@@ -1264,9 +1007,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
 def _launch_with_tunnel(**overrides):
     env = {
         "CHEESE_TUNNEL_URL": "wss://gw.example/api/llm/tunnel",
-        "CHEESE_TUNNEL_PORT": "8445",
         "CLAUDE_CODE_OAUTH_TOKEN": "scoped.session.token",
-        "HTTPS_PROXY": "http://127.0.0.1:8445",
     }
     env.update(overrides)
     command, _env = _screen_launch(
@@ -1307,18 +1048,53 @@ def test_the_helper_and_its_token_are_written_every_launch():
     )
 
 
-def test_the_helper_starts_inside_the_session_and_before_claude():
-    """Two properties, one line. INSIDE: backgrounded in the launcher's own tree
-    it would die with the connector while claude survives in tmux. BEFORE:
-    claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
-    still binding loses that race and the screen boots unauthenticated."""
+def _run_tunnel_prefix(tmp_path, up_script: str):
+    """The launcher's tunnel lines, run for real in front of a stand-in agent
+    that reports the proxy it was started with."""
     script = _launch_with_tunnel()
-    # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
-    # under `sh`, which is dash on the machine images, where that redirect fails
-    # on every iteration and the loop would report "not ready" for a helper that
-    # came up fine (verified on the real image: `cannot create /dev/tcp/...`).
+    # Not via bash's /dev/tcp anywhere: this runs under `sh`, which is dash on
+    # the machine images, where that redirect fails on every attempt.
     assert "/dev/tcp/" not in script
-    assert 'python3 - "$CHEESE_TUNNEL_PORT"' in script
+    start = script.rindex(
+        'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then',
+        0,
+        script.index('TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up")"'),
+    )
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    (tmp_path / ".cheese").mkdir(exist_ok=True)
+    (tmp_path / ".cheese" / "cheese-tunnel-up").write_text(up_script)
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower() not in ("https_proxy", "http_proxy", "all_proxy")
+    }
+    return subprocess.run(
+        ["sh", "-c", script[start:end] + 'printf "agent:%s" "$HTTPS_PROXY"\n'],
+        env={**env, "HOME": str(tmp_path), "CHEESE_TUNNEL_URL": "wss://x/y"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_the_agent_is_started_on_the_port_its_helper_bound(tmp_path):
+    """The helper's port is the machine's choice, reported by the script that
+    brought it up. `claude` reads HTTPS_PROXY once, at startup, so the port has
+    to be in its environment before it starts — any other port is either dead or
+    somebody else's helper, carrying somebody else's credential."""
+    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123\n")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "agent:http://127.0.0.1:40123"
+
+
+def test_no_agent_starts_when_its_helper_is_not_ready(tmp_path):
+    """A `claude` started without its helper fails every turn looking like a
+    stalled model. The launch has to stop here, visibly, instead."""
+    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123\nexit 1\n")
+
+    assert result.returncode == 1
+    assert "agent:" not in result.stdout
 
 
 def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
@@ -1343,42 +1119,27 @@ def test_a_helper_running_older_code_is_retired_not_adopted():
     assert 'kill "$PID"' in script
 
 
-def _tunnel_up_home(tmp_path):
-    """A HOME laid out the way the launcher leaves one, with a stub helper that
-    binds its --port and then sits there — the only thing about the real helper
-    this script cares about."""
+def _tunnel_up_home(tmp_path, name: str = "home"):
+    """A room HOME laid out the way the launcher leaves one, with the real helper
+    and the real up-script. The helper only dials its URL when a client connects,
+    so an unreachable one is enough for everything this script decides."""
+    from app.domain.agent import machine_tunnel
     from app.domain.agent.machine_launcher import CHEESE_TUNNEL_UP
 
-    home = tmp_path / "home"
-    for name in (".claude", ".cheese"):
-        (home / name).mkdir(parents=True, exist_ok=True)
+    home = tmp_path / name
+    for directory in (".claude", ".cheese"):
+        (home / directory).mkdir(parents=True, exist_ok=True)
     (home / ".cheese" / "cheese-tunnel.py").write_text(
-        "import socket, sys, time\n"
-        "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
-        "s = socket.socket()\n"
-        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
-        "s.bind(('127.0.0.1', port))\n"
-        "s.listen(5)\n"
-        "print('tunnel listening on 127.0.0.1:%d' % port, flush=True)\n"
-        "time.sleep(300)\n"
+        Path(machine_tunnel.__file__).read_text()
     )
-    (home / ".cheese" / "cheese-tunnel.token").write_text("")
+    (home / ".cheese" / "cheese-tunnel.token").write_text("scoped\n")
     up = home / ".cheese" / "cheese-tunnel-up"
     up.write_text(CHEESE_TUNNEL_UP)
     up.chmod(0o755)
     return home, up
 
 
-def _free_port() -> int:
-    import socket
-
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
 def _listening(port: int) -> bool:
-    import socket
 
     try:
         socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
@@ -1387,30 +1148,77 @@ def _listening(port: int) -> bool:
     return True
 
 
-def _await_listening(port: int, *, timeout: float = 10.0) -> bool:
+def _await(condition, *, timeout: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _listening(port):
+        if condition():
             return True
         time.sleep(0.05)
     return False
 
 
-def _kill_pidfile(home) -> None:
+def _helper_pid(home) -> int:
+    return int((home / ".cheese" / "cheese-tunnel.pid").read_text().strip())
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _kill_helper(home) -> None:
     import signal
 
     try:
-        pid = int((home / ".cheese" / "cheese-tunnel.pid").read_text().strip())
+        pid = _helper_pid(home)
     except (OSError, ValueError):
         return
     with contextlib.suppress(OSError):
         os.kill(pid, signal.SIGKILL)
+    _await(lambda: not _pid_alive(pid), timeout=5)
+
+
+def _run_tunnel_up(home):
+    return subprocess.run(
+        ["sh", str(home / ".cheese" / "cheese-tunnel-up")],
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _up(home) -> int:
+    """Run the up-script, and return the port it printed — which must be all it
+    printed, since the launcher exports stdout verbatim as the proxy's port."""
+    result = _run_tunnel_up(home)
+    assert result.returncode == 0, result.stderr
+    assert re.fullmatch(r"[0-9]+\n", result.stdout), result.stdout
+    port = int(result.stdout)
+    assert (home / ".cheese" / "cheese-tunnel.port").read_text().strip() == str(port)
+    return port
+
+
+def _stamp_of(home) -> str:
+    return subprocess.run(
+        ["cksum", str(home / ".cheese" / "cheese-tunnel.py")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()[0]
 
 
 @pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
 def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
-    """The reuse path starts the helper as the command of its own tmux window,
-    and that window is torn down the instant the command returns. A helper that
+    """A caller can run this script as the command of its own tmux window, and
+    that window is torn down the instant the command returns. A helper that
     dies with it leaves `claude` — which read HTTPS_PROXY once at startup and
     cannot be told a new one — dialling a dead port for the life of the screen.
 
@@ -1418,10 +1226,9 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
     `cheese-tunnel.log` showing `tunnel listening` at the last launch's
     timestamp, one of them re-@'d four times in three hours without a single
     reply."""
-    import shutil
 
-    home, _up = _tunnel_up_home(tmp_path)
-    port = _free_port()
+    home, _up_script = _tunnel_up_home(tmp_path)
+    port_file = home / ".cheese" / "cheese-tunnel.port"
     tmux = shutil.which("tmux") or "tmux"  # the skipif above already found it
     sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
     try:
@@ -1431,12 +1238,14 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
         subprocess.run(
             [
                 tmux, "-S", sock, "new-window", "-d", "-t", "s:", "-n", "cheese-tunnel",
-                f'HOME={home} CHEESE_TUNNEL_PORT={port} CHEESE_TUNNEL_URL=wss://x/y '
+                f"HOME={home} CHEESE_TUNNEL_URL=ws://127.0.0.1:9/x "
                 f'exec sh "{home}/.cheese/cheese-tunnel-up"',
             ],
             check=True,
         )  # fmt: skip
-        assert _await_listening(port), (
+        assert _await(port_file.exists), "the helper never reported a port"
+        port = int(port_file.read_text())
+        assert _await(lambda: _listening(port)), (
             "the helper did not come up in its own tmux window"
         )
         # The window's command has long returned by now; the helper must not have
@@ -1447,42 +1256,143 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
             "screen now fails with ConnectionRefused and nothing can repair it"
         )
     finally:
-        _kill_pidfile(home)
+        _kill_helper(home)
         subprocess.run([tmux, "-S", sock, "kill-server"], capture_output=True)
 
 
-def _run_tunnel_up(home, port: int):
-    return subprocess.run(
-        ["sh", str(home / ".cheese" / "cheese-tunnel-up")],
-        env={
-            **os.environ,
-            "HOME": str(home),
-            "CHEESE_TUNNEL_PORT": str(port),
-            "CHEESE_TUNNEL_URL": "wss://x/y",
-        },
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+def test_rooms_launched_together_each_get_their_own_helper(tmp_path):
+    """~50 rooms share one host, and a port chosen by anything but the machine
+    lands two of them on one number. When that happened the second helper died,
+    the first answered the readiness check in its place, and the second room's
+    `claude` ran every request — its Remote Control registration included — on
+    the first room's credential. Each room must get a port that its OWN helper
+    holds, even when they all start at once."""
+    homes = [_tunnel_up_home(tmp_path, f"room-{index}")[0] for index in range(6)]
+    results: dict[int, subprocess.CompletedProcess] = {}
 
+    def launch(index: int) -> None:
+        results[index] = _run_tunnel_up(homes[index])
 
-def test_a_helper_it_already_started_is_adopted_rather_than_churned(tmp_path):
-    """A screen is reused across turns, so this runs on every launch. Restarting
-    a working helper each time would reset every in-flight connection."""
-    home, _up = _tunnel_up_home(tmp_path)
-    port = _free_port()
-    pidf = home / ".cheese" / "cheese-tunnel.pid"
+    threads = [threading.Thread(target=launch, args=(i,)) for i in range(len(homes))]
     try:
-        _run_tunnel_up(home, port)
-        assert _await_listening(port)
-        first = pidf.read_text().strip()
-        _run_tunnel_up(home, port)
-        assert pidf.read_text().strip() == first, (
-            "a healthy helper was restarted instead of adopted"
-        )
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        ports = []
+        for index in range(len(homes)):
+            result = results[index]
+            assert result.returncode == 0, result.stderr
+            ports.append(int(result.stdout))
+            assert _listening(ports[-1])
+        assert len(set(ports)) == len(homes), f"rooms share a helper port: {ports}"
+
+        # And each port is held by that room's helper: retiring one room's helper
+        # takes down its port and nobody else's.
+        _kill_helper(homes[0])
+        assert _await(lambda: not _listening(ports[0]))
+        assert all(_listening(port) for port in ports[1:])
+    finally:
+        for home in homes:
+            _kill_helper(home)
+
+
+def test_a_foreign_listener_on_the_recorded_port_is_never_adopted(tmp_path):
+    """The recorded port is only a preference. While this room's helper was gone,
+    anything — another room's helper among them — may have bound it, and a
+    readiness check that asks only "does something answer there" hands this
+    room's `claude` to that listener. The script must start a helper of its own
+    somewhere else and report THAT port."""
+
+    home, _up_script = _tunnel_up_home(tmp_path)
+    cheese = home / ".cheese"
+    with socket.socket() as foreign:
+        foreign.bind(("127.0.0.1", 0))
+        foreign.listen(8)
+        taken = foreign.getsockname()[1]
+        # What a room is left with after its helper died: its port, its stamp,
+        # and a pid that no longer resolves.
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (cheese / "cheese-tunnel.pid").write_text(f"{dead.pid}\n")
+        (cheese / "cheese-tunnel.stamp").write_text(f"{_stamp_of(home)}\n")
+        (cheese / "cheese-tunnel.port").write_text(f"{taken}\n")
+        try:
+            port = _up(home)
+
+            assert port != taken, "reported ready on somebody else's listener"
+            assert _listening(port)
+            # It is ours: our helper going away takes that port with it, and the
+            # foreign listener is untouched.
+            _kill_helper(home)
+            assert _await(lambda: not _listening(port))
+            assert _listening(taken)
+        finally:
+            _kill_helper(home)
+
+
+def test_a_live_pid_that_does_not_hold_the_recorded_port_is_not_adopted(tmp_path):
+    """After a reboot the recorded pid can name some unrelated process, and the
+    recorded port can be held by another room's helper. A live pid, a matching
+    stamp and an answering port are all true then, and none of them makes that
+    listener this room's. Adoption asks whether the pid holds the port."""
+
+    home, _up_script = _tunnel_up_home(tmp_path)
+    cheese = home / ".cheese"
+    unrelated = subprocess.Popen(["sleep", "30"])
+    try:
+        with socket.socket() as foreign:
+            foreign.bind(("127.0.0.1", 0))
+            foreign.listen(8)
+            taken = foreign.getsockname()[1]
+            (cheese / "cheese-tunnel.pid").write_text(f"{unrelated.pid}\n")
+            (cheese / "cheese-tunnel.stamp").write_text(f"{_stamp_of(home)}\n")
+            (cheese / "cheese-tunnel.port").write_text(f"{taken}\n")
+
+            port = _up(home)
+
+            assert port != taken, "adopted a listener the recorded pid does not hold"
+            assert _helper_pid(home) != unrelated.pid
+            assert _listening(port)
+            assert _listening(taken)
+    finally:
+        _kill_helper(home)
+        unrelated.kill()
+        unrelated.wait()
+
+
+def test_a_helper_it_already_started_is_adopted_on_its_port(tmp_path):
+    """Runs before every agent start or claim. Restarting a working helper each
+    time would reset every in-flight connection, and would move the port out from
+    under anything already dialling it."""
+    home, _up_script = _tunnel_up_home(tmp_path)
+    try:
+        port = _up(home)
+        first = _helper_pid(home)
+
+        assert _up(home) == port
+        assert _helper_pid(home) == first, "a healthy helper was restarted"
         assert _listening(port)
     finally:
-        _kill_pidfile(home)
+        _kill_helper(home)
+
+
+def test_a_helper_that_died_comes_back_on_the_port_it_had(tmp_path):
+    """A helper that exits is started again on the port it recorded when that port
+    is still free, so the address a room uses changes only when something else
+    has taken it."""
+    home, _up_script = _tunnel_up_home(tmp_path)
+    try:
+        port = _up(home)
+        first = _helper_pid(home)
+        _kill_helper(home)
+        assert _await(lambda: not _listening(port))
+
+        assert _up(home) == port
+        assert _helper_pid(home) != first
+        assert _listening(port)
+    finally:
+        _kill_helper(home)
 
 
 def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
@@ -1490,32 +1400,81 @@ def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
     number — after a reboot, or on a box that has burnt through the pid space,
     that is a coincidence. Adopting on it would leave the port dead for the life
     of the screen, which is the failure this script exists to end."""
-    home, _up = _tunnel_up_home(tmp_path)
-    port = _free_port()
-    claude = home / ".cheese"
+    home, _up_script = _tunnel_up_home(tmp_path)
+    cheese = home / ".cheese"
     impostor = subprocess.Popen(["sh", "-c", "sleep 300"])
     try:
+        port = _up(home)
+        _kill_helper(home)
         # The state the box is actually found in: a pid that resolves, a stamp
-        # that matches the helper on disk, and nothing listening.
-        (claude / "cheese-tunnel.pid").write_text(f"{impostor.pid}\n")
-        stamp = subprocess.run(
-            ["cksum", str(claude / "cheese-tunnel.py")],
-            capture_output=True,
-            text=True,
-        ).stdout.split()[0]
-        (claude / "cheese-tunnel.stamp").write_text(f"{stamp}\n")
+        # that matches the helper on disk, a port file, and nothing listening.
+        (cheese / "cheese-tunnel.pid").write_text(f"{impostor.pid}\n")
         assert not _listening(port)
 
-        _run_tunnel_up(home, port)
+        replaced = _up(home)
 
-        assert _await_listening(port), (
-            "the port is still dead — an impostor pid was adopted as a live helper"
-        )
-        assert (claude / "cheese-tunnel.pid").read_text().strip() != str(impostor.pid)
+        assert _listening(replaced), "an impostor pid was adopted as a live helper"
+        assert _helper_pid(home) != impostor.pid
     finally:
-        _kill_pidfile(home)
+        _kill_helper(home)
         impostor.terminate()
         impostor.wait(timeout=5)
+
+
+def test_a_helper_that_cannot_start_fails_the_launch_loudly(tmp_path):
+    """Nothing about a `claude` pointed at no helper looks like a tunnel problem
+    from outside — its turns just never answer. So a helper that exits instead of
+    binding must fail this script, print no port, and say where to look."""
+    home, _up_script = _tunnel_up_home(tmp_path)
+    (home / ".cheese" / "cheese-tunnel.py").write_text(
+        "import sys\nprint('cannot bind', file=sys.stderr)\nraise SystemExit(1)\n"
+    )
+    (home / ".cheese" / "cheese-tunnel.port").write_text("40999\n")
+
+    started = time.monotonic()
+    result = _run_tunnel_up(home)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "cannot bind" in result.stderr
+    # An exit is noticed when it happens, not at the end of the wait.
+    assert time.monotonic() - started < 5
+
+
+def test_the_helper_reports_only_a_port_it_actually_bound(tmp_path):
+    """The port file is the helper's proof that it holds the port. Written after
+    the bind it is exactly that; a failed bind must leave none behind, or a
+    reader would take the foreign listener on that port for this helper."""
+
+    from app.domain.agent import machine_tunnel
+
+    def helper(port: int, port_file):
+        return subprocess.Popen(
+            [
+                sys.executable, machine_tunnel.__file__,
+                "--port", str(port), "--port-file", str(port_file),
+                "--url", "ws://127.0.0.1:9/x", "--token", "scoped",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )  # fmt: skip
+
+    with socket.socket() as foreign:
+        foreign.bind(("127.0.0.1", 0))
+        foreign.listen(1)
+        taken = foreign.getsockname()[1]
+        refused = helper(taken, tmp_path / "refused.port")
+        assert refused.wait(timeout=10) != 0
+        assert not (tmp_path / "refused.port").exists()
+
+    chosen = tmp_path / "chosen.port"
+    process = helper(0, chosen)
+    try:
+        assert _await(chosen.exists), "the helper never reported its port"
+        assert _listening(int(chosen.read_text()))
+    finally:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def test_the_helper_is_verified_by_the_dash_syntax_check_too():
@@ -1966,7 +1925,6 @@ def _assert_exited(pid):
 
 @pytest.mark.parametrize("shell", ["sh", "dash"])
 def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, shell):
-    import shutil
 
     if shutil.which(shell) is None:
         pytest.skip(f"needs {shell}")
@@ -1994,8 +1952,6 @@ def test_supervisor_preserves_input_and_exit_status_and_reaps_drainer(tmp_path, 
 
 def test_closing_real_tmux_ends_agent_and_drainer(tmp_path):
     import shlex
-    import shutil
-    import tempfile
 
     tmux = shutil.which("tmux")
     if tmux is None:
@@ -2041,7 +1997,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     executor-backed screen at startup, and nothing else in the script would say
     why. Nothing exercises that branch in-process: it runs on the machine."""
     script = device_launch.build_launch_script(
-        remote_execution=True,
         system_prompt="x",
         resume_session_id=None,
         topic_id="t",

@@ -2,6 +2,8 @@
 
 import ast
 import base64
+import errno
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -34,6 +36,37 @@ RUNTIME = (
 spec = importlib.util.spec_from_file_location("execution_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
+
+
+def test_acceptance_cleanup_leaves_another_runs_same_named_case_alive(
+    tmp_path, monkeypatch
+):
+    scripts = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
+    monkeypatch.syspath_prepend(str(scripts))
+    acceptance_spec = importlib.util.spec_from_file_location(
+        "acceptance_isolation", scripts / "acceptance.py"
+    )
+    acceptance = importlib.util.module_from_spec(acceptance_spec)
+    acceptance_spec.loader.exec_module(acceptance)
+    cases = [tmp_path / name / "native-terminal-rc-1" for name in ("run-a", "run-b")]
+    servers = [acceptance.tmux_server(folder) for folder in cases]
+    # Keep even the deliberately broken negative control away from other runs.
+    with tempfile.TemporaryDirectory(prefix="ci-tmux-", dir="/tmp") as sockets:
+        monkeypatch.setenv("TMUX_TMPDIR", sockets)
+        try:
+            for server in servers:
+                acceptance.run(
+                    server + ["new-session", "-d", "-s", "agent", "sleep 300"]
+                )
+            identity = ["display-message", "-p", "-t", "agent", "#{pane_pid}"]
+            second_pid = acceptance.run(servers[1] + identity).strip()
+            acceptance.run(servers[0] + ["kill-server"])
+            assert acceptance.run(servers[1] + identity).strip() == second_pid
+        finally:
+            for server in servers:
+                subprocess.run(
+                    server + ["kill-server"], capture_output=True, timeout=10
+                )
 
 
 def _proxy_source() -> str:
@@ -81,6 +114,28 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
           }, () => {throw new Error('searched session host')});
           assert.match(result.deny, /use Bash/);
         }
+    """)
+
+
+def test_isolated_subagents_are_refused_with_the_way_that_works():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        for (const isolation of ['worktree', 'remote']) {
+          const result = await handlers['tool.call']({}, {
+            tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+            prompt: 'list files', isolation,
+          }, () => {throw new Error('spawned on the session host')});
+          assert.match(result.deny, /cheese split/);
+        }
+        const spawned = await handlers['tool.call']({}, {
+          tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+          prompt: 'list files',
+        }, (event) => ({spawned: event.tool}));
+        assert.deepEqual(spawned, {spawned: 'Agent'});
     """)
 
 
@@ -997,6 +1052,89 @@ def test_executor_upgrade_retries_after_installer_failure(
         )
 
 
+@pytest.mark.parametrize("socket_gone", [False, True])
+def test_stop_waits_for_service_lock_after_socket_disappears(tmp_path, socket_gone):
+    state = tmp_path / "executor"
+    state.mkdir()
+    attempted = tmp_path / "lock-attempted"
+    signalled = tmp_path / "signalled"
+    observer = tmp_path / "observed_stop.py"
+    observer.write_text(
+        """
+import importlib.util
+import pathlib
+import sys
+
+source, state, attempted, signalled, socket_gone = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("executor_runtime", source)
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+original_flock = runtime.fcntl.flock
+
+def observe_flock(lock, operation):
+    try:
+        return original_flock(lock, operation)
+    except BlockingIOError:
+        pathlib.Path(attempted).touch()
+        raise
+
+runtime.fcntl.flock = observe_flock
+if socket_gone == "False":
+    runtime.request = lambda *_: {"pid": 123}
+    runtime.os.kill = lambda *_: pathlib.Path(signalled).touch()
+sys.argv = [source, "stop", "--state", state]
+runtime.main()
+"""
+    )
+    with (state / "service.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stop = subprocess.Popen(
+            [
+                sys.executable,
+                str(observer),
+                str(RUNTIME),
+                str(state),
+                str(attempted),
+                str(signalled),
+                str(socket_gone),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not attempted.exists():
+                if stop.poll() is not None:
+                    _, stderr = stop.communicate()
+                    pytest.fail(f"stop returned before lock release: {stderr.decode()}")
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert stop.poll() is None
+            if not socket_gone:
+                assert signalled.exists()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            try:
+                _, stderr = stop.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                stop.kill()
+                stop.communicate()
+                raise
+        assert stop.returncode == 0, stderr.decode()
+
+
+def test_stop_with_no_state_remains_a_no_op(tmp_path):
+    state = tmp_path / "missing"
+    result = subprocess.run(
+        [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not state.exists()
+
+
 @pytest.mark.parametrize("update_kind", ["runtime", "binary", "helper"])
 def test_executor_release_waits_for_commands_and_preserves_results(
     tmp_path, monkeypatch, capsys, update_kind
@@ -1027,7 +1165,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         bootstrap.configure(payload)
         capsys.readouterr()
         original = ready()
-        task = runtime.request(
+        started = runtime.request(
             state,
             "invoke",
             {
@@ -1040,7 +1178,9 @@ def test_executor_release_waits_for_commands_and_preserves_results(
                     "run_in_background": True,
                 },
             },
-        )["value"]["backgroundTaskId"]
+        )
+        assert "value" in started, started
+        task = started["value"]["backgroundTaskId"]
         changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
         if update_kind == "runtime":
             changed += b"\n# release fixture\n"
@@ -1055,7 +1195,14 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         ).decode()
         before = source.read_bytes()
         payload["env"]["CHEESE_TOKEN"] = "refreshed-while-busy"
-        bootstrap.configure(payload)
+        try:
+            bootstrap.configure(payload)
+        except RuntimeError as error:
+            log = home / ".cheese/executor-bootstrap.log"
+            pytest.fail(
+                f"{error}; executor-bootstrap.log:\n"
+                f"{log.read_text() if log.exists() else '<missing>'}"
+            )
         deferred = json.loads(capsys.readouterr().out)
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
@@ -1079,7 +1226,14 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert result["stdout"] == "kept"
-        bootstrap.configure(payload)
+        try:
+            bootstrap.configure(payload)
+        except RuntimeError as error:
+            log = home / ".cheese/executor-bootstrap.log"
+            pytest.fail(
+                f"{error}; restart executor-bootstrap.log:\n"
+                f"{log.read_text() if log.exists() else '<missing>'}"
+            )
         capsys.readouterr()
         updated = ready()
         assert updated["pid"] != original["pid"]
@@ -1669,6 +1823,44 @@ class RemoteExecutionTests(unittest.TestCase):
         (skill / "SKILL.md").write_text("changed skill body")
         changed = runtime.request(self.state, "context_fs", {"operation": "tree"})
         self.assertNotEqual(changed["generation"], tree["generation"])
+
+    def test_project_workflow_save_reaches_executor_and_other_paths_stay_read_only(
+        self,
+    ):
+        spec = importlib.util.spec_from_file_location(
+            "forwarded_fs", RUNTIME.with_name("forwarded_fs.py")
+        )
+        forwarded_fs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(forwarded_fs)
+
+        workflows = self.workspace / ".claude/workflows"
+        view = forwarded_fs.ForwardedProject(
+            lambda method, params: runtime.request(self.state, method, params)
+        )
+        view.refresh()
+        view.mkdir("/.claude", 0o700)
+        view.mkdir("/.claude/workflows", 0o700)
+        view.create("/.claude/workflows/draft.js", 0o600)
+        view.write("/.claude/workflows/draft.js", b"export default 1\n", 0)
+        view.rename("/.claude/workflows/draft.js", "/.claude/workflows/saved.js")
+        assert (workflows / "saved.js").read_text() == "export default 1\n"
+        assert ".claude/workflows/saved.js" in view.entries
+        assert view.read("/.claude/workflows/saved.js", 100, 0) == b"export default 1\n"
+        view.open("/.claude/workflows/saved.js", os.O_WRONLY | os.O_TRUNC)
+        view.write("/.claude/workflows/saved.js", b"export default 2\n", 0)
+        assert (workflows / "saved.js").read_text() == "export default 2\n"
+
+        with pytest.raises(OSError) as outside:
+            view.create("/.claude/settings.json", 0o600)
+        assert outside.value.errno == errno.EROFS
+        (workflows / "outside").symlink_to(self.root)
+        with pytest.raises(RuntimeError, match="Only project workflows"):
+            runtime.request(
+                self.state,
+                "context_fs",
+                {"operation": "create", "path": ".claude/workflows/outside/leak"},
+            )
+        assert not (self.root / "leak").exists()
 
     def test_context_fs_reports_imports_outside_project_boundary(self):
         absolute_project_import = str(self.workspace / "inside.md")

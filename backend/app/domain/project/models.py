@@ -85,11 +85,25 @@ class Project(UuidPk, Timestamps, Base):
     )
     # 一页纸总结 (spec §7.3/F2): AI-maintained one-pager, 老师 30 秒读懂。
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # 用户自己写的一句话：这个项目打算做什么（#946 片 C，建项目时问的那一句）。
+    # 与 summary 的分工是「谁说的」：summary 是 AI 维护的一页纸，这一条是用户的
+    # 原话——平台不改写它，只把它搬进新生的房间（见 ProjectService.create）。
+    intent: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
     # When the 本体 last ran a heartbeat — used to schedule ≤1 patrol/day/project.
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # The project's join link (``/project-invites/<token>``), the same shape a
+    # team's has: permanent until a manager resets it, NULL until first asked for.
+    join_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    # Whether someone arriving by that link waits for a manager. Off, they are in
+    # the moment they confirm; either way it is their own click, never the link's.
+    join_approval: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
     )
 
 
@@ -113,19 +127,6 @@ class ProjectMember(UuidPk, Timestamps, Base):
         Enum(ProjectRole, native_enum=False, length=16),
         default=ProjectRole.member,
     )
-
-
-class ProjectJoinLink(UuidPk, Timestamps, Base):
-    """A manager's revocable invitation for anyone holding the link."""
-
-    __tablename__ = "project_join_links"
-
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
-    )
-    token: Mapped[str] = mapped_column(String(64), unique=True)
-    created_by: Mapped[str] = mapped_column(String(64))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class InvitationStatus(enum.StrEnum):
@@ -171,6 +172,44 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
         default=InvitationStatus.pending,
     )
     responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class JoinRequestStatus(enum.StrEnum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class ProjectJoinRequest(UuidPk, Timestamps, Base):
+    """Someone asking to join a project through its link, waiting for a manager.
+
+    The mirror of :class:`ProjectInvitation`: there a manager asks and the person
+    answers, here the person asks and a manager answers. Answered rows stay, for
+    the same reason — they are the record of how someone came to be on the roster.
+    """
+
+    __tablename__ = "project_join_requests"
+    __table_args__ = (
+        # One pending request per person per project; answered ones pile up, so
+        # someone turned down can ask again. Same shape as uq_project_invitation.
+        UniqueConstraint(
+            "project_id", "requester_handle", "status", name="uq_project_join_request"
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    requester_handle: Mapped[str] = mapped_column(String(64), index=True)
+    message: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[JoinRequestStatus] = mapped_column(
+        Enum(JoinRequestStatus, native_enum=False, length=16),
+        default=JoinRequestStatus.pending,
+    )
+    decided_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

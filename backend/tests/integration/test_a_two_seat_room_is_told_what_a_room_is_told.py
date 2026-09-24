@@ -42,9 +42,8 @@ class Screen(StubChannel):
         return True
 
 
-async def _prompt_of(client, tmp_path, *, private: bool) -> tuple[str, int]:
+async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
     """跑一轮，交回这一轮的 system prompt 和这间房名册上的席位数。"""
-    factory = client.test_factory
     screen = Screen()
     svc = ChatService(
         session_factory=factory,
@@ -90,8 +89,12 @@ async def _prompt_of(client, tmp_path, *, private: bool) -> tuple[str, int]:
 
 async def test_a_dm_is_told_the_doc_the_card_and_the_stage(client, tmp_path):
     """合同：实况文档、验收卡、阶段，两席的私聊和两席的普通房间一模一样。"""
-    private_prompt, private_seats = await _prompt_of(client, tmp_path, private=True)
-    room_prompt, room_seats = await _prompt_of(client, tmp_path, private=False)
+    private_prompt, private_seats = client.portal.call(
+        lambda: _prompt_of(client.test_request_factory, tmp_path, private=True)
+    )
+    room_prompt, room_seats = client.portal.call(
+        lambda: _prompt_of(client.test_request_factory, tmp_path, private=False)
+    )
 
     # 前提：两边都是两席，比的才是「私聊 vs 普通」而不是「两席 vs 多席」。
     assert private_seats == 2

@@ -58,12 +58,14 @@ class Member:
     # 或者它是这个项目的队友。有 source 的行改不了角色也移不走。
     source: str | None = None
     team_id: int | None = None
+    # The handle of that team, which the row's 「来自团队」 link goes to.
+    team_handle: str | None = None
     created_at: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
 
-        键与字段同名，缺省的三个（``source``/``team_id``/``created_at``）不出现，
+        键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/``created_at``）不出现，
         因为「没有这个字段」正是界面判断「这一行背后有没有授权行」的依据。
         """
         row: dict = {
@@ -79,6 +81,8 @@ class Member:
             row["source"] = self.source
         if self.team_id is not None:
             row["team_id"] = self.team_id
+        if self.team_handle is not None:
+            row["team_handle"] = self.team_handle
         if self.created_at is not None:
             row["created_at"] = self.created_at
         return row
@@ -112,6 +116,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             avatar_id=person["avatar_id"],
             source=person.get("source"),
             team_id=person.get("team_id"),
+            team_handle=person.get("team_handle"),
             created_at=person.get("created_at"),
         )
         for person in await projects.people(project_id)
@@ -152,6 +157,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             project_default=instance.id == default_instance_id,
             source=held.source,
             team_id=held.team_id,
+            team_handle=held.team_handle,
             created_at=held.created_at,
         )
     return tuple(rows)

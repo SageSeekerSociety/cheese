@@ -33,12 +33,24 @@ class RequiredCITest(unittest.TestCase):
             "harness": ["backend/uv.lock", "backend/app/domain/agent/harness/claude_code/device_launch.py",
                         "backend/app/domain/agent/harness/codex/host.py",
                         ".github/workflows/harness-contract.yml"],
-            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml"],
+            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml",
+                    "scripts/remote_execution/headless_contract.py"],
         }
         for suite, paths in previous.items():
             for path in paths:
                 with self.subTest(suite=suite, path=path):
                     self.assertTrue(gate.select([path])[suite])
+
+    def test_remote_execution_plugin_runs_the_build_contracts(self):
+        # headless_contract.py launches -p through the plugin and the executor.
+        for path in (
+            "backend/app/domain/agent/harness/claude_code/remote_execution/proxy.js",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/client.py",
+            "backend/app/domain/agent/executor_transport.py",
+            "scripts/remote_execution/acceptance.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["mcp"])
 
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])

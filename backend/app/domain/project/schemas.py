@@ -25,6 +25,9 @@ class ProjectCreate(BaseModel):
     # The 赛题 this project comes from, when it was created from one.
     external_task_id: int | None = None
     forge_kind: Literal["forgejo", "github_app"] = "forgejo"
+    # 建项目时问的那一句「你打算做什么」（#946 片 C）。可选：空串就是没问过或
+    # 用户跳过了，那时新生房间里什么都不写——房间靠它自己的起手区块顶上。
+    intent: str = Field(default="", max_length=2000)
 
 
 class ProjectOut(BaseModel):
@@ -34,9 +37,13 @@ class ProjectOut(BaseModel):
     name: str
     owner_handle: str | None
     team_id: int | None = None
+    #: The owning team's handle, which links to the team go by. Filled by the
+    #: route, like ``shell``: it lives on the team, not on the project row.
+    team_handle: str | None = None
     external_task_id: int | None = None
     ai_mode: AiMode
     summary: str
+    intent: str = ""
     root_topic_id: uuid.UUID | None
     created_at: datetime
     #: The 壳 in force for this project, already resolved (项目-level setting →

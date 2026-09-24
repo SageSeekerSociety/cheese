@@ -1,7 +1,6 @@
 """Durable archived-room cleanup, independent of backend process lifetime."""
 
 import asyncio
-import json
 import logging
 import os
 import socket
@@ -31,6 +30,26 @@ from app.domain.topic.repositories import TopicRepository
 
 logger = logging.getLogger("cheesex.topic.retire")
 
+# How long an archived room's Claude Code transcripts stay on the session host
+# after its cleanup removes the room's home. A window for debugging what an
+# agent did after the fact, and no longer: transcripts are sensitive user data,
+# and nothing needs them to carry the work on — the room's chat, its living doc
+# and the action timeline stay with the room. A reopened room starts a new
+# session and does not read them either.
+TRANSCRIPT_RETENTION = timedelta(days=30)
+
+
+def _keeps_transcripts(entry: dict) -> bool:
+    """Whether this resource's transcripts are kept when its home is removed.
+
+    Every Claude Code session runs on the central session host, so a room's
+    transcripts are in its home there and in no other device's."""
+    return (
+        entry["kind"] == "device"
+        and settings.agent_session_device_id is not None
+        and entry["device_id"] == settings.agent_session_device_id
+    )
+
 
 async def _device_action(
     device: str,
@@ -38,14 +57,21 @@ async def _device_action(
     resource: str,
     action: str,
     cleanup_id: uuid.UUID,
-    receipts: list | None = None,
+    room: uuid.UUID | None = None,
 ) -> None:
     result = await device_hub.exec(
         device,
-        ["python3", "-", action, str(project), resource, str(cleanup_id)],
+        [
+            "python3",
+            "-",
+            action,
+            str(project),
+            resource,
+            str(cleanup_id),
+            str(room) if room else "-",
+        ],
         stdin=Path(resource_cleanup.__file__).read_text(),
         timeout=60,
-        env={"CHEESE_TRANSCRIPT_RECEIPTS": json.dumps(receipts or [])},
     )
     if result.get("exit") != 0 or result.get("truncated"):
         raise RuntimeError(
@@ -53,37 +79,36 @@ async def _device_action(
         )
 
 
-async def _flush_transcripts(
+async def _deliver_events(
     project: uuid.UUID,
     topic: uuid.UUID,
     entry: dict,
     session: AsyncSession,
-    cleanup_id: uuid.UUID,
-) -> list:
-    # Use the same collector even when the room last ran an older launcher.
+) -> None:
+    """Deliver the home's last spooled hook events before it is removed.
+
+    The room's own sender stops with its agent, so what it had not sent yet is
+    sent from here, with the sender the backend ships today."""
     home = device_home_dir(project, uuid.UUID(entry["resource_id"]))
     token = mint_scoped_token(project_id=str(project), topic_id=str(topic), ttl_s=3600)
     base = settings.connector_public_base.rstrip("/")
     device = await session.get(DeviceRow, entry["device_id"])
     if device and device.supply == Supply.cloud and device.cloud_control_private:
         base = "http://127.0.0.1:18080"
-    # The collection below can take minutes; nothing here is pending, so end
-    # the transaction rather than hold a pool connection across it.
+    # Delivery can take a while; nothing here is pending, so end the
+    # transaction rather than hold a pool connection across it.
     await session.commit()
     setup = (
-        f'if [ ! -d "{home}" ]; then printf "[]"; exit 0; fi; '
+        f'if [ ! -d "{home}/.cheese/cheese-spool" ]; then exit 0; fi; '
         f'export CHEESE_COLLECT_HOME="{home}"; exec python3 -'
     )
     source = Path(event_drain.__file__).read_text()
     source = source[: source.index('if __name__ == "__main__":')]
     source += """\nhome = Path(os.environ["CHEESE_COLLECT_HOME"])
-script = home / ".cheese/cheese-drain"
-script.parent.mkdir(parents=True, exist_ok=True)
-values = {"CHEESE_HOOK_SPOOL": str(home / ".cheese/cheese-spool"),
-          "CHEESE_HOOK_URL": os.environ["CHEESE_CLEANUP_HOOK_URL"],
-          "CHEESE_CLEANUP_ID": os.environ["CHEESE_CLEANUP_ID"],
+values = {"CHEESE_HOOK_URL": os.environ["CHEESE_CLEANUP_HOOK_URL"],
           "CHEESE_TOKEN": os.environ["CHEESE_CLEANUP_TOKEN"]}
-print(json.dumps(collect_transcripts(script, values, flush=True)))
+if deliver_events(home / ".cheese/cheese-spool", values).rejected:
+    sys.exit("hook events still await acknowledgement")
 """
     result = await device_hub.exec(
         entry["device_id"],
@@ -92,13 +117,11 @@ print(json.dumps(collect_transcripts(script, values, flush=True)))
         env={
             "CHEESE_CLEANUP_TOKEN": token,
             "CHEESE_CLEANUP_HOOK_URL": f"{base}/sandbox/hooks/{topic}",
-            "CHEESE_CLEANUP_ID": str(cleanup_id),
         },
         timeout=900,
     )
     if result.get("exit") != 0 or result.get("truncated"):
-        raise RuntimeError("final transcript collection or confirmation failed")
-    return json.loads(result.get("stdout") or "[]")
+        raise RuntimeError("final hook event delivery failed")
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
@@ -326,7 +349,9 @@ async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
         ids = list(
             await session.scalars(
                 select(RoomCleanup.id).where(
-                    RoomCleanup.state.in_(["pending", "preparing", "claimed"]),
+                    RoomCleanup.state.in_(
+                        ["pending", "preparing", "claimed", "retained"]
+                    ),
                     RoomCleanup.due_at <= datetime.now(UTC),
                 )
             )
@@ -356,7 +381,7 @@ async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
                     operation = await session.get(RoomCleanup, cleanup_id)
                     counts[
                         "completed"
-                        if operation and operation.state == "complete"
+                        if operation and operation.state in {"complete", "retained"}
                         else "pending"
                     ] += 1
                 except Exception as exc:
@@ -404,6 +429,11 @@ async def _release(sessions: SessionFactory, cleanup_id: uuid.UUID) -> None:
 async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
     operation = await session.get(RoomCleanup, cleanup_id)
     if operation is None or operation.state in {"cancelled", "complete"}:
+        return
+    if operation.state == "retained":
+        # Reopening the room does not cancel this: the new generation starts a
+        # new session and never reads these, so they expire on schedule.
+        await _expire_transcripts(session, operation)
         return
     retry_claim = operation.state == "claimed"
     room = await TopicRepository(session).lock(operation.topic_id)
@@ -476,12 +506,8 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                         "publication",
                         operation.id,
                     )
-                    entry["transcripts"] = await _flush_transcripts(
-                        operation.project_id,
-                        operation.topic_id,
-                        entry,
-                        session,
-                        operation.id,
+                    await _deliver_events(
+                        operation.project_id, operation.topic_id, entry, session
                     )
             active = await session.scalar(
                 select(AgentTurn.id)
@@ -524,8 +550,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                 await device_hub.close_screen(screen.device_id, screen.sid)
             operation.state = "claimed"
             operation.last_error = None
-            if room is not None:
-                room.transcripts_archived_at = datetime.now(UTC)
             await session.commit()
         except Exception as exc:
             operation.state = (
@@ -564,22 +588,16 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     "prepare",
                     operation.id,
                 )
-                entry["transcripts"] = await _flush_transcripts(
-                    operation.project_id,
-                    operation.topic_id,
-                    entry,
-                    session,
-                    operation.id,
+                await _deliver_events(
+                    operation.project_id, operation.topic_id, entry, session
                 )
-                operation.resources = [dict(item) for item in operation.resources]
-                await session.commit()
             await _device_action(
                 entry["device_id"],
                 operation.project_id,
                 entry["resource_id"],
                 "remove",
                 operation.id,
-                entry.get("transcripts"),
+                operation.topic_id if _keeps_transcripts(entry) else None,
             )
         elif entry["kind"] == "worktree":
             target = Path(entry["retired"])
@@ -597,12 +615,52 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             await MachineService(session).release_archived_machine(
                 uuid.UUID(entry["id"])
             )
+        # Whether transcripts were kept is recorded with the removal, so their
+        # expiry follows what was kept even if the session host changes.
+        done = {"removed": True}
+        if _keeps_transcripts(entry):
+            done["retained"] = True
         operation.resources = [
-            {**item, "removed": True} if item == entry else item
+            {**item, **done} if item == entry else item for item in operation.resources
+        ]
+        await session.commit()
+    if any(entry.get("retained") for entry in operation.resources):
+        operation.state = "retained"
+        operation.due_at = datetime.now(UTC) + TRANSCRIPT_RETENTION
+    else:
+        operation.state = "complete"
+    operation.last_error = None
+    await session.commit()
+    logger.info(
+        "cleanup %s operation=%s room=%s",
+        operation.state,
+        cleanup_id,
+        operation.topic_id,
+    )
+
+
+async def _expire_transcripts(session, operation: RoomCleanup) -> None:
+    for entry in operation.resources:
+        if not entry.get("retained") or entry.get("expired"):
+            continue
+        await _device_action(
+            entry["device_id"],
+            operation.project_id,
+            entry["resource_id"],
+            "expire",
+            operation.id,
+            operation.topic_id,
+        )
+        operation.resources = [
+            {**item, "expired": True} if item == entry else item
             for item in operation.resources
         ]
         await session.commit()
     operation.state = "complete"
     operation.last_error = None
     await session.commit()
-    logger.info("cleanup complete operation=%s room=%s", cleanup_id, operation.topic_id)
+    logger.info(
+        "cleanup transcripts expired operation=%s room=%s",
+        operation.id,
+        operation.topic_id,
+    )

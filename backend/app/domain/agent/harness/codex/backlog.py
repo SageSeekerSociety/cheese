@@ -7,6 +7,7 @@ from pathlib import Path
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.journal import Journal
+from app.domain.agent.harness.driven.journal import PAGE
 
 
 async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> None:
@@ -16,7 +17,7 @@ async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> N
         while True:
             entries = (await call("events", {"after": after}))["events"]
             journal.import_events(entries)
-            if len(entries) < 256:
+            if len(entries) < PAGE:
                 return
             after = entries[-1]["sequence"]
     finally:

@@ -37,7 +37,14 @@ let lib: PdfLib | null = null
 let task: PDFDocumentLoadingTask | null = null
 let observer: IntersectionObserver | null = null
 let resizeObserver: ResizeObserver | null = null
-let generation = 0
+// 两份「代际」是两件事，别合成一个：`loadGeneration` 管的是「这一份文档的加载还
+// 算不算数」，`renderGeneration` 管的是「已经画出来的页还算不算数」。它们共用一个
+// 计数器时，重排会把加载一起作废掉——挂载时 ResizeObserver 的那次初回调 200 毫秒
+// 后就触发一次重排，而 pdf.js 解析一份文档要一秒多，于是 open() 每次都在
+// `await task.promise` 之后发现自己已经过期、空手返回；`finally` 又只在代际没变时
+// 才关掉 loading，预览就永远转圈，既不报错也不超时。
+let loadGeneration = 0
+let renderGeneration = 0
 
 /** pdf.js 的 worker 必须在第一次取文档之前指好，否则它会去猜一个取不到的地址。 */
 async function library() {
@@ -63,7 +70,7 @@ async function renderPage(slot: PageSlot, mine: number) {
   if (slot.rendered || !doc.value || !slot.el) return
   slot.rendered = true
   const page = await doc.value.getPage(slot.number)
-  if (mine !== generation || !slot.el) return
+  if (mine !== renderGeneration || !slot.el) return
 
   const ratio = window.devicePixelRatio || 1
   const scale = scaleFor(page)
@@ -85,7 +92,7 @@ async function renderPage(slot: PageSlot, mine: number) {
     viewport,
     transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
   }).promise
-  if (mine !== generation || !slot.el) return
+  if (mine !== renderGeneration || !slot.el) return
 
   const textLayer = document.createElement('div')
   textLayer.className = 'pv-text'
@@ -111,7 +118,7 @@ function observe() {
         if (!entry.isIntersecting) continue
         const number = Number((entry.target as HTMLElement).dataset.page)
         const slot = pages.value.find((p) => p.number === number)
-        if (slot) void renderPage(slot, generation)
+        if (slot) void renderPage(slot, renderGeneration)
       }
     },
     // 提前一屏开始画，读者滚到的时候那一页已经在了。
@@ -121,7 +128,9 @@ function observe() {
 }
 
 async function open(data: ArrayBuffer) {
-  const mine = ++generation
+  const mine = ++loadGeneration
+  // 换了一份文档，上一份画出来的页就不算数了。
+  renderGeneration += 1
   loading.value = true
   failure.value = ''
   pages.value = []
@@ -131,7 +140,7 @@ async function open(data: ArrayBuffer) {
     void task?.destroy()
     task = pdfjs.getDocument({ data: data.slice(0) })
     const loaded = await task.promise
-    if (mine !== generation) return
+    if (mine !== loadGeneration) return
     doc.value = loaded
     pages.value = Array.from({ length: loaded.numPages }, (_, i) => ({
       number: i + 1,
@@ -139,13 +148,13 @@ async function open(data: ArrayBuffer) {
       rendered: false,
     }))
     await nextTick()
-    if (mine !== generation) return
+    if (mine !== loadGeneration) return
     observe()
   } catch (e) {
-    if (mine !== generation) return
+    if (mine !== loadGeneration) return
     failure.value = e instanceof Error ? e.message : '无法打开这个文档'
   } finally {
-    if (mine === generation) loading.value = false
+    if (mine === loadGeneration) loading.value = false
   }
 }
 
@@ -153,9 +162,13 @@ async function open(data: ArrayBuffer) {
  *
  *  只作废，不补画。重新 observe 会对当下就在视野里的页立刻回调一次，由它一处
  *  发起渲染——这里再补一轮循环，两条路径会为同一页同时开工，而 `rendered` 标记
- *  是在进入时就置上的，谁先谁后取决于时序。 */
+ *  是在进入时就置上的，谁先谁后取决于时序。
+ *
+ *  只推进 `renderGeneration`：重排作废的是已经画出来的页，跟「哪一份文档正在加载」
+ *  无关。它推错了计数器（推了加载那一个）的后果，就是 ResizeObserver 挂载时的初
+ *  回调把一份还在解析的文档整个丢掉——见上面两份代际的说明。 */
 function relayout() {
-  generation += 1
+  renderGeneration += 1
   for (const slot of pages.value) {
     slot.rendered = false
     slot.el?.replaceChildren()
@@ -188,7 +201,8 @@ watch(
   (data) => {
     if (data) void open(data)
     else {
-      generation += 1
+      loadGeneration += 1
+      renderGeneration += 1
       pages.value = []
     }
   },
@@ -203,7 +217,8 @@ watch(container, (el) => {
 })
 
 onBeforeUnmount(() => {
-  generation += 1
+  loadGeneration += 1
+  renderGeneration += 1
   observer?.disconnect()
   resizeObserver?.disconnect()
   if (relayoutTimer) clearTimeout(relayoutTimer)

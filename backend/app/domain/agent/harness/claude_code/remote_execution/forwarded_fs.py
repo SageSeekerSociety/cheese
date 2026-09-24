@@ -35,6 +35,15 @@ class ForwardedProject:
     def _name(path):
         return path.lstrip("/")
 
+    @classmethod
+    def _workflow_name(cls, path, *, allow_claude=False):
+        name = cls._name(path)
+        if allow_claude and name == ".claude":
+            return name
+        if name != ".claude/workflows" and not name.startswith(".claude/workflows/"):
+            raise OSError(errno.EROFS, name)
+        return name
+
     def getattr(self, path, handle=None):
         self.refresh()
         name = self._name(path)
@@ -56,8 +65,13 @@ class ForwardedProject:
             "file": stat.S_IFREG,
             "symlink": stat.S_IFLNK,
         }[entry["kind"]]
+        mode = entry["mode"]
+        if name not in (".claude", ".claude/workflows") and not name.startswith(
+            ".claude/workflows/"
+        ):
+            mode &= ~0o222
         return {
-            "st_mode": kind | entry["mode"],
+            "st_mode": kind | mode,
             "st_nlink": entry["nlink"],
             "st_size": entry["size"],
             "st_mtime_ns": entry["mtime_ns"],
@@ -110,14 +124,70 @@ class ForwardedProject:
 
     def open(self, path, flags):
         if flags & (os.O_WRONLY | os.O_RDWR):
-            raise OSError(errno.EROFS, self._name(path))
+            self._workflow_name(path)
+            if flags & os.O_TRUNC:
+                self.truncate(path, 0)
         self.getattr(path)
         return 0
 
     def access(self, path, mode):
-        if mode & os.W_OK:
-            raise OSError(errno.EROFS, self._name(path))
+        if mode & os.W_OK and self._name(path) != ".claude":
+            self._workflow_name(path)
         self.getattr(path)
+        return 0
+
+    def mkdir(self, path, mode):
+        name = self._workflow_name(path, allow_claude=True)
+        self.call("context_fs", {"operation": "mkdir", "path": name})
+        self.refresh()
+        return 0
+
+    def create(self, path, mode, handle=None):
+        name = self._workflow_name(path)
+        self.call("context_fs", {"operation": "create", "path": name})
+        self.refresh()
+        return 0
+
+    def write(self, path, data, offset, handle=None):
+        name = self._workflow_name(path)
+        result = self.call(
+            "context_fs",
+            {
+                "operation": "write",
+                "path": name,
+                "offset": offset,
+                "data": base64.b64encode(data).decode(),
+            },
+        )
+        self.refresh()
+        return result["written"]
+
+    def truncate(self, path, size, handle=None):
+        name = self._workflow_name(path)
+        self.call("context_fs", {"operation": "truncate", "path": name, "size": size})
+        self.refresh()
+        return 0
+
+    def rename(self, old, new):
+        source = self._workflow_name(old)
+        destination = self._workflow_name(new)
+        self.call(
+            "context_fs",
+            {"operation": "rename", "path": source, "destination": destination},
+        )
+        self.refresh()
+        return 0
+
+    def unlink(self, path):
+        name = self._workflow_name(path)
+        self.call("context_fs", {"operation": "unlink", "path": name})
+        self.refresh()
+        return 0
+
+    def rmdir(self, path):
+        name = self._workflow_name(path)
+        self.call("context_fs", {"operation": "rmdir", "path": name})
+        self.refresh()
         return 0
 
     def opendir(self, path):
@@ -137,7 +207,7 @@ class ForwardedProject:
         return []
 
     def statfs(self, path):
-        return {"f_bsize": 4096, "f_blocks": 1, "f_bavail": 0, "f_bfree": 0}
+        return self.call("context_fs", {"operation": "statfs"})
 
 
 def mount(target_path, mountpoint):
@@ -174,7 +244,7 @@ def mount(target_path, mountpoint):
         view,
         mountpoint,
         foreground=True,
-        ro=True,
+        ro=False,
         nothreads=False,
         direct_io=True,
         attr_timeout=0,

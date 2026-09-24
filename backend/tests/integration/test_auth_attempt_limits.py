@@ -56,15 +56,12 @@ def outbox(monkeypatch) -> _Outbox:
 
 @pytest.fixture
 def forget_redis_state():
-    """Lockouts and TOTP secrets outlive the test and its rolled-back users."""
+    """Lockouts outlive the test and its rolled-back users."""
     from app.domain.user.login_security import (
         LOGIN_ATTEMPTS_PREFIX,
         LOGIN_LOCKOUT_PREFIX,
         STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
         STEP_UP_PASSWORD_LOCKOUT_PREFIX,
-        TOTP_ALWAYS_PREFIX,
-        TOTP_BACKUP_PREFIX,
-        TOTP_SECRET_PREFIX,
     )
 
     users: list[CreatedUser] = []
@@ -82,9 +79,6 @@ def forget_redis_state():
             *(
                 f"{p}{user.user_id}"
                 for p in (
-                    TOTP_SECRET_PREFIX,
-                    TOTP_BACKUP_PREFIX,
-                    TOTP_ALWAYS_PREFIX,
                     STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
                     STEP_UP_PASSWORD_LOCKOUT_PREFIX,
                 )

@@ -3,7 +3,7 @@
 creation and binding — everything downstream of the provider callback, which
 is the part that needs no live OAuth provider."""
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from urllib.parse import parse_qs, urlparse
 
 import pyotp
@@ -34,48 +34,6 @@ def state_token(_portal) -> StateToken:
         return _portal.call(_issue_oauth_state_token, provider, payload)
 
     return issue
-
-
-@pytest.fixture
-def totp_users(user_client: UserCreator) -> Generator[UserCreator]:
-    """``user_client`` that also removes the 2FA state its users leave behind.
-
-    TOTP secrets live in Redis and do not roll back with the per-test DB
-    transaction, while user ids restart with each session's fresh DB — a stale
-    secret would demand 2FA from an unrelated future test user.
-    """
-    created: list[CreatedUser] = []
-    original = user_client.create_user
-
-    def create_user(*args, **kwargs) -> CreatedUser:
-        user = original(*args, **kwargs)
-        created.append(user)
-        return user
-
-    user_client.create_user = create_user  # type: ignore[method-assign]
-    yield user_client
-
-    import redis
-
-    from app.domain.user.login_security import (
-        TOTP_ALWAYS_PREFIX,
-        TOTP_BACKUP_PREFIX,
-        TOTP_SECRET_PREFIX,
-    )
-
-    r = redis.Redis.from_url(settings.redis_url)
-    for user in created:
-        r.delete(
-            *(
-                f"{prefix}{user.user_id}"
-                for prefix in (
-                    TOTP_SECRET_PREFIX,
-                    TOTP_BACKUP_PREFIX,
-                    TOTP_ALWAYS_PREFIX,
-                )
-            )
-        )
-    r.close()
 
 
 def _loc(resp) -> str:
@@ -444,9 +402,9 @@ class TestOAuthRespectsTwoFactor:
         assert done.json()["data"]["accessToken"]
 
     def test_binding_a_2fa_account_asks_for_the_second_factor(
-        self, api_client: TestClient, totp_users: UserCreator, state_token: StateToken
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
     ):
-        user = totp_users.create_user()
+        user = user_client.create_user()
         secret = _enable_2fa(api_client, user)
 
         resp = _bind(
@@ -458,9 +416,9 @@ class TestOAuthRespectsTwoFactor:
         self._assert_2fa_ticket(api_client, resp, secret)
 
     def test_verify_page_asks_a_2fa_account_for_the_second_factor(
-        self, api_client: TestClient, totp_users: UserCreator, _portal
+        self, api_client: TestClient, user_client: UserCreator, _portal
     ):
-        user = totp_users.create_user()
+        user = user_client.create_user()
         secret = _enable_2fa(api_client, user)
         session_id = f"oauth_password_2fa_{user.user_id}"
         _seed_pending(
@@ -484,7 +442,7 @@ class TestOAuthRespectsTwoFactor:
     def test_signing_in_with_a_linked_provider_asks_for_the_second_factor(
         self,
         api_client: TestClient,
-        totp_users: UserCreator,
+        user_client: UserCreator,
         state_token: StateToken,
         monkeypatch,
     ):
@@ -508,7 +466,7 @@ class TestOAuthRespectsTwoFactor:
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
 
-        user = totp_users.create_user()
+        user = user_client.create_user()
         linked = _bind(
             api_client,
             state_token("github", id="gh-2fa-uid"),

@@ -10,7 +10,7 @@ import pytest
 
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
-from tests.conftest import stub_compute
+from tests.conftest import finish_turn, stub_compute
 from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
@@ -191,12 +191,12 @@ def test_unsummoned_message_gets_no_receipt(client):
 
 
 @pytest.mark.anyio
-async def test_resume_turn_adds_no_receipt(client, tmp_path):
+async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
     """A system-initiated turn (重发 / nudge) has no human summon message —
     nothing gets 👀-acked and no reaction frame is emitted."""
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
-    factory = client.test_factory  # type: ignore[attr-defined]
+    factory = business_db_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
         session_factory=factory,
@@ -235,4 +235,4 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
     async with factory() as session:
         rows = (await session.scalars(select(BlockReaction))).all()
     assert rows == []
-    await asyncio.sleep(0)  # let any stray tasks settle
+    await finish_turn(svc, topic_id)

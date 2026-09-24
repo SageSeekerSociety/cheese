@@ -24,17 +24,11 @@ def test_no_tunnel_configured_means_no_tunnel():
         assert uses_tunnel(tunnel_url=blank) is False
 
 
-def test_the_tunnel_address_carries_no_credential(monkeypatch):
-    """The helper is the only thing on that loopback port and it reads the token
-    from a file. Keeping it out of the URL is what lets a refreshed token take
-    effect without relaunching `claude`, which reads HTTPS_PROXY exactly once at
-    startup (#385)."""
-    monkeypatch.setattr(settings, "subscription_tunnel_local_port", 8445)
-
-    value = connect_transport(session_token="a-real-scoped-token", via_tunnel=True)
-
-    assert value == "http://127.0.0.1:8445"
-    assert "a-real-scoped-token" not in value
+def test_the_backend_names_no_tunnel_address():
+    """Through the tunnel the address is a loopback port on the machine, chosen by
+    that machine's kernel when the helper binds; the launcher exports it. The
+    backend cannot know which ports are free there, so it names none."""
+    assert connect_transport(session_token="scoped-token", via_tunnel=True) is None
 
 
 def test_the_direct_address_carries_the_token_as_the_proxy_password(monkeypatch):

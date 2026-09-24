@@ -67,7 +67,7 @@ PRIVATE_INSTRUCTIONS = (
 
 
 def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.hooks_settings 的同款）：队友分身定义随会话启动
+    """发现层（session_launch.hooks_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
@@ -381,6 +381,15 @@ def prepare(
     env["CLAUDE_CODE_SHELL_PREFIX"] = str(prefix)
     command = [
         claude,
+        # The session's working directory sits under the session host's home,
+        # and Claude Code reads CLAUDE.md, CLAUDE.local.md, .claude/CLAUDE.md
+        # and .claude/rules from every directory between it and `/`. This flag
+        # limits it to the user source, which is our config dir, so none of the
+        # host owner's files reach the room. Nothing else keeps them out:
+        # dropping it puts them back into every session's prompt without any
+        # error. The room's own instructions arrive through the config dir
+        # (`link_forwarded_user_context`). Guarded by
+        # tests/unit/test_session_host_files_stay_out_of_the_prompt.py.
         "--setting-sources",
         "user",
         "--plugin-dir",

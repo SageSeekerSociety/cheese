@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Build deps a cheese CI runner needs beyond the template (docker ships already):
 # - build-essential: `go test -race` in cli.yml needs gcc.
-# - a weekly docker prune cron: no deploys run here, so nothing else ever
-#   reclaims layer space on the 40G disk.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq
@@ -12,5 +10,6 @@ sudo apt-get install -y -qq build-essential git curl lsof qemu-guest-agent >/dev
 # discard=on since 2026-09-03, and nobody with sudo can otherwise reach them).
 # It only talks to the host once the VM config carries `agent: 1`.
 sudo systemctl enable --now qemu-guest-agent >/dev/null 2>&1 || true
-( crontab -l 2>/dev/null | grep -v "docker system prune" ; echo '0 5 * * 0 docker system prune -af --filter until=168h >/dev/null 2>&1' ) | crontab -
+bash "$(dirname "$0")/retire-docker-prune.sh" \
+  "$HOME/ci-maintenance-backups/prune-retirement-$(date -u +%Y%m%dT%H%M%S)-$$"
 echo "deps ok: gcc=$(gcc --version | head -c 20)"

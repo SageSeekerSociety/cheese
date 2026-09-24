@@ -21,6 +21,7 @@ import json
 import subprocess
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -64,7 +65,6 @@ def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
         "CLAUDE_CONFIG_DIR": str(config_dir),
         "CLAUDE_BIN": str(agent),
         "AGENT_ARGS": str(tmp_path / "agent-args.jsonl"),
-        "WARM_ROOT": "",
         "CHEESE_TUNNEL_URL": "",
         "CHEESE_PREVIEW_URL": "",
         "CLAUDE_MODEL": "",
@@ -82,8 +82,12 @@ def _launch(env, *, resume: str | None = SESSION_ID):
     }
     if resume is not None:
         full["CHEESE_RESUME_SESSION"] = resume
+    # A file, not `sh -c`: the block carries the executor client's sources,
+    # which is more than Linux accepts as one argument.
+    block = Path(env["HOME"]).parent / "resume-block.sh"
+    block.write_text(_resume_deciding_block())
     proc = subprocess.run(
-        ["sh", "-c", _resume_deciding_block()],
+        ["sh", str(block)],
         env=full,
         capture_output=True,
         text=True,

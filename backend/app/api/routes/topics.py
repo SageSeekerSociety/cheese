@@ -55,7 +55,11 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    addressed_to_agent,
+    announce_stale,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -1260,7 +1264,7 @@ async def edit_topic_doc(
                 "block": BlockOut.model_validate(notice).model_dump(mode="json"),
             },
         )
-    await broker.publish(str(place.room_id), {"type": "state", "resource": "doc"})
+    await announce_stale(place.room_id, "doc")
     if notice is not None and (line := agent_notice(notice)):
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
@@ -1463,7 +1467,6 @@ async def acquire_session_work_lease(
                     claims=claims,
                     token=token,
                     env=body.env,
-                    api=str(request.base_url).rstrip("/"),
                 )
             )
     except TimeoutError as exc:
@@ -2070,6 +2073,8 @@ async def record_decision(
     out = BlockOut.model_validate(block).model_dump(mode="json")
     if key is not None:
         await idem.record_result(db, key, out)
+    await db.commit()
+    await announce_stale(place.room_id, "decision")
     return ok(out)
 
 
@@ -2355,6 +2360,7 @@ async def split_topic(
     # its brief doc, and the thread label on it, before it can put a worker on
     # them.
     await db.commit()
+    await announce_stale(parent_place.room_id, "topics")
     return ok(out)
 
 

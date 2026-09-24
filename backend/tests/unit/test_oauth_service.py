@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.crypto import decrypt_text, encrypt_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.oauth.services import (
     GitHubProvider,
@@ -14,6 +13,8 @@ from app.domain.oauth.services import (
     OAuthService,
     OAuthUserInfo,
     RUCProvider,
+    open_oauth_token,
+    seal_oauth_token,
 )
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -63,6 +64,11 @@ def _connection(**overrides):
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
+
+
+def _sealed(value: str, field: str) -> str:
+    """A token column as the service stores it for ``_connection()``'s owner."""
+    return seal_oauth_token(value, user_id=42, provider_id="github", field=field)
 
 
 def _make_service(repo=None) -> tuple[OAuthService, AsyncMock]:
@@ -912,8 +918,17 @@ class TestCreateConnection:
         # stored ciphertext, never the plaintext token
         assert call_kwargs["access_token"] != "at-token"
         assert call_kwargs["refresh_token"] != "rt-token"
-        assert decrypt_text(call_kwargs["access_token"]) == "at-token"
-        assert decrypt_text(call_kwargs["refresh_token"]) == "rt-token"
+        owner = {"user_id": 5, "provider_id": "google"}
+        assert (
+            open_oauth_token(call_kwargs["access_token"], field="access_token", **owner)
+            == "at-token"
+        )
+        assert (
+            open_oauth_token(
+                call_kwargs["refresh_token"], field="refresh_token", **owner
+            )
+            == "rt-token"
+        )
         assert result["id"] == 99
         assert result["userId"] == 5
 
@@ -950,6 +965,7 @@ class TestUpdateConnectionTokens:
     @pytest.mark.anyio
     async def test_encrypts_before_storing(self):
         svc, repo = _make_service()
+        repo.get.return_value = _connection(id=7)
 
         await svc.update_connection_tokens(
             connection_id=7,
@@ -961,13 +977,17 @@ class TestUpdateConnectionTokens:
         repo.update_tokens.assert_awaited_once()
         call_args = repo.update_tokens.call_args.args
         assert call_args[0] == 7
-        assert decrypt_text(call_args[1]) == "new-at"
-        assert decrypt_text(call_args[2]) == "new-rt"
+        owner = {"user_id": 42, "provider_id": "github"}
+        assert open_oauth_token(call_args[1], field="access_token", **owner) == "new-at"
+        assert (
+            open_oauth_token(call_args[2], field="refresh_token", **owner) == "new-rt"
+        )
         assert call_args[3] == NOW
 
     @pytest.mark.anyio
     async def test_none_tokens_stay_none(self):
         svc, repo = _make_service()
+        repo.get.return_value = _connection(id=7)
 
         await svc.update_connection_tokens(
             connection_id=7, access_token=None, refresh_token=None, token_expires=None
@@ -1008,7 +1028,7 @@ class TestGetGithubUserToken:
     async def test_non_expiring_token_returned_decrypted(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
-            access_token=encrypt_text("live-token"),
+            access_token=_sealed("live-token", "access_token"),
             token_expires=None,
             refresh_token=None,
         )
@@ -1021,7 +1041,7 @@ class TestGetGithubUserToken:
     async def test_unexpired_token_returned_decrypted(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
-            access_token=encrypt_text("live-token"),
+            access_token=_sealed("live-token", "access_token"),
             token_expires=datetime.now(UTC) + timedelta(hours=1),
             refresh_token=None,
         )
@@ -1034,7 +1054,7 @@ class TestGetGithubUserToken:
     async def test_expired_without_refresh_token_returns_none(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
-            access_token=encrypt_text("stale-token"),
+            access_token=_sealed("stale-token", "access_token"),
             token_expires=datetime.now(UTC) - timedelta(hours=1),
             refresh_token=None,
         )
@@ -1060,9 +1080,9 @@ class TestGetGithubUserToken:
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
-            access_token=encrypt_text("stale-token"),
+            access_token=_sealed("stale-token", "access_token"),
             token_expires=datetime.now(UTC) - timedelta(hours=1),
-            refresh_token=encrypt_text("stored-refresh"),
+            refresh_token=_sealed("stored-refresh", "refresh_token"),
         )
 
         with patch.object(
@@ -1080,9 +1100,9 @@ class TestGetGithubUserToken:
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
-            access_token=encrypt_text("stale-token"),
+            access_token=_sealed("stale-token", "access_token"),
             token_expires=datetime.now(UTC) + timedelta(minutes=1),
-            refresh_token=encrypt_text("stored-refresh"),
+            refresh_token=_sealed("stored-refresh", "refresh_token"),
         )
 
         with patch.object(
@@ -1098,9 +1118,9 @@ class TestGetGithubUserToken:
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
-            access_token=encrypt_text("stale-token"),
+            access_token=_sealed("stale-token", "access_token"),
             token_expires=datetime.now(UTC) - timedelta(hours=1),
-            refresh_token=encrypt_text("stored-refresh"),
+            refresh_token=_sealed("stored-refresh", "refresh_token"),
         )
 
         with patch.object(
@@ -1140,9 +1160,9 @@ class TestGetGithubUserToken:
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
-            access_token=encrypt_text("stale-token"),
+            access_token=_sealed("stale-token", "access_token"),
             token_expires=datetime.now(UTC) - timedelta(hours=1),
-            refresh_token=encrypt_text("stored-refresh"),
+            refresh_token=_sealed("stored-refresh", "refresh_token"),
         )
         svc._initialized = True
         svc._providers = {}
@@ -1154,7 +1174,7 @@ class TestGetGithubUserToken:
     async def test_provider_id_is_threaded_through(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
-            access_token=encrypt_text("live-token"), token_expires=None
+            access_token=_sealed("live-token", "access_token"), token_expires=None
         )
 
         result = await svc.get_github_user_token(42, provider_id="github")

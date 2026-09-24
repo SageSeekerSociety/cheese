@@ -83,11 +83,11 @@ async def test_an_ordinary_name_still_registers(client):
     assert r.status_code == 200, r.text
 
 
-async def test_the_platform_can_still_create_its_own_agent_row(client):
+async def test_the_platform_can_still_create_its_own_agent_row(business_db_factory):
     """芝士自己那行必须照建不误——不然平台起不来。"""
     from app.domain.identity.services import IdentityService
 
-    async with client.test_factory() as session:
+    async with business_db_factory() as session:
         user = await IdentityService(session).ensure_agent_user()
         await session.commit()
 

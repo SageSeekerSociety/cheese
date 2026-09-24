@@ -21,6 +21,7 @@ depends on Redis (rate-limiter / 2FA session store), which this harness does not
 run.
 """
 
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -61,6 +62,7 @@ async def seeded_team(authed_client: AsyncClient) -> int:
     async with factory() as session:
         team = Team(
             name="Contract Team",
+            handle=f"t-{uuid.uuid4().hex[:12]}",
             intro="",
             description="",
             avatar_id=1,

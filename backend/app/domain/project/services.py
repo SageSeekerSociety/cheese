@@ -20,6 +20,19 @@ from app.domain.usage.repositories import ComputeGrantRepository
 logger = logging.getLogger(__name__)
 
 
+def _intent_brief(intent: str) -> str:
+    """把用户写的那句话拼成新生房间的简报；没写就返回空串，调用方不写任何东西。
+
+    纯模板，不调模型——``seed_brief_doc`` 的约定是「平台把已有的文字搬个地方」，
+    所以它署 system 而不是芝士（见 ``TopicService.seed_brief_doc`` 的注释）。这也
+    是赛题报名那条路径的形状：简报是拼出来的，房间里的第一句人话仍由人来说。
+    """
+    text = intent.strip()
+    if not text:
+        return ""
+    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下面告诉芝士你要做什么。"
+
+
 class ProjectService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -39,6 +52,7 @@ class ProjectService:
         team_id: int | None = None,
         external_task_id: int | None = None,
         forge_kind: str = "forgejo",
+        intent: str = "",
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -47,6 +61,10 @@ class ProjectService:
         单人真团队), so 个人项目 is just 个人团队的项目. Only when the owner
         handle doesn't resolve to a user (agent handles, bare test fixtures)
         does the row keep the legacy ``team_id NULL``.
+
+        ``intent`` is what the person said they wanted to do, when the creation
+        form asked (#946 片 C). It is stored as written and, if non-empty, copied
+        into the newborn room's document — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if team_id is None and owner_handle:
@@ -57,6 +75,7 @@ class ProjectService:
             ai_mode=ai_mode,
             team_id=team_id,
             external_task_id=external_task_id,
+            intent=intent,
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         root = await self._topics.add(
@@ -97,6 +116,15 @@ class ProjectService:
 
         if forge_kind == "forgejo":
             await provision_repository(project.id, self._session)
+        # What the person said they wanted to do, carried into the room they are
+        # about to land in. Without it the room opens empty and the only thing
+        # answering 「我该说什么」 is its starter block; with it, the first thing
+        # they read is their own sentence, and the next step is named.
+        brief = _intent_brief(intent)
+        if brief:
+            from app.domain.topic.services import TopicService
+
+            await TopicService(self._session).seed_brief_doc(root, brief)
         return project
 
     async def _seed_roster(self, project: Project) -> None:
@@ -242,6 +270,11 @@ class ProjectService:
         「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
         """
         return await self._repo.people(project_id)
+
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for someone not on the roster yet, by the same
+        rules a roster row follows."""
+        return await self._repo.person(handle)
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)

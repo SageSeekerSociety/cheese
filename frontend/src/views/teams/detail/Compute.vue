@@ -6,7 +6,6 @@ import type { TeamResourceQuotas } from '@/api'
 import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 
 import {
   changeProjectMachinePower,
@@ -24,9 +23,8 @@ import { teamDataInjectionKey } from '@/keys'
 
 type CloudMachine = ProjectMachine & { projectName: string }
 
-const route = useRoute()
 const teamData = inject(teamDataInjectionKey, ref())
-const teamId = computed(() => Number(route.params.teamId))
+const teamId = computed(() => teamData.value?.id ?? 0)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
 
 const devices = ref<MyDevice[]>([])

@@ -248,6 +248,13 @@ jobs:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"
 
-      - name: Deploy metering addon when its files changed
+      - name: Release the verified metering image
         if: steps.release.outputs.skip != 'true'
-        run: bash deploy/deploy-metering-proxy.sh /home/nictheboy/cheese-proxy-new/deploy/metering-proxy "$(git rev-parse --short=7 HEAD)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          METERING_ALLOW_INTERRUPT: "1"
+        run: |
+          set -euo pipefail
+          release_sha="$(git rev-parse HEAD)"
+          python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
+          bash deploy/release-metering-proxy.sh "$release_sha"

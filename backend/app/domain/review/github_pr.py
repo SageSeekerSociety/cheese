@@ -1436,6 +1436,10 @@ class GitHubPRError(RuntimeError):
     """GitHub refused an operation (or the network did)."""
 
 
+class GitHubPRRateLimited(GitHubPRError):
+    """The GitHub App installation has temporarily exhausted its API quota."""
+
+
 class GitHubPRMergeBlocked(GitHubPRError):
     """The merge was refused because the PR is not mergeable (conflict)."""
 
@@ -1568,6 +1572,10 @@ class GitHubPRClient:
                 self._url(f"/pulls/{number}"), headers=self._headers(token)
             )
         if resp.status_code != 200:
+            if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
+                raise GitHubPRRateLimited(
+                    f"PR read rate limited (HTTP 403): {resp.text[:300]}"
+                )
             raise GitHubPRError(
                 f"PR read failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )

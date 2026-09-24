@@ -30,6 +30,7 @@ class ProjectRepository:
         ai_mode: AiMode = AiMode.collaborative,
         team_id: int | None = None,
         external_task_id: int | None = None,
+        intent: str = "",
     ) -> Project:
         project = Project(
             name=name,
@@ -37,6 +38,7 @@ class ProjectRepository:
             ai_mode=ai_mode,
             team_id=team_id,
             external_task_id=external_task_id,
+            intent=intent,
         )
         self._session.add(project)
         await self._session.flush()
@@ -241,6 +243,8 @@ class ProjectRepository:
                 )
             )
         ).all()
+        team = await self._session.get(Team, project.team_id)
+        team_handle = team.handle if team is not None else None
         for handle, name, avatar_id, avatar_type, created_at in team_rows:
             if handle in explicit:
                 continue
@@ -252,10 +256,20 @@ class ProjectRepository:
                     "avatar_id": None if avatar_type == "default" else avatar_id,
                     "source": "team",
                     "team_id": project.team_id,
+                    "team_handle": team_handle,
                     "created_at": created_at.isoformat(),
                 }
             )
         return members
+
+    async def person(self, handle: str) -> dict:
+        """``{name, avatar_id}`` for one handle, by the same rules as a roster row
+        in :meth:`people` — for someone who is not on the roster yet."""
+        name, avatar_id, avatar_type = await self._profile_of(handle)
+        return {
+            "name": name or handle,
+            "avatar_id": None if avatar_type == "default" else avatar_id,
+        }
 
     async def _profile_of(
         self, handle: str

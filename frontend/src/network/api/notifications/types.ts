@@ -21,6 +21,8 @@ export interface EntityInfo {
   id: string
   type: string
   name: string
+  // The page this entity opens, as the backend resolved it (a team: `/teams/<handle>`).
+  url?: string
   avatarUrl?: string
 }
 

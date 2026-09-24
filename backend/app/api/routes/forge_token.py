@@ -148,7 +148,7 @@ async def forge_transport(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Relay native Git and API traffic using the caller's leased forge token."""
-    from app.core.crypto import decrypt_text
+    from app.domain.agent.forgejo_tokens import open_forge_token
     from app.domain.project.forge import binding_for_project, tokens_for_project
     from app.domain.project.models import ForgeToken
 
@@ -196,7 +196,7 @@ async def forge_transport(
         )
     elif binding.kind == "forgejo":
         leases = await db.scalars(
-            select(ForgeToken.value).where(
+            select(ForgeToken).where(
                 ForgeToken.project_id == project_id,
                 ForgeToken.api_url == binding.api_url,
                 ForgeToken.username == binding.repo.split("/", 1)[0],
@@ -205,9 +205,8 @@ async def forge_transport(
             )
         )
         if not any(
-            hmac.compare_digest(credential.encode(), decrypt_text(value).encode())
-            for value in leases
-            if value is not None
+            hmac.compare_digest(credential.encode(), open_forge_token(lease).encode())
+            for lease in leases
         ):
             return denied
         base = binding.api_url.removesuffix("/api/v1").rstrip("/")

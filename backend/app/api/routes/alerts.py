@@ -21,6 +21,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
+from app.domain.agent.runtime import announce_stale
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -92,6 +93,9 @@ async def create_notification(
         topic_id=topic_id,
         payload=body.payload,
     )
+    if topic_id is not None:
+        await db.commit()
+        await announce_stale(topic_id, "notify")
     return ok(page([_dump(row) for row in rows], len(rows)))
 
 
@@ -203,7 +207,48 @@ async def resolve_notification(
     service = ProjectNotificationService(db)
     row = await service.get_or_404(notification_id)
     handle = await _acting_recipient(resolver, row)
+    if row.resolved_at is None and await _carry_out(row, body.chosen, db, resolver):
+        await db.commit()
+        return ok(_dump(await service.get_or_404(notification_id)))
     resolved = await service.resolve(
         notification_id, chosen=body.chosen, decided_by=handle
     )
     return ok(_dump(resolved))
+
+
+async def _carry_out(
+    row: Notification, chosen: str, db: AsyncSession, resolver: ActorResolver
+) -> bool:
+    """A card that stands for a membership decision is answered by making it.
+
+    Recording the choice alone would clear the card while the invitation or the
+    join request stayed exactly where it was. The decision settles its own cards
+    (every manager's, for a request), so there is nothing left to record here.
+    Returns False for every other card.
+    """
+    from app.domain.membership.join_links import REQUEST_OPTIONS, JoinLinkService
+    from app.domain.membership.services import INVITATION_OPTIONS, InvitationService
+
+    payload = row.metadata_payload or {}
+    request_id = payload.get("join_request_id")
+    invitation_id = payload.get("invitation_id")
+    if request_id is None and invitation_id is None:
+        return False
+    options = REQUEST_OPTIONS if request_id is not None else INVITATION_OPTIONS
+    if chosen not in options or row.project_id is None:
+        raise ValidationError("所选项不在候选项中")
+    actor = await resolver.require_verified_caller()
+    if request_id is not None:
+        await JoinLinkService(db).decide(
+            row.project_id,
+            uuid.UUID(request_id),
+            approve=chosen == options[0],
+            actor=actor,
+        )
+    else:
+        await InvitationService(db).respond(
+            invitation_id=uuid.UUID(invitation_id),
+            accept=chosen == options[0],
+            actor=actor,
+        )
+    return True

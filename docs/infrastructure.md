@@ -232,13 +232,18 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   down" at once — none of which name memory. Swap does not make a box bigger; it
   makes the same overload arrive as slowness, which is why `test` and `e2e` carry
   timeouts at roughly twice their median runtime rather than just above it.
-- Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential —
-  `go test -race` needs gcc; weekly docker prune — nothing else reclaims
-  layers here) then `deploy/ci-runner/provision.sh
+- Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential for
+  `go test -race`, plus retirement of the legacy weekly Docker prune) then `deploy/ci-runner/provision.sh
   <name> <registration-token>` (runner + systemd service with Restart=always +
   OOMPolicy=continue — the dev-box runner once died silently for 25h after an
   OOM kill). Registration tokens: `gh api -X POST
   repos/SageSeekerSociety/cheese/actions/runners/registration-token`.
+- Job-started disk guards reclaim host caches and warn below the free-space
+  floor; they do not prune the shared Docker daemon or reject jobs at that
+  threshold. Docker reclamation requires maintenance with both slots drained.
+  Dispatch Runner maintenance with `operation=disk-guard`
+  on main to update both slots on each CI box and retire the legacy prune cron
+  and timer. Previous guard copies and schedule state are backed up on each host.
 - Machines are created via the MicroCloud prod API
   (`http://microcloud-prod.119net.ghg.org.cn/microcloud`, Bearer = tenant
   secret, held by Lg / in the team chat — never committed). Reach the machines
@@ -351,8 +356,8 @@ Two mechanisms, deliberately different in kind:
   interpreter a venv points at by absolute path).
 
   What it CANNOT reclaim is the per-room Node install and the interpreter. Those
-  need the room gone, which is archival's job and verifies the backend holds the
-  transcript first — see `deploy/README-room-cleanup.md`.
+  need the room gone, which is archival's job — see
+  `deploy/README-room-cleanup.md`.
 - **`deploy/reclaim-legacy-room-checkouts.py`** is the third, and the deploy runs
   it too. Until #936 (2026-09-09) a room's working directory was
   `~/.cheese/work/<project>/<room>` and held a full checkout; that commit moved a
@@ -487,13 +492,14 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Transcripts**: live collection writes immutable original byte ranges and source
-  identity records directly to the private `TRANSCRIPT_S3_BUCKET`, alongside a
-  PostgreSQL index. Existing tar archives remain in `TRANSCRIPTS_HOST_PATH`
-  (`/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`) and keep
-  their hourly additive R2 mirror through `cheese-transcripts-mirror.timer`.
-  Neither archived-room cleanup nor this mirror deletes retained transcript objects.
-  See [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
+- **Transcripts** are not backed up. Claude Code sessions run on the central
+  session host, and their transcripts stay there: the platform does not upload
+  them. Archived-room cleanup keeps a room's transcripts compressed on that host
+  for 30 days, then deletes them — see
+  [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
+  Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before
+  uploading stopped are still there, indexed by the `raw_transcripts` table;
+  nothing reads or writes either.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or

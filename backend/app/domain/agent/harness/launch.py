@@ -110,7 +110,7 @@ class MachinePlace:
 class MachineLaunch:
     """跑什么 —— 平台骨架上那几段，加上只有这个 harness 自己读的 env。
 
-    The五段 are named for WHEN they run on the machine, which is the only thing
+    The四段 are named for WHEN they run on the machine, which is the only thing
     the platform half knows about them; ``machine_launcher`` documents each.
     ``env`` is the harness's own: a channel merges it into the one environment
     the session is started with, without having to read a line of it.
@@ -124,7 +124,6 @@ class MachineLaunch:
 
     command: str
     contract: str = ""
-    staging: str = ""
     configure: str = ""
     credentials: str = ""
     prepare: str = ""
