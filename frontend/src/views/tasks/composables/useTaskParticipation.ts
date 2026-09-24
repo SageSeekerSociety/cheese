@@ -82,7 +82,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       events.emit('reload-joined-teams')
       await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
-      toast.error('小队领取题目失败')
+      toast.error('团队领取题目失败')
       console.error('Failed to join task as team:', error)
     }
   }
@@ -126,7 +126,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       } else if (joinedTeams.length === 1) {
         const teamId = joinedTeams[0].id
         const confirmed = await dialogs
-          .confirm(`确定要让小队"${joinedTeams[0].name}"退出该题目吗？`, {
+          .confirm(`确定要让团队"${joinedTeams[0].name}"退出该题目吗？`, {
             title: '确认退出',
           })
           .wait()
@@ -135,7 +135,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
           await leaveTaskWithTeam(teamId)
         }
       } else {
-        toast.info('您没有代表小队参与此题目')
+        toast.info('您没有代表团队参与此题目')
       }
     } else {
       const confirmed = await dialogs
@@ -172,7 +172,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
     try {
       await TasksApi.removeParticipantByMemberId(taskData.value.id, teamId)
-      toast.success('小队已退出题目')
+      toast.success('团队已退出题目')
       await loadTaskData()
     } catch (error) {
       toast.error('退出题目失败')
