@@ -181,6 +181,15 @@ class ForgotPasswordRequest(BaseModel):
     email: str = Field(..., min_length=1)
 
 
+class EmailCodeSignInRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class EmailCodeSignInVerifyRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=1)
+
+
 class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1993,6 +2002,177 @@ async def verify_2fa_login(
         await redis.aclose()
 
 
+_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+# The sign-in code request answers with this one body whatever the address:
+# known, unknown or a placeholder. Anything that differed would tell the
+# caller whether an account uses that address.
+_SIGN_IN_CODE_REQUESTED = {
+    "code": 200,
+    "message": "If an account uses this email, a sign-in code has been sent.",
+}
+
+
+def _invalid_email_code() -> AuthenticationRequiredError:
+    return AuthenticationRequiredError(
+        "Invalid or expired code", {"reason": "invalid_email_code"}
+    )
+
+
+async def _mail_sign_in_code(email: str) -> None:
+    """Issue a sign-in code and mail it; runs after the response has gone,
+    so that the response takes as long for an unknown address as for a known
+    one. A failed send is only logged, for the same reason."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
+        if not await service.issue(email):
+            logger.warning("Sign-in code mail was not sent")
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/auth/email-code",
+    summary="Mail a sign-in code",
+)
+async def request_sign_in_code(
+    payload: EmailCodeSignInRequest,
+    request: Request,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Mail a single-use sign-in code to the account using this address.
+
+    The quota is spent before the account is looked up, so an unknown address
+    is refused exactly when a known one would be, and otherwise gets the same
+    answer while nothing is sent.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.background import spawn
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.services import is_placeholder_email
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    email = payload.email.strip()
+    if not _EMAIL_FORMAT.match(email):
+        raise UnprocessableEntityError("Invalid email address format")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(redis, EmailCodePurpose.SIGN_IN).claim(
+            email, resolved_client_address(request)
+        )
+    finally:
+        await redis.aclose()
+
+    user = await auth_service.get_user_by_email(email)
+    if user is not None and not is_placeholder_email(user.email):
+        spawn(_mail_sign_in_code(user.email), name="sign-in code mail")
+    return _SIGN_IN_CODE_REQUESTED
+
+
+@router.post(
+    "/auth/email-code/verify",
+    summary="Sign in with a mailed code",
+)
+async def verify_sign_in_code(
+    payload: EmailCodeSignInVerifyRequest,
+    request: Request,
+    response: Response,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """The mailed code is a first step like a password: an account with 2FA
+    gets the same ``2fa_pending`` ticket the password step hands out, and
+    only an account without it is signed in here."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import ClientFailureBudget, TOTPService
+    from app.domain.user.services import is_placeholder_email
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    email = payload.email.strip()
+    client = resolved_client_address(request)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        # Shared with the sign-up code: one source guessing mailed codes is
+        # the same attack whichever form it types them into.
+        client_budget = ClientFailureBudget(redis, "email_code")
+        wait = await client_budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        wrong = False
+        try:
+            service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
+            wrong = not await service.verify_code(email, payload.code.strip())
+        finally:
+            if not wrong:
+                await client_budget.refund(client)
+    finally:
+        await redis.aclose()
+    if wrong:
+        raise _invalid_email_code()
+
+    user = await auth_service.get_user_by_email(email)
+    if user is None or is_placeholder_email(user.email):
+        raise _invalid_email_code()
+
+    if await TOTPService(session).is_2fa_enabled(user.id):
+        return {
+            "code": 200,
+            "message": "2FA required",
+            "data": {
+                "requires2FA": True,
+                "userId": user.id,
+                "tempToken": await _issue_2fa_pending_token(user.id),
+            },
+        }
+
+    try:
+        user, profile = await auth_service.get_user_with_profile(user.id)
+    except ValueError as exc:
+        raise _invalid_email_code() from exc
+
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user.id,
+        handle=user.username,
+        login_method="email_code",
+    )
+    user_dto = await auth_service.build_user_dto(
+        user=user,
+        profile=profile,
+        viewer_id=user.id,
+    )
+    return {
+        "code": 201,
+        "message": "Login successfully.",
+        "data": {
+            "user": user_dto,
+            "accessToken": access_token,
+            "requires2FA": False,
+            "passkeyEnrollment": await _passkey_enrollment(user.id, session),
+        },
+    }
+
+
 @router.post(
     "/auth/refresh-token",
     summary="Refresh Access Token",
@@ -2497,12 +2677,12 @@ async def recover_password_request(
     # the same success body and simply sends nothing.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        allowed = await MailQuota(redis, "password_recovery").take(
+        claim = await MailQuota(redis, "password_recovery").claim(
             email, resolved_client_address(request)
         )
     finally:
         await redis.aclose()
-    if not allowed:
+    if not claim.granted:
         return _RECOVERY_REQUESTED
 
     user = await auth_service.get_user_by_email(email)
