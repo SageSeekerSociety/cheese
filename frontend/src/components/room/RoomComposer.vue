@@ -694,10 +694,12 @@ defineExpose({
   background: #8a94a3;
   flex: none;
 }
+/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：--ink 的圆角方块。它原来
+   是一颗琥珀圆——琥珀留给主操作，不给头像。 */
 .mention-avatar--agent {
-  /* 琥珀底上的墨：主题色自己那一套，深浅主题各有一个值。 */
-  color: rgb(var(--v-theme-on-primary));
-  background: var(--accent);
+  color: var(--surface);
+  background: var(--ink);
+  border-radius: var(--radius-sm);
 }
 .mention-avatar--broadcast {
   /* --ink inverts with the theme (near-black → near-white), so the ink on it
