@@ -22,7 +22,6 @@ from app.domain.project.models import (
     AiMode,
     Project,
     ProjectMember,
-    ProjectRole,
 )
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -105,18 +104,9 @@ async def seed() -> None:
                 created_by=OWNER,
             )
             s.add(work)
-            s.add_all(
-                [
-                    ProjectMember(
-                        project_id=project.id, user_handle=OWNER, role=ProjectRole.lead
-                    ),
-                    ProjectMember(
-                        project_id=project.id,
-                        user_handle=CHEESE,
-                        role=ProjectRole.member,
-                    ),
-                ]
-            )
+            # 芝士's seat on the roster. The owner needs no row: owner_handle puts
+            # them on it, and the project's team brings everyone else.
+            s.add(ProjectMember(project_id=project.id, user_handle=CHEESE))
             await s.flush()
 
             # Seed topic rosters (这些 Topic 是直接建的，绕过了 TopicService，
