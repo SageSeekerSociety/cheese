@@ -1019,6 +1019,11 @@ class DeviceChannel(Channel):
         session = await store().current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             return None
+        # A disconnected worker leaves the Redis session marked active. The
+        # control snapshot uses 90 seconds for connectivity; a stale worker
+        # cannot answer the release's MCP reconnect request either.
+        if time.time() - (session.get("last_seen") or 0) >= 90:
+            return None
         if screen.resource_id is not None and (
             (session.get("execution") or {}).get("resource_id")
             != str(screen.resource_id)

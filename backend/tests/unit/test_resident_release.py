@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -346,7 +347,7 @@ async def test_release_acknowledgement_requires_connection(
             # the control session to look for — no room is asked, and nothing
             # re-resolves it behind the screen's back.
             assert agent_handle == "agent"
-            return {"id": "session", "status": "active"}
+            return {"id": "session", "status": "active", "last_seen": time.time()}
 
         async def enqueue(self, sid, payload, actor):
             commands.append(payload["request"]["subtype"])

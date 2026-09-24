@@ -1033,8 +1033,9 @@ def _executor_screen_arguments(topic_id: uuid.UUID) -> dict:
         None,
         {"id": "rc", "status": "ended", "execution": None},
         {"id": "rc", "status": "active", "execution": {"resource_id": "earlier"}},
+        {"id": "rc", "status": "active", "last_seen": time.time() - 3600},
     ],
-    ids=["no_session", "inactive", "another_generation"],
+    ids=["no_session", "inactive", "another_generation", "stale_worker"],
 )
 async def test_a_reused_screen_a_release_cannot_reach_is_relaunched(
     monkeypatch, caplog, session
@@ -1079,7 +1080,12 @@ async def test_a_reused_screen_is_released_in_place_through_its_control_session(
     brought to the current release in place and keeps serving the room."""
     from app.domain.agent import remote_control
 
-    session: dict = {"id": "rc", "status": "active", "execution": None}
+    session: dict = {
+        "id": "rc",
+        "status": "active",
+        "last_seen": time.time(),
+        "execution": None,
+    }
     control = NativeControl(session)
     monkeypatch.setattr(remote_control, "store", lambda: control)
     hub = BehindReleaseHub()
