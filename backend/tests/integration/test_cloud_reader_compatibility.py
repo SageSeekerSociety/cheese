@@ -1,6 +1,5 @@
 """Reader-first release tolerates later session allocations without creating them."""
 
-import asyncio
 import uuid
 
 import pytest
@@ -21,7 +20,7 @@ def test_legacy_readers_keep_their_lease_and_cleanup_accounts_for_session_rows(
     monkeypatch.setattr(retire.ws, "topic_worktrees_on_disk", lambda: [])
 
     async def run():
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             topic = uuid.UUID(topics[0])
             legacy = await service.ensure_topic_machine(topic, actor=actor)
@@ -92,7 +91,7 @@ def test_legacy_readers_keep_their_lease_and_cleanup_accounts_for_session_rows(
             assert cloud.deleted == []
             assert len(cloud.claims) == 1 and cloud.created == []
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 @pytest.mark.anyio

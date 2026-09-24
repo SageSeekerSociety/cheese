@@ -113,7 +113,7 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
     from app.domain.block.repositories import BlockRepository
     from app.domain.machine.models import AiStatus
 
-    async def run():
+    async def seed():
         async with client.test_factory() as session:
             project = await ProjectRepository(session).add(name="Resume pending input")
             topic = await TopicRepository(session).add(
@@ -135,15 +135,23 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
                 content="Waiting for cloud",
                 meta={"event_type": "cloud_provisioning", "state": "waiting"},
             )
-            cloud = FakeMicroCloud()
-            cloud.machines[72] = {"id": 72, "status": "suspended", "aiStatus": "ready"}
+            await session.commit()
+            return machine.id
+
+    machine_id = asyncio.run(seed())
+    cloud = FakeMicroCloud()
+    cloud.machines[72] = {"id": 72, "status": "suspended", "aiStatus": "ready"}
+
+    async def run():
+        async with client.test_request_factory() as session:
             service = MachineService(session, cloud)
             await service.refresh_unsettled()
+            machine = await ProjectMachineRepository(session).get(machine_id)
             assert machine.status == MachineStatus.resuming
             assert not cloud.created and not cloud.deleted
             await session.commit()
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
@@ -426,7 +434,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topic_id), actor=actor
             )
@@ -440,7 +448,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
         other_topic = await _ensure(second_topic_id)
         return same_topic, other_topic
 
-    same_topic, other_topic = asyncio.run(_run())
+    same_topic, other_topic = client.portal.call(_run)
 
     assert same_topic[0] == same_topic[1]
     assert len(cloud.created) == 2
@@ -479,12 +487,12 @@ def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     direct_id, parent_id, child_id = asyncio.run(_seed())
 
     async def archive_both():
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             await TopicService(session).archive(direct_id, by="u")
             await TopicService(session).archive(parent_id, by="u")
             await session.commit()
 
-    asyncio.run(archive_both())
+    client.portal.call(archive_both)
 
     async def _released():
         async with client.test_factory() as session:
@@ -548,9 +556,11 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
         return None
 
     monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
+    portal_loop = client.portal.call(asyncio.get_running_loop)
 
     async def _reprovision():
-        async with client.test_factory() as session:
+        assert asyncio.get_running_loop() is portal_loop
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 topic_id, actor=Actor("owner", 1, "token")
             )
@@ -558,7 +568,7 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
             await session.commit()
             return machine.id, old.released_at
 
-    new_id, released_at = asyncio.run(_reprovision())
+    new_id, released_at = client.portal.call(_reprovision)
     assert new_id != old_id
     assert released_at is not None
     assert len(cloud.created) == 1
@@ -585,17 +595,7 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
         for title in ("First", "Second", "Third")
     ]
     cloud = FakeMicroCloud()
-    in_flight = asyncio.Event()
-    release = asyncio.Event()
     original = cloud.create_machine
-
-    async def slow_create(body):
-        if body["hostname"].endswith("-1"):
-            in_flight.set()
-            await release.wait()
-        return await original(body)
-
-    cloud.create_machine = slow_create
 
     async def _keypair():
         return "private", "ssh-ed25519 public"
@@ -609,7 +609,7 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
     actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str):
-        async with client.test_factory() as session:
+        async with client.test_request_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topic_id), actor=actor
             )
@@ -617,6 +617,16 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
             return machine.machine_id
 
     async def _run():
+        in_flight = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_create(body):
+            if body["hostname"].endswith("-1"):
+                in_flight.set()
+                await release.wait()
+            return await original(body)
+
+        cloud.create_machine = slow_create
         first = asyncio.create_task(_ensure(topics[0]))
         await asyncio.wait_for(in_flight.wait(), timeout=5)
         # The team lock is free: the second room does not wait for the first.
@@ -627,5 +637,5 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
         release.set()
         return await asyncio.wait_for(first, timeout=5), second
 
-    first, second = asyncio.run(_run())
+    first, second = client.portal.call(_run)
     assert {first, second} == {101, 102}

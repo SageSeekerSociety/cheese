@@ -37,7 +37,7 @@ from tests.unit.test_machine_service import FakeMicroCloud
 async def _sessions_for_cloud(client, topic_id):
     from app.domain.topic.models import Topic
 
-    async with client.test_factory() as db:
+    async with client.test_request_factory() as db:
         topic = await db.get(Topic, uuid.UUID(topic_id))
         result = []
         for handle in ("cloud-a", "cloud-b"):
@@ -65,7 +65,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         first, second = await _sessions_for_cloud(client, topics[0])
 
         async def ensure(session_id):
-            async with client.test_factory() as db:
+            async with client.test_request_factory() as db:
                 machine = await MachineService(db, cloud).ensure_session_machine(
                     session_id, actor=actor, choice=choice
                 )
@@ -79,7 +79,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         assert a[0] != b[0] and a[1] != b[1] and a[2] != b[2]
         assert len(cloud.created) == 1 and len(cloud.claims) == 1
         assert cloud.claims[0][1]["claimKey"] in {str(a[0]), str(b[0])}
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             assert await service.topic_machine(uuid.UUID(topics[0])) is None
             rows = await service.list_active_for_topic(uuid.UUID(topics[0]))
@@ -95,7 +95,7 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
             assert not await service.list_active_for_topic(uuid.UUID(topics[0]))
             assert cloud.deleted == []
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(warm_case):
@@ -104,7 +104,7 @@ def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(war
 
     async def run():
         first, _ = await _sessions_for_cloud(client, topics[0])
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             machine = await service.ensure_session_machine(
                 first, actor=actor, choice=choice
@@ -117,7 +117,7 @@ def test_session_cloud_rechecks_human_authority_even_for_existing_allocation(war
                 )
             assert len(cloud.created) + len(cloud.claims) == 1
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
@@ -128,7 +128,7 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
 
     async def run():
         first, _ = await _sessions_for_cloud(client, topics[0])
-        async with client.test_factory() as db:
+        async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             old = await service.ensure_session_machine(
                 first, actor=actor, choice=choice
@@ -162,7 +162,7 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
             assert cloud.deleted == []
             assert len(cloud.created) == 1 and len(cloud.claims) == 1
 
-    asyncio.run(run())
+    client.portal.call(run)
 
 
 @pytest.mark.anyio

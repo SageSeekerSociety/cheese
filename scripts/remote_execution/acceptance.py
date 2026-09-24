@@ -7,6 +7,7 @@ Use --ssh and --remote-root to repeat the same cases on another physical host.
 import argparse
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -175,8 +176,14 @@ def execution_handler(rc):
     return DeviceExecutionHandler
 
 
+def tmux_server(folder):
+    # Separate CI runs reuse case names on the same host and Unix account.
+    key = hashlib.sha256(str(folder.resolve()).encode()).hexdigest()[:16]
+    return ["tmux", "-L", "cheese-acceptance-" + key]
+
+
 def case(folder, options):
-    tmux = ["tmux", "-L", "cheese-acceptance-" + folder.name]
+    tmux = tmux_server(folder)
     rc = (
         RemoteControlFixture(
             folder,
