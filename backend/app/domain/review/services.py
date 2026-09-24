@@ -2135,7 +2135,18 @@ class AcceptService:
         client = await self._app_pr_client(topic)
         if client is None:
             return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
-        view = await client.pr_view(task.pr_number)
+        from app.domain.review.github_pr import GitHubPRRateLimited
+
+        try:
+            view = await client.pr_view(task.pr_number)
+        except GitHubPRRateLimited:
+            return {
+                "ready": False,
+                "reason": (
+                    "GitHub API 请求额度暂时用尽，PR 尚未标记为可评审；"
+                    "额度恢复后请重试。"
+                ),
+            }
         if view.get("draft"):
             node_id = str(view.get("node_id") or "")
             if not node_id:
