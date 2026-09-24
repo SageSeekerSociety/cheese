@@ -138,11 +138,11 @@ describe('壳决定露出哪几格、什么顺序', () => {
       '项目2',
       '新建项目',
     ])
-    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual(['题目板', '工作区', '待办'])
+    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual(['空间', '工作区', '待办'])
   })
 
   it('底栏按壳给的顺序排', () => {
-    expect(items(tabItems(sources(3, 'p0'), mine)).map((i) => i.title)).toEqual(['工作区', '题目板', '待办'])
+    expect(items(tabItems(sources(3, 'p0'), mine)).map((i) => i.title)).toEqual(['工作区', '空间', '待办'])
   })
 
   it('壳没列出来的格子就不画', () => {
@@ -150,7 +150,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
       ...DEFAULT_SHELL,
       nav: { ...DEFAULT_SHELL.nav, tabs: ['spaces', 'workspace'] },
     }
-    expect(items(tabItems(sources(1, 'p0'), trimmed)).map((i) => i.title)).toEqual(['题目板', '工作区'])
+    expect(items(tabItems(sources(1, 'p0'), trimmed)).map((i) => i.title)).toEqual(['空间', '工作区'])
   })
 
   it('不认识的 key 画不出来，而不是画一格点了就 404', () => {
@@ -158,7 +158,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
       ...DEFAULT_SHELL,
       nav: { ...DEFAULT_SHELL.nav, tabs: ['spaces', '课程表', 'inbox'] },
     }
-    expect(items(tabItems(sources(1, 'p0'), ahead)).map((i) => i.title)).toEqual(['题目板', '待办'])
+    expect(items(tabItems(sources(1, 'p0'), ahead)).map((i) => i.title)).toEqual(['空间', '待办'])
   })
 
   it('⌘N 跟着画出来的位置走，不是某一格固有的属性', () => {

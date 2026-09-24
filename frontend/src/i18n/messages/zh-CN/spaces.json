@@ -143,7 +143,7 @@
       "title": "课程参数",
       "help": "这里改的每一样都只决定界面和接下来新开的会话：关掉一个模块是把它从侧栏与课程首页收起来，地址仍然打得开、功能一样能用；改完周次与内容之后，学生新开的会话立刻带上，正在跑的会话要重新开始才换。",
       "modules": "课程模块",
-      "modulesHint": "这门课有哪几块。缺省全开 —— 没写过的模块就是开着的，所以老题目板一行都不变。",
+      "modulesHint": "这门课有哪几块。缺省全开 —— 没写过的模块就是开着的，所以已有的空间不受影响。",
       "notWired": "以下模块的界面还没接上，接上之后它们自己会出现在这里：{modules}。",
       "teaching": "本周教学",
       "teachingHint": "这门课现在教到哪、这周用到哪些课件。它挂在课程上（二十道题共享一份），从这门课建的项目开新会话时读到。",
@@ -256,13 +256,13 @@
     }
   },
   "create": {
-    "open": "新建题目板",
-    "name": "题目板名称",
+    "open": "新建空间",
+    "name": "空间名称",
     "placeholder": "例如：程序设计练习",
     "intro": "简介（选填）",
     "avatar": "头像（选填）",
-    "ownership": "提交后等待平台管理员审核。通过后，你可以在自己的题目板发布和审核题目。",
-    "visibility": "审核通过后，题目板会出现在探索列表中。",
+    "ownership": "提交后等待平台管理员审核。通过后，你可以在自己的空间发布和审核题目。",
+    "visibility": "审核通过后，空间会出现在探索列表中。",
     "cancel": "取消",
     "submit": "提交审核",
     "failed": "创建失败，请重试。",
@@ -271,19 +271,19 @@
   },
   "review": {
     "applicant": "申请人",
-    "mine": "我的题目板申请",
-    "title": "开板申请",
+    "mine": "我的空间申请",
+    "title": "空间申请",
     "PENDING": "待审核",
     "APPROVED": "已通过",
     "REJECTED": "已驳回",
-    "emptyMine": "你还没有申请题目板。",
+    "emptyMine": "暂无空间申请",
     "loadFailed": "加载失败，请重试。",
     "retry": "重试",
     "resubmit": "修改并重新提交",
-    "enter": "进入题目板",
+    "enter": "进入空间",
     "previous": "上一页",
     "next": "下一页",
-    "adminHelp": "通过后，题目板将公开显示，创建者可以开始发布题目。驳回时请说明原因。",
+    "adminHelp": "通过后，空间将公开显示，创建者可以开始发布题目。驳回时请说明原因。",
     "status": "审核状态",
     "refresh": "刷新",
     "empty": "暂无申请。",
@@ -294,8 +294,8 @@
   },
   "detail": {
     "editInfo": "编辑信息",
-    "editSpaceInfo": "编辑题目板信息",
-    "spaceName": "题目板名称",
+    "editSpaceInfo": "编辑空间信息",
+    "spaceName": "空间名称",
     "intro": "个人简介",
     "cancel": "取消",
     "update": "更新",
@@ -331,7 +331,7 @@
     "noPermission": "您没有权限发布公告",
     "manageAdmins": "管理员设置",
     "currentAdmins": "当前管理员",
-    "owner": "题目板所有者",
+    "owner": "空间所有者",
     "admin": "管理员",
     "close": "关闭",
     "confirmRemoveAdmin": "确定要移除管理员 {nickname} 吗？",
@@ -340,11 +340,11 @@
     "setAsAdmin": "设为管理员",
     "unsetAsAdmin": "取消管理员",
     "dangerZone": "危险操作",
-    "deleteSpace": "删除题目板",
-    "deleteSpaceHint": "删除后这块题目板会从所有人的列表里消失，且无法恢复。只有题目板所有者能删除它。",
-    "confirmDeleteSpace": "确定要删除题目板「{name}」吗？删除后它对所有人消失，且无法恢复。",
-    "deleteSpaceSuccess": "题目板已删除",
-    "deleteSpaceFailed": "删除题目板失败",
+    "deleteSpace": "删除空间",
+    "deleteSpaceHint": "删除后这个空间会从所有人的列表里消失，且无法恢复。只有空间所有者能删除它。",
+    "confirmDeleteSpace": "确定要删除空间「{name}」吗？删除后它对所有人消失，且无法恢复。",
+    "deleteSpaceSuccess": "空间已删除",
+    "deleteSpaceFailed": "删除空间失败",
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
@@ -445,7 +445,7 @@
       "createSuccess": "创建任务成功",
       "createSuccessAndWaitingAudit": "创建任务成功，等待审核",
       "createFailed": "创建任务失败",
-      "spaceIdNotFound": "未找到题目板ID",
+      "spaceIdNotFound": "未找到空间 ID",
       "initializationFailed": "初始化失败",
       "loadTemplateFailed": "加载模板失败"
     },
@@ -455,7 +455,7 @@
       "blankTemplate": "从空白题目开始"
     },
     "tasks": {
-      "searchPlaceholder": "在当前题目板中搜索",
+      "searchPlaceholder": "在当前空间中搜索",
       "sort": "排序",
       "sortOptions": {
         "latestPublished": "最新发布",
@@ -464,7 +464,7 @@
       },
       "publishTask": "发布题目",
       "noTasks": "暂无题目",
-      "getSpaceDetailsFailed": "获取题目板详情失败:",
+      "getSpaceDetailsFailed": "获取空间详情失败:",
       "topic": "话题",
       "category": "所属分类",
       "noCategory": "无分类",
@@ -539,7 +539,7 @@
   },
   "inviteCodes": {
     "title": "邀请码",
-    "help": "把邀请码发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。码是共享的，别贴到公开场合。",
+    "help": "把邀请码发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。码是共享的，别贴到公开场合。",
     "create": "生成新码",
     "copy": "复制",
     "usage": "已用 {used} / {total}",
@@ -560,7 +560,7 @@
     "createSuccess": "已生成邀请码",
     "createFailed": "生成邀请码失败",
     "createdTitle": "这是你的邀请码",
-    "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。",
+    "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
     "openCourse": "进入课程",
     "courseLinkTitle": "课程链接",
     "courseLinkHelp": "把这条链接发到群里：学生点开会先登录，然后自动加入这门课、建好自己的项目，直接进课程。它只决定从哪一屏进来，不限制他之后能看到什么。",
@@ -569,12 +569,12 @@
     "courseLinkFailed": "读取课程链接失败"
   },
   "index": {
-    "searchPlaceholder": "搜索题目板",
+    "searchPlaceholder": "搜索空间",
     "sortOptions": {
       "newest": "最新",
       "hot": "最热"
     },
-    "noSpaces": "暂无题目板"
+    "noSpaces": "暂无空间"
   },
   "joinCourse": {
     "title": "加入课程",
