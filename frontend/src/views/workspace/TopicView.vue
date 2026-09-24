@@ -294,93 +294,101 @@ watch(
   },
   { immediate: true }
 )
+
+// 整个应用给每一颗没写颜色的按钮默认 `primary`（MyApp 的 v-defaults-provider），于是
+// 房间里每一颗「取消」「下载」「重新加载」、页头那颗退出专注都是琥珀的——而这一屏的
+// 主操作只有发送（和递上来的那张卡的「去验收」）。在房间这一层把默认换成中性色，
+// 真要琥珀的那几颗自己写着 `color="primary"`，不受影响。
+const ROOM_DEFAULTS = { VBtn: { color: 'on-surface-variant' } } as const
 </script>
 
 <template>
-  <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
-    <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
-      <v-progress-circular v-if="resolving" indeterminate color="primary" />
-      <div v-else class="text-center">
-        <div class="t-body c-muted">这个话题不存在</div>
-        <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+  <v-defaults-provider :defaults="ROOM_DEFAULTS">
+    <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
+      <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
+        <v-progress-circular v-if="resolving" indeterminate color="primary" />
+        <div v-else class="text-center">
+          <div class="t-body c-muted">这个话题不存在</div>
+          <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+        </div>
       </div>
-    </div>
 
-    <template v-else>
-      <!-- 一条话题头部，横跨对话和工作面板 -->
-      <TopicHeader
-        :topic="selectedTopic"
-        :phase="phase"
-        :members="store.members"
-        :me="AUTHOR"
-        :connected="composerReady"
-        :focus="focusMode"
-        @toggle-focus="focusMode = !focusMode"
-        @open-topic="openTopic"
-      />
+      <template v-else>
+        <!-- 一条话题头部，横跨对话和工作面板 -->
+        <TopicHeader
+          :topic="selectedTopic"
+          :phase="phase"
+          :members="store.members"
+          :me="AUTHOR"
+          :connected="composerReady"
+          :focus="focusMode"
+          @toggle-focus="focusMode = !focusMode"
+          @open-topic="openTopic"
+        />
 
-      <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
+        <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
            什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
            画。放在这里而不是首屏：见组件自己的说明。 -->
-      <PushPermissionPrompt :working="working" />
+        <PushPermissionPrompt :working="working" />
 
-      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
-        <TopicChatColumn
-          v-if="mdAndUp"
-          v-show="!focusMode"
-          ref="chatColumn"
-          class="col col-chat"
-          :style="{ flex: `0 0 ${store.chatPct}%` }"
-          :topic="selectedTopic"
-          :members="store.members"
-          :topic-list="store.topics"
-          :unread-on-open="unreadOnOpen"
-          v-on="chatEvents"
-        />
-        <div
-          v-if="mdAndUp && !focusMode"
-          class="pane-resizer"
-          title="拖动调整宽度，双击复位"
-          @mousedown.prevent="startPaneDrag"
-          @dblclick="store.setChatPct(50)"
-        />
-        <WorkPanel
-          ref="panelRef"
-          class="col col-doc"
-          :style="{ flex: '1 1 0', minWidth: 0 }"
-          :topic="selectedTopic"
-          :activity-tick="activityTick"
-          :working="working"
-          :topic-list="store.topics"
-          :tab="panelTab"
-          :phase="phase"
-          :with-chat="!mdAndUp"
-          :open-card-id="openCardId"
-          :member-names="memberNames"
-          @open-topic="openTopic"
-          @open-card="onOpenCard"
-          @review="onReview"
-          @mention-click="handleMentionClick"
-          @update:tab="onPanelTab"
-          @locate="onLocate"
-        >
-          <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
-          <template #chat>
-            <TopicChatColumn
-              ref="chatColumn"
-              class="col col-chat flex-grow-1"
-              :topic="selectedTopic"
-              :members="store.members"
-              :topic-list="store.topics"
-              :unread-on-open="unreadOnOpen"
-              v-on="chatEvents"
-            />
-          </template>
-        </WorkPanel>
-      </div>
-    </template>
-  </div>
+        <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
+          <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
+          <TopicChatColumn
+            v-if="mdAndUp"
+            v-show="!focusMode"
+            ref="chatColumn"
+            class="col col-chat"
+            :style="{ flex: `0 0 ${store.chatPct}%` }"
+            :topic="selectedTopic"
+            :members="store.members"
+            :topic-list="store.topics"
+            :unread-on-open="unreadOnOpen"
+            v-on="chatEvents"
+          />
+          <div
+            v-if="mdAndUp && !focusMode"
+            class="pane-resizer"
+            title="拖动调整宽度，双击复位"
+            @mousedown.prevent="startPaneDrag"
+            @dblclick="store.setChatPct(50)"
+          />
+          <WorkPanel
+            ref="panelRef"
+            class="col col-doc"
+            :style="{ flex: '1 1 0', minWidth: 0 }"
+            :topic="selectedTopic"
+            :activity-tick="activityTick"
+            :working="working"
+            :topic-list="store.topics"
+            :tab="panelTab"
+            :phase="phase"
+            :with-chat="!mdAndUp"
+            :open-card-id="openCardId"
+            :member-names="memberNames"
+            @open-topic="openTopic"
+            @open-card="onOpenCard"
+            @review="onReview"
+            @mention-click="handleMentionClick"
+            @update:tab="onPanelTab"
+            @locate="onLocate"
+          >
+            <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+            <template #chat>
+              <TopicChatColumn
+                ref="chatColumn"
+                class="col col-chat flex-grow-1"
+                :topic="selectedTopic"
+                :members="store.members"
+                :topic-list="store.topics"
+                :unread-on-open="unreadOnOpen"
+                v-on="chatEvents"
+              />
+            </template>
+          </WorkPanel>
+        </div>
+      </template>
+    </div>
+  </v-defaults-provider>
 </template>
 
 <style scoped>
