@@ -183,6 +183,10 @@
       "usageLine": "{turns} runs · {tokens} tokens · {cost}",
       "usageSplit": "Input {input} · Output {output}",
       "noUsage": "No data"
+    },
+    "progress": {
+      "title": "Progress",
+      "tally": "{done}/{total} done"
     }
   }
 }

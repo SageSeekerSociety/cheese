@@ -219,6 +219,8 @@ const todoItems = ref<TodoItem[]>([])
 // progress — labelled differently so nobody reads a stale half-circle as
 // "running now".
 const todoRestored = ref(false)
+// 对话里只画正在跑的这一轮的清单；上一轮留下的在总览里（PanelProgress）。
+const liveTodo = computed(() => todoItems.value.length > 0 && !todoRestored.value)
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
 // 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
 // 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
@@ -1329,7 +1331,7 @@ onBeforeUnmount(() => {
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
-          <div v-if="awaitingReply || todoItems.length" class="im-row">
+          <div v-if="awaitingReply || liveTodo" class="im-row">
             <div class="im-gutter">
               <CheeseAvatar :size="28" :name="agentName" />
             </div>
@@ -1338,12 +1340,11 @@ onBeforeUnmount(() => {
                 <span class="im-name">{{ agentName }}</span>
               </div>
 
-              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
-                 turn; between turns this is the topic's stored 进度层 (#187),
-                 labelled so a leftover 进行中 row is not read as "running right
-                 now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
-              <ul v-if="todoItems.length" class="todo-list">
+              <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                 live. Between turns the stored 进度层 (#187) lives in the panel's
+                 总览: parked at the end of the conversation it sat under every new
+                 message, pushing the talk up. -->
+              <ul v-if="liveTodo" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
                   <span class="todo-text">{{ t.subject }}</span>
@@ -1437,11 +1438,6 @@ onBeforeUnmount(() => {
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
-.todo-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 2px 0 0;
-}
 /* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
