@@ -9,7 +9,6 @@ import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
 import { carryLoginRedirect } from './loginRedirect'
-import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
@@ -22,12 +21,6 @@ import { usePageTitleStore } from '@/stores/title'
 
 const routes: RouteRecordRaw[] = [
   {
-    name: 'project-join',
-    path: '/project-invites/:token',
-    component: () => import('@/views/ProjectJoinView.vue'),
-    meta: { titleKey: 'work.joinLink.joinTitle', isFullPage: true },
-  },
-  {
     name: 'team-join',
     path: '/team-invites/:token',
     component: () => import('@/views/TeamInviteView.vue'),
@@ -37,7 +30,6 @@ const routes: RouteRecordRaw[] = [
   ...LegalRoutes,
   HomeRoutes,
   UserRoutes,
-  ProjectsRoutes,
   QuestionRoutes,
   CourseJoinRoutes,
   SpacesRoutes,
@@ -51,12 +43,10 @@ const routes: RouteRecordRaw[] = [
   // retired for long — migration c9f2a3b40e15 dropped it, 41224effe32b brought
   // it back — so the singular stopped being a choice and became an accident,
   // leaving the browser telling two generations apart by one letter. #370 ends
-  // that everywhere; here 1.0 moved to /team-projects and the workspace takes
-  // the plural, so the API and the address bar finally read the same.
+  // that: the workspace takes the plural, so the API and the address bar read
+  // the same.
   //
-  // Old links keep working through ./legacyProjectPaths — which must stay ahead
-  // of the workspace routes below, since one of its rules matches the same path
-  // shape and is distinguished only by the id being numeric.
+  // Old `/project/...` links keep working through ./legacyProjectPaths.
   ...legacyProjectRedirects,
   workspaceRoutes,
   // 反馈：/feedback、/feedback/mine、/feedback/:id，以及后台壳 /admin/*

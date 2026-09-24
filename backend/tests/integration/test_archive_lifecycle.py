@@ -21,6 +21,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -30,6 +31,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
 ):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 37)
     async with business_db_factory() as session:
+        await registered(session, "owner")
         project = await ProjectService(session).create(name="P", owner_handle="owner")
         service = TopicService(session)
         room = await service.create(
@@ -55,6 +57,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
 async def archived_room(client, monkeypatch):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as session:
+        await registered(session, "owner")
         project = await ProjectService(session).create(name="P", owner_handle="owner")
         room = await TopicService(session).create(
             project_id=project.id, title="Room", created_by="owner"

@@ -21,6 +21,7 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, stub_compute
+from tests.integration.conftest import registered
 
 
 @pytest.mark.anyio
@@ -44,6 +45,7 @@ async def test_a_project_that_asks_for_a_harness_nobody_deployed_does_not_run(
     # 不到，这一轮会早在挑模型时就停下——那验的就不是这里要验的东西了。
     monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["gpt-5-codex"]})
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         project.settings = {"harness": "codex", "default_model": "gpt-5-codex"}
         topic = await TopicService(session).create(

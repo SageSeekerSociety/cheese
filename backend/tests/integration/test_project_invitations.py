@@ -1,7 +1,8 @@
 """邀请：加人这件事要两个人同意。
 
-为什么不是一步到位——进了项目就看得见这个项目的**全部话题**，那是别人的工作内容，
-不该由邀请方单方面决定谁能看。所以这一份钉的全是「谁做的决定」：没答复之前不算成
+邀请是团队以外的人进项目的唯一一条路（团队成员本来就在团队的每个项目里）。为什么不
+是一步到位——进了项目就看得见这个项目的公开话题，那是别人的工作内容，不该由邀请方单
+方面决定谁能看。所以这一份钉的全是「谁做的决定」：没答复之前不算成
 员、只有本人能答复、答复过的邀请不能再答一次，以及那条待办不会在答复之后还挂在别
 人的收件箱里等一个已经没有答案的问题。
 
@@ -13,21 +14,21 @@
 import asyncio
 import uuid
 
-from tests.integration.conftest import room_agent_seat
+from tests.integration.conftest import join_project_team, post_project, room_agent_seat
 
 OWNER = "owner-1"
 
 
 def _project(client, name: str = "Demo") -> str:
-    r = client.post("/projects", json={"name": name, "owner_handle": OWNER})
+    r = post_project(client, json={"name": name, "owner_handle": OWNER})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
-def _invite(client, bearer, project_id: str, handle: str, role: str = "member"):
+def _invite(client, bearer, project_id: str, handle: str):
     return client.post(
         f"/projects/{project_id}/invitations",
-        json={"user_handle": handle, "role": role},
+        json={"user_handle": handle},
         headers=bearer(OWNER),
     )
 
@@ -50,19 +51,19 @@ def _granted(client, project_id: str) -> set[str]:
 
 def test_an_invitation_does_not_put_anyone_on_the_roster(client, bearer):
     project_id = _project(client)
-    r = _invite(client, bearer, project_id, "alice", "lead")
+    r = _invite(client, bearer, project_id, "alice")
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "pending"
 
     # 名册上没有她——这就是这个功能的全部意义。
     assert "alice" not in _handles(client, project_id)
     pending = client.get(f"/projects/{project_id}/invitations").json()["data"]["data"]
-    assert [(i["invitee_handle"], i["role"]) for i in pending] == [("alice", "lead")]
+    assert [i["invitee_handle"] for i in pending] == ["alice"]
 
 
 def test_accepting_is_what_joins_the_project(client, bearer):
     project_id = _project(client)
-    invitation = _invite(client, bearer, project_id, "alice", "lead").json()["data"]
+    invitation = _invite(client, bearer, project_id, "alice").json()["data"]
 
     r = client.post(
         f"/invitations/{invitation['id']}/respond",
@@ -72,9 +73,9 @@ def test_accepting_is_what_joins_the_project(client, bearer):
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
     assert "alice" in _handles(client, project_id)
-    # 邀请上写的角色就是她进来时的角色。
+    # 她是以外部成员的身份进来的。
     rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    assert next(m for m in rows if m["user_handle"] == "alice")["role"] == "lead"
+    assert next(m for m in rows if m["user_handle"] == "alice")["source"] == "external"
     # 答复完就不再挂在待答复里。
     assert (
         client.get(f"/projects/{project_id}/invitations").json()["data"]["data"] == []
@@ -157,11 +158,7 @@ def test_the_same_person_is_not_invited_twice_over(client, bearer):
 
 def test_someone_already_in_the_project_is_not_invited(client, bearer):
     project_id = _project(client)
-    client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "alice"},
-        headers=bearer(OWNER),
-    )
+    join_project_team(client, project_id, "alice")
     r = _invite(client, bearer, project_id, "alice")
     assert r.status_code == 422
     assert "已经在项目里" in r.json()["message"]
@@ -169,11 +166,7 @@ def test_someone_already_in_the_project_is_not_invited(client, bearer):
 
 def test_only_a_manager_may_invite(client, bearer):
     project_id = _project(client)
-    client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": "bob", "role": "member"},
-        headers=bearer(OWNER),
-    )
+    join_project_team(client, project_id, "bob")
     r = client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": "alice"},
@@ -315,9 +308,8 @@ def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
 def test_an_agent_is_still_added_to_the_roster_directly(client, bearer):
     """邀请那条挡住了 agent，直加名册这条必须照常——名册是「AI 队友」那一栏的来源。
 
-    agent 上名册走的是 ``MemberService.add``（建项目时铺名册、接受邀请时落行都走
-    它），成员页按这个标记把人 / 队友分成两栏，话题名册也靠它认队友。把这条路也
-    堵掉，队友就从整个界面上消失——那是另一个改动，不该顺手夹在「邀请」这个修复里。
+    agent 上名册走的是 ``MemberService.seat_agent``，人不走这条路（人只能被邀请）。
+    成员页按这个标记把人 / 队友分成两栏，话题名册也靠它认队友。
     """
     project_id = _project(client)
     _seed_agent(client, "cheese-direct")
@@ -344,8 +336,8 @@ def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):
     按读时推导、不留副本的。
     """
     team_id = _make_team(client, "teamlead")
-    r = client.post(
-        "/projects",
+    r = post_project(
+        client,
         json={"name": "P", "owner_handle": OWNER, "team_id": team_id},
     )
     assert r.status_code == 200, r.text

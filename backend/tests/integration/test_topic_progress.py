@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from tests.conftest import StubChannel, retire_topic
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 class ChecklistScreen(StubChannel):
@@ -39,7 +39,7 @@ def stub_hooks() -> ChecklistScreen:
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
     t = client.post(

@@ -22,6 +22,7 @@
 import asyncio
 
 from tests.conftest import seed_space, seed_user
+from tests.integration.conftest import add_external_member, post_project
 from tests.integration.test_project_reads_need_membership import off_the_street
 from tests.integration.test_team_member_enters_team_project import (
     _bearer,
@@ -42,18 +43,15 @@ DOORS = {
 
 def _project(client, owner: str = "alice") -> tuple[str, str]:
     """``(project_id, root_topic_id)``，所有者为 ``owner``。"""
-    r = client.post("/projects", json={"name": "P", "owner_handle": owner})
+    r = post_project(client, json={"name": "P", "owner_handle": owner})
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     return data["id"], data["root_topic_id"]
 
 
-def _add(client, pid: str, handle: str, *, by: str = "alice", role: str = "member"):
-    return client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": handle, "role": role},
-        headers=_bearer(seed_user(client, by)),
-    )
+def _add(client, pid: str, handle: str, *, by: str = "alice") -> None:
+    """``handle`` comes in from outside the team: invited by ``by``, accepted."""
+    add_external_member(client, pid, handle, by=by)
 
 
 def _remove(client, pid: str, handle: str, *, by: str = "alice"):
@@ -129,8 +127,8 @@ def _task_by(client, handle: str) -> int:
 
 def _project_from_task(client, task_id: int, *, student: str) -> str:
     """报名者开的项目：他拥有它，出题者不在名册上。"""
-    r = client.post(
-        "/projects",
+    r = post_project(
+        client,
         json={"name": "赛题项目", "owner_handle": student, "external_task_id": task_id},
     )
     assert r.status_code == 200, r.text
@@ -143,7 +141,7 @@ def _project_from_task(client, task_id: int, *, student: str) -> str:
 
 def test_removing_a_member_shuts_every_door_at_once(client):
     pid, _ = _project(client)
-    assert _add(client, pid, "bob").status_code == 200
+    _add(client, pid, "bob")
     assert set(_read_every_door(client, pid, "bob").values()) == {200}, (
         "先证明他在门里 —— 否则下面的 403 什么都证明不了"
     )

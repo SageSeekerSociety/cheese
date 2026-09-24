@@ -32,10 +32,7 @@ from app.domain.subscription.services import open_subscription_token
 from app.domain.user.realname_services import realname_dict
 from tests.conftest import (
     _PG_BASE,
-    _TEMPLATE_DB,
     _admin_recreate_db,
-    _clone_db,
-    _db_exists,
 )
 
 _REVISION = "e7033a179d9d"
@@ -79,12 +76,10 @@ async def _drop(db_name: str) -> None:
 def db_before_the_migration(_pg_schema):
     db_name = f"cheesex_reenc_{uuid.uuid4().hex[:8]}"
     fixture = _load("derived_from_jwt_secret.json")
-    if asyncio.run(_db_exists(_TEMPLATE_DB)):
-        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
-        step = _alembic(db_name, fixture, "downgrade", _PREVIOUS)
-    else:
-        asyncio.run(_admin_recreate_db(db_name))
-        step = _alembic(db_name, fixture, "upgrade", _PREVIOUS)
+    # Built up from empty rather than walked down from the head template: the
+    # head is past 4b8e1f6c2a93, which cannot be downgraded.
+    asyncio.run(_admin_recreate_db(db_name))
+    step = _alembic(db_name, fixture, "upgrade", _PREVIOUS)
     assert step.returncode == 0, step.stderr
     try:
         yield db_name

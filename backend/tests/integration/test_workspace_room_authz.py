@@ -8,7 +8,11 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.textfile import content_version
 from tests.delivery import delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_file_panel_safety import _put, _worktree
 from tests.integration.test_file_panel_safety import task_machine as task_machine
 from tests.machine_work import machine_commits
@@ -49,14 +53,11 @@ def _connect_workspace(client, project, room):
 @pytest.fixture
 def private_workspace(client):
     alice = session_auth_headers("alice")
-    project = client.post(
-        "/projects", json={"name": "Room authorization", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Room authorization", "owner_handle": "alice"}
     ).json()["data"]
     pid = project["id"]
-    response = client.post(
-        f"/projects/{pid}/members", json={"user_handle": "bob"}, headers=alice
-    )
-    assert response.status_code == 200
+    join_project_team(client, pid, "bob")
     private = client.get(
         f"/projects/{pid}/private-chat",
         params={"user_handle": "alice", "peer_handle": "carol"},
@@ -129,8 +130,8 @@ def test_room_from_another_project_is_rejected_before_workspace_lookup(
     client, private_workspace
 ):
     project, tid = private_workspace
-    other = client.post(
-        "/projects", json={"name": "Other", "owner_handle": "alice"}
+    other = post_project(
+        client, json={"name": "Other", "owner_handle": "alice"}
     ).json()["data"]
     response = request_workspace(
         client, other["id"], tid, "files", session_auth_headers("alice")
@@ -181,8 +182,8 @@ def test_topic_token_cannot_read_a_different_rooms_work(client, private_workspac
 
 
 def test_matching_room_agent_can_read_its_own_work(client):
-    project = client.post(
-        "/projects", json={"name": "Agent access", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Agent access", "owner_handle": "alice"}
     ).json()["data"]
     pid, tid = project["id"], project["root_topic_id"]
     machine_commits(

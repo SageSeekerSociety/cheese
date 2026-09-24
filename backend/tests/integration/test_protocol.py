@@ -9,7 +9,12 @@ from the UI.
 
 from tests.conftest import seed_task_with_protocol
 from tests.delivery import delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    add_external_member,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept import _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -19,27 +24,20 @@ OWNER = "owner-1"
 
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
-    """A project created from a 赛题 whose 项目集 requires a mentor to accept a
-    结题 topic. Returns (project_id, topic_id of a 结题答辩 topic)."""
+    """A project created from a 赛题 whose 项目集 requires someone from outside
+    the team — an external member, here a mentor — to accept a 结题 topic.
+    Returns (project_id, topic_id of a 结题答辩 topic)."""
     task_id = seed_task_with_protocol(
         client, conditions=[{"required_topic": "结题", "reviewer_role": "mentor"}]
     )
-    p = client.post(
-        "/projects",
+    p = post_project(
+        client,
         json={"name": "团队", "owner_handle": OWNER, "external_task_id": task_id},
     ).json()["data"]
     pid = p["id"]
-    # Roster writes are authorized against a token — go out as the project owner.
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "mentor-1", "role": "mentor"},
-        headers=session_auth_headers(OWNER),
-    )
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "user-1"},
-        headers=session_auth_headers(OWNER),
-    )
+    # The mentor comes in from outside the team; user-1 is on the team.
+    add_external_member(client, pid, "mentor-1", by=OWNER)
+    join_project_team(client, pid, "user-1")
     topic = client.post(
         "/topics", json={"project_id": pid, "title": "结题答辩"}
     ).json()["data"]
@@ -61,7 +59,7 @@ def test_non_mentor_cannot_accept_protocol_topic(client):
         json={"decided_by": "user-1", "head_sha": _rendered_head(client, card)},
         headers=session_auth_headers("user-1"),
     )
-    assert r.status_code == 422  # 须导师验收
+    assert r.status_code == 422  # 须外部成员验收
 
 
 def test_mentor_can_accept(client):

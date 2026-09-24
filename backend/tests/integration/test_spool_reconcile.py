@@ -31,6 +31,7 @@ from tests.conftest import (
     settle_turn,
     stub_compute,
 )
+from tests.integration.conftest import registered
 
 
 class QuietScreen(StubChannel):
@@ -94,6 +95,7 @@ async def test_slow_spool_retention_does_not_block_other_requests(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -145,6 +147,7 @@ async def test_spooled_event_is_backfilled_then_deduped(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -204,6 +207,7 @@ async def test_spooled_chat_message_is_backfilled(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -286,6 +290,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -364,6 +369,7 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     factory = business_db_factory
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -408,6 +414,7 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
@@ -505,6 +512,7 @@ def _spool_flush(
 
 async def _project_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"

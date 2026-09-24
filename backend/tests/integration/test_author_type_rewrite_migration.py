@@ -30,6 +30,7 @@ from sqlalchemy import event, select, text
 from app.domain.block.models import AuthorType, Block
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from tests.integration.conftest import a_team
 
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 
@@ -70,7 +71,7 @@ def _seed(client) -> dict[str, uuid.UUID]:
 
     async def _run() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             topic = Topic(

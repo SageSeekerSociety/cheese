@@ -67,7 +67,6 @@ from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
-from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
@@ -78,7 +77,7 @@ from app.domain.preview.office import (
     render_to_pdf,
 )
 from app.domain.project import artifacts
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -111,6 +110,7 @@ from app.domain.team.services import team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -183,18 +183,18 @@ async def create_project(
     if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
-        # nothing else in the system will ever mention it: all seven readers of
-        # the field fall back to `lead` without erroring, so the gap surfaces
-        # only as "why can only one person do anything here", six days later.
+        # nothing else in the system will ever mention it: every reader of the
+        # field falls back to the team's admins without erroring, so the gap
+        # surfaces only as "why can only they do anything here", days later.
         #
         # The check covers `anonymous` as well as empty, because the empty case
         # is no longer the one that happens. `resolve()` hands back the literal
         # handle `anonymous` rather than nothing, so an unidentified creator now
         # produces a *populated* owner column that still matches no user — the
-        # same collapse onto `lead`, wearing a value.
+        # same collapse onto the team's admins, wearing a value.
         #
         # It does NOT ask whether the owner is a person. An agent instance is a
-        # participant and holds a project role like anybody else, so a handle
+        # participant like anybody else, so a handle
         # that names one is an owner this log has nothing to warn about; reading
         # the handle's SHAPE to decide otherwise was the platform guessing at a
         # participant's kind from its name.
@@ -331,7 +331,13 @@ async def get_project(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    return ok(await _project_payload(db, project))
+    payload = await _project_payload(db, project)
+    # Whether this caller runs the project's membership: its owner, or an
+    # owner/admin of its team. The members page shows invite/remove by it.
+    payload["can_manage_members"] = actor.authenticated and await MemberService(
+        db
+    ).manages(project_id, actor.handle)
+    return ok(payload)
 
 
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
@@ -1616,9 +1622,10 @@ async def set_compute_profile(
 async def require_project_steward(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> str:
-    """The verified owner/lead of a project, or a 404 that hides it.
+    """A verified manager of the project — its owner, or an owner/admin of its
+    team — or a 404 that hides it.
 
-    People and agents need the same management role. A credential alone does
+    People and agents need the same standing. A credential alone does
     not grant authority to change ownership or the project's checks.
 
     Returns the caller's handle so a route can record who acted.
@@ -1630,10 +1637,7 @@ async def require_project_steward(
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.owner_handle == handle:
-        return handle
-    member = await MemberRepository(db).get(project_id=project_id, user_handle=handle)
-    if member is not None and member.role == ProjectRole.lead:
+    if await MemberService(db).manages(project_id, handle):
         return handle
     # Conceal project existence from anonymous callers and outsiders.
     raise NotFoundError("Project not found")
@@ -1651,13 +1655,12 @@ async def set_project_owner(
     ``owner_handle`` had seven readers and exactly one writer: ``POST /projects``.
     A project created without one could therefore never acquire one, and on the
     dogfood project it never did (#315): the field sat NULL for six days while
-    every one of those seven readers quietly fell back to ``lead``, collapsing
-    every owner-level decision onto one person and reporting no error anywhere.
+    every one of those readers quietly fell back to someone else, collapsing
+    every owner-level decision onto them and reporting no error anywhere.
 
-    The new owner must already be on the project roster. Not ceremony — the
-    roster is what ``authorize_topic_access`` reads, so handing the project to
-    someone outside it produces an owner who cannot open the project's topics,
-    which is a worse state than the NULL this route exists to escape.
+    The new owner must be on the project's team. Not ceremony — someone outside
+    it would own a project they cannot open, which is a worse state than the
+    NULL this route exists to escape.
     """
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
@@ -1666,12 +1669,14 @@ async def set_project_owner(
     if project is None:
         raise NotFoundError("Project not found")
     if handle != project.owner_handle:
-        member = await MemberRepository(db).get(
-            project_id=project_id, user_handle=handle
-        )
-        if member is None:
+        # The project is its team's; its owner is someone from that team, not an
+        # external member who sees this one project and nothing else of it.
+        user = await user_by_handle(db, handle)
+        if user is None or not await team_service(db).is_team_member(
+            project.team_id, user.id
+        ):
             raise ValidationError(
-                f"{handle} 不是这个项目的成员——请先把 TA 加进项目成员，再转交"
+                f"{handle} 不是这个项目所属团队的成员——请先把 TA 加进团队，再转交"
             )
     previous = project.owner_handle
     project.owner_handle = handle
@@ -1774,8 +1779,7 @@ async def set_branch_protection(
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
     never dual-written. Who may change review policy is the steward dependency's
-    question, and it is a question about role: an owner or a lead, whoever they
-    are.
+    question: the project's owner, or an owner/admin of its team.
     """
     project = await ProjectRepository(db).get(project_id)
     if project is None:

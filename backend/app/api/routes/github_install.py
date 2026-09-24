@@ -70,7 +70,7 @@ async def _manager(
     try:
         await MemberService(db).require_manager(project_id, actor)
     except ForbiddenError:
-        raise ForbiddenError("只有项目 owner / lead 能连接 GitHub 仓库") from None
+        raise ForbiddenError("只有项目所有者或团队管理员能连接 GitHub 仓库") from None
     return actor
 
 

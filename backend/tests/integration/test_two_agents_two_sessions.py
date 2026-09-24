@@ -10,13 +10,13 @@ which cannot say which agent it means.
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.fixture
 def place(client):
-    project = client.post(
-        "/projects", json={"name": "Two agents", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Two agents", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",

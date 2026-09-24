@@ -9,11 +9,11 @@ a room picks too — the alternative is the room pointing at an agent, and then
 import uuid
 
 from app.domain.identity.handles import agent_instance_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, name: str = "Two teammates") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

@@ -22,6 +22,7 @@ from app.domain.topic.models import (
     Topic,
     TopicKind,
 )
+from tests.integration.conftest import a_team
 
 _MIGRATION = (
     Path(__file__).resolve().parents[2]
@@ -48,7 +49,7 @@ def _room_with_threads(client) -> dict:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             room = Topic(project_id=project.id, title="房间", kind=TopicKind.topic)

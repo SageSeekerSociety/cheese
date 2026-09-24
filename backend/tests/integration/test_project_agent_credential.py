@@ -17,6 +17,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from tests.conftest import seed_user
+from tests.integration.conftest import join_project_team, post_project
 
 # --- helpers ------------------------------------------------------------------
 
@@ -28,7 +29,7 @@ def _steward(client, handle: str) -> dict[str, str]:
 
 
 def _project(client, owner: str) -> str:
-    r = client.post("/projects", json={"name": "P", "owner_handle": owner})
+    r = post_project(client, json={"name": "P", "owner_handle": owner})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -139,20 +140,15 @@ def test_the_secret_is_returned_once_and_nowhere_else(client):
     assert token not in status.text
 
 
-def test_only_the_owner_or_a_lead_may_issue(client):
+def test_only_the_owner_or_a_team_admin_may_issue(client):
     """Handing the project's agent a credential is a decision about the project,
-    so it takes someone who answers for the project. A plain member cannot, and
-    neither can somebody with no claim on it at all."""
+    so it takes someone who answers for the project. A plain member of its team
+    cannot, and neither can somebody with no claim on it at all."""
     pid = _project(client, "alice")
     owner = _steward(client, "alice")
 
-    for handle, role in (("bob", "member"), ("carol", "lead")):
-        added = client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": handle, "role": role},
-            headers=owner,
-        )
-        assert added.status_code == 200, added.text
+    join_project_team(client, pid, "bob")
+    join_project_team(client, pid, "carol", admin=True)
 
     assert _issue(client, pid, owner).status_code == 200
     assert _issue(client, pid, _steward(client, "carol")).status_code == 200
@@ -341,15 +337,15 @@ def test_the_gate_still_refuses_another_project_s_credential(client):
 
 
 def test_it_is_a_member_not_a_lead(client):
-    """ "As big as a member" is a ceiling as well as a floor. Writing the project
-    roster decides who else reaches the project, and a plain member cannot do it
+    """ "As big as a member" is a ceiling as well as a floor. Inviting someone
+    into the project decides who else reaches it, and a plain member cannot do it
     either — so refusing here is the model holding, not an exception to it."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
 
     r = client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "mallory", "role": "lead"},
+        f"/projects/{pid}/invitations",
+        json={"user_handle": "mallory"},
         headers=_cred(token),
     )
     assert r.status_code == 403, r.text

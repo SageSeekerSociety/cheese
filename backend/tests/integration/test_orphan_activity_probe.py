@@ -17,6 +17,7 @@ from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 
 @pytest.mark.anyio
@@ -24,6 +25,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(business_db_fact
     factory = business_db_factory
 
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         chatty = await topics.create(project_id=project.id, title="A", created_by="u")

@@ -27,12 +27,6 @@ export const AI_MODE: Record<string, string> = {
   autonomous: '自主',
 }
 
-export const PROJECT_ROLE: Record<string, string> = {
-  lead: '组长',
-  member: '成员',
-  mentor: '导师',
-}
-
 export function label(map: Record<string, string>, key: string | null | undefined): string {
   if (!key) return ''
   return map[key] ?? key

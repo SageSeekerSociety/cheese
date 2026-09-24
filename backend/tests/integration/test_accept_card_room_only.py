@@ -16,6 +16,7 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import post_project
 from tests.integration.test_accept_pr import app_world as app_world
 
 pytestmark = pytest.mark.usefixtures("app_world")
@@ -24,7 +25,7 @@ _SUBJECT = "chore(test): file an accept card"
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(

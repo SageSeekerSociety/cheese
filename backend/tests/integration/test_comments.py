@@ -5,7 +5,7 @@ import pytest
 from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.main import app
-from tests.integration.conftest import room_agent_seat
+from tests.integration.conftest import post_project, room_agent_seat
 
 
 class _RecordingRunner:
@@ -28,7 +28,7 @@ def runner():
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]

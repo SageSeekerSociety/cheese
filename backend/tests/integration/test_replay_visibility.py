@@ -18,7 +18,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 class SilentScreen(StubChannel):
@@ -65,7 +65,7 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
 
 
 def _project_and_topic(client) -> str:
-    pr = client.post("/projects", json={"name": "Replay"})
+    pr = post_project(client, json={"name": "Replay"})
     tr = client.post(
         "/topics",
         json={

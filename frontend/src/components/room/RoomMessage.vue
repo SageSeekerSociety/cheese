@@ -15,6 +15,7 @@ import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } 
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
+import ExternalTag from '../common/ExternalTag.vue'
 
 /** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
 const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
@@ -33,6 +34,8 @@ const props = defineProps<{
   /** 真头像的地址；取不到就画按 handle 哈希的色块。 */
   avatar: string | null
   isAgent: boolean
+  /** 说话的人是这个项目的外部成员（团队以外、被邀请进来的）——名字旁挂「外部」。 */
+  external?: boolean
   time: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
@@ -107,6 +110,7 @@ function renderPlain(text: string): string {
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
         <span class="im-name">{{ authorName }}</span>
+        <ExternalTag v-if="external && !isAgent" />
         <span class="im-time">{{ time }}</span>
       </div>
       <!-- B3: a reply shows the message it threads under -->

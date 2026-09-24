@@ -14,7 +14,7 @@ import time
 import pytest
 
 from app.domain.agent.remote_control import key
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -26,8 +26,8 @@ def signing_key(monkeypatch):
 
 @pytest.fixture
 def place(client):
-    project = client.post(
-        "/projects", json={"name": "RC record", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "RC record", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",

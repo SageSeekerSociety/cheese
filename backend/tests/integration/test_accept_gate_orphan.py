@@ -25,7 +25,12 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import room_text, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_text,
+    session_auth_headers,
+)
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr
 from tests.integration.test_accept_pr import app_world as app_world
@@ -39,7 +44,7 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -295,14 +300,11 @@ def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
     )
 
 
-def test_project_lead_can_void_but_an_ordinary_member_cannot(client):
+def test_a_team_admin_can_void_but_an_ordinary_member_cannot(client):
     tid, card_id = _orphan_card(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
-    for handle, role in (("lead-user", "lead"), ("member-user", "member")):
-        r = client.post(
-            f"/projects/{pid}/members", json={"user_handle": handle, "role": role}
-        )
-        assert r.status_code == 200
+    join_project_team(client, pid, "lead-user", admin=True)
+    join_project_team(client, pid, "member-user")
 
     assert _void(client, card_id, "member-user").status_code == 403
     assert _void(client, card_id, "mallory").status_code == 403

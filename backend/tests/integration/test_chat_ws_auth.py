@@ -20,13 +20,11 @@ dropped connection, so it reconnects forever and buries the reason.
 import pytest
 
 from app.core.config import settings
-from tests.integration.conftest import chat_ws_url, session_token
+from tests.integration.conftest import chat_ws_url, post_project, session_token
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},

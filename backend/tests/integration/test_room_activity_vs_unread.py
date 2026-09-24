@@ -11,11 +11,16 @@
 一处带 `task_id IS NULL` 一处不带，很容易以为是漏了。
 """
 
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> dict:
-    return client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    return post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]
 
@@ -29,7 +34,10 @@ def _room(client, project_id: str) -> str:
 
 def _join(client, room_id: str, handle: str) -> None:
     """A thread is read and written through the ROOM's roster — there is no
-    separate one per thread — so anyone speaking in either has to be in it."""
+    separate one per thread — so anyone speaking in either has to be in it,
+    and a room seats only people who are in the project."""
+    pid = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
+    join_project_team(client, pid, handle)
     r = client.post(
         f"/topics/{room_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},

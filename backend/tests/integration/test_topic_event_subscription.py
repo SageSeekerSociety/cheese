@@ -35,6 +35,7 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.integration.conftest import registered
 from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
@@ -139,6 +140,7 @@ class _RecoveringChannel(_IdleChannel):
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:  # type: ignore[operator]
+        await registered(session, "u1")
         project = await ProjectService(session).create(name="P", owner_handle="u1")
         topic = await TopicService(session).create(
             project_id=project.id,

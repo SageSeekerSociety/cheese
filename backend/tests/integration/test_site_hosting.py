@@ -7,7 +7,12 @@ import pytest
 from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.domain.site.hosting import content_origin, mint_site_token
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import (
+    add_external_member,
+    post_project,
+    session_auth_headers,
+    session_token,
+)
 from tests.machine_work import declare_task, machine_commits
 from tests.support import git_store
 
@@ -20,8 +25,8 @@ def published(client, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "sites_port", None)
     monkeypatch.setattr(settings, "frontend_url", "http://platform.localhost")
     auth = session_auth_headers("alice")
-    result = client.post(
-        "/projects", json={"name": "Website", "owner_handle": "alice"}, headers=auth
+    result = post_project(
+        client, json={"name": "Website", "owner_handle": "alice"}, headers=auth
     )
     assert result.status_code == 200, result.text
     project = uuid.UUID(result.json()["data"]["id"])
@@ -149,12 +154,7 @@ def test_content_host_rejects_platform_tokens_wrong_projects_and_expired_grants(
 
 def test_revoked_membership_blocks_existing_site_cookie(client, published):
     project, auth = published
-    member = client.post(
-        f"/projects/{project}/members",
-        json={"user_handle": "bob", "role": "member"},
-        headers=auth,
-    )
-    assert member.status_code == 200, member.text
+    add_external_member(client, str(project), "bob", by="alice")
     _open(client, project, session_auth_headers("bob"))
     origin = content_origin(project)
     assert client.get(origin + "/app.js").status_code == 200

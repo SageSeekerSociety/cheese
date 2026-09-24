@@ -22,7 +22,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
 def _user_id(client, handle: str) -> int:
@@ -43,7 +43,7 @@ def _user_id(client, handle: str) -> int:
 
 
 def _project(client, owner: str = "andyl") -> str:
-    return client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+    return post_project(client, json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]["id"]
 

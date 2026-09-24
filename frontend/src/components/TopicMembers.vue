@@ -9,9 +9,12 @@ import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import { t } from '../i18n'
+import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
+import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 
 const props = defineProps<{
@@ -63,18 +66,23 @@ const myRole = computed(() => members.value.find((m) => m.member_handle === prop
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
-// 还不在这间房里的项目成员——「添加」那个下拉。请一个 AI 队友进房间和请一个人
+// 项目里的外部成员（团队以外、被邀请进来的人）。房间名册上的人都来自项目名册，所以
+// 谁是外部成员问项目名册就够了，列表和「添加」下拉都挂「外部」。
+const externals = computed(() => externalHandles(props.projectMembers))
+
+// 还不在这间房里的项目成员——「添加」那个下拉。只列项目名册上的人：房间只能从项目的
+// 成员里挑，团队以外的人得先被邀请成外部成员。请一个 AI 队友进房间和请一个人
 // 是同一件事（往名册上加一行），所以它们本来就在同一张项目名册上，这里不再把两
 // 份拼起来。已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
   return props.projectMembers
     .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
-    .map((m) => ({
-      title: m.agent ? `${m.name || m.user_handle}（AI 队友）` : m.name || m.user_handle,
-      subtitle: `@${m.user_handle}`,
-      value: m.user_handle,
-    }))
+    .map((m) => {
+      const name = m.name || m.user_handle
+      const mark = m.agent ? '（AI 队友）' : externals.value.has(m.user_handle) ? `（${t('work.external.tag')}）` : ''
+      return { title: `${name}${mark}`, subtitle: `@${m.user_handle}`, value: m.user_handle }
+    })
 })
 
 // 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
@@ -188,6 +196,7 @@ async function onSetRole(handle: string, role: string) {
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">AI 队友</span>
+          <ExternalTag v-else-if="externals.has(m.member_handle)" />
 
           <!-- Owner/admin: change role via a small menu; else a static chip.
                队友没有角色菜单——它在房间里的身份是「AI 队友」那个标——但和人一样

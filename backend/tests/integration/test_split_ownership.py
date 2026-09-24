@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 from app.api.deps import get_work_runner
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_token
+from tests.integration.conftest import post_project, session_token
 
 
 class _FakeTokens:
@@ -96,9 +96,7 @@ def _driving(monkeypatch, handle: str | None):
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -108,18 +106,25 @@ def _agent() -> str:
 
 def _add_project_member(client, project_id: str, handle: str) -> None:
     """Splitting is a project-level permission, so a caller who is not on the
-    parent topic's roster still needs to be in the project."""
-    from app.domain.identity.actor import Actor
-    from app.domain.membership.services import MemberService
-    from app.domain.project.models import ProjectRole
+    parent topic's roster still needs to be in the project: on its team."""
+    from datetime import UTC, datetime
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from tests.integration.conftest import registered
 
     async def _add() -> None:
         async with client.test_request_factory() as s:
-            await MemberService(s).add(
-                project_id=uuid.UUID(project_id),
-                user_handle=handle,
-                role=ProjectRole.member,
-                actor=Actor(handle="alice", user_id=None, via="token"),
+            project = await s.get(Project, uuid.UUID(project_id))
+            now = datetime.now(UTC)
+            s.add(
+                TeamUserRelation(
+                    team_id=project.team_id,
+                    user_id=await registered(s, handle),
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
             await s.commit()
 

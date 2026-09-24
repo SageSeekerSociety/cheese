@@ -31,7 +31,7 @@ from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.support import wire
 
@@ -101,8 +101,8 @@ async def test_execution_survives_an_unrelated_room_column_rename(
 
 @pytest.fixture
 async def room(client):
-    project = client.post(
-        "/projects", json={"name": "Central", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Central", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",

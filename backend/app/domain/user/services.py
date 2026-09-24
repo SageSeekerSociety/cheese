@@ -92,6 +92,15 @@ async def usernames_by_ids(
     return {uid: user.username for uid, user in users.items()}
 
 
+async def lookup_account(session: AsyncSession, q: str) -> dict | None:
+    """``{handle, name, avatar_id}`` for an exact username or email, or None."""
+    found = await UserRepository(session).lookup_account(q)
+    if found is None:
+        return None
+    handle, name, avatar_id = found
+    return {"handle": handle, "name": name, "avatar_id": avatar_id}
+
+
 async def search_accounts(
     session: AsyncSession, q: str, limit: int
 ) -> Sequence[tuple[str, str]]:

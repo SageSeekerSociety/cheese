@@ -34,6 +34,17 @@ _BARE_PATH_RE = re.compile(
 )
 
 
+# How a roster row is in the project, in the words the agent reads. An external
+# member is someone from outside the team taking part in this one project.
+_STANDING = {"owner": "项目所有者", "team": "团队成员", "external": "外部成员"}
+
+
+def _standing(member: dict) -> str:
+    if member.get("agent"):
+        return "AI 队友"
+    return _STANDING.get(member.get("source") or "", "成员")
+
+
 def chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
@@ -306,7 +317,7 @@ def build_system_prompt(
             )
     if roster:
         lines = "\n".join(
-            f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
+            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
         )
         parts.append(
             "## 项目成员 & 怎么点名\n"

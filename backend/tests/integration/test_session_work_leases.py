@@ -19,7 +19,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -29,8 +29,8 @@ pytestmark = pytest.mark.anyio
 async def test_first_tool_acquires_the_addressed_sessions_device(
     client, monkeypatch, old_online, background_state
 ):
-    project = client.post(
-        "/projects", json={"name": "Session hands", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -484,8 +484,8 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
 async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     client, monkeypatch, scenario, tmp_path
 ):
-    project = client.post(
-        "/projects", json={"name": "Session hands", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -695,8 +695,8 @@ async def test_agent_cloud_choice_requires_its_own_team_membership(client, monke
     from app.domain.team.models import Team, TeamMemberRole
     from app.domain.team.repositories import TeamRepository
 
-    project = client.post(
-        "/projects", json={"name": "Cloud authority", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Cloud authority", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -864,8 +864,8 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     monkeypatch.setattr(
         settings, "connector_public_base", "https://cheese.example.test/api"
     )
-    project = client.post(
-        "/projects", json={"name": "Dialers", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Dialers", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",

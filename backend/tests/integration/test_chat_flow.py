@@ -9,13 +9,15 @@ from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
+    post_project,
     room_agent_seat,
     session_auth_headers,
 )
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
-    pr = client.post("/projects", json={"name": "Demo", "owner_handle": owner})
+    pr = post_project(client, json={"name": "Demo", "owner_handle": owner})
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
@@ -43,7 +45,7 @@ def test_create_and_list_project(client):
     # their token lapsed). Creating anonymously would leave the project with no
     # owner and no roster, so nobody would have a claim on it either.
     headers = session_auth_headers("alice")
-    client.post("/projects", json={"name": "P1"}, headers=headers)
+    post_project(client, json={"name": "P1"}, headers=headers)
     r = client.get("/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
@@ -236,7 +238,8 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     # each tagged with who said it (§8.4 multi-person disambiguation).
     # Two speakers means two sockets: authorship is pinned to the connection's
     # token, so one socket can only ever speak as one person.
-    _, topic_id = _create_project_and_topic(client, owner="alice")
+    project_id, topic_id = _create_project_and_topic(client, owner="alice")
+    join_project_team(client, project_id, "bob")
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},

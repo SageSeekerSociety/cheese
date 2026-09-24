@@ -7,6 +7,7 @@ from app.domain.project.models import Project
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.services import RoomLockService, TaskService
 from app.domain.topic.models import Topic, TopicKind
+from tests.integration.conftest import a_team
 
 
 def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
@@ -14,7 +15,7 @@ def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
 
     async def _seed() -> None:
         async with client.test_factory() as s:
-            project = Project(name="P", owner_handle="alice")
+            project = Project(team_id=await a_team(s), name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
             await forge.provision_repository(project.id, s)

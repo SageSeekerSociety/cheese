@@ -5,7 +5,7 @@ still works, and a token-authenticated outsider is denied (越权)."""
 import pytest
 
 from app.common.auth import verify_access_token
-from tests.integration.conftest import session_token
+from tests.integration.conftest import join_project_team, post_project, session_token
 
 
 def _login(client, handle: str) -> str:
@@ -21,9 +21,7 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
@@ -139,29 +137,9 @@ def test_ensure_agent_user_idempotent_and_derives_agent(client):
 def test_project_member_allowed_even_if_not_in_roster(client):
     """权限属于项目: a project member may act in the project's topics even without
     being on that topic's roster."""
-    import asyncio
-    import uuid
-
-    from app.domain.identity.actor import Actor
-    from app.domain.membership.services import MemberService
-    from app.domain.project.models import ProjectRole
-
     pid, tid = _project_topic(client, owner="alice")
     token = _login(client, "bob")
-
-    # Seed bob as a project member directly (StaticPool shares the connection).
-    async def _add_member() -> None:
-        async with client.test_factory() as s:  # type: ignore[attr-defined]
-            await MemberService(s).add(
-                project_id=uuid.UUID(pid),
-                user_handle="bob",
-                role=ProjectRole.member,
-                # Roster writes are authorized — seed as the project owner.
-                actor=Actor(handle="alice", user_id=None, via="token"),
-            )
-            await s.commit()
-
-    asyncio.run(_add_member())
+    join_project_team(client, pid, "bob")
 
     r = client.put(
         f"/topics/{tid}/doc",
