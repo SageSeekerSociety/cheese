@@ -142,10 +142,30 @@ def stat_file_on_the_machine(invoke, path, request_id):
     return int("".join(stdout.split()))
 
 
+# The build returns at most 30000 characters of a command's stdout inline and
+# truncates the rest. 21000 bytes encode to 28000 base64 characters plus line
+# breaks, so every piece arrives whole.
+MACHINE_READ_CHUNK_BYTES = 21000
+
+
 def read_file_on_the_machine(invoke, path, request_id):
-    """One file's bytes, from the machine that holds them."""
-    stdout = on_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
-    return base64.b64decode("".join(stdout.split()), validate=True)
+    """One file's bytes, from the machine that holds them, in pieces small
+    enough that the build hands each one back whole."""
+    size = stat_file_on_the_machine(invoke, path, f"{request_id}-size")
+    quoted = shlex.quote(path)
+    pieces = []
+    for index in range(-(-size // MACHINE_READ_CHUNK_BYTES)):
+        stdout = on_the_machine(
+            invoke,
+            f"dd if={quoted} bs={MACHINE_READ_CHUNK_BYTES} skip={index} count=1 "
+            "status=none | base64",
+            f"{request_id}-{index}",
+        )
+        pieces.append(base64.b64decode("".join(stdout.split()), validate=True))
+    data = b"".join(pieces)
+    if len(data) != size:
+        raise RuntimeError(f"{path} changed on the machine while it was being read")
+    return data
 
 
 class PlatformHost:
