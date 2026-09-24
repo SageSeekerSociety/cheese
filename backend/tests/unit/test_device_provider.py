@@ -18,7 +18,6 @@ from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
-    tunnel_port_for_topic,
 )
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -581,7 +580,7 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     async def alive(_screen):
         return await operation("alive", True)
 
-    async def tunnel(_screen):
+    async def tunnel(_screen, _home):
         return await operation("tunnel", False)
 
     async def refresh(*_arguments, **_keywords):
@@ -865,14 +864,14 @@ class DeadTunnelHub(DeadClaudeHub):
         super().__init__()
         self.tunnel_verdict = tunnel_verdict
         self.tunnel_exit = tunnel_exit
-        self.probed_ports: list[str] = []
+        self.probed_homes: list[str] = []
 
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         self.execs.append((argv, stdin))
-        if env and "CHEESE_TUNNEL_PROBE_PORT" in env:
-            self.probed_ports.append(env["CHEESE_TUNNEL_PROBE_PORT"])
+        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
+            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
             return {
                 "stdout": self.tunnel_verdict,
                 "stderr": "",
@@ -953,9 +952,9 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatc
     assert hub.closed == ["s1"]  # … the screen was retired …
     assert [s.sid for s in hub.opened] == ["s2"]  # … and relaunched fresh
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
-    # The port probed is the topic's own, so concurrent topics on one machine are
-    # judged independently rather than sharing one verdict.
-    assert hub.probed_ports == [str(tunnel_port_for_topic(topic_id))]
+    # The probe reads the port from the room's own home, so concurrent rooms on
+    # one machine are judged independently rather than sharing one verdict.
+    assert hub.probed_homes == [device_home_dir(project_id, topic_id)]
 
 
 @pytest.mark.parametrize(
@@ -994,35 +993,32 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
 
     await _two_turns(provider, router, project_id, topic_id, hub)
 
-    assert hub.probed_ports == []  # never asked
+    assert hub.probed_homes == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
-def test_the_tunnel_probe_reads_a_real_listening_socket(host: str):
+def test_the_tunnel_probe_reads_a_real_listening_socket(tmp_path, host: str):
     """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
-    of thing that passes review and is wrong on the box. Run it for real: against a
-    port this test is actually listening on it must say `up`, and against one
-    nothing holds it must say `down`. A port is used rather than the helper's pid
-    because ConnectionRefused — what `claude` reports — is precisely 'nothing is
-    listening', and a lingering helper that still holds the port is not this bug."""
+    of thing that passes review and is wrong on the box. Run it for real: against
+    the port a room's port file records, it must say `up` while this test is
+    listening there and `down` once nothing holds it. A port is used rather than
+    the helper's pid because ConnectionRefused — what `claude` reports — is
+    precisely 'nothing is listening', and a lingering helper that still holds the
+    port is not this bug."""
     import socket
-    import subprocess
 
     if not os.access("/proc/net/tcp", os.R_OK):
         pytest.skip("no readable /proc/net/tcp on this platform")
     if host == "::1" and not socket.has_ipv6:
         pytest.skip("IPv6 is unavailable on this platform")
     family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+    port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+    port_file.parent.mkdir(parents=True)
 
     def verdict(port: int) -> str:
-        return subprocess.run(
-            ["sh", "-c", DEVICE_TUNNEL_PROBE],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "CHEESE_TUNNEL_PROBE_PORT": str(port)},
-            timeout=30,
-        ).stdout.strip()
+        port_file.write_text(f"{port}\n")
+        return _tunnel_probe(tmp_path)
 
     with socket.socket(family) as live:
         live.bind((host, 0))
@@ -1034,6 +1030,36 @@ def test_the_tunnel_probe_reads_a_real_listening_socket(host: str):
         probe.bind((host, 0))
         free = probe.getsockname()[1]
     assert verdict(free) == "down"
+
+
+def _tunnel_probe(machine_home: Path) -> str:
+    """The probe as the backend runs it: the room's home named with the literal
+    `$HOME` placeholder, resolved against the machine's own HOME."""
+    return subprocess.run(
+        ["sh", "-c", DEVICE_TUNNEL_PROBE],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(machine_home),
+            "CHEESE_TUNNEL_PROBE_HOME": "$HOME/room",
+        },
+        timeout=30,
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("content", [None, "", "not-a-port\n"])
+def test_a_room_without_a_readable_port_file_is_unknown_not_down(tmp_path, content):
+    """Only the machine knows the helper's port, and it knows it through this
+    file. No file (a room launched before it existed, a home being rebuilt) or a
+    file that is not a number is no evidence the helper died — `down` here would
+    throw away a working screen on a probe that never looked at a port."""
+    if content is not None:
+        port_file = tmp_path / "room" / ".cheese" / "cheese-tunnel.port"
+        port_file.parent.mkdir(parents=True)
+        port_file.write_text(content)
+
+    assert _tunnel_probe(tmp_path) == "unknown"
 
 
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
@@ -1692,17 +1718,6 @@ def test_a_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
         )
     assert not caplog.records, "a reachable proxy must not be flagged"
 
-    caplog.clear()
-    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
-        _warn_if_model_endpoint_is_box_local(
-            {
-                "HTTPS_PROXY": "http://127.0.0.1:8445",
-                "CHEESE_TUNNEL_URL": "wss://gateway.example/llm/tunnel",
-            },
-            "machine-1",
-        )
-    assert not caplog.records, "the device-local tunnel helper must not be flagged"
-
 
 # --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
 # The shared two-layer loop (`monitor_session_activity` idle-suspect / hard-ceiling +
@@ -2252,27 +2267,26 @@ async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_pa
     assert "CHEESE_MACHINE_TICKET" not in hub.env
 
 
-def test_tunnel_port_is_per_topic_and_stable():
-    """#425: one fixed helper port made two concurrent topics on one remote
-    machine race for the same bind. The port must differ across topics and be
-    stable for one topic (claude bakes its HTTPS_PROXY at launch, #385, so a
-    reused screen must re-derive the same value)."""
-    from app.domain.agent.device_provider import (
-        connect_transport,
-        tunnel_port_for_topic,
+@pytest.mark.anyio
+async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path):
+    """The helper's port is the machine's: the kernel picks a free one when the
+    helper binds, and the launcher exports what it got. A port named here would be
+    a guess about another machine's free ports — the guess that put two rooms on
+    one helper, where the second room's `claude` spent the first room's
+    credential and took over its Remote Control session."""
+    _subscription_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
     )
 
-    # FIXED ids, not uuid4(): the port space is 2000 wide (base + sha1 % 2000),
-    # so two random topics collide on ~1 run in 2000 and the assertion below has
-    # no way to tell that apart from the bug it guards. It flaked exactly that
-    # way on CI (both drew 10339). These two are checked to land apart.
-    a = uuid.UUID("11111111-1111-4111-8111-111111111111")
-    b = uuid.UUID("22222222-2222-4222-8222-222222222222")
-    pa, pb = tunnel_port_for_topic(a), tunnel_port_for_topic(b)
-    assert pa == tunnel_port_for_topic(a), "not stable for the same topic"
-    assert pa != pb, "distinct topics must not share a port"
-    url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
-    assert url == f"http://127.0.0.1:{pa}"
+    hub, _project, _topic = await _subscription_screen()
+
+    assert hub.env["CHEESE_TUNNEL_URL"] == "wss://gateway.example/llm/tunnel"
+    assert "HTTPS_PROXY" not in hub.env
+    # NO_PROXY still names loopback; no value names a loopback proxy address.
+    assert not any("//127.0.0.1:" in value for value in hub.env.values())
+    # The meter's allowlist still applies to the tunnelled route.
+    assert hub.env["CHEESE_MODEL_PROXY"] == "1"
 
 
 # --- interrupt: take the work away without saying anything -------------------

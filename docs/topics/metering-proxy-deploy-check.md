@@ -242,7 +242,6 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 
 ## 仍未做的
 
-- **第 2 条 端口撞车**：`1e2e1e61` 与 `b52e024f` 的 sha1 都落在 367 → 同一个端口 8812（`base 8445 + hash%2000`，已用代码算式复核）。`tunnel_port_for_topic` 的注释自称撞车会「loud」（第二个 helper bind 失败、启动报错），但实际后果是两个不相干会话共用一条隧道、算到同一个 token 账上。这两个话题因此没救活。
 - **第 3 条 探活告警**：仍然零告警。
 - metering-proxy 那条老待办：`deploy/metering-proxy` 是手工 copy 的孤儿目录、不在 CD 里。
 - 图片送不到本机：connector `0.3.2+6eb332a`（8/23 构建）二进制里没有 `file.put` 帧，需要升级它。

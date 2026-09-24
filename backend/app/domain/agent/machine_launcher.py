@@ -57,7 +57,20 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # `place.footprint_root()`, and `test_the_launcher_installs_only_inside_the_footprint`
 # reads every write point out of the rendered script and holds it to that name.
 
-# Starts the tunnel helper and does NOT return until its port answers.
+# Starts the tunnel helper, and does NOT return until the helper it started has
+# bound a port. Prints that port on stdout and nothing else; the caller exports
+# it as HTTPS_PROXY for the agent it is about to start.
+#
+# The port belongs to the machine. Only its kernel knows which ports are free,
+# so a helper with no port recorded binds port 0 and reports what it got. The
+# backend used to derive one by hashing the room into a 2000-port window, and
+# with ~50 rooms on one host two of them landed on the same number: the second
+# helper died on EADDRINUSE, the first one answered the readiness check in its
+# place, and the second room's `claude` sent everything it had — model calls,
+# its Remote Control registration — through the first room's helper, on the
+# first room's credential. That is why "ready" here means the helper THIS run
+# started wrote its port file while still alive, and never that something
+# answers on a port.
 #
 # The wait is the point. `claude` reads HTTPS_PROXY once at startup and makes its
 # first request (the login/profile check) immediately, so a helper that is merely
@@ -65,38 +78,39 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # rather than unbounded: if it cannot bind in five seconds it is not going to, and
 # hanging the launch would be a worse failure than a loud one.
 #
+# The recorded port is tried first when a helper has to be started again, and a
+# fresh one only when that bind fails. Both callers hand the printed port to the
+# agent they start or claim next, which is what makes a new number safe. The old
+# one is still preferred because a warm process claimed earlier keeps the address
+# it was claimed with, and a re-run claim of it (`warm_session.bind` resuming a
+# bound process) hands it nothing new.
+#
 # Adopt-if-alive for the same reason the drainer does: a screen is reused across
-# turns, and a second helper on the same port would exit immediately, leaving
-# whichever one won holding a token file the other launch had already replaced.
+# turns, and restarting a working helper each time would reset every in-flight
+# connection. Adoption needs all four: the recorded pid alive, the stamp
+# matching the helper on disk, the port file present, and that port listening.
+# A pid that resolves proves only that SOME process holds that number — after a
+# reboot, or on a box that has burnt through the pid space, that is a
+# coincidence, and adopting on it leaves the port dead for the life of the
+# screen with nothing anywhere reporting a fault.
 #
-# `nohup`, and the LISTEN check below, are what make the reuse path actually
-# heal. Measured 2026-08-30 on the dev box: fifteen topics whose helper was gone
-# and whose `claude` had been dialling a dead port for days — one of them re-@'d
-# four times in three hours with not one reply. Their `cheese-tunnel.log` said
-# `tunnel listening` at the timestamp of the last launch, so the launcher HAD run
-# and this script HAD started a helper; the helper simply did not outlive the
-# `tmux new-window` the reuse branch starts it from. That window's command is
-# this script, this script backgrounds the helper and returns, and the window's
-# process group is torn down the moment it does — SIGHUP, and the port is dead
-# again before the turn it was started for reaches the model. `nohup` is what
-# makes the helper outlive the window that bore it; the direct call in the CREATE
-# branch never noticed, because there the process that returns is the one that
-# goes on to be `claude`.
-#
-# The adopt test is the port, not the pid, for the reason DEVICE_TUNNEL_PROBE
-# gives: `claude` connects to a port, and ConnectionRefused is exactly "nothing
-# is listening there". A recorded pid that is alive proves only that SOME process
-# holds that number — after a reboot, or on a box that has burnt through the pid
-# space, that is a coincidence, and adopting on it leaves the port dead for the
-# life of the screen with nothing anywhere reporting a fault.
+# `nohup` is what makes the helper outlive a caller that returns. Measured
+# 2026-08-30 on the dev box: fifteen topics whose helper was gone and whose
+# `claude` had been dialling a dead port for days. Their `cheese-tunnel.log` said
+# `tunnel listening` at the timestamp of the last launch, so this script HAD
+# started a helper; it simply did not outlive the tmux window that ran the
+# script, whose process group is torn down — SIGHUP — the moment the script
+# returns.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 PIDF="$HOME/.cheese/cheese-tunnel.pid"
 STAMPF="$HOME/.cheese/cheese-tunnel.stamp"
-# Is anything answering on the port `claude` was pointed at? python3 rather than
-# bash's /dev/tcp for the same reason the readiness wait below uses it: /bin/sh
-# is dash on the machine images and dash has no /dev/tcp.
+PORTF="$HOME/.cheese/cheese-tunnel.port"
+LOG="$HOME/.cheese/cheese-tunnel.log"
+# Is anything answering on this port? python3 rather than bash's /dev/tcp for
+# the same reason the readiness wait below uses it: /bin/sh is dash on the
+# machine images and dash has no /dev/tcp.
 tunnel_listening() {
-  python3 - "$CHEESE_TUNNEL_PORT" <<'PROBEPY'
+  python3 - "$1" <<'PROBEPY'
 import socket, sys
 
 try:
@@ -113,39 +127,80 @@ PROBEPY
 WANT="$(cksum "$HOME/.cheese/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
+PORT="$(cat "$PORTF" 2>/dev/null || true)"
+case "$PORT" in ''|*[!0-9]*) PORT="" ;; esac
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && tunnel_listening; then
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && [ -n "$PORT" ] \\
+    && tunnel_listening "$PORT"; then
+    printf '%s\\n' "$PORT"
     exit 0
   fi
-  # Different code, or a pid that is alive without the port being served:
+  # Different code, or a pid that is alive without its port being served:
   # retire it. In-flight turns see one connection reset, which claude retries;
   # a permanently stale helper does not heal at all.
   kill "$PID" 2>/dev/null || true
 fi
-nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
-  --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
-  --token-file "$HOME/.cheese/cheese-tunnel.token" \\
-  >"$HOME/.cheese/cheese-tunnel.log" 2>&1 &
-echo $! > "$PIDF"
-printf '%s\n' "$WANT" > "$STAMPF"
-# The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
-# invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
-# /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its
-# whole budget and then report "not ready" for a helper that came up fine.
-# python3 is not an extra dependency here; the helper itself is written in it.
-python3 - "$CHEESE_TUNNEL_PORT" <<'WAITPY'
-import socket, sys, time
-port = int(sys.argv[1])
+NEWF="$PORTF.new.$$"
+# Start a helper on port $1 and wait for it. Exit 0: it is alive and wrote its
+# port file. 3: it exited, which is how a failed bind looks. 1: timed out.
+# The wait runs in python3, NOT with bash's /dev/tcp: this script is invoked as
+# `sh`, and dash has no /dev/tcp. python3 is not an extra dependency here; the
+# helper itself is written in it.
+start_helper() {
+  rm -f "$NEWF"
+  nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
+    --port "$1" --port-file "$NEWF" --url "$CHEESE_TUNNEL_URL" \\
+    --token-file "$HOME/.cheese/cheese-tunnel.token" \\
+    >>"$LOG" 2>&1 &
+  NEWPID=$!
+  python3 - "$NEWPID" "$NEWF" <<'WAITPY'
+import os, sys, time
+
+pid, path = int(sys.argv[1]), sys.argv[2]
+
+
+def alive():
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # An exited child the shell has not reaped yet still answers kill -0.
+    try:
+        with open("/proc/%d/stat" % pid) as handle:
+            return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return True
+
+
 deadline = time.monotonic() + 5.0
 while time.monotonic() < deadline:
-    try:
-        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+    if not alive():
+        raise SystemExit(3)
+    if os.path.exists(path):
         raise SystemExit(0)
-    except OSError:
-        # Native adoption waits here; avoid adding a full 100 ms after port bind.
-        time.sleep(0.02)
+    time.sleep(0.02)
 raise SystemExit(1)
 WAITPY
+}
+: >"$LOG"
+start_helper "${PORT:-0}"
+RC=$?
+if [ "$RC" = 3 ] && [ -n "$PORT" ]; then
+  # Something else holds the recorded port now. Let the kernel choose.
+  start_helper 0
+  RC=$?
+fi
+if [ "$RC" != 0 ]; then
+  kill "$NEWPID" 2>/dev/null || true
+  rm -f "$NEWF" "$PIDF"
+  echo "cheese-tunnel-up: the tunnel helper did not come up; $LOG ends:" >&2
+  tail -n 5 "$LOG" >&2
+  exit 1
+fi
+mv "$NEWF" "$PORTF"
+echo "$NEWPID" > "$PIDF"
+printf '%s\\n' "$WANT" > "$STAMPF"
+cat "$PORTF"
 """
 
 
@@ -669,7 +724,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap cleanup EXIT
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  sh "$HOME/.cheese/cheese-tunnel-up" || exit 1
+  # The machine chose the port, so only this line can tell the agent which.
+  TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up")" || exit 1
+  export HTTPS_PROXY="http://127.0.0.1:$TUNNEL_PORT"
 fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
   sh "$HOME/.cheese/cheese-preview-up" || exit 1

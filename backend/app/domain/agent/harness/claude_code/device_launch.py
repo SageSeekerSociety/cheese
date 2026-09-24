@@ -281,16 +281,17 @@ echo unknown
 """
 
 
-# Is the machine-local tunnel helper this topic's `claude` was pointed at still
+# Is the machine-local tunnel helper this room's `claude` was pointed at still
 # listening? Companion to DEVICE_ALIVE_PROBE, for the OTHER half of "the process
 # is alive but cannot reach the model".
 #
-# The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-# launcher's prefix — and a reused screen is reasserted (an adopt-create),
-# never relaunched. So a helper that dies under a still-running `claude` never
-# comes back on its own, and `claude` bakes its HTTPS_PROXY at startup and never
-# re-reads it: every turn thereafter dies with `API Error: Unable to connect to
-# API (ConnectionRefused)` while the process-tree probe above reports `alive`.
+# The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY before an
+# agent is started or claimed — and a reused screen is reasserted (an
+# adopt-create), never relaunched. So a helper that dies under a still-running
+# `claude` never comes back on its own, and `claude` bakes its HTTPS_PROXY at
+# startup and never re-reads it: every turn thereafter dies with `API Error:
+# Unable to connect to API (ConnectionRefused)` while the process-tree probe
+# above reports `alive`.
 # Measured 2026-08-18 on the dev box: five screens in that state, one of them
 # replaying the same 28-message batch for the 30th time, ~3 minutes burnt per
 # attempt, with no path in the system able to restore them.
@@ -300,10 +301,21 @@ echo unknown
 # "nothing is listening there". A lingering helper process that has lost its
 # upstream still holds the port and is NOT this failure.
 #
+# The port is read from the room's own `cheese-tunnel.port`, where the helper
+# recorded what the kernel gave it; nothing else knows it. CHEESE_TUNNEL_PROBE_HOME
+# is the room's home as the backend names it, with the literal `$HOME` placeholder
+# only this machine can resolve.
+#
 # Prints exactly one of `up` / `down` / `unknown`, same tri-state discipline as
 # the probe above: only an explicit `down` is actionable, so a missing /proc, an
-# absent awk, or any hiccup leaves a working screen alone.
-DEVICE_TUNNEL_PROBE = r"""port="${CHEESE_TUNNEL_PROBE_PORT:-}"
+# absent awk, a port file that is missing or unreadable, or any hiccup leaves a
+# working screen alone.
+DEVICE_TUNNEL_PROBE = r"""home="${CHEESE_TUNNEL_PROBE_HOME:-}"
+case "$home" in
+  '') echo unknown; exit 0 ;;
+  '$HOME'*) home="$HOME${home#'$HOME'}" ;;
+esac
+port=$(cat "$home/.cheese/cheese-tunnel.port" 2>/dev/null) || { echo unknown; exit 0; }
 case "$port" in ''|*[!0-9]*) echo unknown; exit 0 ;; esac
 [ -r /proc/net/tcp ] || { echo unknown; exit 0; }
 command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }

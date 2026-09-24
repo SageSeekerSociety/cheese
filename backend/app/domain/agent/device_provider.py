@@ -215,22 +215,6 @@ def uses_tunnel(*, tunnel_url: str) -> bool:
     return bool(tunnel_url.strip())
 
 
-def tunnel_port_for_topic(topic_id: uuid.UUID) -> int:
-    """The tunnel helper's loopback port for THIS topic — derived, not fixed.
-
-    One fixed port (#425) meant two concurrent topics on one remote machine
-    raced for the same bind: the second helper failed and its turns died
-    looking like a dead model. Deriving from the topic id keeps the port
-    stable across screen reuse/reassert (claude bakes its HTTPS_PROXY at
-    launch and never re-reads it, #385) while giving concurrent topics
-    distinct listeners. Collisions inside the 2000-port window are possible
-    but loud: the second helper's bind fails and the launch surfaces a
-    visible setup error instead of a silent share.
-    """
-    base = settings.subscription_tunnel_local_port
-    return base + (int(hashlib.sha1(str(topic_id).encode()).hexdigest(), 16) % 2000)
-
-
 def _preview_ws_url(public_base: str) -> str:
     """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
 
@@ -247,23 +231,22 @@ def _preview_ws_url(public_base: str) -> str:
     return f"{base}/preview/tunnel"
 
 
-def connect_transport(
-    *, session_token: str, via_tunnel: bool, tunnel_port: int | None = None
-) -> str:
-    """The ``HTTPS_PROXY`` value that steers this screen to the meter.
+def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
+    """The ``HTTPS_PROXY`` value that steers this screen to the meter, or None
+    when the backend does not know it.
 
-    Through the tunnel the address is loopback and carries NO credential: the
-    helper is the only thing listening there, and it reads the scoped token from
-    a file the launcher writes — kept out of the URL so a refreshed token takes
-    effect without relaunching `claude`, which reads this value exactly once at
-    startup (#385).
+    Through the tunnel it does not: the address is the helper's loopback port,
+    and that port is the machine's to choose — the launcher asks the kernel for
+    a free one and exports it itself. It carries NO credential either way: the
+    helper reads the scoped token from a file the launcher writes, so a refreshed
+    token takes effect without relaunching `claude`, which reads HTTPS_PROXY
+    exactly once at startup (#385).
 
     Direct, the scoped token rides as the proxy password, which is what stops an
     exposed listener relaying for anyone who cannot prove which project to bill.
     """
     if via_tunnel:
-        port = tunnel_port or settings.subscription_tunnel_local_port
-        return f"http://127.0.0.1:{port}"
+        return None
     host = (
         settings.subscription_device_proxy_host.strip()
         or settings.subscription_proxy_host
@@ -319,10 +302,6 @@ def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) ->
     # only way its traffic reaches a model at all. Pointing it at a box-local
     # address fails off-box.
     value = env.get("HTTPS_PROXY", "")
-    # A configured tunnel intentionally points HTTPS_PROXY at the helper on
-    # the device's own loopback; that address is not a backend-host leak.
-    if env.get("CHEESE_TUNNEL_URL"):
-        return
     if any(h in value for h in _BOX_LOCAL_HOSTS):
         logger.error(
             "device %s received HTTPS_PROXY=%s, which only "
@@ -1348,11 +1327,8 @@ class DeviceChannel(Channel):
         )
         tunnel_url = settings.subscription_tunnel_url.strip()
         via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
-        tunnel_port = tunnel_port_for_topic(topic_id)
         connect_proxy_url = connect_transport(
-            session_token=session_token,
-            via_tunnel=via_tunnel,
-            tunnel_port=tunnel_port,
+            session_token=session_token, via_tunnel=via_tunnel
         )
         sub = provider_env.subscription_provider(
             ca_path=_DEVICE_PROXY_CA_PATH,
@@ -1392,17 +1368,15 @@ class DeviceChannel(Channel):
         model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
             "user:inference user:profile user:sessions:claude_code"
         )
-        if connect_proxy_url:
-            # The meter accepts model hosts, not package registries.
-            model_env["CHEESE_MODEL_PROXY"] = "1"
+        # The meter accepts model hosts, not package registries.
+        model_env["CHEESE_MODEL_PROXY"] = "1"
         if via_tunnel:
             # Read by the launch script: it writes the helper and the token
-            # file, and starts the helper before `claude`. Carried on the env
-            # rather than as arguments because a remote machine's launch is
-            # built entirely from `extra_env` — there is no other channel
-            # into that builder.
+            # file, starts the helper before `claude`, and exports the port the
+            # helper bound as HTTPS_PROXY. Carried on the env rather than as
+            # arguments because a remote machine's launch is built entirely from
+            # `extra_env` — there is no other channel into that builder.
             model_env["CHEESE_TUNNEL_URL"] = tunnel_url
-            model_env["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
         elif await self._device_ccproxy_upstream(device_id):
             # A device with its own ccproxy identity runs on the machine-ticket
             # model: the launcher's reconcile hands claude the device's
@@ -1500,7 +1474,7 @@ class DeviceChannel(Channel):
             )
             alive, tunnel_down, _ = await asyncio.gather(
                 self.confirm_alive(existing),
-                self._tunnel_helper_is_down(existing),
+                self._tunnel_helper_is_down(existing, home_dir),
                 self._refresh_screen_files(
                     device_id,
                     home_dir,
@@ -1989,7 +1963,7 @@ class DeviceChannel(Channel):
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
-    async def _tunnel_helper_is_down(self, screen: HubScreen) -> bool:
+    async def _tunnel_helper_is_down(self, screen: HubScreen, home_dir: str) -> bool:
         """Whether the machine-local tunnel helper this screen's `claude` dials has
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
@@ -2005,10 +1979,15 @@ class DeviceChannel(Channel):
         directly, so there is no helper to lose) — that keeps the per-turn cost at
         zero everywhere the failure cannot happen.
 
+        Which port to ask about is the machine's answer, not ours: the helper
+        bound whatever the kernel gave it and recorded it in the room's home, so
+        the probe reads it from there.
+
         Conservative in the same direction as `confirm_alive`: only an explicit
         `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
-        (no /proc, no awk) is read as "still up", so a probe hiccup never throws
-        away a healthy screen and its in-progress work."""
+        (no /proc, no awk, no readable port file) is read as "still up", so a
+        probe hiccup never throws away a healthy screen and its in-progress
+        work."""
         topic_id = screen.topic_id
         if topic_id is None:
             return False
@@ -2019,7 +1998,7 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_PORT": str(tunnel_port_for_topic(topic_id))},
+                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death
