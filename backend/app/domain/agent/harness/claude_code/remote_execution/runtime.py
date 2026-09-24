@@ -6,7 +6,6 @@ closing an SSH connection does not discard the command registry or replay writes
 
 from __future__ import annotations
 
-import array
 import base64
 import contextlib
 import fcntl
@@ -361,79 +360,6 @@ class Executor:
                 raise RuntimeError("CLI worker startup failed; inspect cli-worker.log")
             self.env["CHEESE_CLI_SOCKET"] = socket_path(self.state) + ".cli"
             self.cli_worker_ready = True
-
-    # Outside `cwd_lock` deliberately: a foreground shell command holds that
-    # lock for as long as it runs, up to ten minutes, and nothing about a
-    # platform command needs the shell to be idle — the worker forks per
-    # request and only reads `cwd`. Taking it here cost a room its entire
-    # session on 2026-09-17: the `tools/list` a new session must answer queued
-    # behind a 60s command, Claude Code dropped the native server at its own
-    # 30s deadline, and every file, shell and chat tool was denied until the
-    # session was relaunched.
-    def cli(self, params):
-        self._ready_cli_worker()
-        call_id = "cli-" + uuid.uuid4().hex[:16]
-        directory = self.state / "tasks" / call_id
-        directory.mkdir(parents=True)
-        paths = [directory / name for name in ("stdin", "stdout", "stderr")]
-        paths[0].write_text(params.get("stdin", ""))
-        with (
-            paths[0].open("rb") as stdin,
-            paths[1].open("wb") as stdout,
-            paths[2].open("wb") as stderr,
-            socket.socket(socket.AF_UNIX) as connection,
-        ):
-            connection.connect(self.env["CHEESE_CLI_SOCKET"])
-            connection.sendmsg(
-                [b"\0"],
-                [
-                    (
-                        socket.SOL_SOCKET,
-                        socket.SCM_RIGHTS,
-                        array.array(
-                            "i", [stdin.fileno(), stdout.fileno(), stderr.fileno()]
-                        ),
-                    )
-                ],
-            )
-            connection.sendall(
-                json.dumps(
-                    {
-                        "mcp": params,
-                        # A listing needs no directory, and asking the serve
-                        # process for one on a session's first listing means
-                        # waiting for that process to start — which is the
-                        # listing arriving after the first tool call again.
-                        "cwd": str(
-                            self.root
-                            if params.get("method") == "tools/list"
-                            else self.current_directory()
-                        ),
-                        "env": self.env,
-                        "stdio": [
-                            {"encoding": "utf-8", "errors": "strict"} for _ in range(3)
-                        ],
-                    }
-                ).encode()
-                + b"\n"
-            )
-            with connection.makefile("rb") as stream:
-                line = stream.readline()
-        if not line:
-            raise RuntimeError(
-                "CLI worker disconnected; query the platform before retrying a write"
-            )
-        receipt = json.loads(line)
-        if "result" in receipt:
-            return receipt["result"]
-        result = {
-            "stdout": paths[1].read_text(),
-            "stderr": paths[2].read_text(),
-            "exit_code": receipt["status"],
-        }
-        if receipt["status"]:
-            raise RuntimeError(result["stderr"] or f"Cheese exited {receipt['status']}")
-        return result
 
     def invoke(self, params):
         key = params["id"]
@@ -1697,8 +1623,6 @@ class Executor:
             return self.client(params["server"]).call(
                 params["method"], params.get("params")
             )
-        if method == "cli":
-            return self.cli(params)
         raise ValueError("Unknown executor method")
 
     def close(self):

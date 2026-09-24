@@ -439,7 +439,6 @@ class RemoteClient:
         if self.config.get("lease_path") and method in {
             "invoke",
             "mcp",
-            "cli",
             "project_tools",
         }:
             # Only a requested execution operation acquires hands. Bootstrap,
