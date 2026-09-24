@@ -341,7 +341,8 @@ export namespace UserApi {
   }
 
   // TOTP 验证相关
-  export const verify2FA = (data: { temp_token: string; code: string }) =>
+  /** `trust_device` trusts this browser to skip the step for 30 days. */
+  export const verify2FA = (data: { temp_token: string; code: string; trust_device: boolean }) =>
     ApiInstance.request<TOTPAuthResponseDataType>({
       url: '/users/auth/verify-2fa',
       method: 'POST',

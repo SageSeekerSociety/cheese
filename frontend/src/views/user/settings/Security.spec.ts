@@ -19,7 +19,7 @@ const CHROME_ON_WINDOWS =
 const SAFARI_ON_IPHONE =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
 
-function session(id: string, userAgent: string, current: boolean, loginMethod = 'password') {
+function session(id: string, userAgent: string, current: boolean, loginMethod = 'password', trusted = false) {
   return {
     id,
     loginMethod,
@@ -28,6 +28,7 @@ function session(id: string, userAgent: string, current: boolean, loginMethod = 
     createdAt: '2026-09-01T08:00:00Z',
     lastActiveAt: '2026-09-20T08:00:00Z',
     current,
+    trusted,
   }
 }
 
@@ -86,6 +87,24 @@ describe('signed-in devices', () => {
     expect(view.getByText('This device')).toBeTruthy()
     expect(view.getByText('Password sign-in')).toBeTruthy()
     expect(view.getByText('GitHub sign-in')).toBeTruthy()
+    expect(view.queryByText('Trusted')).toBeNull()
+  })
+
+  it('marks a device trusted to skip two-step verification', async () => {
+    vi.mocked(UserApi.listSessions).mockResolvedValue({
+      data: {
+        sessions: [
+          session('here', CHROME_ON_WINDOWS, true),
+          session('phone', SAFARI_ON_IPHONE, false, 'password', true),
+        ],
+      },
+    } as never)
+    const view = await renderPage()
+
+    const phone = (await view.findByText('Safari on iOS')).closest('.srow') as HTMLElement
+    expect(phone.textContent).toContain('Trusted')
+    const here = view.getByText('Chrome on Windows').closest('.srow') as HTMLElement
+    expect(here.textContent).not.toContain('Trusted')
   })
 
   it('signs out one other device, and never offers to sign out this one', async () => {

@@ -30,6 +30,12 @@
 
       <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
 
+      <v-checkbox v-model="trustDevice" density="compact" hide-details class="verify-trust">
+        <template #label>
+          <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
+        </template>
+      </v-checkbox>
+
       <v-btn
         block
         color="primary"
@@ -96,6 +102,8 @@ function afterSignIn(): string {
 const backToSignIn = () => ({ name: 'SignIn', query: { redirect: route.query.redirect } })
 
 const codeType = ref<'totp' | 'backup'>('totp')
+// 默认不勾：在公用电脑上勾选，之后任何人只凭密码就能登录这个账号。
+const trustDevice = ref(false)
 const totpCode = ref('')
 const backupCode = ref('')
 const loading = ref(false)
@@ -126,6 +134,7 @@ const handleVerify = async () => {
     const { data } = await UserApi.verify2FA({
       temp_token: token,
       code: code,
+      trust_device: trustDevice.value,
     })
 
     // 登录成功
@@ -210,3 +219,15 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.verify-trust {
+  margin-bottom: 8px;
+}
+
+.verify-trust__label {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+</style>
