@@ -11,6 +11,7 @@ calls.
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select
@@ -33,6 +34,10 @@ TRANSIENT_MISSES_BEFORE_ERROR = 3
 #: outage do not read the same. Module level because the clock that drives this
 #: is process-wide: one backend, one count per card.
 _transient_misses: dict[uuid.UUID, int] = {}
+
+# Keep the one-minute sweep within the forge API quota while covering old tasks.
+UNCARDED_TASKS_PER_TICK = 10
+_uncarded_task_cursor: uuid.UUID | None = None
 
 
 async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) -> dict:
@@ -69,6 +74,106 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
                 _report_card_failure(card_id, exc)
                 await _note_card_poll_crashed(chat, card_id, exc)
     return {"cards_checked": checked, "errors": errors}
+
+
+async def poll_uncarded_task_prs(
+    chat: ChatService, project_id: uuid.UUID | None = None
+) -> dict:
+    """Record task PRs merged on the forge without an accept card."""
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_ACCEPT_DONE,
+        SEVERITY_INFO,
+        WHO_PLATFORM,
+        notice,
+    )
+    from app.domain.project.forge import proposal_client
+    from app.domain.review.models import AcceptCard
+    from app.domain.room_task.models import Task, TaskStatus
+    from app.domain.topic.models import Topic, TopicStatus
+
+    global _uncarded_task_cursor
+    sessions = chat.session_factory
+    query = (
+        select(Task.id)
+        .join(Topic, Topic.id == Task.room_id)
+        .where(
+            Task.pr_number.is_not(None),
+            Task.delivered_head.is_(None),
+            Topic.status != TopicStatus.archived,
+            ~select(AcceptCard.id).where(AcceptCard.task_id == Task.id).exists(),
+        )
+        .order_by(Task.id)
+        .limit(UNCARDED_TASKS_PER_TICK)
+    )
+    if project_id is not None:
+        query = query.where(Task.project_id == project_id)
+    cursor = _uncarded_task_cursor if project_id is None else None
+    async with sessions() as session:
+        task_ids = list(
+            await session.scalars(
+                query.where(Task.id > cursor) if cursor is not None else query
+            )
+        )
+        if cursor is not None and len(task_ids) < UNCARDED_TASKS_PER_TICK:
+            task_ids.extend(
+                await session.scalars(
+                    query.where(Task.id <= cursor).limit(
+                        UNCARDED_TASKS_PER_TICK - len(task_ids)
+                    )
+                )
+            )
+    if project_id is None and task_ids:
+        _uncarded_task_cursor = task_ids[-1]
+
+    checked = merged = 0
+    errors: list[str] = []
+    for task_id in task_ids:
+        try:
+            async with sessions() as session:
+                task = await session.get(Task, task_id)
+                if task is None or task.pr_number is None:
+                    continue
+                number, project = task.pr_number, task.project_id
+                client = await proposal_client(project, session)
+            if client is None:
+                continue
+            status = await client.pr_status(number)
+            checked += 1
+            if not status.merged:
+                continue
+            async with sessions() as session:
+                task = await session.get(Task, task_id, with_for_update=True)
+                if (
+                    task is None
+                    or task.pr_number != number
+                    or task.delivered_head is not None
+                ):
+                    continue
+                merged_at = status.merged_at or datetime.now(UTC)
+                task.status = TaskStatus.closed
+                task.closed_at = task.closed_at or merged_at
+                task.accepted_at = task.accepted_at or merged_at
+                task.delivered_head = status.head_sha[:64]
+                await announce(
+                    session,
+                    place_id=task.room_id,
+                    content=f"PR #{number} 已在代码仓库合并，任务已交付",
+                    meta=notice(
+                        EVENT_ACCEPT_DONE,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=task.pr_url or "",
+                    ),
+                )
+                await session.commit()
+                merged += 1
+        except Exception as exc:  # noqa: BLE001 — one PR must not block the rest
+            errors.append(f"{task_id}: {exc}")
+            logger.warning(
+                "uncarded task PR poll failed for %s", task_id, exc_info=True
+            )
+    return {"tasks_checked": checked, "tasks_merged": merged, "errors": errors}
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
