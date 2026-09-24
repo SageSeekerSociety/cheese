@@ -20,8 +20,6 @@ ref_type="${REF_TYPE:-branch}"
 if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
   # The server's success filter has returned older runs while its completed
   # list included newer successes. Select the conclusion from that list.
-  # Manual runs count: they rebuild every image under this branch's commit, so
-  # they are a complete baseline, and a rebuild is how a broken chain recovers.
   for page in {1..10}; do
     if ! runs="$(gh api \
         "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=completed&per_page=100&page=$page" \
