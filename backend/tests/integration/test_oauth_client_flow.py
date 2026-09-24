@@ -451,13 +451,11 @@ class TestOAuthRespectsTwoFactor:
         )
         self._assert_2fa_ticket(api_client, resp, secret)
 
-    def test_signing_in_with_a_linked_provider_asks_for_the_second_factor(
-        self,
-        api_client: TestClient,
-        user_client: UserCreator,
-        state_token: StateToken,
-        monkeypatch,
-    ):
+    def _linked_github_account(
+        self, client: TestClient, user_client: UserCreator, state_token, monkeypatch
+    ) -> tuple[CreatedUser, str]:
+        """An account with 2FA and a linked GitHub identity; returns it and its
+        TOTP secret."""
         from app.domain.oauth.services import GitHubProvider, OAuthUserInfo
 
         monkeypatch.setattr(settings, "oauth_enabled_providers", "github")
@@ -480,22 +478,67 @@ class TestOAuthRespectsTwoFactor:
 
         user = user_client.create_user()
         linked = _bind(
-            api_client,
+            client,
             state_token("github", id="gh-2fa-uid"),
             user.username,
             user.password,
         )
         assert _q(_loc(linked))["bound"] == "true"
-        secret = _enable_2fa(api_client, user)
+        return user, _enable_2fa(client, user)
 
-        start = api_client.get("/users/auth/oauth/login/github", follow_redirects=False)
+    def _github_sign_in(self, client: TestClient):
+        start = client.get("/users/auth/oauth/login/github", follow_redirects=False)
         state = _q(start.headers["location"])["state"]
-        resp = api_client.get(
+        return client.get(
             "/users/auth/oauth/callback/github",
             params={"code": "c", "state": state},
             follow_redirects=False,
         )
+
+    def test_signing_in_with_a_linked_provider_asks_for_the_second_factor(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        state_token: StateToken,
+        monkeypatch,
+    ):
+        _user, secret = self._linked_github_account(
+            api_client, user_client, state_token, monkeypatch
+        )
+
+        resp = self._github_sign_in(api_client)
         self._assert_2fa_ticket(api_client, resp, secret)
+
+    def test_a_trusted_browser_signs_in_with_a_linked_provider_directly(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        state_token: StateToken,
+        monkeypatch,
+    ):
+        _user, secret = self._linked_github_account(
+            api_client, user_client, state_token, monkeypatch
+        )
+        first = self._github_sign_in(api_client)
+        trusted = api_client.post(
+            "/users/auth/verify-2fa",
+            json={
+                "temp_token": _q(_loc(first))["token"],
+                "code": pyotp.TOTP(secret).now(),
+                "trust_device": True,
+            },
+        )
+        assert trusted.status_code == 200, trusted.text
+        cookie = trusted.cookies.get("cheese_trusted_device")
+        assert cookie
+        api_client.cookies.set("cheese_trusted_device", cookie)
+
+        resp = self._github_sign_in(api_client)
+
+        loc = _loc(resp)
+        assert loc.startswith(f"{settings.frontend_url}/account/oauth/success")
+        assert cookie not in loc
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
 
 class TestOAuthVerifyPending:

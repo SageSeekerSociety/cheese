@@ -6,7 +6,7 @@ import { startAuthentication } from '@simplewebauthn/browser'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SudoCancelledError, withSudo } from '@/utils/sudo'
+import { pendingSudo, SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import SudoDialog from './SudoDialog.vue'
 
@@ -18,6 +18,7 @@ const browser = vi.hoisted(() => ({ webAuthn: true }))
 
 vi.mock('@/network/api/users', () => ({
   UserApi: {
+    requestSudoTicket: vi.fn(),
     getMyAuthMethods: vi.fn(),
     getPasskeyAuthenticationOptions: vi.fn(),
     verifySudoPasskey: vi.fn(),
@@ -41,6 +42,13 @@ beforeEach(() => {
   browser.webAuthn = true
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
+  // Outside the sudo window unless a test says otherwise, so the dialog opens.
+  vi.mocked(UserApi.requestSudoTicket).mockRejectedValue(
+    new BusinessError('Re-authentication required for this operation', 403, {
+      name: 'SudoRequiredError',
+      message: 'Re-authentication required for this operation',
+    })
+  )
   vi.mocked(UserApi.verifySudoPassword).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-1' } } as never)
   vi.mocked(UserApi.verifySudoTOTP).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-2' } } as never)
   vi.mocked(UserApi.requestSudoEmailCode).mockResolvedValue({ data: { email: 'alice@example.com' } } as never)
@@ -49,6 +57,9 @@ beforeEach(() => {
   } as never)
 })
 afterEach(() => {
+  // A test that leaves its dialog open must not hand it to the next one, which
+  // mounts a fresh dialog before its own request arrives.
+  pendingSudo.value?.settle(null)
   cleanup()
   vi.unstubAllGlobals()
 })
@@ -90,6 +101,47 @@ async function ask(purpose: Parameters<typeof withSudo>[0] = 'password:change') 
 const submit = (field: HTMLElement) => fireEvent.submit(field.closest('form')!)
 
 const otherWays = () => screen.queryAllByRole('button', { name: /^Enter / }).map((b) => b.textContent?.trim())
+
+describe('shortly after the person proved who they are', () => {
+  it('runs the operation with the ticket the server grants, without opening the dialog', async () => {
+    vi.mocked(UserApi.requestSudoTicket).mockResolvedValue({
+      data: { verified: true, sudoTicket: 'silent-ticket' },
+    } as never)
+    render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
+    const operation = vi.fn(async (ticket: string) => `done with ${ticket}`)
+
+    await expect(withSudo('2fa:disable', operation)).resolves.toBe('done with silent-ticket')
+
+    expect(UserApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
+    expect(operation).toHaveBeenCalledWith('silent-ticket')
+    expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull()
+    expect(UserApi.getMyAuthMethods).not.toHaveBeenCalled()
+  })
+
+  it('opens the dialog when the server asks for confirmation', async () => {
+    accountWith({ passkey: false, twoFactor: false })
+    const { result, operation } = await ask('2fa:disable')
+
+    expect(UserApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
+    await fireEvent.update(await screen.findByLabelText('Password'), 'correct horse!1')
+    expect(operation).not.toHaveBeenCalled()
+    await submit(screen.getByLabelText('Password'))
+
+    await expect(result).resolves.toBe('done with ticket-1')
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull())
+  })
+
+  it('reports any other failure instead of asking', async () => {
+    vi.mocked(UserApi.requestSudoTicket).mockRejectedValue(new BusinessError('Service unavailable', 503))
+    render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
+    const operation = vi.fn()
+
+    await expect(withSudo('2fa:disable', operation)).rejects.toThrow('Service unavailable')
+
+    expect(operation).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull()
+  })
+})
 
 describe('what the dialog offers first', () => {
   it('leads with the passkey and lists the password and the code under it', async () => {

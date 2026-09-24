@@ -1,6 +1,6 @@
-import type { UserApi } from '@/network/api/users'
-
 import { shallowRef } from 'vue'
+
+import { UserApi } from '@/network/api/users'
 
 /**
  * The person closed the confirmation instead of completing it. Nothing ran,
@@ -41,14 +41,31 @@ function confirmIdentity(purpose: UserApi.SudoPurpose): Promise<string> {
 }
 
 /**
- * Run an operation the server gates on a sudo ticket. The person confirms who
- * they are in a dialog over the current page; the operation then runs with the
- * single-use ticket the server signed for `purpose`, and its result comes back
- * here. Rejects with SudoCancelledError, without running it, when they back out.
+ * A ticket the server hands out without asking, while this sign-in is still
+ * inside the few minutes after it last proved who is at it; null when the
+ * server says the person has to confirm again.
+ */
+async function ticketWithoutAsking(purpose: UserApi.SudoPurpose): Promise<string | null> {
+  try {
+    const { data } = await UserApi.requestSudoTicket(purpose)
+    return data.sudoTicket ?? null
+  } catch (error) {
+    if ((error as { name?: unknown } | null)?.name === 'SudoRequiredError') return null
+    throw error
+  }
+}
+
+/**
+ * Run an operation the server gates on a sudo ticket. Shortly after the person
+ * signed in or confirmed who they are, the server grants the ticket without
+ * asking; otherwise they confirm in a dialog over the current page. The
+ * operation then runs with the single-use ticket the server signed for
+ * `purpose`, and its result comes back here. Rejects with SudoCancelledError,
+ * without running it, when they back out.
  */
 export async function withSudo<T>(
   purpose: UserApi.SudoPurpose,
   operation: (sudoTicket: string) => Promise<T>
 ): Promise<T> {
-  return operation(await confirmIdentity(purpose))
+  return operation((await ticketWithoutAsking(purpose)) ?? (await confirmIdentity(purpose)))
 }

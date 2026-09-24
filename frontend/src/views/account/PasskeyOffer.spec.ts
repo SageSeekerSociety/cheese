@@ -30,6 +30,10 @@ vi.mock('@/network/api/users', () => ({
     getPasskeyRegistrationOptions: vi.fn(),
     verifyPasskeyRegistration: vi.fn(),
     dismissPasskeyPrompt: vi.fn(),
+    // The sign-in is past its sudo window in these tests, so confirming is asked for.
+    requestSudoTicket: vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Re-authentication required'), { name: 'SudoRequiredError' })),
   },
 }))
 vi.mock('@/services/account', async () => {
@@ -111,8 +115,8 @@ async function submitPassword(path = '/account/signin') {
 
 // Filling the sixth digit submits, as it does for a person typing.
 async function enterCode(view: ReturnType<typeof render>) {
-  await waitFor(() => expect(view.container.querySelectorAll('input').length).toBeGreaterThanOrEqual(6))
-  const inputs = view.container.querySelectorAll('input')
+  await waitFor(() => expect(view.container.querySelectorAll('.v-otp-input input').length).toBeGreaterThanOrEqual(6))
+  const inputs = view.container.querySelectorAll('.v-otp-input input')
   for (const [i, digit] of [...'123456'].entries()) {
     await fireEvent.focus(inputs[i])
     await fireEvent.update(inputs[i], digit)

@@ -54,6 +54,8 @@ export type SessionInfo = {
   lastActiveAt: string
   /** The sign-in this request was made from. */
   current: boolean
+  /** Its browser is trusted to skip two-step verification. */
+  trusted: boolean
 }
 
 export type GetSessionsResponse = {
