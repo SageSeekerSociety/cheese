@@ -180,5 +180,28 @@
       "bindSubmit": "Link and sign in",
       "unavailable": "Cannot continue signing in"
     }
+  },
+  "sudo": {
+    "title": "Confirm it’s you",
+    "lede": "Confirm it’s you to continue",
+    "ledeFor": "Confirm it’s you before you {action}",
+    "passkey": "Confirm with a passkey",
+    "submit": "Confirm",
+    "usePasskey": "Use a passkey",
+    "usePassword": "Use your password",
+    "useTotp": "Use an authenticator code",
+    "passwordRequired": "Enter your password",
+    "passkeyCanceled": "Passkey confirmation was canceled",
+    "failed": "Could not confirm. Try again.",
+    "action": {
+      "initTOTP": "turn on two-step verification",
+      "disableTOTP": "turn off two-step verification",
+      "generateBackupCodes": "generate new backup codes",
+      "update2FASettings": "change two-step verification settings",
+      "addPasskey": "add a passkey",
+      "deletePasskey": "delete a passkey",
+      "changePassword": "change your password",
+      "unbindOAuthConnection": "unlink a connected account"
+    }
   }
 }

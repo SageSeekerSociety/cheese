@@ -180,5 +180,28 @@
       "bindSubmit": "关联并登录",
       "unavailable": "无法继续登录"
     }
+  },
+  "sudo": {
+    "title": "验证身份",
+    "lede": "继续之前，请先验证身份",
+    "ledeFor": "{action}之前，请先验证身份",
+    "passkey": "使用通行密钥验证",
+    "submit": "验证",
+    "usePasskey": "改用通行密钥",
+    "usePassword": "改用密码",
+    "useTotp": "改用验证器验证码",
+    "passwordRequired": "请输入密码",
+    "passkeyCanceled": "已取消通行密钥验证",
+    "failed": "验证失败，请重试",
+    "action": {
+      "initTOTP": "开启两步验证",
+      "disableTOTP": "关闭两步验证",
+      "generateBackupCodes": "生成新的备用码",
+      "update2FASettings": "修改两步验证设置",
+      "addPasskey": "添加通行密钥",
+      "deletePasskey": "删除通行密钥",
+      "changePassword": "修改密码",
+      "unbindOAuthConnection": "解除第三方账号关联"
+    }
   }
 }
