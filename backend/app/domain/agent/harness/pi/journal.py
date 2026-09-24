@@ -13,36 +13,23 @@ the parent chain is a linked list nobody wants to walk on every read.
 """
 
 import json
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
-PAGE = 256
+from app.domain.agent.harness.driven import journal
 
 
-class Journal:
-    def __init__(self, path: Path):
-        self.connection = sqlite3.connect(path)
-        self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.executescript("""
-            CREATE TABLE IF NOT EXISTS entries (
-                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                role TEXT NOT NULL,
-                recorded_at TEXT NOT NULL,
-                entry TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS inputs (
-                id TEXT PRIMARY KEY,
-                payload TEXT NOT NULL,
-                status TEXT NOT NULL,
-                result TEXT
-            );
-            CREATE TABLE IF NOT EXISTS state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-        """)
+class Journal(journal.Journal):
+    table = "entries"
+    column = "entry"
+    schema = """
+        CREATE TABLE IF NOT EXISTS entries (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT NOT NULL UNIQUE,
+            role TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            entry TEXT NOT NULL
+        );
+    """
 
     def import_entries(self, entries: list[dict]) -> None:
         """Land a page, then advance the cursor we ask pi from.
@@ -65,16 +52,6 @@ class Journal:
             if entries:
                 self.remember("received", entries[-1]["id"])
 
-    def read(self, after: int = 0) -> list[dict]:
-        return [
-            {"sequence": seq, "at": at, "entry": json.loads(entry)}
-            for seq, at, entry in self.connection.execute(
-                "SELECT sequence, recorded_at, entry FROM entries "
-                "WHERE sequence > ? ORDER BY sequence LIMIT ?",
-                (after, PAGE),
-            )
-        ]
-
     def sequence_of(self, entry_id: str) -> int:
         """Where a pi entry id sits in arrival order, or 0 when we never saw it.
 
@@ -86,28 +63,6 @@ class Journal:
             "SELECT sequence FROM entries WHERE id=?", (entry_id,)
         ).fetchone()
         return row[0] if row else 0
-
-    # --- inputs: at most once, however many times we are asked ---------------
-
-    def input(self, identifier: str) -> tuple[str, str, dict | None] | None:
-        row = self.connection.execute(
-            "SELECT payload, status, result FROM inputs WHERE id=?", (identifier,)
-        ).fetchone()
-        return (row[0], row[1], json.loads(row[2]) if row[2] else None) if row else None
-
-    def begin_input(self, identifier: str, payload: str) -> None:
-        with self.connection:
-            self.connection.execute(
-                "INSERT INTO inputs VALUES (?, ?, 'sending', NULL)",
-                (identifier, payload),
-            )
-
-    def finish_input(self, identifier: str, status: str, result: dict) -> None:
-        with self.connection:
-            self.connection.execute(
-                "UPDATE inputs SET status=?, result=? WHERE id=?",
-                (status, json.dumps(result), identifier),
-            )
 
     def turn_started_at(self, sequence: int) -> int:
         """Where the turn containing this point began — the last thing a person
@@ -131,36 +86,3 @@ class Journal:
                 (after, through),
             )
         ]
-
-    def acknowledge(self, through: int) -> None:
-        with self.connection:
-            self.connection.execute(
-                "INSERT INTO state VALUES ('landed', ?) ON CONFLICT(key) "
-                "DO UPDATE SET value=CAST(MAX(CAST(value AS INTEGER), "
-                "CAST(excluded.value AS INTEGER)) AS TEXT)",
-                (str(through),),
-            )
-
-    def prune(self, before: str) -> None:
-        with self.connection:
-            self.connection.execute(
-                "DELETE FROM entries WHERE sequence <= ? AND recorded_at < ?",
-                (int(self.recall("landed") or 0), before),
-            )
-
-    def remember(self, key: str, value: str) -> None:
-        with self.connection:
-            self.connection.execute(
-                "INSERT INTO state VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, value),
-            )
-
-    def recall(self, key: str) -> str | None:
-        row = self.connection.execute(
-            "SELECT value FROM state WHERE key=?", (key,)
-        ).fetchone()
-        return row[0] if row else None
-
-    def close(self) -> None:
-        self.connection.close()

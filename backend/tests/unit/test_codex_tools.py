@@ -150,3 +150,24 @@ def test_runner_archive_launches_without_the_backend_environment(tmp_path):
     )
     assert process.returncode == 0, process.stderr
     assert "--state" in process.stdout
+
+
+def test_the_runner_archive_carries_the_platform_tool_table(tmp_path):
+    """The session host has no source tree: the table has to arrive inside the
+    archive, and load from there."""
+    archive = tmp_path / "runner.pyz"
+    archive.write_bytes(build())
+    probe = (
+        "import sys; sys.path.insert(0, sys.argv[1]);"
+        "from app.domain.agent.harness.codex.tools import platform_tools;"
+        "print(sorted(platform_tools().PLATFORM_TOOLS.names())[:3])"
+    )
+    process = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", probe, str(archive)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert process.returncode == 0, process.stderr
+    assert "chat_send" in process.stdout
