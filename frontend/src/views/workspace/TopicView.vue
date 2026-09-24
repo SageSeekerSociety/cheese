@@ -101,6 +101,13 @@ function openTopic(topicId: string) {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const focusMode = ref(false) // 专注模式 (spec §7.1): session-only, a transient mode
+// 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
+// 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
+function freezeChatWidth(el: Element) {
+  const panes = (el as HTMLElement).parentElement
+  if (!panes) return
+  ;(el as HTMLElement).style.setProperty('--chat-frozen-w', `${(panes.clientWidth * store.chatPct) / 100}px`)
+}
 const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
@@ -332,19 +339,23 @@ const ROOM_DEFAULTS = { VBtn: { color: 'on-surface-variant' } } as const
         <PushPermissionPrompt :working="working" />
 
         <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-          <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
-          <TopicChatColumn
-            v-if="mdAndUp"
-            v-show="!focusMode"
-            ref="chatColumn"
-            class="col col-chat"
-            :style="{ flex: `0 0 ${store.chatPct}%` }"
-            :topic="selectedTopic"
-            :members="store.members"
-            :topic-list="store.topics"
-            :unread-on-open="unreadOnOpen"
-            v-on="chatEvents"
-          />
+          <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
+             专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
+             人要看得出面板是从哪儿长过来的。 -->
+          <Transition name="focus-chat" @before-enter="freezeChatWidth" @before-leave="freezeChatWidth">
+            <TopicChatColumn
+              v-if="mdAndUp"
+              v-show="!focusMode"
+              ref="chatColumn"
+              class="col col-chat"
+              :style="{ flex: `0 0 ${store.chatPct}%` }"
+              :topic="selectedTopic"
+              :members="store.members"
+              :topic-list="store.topics"
+              :unread-on-open="unreadOnOpen"
+              v-on="chatEvents"
+            />
+          </Transition>
           <div
             v-if="mdAndUp && !focusMode"
             class="pane-resizer"
@@ -404,6 +415,32 @@ const ROOM_DEFAULTS = { VBtn: { color: 'on-surface-variant' } } as const
 }
 .col {
   min-width: 0;
+}
+/* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
+   flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
+.focus-chat-enter-active,
+.focus-chat-leave-active {
+  overflow: hidden;
+}
+.focus-chat-enter-active {
+  transition:
+    flex-basis var(--dur-slow) var(--ease-out),
+    opacity var(--dur-slow) var(--ease-out);
+}
+.focus-chat-leave-active {
+  transition:
+    flex-basis var(--dur-base) var(--ease-in),
+    opacity var(--dur-base) var(--ease-in);
+}
+.focus-chat-enter-from,
+.focus-chat-leave-to {
+  flex-basis: 0% !important;
+  opacity: 0;
+}
+.focus-chat-enter-active > :deep(*),
+.focus-chat-leave-active > :deep(*) {
+  width: var(--chat-frozen-w);
+  min-width: var(--chat-frozen-w);
 }
 /* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
    的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，

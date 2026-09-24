@@ -784,141 +784,147 @@ const canTransferProject = computed(() => {
               </button>
 
               <v-list density="compact" nav class="py-0">
-                <v-list-item
-                  v-for="row in section.rows"
-                  :key="row.topic.id"
-                  :data-room-id="row.topic.id"
-                  :active="row.topic.id === selectedTopicId"
-                  rounded="lg"
-                  class="topic-row"
-                  :class="{
-                    'is-active': row.topic.id === selectedTopicId,
-                    'is-sub': row.depth > 0,
-                    'is-menu-open': actionsMenuFor === row.topic.id,
-                  }"
-                  :style="{
-                    paddingInlineStart: 8 + row.depth * 20 + 'px',
-                    '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
-                  }"
-                  @click="emit('select-topic', row.topic.id)"
-                  @mouseenter="emit('hover-topic', row.topic.id)"
-                  @mouseleave="emit('leave-topic')"
-                >
-                  <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
+                <!-- 顺序按最近动静排，一条新消息会把一个房间顶到上面。换位置时让行滑过
+                     去（FLIP），而不是整列瞬间重排——人找的那一行刚才在哪、现在去了
+                     哪，要看得见。按项目换 key：切项目是换了一整份列表，不是这份列表
+                     在重排，不演。 -->
+                <TransitionGroup :key="selectedProjectId" name="rail-row">
+                  <v-list-item
+                    v-for="row in section.rows"
+                    :key="row.topic.id"
+                    :data-room-id="row.topic.id"
+                    :active="row.topic.id === selectedTopicId"
+                    rounded="lg"
+                    class="topic-row"
+                    :class="{
+                      'is-active': row.topic.id === selectedTopicId,
+                      'is-sub': row.depth > 0,
+                      'is-menu-open': actionsMenuFor === row.topic.id,
+                    }"
+                    :style="{
+                      paddingInlineStart: 8 + row.depth * 20 + 'px',
+                      '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
+                    }"
+                    @click="emit('select-topic', row.topic.id)"
+                    @mouseenter="emit('hover-topic', row.topic.id)"
+                    @mouseleave="emit('leave-topic')"
+                  >
+                    <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
                        身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
                        原先这里还有一颗每行都一样的装饰图标——同一层级里人人相同的
                        标记区分不了任何东西，删掉了。 -->
-                  <template #prepend>
-                    <button
-                      v-if="row.hasChildren"
-                      type="button"
-                      class="row-slot subtree-toggle"
-                      :class="{
-                        'subtree-toggle--awaits': rowAwaits(row),
-                        'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
-                      }"
-                      :title="toggleTitle(row)"
-                      :aria-expanded="!row.collapsed"
-                      @click.stop="toggleCollapse(row.topic.id)"
-                    >
-                      <v-icon size="15">
-                        {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-                      </v-icon>
-                    </button>
-                    <!-- 等你处理：有点名给你的验收卡、@你 的未读，或芝士停在一道只有
+                    <template #prepend>
+                      <button
+                        v-if="row.hasChildren"
+                        type="button"
+                        class="row-slot subtree-toggle"
+                        :class="{
+                          'subtree-toggle--awaits': rowAwaits(row),
+                          'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                        }"
+                        :title="toggleTitle(row)"
+                        :aria-expanded="!row.collapsed"
+                        @click.stop="toggleCollapse(row.topic.id)"
+                      >
+                        <v-icon size="15">
+                          {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                        </v-icon>
+                      </button>
+                      <!-- 等你处理：有点名给你的验收卡、@你 的未读，或芝士停在一道只有
                          你能回答的问题上。排在"在跑"前面——芝士在忙是它的事，等你做
                          事才是你的事。行首只有这一颗点：看板每一列的状态点不再画进
                          标题里，那一颗对每一行都有，于是哪一行都不显眼。 -->
-                    <span v-else-if="row.topic.awaits_me" class="row-slot">
-                      <span class="await-dot" title="有待处理的事项" />
-                    </span>
-                    <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
-                         任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
-                    <span v-else-if="row.topic.running" class="row-slot">
-                      <span class="running-dot" title="芝士正在这个话题里工作" />
-                    </span>
-                    <span v-else class="row-slot" />
-                  </template>
-                  <v-list-item-title class="d-flex align-center topic-title">
-                    <v-text-field
-                      v-if="renamingTopicId === row.topic.id"
-                      v-model="draftTitle"
-                      autocomplete="off"
-                      density="compact"
-                      variant="outlined"
-                      hide-details
-                      autofocus
-                      :maxlength="TOPIC_TITLE_MAX_LENGTH"
-                      class="rename-field"
-                      @click.stop
-                      @keyup.enter="saveRename(row.topic)"
-                      @keyup.esc="cancelRename()"
-                      @blur="saveRename(row.topic)"
-                    />
-                    <template v-else>
-                      <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
-                        row.topic.title
-                      }}</span>
-                      <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
-                      <span
-                        v-if="row.collapsed && row.hiddenCount > 0"
-                        class="subtree-count ms-2"
-                        :title="`收起了 ${row.hiddenCount} 项`"
-                        >{{ countLabel(row.hiddenCount) }}</span
-                      >
-                      <span
-                        v-if="statusBadge(row.topic.status)"
-                        class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
-                      >
-                        <span class="status-dot status-dot--warn" />
-                        {{ statusBadge(row.topic.status) }}
+                      <span v-else-if="row.topic.awaits_me" class="row-slot">
+                        <span class="await-dot" title="有待处理的事项" />
                       </span>
+                      <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
+                         任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
+                      <span v-else-if="row.topic.running" class="row-slot">
+                        <span class="running-dot" title="芝士正在这个话题里工作" />
+                      </span>
+                      <span v-else class="row-slot" />
                     </template>
-                  </v-list-item-title>
-                  <template #append>
-                    <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
-                    <span
-                      v-if="row.unreadTotal > 0"
-                      class="unread-badge"
-                      :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
-                      >{{ countLabel(row.unreadTotal) }}</span
-                    >
-                    <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
-                    <div class="row-actions" @click.stop>
-                      <v-menu
-                        :model-value="actionsMenuFor === row.topic.id"
-                        location="bottom end"
-                        @update:model-value="(open: boolean) => setActionsMenu(row.topic.id, open)"
+                    <v-list-item-title class="d-flex align-center topic-title">
+                      <v-text-field
+                        v-if="renamingTopicId === row.topic.id"
+                        v-model="draftTitle"
+                        autocomplete="off"
+                        density="compact"
+                        variant="outlined"
+                        hide-details
+                        autofocus
+                        :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                        class="rename-field"
+                        @click.stop
+                        @keyup.enter="saveRename(row.topic)"
+                        @keyup.esc="cancelRename()"
+                        @blur="saveRename(row.topic)"
+                      />
+                      <template v-else>
+                        <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
+                          row.topic.title
+                        }}</span>
+                        <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
+                        <span
+                          v-if="row.collapsed && row.hiddenCount > 0"
+                          class="subtree-count ms-2"
+                          :title="`收起了 ${row.hiddenCount} 项`"
+                          >{{ countLabel(row.hiddenCount) }}</span
+                        >
+                        <span
+                          v-if="statusBadge(row.topic.status)"
+                          class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
+                        >
+                          <span class="status-dot status-dot--warn" />
+                          {{ statusBadge(row.topic.status) }}
+                        </span>
+                      </template>
+                    </v-list-item-title>
+                    <template #append>
+                      <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
+                      <span
+                        v-if="row.unreadTotal > 0"
+                        class="unread-badge"
+                        :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+                        >{{ countLabel(row.unreadTotal) }}</span
                       >
-                        <template #activator="{ props: menuProps }">
-                          <v-btn
-                            v-bind="menuProps"
-                            icon="mdi-dots-horizontal"
-                            size="small"
-                            variant="text"
-                            color="on-surface-variant"
-                            density="comfortable"
-                            title="更多操作"
-                            class="row-actions__btn"
-                          />
-                        </template>
-                        <v-list density="compact" nav>
-                          <v-list-item
-                            prepend-icon="mdi-pencil-outline"
-                            title="重命名"
-                            @click="startRename(row.topic)"
-                          />
-                          <v-list-item
-                            v-if="row.topic.can_archive"
-                            prepend-icon="mdi-archive-arrow-down-outline"
-                            title="归档"
-                            @click="emit('archive-topic', row.topic.id)"
-                          />
-                        </v-list>
-                      </v-menu>
-                    </div>
-                  </template>
-                </v-list-item>
+                      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
+                      <div class="row-actions" @click.stop>
+                        <v-menu
+                          :model-value="actionsMenuFor === row.topic.id"
+                          location="bottom end"
+                          @update:model-value="(open: boolean) => setActionsMenu(row.topic.id, open)"
+                        >
+                          <template #activator="{ props: menuProps }">
+                            <v-btn
+                              v-bind="menuProps"
+                              icon="mdi-dots-horizontal"
+                              size="small"
+                              variant="text"
+                              color="on-surface-variant"
+                              density="comfortable"
+                              title="更多操作"
+                              class="row-actions__btn"
+                            />
+                          </template>
+                          <v-list density="compact" nav>
+                            <v-list-item
+                              prepend-icon="mdi-pencil-outline"
+                              title="重命名"
+                              @click="startRename(row.topic)"
+                            />
+                            <v-list-item
+                              v-if="row.topic.can_archive"
+                              prepend-icon="mdi-archive-arrow-down-outline"
+                              title="归档"
+                              @click="emit('archive-topic', row.topic.id)"
+                            />
+                          </v-list>
+                        </v-menu>
+                      </div>
+                    </template>
+                  </v-list-item>
+                </TransitionGroup>
               </v-list>
             </template>
 
@@ -1434,6 +1440,25 @@ const canTransferProject = computed(() => {
   .running-dot {
     animation: none;
   }
+}
+/* 行换位置、进出（见模板里 TransitionGroup 那段）。走掉的那一行脱离文档流，否则
+   下面几行要等它淡完才补位，那是一次跳；左右 8px 是 `.v-list--nav` 自己的内边距。
+   减弱动效时全局那条把时长压到 0.001ms，进出瞬间完成，不用在这儿单独关。 */
+.rail-row-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.rail-row-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.rail-row-leave-active {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.rail-row-enter-from,
+.rail-row-leave-to {
+  opacity: 0;
 }
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。
    这是结构线，不是强调条——左条纹禁令不管它。 */
