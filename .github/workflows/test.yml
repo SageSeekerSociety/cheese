@@ -320,7 +320,11 @@ jobs:
             selection=(tests/ -m "$TEST_LAYER" -k 'not kotlin and not meilisearch_integration')
             workers="$CHEESE_CI_TEST_WORKERS"
           fi
-          uv run python -m pytest "${selection[@]}" --ignore=tests/forgejo -n "$workers" \
+          observe=()
+          if [ "$TEST_LAYER" = integration ]; then
+            observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
+          fi
+          "${observe[@]}" uv run python -m pytest "${selection[@]}" --ignore=tests/forgejo -n "$workers" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             --dist worksteal --tb=short --durations=30 \
