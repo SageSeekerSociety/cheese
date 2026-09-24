@@ -33,7 +33,8 @@ class RequiredCITest(unittest.TestCase):
             "harness": ["backend/uv.lock", "backend/app/domain/agent/harness/claude_code/device_launch.py",
                         "backend/app/domain/agent/harness/codex/host.py",
                         ".github/workflows/harness-contract.yml"],
-            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml"],
+            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml",
+                    "scripts/remote_execution/headless_contract.py"],
         }
         for suite, paths in previous.items():
             for path in paths:
