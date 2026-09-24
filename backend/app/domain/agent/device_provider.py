@@ -215,6 +215,24 @@ def uses_tunnel(*, tunnel_url: str) -> bool:
     return bool(tunnel_url.strip())
 
 
+async def device_api_base(session, device_id: str, public_base: str) -> str:
+    """The backend base that ``device_id`` dials, from configuration.
+
+    An address belongs to the dialer: the session host reaches the backend over
+    its own configured base, a private-control cloud machine over loopback, and
+    everything else over the public connector base.
+    """
+    if (
+        device_id == settings.agent_session_device_id
+        and settings.agent_session_api_base
+    ):
+        return settings.agent_session_api_base.rstrip("/")
+    device = await session.get(DeviceRow, device_id)
+    if device and device.supply == Supply.cloud and device.cloud_control_private:
+        return "http://127.0.0.1:18080"
+    return public_base.rstrip("/")
+
+
 def _preview_ws_url(public_base: str) -> str:
     """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
 
@@ -784,25 +802,13 @@ class DeviceChannel(Channel):
         return None
 
     async def _device_api_base(self, device_id: str) -> str:
-        if (
-            device_id == settings.agent_session_device_id
-            and settings.agent_session_api_base
-        ):
-            return settings.agent_session_api_base.rstrip("/")
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory
 
             factory = async_session_factory
         async with factory() as session:
-            device = await session.get(DeviceRow, device_id)
-            if (
-                device
-                and device.supply == Supply.cloud
-                and device.cloud_control_private
-            ):
-                return "http://127.0.0.1:18080"
-        return self._public_base
+            return await device_api_base(session, device_id, self._public_base)
 
     async def _device_ccproxy_upstream(self, device_id: str) -> str:
         """The ccproxy identity this DEVICE brings, '' when it brings none.

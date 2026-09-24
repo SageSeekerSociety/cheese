@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution
@@ -19,6 +20,7 @@ from app.domain.agent.compute_configs import (
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import (
     _preview_ws_url,
+    device_api_base,
     device_home_dir,
     environment_status,
 )
@@ -99,7 +101,7 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
     return presentation(row)
 
 
-async def ensure(db, *, topic_id, session_id, claims, token, env, api, hub=None):
+async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     """The row reservation survives worker death; remote work holds no DB lock."""
     hub = hub or device_hub
     topic = await TopicService(db).lock_for_execution(topic_id)
@@ -208,8 +210,14 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, api, hub=None)
     else:
         assert selected is not None
         device_id = selected.device_id
-    if device_id == (row.runtime_location or {}).get("device_id"):
+    # Placement records the session host before the screen that asks opens.
+    assert row.runtime_location is not None
+    host = row.runtime_location["device_id"]
+    if device_id == host:
         raise ForbiddenError("Project tools cannot execute on the session host")
+    # Each dialer reaches the backend over its own configured base.
+    host_api = await device_api_base(db, host, settings.connector_public_base)
+    api = await device_api_base(db, device_id, settings.connector_public_base)
     work_resource = (lease or {}).get("resource_id") or generation
     claim = str(uuid.uuid4())
     reservation = {
@@ -294,7 +302,7 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, api, hub=None)
             "desired_release": info.get("desired_release"),
             "workspace": info["workspace"],
             "mcp_servers": info["mcp_servers"],
-            "url": f"{api}/topics/{topic_id}/execution/session-{resource}",
+            "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
         }
         target.pop("claim")
         target.pop("claim_until")
