@@ -204,6 +204,15 @@ export namespace UserApi {
       withCredentials: true,
     })
 
+  /** Decline the offer to add a passkey shown after signing in; `forever`
+   *  stops it for good instead of holding it back for a while. */
+  export const dismissPasskeyPrompt = (userId: number, forever: boolean) =>
+    ApiInstance.request({
+      url: `/users/${userId}/passkeys/prompt/dismiss`,
+      method: 'POST',
+      data: { forever },
+    })
+
   // Passkey 认证相关
   export const getPasskeyAuthenticationOptions = (userId?: number) =>
     ApiInstance.request<{ options: any }>({

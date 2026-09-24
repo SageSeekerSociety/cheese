@@ -74,7 +74,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { attemptMessage } from './attemptWait'
-import { afterPasswordSignIn, takePasswordStep } from './passkeyEnrollment'
+import { landingAfterSignIn, takePasswordStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
@@ -131,13 +131,14 @@ const handleVerify = async () => {
     // 登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signIn.signedIn'))
-    if (takePasswordStep()) afterPasswordSignIn(data.user!.id, data.passkeyEnrollment)
+    const upgrade = takePasswordStep() ? upgradeAfterPasswordSignIn(data.user!.id, data.passkeyEnrollment) : null
 
-    // 如果使用了备用码，显示提醒对话框
+    // 如果使用了备用码，显示提醒对话框。它已经是登录后的下一件事，不再接着
+    // 提议添加通行密钥。
     if (data.usedBackupCode) {
       showBackupCodeDialog.value = true
     } else {
-      router.replace(afterSignIn())
+      router.replace(await landingAfterSignIn(upgrade, afterSignIn()))
     }
   } catch (error: any) {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
