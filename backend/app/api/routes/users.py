@@ -156,6 +156,7 @@ class PutUserIdentityRequest(BaseModel):
     grade: str = ""
     major: str = ""
     class_name: str = Field(default="", alias="className")
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
 
 class PatchUserIdentityRequest(BaseModel):
@@ -166,6 +167,7 @@ class PatchUserIdentityRequest(BaseModel):
     grade: str | None = None
     major: str | None = None
     class_name: str | None = Field(default=None, alias="className")
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
 
 class TwoFactorCodeRequest(BaseModel):
@@ -2039,11 +2041,21 @@ async def get_user_identity(
     moduleEntityId: int | None = Query(default=None),
     accessReason: str | None = Query(default=None),
     accessType: str = Query(default="VIEW"),
+    sudo_ticket: str | None = Query(default=None, alias="sudoTicket"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
-    if precise and auth_user.user_id != user_id:
-        raise ForbiddenError("Precise identity view only allowed for the owner.")
+    """The owner's identity, masked unless ``precise`` is asked for.
+
+    The unmasked name and student ID take a fresh re-authentication: a
+    session alone, stolen or left open, only ever reads the masked form.
+    """
+    if precise:
+        if auth_user.user_id != user_id:
+            raise ForbiddenError("Precise identity view only allowed for the owner.")
+        await _spend_sudo_ticket(
+            sudo_ticket, user_id=auth_user.user_id, purpose=SudoPurpose.REALNAME_VIEW
+        )
 
     try:
         if precise:
@@ -2087,6 +2099,11 @@ async def put_user_identity(
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can update identity.")
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.REALNAME_UPDATE,
+    )
     stored = await realname_service.create_or_update_user_identity(
         user_id=user_id,
         real_name=payload.real_name,
@@ -2110,6 +2127,11 @@ async def patch_user_identity(
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can update identity.")
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.REALNAME_UPDATE,
+    )
     try:
         existing = await realname_service.get_user_identity(user_id)
         base = existing.copy()

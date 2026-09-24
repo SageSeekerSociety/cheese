@@ -243,6 +243,8 @@ export namespace UserApi {
     | 'passkey:delete'
     | 'password:change'
     | 'oauth:unbind'
+    | 'realname:view'
+    | 'realname:update'
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse>({
@@ -385,28 +387,33 @@ export namespace UserApi {
       data,
     })
 
-  // 实名信息 API
-  export const getRealNameInfo = (userId: number, precise: boolean = false) =>
+  // 实名信息 API。看完整信息和修改都要一张 sudo 票：看要 'realname:view'，改要 'realname:update'
+  export const getRealNameInfo = (userId: number) =>
     NewApiInstance.request<GetRealNameInfoResponse>({
       url: `/users/${userId}/identity`,
       method: 'GET',
-      params: {
-        precise,
-      },
+      params: { precise: false },
     })
 
-  export const updateRealNameInfo = (userId: number, data: RealNameInfo) =>
+  export const getPreciseRealNameInfo = (userId: number, sudoTicket: string) =>
+    NewApiInstance.request<GetRealNameInfoResponse>({
+      url: `/users/${userId}/identity`,
+      method: 'GET',
+      params: { precise: true, sudoTicket },
+    })
+
+  export const updateRealNameInfo = (userId: number, data: RealNameInfo, sudoTicket: string) =>
     NewApiInstance.request<UpdateRealNameInfoResponse>({
       url: `/users/${userId}/identity`,
       method: 'PUT',
-      data,
+      data: { ...data, sudoTicket },
     })
 
-  export const patchRealNameInfo = (userId: number, data: Partial<RealNameInfo>) =>
+  export const patchRealNameInfo = (userId: number, data: Partial<RealNameInfo>, sudoTicket: string) =>
     NewApiInstance.request<UpdateRealNameInfoResponse>({
       url: `/users/${userId}/identity`,
       method: 'PATCH',
-      data,
+      data: { ...data, sudoTicket },
     })
 
   // 获取实名信息访问日志

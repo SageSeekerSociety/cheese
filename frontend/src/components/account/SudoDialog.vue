@@ -160,6 +160,8 @@ const ACTIONS: Record<UserApi.SudoPurpose, string> = {
   'passkey:delete': 'account.sudo.action.deletePasskey',
   'password:change': 'account.sudo.action.changePassword',
   'oauth:unbind': 'account.sudo.action.unbindOAuthConnection',
+  'realname:view': 'account.sudo.action.viewRealName',
+  'realname:update': 'account.sudo.action.updateRealName',
 }
 
 const titleId = useId()

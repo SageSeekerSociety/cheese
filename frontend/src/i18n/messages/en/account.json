@@ -204,7 +204,9 @@
       "addPasskey": "add a passkey",
       "deletePasskey": "delete a passkey",
       "changePassword": "change your password",
-      "unbindOAuthConnection": "unlink a connected account"
+      "unbindOAuthConnection": "unlink a connected account",
+      "viewRealName": "view your full real-name information",
+      "updateRealName": "change your real-name information"
     }
   },
   "security": {

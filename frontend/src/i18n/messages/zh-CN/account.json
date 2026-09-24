@@ -204,7 +204,9 @@
       "addPasskey": "添加通行密钥",
       "deletePasskey": "删除通行密钥",
       "changePassword": "修改密码",
-      "unbindOAuthConnection": "解除第三方账号关联"
+      "unbindOAuthConnection": "解除第三方账号关联",
+      "viewRealName": "查看完整实名信息",
+      "updateRealName": "修改实名信息"
     }
   },
   "security": {

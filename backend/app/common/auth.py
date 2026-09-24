@@ -143,6 +143,8 @@ class SudoPurpose(StrEnum):
     PASSKEY_DELETE = "passkey:delete"
     PASSWORD_CHANGE = "password:change"
     OAUTH_UNBIND = "oauth:unbind"
+    REALNAME_VIEW = "realname:view"
+    REALNAME_UPDATE = "realname:update"
 
 
 class MintedSudoTicket(NamedTuple):

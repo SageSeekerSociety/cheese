@@ -277,6 +277,7 @@ import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
+import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import { UserApi } from '@/network/api/users'
@@ -390,7 +391,7 @@ const fetchRealNameInfo = async () => {
 
   loading.value = true
   try {
-    const { data } = await UserApi.getRealNameInfo(currentUserId.value, false)
+    const { data } = await UserApi.getRealNameInfo(currentUserId.value)
     hasRealNameInfo.value = data.hasIdentity
     if (data.hasIdentity && data.identity) {
       realNameInfo.value = data.identity
@@ -426,7 +427,8 @@ const fetchPreciseInfo = async () => {
   showingPrecise.value = true
 
   try {
-    const result = await UserApi.getRealNameInfo(currentUserId.value, true)
+    const userId = currentUserId.value
+    const result = await withSudo('realname:view', (ticket) => UserApi.getPreciseRealNameInfo(userId, ticket))
 
     if (result.data.hasIdentity && result.data.identity) {
       setFieldValue('realName', result.data.identity.realName)
@@ -443,9 +445,10 @@ const fetchPreciseInfo = async () => {
       toast.error('未填写过实名信息')
     }
   } catch (error: any) {
+    showingPrecise.value = false
+    if (error instanceof SudoCancelledError) return
     console.error('获取精确实名信息失败', error)
     toast.error(error?.message || '获取完整实名信息失败，请重试')
-    showingPrecise.value = false
   } finally {
     loadingPrecise.value = false
   }
@@ -479,7 +482,8 @@ const onSubmit = handleSubmit(async (values) => {
 
     console.log('提交的修改字段:', changedFields)
 
-    const { data } = await UserApi.patchRealNameInfo(currentUserId.value!, changedFields)
+    const userId = currentUserId.value
+    await withSudo('realname:update', (ticket) => UserApi.patchRealNameInfo(userId, changedFields, ticket))
 
     const wasPrecise = showingPrecise.value
 
@@ -491,6 +495,7 @@ const onSubmit = handleSubmit(async (values) => {
       await fetchRealNameInfo()
     }
   } catch (error: any) {
+    if (error instanceof SudoCancelledError) return
     console.error('保存实名信息失败', error)
     toast.error(error.message || '保存实名信息失败')
   } finally {
