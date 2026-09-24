@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlsplit
 
 import jwt
 from fastapi import (
@@ -227,6 +228,37 @@ def _clear_refresh_cookie(response: Response) -> None:
         samesite="lax",
         path=_REFRESH_COOKIE_PATH,
     )
+
+
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+def _require_same_origin(request: Request) -> None:
+    """Refuse a refresh or sign-out that another site had the browser send.
+
+    SameSite=Lax keeps the cookie off a cross-site POST, but not off one from
+    a sibling subdomain, and older browsers do not apply it at all. Modern
+    browsers say where a request came from in Sec-Fetch-Site; older ones at
+    least send Origin on a POST. A request with neither did not come from a
+    browser, so it carries no cookie it did not mean to, and passes.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        if site != "same-origin":
+            raise ForbiddenError("Cross-site request refused")
+        return
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    trusted = {
+        _origin_of(settings.frontend_url),
+        *map(_origin_of, settings.cors_origins),
+    }
+    same_host = urlsplit(origin).netloc == request.headers.get("host")
+    if not same_host and _origin_of(origin) not in trusted:
+        raise ForbiddenError("Cross-site request refused")
 
 
 async def issue_session(
@@ -1953,6 +1985,7 @@ async def refresh_access_token(
     refresh racing another one with the same cookie gets an access token and
     no new cookie: the winner's response already carries the successor.
     """
+    _require_same_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise AuthenticationRequiredError("Refresh token is missing")
@@ -2001,6 +2034,7 @@ async def user_logout(
     Idempotent: with the cookie missing or its session already over, the
     client still gets the clearing header and a success response.
     """
+    _require_same_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     if refresh_token:
         await SessionService(session).end(refresh_token)

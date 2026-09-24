@@ -313,3 +313,48 @@ def test_resetting_a_forgotten_password_signs_out_everywhere(
     assert resp.status_code == 200, resp.text
     for sign_in in sign_ins:
         assert _refresh(api_client, sign_in.refresh).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://elsewhere.example"},
+    ],
+    ids=["cross-site", "sibling-subdomain", "foreign-origin"],
+)
+def test_another_site_cannot_refresh_or_sign_out(
+    api_client: TestClient, user: CreatedUser, headers: dict[str, str]
+):
+    sign_in = _sign_in(api_client, user)
+    cookie = {"Cookie": f"{COOKIE}={sign_in.refresh}"}
+
+    refreshed = api_client.post(REFRESH, headers={**cookie, **headers})
+    signed_out = api_client.post("/users/auth/logout", headers={**cookie, **headers})
+
+    assert refreshed.status_code == 403, refreshed.text
+    assert signed_out.status_code == 403, signed_out.text
+    # Neither rotated nor ended the session.
+    assert _refresh(api_client, sign_in.refresh).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"},
+        # An older browser sends no Sec-Fetch-Site; its Origin is this host.
+        {"Origin": "http://testserver"},
+    ],
+    ids=["modern-browser", "older-browser"],
+)
+def test_the_app_itself_can_refresh(
+    api_client: TestClient, user: CreatedUser, headers: dict[str, str]
+):
+    sign_in = _sign_in(api_client, user)
+
+    resp = api_client.post(
+        REFRESH, headers={"Cookie": f"{COOKIE}={sign_in.refresh}", **headers}
+    )
+
+    assert resp.status_code == 200, resp.text
