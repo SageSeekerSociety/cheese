@@ -113,6 +113,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
 import { oauthProviderIcon } from './oauthProvider'
+import { afterPasswordSignIn, passwordAccepted } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 
@@ -212,13 +213,19 @@ const login = handleSubmit(async (value) => {
     const { data } = await UserApi.login(value)
     if (data.requires2FA) {
       rememberSignIn('password')
+      passwordAccepted()
       router.push({
         name: 'Verify2FA',
         query: { token: data.tempToken, redirect: route.query.redirect },
       })
       return
     }
+    // The waiting autofill ceremony is ended here, not when the page goes:
+    // by then a passkey may be being created, and ending "the ceremony" would
+    // end that one instead.
+    stopAutofill()
     signedIn('password', data.accessToken!, data.user!)
+    afterPasswordSignIn(data.user!.id, data.passkeyEnrollment)
   } catch (e) {
     errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
     waitFor(e)
@@ -320,9 +327,13 @@ onMounted(() => {
   startAutofill()
 })
 
-onBeforeUnmount(() => {
-  if (autofillOn) WebAuthnAbortService.cancelCeremony()
-})
+function stopAutofill() {
+  if (!autofillOn) return
+  autofillOn = false
+  WebAuthnAbortService.cancelCeremony()
+}
+
+onBeforeUnmount(stopAutofill)
 </script>
 
 <style scoped>

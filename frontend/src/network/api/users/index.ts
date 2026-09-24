@@ -30,6 +30,18 @@ export namespace UserApi {
     accessToken?: string
     requires2FA?: boolean
     tempToken?: string
+    passkeyEnrollment?: PasskeyEnrollment
+  }
+
+  /**
+   * What a finished sign-in hands back for adding a passkey: a ticket that
+   * opens one registration within a few minutes, and whether this account is
+   * due the screen offering one.
+   */
+  export interface PasskeyEnrollment {
+    ticket: string
+    offer: boolean
+    canStopAsking: boolean
   }
 
   export type RegisterResponseDataType = {

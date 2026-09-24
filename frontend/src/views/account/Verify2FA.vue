@@ -74,6 +74,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { attemptMessage } from './attemptWait'
+import { afterPasswordSignIn, takePasswordStep } from './passkeyEnrollment'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
@@ -130,6 +131,7 @@ const handleVerify = async () => {
     // 登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signIn.signedIn'))
+    if (takePasswordStep()) afterPasswordSignIn(data.user!.id, data.passkeyEnrollment)
 
     // 如果使用了备用码，显示提醒对话框
     if (data.usedBackupCode) {
