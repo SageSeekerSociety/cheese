@@ -4,11 +4,20 @@
 import array
 import json
 import os
+import runpy
 import socket
 import sys
+from pathlib import Path
 
 
 def main():
+    if sys.platform == "win32":
+        # Windows can neither fork a preloaded CLI nor hand it this process's
+        # descriptors, so the CLI runs here: bin/cheese -> the release's cheese.
+        cli = Path(__file__).resolve().parents[2] / "cheese"
+        sys.argv[0] = str(cli)
+        runpy.run_path(str(cli), run_name="__main__")
+        return
     with socket.socket(socket.AF_UNIX) as connection:
         connection.connect(os.environ["CHEESE_CLI_SOCKET"])
         connection.sendmsg(
