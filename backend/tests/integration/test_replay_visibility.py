@@ -22,21 +22,19 @@ from tests.integration.conftest import chat_ws_url, post_project
 
 
 class SilentScreen(StubChannel):
-    """A session that takes the prompt and then says nothing at all.
+    """A session whose process is gone: it takes the prompt and says nothing.
 
-    The turn ends the way a dead session's turn ends — the watchdog gives up and
-    closes it as an error — which is the shape that leaves the pending batch
-    unconsumed (nothing ever reaches `mark_consumed`). The timeouts are squeezed
-    so the test does not sit through the production ones.
+    Its runner answers that the process is not alive, and the turn ends the way
+    a dead session's turn ends — as an error — which is the shape that leaves
+    the pending batch unconsumed (nothing ever reaches `mark_consumed`).
     """
+
+    def __init__(self, **policy: float) -> None:
+        super().__init__(**policy)
+        self.alive = False
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del topic_id, prompt, reply
-
-    async def confirm_alive(self, screen: object) -> bool:
-        # Silence alone is not failure; this fixture models a confirmed dead
-        # process so each replay attempt reaches a terminal result.
-        return False
 
 
 def _use_failing_agent(client, monkeypatch) -> SilentScreen:
@@ -47,12 +45,7 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     batch behind these tests' backs. That is what makes it safe to count how
     many times ONE batch is sent, which is the whole assertion here.
     """
-    # The first silence check asks the channel whether the process is alive.
-    # Keep that check short; the fake then confirms death. The wall-clock
-    # ceiling only records elapsed time and does not terminate the turn.
-    screen = SilentScreen(
-        idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
-    )
+    screen = SilentScreen()
 
     service = ChatService(
         session_factory=client.test_request_factory,
@@ -193,8 +186,14 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
             if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
                 break
 
-    client.portal.call(before.runtime._close_topic, room)
+    client.portal.call(before.runtime._detach, room)
+    # The machine kept its runner; the new process has only the channel to it.
     after = StubChannel()
+    after.root = before.root
+    after.sessions = before.sessions
+    after.calls = before.calls
+    for session in after.sessions.values():
+        session.channel = after
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
@@ -202,7 +201,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         compute=stub_compute(after),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    client.portal.call(after.runtime.ensure_subscription, uuid.UUID(project_id), room)
+    assert client.portal.call(service.recover_sessions) == 1
     return topic_id, after, service
 
 
@@ -213,7 +212,7 @@ def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
     topic_id, after, service = _restarted_mid_turn(client, "第一句")
     room = uuid.UUID(topic_id)
 
-    after.returns(room, "Bash", "done", command="sleep 600")
+    after.returns(room, "Bash", "done")
     after.says(room, "第一句已处理")
     after.stops(room, "第一句已处理")
     client.portal.call(settle_turn, service, room)
@@ -236,11 +235,14 @@ def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
 
     if worked_first:
         after.uses(room, "Bash", command="make test")
-    after.hook(
+    after.says(room, "API Error: Rate limit reached", error="rate_limit")
+    after.record(
         room,
-        hook_event_name="StopFailure",
-        session_id="sess-test-1",
-        error="rate_limit",
+        type="result",
+        subtype="success",
+        is_error=True,
+        result="API Error: Rate limit reached",
+        terminal_reason="api_error",
     )
     client.portal.call(settle_turn, service, room)
 
@@ -257,16 +259,9 @@ def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
 class DiesOnceScreen(SilentScreen):
     """The first session dies on its prompt; the machine is healthy after."""
 
-    def __init__(self, **timeouts: float) -> None:
-        super().__init__(**timeouts)
-        self.dead = True
-
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-        if not self.dead:
+        if self.alive:
             StubChannel.emit_turn(self, topic_id, prompt, reply)
-
-    async def confirm_alive(self, screen: object) -> bool:
-        return not self.dead
 
 
 def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
@@ -278,9 +273,7 @@ def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
         json={"project_id": project_id, "title": "死过一次", "created_by": "user-1"},
     ).json()["data"]["id"]
     room = uuid.UUID(topic_id)
-    screen = DiesOnceScreen(
-        idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
-    )
+    screen = DiesOnceScreen()
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
@@ -290,10 +283,12 @@ def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
     app.dependency_overrides[get_chat_service] = lambda: service
 
     _say(client, topic_id, "死掉那句")
-    screen.dead = False
+    # The runner was only out of reach: it is back, and the backend finds it
+    # again.
+    screen.alive = True
+    assert client.portal.call(service.recover_sessions) == 1
 
     # A turn the session starts by itself, ending cleanly.
-    client.portal.call(screen.runtime.ensure_subscription, uuid.UUID(project_id), room)
     screen.uses(room, "Bash", command="ls")
     screen.stops(room, "顺手看了一眼")
     client.portal.call(settle_turn, service, room)

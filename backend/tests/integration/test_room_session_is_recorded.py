@@ -4,7 +4,8 @@
 出去的每一件活都是这一个会话里的一个分身，不另开会话，也没有自己的 `--resume`。
 
 同一行代码还带着第二个用途：`resume_token`。`--resume` 只在**冷启动**时用得上
-（`build_session_launch` 那道守卫：tmux 会话本身就是一个普通话题的连续性），所以
+（runner 那道守卫：只有 transcript 在的时候才 `--resume`，活着的会话本身就是
+连续性），所以
 写侧被跳过的后果不是「每轮都失忆」，而是**屏幕一旦被回收，这个房间就接不回自己那
 段对话** —— 尽管 transcript 就躺在它自己的 session 目录里。这里用「第二轮冷启动
 时拿到的 resume 指针」来钉它，因为那正是唯一用得上它的时刻。
@@ -23,14 +24,13 @@ class _Screen(StubChannel):
     def __init__(self, session_id: str = "s-1") -> None:
         super().__init__()
         self._sid = session_id
-        #: 每次 `ensure_ready` 拿到的 resume 指针，按顺序。冷启动是唯一用得上它的
+        #: 每次 `ensure` 拿到的 resume 指针，按顺序。冷启动是唯一用得上它的
         #: 时刻，所以这就是「这条会话接不接得回去」的全部证据。
         self.resume_asked: list[str | None] = []
 
-    async def ensure_ready(self, **kwargs: object) -> uuid.UUID:  # type: ignore[override]
-        launch = kwargs["launch"]
-        self.resume_asked.append(launch.resume_session_id)  # type: ignore[attr-defined]
-        return await super().ensure_ready(**kwargs)  # type: ignore[arg-type]
+    async def ensure(self, session, opening):
+        self.resume_asked.append(opening.resume_token)
+        return await super().ensure(session, opening)
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         self.starts(topic_id, session_id=self._sid)

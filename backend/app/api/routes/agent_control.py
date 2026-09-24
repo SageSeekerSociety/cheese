@@ -1,0 +1,180 @@
+"""The room's controls over its live session: what it shows, and what it sends.
+
+A control is a request the session answers (interrupt it, change its model,
+read its context usage) or one the room's executor answers, because the files
+and the commands live there (read a file, list the workspace diff, move a
+running command to the background). The runtime that holds the room says which
+are which (``SessionControls``); this route checks who is asking and sends each
+to whoever answers it.
+"""
+
+import uuid
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service
+from app.api.response import ok
+from app.core.db import get_db
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ConflictError,
+    ForbiddenError,
+    ValidationError,
+)
+from app.domain.agent import private_chat
+from app.domain.agent.chat import ChatService
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.actor import Actor
+from app.domain.topic.services import TopicService
+
+router = APIRouter(tags=["agent-control"])
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+Chat = Annotated[ChatService, Depends(get_chat_service)]
+
+#: A task the executor runs, as the controls list it.
+EXECUTOR_TASK = "executor_bash"
+
+
+async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
+    """Whoever is in this room may read and control a session here."""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("Login required to control a session")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    return actor
+
+
+@router.get("/topics/{topic_id}/agent/control", operation_id="agent-control-state")
+async def control_state(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, chat: Chat
+) -> dict:
+    await controller(topic_id, db, resolver)
+    await db.commit()
+    runtime = chat.session_controls(topic_id)
+    if runtime is None:
+        return ok({"id": None, "connected": False, "controls": [], "tasks": {}})
+    return ok(runtime.control_state(topic_id))
+
+
+class ControlIn(BaseModel):
+    session_id: str = Field(max_length=80)
+    request_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), min_length=1, max_length=100
+    )
+    request: dict[str, Any]
+
+
+def not_its_own(state: dict, actor: Actor) -> None:
+    """A session may not decide its own controls.
+
+    Raising its own permission mode, or stopping the thing it is being watched
+    doing, is the party under review acting as the reviewer. The question is
+    whether this actor IS this session — asked of the session, which knows,
+    and never of the room, which may seat several agents.
+    """
+    if actor.handle == state.get("agent_handle"):
+        raise ForbiddenError("A session cannot decide its own controls")
+
+
+def answered_by_the_session(request: dict, state: dict, executor: frozenset) -> bool:
+    """Whether the session, rather than the executor, answers this request.
+
+    A task has two possible owners: a command the executor runs, and an agent
+    or command the harness runs itself. The task list says which each one is.
+    """
+    subtype = request.get("subtype")
+    if subtype not in executor:
+        return True
+    tasks = (state.get("tasks") or {}).values()
+    if subtype == "stop_task":
+        key, value = "task_id", request.get("task_id")
+    elif subtype == "background_tasks":
+        if not request.get("tool_use_id"):
+            return True
+        key, value = "tool_use_id", request.get("tool_use_id")
+    else:
+        return False
+    return any(
+        task.get(key) == value and task.get("task_type") != EXECUTOR_TASK
+        for task in tasks
+    )
+
+
+async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
+    """The executor the room's session works on, for this generation of the room.
+
+    Asked of the room's sessions and not of one: they lease the same executor
+    today (see `api/routes/execution.py`).
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    resource = str(place.room.resource_id or place.room.id)
+    for held in await AgentSessionService(db).places_in_room(place.room_id):
+        if held.lease and held.resource_id == resource:
+            return held.lease
+    return None
+
+
+@router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
+async def control(
+    topic_id: uuid.UUID,
+    data: ControlIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Chat,
+) -> dict:
+    actor = await controller(topic_id, db, resolver)
+    runtime = chat.session_controls(topic_id)
+    if runtime is None:
+        raise ConflictError("No session is running in this room")
+    state = runtime.control_state(topic_id)
+    if state.get("id") != data.session_id:
+        raise ConflictError("The active session changed; refresh before controlling it")
+    not_its_own(state, actor)
+    request = data.request
+    if request.get("subtype") not in runtime.controls:
+        raise ValidationError("Unsupported control; see the session's controls list")
+    target = await executor_target(db, topic_id)
+    # A control waits for a remote process; do not hold an idle transaction.
+    await db.commit()
+    by_session = answered_by_the_session(request, state, runtime.executor_controls)
+    try:
+        if by_session:
+            response = await runtime.control(topic_id, request)
+            if target is not None and (
+                request.get("subtype") == "interrupt"
+                or (
+                    request.get("subtype") == "background_tasks"
+                    and not request.get("tool_use_id")
+                )
+            ):
+                # Interrupting the turn also stops the command it is waiting on
+                # there, and a move to the background with no call named moves
+                # the executor's foreground command too.
+                await private_chat.control(target, request)
+        elif target is None:
+            raise ConflictError("This room has no work machine for that control")
+        else:
+            response = {
+                "subtype": "success",
+                "response": await private_chat.control(target, request),
+            }
+    except ConflictError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — the room reads why it failed
+        response = {"subtype": "error", "error": str(exc) or type(exc).__name__}
+    return ok(
+        {
+            "request_id": data.request_id,
+            "status": "completed",
+            "result": {"response": {**response, "request_id": data.request_id}},
+        }
+    )

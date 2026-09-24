@@ -307,11 +307,13 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def precheck(self, session, *, needs_place):
-        self.asked.append(needs_place)
-        if needs_place:
+    async def ensure(self, session, opening):
+        # The turn says whether it needs hands (`Opening.needs_place`); a
+        # channel with no machine to give refuses only the turn that does.
+        self.asked.append(opening.needs_place)
+        if opening.needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")
-        return None
+        return await super().ensure(session, opening)
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(

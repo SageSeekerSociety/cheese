@@ -58,22 +58,13 @@ def test_the_shipped_programs_carry_the_root_that_place_chose():
 
 
 def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
-    """The name `place.write` refuses, held to the name the checkout gets.
+    """The checkout's name in `place`, held to the name the machine gives it.
 
-    `place.write` turns a staged file away when the destination has the checkout
-    as a path segment. That rule can only be checked while the name it refuses
-    and the name the checkout is actually given are the same string, and the
-    code that gives it is not the code that refuses it: the backend builds the
-    path it hands a machine, and three programs that run ON the machine build
-    theirs — the bootstrap creates the directory, the teardown looks in it
-    before deleting a home, and the session transfer hashes its path into a
-    session name.
-
-    Drift is silent in each direction. A bootstrap that made `checkout/` while
-    `place.py` still said `room/` would leave the one assertion standing between
-    the platform and somebody's repository rejecting a directory nothing writes
-    to and waving through the one it does; a teardown or a transfer pointed one
-    directory over passes every check vacuously.
+    The backend builds the path it hands a machine, and three programs that run
+    ON the machine build theirs — the bootstrap creates the directory, the
+    teardown looks in it before deleting a home, and the session transfer hashes
+    its path into a session name. Drift is silent: a teardown or a transfer
+    pointed one directory over passes every check vacuously.
     """
     assert resource_cleanup.CHECKOUT_DIR == CHECKOUT_DIR
     assert bootstrap.CHECKOUT_DIR == CHECKOUT_DIR

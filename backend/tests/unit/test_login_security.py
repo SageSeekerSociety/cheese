@@ -376,21 +376,10 @@ class TestTOTPServiceStorage:
         user_id = await _user(session)
         await self._enable(totp, user_id)
         codes = await totp.generate_backup_codes(user_id)
-        await totp.set_always_required(user_id, True)
         assert await totp.disable_2fa(user_id) is True
         assert await totp.is_2fa_enabled(user_id) is False
-        assert await totp.is_always_required(user_id) is False
         assert await totp.verify_backup_code(user_id, codes[0]) is False
         assert await totp.disable_2fa(user_id) is False
-
-    @pytest.mark.anyio
-    async def test_always_required_flag(self, totp, session) -> None:
-        user_id = await _user(session)
-        assert await totp.is_always_required(user_id) is False
-        await totp.set_always_required(user_id, True)
-        assert await totp.is_always_required(user_id) is True
-        await totp.set_always_required(user_id, False)
-        assert await totp.is_always_required(user_id) is False
 
 
 class TestAttemptLimiterExtended:

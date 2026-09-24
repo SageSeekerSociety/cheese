@@ -109,9 +109,9 @@ order: 1            # 组内排第几
 | [`quickstart.md`](quickstart.md) | 第一次用的人。一条路走到底：建项目 → 开房间 → 说一句话 → 采纳合并。 |
 | [`working-with-cheese.md`](working-with-cheese.md) | 已经会用、但交出去的活总不太对的人。这是这个产品真正的门槛，也是唯一不属于任何单个功能的一页。 |
 
-按功能一页：[`teams.md`](teams.md) 小队、[`projects.md`](projects.md) 项目、[`members.md`](members.md) 成员、[`rooms.md`](rooms.md) 话题（房间）、[`agents.md`](agents.md) AI 队友、[`tasks.md`](tasks.md) 活与看板、[`accept.md`](accept.md) 验收与采纳、[`compute.md`](compute.md) 设备与算力。
+按功能一页：[`teams.md`](teams.md) 团队、[`projects.md`](projects.md) 项目、[`members.md`](members.md) 成员、[`rooms.md`](rooms.md) 话题（房间）、[`agents.md`](agents.md) AI 队友、[`tasks.md`](tasks.md) 活与看板、[`accept.md`](accept.md) 验收与采纳、[`compute.md`](compute.md) 设备与算力。
 
-**结构是按功能分的，只留一页旅程。** 按功能分回答的是「X 怎么用」，前提是读者已经知道要找 X；而第一次来的人不知道「小队」「房间」是什么，所以还需要一页从头走到尾的[快速开始](quickstart.md)。那五家参照物都是这个形状：首页给一条旅程，侧栏是一片功能。
+**结构是按功能分的，只留一页旅程。** 按功能分回答的是「X 怎么用」，前提是读者已经知道要找 X；而第一次来的人不知道「团队」「房间」是什么，所以还需要一页从头走到尾的[快速开始](quickstart.md)。那五家参照物都是这个形状：首页给一条旅程，侧栏是一片功能。
 
 按功能分还有一个不明显的好处：**一个功能一页，`llms.txt` 里一行就说得清这一页讲什么**，模型挑页几乎不会错。原先那一页塞了八个概念的「这些词是什么意思」正相反——模型挑中它之后还得在页内猜是哪一段，所以它被拆掉了，每个名词并进了它对应的功能页。
 

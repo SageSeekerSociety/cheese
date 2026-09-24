@@ -22,11 +22,11 @@ def _clean_registry():
 def test_healthz_reports_a_module_that_did_not_mount(client):
     assert client.get("/healthz").json()["status"] == "ok"
 
-    main.FAILED_ROUTE_MODULES.append("app.api.routes.terminal")
+    main.FAILED_ROUTE_MODULES.append("app.api.routes.agent_control")
     body = client.get("/healthz").json()
 
     assert body["status"] == "degraded"
-    assert "app.api.routes.terminal" in body["unmounted"]
+    assert "app.api.routes.agent_control" in body["unmounted"]
 
 
 def test_a_broken_module_stops_the_boot_outside_production(monkeypatch):

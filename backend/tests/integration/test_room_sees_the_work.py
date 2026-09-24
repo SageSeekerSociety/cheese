@@ -39,13 +39,7 @@ class SubagentScreen(StubChannel):
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.uses(topic_id, "Task", description="查分页接口现状")
-        self.returns(
-            topic_id,
-            "Task",
-            "结论：分页用的是 offset，\n改动点在路由层",
-            eid="sub-1",
-            description="查分页接口现状",
-        )
+        self.returns(topic_id, "Task", "结论：分页用的是 offset，\n改动点在路由层")
         self.stops(topic_id, "查完了")
 
 

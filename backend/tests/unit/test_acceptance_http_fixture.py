@@ -23,37 +23,36 @@ def load(name):
 
 
 @pytest.mark.parametrize("malformed", [False, True])
-def test_put_failure_invalidates_acceptance(tmp_path, malformed):
+def test_request_failure_invalidates_acceptance(tmp_path, malformed):
     model = load("model_fixture")
-    rc = load("rc_fixture").RemoteControlFixture(tmp_path, lambda *a, **kw: None)
-    server = model.Server(("127.0.0.1", 0), rc.handler(model.Handler))
+    server = model.Server(("127.0.0.1", 0), model.Handler)
     server.state = {"dir": tmp_path}
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     connection = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
     try:
         connection.request(
-            "PUT",
-            f"/v1/code/sessions/{rc.sid}",
+            "POST",
+            "/topics/other",
             b"\xff" if malformed else json.dumps({"title": "Updated title"}),
             {"Content-Type": "application/json"},
         )
         if malformed:
             with pytest.raises(RemoteDisconnected):
                 connection.getresponse()
-            with pytest.raises(AssertionError, match="Cannot parse PUT"):
+            with pytest.raises(AssertionError, match="UnicodeDecodeError"):
                 server.assert_healthy()
             assert (tmp_path / "handler-errors.jsonl").is_file()
         else:
             response = connection.getresponse()
             assert response.status == 200
-            assert json.loads(response.read())["title"] == "Updated title"
+            assert json.loads(response.read()) == {}
             server.assert_healthy()
     finally:
         connection.close()
         server.shutdown()
         if malformed:
-            with pytest.raises(AssertionError, match="Cannot parse PUT"):
+            with pytest.raises(AssertionError, match="UnicodeDecodeError"):
                 server.server_close()
         else:
             server.server_close()
@@ -92,34 +91,9 @@ def test_late_handler_failure_invalidates_server_close(tmp_path):
         thread.join()
 
 
-def test_open_event_stream_finishes_when_fixture_closes(tmp_path):
-    model = load("model_fixture")
-    rc = load("rc_fixture").RemoteControlFixture(tmp_path, lambda *a, **kw: None)
-    server = model.Server(("127.0.0.1", 0), rc.handler(model.Handler))
-    server.state = {"dir": tmp_path}
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
-    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=8)
-    try:
-        connection.request("GET", f"/v1/code/sessions/{rc.sid}/worker/events/stream")
-        response = connection.getresponse()
-        assert response.status == 200
-        assert rc.connected.wait(3)
-        server.shutdown()
-        # Read through EOF while the client remains connected.
-        assert response.read().startswith(b": connected\n\n")
-        server.server_close()
-    finally:
-        connection.close()
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-def test_execution_endpoint_reaches_wire_before_rc_handler(tmp_path, monkeypatch):
+def test_execution_endpoint_reaches_wire(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "scripts/remote_execution"))
     acceptance = load("acceptance")
-    rc = acceptance.RemoteControlFixture(tmp_path, lambda *a, **kw: None)
     calls = []
 
     class Wire:
@@ -127,7 +101,7 @@ def test_execution_endpoint_reaches_wire_before_rc_handler(tmp_path, monkeypatch
             calls.append((device, state, method, params))
             return {"workspace": "/remote/work"}
 
-    server = acceptance.Server(("127.0.0.1", 0), acceptance.execution_handler(rc))
+    server = acceptance.Server(("127.0.0.1", 0), acceptance.execution_handler())
     server.state = {
         "dir": tmp_path,
         "wire": Wire(),

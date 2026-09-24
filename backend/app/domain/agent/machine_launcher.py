@@ -2,9 +2,8 @@
 
 A device launcher is one shell script, and two different things are written in
 it. One is this platform on somebody else's machine — where the session's home
-and workdir are, the ``cheese`` CLI on PATH, the event spool and the drainer
-that empties it, the tunnel and the preview helper, and the supervisor that
-owns all of them plus the agent process. The other is one harness: which
+and workdir are, the ``cheese`` CLI on PATH, the tunnel and the preview helper,
+and the supervisor that owns them and the agent process. The other is one harness: which
 binary, which version, which config files, how a conversation resumes.
 
 Only the second changes with the harness, and until this module existed the two
@@ -17,8 +16,7 @@ WHEN they run, because that is the only thing this side knows about them:
 
 ``configure``   after ``cheese-environment.py`` is on disk: the harness's own
                 config files, written before anything can read them.
-``credentials`` after the platform CLI is on PATH, so this hole may report its
-                own failure through ``cheese-hook``.
+``credentials`` after the platform CLI is on PATH.
 ``prepare``     after ``cd`` into the workdir: find the binary, check its
                 version, decide what resuming means, and leave the command in a
                 shell variable.
@@ -39,14 +37,12 @@ from pathlib import Path
 
 from app.domain.agent import (
     environment_runner,
-    event_drain,
     forge_cli,
     machine_tunnel,
     preview_tunnel,
     toolchain,
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
-from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 
 # The launcher below spells the platform's own directory literally, because the
 # script is one long shell string and a name threaded through sixty paths would
@@ -63,8 +59,8 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # backend used to derive one by hashing the room into a 2000-port window, and
 # with ~50 rooms on one host two of them landed on the same number: the second
 # helper died on EADDRINUSE, the first one answered the readiness check in its
-# place, and the second room's `claude` sent everything it had — model calls,
-# its Remote Control registration — through the first room's helper, on the
+# place, and the second room's `claude` sent everything it had — its model calls
+# included — through the first room's helper, on the
 # first room's credential. That is why "ready" here means the helper THIS run
 # started wrote its port file while still alive, and never that something
 # answers on a port.
@@ -79,7 +75,7 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # fresh one only when that bind fails. The launcher hands whichever port was
 # printed to the agent it starts next, so either one is safe.
 #
-# Adopt-if-alive for the same reason the drainer does: a screen is reused across
+# Adopt-if-alive, because a screen is reused across
 # turns, and restarting a working helper each time would reset every in-flight
 # connection. Adoption needs all four: the recorded pid alive, the stamp
 # matching the helper on disk, the port file present, and that pid holding the
@@ -400,7 +396,6 @@ def screen_launch(
     place: MachinePlace,
     spec: MachineLaunch,
     *,
-    hook_url: str,
     token: str,
 ) -> tuple[list[str], dict[str, str]]:
     """一次设备启动的两半，合到一起：``(command, env)``。
@@ -421,25 +416,23 @@ def screen_launch(
                 command=spec.command,
             ),
         ],
-        {**screen_env(place, hook_url=hook_url, token=token), **spec.env},
+        {**screen_env(place, token=token), **spec.env},
     )
 
 
 def screen_env(
     place: MachinePlace,
     *,
-    hook_url: str,
     token: str,
 ) -> dict[str, str]:
     """一个会话环境里平台那一半：换哪个 harness 都一样的那些变量。
 
     The session takes ONE environment and both halves have to be in it, so a
     channel merges what the harness answered onto this. Everything here is read
-    by the script above, by the ``cheese`` CLI, or by the drainer — never by a
-    particular agent binary.
+    by the script above or by the ``cheese`` CLI — never by a particular agent
+    binary.
     """
     env = {
-        "CHEESE_HOOK_URL": hook_url,
         "CHEESE_TOKEN": token,
         "CHEESE_HOME": place.home,
         "CHEESE_WORK": place.workdir,
@@ -482,11 +475,6 @@ def screen_env(
     return env
 
 
-def build_drain_script() -> str:
-    source = Path(event_drain.__file__).read_text(encoding="utf-8")
-    return '#!/bin/sh\nexec python3 - "$0" "$@" <<\'PY\'\n' + source + "\nPY\n"
-
-
 def launch_script(
     *,
     configure: str = "",
@@ -499,7 +487,6 @@ def launch_script(
     Every value the harness needs beyond these reaches it as environment: the
     channel builds one environment for the session and both halves read it.
     """
-    drain_script = build_drain_script()
     cli_source = (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
     )
@@ -628,12 +615,9 @@ fi
 mkdir -p "$HOME/.cheese"
 cat > "$HOME/.cheese/cheese-environment.py" <<'CHEESE_ENV_PY'
 {environment_helper}CHEESE_ENV_PY
-{configure}cat > "$HOME/.cheese/cheese-hook" <<'SH'
-{CHEESE_HOOK_SCRIPT}SH
-chmod +x "$HOME/.cheese/cheese-hook"
-# Ship the platform CLI with the launcher over the existing device connection.
-# A separate public HTTP download added 0.39-1.24s to measured launches and
-# could block each launch for its 10s timeout.
+{configure}# Ship the platform CLI with the launcher over the existing device
+# connection. A separate public HTTP download added 0.39-1.24s to measured
+# launches and could block each launch for its 10s timeout.
 cat > "$HOME/.cheese/cheese" <<'CHEESE_PLATFORM_CLI'
 {cli_source}CHEESE_PLATFORM_CLI
 chmod +x "$HOME/.cheese/cheese"
@@ -646,36 +630,14 @@ cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
-# Durable event delivery on the device: cheese-hook spools every hook and (via
-# CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script
-# is the sole sender — it retries each spooled event until the backend DURABLY
-# accepts it (code:200 = the backend wrote the event to the topic's server-side
-# spool; anything else leaves this machine's copy in place, which is the only
-# one there is), so a link/backend outage never drops an event. A 24h age cap
-# stops an unreachable backend from accumulating retries forever. The backend
-# dedups re-deliveries by event-id.
-#
-# The supervisor below owns the drainer for a newly started session.
-export CHEESE_HOOK_SPOOL="$HOME/.cheese/cheese-spool"
-export CHEESE_HOOK_SPOOL_ONLY=1
-mkdir -p "$CHEESE_HOOK_SPOOL"
-cat > "$HOME/.cheese/cheese-drain" <<'DRAIN'
-{drain_script}DRAIN
-chmod +x "$HOME/.cheese/cheese-drain"
-cat > "$HOME/.cheese/cheese-drain.env.tmp" <<DRAINENV
-CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"
-CHEESE_HOOK_URL="$CHEESE_HOOK_URL"
-CHEESE_TOKEN="$CHEESE_TOKEN"
-DRAINENV
-mv "$HOME/.cheese/cheese-drain.env.tmp" "$HOME/.cheese/cheese-drain.env"
 # The tunnel helper, for a machine that cannot reach the meter's listener
 # directly. Written on EVERY launch, token included: the helper re-reads the
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  # Use the place-scoped CONNECT credential, including its RC claim. The hook
-  # token can have project scope; the machine OAuth ticket is never a tunnel
-  # credential. A missing CONNECT token must not fall back to either one.
+  # Use the place-scoped CONNECT credential. CHEESE_TOKEN can have project
+  # scope; the machine OAuth ticket is never a tunnel credential. A missing
+  # CONNECT token must not fall back to either one.
   cat > "$HOME/.cheese/cheese-tunnel.token.tmp" <<TUNNELTOK
 $CHEESE_CONNECT_TOKEN
 TUNNELTOK
@@ -720,13 +682,9 @@ if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
   ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
-DRAIN_PID=""
 cleanup() {{
   trap '' HUP INT TERM
   [ -z "$AGENT_PID" ] || kill "$AGENT_PID" 2>/dev/null || true
-  [ -z "$DRAIN_PID" ] || kill "$DRAIN_PID" 2>/dev/null || true
-  # The drainer is tethered to this shell and cannot keep the session alive.
-  # A delayed TERM handler must not delay the foreground agent's result.
   [ -z "$AGENT_PID" ] || wait "$AGENT_PID" 2>/dev/null || true
 }}
 trap 'exit 129' HUP
@@ -741,8 +699,6 @@ fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
   sh "$HOME/.cheese/cheese-preview-up" || exit 1
 fi
-CHEESE_DRAIN_TETHER=$$ sh "$HOME/.cheese/cheese-drain" >/dev/null 2>&1 &
-DRAIN_PID=$!
 # Preserve input before POSIX sh redirects an asynchronous command's fd 0.
 exec 3<&0
 eval "exec $ENVIRONMENT_CMD{command}" <&3 3<&- &

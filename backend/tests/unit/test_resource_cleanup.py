@@ -126,13 +126,15 @@ def test_exit_targets_live_pane_after_the_original_pane_has_exited(terminal_reso
         )
     )
     received = home / "received"
+    # A launcher stands in for the pane's program: asked to stop, it says so
+    # and leaves, the way the real one stops its runner and exits.
     tmux(
         "new-window",
         "-t",
         "=" + name + ":",
         "sh",
         "-c",
-        'read answer; printf %s "$answer" > "$1"',
+        "trap 'printf TERM > \"$1\"; exit 0' TERM; while :; do sleep 0.1; done",
         "sh",
         str(received),
     )
@@ -140,7 +142,7 @@ def test_exit_targets_live_pane_after_the_original_pane_has_exited(terminal_reso
     with (home / "lock").open("w") as lock:
         with pytest.raises(RuntimeError, match="waiting for the agent"):
             cleanup.request_exit(home, work, lock.fileno())
-        wait_for(lambda: received.exists() and received.read_text() == "/exit")
+        wait_for(lambda: received.exists() and received.read_text() == "TERM")
         wait_for(
             lambda: all(
                 line == "1"
@@ -196,8 +198,19 @@ root = Path(os.environ["HOME"])
 if "has-session" in sys.argv:
     sys.exit(1 if (root / "delivered").exists() else 0)
 if "list-panes" in sys.argv:
-    print("%0 0")
+    print("%0 0 4242")
     sys.exit(0)
+"""
+    )
+    tmux.chmod(0o755)
+    # The stop request is the signal to the pane's program, sent by a child
+    # that holds the stop lock; this one takes its time about it.
+    kill = binary / "kill"
+    kill.write_text(
+        f"#!{sys.executable}\n"
+        + """import os, time
+from pathlib import Path
+root = Path(os.environ["HOME"])
 (root / "started").write_text(str(os.getpid()))
 while not (root / "release").exists():
     time.sleep(0.01)
@@ -205,7 +218,7 @@ with (root / "delivered").open("a") as output:
     output.write("stop\\n")
 """
     )
-    tmux.chmod(0o755)
+    kill.chmod(0o755)
     lsof = binary / "lsof"
     lsof.write_text("#!/bin/sh\nexit 1\n")
     lsof.chmod(0o755)
@@ -439,18 +452,6 @@ def test_expiry_deletes_only_that_generations_transcripts(tmp_path, room_home):
     assert not (tmp_path / ".cheese/transcripts" / project).exists()
     # Expiring again, as a retried sweep would, finds nothing and succeeds.
     assert run_cleanup(tmp_path, "expire", project, later, room).returncode == 0
-
-
-def test_removal_waits_for_undelivered_hook_events(tmp_path, room_home):
-    project, resource, room, home, archive = room_home
-    spool = home / ".cheese/cheese-spool"
-    spool.mkdir(parents=True)
-    (spool / "0001").write_text("{}")
-    refused = run_cleanup(tmp_path, "remove", project, resource, room)
-    assert refused.returncode != 0
-    assert "hook events" in refused.stderr
-    assert (home / ".claude/projects/-room/77d3f6bc.jsonl").exists()
-    assert not archive.exists()
 
 
 @pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])

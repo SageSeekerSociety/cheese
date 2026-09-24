@@ -237,7 +237,7 @@ async def test_repeated_mutation_id_does_not_repeat_shell_write(executor):
 
 
 @pytest.fixture
-def central_transport(executor, tmp_path, request):
+def central_transport(executor, tmp_path):
     target, work, state = executor
     clients = []
     drop = []
@@ -296,7 +296,7 @@ def central_transport(executor, tmp_path, request):
                 "kind": "device",
                 "url": f"http://127.0.0.1:{server.server_port}/execution",
                 "workspace": str(work),
-                "central_hooks": getattr(request, "param", {}),
+                "central_hooks": {},
             }
         )
     )
@@ -703,48 +703,6 @@ def test_send_user_file_names_the_object_form_it_cannot_take(central_transport):
         )
 
 
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "mcp__native__platform_request",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":"
-                                '{"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"custom policy"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_platform_mcp_respects_custom_policy_before_http(central_transport):
-    process, clients, _, _ = central_transport
-    result = process.call(
-        "tools/call",
-        {
-            "name": "platform_request",
-            "arguments": {
-                "id": "denied",
-                "session_id": "fixture",
-                "method": "POST",
-                "path": "/platform-fixture",
-                "body": {},
-            },
-        },
-    )
-    assert json.loads(result["content"][0]["text"])["deny"] == "custom policy"
-    assert clients == []
-
-
 def native_call(process, identifier, command):
     result = process.call(
         "tools/call",
@@ -980,77 +938,6 @@ def test_lost_http_response_is_not_replayed_and_original_id_recovers(central_tra
     assert "result" in native_call(process, "same", "printf once >> count")
     assert (work / "count").read_text() == "once"
     assert len(clients) == 2 and clients[0] != clients[1]
-
-
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":{"
-                                '"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"blocked by policy"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ],
-        }
-    ],
-    indirect=True,
-)
-def test_resident_transport_keeps_policy_denials(central_transport):
-    process, clients, _, work = central_transport
-    assert native_call(process, "denied", "touch forbidden") == {
-        "deny": "blocked by policy"
-    }
-    assert not clients and not (work / "forbidden").exists()
-
-
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "mcp__native__chat_send",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":"
-                                '{"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"publication denied"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_structured_chat_preserves_policy_denial(central_transport):
-    process, clients, _, _ = central_transport
-    result = process.call(
-        "tools/call",
-        {
-            "name": "chat_send",
-            "arguments": {
-                "content": "not published",
-                "id": "denied",
-                "session_id": "fixture",
-            },
-        },
-    )
-    assert json.loads(result["content"][0]["text"]) == {"deny": "publication denied"}
-    assert not process.publications and not clients
 
 
 def test_resident_transport_cancels_a_running_shell(central_transport):

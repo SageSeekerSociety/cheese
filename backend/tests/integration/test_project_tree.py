@@ -109,13 +109,13 @@ def _card_messages(client, room_id: str, task_id: str) -> list[dict]:
 def _record_screens(stub_hooks) -> list[str]:
     """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
     seen: list[str] = []
-    original = stub_hooks.ensure_ready
+    original = stub_hooks.ensure
 
-    async def _spy(**kw):
-        seen.append(str(kw["session"].topic_id))
-        return await original(**kw)
+    async def _spy(session, opening):
+        seen.append(str(session.topic_id))
+        return await original(session, opening)
 
-    stub_hooks.ensure_ready = _spy
+    stub_hooks.ensure = _spy
     return seen
 
 

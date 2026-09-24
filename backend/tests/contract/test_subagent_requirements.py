@@ -55,7 +55,7 @@ _CITED = re.compile(r"`([A-Za-z0-9_./]+)`")
 #: 不止 ``.py``——一条要求的做法写在哪儿就引哪儿，``agent/skill_library/`` 下发给
 #: agent 的那几份说明也是本仓库的东西，也核得了。
 _PATH = re.compile(r"/|\.(?:py|md)\Z")
-#: 一个符号名长什么样：``SubThreads``、``thread_label``、``AgentRuntime.deliver``。
+#: 一个符号名长什么样：``bind``、``thread_label``、``AgentRuntime.deliver``。
 _SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
 
 
@@ -110,7 +110,7 @@ def test_an_answer_points_at_code_that_exists(
     时候发现——和功能矩阵里那些格子同一条规矩。
 
     核到符号那一层，不是只核文件在不在。一句答案的实质是里面那几个名字——
-    ``SubThreads``、``thread_label``、``AgentRuntime.deliver``——而删掉一个符号比搬
+    ``bind``、``thread_label``、``AgentRuntime.deliver``——而删掉一个符号比搬
     走一个文件常见得多：文件照样在，这句话已经是假的了，读起来却和真的一模一样。
 
     而且核的是那个名字**出现在什么位置**（``_participates``），不是文件里搜不搜得

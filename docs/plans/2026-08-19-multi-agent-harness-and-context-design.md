@@ -364,9 +364,10 @@ tmux + send-keys 注入 · `❯` 就绪握手 · 预接受首启门 · 固定 pa
 命令 hook 脚本 + spool 落盘 + reconcile 去重 · MessageAssembler 拼消息 · 自造 event id ·
 `--disallowedTools AskUserQuestion`（问人成为一等通道）· 交互 hooks 拿不到 usage（`hook_events.py` 置 0）。
 
-⚠️ **订阅路除外。** 那条路的合法性建立在「客户端就是 Claude Code 本体」上（§4.6），
-所以只要订阅还在，`hooks_substrate.py` / `tmux_provider.py` 这套就得留着。
-**它留多久取决于待定 #3**——在那个决定之前，不要按这一节去删代码。
+订阅路也在这个契约下：客户端仍是 Claude Code 本体（§4.6），只是以 headless `claude -p` 跑在
+stream-json 上，由会话机上的 runner 握着（`harness/claude_code/runner.py`），上面这些随之删除。
+例外两条：Claude Code 的 `AskUserQuestion` 仍然禁用，问人走 `cheese ask`；Claude Code 轮次的
+用量仍由计量代理记，不从记录里读。
 
 ---
 
@@ -454,7 +455,7 @@ pi 今天的形状：runner 是屏幕跑的那个进程（不是旁边起的守�
 
 - `evals/` 现有场景不低于当前基线；
 - 一轮里 `cheese` CLI 的调用正确率不降（平台动作的命门）；
-- 中文长文本注入零损（今天靠 tmux 三步注入换来的，新 harness 应当白送）；
+- 中文长文本注入零损（写进 stdin 的 stream-json 消息白送，新 harness 也应当白送）；
 - 断线重连能补齐，且不重不漏。
 
 **否掉的信号**

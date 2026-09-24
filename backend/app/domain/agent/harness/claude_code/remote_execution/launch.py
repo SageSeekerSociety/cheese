@@ -16,7 +16,6 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.agent.harness.claude_code.device_launch import CHEESE_SYNC_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
@@ -24,8 +23,13 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     runtime,
     session_transfer,
 )
-from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
+
+# What the session's Stop checkpoint runs on the executor (`runtime.control`):
+# every task checkout backed up and pushed.
+CHEESE_SYNC_SCRIPT = """#!/bin/sh
+exec cheese sync --all
+"""
 
 
 def can_prepare(info):
@@ -55,7 +59,6 @@ def file_sources():
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
-        "cheese-hook": CHEESE_HOOK_SCRIPT,
         "cheese": (Path(__file__).resolve().parents[6] / "sandbox/cheese").read_text(),
     }
 

@@ -55,7 +55,7 @@ vi.mock('../../api', async () => {
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getTerminal: vi.fn().mockResolvedValue({ available: false }),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),

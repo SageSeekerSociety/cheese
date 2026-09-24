@@ -11,8 +11,7 @@
 3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
    的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
    prompt 交给它，而它**在启动时读一次**那个文件
-   （`claude_code/session_launch.py` 的模块注释，`hooks_substrate` 里
-   「reads a system prompt exactly once — at launch」）。文件每轮都重写，重写是
+   （`claude_code/session_launch.py` 的模块注释）。文件每轮都重写，重写是
    给**下一次**冷启动看的。
 
    所以「第 3 周改成了第 4 周」这件事，一个正在跑的会话当天听不到。这是有意接受
