@@ -12,7 +12,7 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 在本房间开一条活(返回线程标识,写进分身的 prompt)
+  cheese task "数据清洗"            # 在本房间开一条活(返回线程标识,写进分身的 prompt)
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
@@ -1572,7 +1572,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     ps = sub.add_parser(
-        "split",
+        "task",
         help="创建任务及其独立工作分支",
         description="创建任务、独立分支和工作目录；执行者由调用者安排。",
     )
@@ -2305,7 +2305,7 @@ def main() -> None:
         # printed, and `doc set` writes against it.
         _remember_doc_version(topic, (d or {}).get("doc_version", 0))
         print((d or {}).get("content", "") if d else "")
-    elif a.cmd == "split":
+    elif a.cmd == "task":
         topic = _need("CHEESE_TOPIC", TOPIC)
         body = {"title": a.title, "created_by": AUTHOR}
         if a.reported_by:

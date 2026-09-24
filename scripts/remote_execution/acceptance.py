@@ -522,7 +522,7 @@ def case(folder, options):
         if options.mode == "normal":
             isolated = results[-2]
             assert isolated.get("is_error"), isolated
-            assert "cheese split" in json.dumps(isolated), isolated
+            assert "cheese task" in json.dumps(isolated), isolated
             # `.claude/` itself is the project's mirrored assets; an isolated
             # spawn would have added its worktree beneath it.
             assert not (center / ".claude/worktrees").exists()

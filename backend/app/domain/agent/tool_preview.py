@@ -123,7 +123,7 @@ _TOOL_ARG = {
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
     "cheese_chat_search": "query",
     "cheese_doc_set": "file",
-    "cheese_split": "title",
+    "cheese_task": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
     "cheese_close_task": "conclusion",

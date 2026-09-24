@@ -128,17 +128,17 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_recover",
         "cheese_remember",
         "cheese_serve",
-        "cheese_split",
         "cheese_status",
         "cheese_sync",
         "cheese_sync_agents",
+        "cheese_task",
         "cheese_tell",
         "cheese_title",
         "cheese_unlock",
         "cheese_worktree",
     }
-    assert tools["cheese_split"]["inputSchema"]["required"] == ["title"]
-    assert tools["cheese_split"]["inputSchema"]["properties"]["contributor"] == {
+    assert tools["cheese_task"]["inputSchema"]["required"] == ["title"]
+    assert tools["cheese_task"]["inputSchema"]["properties"]["contributor"] == {
         "type": "array",
         "items": {"type": "string"},
         "description": "实际贡献者的 handle，可重复",

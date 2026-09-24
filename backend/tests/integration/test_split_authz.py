@@ -105,7 +105,7 @@ def test_split_ignores_forged_created_by_in_body(client):
 
 def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     """The bug users actually hit: a 分身-initiated split (no human token, the
-    `cheese` agent as `created_by` — same shape `cheese split` sends) used to
+    `cheese` agent as `created_by` — same shape `cheese task` sends) used to
     seed the child roster from `owner_handle="cheese"` alone. `seed()` skips
     "cheese" as owner, so the child ended up belonging to NOBODY — and the
     accept card it ends in had no one to land on. It must default to the room's

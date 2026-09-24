@@ -51,7 +51,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_chat_replies: '读取消息回复',
   cheese_doc_set: '更新实况文档',
   cheese_doc_get: '读取实况文档',
-  cheese_split: '创建任务',
+  cheese_task: '创建任务',
   cheese_worktree: '准备工作目录',
   cheese_sync: '同步任务代码',
   cheese_recover: '恢复任务备份',

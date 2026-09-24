@@ -305,7 +305,7 @@ _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 #: 简报; naming the room is what makes that visible instead of "not found".
 _NOT_THIS_ROOMS_WORK = (
     "这个房间里没有活 {task_id}。--task 只认本房间派出的活的 id"
-    "（`cheese split` 当时打印的那个）。"
+    "（`cheese task` 当时打印的那个）。"
 )
 
 

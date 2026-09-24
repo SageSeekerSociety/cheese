@@ -35,11 +35,11 @@ def _run(monkeypatch, argv: list[str], data: dict) -> list[tuple[str, str, dict]
     return calls
 
 
-def test_split_hands_back_the_label_the_subagent_must_carry(monkeypatch, capsys):
+def test_task_hands_back_the_label_the_subagent_must_carry(monkeypatch, capsys):
     """开完卡就打印线程标识 —— 起分身的那一步要用它，而这是 agent 拿到它的地方。"""
     _run(
         monkeypatch,
-        ["split", "查一下分页", "--brief", "干这个"],
+        ["task", "查一下分页", "--brief", "干这个"],
         {"id": _TASK, "title": "查一下分页", "thread_label": f"work-{_TASK}"},
     )
     out = capsys.readouterr().out

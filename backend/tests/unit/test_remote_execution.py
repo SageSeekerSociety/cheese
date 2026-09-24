@@ -129,7 +129,8 @@ def test_isolated_subagents_are_refused_with_the_way_that_works():
             tool: 'Agent', tool_use_id: 'spawn', description: 'look',
             prompt: 'list files', isolation,
           }, () => {throw new Error('spawned on the session host')});
-          assert.match(result.deny, /cheese split/);
+          assert.match(result.deny, /omit isolation/);
+          assert.match(result.deny, /cheese task/);
         }
         const spawned = await handlers['tool.call']({}, {
           tool: 'Agent', tool_use_id: 'spawn', description: 'look',

@@ -658,7 +658,7 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
 _CHEESE_RESOURCE = {
     "doc": "doc",
     "decision": "decision",
-    "split": "topics",
+    "task": "topics",
     "conclude": "topics",
     "milestone": "milestone",
     "accept-request": "accept",
