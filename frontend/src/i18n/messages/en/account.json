@@ -32,7 +32,8 @@
     "password": "Password",
     "showPassword": "Show password",
     "username": "Username",
-    "capsLock": "Caps Lock is on"
+    "capsLock": "Caps Lock is on",
+    "capsLockShort": "Caps Lock"
   },
   "rule": {
     "displayName": "Use letters, numbers, underscores, or Chinese characters",

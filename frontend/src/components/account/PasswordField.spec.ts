@@ -19,20 +19,21 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function mount(props: Record<string, unknown> = {}) {
-  // `label` is not a prop of its own: it passes through to the text field.
+function mount() {
+  // `label` and `hint` are not props of their own: they pass through to the text field.
   return render(PasswordField, {
-    props: { autocomplete: 'current-password', ...props },
-    attrs: { label: 'Password' },
+    props: { autocomplete: 'current-password' },
+    attrs: { label: 'Password', hint: 'At least 8 characters', persistentHint: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
 
-function key(capsOn: boolean) {
-  const event = new KeyboardEvent('keydown', { key: 'a', bubbles: true })
+function withCaps<E extends Event>(event: E, capsOn: boolean): E {
   Object.defineProperty(event, 'getModifierState', { value: (k: string) => k === 'CapsLock' && capsOn })
   return event
 }
+const key = (type: 'keydown' | 'keyup', capsOn: boolean, k = 'a') =>
+  withCaps(new KeyboardEvent(type, { key: k, bubbles: true }), capsOn)
 
 describe('password field and Caps Lock', () => {
   it('warns while Caps Lock is on and stops once it is off', async () => {
@@ -40,23 +41,43 @@ describe('password field and Caps Lock', () => {
     const input = view.getByLabelText('Password')
     await fireEvent.focus(input)
 
-    await fireEvent(input, key(true))
-    expect(await view.findByText('Caps Lock is on')).toBeTruthy()
+    await fireEvent(input, key('keydown', true))
+    expect(view.getByRole('status').textContent).toBe('Caps Lock is on')
+    expect(view.getByText('Caps Lock')).toBeTruthy()
 
-    await fireEvent(input, key(false))
-    expect(view.queryByText('Caps Lock is on')).toBeNull()
+    await fireEvent(input, key('keydown', false))
+    expect(view.getByRole('status').textContent).toBe('')
+    expect(view.queryByText('Caps Lock')).toBeNull()
   })
 
-  it('gives the field its own hint back when Caps Lock goes off', async () => {
-    const view = mount({ hint: 'At least 8 characters', persistentHint: true })
+  it('knows as soon as the field is clicked, before anything is typed', async () => {
+    const view = mount()
+    const input = view.getByLabelText('Password')
+
+    await fireEvent(input, withCaps(new MouseEvent('mousedown', { bubbles: true }), true))
+
+    expect(view.getByRole('status').textContent).toBe('Caps Lock is on')
+  })
+
+  it('turns on with the Caps Lock key even where that keydown reports the old state', async () => {
+    const view = mount()
     const input = view.getByLabelText('Password')
     await fireEvent.focus(input)
 
-    await fireEvent(input, key(true))
-    expect(await view.findByText('Caps Lock is on')).toBeTruthy()
-    expect(view.queryByText('At least 8 characters')).toBeNull()
+    await fireEvent(input, key('keydown', false, 'CapsLock'))
+    expect(view.getByRole('status').textContent).toBe('Caps Lock is on')
 
-    await fireEvent(input, key(false))
-    expect(await view.findByText('At least 8 characters')).toBeTruthy()
+    await fireEvent(input, key('keyup', true, 'CapsLock'))
+    expect(view.getByRole('status').textContent).toBe('Caps Lock is on')
+  })
+
+  it('leaves the field’s own hint in place while warning', async () => {
+    const view = mount()
+    const input = view.getByLabelText('Password')
+    await fireEvent.focus(input)
+
+    await fireEvent(input, key('keydown', true))
+
+    expect(view.getByText('At least 8 characters')).toBeTruthy()
   })
 })
