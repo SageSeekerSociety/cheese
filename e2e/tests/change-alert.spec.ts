@@ -3,6 +3,9 @@
  * 它以前写进库没有任何界面读得到（收件箱查询只放行决策请求和验收卡），点它亮着
  * 项目角标、列表里却一条也没有。这一条从写入那一步开始走完整条路：走 `cheese
  * notify` 用的那个接口写一条，在项目首页看到它，点「去话题」落到那个话题上。
+ *
+ * 2026-09-24 在本机这套栈上跑过：自己的后端 + 自己的前端（Playwright 的
+ * webServer 从本工作树起）+ 一份迁移+种子好的库，真浏览器，2 passed。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
