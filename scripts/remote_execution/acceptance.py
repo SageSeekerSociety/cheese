@@ -523,7 +523,9 @@ def case(folder, options):
             isolated = results[-2]
             assert isolated.get("is_error"), isolated
             assert "cheese split" in json.dumps(isolated), isolated
-            assert not (center / ".claude").exists()
+            # `.claude/` itself is the project's mirrored assets; an isolated
+            # spawn would have added its worktree beneath it.
+            assert not (center / ".claude/worktrees").exists()
             assert not [r for r in results[:-2] + results[-1:] if r.get("is_error")], (
                 results
             )
