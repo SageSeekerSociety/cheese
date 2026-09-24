@@ -14,6 +14,7 @@
   "legalEffectiveDate": "生效日期 {date}",
   "legalLoadFailed": "暂时无法加载，请刷新页面重试",
   "legalVersion": "版本 {version}",
+  "passkeyWrongHost": "这个地址不能使用通行密钥，请前往 {host}",
   "privacyPolicy": "《隐私政策》",
   "registrationSettingsCouldNotBeLoadedRefresh": "暂时无法获取注册配置，请刷新页面重试",
   "rulesUpdated": "协议已更新",

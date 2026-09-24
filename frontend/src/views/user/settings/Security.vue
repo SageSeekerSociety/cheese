@@ -260,6 +260,7 @@ import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { useSudoStore } from '@/stores/sudo'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
+import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const router = useRouter()
 const dialogs = useDialog()
@@ -339,10 +340,12 @@ const fetchPasskeys = async () => {
 const handleAddPasskey = async () => {
   if (!currentUserId.value) return
   addingPasskey.value = true
+  let rpId: string | undefined
   try {
     await withSudo(
       async (sudoTicket) => {
         const { data } = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
+        rpId = data.options.rp?.id
         const attestation = await startRegistration({ optionsJSON: data.options })
         await UserApi.verifyPasskeyRegistration(currentUserId.value!, attestation)
         await fetchPasskeys()
@@ -354,7 +357,9 @@ const handleAddPasskey = async () => {
     )
   } catch (error: any) {
     // The browser's own WebAuthn error text is English and names internals.
-    if (error?.name === 'InvalidStateError') toast.error(t('account.security.passkeyExists'))
+    const wrongHost = passkeyWrongHostMessage(error, rpId)
+    if (wrongHost) toast.error(wrongHost)
+    else if (error?.name === 'InvalidStateError') toast.error(t('account.security.passkeyExists'))
     else if (error?.name === 'NotAllowedError') toast.error(t('account.security.passkeyCanceled'))
     else fail(error, t('account.security.passkeyAddFailed'))
   } finally {
