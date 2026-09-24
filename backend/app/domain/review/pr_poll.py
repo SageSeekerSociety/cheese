@@ -80,13 +80,6 @@ async def poll_uncarded_task_prs(
     chat: ChatService, project_id: uuid.UUID | None = None
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
-    from app.domain.agent.announce import announce
-    from app.domain.agent.platform_notices import (
-        EVENT_ACCEPT_DONE,
-        SEVERITY_INFO,
-        WHO_PLATFORM,
-        notice,
-    )
     from app.domain.project.forge import proposal_client
     from app.domain.review.models import AcceptCard
     from app.domain.room_task.models import Task, TaskStatus
@@ -162,17 +155,6 @@ async def poll_uncarded_task_prs(
                 task.closed_at = task.closed_at or merged_at
                 task.accepted_at = task.accepted_at or merged_at
                 task.delivered_head = status.head_sha[:64]
-                await announce(
-                    session,
-                    place_id=task.room_id,
-                    content=f"PR #{number} 已在代码仓库合并，任务已交付",
-                    meta=notice(
-                        EVENT_ACCEPT_DONE,
-                        severity=SEVERITY_INFO,
-                        who=WHO_PLATFORM,
-                        detail=task.pr_url or "",
-                    ),
-                )
                 await session.commit()
                 merged += 1
         except Exception as exc:  # noqa: BLE001 — one PR must not block the rest
