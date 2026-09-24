@@ -170,7 +170,6 @@ jobs:
           --at-least 220
       - name: Upload private-chat CLEAN evidence
         if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
-        continue-on-error: true
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -326,7 +325,6 @@ jobs:
           --require-step ordinary_terminal
       - name: Upload remote-acceptance CLEAN evidence
         if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
-        continue-on-error: true
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
