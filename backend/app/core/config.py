@@ -381,12 +381,11 @@ class Settings(BaseSettings):
     #
     # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
-    # any backend keeps until it signals its own ceiling. The hooks-driven
-    # backends no longer use this for their
-    # effective timeout: they run the liveness loop the settings below describe
-    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
-    # only records) and hand the outer wrap their own ceiling through the
-    # `turn_ceiling` frame.
+    # any backend keeps until it signals its own ceiling. The session runtimes
+    # do not use this for their effective timeout: they apply the liveness
+    # rules the settings below describe (process gone, no-progress, unread
+    # grace; the ceiling only records) and hand the outer wrap their own
+    # ceiling through the `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -397,40 +396,31 @@ class Settings(BaseSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
-    # Two-layer safety net for the hooks-driven backends (they share one
-    # policy). Below this much idle time (no hook, and no
-    # backend-specific activity signal) a turn is normal; past it the turn is only
-    # SUSPECTED wedged and gets one lightweight liveness probe (a process-tree
-    # probe over the link) rather than being killed outright
-    # — a long foreground command with no interim hook must not look identical to a
-    # dead screen.
-    agent_idle_suspect_s: float = 300.0
     # The wall-clock mark past which a turn is recorded as long. A metric, not
-    # a gate: crossing it is logged once by the harness monitor and written to
-    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
-    # gates in place (the process probe past idle-suspect, output with no
-    # progress, an unread injection), what a wall clock alone could still end
-    # is a turn that is working and has not finished, which is not a fault. One
-    # number for both layers: the monitor reads it directly and the outer wrap
-    # in runtime.py receives it via the `turn_ceiling` frame.
+    # a gate: crossing it is written to the turn record (`ceiling_crossed_s`),
+    # and nothing ends. With the three gates in place (the session's process or
+    # runner gone, output with no progress, an input unread), what a wall clock
+    # alone could still end is a turn that is working and has not finished,
+    # which is not a fault. The outer wrap in runtime.py receives it via the
+    # `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
     # How long a message we injected may sit unconsumed before the session is
-    # called unable to read. On a different axis from the two above: those watch
+    # called unable to read. On a different axis from the others: they watch
     # what a session PRODUCES, and a session that has stopped reading goes on
-    # producing, so neither of them ever fires for it. This one only exists
+    # producing, so none of them ever fires for it. This one only exists
     # while something is actually waiting, which makes it the narrower check and
     # the one with a person behind it.
     #
-    # Sized against the longest legitimate reason a message goes unread, which
-    # is a single long tool call: input is taken at tool boundaries, so a
-    # 20-minute command legitimately holds a message that long. This is not a
-    # responsiveness target. Ending the turn on this verdict replays the pending
-    # message into the next one, so the cost of firing is a restart, not a loss.
+    # Input is taken at tool boundaries, so the clock stands still while a tool
+    # runs and starts from its return: a 20-minute command holds a message that
+    # long without eating into this. This is not a responsiveness target. Ending
+    # the turn on this verdict replays the pending message into the next one,
+    # so the cost of firing is a restart, not a loss.
     agent_unread_grace_s: float = 1800.0
     # How long a session may keep producing output with no tool call and no
     # ending before it is called stuck. This is the gate for a loop: a session
-    # that talks and never acts keeps every other signal healthy, because the
-    # idle check sees hooks arriving and the process probe sees a live process.
+    # that talks and never acts keeps every other signal healthy: its records
+    # keep arriving and its process stays alive.
     # A long foreground command does not trip it, since it emits no output
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
@@ -508,14 +498,13 @@ class Settings(BaseSettings):
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at: the enrolled machine's
-    # `cheese-hook` POSTs Claude Code hooks to
-    # `{connector_public_base}/connector/hooks/{key}`, and the device-flow approval
-    # link is built from it. For a NAT'd device this must be publicly reachable
-    # (outbound-only for the link WS; the hook POST is a normal outbound request).
-    # Every machine-facing URL is `{base}/<backend path>`, so the base must map
-    # 1:1 onto the backend's ROOT. Behind a reverse proxy that strips an `/api`
-    # prefix, that means the base ends in `/api` — otherwise `/sandbox/hooks/...`
-    # lands on the SPA, which answers 200/405 and drops every agent event
+    # CLI, git and model traffic go to it, and the device-flow approval link is
+    # built from it. For a NAT'd device this must be publicly reachable
+    # (outbound-only for the link WS; the CLI's calls are normal outbound
+    # requests). Every machine-facing URL is `{base}/<backend path>`, so the
+    # base must map 1:1 onto the backend's ROOT. Behind a reverse proxy that
+    # strips an `/api` prefix, that means the base ends in `/api` — otherwise
+    # `/topics/...` lands on the SPA, which answers 200/405 and drops the call
     # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
     # Optional per-install-origin override for the device's persistent control
@@ -598,14 +587,14 @@ class Settings(BaseSettings):
 
         `sandbox_token` when pinned; otherwise DERIVED from `jwt_secret` rather
         than randomised per process. That fallback used to be
-        `secrets.token_hex(24)`, and the cost was not theoretical: a box's hook
-        token is baked into the environment of the long-running `claude` at
-        launch and never refreshed, so a fresh per-process secret invalidated
+        `secrets.token_hex(24)`, and the cost was not theoretical: a box's
+        session token is baked into the environment of the long-running session
+        at launch and never refreshed, so a fresh per-process secret invalidated
         every existing box's token the instant the backend restarted. The whole
-        deployment went deaf at once — hooks 401ing into nothing, turns running
-        to their ceiling reporting `tools: 0` while the agent inside worked
-        perfectly — recovering only by destroying each box (and with it the
-        session that IS that topic's conversational continuity).
+        deployment went deaf at once — every call from a session 401ing into
+        nothing while the agent inside worked perfectly — recovering only by
+        destroying each box (and with it the session that IS that topic's
+        conversational continuity).
 
         Deriving instead of randomising makes the secret stable across restarts
         with no deploy change, and `jwt_secret` is the right root because a

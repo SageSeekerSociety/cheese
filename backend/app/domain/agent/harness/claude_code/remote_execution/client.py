@@ -16,7 +16,6 @@ import argparse
 import base64
 import json
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -73,7 +72,7 @@ PRIVATE_INSTRUCTIONS = (
 
 
 def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.hooks_settings 的同款）：模型分身定义随会话启动
+    """发现层（session_launch.session_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
@@ -238,15 +237,6 @@ def prepare(
         if f"mcp__native__{tool}" not in allowed:
             allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
-    # The transport publishes hooks for the original tool. Running them again
-    # for its internal MCP call duplicates events and delays both directions.
-    for event in ("PreToolUse", "PostToolUse"):
-        for group in hooks.get(event, []):
-            matcher = group.get("matcher", "*")
-            matcher = ".*" if matcher in ("*", "") else matcher
-            group["matcher"] = (
-                f"^(?!mcp__native__(?:invoke|chat_send|platform_request|project_tools|cheese_.*)$).*(?:{matcher})"
-            )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
     # `TaskStop` 不在这道闸门后面。闸门拒的是「插件没接住的原生调用」，而
@@ -577,48 +567,6 @@ def shell(target_path, command):
         time.sleep(0.1)
 
 
-def _publish_spooled_hook(command, payload):
-    if (
-        command != "cheese-hook"
-        or payload["hook_event_name"] not in ("PreToolUse", "PostToolUse")
-        or not os.environ.get("CHEESE_HOOK_SPOOL_ONLY")
-        or not os.environ.get("CHEESE_HOOK_SPOOL")
-    ):
-        return False
-    import shutil
-
-    executable = shutil.which(command)
-    if executable is None:
-        return False
-    if __package__:
-        from app.domain.agent.event_spool import append
-        from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-
-        expected = CHEESE_HOOK_SCRIPT.encode()
-    else:
-        from event_spool import append
-
-        expected = Path(__file__).with_name("platform-hook-source").read_bytes()
-    try:
-        actual = Path(executable).read_bytes()
-    except OSError:
-        return False
-    if actual != expected:
-        return False
-    try:
-        spool = Path(os.environ["CHEESE_HOOK_SPOOL"])
-        spool.mkdir(parents=True, exist_ok=True)
-        try:
-            spool.chmod(0o777)
-        except OSError:
-            pass
-        append(spool, str(uuid.uuid4()), payload)
-    except OSError:
-        # The managed shell hook is best effort and never denies a tool on IO failure.
-        pass
-    return True
-
-
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 
 # What the tool result promises the caller about the file: `isImage` for the
@@ -810,39 +758,6 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     if isinstance(args.get("display"), str):
         result["display"] = args["display"]
     return {"value": result}
-
-
-def publish_event(config, payload):
-    output = {}
-    for group in config.get("central_hooks", {}).get(payload["hook_event_name"], []):
-        matcher = group.get("matcher", "*")
-        if matcher not in ("*", "") and not re.fullmatch(matcher, payload["tool_name"]):
-            continue
-        for hook in group.get("hooks", []):
-            if hook["type"] != "command":
-                raise ValueError("Execution event forwarding requires command hooks")
-            if _publish_spooled_hook(hook["command"], payload):
-                continue
-            result = subprocess.run(
-                ["sh", "-c", hook["command"]],
-                input=json.dumps(payload),
-                text=True,
-                capture_output=True,
-                timeout=hook.get("timeout", 60),
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr)
-            if result.stdout.strip():
-                output = json.loads(result.stdout)
-                decision = output.get("hookSpecificOutput", {})
-                if decision.get("permissionDecision") == "deny":
-                    return {
-                        "deny": decision.get(
-                            "permissionDecisionReason",
-                            "Central policy denied operation",
-                        )
-                    }
-    return output
 
 
 def transport(config, target_path):
@@ -1122,54 +1037,31 @@ def transport(config, target_path):
                         raise RuntimeError("Tool call was cancelled")
                 if tool == "invoke" and payload["tool"] not in NATIVE_TOOLS:
                     raise ValueError("Unknown native tool")
-                event = {
-                    "hook_event_name": "PreToolUse",
-                    "session_id": payload["session_id"],
-                    "tool_name": payload["tool"],
-                    "tool_use_id": payload["id"],
-                    "tool_input": payload["args"],
-                    "cwd": config["workspace"],
-                }
-                decision = publish_event(config, event)
-                if decision.get("deny"):
-                    outcome = decision
-                else:
-                    args = decision.get("hookSpecificOutput", {}).get(
-                        "updatedInput", payload["args"]
+                args = payload["args"]
+                if tool == "project_tools":
+                    receipt = {
+                        "value": client.call(
+                            "project_tools", {**args, "id": payload["id"]}
+                        )
+                    }
+                elif tool == "send_user_file":
+                    receipt = deliver_send_user_file(
+                        client, config, payload, args, invoke_on_the_machine
                     )
-                    if tool == "project_tools":
-                        receipt = {
-                            "value": client.call(
-                                "project_tools", {**args, "id": payload["id"]}
-                            )
-                        }
-                    elif tool == "send_user_file":
-                        receipt = deliver_send_user_file(
-                            client, config, payload, args, invoke_on_the_machine
-                        )
-                    elif tool.startswith("cheese_"):
-                        receipt = platform_tool(tool, args, payload["id"])
-                    else:
-                        receipt = (
-                            client.platform_request(args)
-                            if tool == "platform_request"
-                            else client.publish_message(payload, args)
-                            if tool == "chat_send"
-                            else invoke_on_the_machine(payload, args)
-                        )
-                    if "error" in receipt:
-                        outcome = {"deny": receipt["error"]}
-                    else:
-                        publish_event(
-                            config,
-                            dict(
-                                event,
-                                hook_event_name="PostToolUse",
-                                tool_input=args,
-                                tool_response=receipt["value"],
-                            ),
-                        )
-                        outcome = {"result": receipt["value"]}
+                elif tool.startswith("cheese_"):
+                    receipt = platform_tool(tool, args, payload["id"])
+                else:
+                    receipt = (
+                        client.platform_request(args)
+                        if tool == "platform_request"
+                        else client.publish_message(payload, args)
+                        if tool == "chat_send"
+                        else invoke_on_the_machine(payload, args)
+                    )
+                if "error" in receipt:
+                    outcome = {"deny": receipt["error"]}
+                else:
+                    outcome = {"result": receipt["value"]}
                 image = outcome.get("result", {})
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.

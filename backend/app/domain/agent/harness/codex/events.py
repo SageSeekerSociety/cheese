@@ -41,10 +41,7 @@ class Assembler:
         identity = {
             key: owner[key] for key in ("agent_handle", "harness") if key in owner
         }
-        message_owner = {
-            "agent_handle": owner.get("agent_handle"),
-            "complete_identity": True,
-        }
+        message_owner = {"agent_handle": owner.get("agent_handle")}
         if method == "thread/started":
             thread = params["thread"]
             if parent := thread.get("parentThreadId"):

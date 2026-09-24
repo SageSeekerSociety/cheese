@@ -81,7 +81,7 @@ reclaim_apt() {
 }
 
 # npm's content-addressed cache, ~1.5 GB per box and growing: `npm install -g
-# @anthropic-ai/claude-code` in cli.yml and claude-canary.yml never prunes it.
+# @anthropic-ai/claude-code` in cli.yml never prunes it.
 # pnpm's store is left alone — it is what frontend and e2e install out of.
 reclaim_npm() {
   rm -rf "$HOME/.npm/_cacache"

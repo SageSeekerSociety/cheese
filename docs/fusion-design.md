@@ -11,31 +11,27 @@
 > **修订 2026-07-10（andyl，与 lg 对齐后）**：撤销原「平台容器 / 用户设备 二选一并存」的
 > 两路框架。本地容器与远程用户机器**只走一套 cc-脚本-服务端底座**（复用他们 frozen 的 cli +
 > 线协议）——唯一真实差别是**入册**（本地我们自动注入凭证；远程走设备流）与**网络拓扑**
-> （远程穿 NAT，本地 dial-out 退化为 localhost no-op），都是薄差异，不值得两套机制。hooks
-> 不再烤进镜像做独立第二路，而是作为「报状态」通道，由**服务端下发的 cheeselet** 统一接线
-> （改 cli 的 js 暴露面——**瘦客户机是宪法**：cli/线协议 frozen、业务逻辑在后端、客户端永不因
-> 业务改动重装。**这块我们自己做，不外包。**）唯一真正正交的轴**不是**「本地 vs 远程」，而是「**SDK 原生流 vs
-> 驱动真 cc TUI**」——两种「怎么跟 cc 说话」的产品形态，与容器在哪无关。§0/§5 已按此重写，
-> 实现层收敛见 §8.6。
+> （远程穿 NAT，本地 dial-out 退化为 localhost no-op），都是薄差异，不值得两套机制。
+> 业务逻辑一律在服务端（**瘦客户机是宪法**：cli/线协议 frozen、业务逻辑在后端、客户端永不因
+> 业务改动重装。**这块我们自己做，不外包。**）§0/§5 已按此重写，实现层收敛见 §8.6。
 
 ## 0. 一句话公式（2026-07-10 修订：统一底座）
 
 > 一套 cc-脚本-服务端底座（复用他们 frozen 的 cli + 线协议）
-> ＋ 服务端下发的 cheeselet 驱动真 cc，hooks 作「报状态」通道换掉读屏
+> ＋ 会话机上的 runner 握着 headless cc 的 stream-json 管道，结构化记录换掉读屏
 > ＋ 本地容器与用户设备走**同一底座**，只差入册（本地自动 / 远程设备流）
 > ＋ 我们的产品面（前端 + 群聊 + agent-as-user + 权限 + 记忆 + 闸门）
 > ＋ 话题=群聊（我们的选择，非他们的 thread/workitem 拆分）
 > ＋ merge 进主 repo（我们代码为准）
 > ＝ 一套底座、到处一致；取他们骨架、去其读屏脆弱点。
 
-## 1. 感知层：hooks，不是读屏（决定性，保留我们的）
+## 1. 感知层：结构化记录，不是读屏（决定性）
 
 - 他们 `cheeselets/claude.js`：正则匹配屏幕尾部推断 busy/idle/choices，注释满是
   "verified against real v2.1.x screens"——TUI 改版即碎。
-- 我们的 hooks 后端（已建，`ClaudeCodeRuntime`）：Claude Code hooks 吐结构化 JSON
-  （SessionStart/PreToolUse/MessageDisplay/Stop → AgentEvent），连控制态都不猜。
-- **融合时用我们的 hooks 感知替换他们的读屏**，消除他们最大脆弱点。这也让 self-hosted 更稳
-  （hooks 在任何机器一致，读屏依赖具体 TUI 版本）。
+- 我们：Claude Code 以 `claude -p` 跑在 stream-json 上，会话机上的 runner 握着它的 stdin/stdout，
+  把每一行结构化记录写进日志，后端镜像这份日志、翻译成 AgentEvent（`harness/claude_code/`），
+  连控制态都不猜。结构化记录在任何机器上一致，读屏依赖具体 TUI 版本。
 
 ## 2. agent-as-user 身份（嫁接，地基级）
 
@@ -71,7 +67,7 @@
 - **权限属于项目**：一个权限分享给项目，则项目内所有人/agent/自动化都有，可撤销；
 - **组合式授权策略**：授权是纯策略函数 + 注入适配器（resolve_user/is_member/shares_thread），
   脱离 DB/WS 可单测；
-- **"群是共享访问的单位"**：和 agent 同群者可看/操作其现场；
+- **"群是共享访问的单位"**：和 agent 同群者可看/操作其会话；
 - 一个有效 token 是**必要非充分**——每次调用按 actor 真实权限授权。
 - **待办**：对我们现有 authz（require_auth_user / 各 service 的权限检查）做一次审计，按这套
   纪律收敛。这是点4"仔细研究权限"的落点。
@@ -84,10 +80,8 @@
   常驻连接器；所有逻辑在后端，客户端永不因业务改动重装；
 - 一个 agent = 一个屏幕（screen），screen token 归属调用。
 - **我们的做法（统一底座）**：本地容器与用户设备**同走一套 cc-脚本-服务端底座**（他们的 cli +
-  线协议），感知走 hooks（服务端下发的 cheeselet 接线，非读屏）。本地=我们自动入册、NAT 是
+  线协议），感知走 runner 记下的结构化记录（非读屏）。本地=我们自动入册、NAT 是
   no-op；远程=设备流。**不是「平台容器 vs 用户设备」两套 provider，是同一底座上的入册差异。**
-- 正交的一轴（非本地/远程）：**SDK 原生流** vs **驱动真 cc TUI**——干净结构化 vs 真终端可围观
-  （现场镜像 + hooks）。这是「怎么跟 cc 说话」的产品形态选择，与容器在哪无关。
 - 这是大件，单独分阶段，不是抄一段代码。
 
 ### 5.1 他们的 `cli/` 瘦客户机（读过代码，确实好——self-hosted 的现成骨架）
@@ -107,8 +101,7 @@
    握手协商版本，客户端纯传输、永不因业务改动重装。
 - **定位（统一底座，2026-07-10 修订）**：他们的 `cli/` 不只是「self-hosted 的骨架」，而是
   **本地/远程通用的执行底座**——本地容器也跑在同一 cc-脚本-服务端模型上（dial-out 退化为
-  localhost no-op）。把读屏 cheeselet 换成**服务端下发的 hooks-cheeselet** 即可；cli/线协议
-  frozen，改 js 暴露面（我们自己做）。
+  localhost no-op）。读屏 cheeselet 由 runner 的结构化记录取代；cli/线协议 frozen。
 
 ## 5.2 cheese CLI 设计（用我们的代码，curated + raw 逃生口）
 
@@ -130,8 +123,7 @@
   彼此不感知、靠文档对齐；Claude Code 默认 subagent 也是 fresh，委派 prompt 是唯一通道。
   我们"子话题带简报 + 父文档快照"就是对的，**不改**。
 - **transcript-fork（他们 clone.py）是另一个功能**："整体克隆一个 agent"或"从当前状态并行
-  探索"（对应 Claude Code `/fork`）。未来做"克隆 agent"时再嫁接；我们 tmux 后端的 Stop hook
-  已给 `transcript_path`，届时白捡。
+  探索"（对应 Claude Code `/fork`）。未来做"克隆 agent"时再嫁接。
 
 ## 7. 同源共识（两边一致，无需融合）
 
@@ -142,82 +134,26 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 
 - **P0（即刻）**：表情 bug 修复；成员名册 + @all/@here（话题群聊感）。
 - **P1**：agent-as-user 身份重构 + 权限纪律审计。
-- **P2**：现场升级为 ttyd 真终端镜像（已备，容器 7681 就绪）；多 agent 编排借鉴。
+- **P2**：多 agent 编排借鉴。
 - **P3**：self-hosted 设备流 + 瘦客户机（战略大件，单独立项）。
 - **P4**：clone agent（transcript-fork）。
 
 > 修订 2026-07-10：P0–P4 记录保留（均已建/已上线）。方向修正见顶部修订块与 §0/§5——
-> 收敛终态是**统一底座**（本地/远程一套 cc-脚本-服务端）；原实现里烤进镜像的独立 hook 路
-> 作为迁移项收敛进统一底座，见 §8.6。
+> 收敛终态是**统一底座**（本地/远程一套 cc-脚本-服务端），见 §8.6。
 
 ## 8.6 实现层收敛（统一底座迁移，2026-07-10）
 
-原实现有两条并行感知/执行路（平台=SDK/烤入镜像的 `cheese-hook`；自托管=cli+我们写的
-`claude_min.js`）。现按顺序收敛成**一套**，纪律是「**先让统一底座跑通、验证后再拆旧路**」——
-**全部我们做（含 cli 侧改动，不外包）**：
+统一底座已落地：一轮活只跑在别人的机器上（device / cloud），走同一个连接器与线协议；SDK
+后端已删除（2026-08-19）——它是「起一个子进程、流式读完、退出」那一种形状，而拿着迭代器的
+人就拥有那一轮，平台里每一件打捞机器都是从这条性质长出来的。留下的是可以重连的那一种：
+会话机上的 runner 握着 headless `claude -p` 的管道、把记录写进日志，后端从游标读、崩溃后
+`recover` 重新找到它（`harness/driven/runtime.py`）。
 
-1. **底座统一**：cli/线协议保持 frozen 语义（不改线协议），改 driver 的 **js 暴露面**，让服务端
-   下发的 cheeselet 订阅 hooks 事件流（替代读屏）。本地容器与用户设备共用这一底座。
-2. **入册统一**：平台容器经同一 connector 底座**自动入册**（注入凭证、免交互设备流），用户设备
-   走设备流；本地/远程只差入册，不两套 provider。
-3. **拆旧路**：统一底座（1+2）跑通并验证后，拆掉烤入镜像的 `cheese-hook` 第二路 + 冗余 provider，
-   一次切换。
-4. **SDK 后端**：已删除（2026-08-19）。它是「起一个子进程、流式读完、退出」那一种形状，
-   而拿着迭代器的人就拥有那一轮——平台里每一件打捞机器都是从这条性质长出来的。留下的
-   是可以重连的那一种。
-
-**触及面（我们自己改）**：`claude_min.js`（最小 driver：启动 cc + 过 `❯` ready-gate）→ 改造成
-cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToolUse/Stop → 结构化事件 →
-后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
-
-**进度**：
-- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/harness/claude_code/hooks_substrate.py`—— turn drain 循环
-  `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
-- ✅ **增量 2（完成、行为不变）**：把两个 transport 的**整段 turn 流程**收敛成一份——
-  check topic → mint token → register 队列 → `ensure_ready` + `send_prompt`（transport）→
-  drain → unregister。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
-- ✅ **组合替代继承**：那一份流程现在住在 `ClaudeCodeRuntime` 里，它**持有**一条
-  `Channel`（`DeviceChannel` 远程 link.Msg、`CloudChannel` 租来的机器；本地的
-  `TmuxChannel` 已随 #630 于 2026-08-28 删除）。channel 只答两件事：把屏幕开起来、把字
-  送进去；订阅、
-  活跃度、spool、收据全在缝的上面写一次。原来是基类，于是每条传输各带一份，第二个
-  harness 得按传输数写 M×N 份；现在是 M+N。
-- ✅ **launch 也过了缝**：`session_launch.build_session_launch` 交出一份 `LaunchSpec`
-  ——跑哪条命令、claude 自己读哪几个 env、开机前盘上得有哪三个文件（hooks settings、
-  首启闸门、system prompt）。channel 给路径、拿结果、按自己的方式落地，不再自己拼
-  `--append-system-prompt-file` / `--resume` / `--model`。和 device 那边
-  `build_screen_launch` 对称。
-  故意**不**和 `build_launch_script` 合并：装到别人机器上的启动脚本和隔壁容器里的一条
-  命令本来就不是一回事，要消掉的 M×N 是订阅/活跃度/spool/收据那套机器，不是 launch 细节。
-- **复用策略**：住在 device channel 的 `ensure_ready` 里——屏幕在且凭据没过期、进程活着、
-  隧道助手还在就复用（它就是对话本身），三道闸任一不过就退役重开。「就绪」的判据是
-  rendezvous socket 开始接受连接（连接器的 `dialWhenReady`），不是屏幕上画出 ❯：prompt
-  不再敲进终端，所以输入框画没画出来与投递无关。曾经的 `ensure_claude`（等 ❯ 的那份
-  复用编排）随本地 channel 一起删除。
-- ✅ **池子长出第二个轴，平台不再说 Claude Code 的话**：`ComputePool` 从「按机器」变成
-  「按 (机器, harness)」——机器选不到会退回默认，harness 选不到**直接拒绝**（跑成别的
-  agent 比不跑更糟）。`bind_*` / `holds` / `recover` / `replay` / `backlog` 都进了
-  `AgentRuntime` 契约，池子不再靠 `isinstance` 认人。
-  最要紧的是 `backlog`：崩溃恢复和 spool 补录原来是 chat.py 自己调 `read_log` +
-  `MessageAssembler`，认得 Claude Code 的事件形状；现在它拿到的是拼好的 `AgentEvent`，
-  落库发帧还是它的活，翻译不是。**`test_harness_boundary` 的账本里 chat.py 整行没有了。**
-  会话启动时打 `CHEESE_HARNESS` 标记，重启恢复只认自己的——一台机器上并存两个 harness
-  时，谁也别去认领别人的屏幕。device 通道今天报不出这个标记（绑定表只记话题不记
-  harness），所以那条传输暂时一台机器一个 harness，这一点写在 `discover` 的契约里。
-- ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
-  `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
-  `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一
-  常量。烤入镜像与远程运行时两条路的 forwarder 由此**同源**。
-
-- ✅ **三方并行 review + 修复（收官）**：安全/正确性/行为保持三个独立 reviewer 过了整个 diff。
-  结论：无安全回归、无新 bug；行为保持发现 2 个窄差异，已修——(a) tmux `_wait_ready`/
-  `send_prompt` 的 docker-exec OS 级失败原会以裸异常逃出 generator，现包进 `ScreenSetupError`
-  （旧行为=干净错误结果）；(b) 新增 `precheck` seam：早失败（无 Docker / 无在线设备）在
-  mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
-  扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `ensure_ready`（不解析两次）。
-  +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
-  （setup 失败被当 transient 重试 3 次；`images` 参数两个 hooks 后端都静默忽略）——非回归，
-  留待后续。
+- **组合替代继承**：一轮的流程住在 `DrivenRuntime` 里，它**持有**一条 channel（找到或开起会话、
+  把调用送到 runner）；订阅、活跃度、收据全在缝的上面写一次，第二个 harness 是 M+N 不是 M×N。
+- **池子按 (机器, harness)**：`ComputePool` 里机器选不到会退回默认，harness 选不到**直接拒绝**
+  （跑成别的 agent 比不跑更糟）。崩溃恢复和补录由 runtime 交出拼好的 `AgentEvent`，chat.py
+  落库发帧，翻译不是它的活；`test_harness_boundary` 守这条缝。
 
 **本地 transport：已删除（2026-08-28，#630）。** 平台不再自带机器，一轮活只跑在别人的机器上
 （device / cloud），所以「本地容器 vs 远程机器」这一对 transport 不再存在，也就没有「拆不拆
@@ -232,7 +168,7 @@ connector 服务器，self-hosted 服务器端已建完）。我们的 `cheesex`
 关键判断（实证：他们 cli `go build` 零改动即成、服务器端点仅 `/auth/device/{start,poll}` +
 `/agent` WS + `/openapi.json`，后者 FastAPI 已免费提供）：
 - **self-hosted 不在 cheesex 重造**——直接复用主 repo 已有的 cli + 设备流 + connector 骨架；
-- 我们的贡献 = 把他们的**读屏 cheeselet 换成我们的 hooks 感知** + 带入我们的产品面
+- 我们的贡献 = 把他们的**读屏 cheeselet 换成结构化记录** + 带入我们的产品面
   （前端 / 记忆真集成 / 闸门 / 算力 / 群聊）；
 - cli 唯一必改：与我们沙箱内 `cheese`（平台动作 CLI）**重名冲突**须理顺（改一方名）。
 
@@ -247,9 +183,8 @@ connector 服务器，self-hosted 服务器端已建完）。我们的 `cheesex`
 核心信息（2026-07-10 对齐后）：
 - **底座一套**：cc-脚本-服务端 + frozen cli/线协议语义不变；本地/远程只差入册，不两套。
   **我们直接实现（含 cli 侧），不分包。**
-- **读屏去掉、双方已一致**；hooks 作「报状态」通道，走**服务端下发的 cheeselet**（改 cli 的 js
-  暴露面，我们做），不烤进镜像。
+- **读屏去掉、双方已一致**；会话的状态来自 runner 记下的结构化记录。
 - **我们守产品面**：前端 / 群聊（话题=群聊，非 thread/workitem）/ agent-as-user / 权限 / 记忆 / 闸门。
-- 那三条 coordinator 标的「分歧」：#1 感知其实无冲突（都去读屏，只谈投递方式，已定服务端下发）；
+- 那三条 coordinator 标的「分歧」：#1 感知其实无冲突（都不读屏）；
   #2 话题=群聊 是我们已定的产品决策，保留；#3 cli 定位——按统一底座，cli 确实是本地/远程通用
   地基（比"三个前门之一"更接近 lg 原意），已在 §5 修正。

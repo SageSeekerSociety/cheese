@@ -61,7 +61,24 @@ def device(tmp_path, monkeypatch):
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            payload = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.path.startswith("/topics/"):
+                # What the room is told, kept where a test can read it.
+                with (home / "posted.jsonl").open("a") as posted:
+                    posted.write(
+                        json.dumps(
+                            {
+                                "path": self.path,
+                                "token": self.headers["X-Cheese-Token"],
+                                "body": json.loads(payload),
+                            }
+                        )
+                        + "\n"
+                    )
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"data": {}}')
+                return
             self.do_GET()
 
         def do_PUT(self):
@@ -182,14 +199,10 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     assert (work / "draft.txt").read_text() == "keep me"
 
 
-def test_failed_push_is_spooled_to_the_room_hook(device, monkeypatch):
+def test_failed_push_is_told_to_the_room(device):
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
-    hook = home / "cheese-hook"
-    hook.write_text('#!/bin/sh\ncat >> "$HOME/hook.json"\n')
-    hook.chmod(0o755)
-    monkeypatch.setenv("PATH", str(home) + os.pathsep + os.environ["PATH"])
     reject = remote / "hooks/pre-receive"
     reject.write_text("#!/bin/sh\nexit 1\n")
     reject.chmod(0o755)
@@ -198,11 +211,24 @@ def test_failed_push_is_spooled_to_the_room_hook(device, monkeypatch):
     git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "local work")
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
-    report = json.loads((home / "hook.json").read_text())
-    assert report["hook_event_name"] == "CheeseSync"
-    assert report["status"] == "failed"
-    assert report["task_id"] == task
-    assert report["branch"] == tasks[task]["branch"]
+    (report,) = [
+        json.loads(line) for line in (home / "posted.jsonl").read_text().splitlines()
+    ]
+    assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/messages"
+    assert report["token"] == "test-secret"
+    assert tasks[task]["branch"] in report["body"]["content"]
+    assert report["body"]["request_id"]
+
+
+def test_a_push_that_lands_tells_the_room_nothing(device):
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "done.txt").write_text("done")
+    git(work, "add", "done.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "landed work")
+    cli._sync_task(task)
+    assert not (home / "posted.jsonl").exists()
 
 
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):

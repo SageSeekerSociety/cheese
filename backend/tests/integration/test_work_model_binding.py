@@ -34,7 +34,7 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
 from tests.integration.conftest import registered
-from tests.unit.test_device_provider import ReuseGateHub
+from tests.unit.test_device_provider import FakeHub
 
 
 @pytest.fixture(autouse=True)
@@ -174,7 +174,7 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
     ids = client.portal.call(lambda: _room(client.test_request_factory))
     client.portal.call(lambda: _use_the_pool(client.test_request_factory, ids))
     chat = _chat(client.test_request_factory, tmp_path)
-    hub = ReuseGateHub()
+    hub = FakeHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
     async def screen_for(kwargs):

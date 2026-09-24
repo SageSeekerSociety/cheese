@@ -10,8 +10,6 @@ but bills nothing" if it regresses:
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
 
-import json
-
 from app.domain.agent import provider_env
 
 
@@ -94,22 +92,24 @@ def test_model_names_are_never_pinned_on_the_subscription():
     assert not [k for k in choice.env if "MODEL" in k]
 
 
-def test_no_credential_file_is_ever_planted_in_the_box():
+def test_no_credential_file_is_ever_planted_in_the_box(tmp_path):
     """The session's login is its host's own store; nothing credential-shaped is
     planted into its config dir, where a private copy would be stranded by the
     first sibling's refresh."""
-    from app.domain.agent.harness.claude_code import build_session_launch
+    import subprocess
 
-    launch = build_session_launch(
-        config_dir="/sessions/ab12cd34",
-        workdir="/topics/topic_ab12cd34",
-        system_prompt="",
+    from app.domain.agent.harness.claude_code.device_launch import launch_holes
+
+    holes = launch_holes(state="$HOME/.cheese/harness/p/r/claude-code/x")
+    subprocess.run(
+        ["sh", "-c", "set -e\n" + holes.configure],
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        check=True,
+        capture_output=True,
     )
-    planted = {f.name: f.content for f in launch.files}
+    planted = {path.name for path in (tmp_path / ".claude").rglob("*")}
+    assert "settings.json" in planted
     assert ".credentials.json" not in planted
-    # The gates it DOES plant are not credential-shaped, and they trust this
-    # topic's own cwd rather than a path baked into the image.
-    gates = json.loads(planted[".claude.json"])
-    assert gates["hasCompletedOnboarding"] is True
-    assert "/topics/topic_ab12cd34" in gates["projects"]
-    assert "token" not in json.dumps(gates).lower()
+    # What it DOES plant is not credential-shaped.
+    settings = (tmp_path / ".claude/settings.json").read_text()
+    assert "token" not in settings.lower()

@@ -12,7 +12,8 @@ The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen
 ``v`` (version), ``build``/``target`` (which connector binary said hello),
 ``name``/``args``/``id``/``value``/``error`` (rpc),
 ``command``/``env``/``screen``/``cols``/``rows``/``adopt`` (session),
-``data`` (base64 raw screen bytes or one uploaded file), ``path`` (file upload),
+``data`` (base64 raw screen bytes), ``path`` (the state directory an
+``execution.call`` names),
 and the exec set
 ``cwd``/``stdin``/``timeout``/``stdout``/``stderr``/``exit``/``truncated``.
 
@@ -125,21 +126,6 @@ def session_create(
 
 def session_close(sid: str) -> dict[str, Any]:
     return {"t": "session.close", "sid": sid}
-
-
-def rpc_call(sid: str, call_id: str, name: str, args: list[Any]) -> dict[str, Any]:
-    return {"t": "rpc.call", "sid": sid, "id": call_id, "name": name, "args": args}
-
-
-def file_put(sid: str, file_id: str, path: str, data: bytes) -> dict[str, Any]:
-    """Stage one worktree-relative file in a screen's workspace."""
-    return {
-        "t": "file.put",
-        "sid": sid,
-        "id": file_id,
-        "path": path,
-        "data": base64.b64encode(data).decode(),
-    }
 
 
 def screen_subscribe(sid: str, cols: int, rows: int) -> dict[str, Any]:

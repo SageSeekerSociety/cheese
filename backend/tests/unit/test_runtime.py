@@ -304,7 +304,7 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
 
 
 # --- turn 活跃度检测 (2026-08-09): `turn_ceiling` reschedules the outer wrap.
-# hooks_substrate's two-layer idle-suspect/hard-ceiling logic is pointless if
+# A driven runtime's own liveness rules and hard ceiling are pointless if
 # THIS outer, transport-independent wrap still kills the turn at the generic
 # `agent_turn_timeout_s` regardless of activity — these prove the reschedule
 # actually takes effect, is scoped to only the turn that asks for it, and never
@@ -1740,7 +1740,7 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
 async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, caplog):
     """上限不再是判决。一轮跑过了它，日志里记一笔、turn 记录里记一笔，然后照常
     跑到它自己的 `done`。「一直吐字、一次工具都不调」那种会话现在由 harness 的
-    monitor 判（test_hooks_substrate），这一层不再替它做。
+    runtime 判（test_driven_liveness），这一层不再替它做。
     """
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)

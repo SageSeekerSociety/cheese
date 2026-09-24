@@ -8,8 +8,10 @@ import uuid
 
 import pytest
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -28,15 +30,29 @@ class PrivateScreen(StubChannel):
         self.prompts = []
         self.openings = []
 
-    async def ensure_ready(self, **kwargs):
-        self.openings.append(kwargs)
-        return await super().ensure_ready(**kwargs)
+    async def ensure(self, session, opening):
+        # What the channel is started with, and the scoped credential it hands
+        # the session's `cheese` CLI: the room's place, signed for the agent
+        # acting in it (`claude_code/channel.py` mints the same shape).
+        self.openings.append(
+            {
+                "memory_scope": opening.memory_scope,
+                "token": mint_scoped_token(
+                    project_id=str(session.project_id),
+                    topic_id=str(session.topic_id),
+                    ttl_s=SESSION_TOKEN_TTL_S,
+                    access_scope="project",
+                    agent_handle=opening.agent_handle or session.agent_handle,
+                ),
+            }
+        )
+        return await super().ensure(session, opening)
 
-    async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         self.prompts.append(prompt)
-        self.starts(screen, session_id="private-session")
-        self.stops(screen, "Draft saved.", session_id="private-session")
-        return True
+        self.starts(topic_id, session_id="private-session")
+        self.acknowledges(topic_id, prompt)
+        self.stops(topic_id, "Draft saved.", session_id="private-session")
 
 
 @pytest.mark.parametrize("private", [True, False])

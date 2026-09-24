@@ -56,7 +56,6 @@ from cheese_billing_core import (  # noqa: E402
     GATEWAY,
     MODEL_REWRITE_LIMIT,
     NO_LOGIN_PLACEHOLDER,
-    TELEMETRY_HOSTS,
     AdmissionGate,
     Meter,
     ModelRewrite,
@@ -84,9 +83,6 @@ ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
 # turns sit orders of magnitude below this; past it the flow keeps the old
 # streamed behaviour, which is a floor, not a failure.
 DEFER_BODY_LIMIT = int(os.environ.get("CHEESE_DEFER_BODY_LIMIT", str(8 * 1024 * 1024)))
-# Same backend as admission; no second public listener or deployment secret.
-RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
-RC_EXTRA_HOSTS = frozenset({"claude.ai", "cdn.growthbook.io"}) | TELEMETRY_HOSTS
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
 # Where the API-key pool lives (LiteLLM). A project whose supply decision says
@@ -398,11 +394,7 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
     mode = getattr(data.context.client, "proxy_mode", None)
     if getattr(mode, "type_name", "") != "regular":
         return
-    pinned = _SCOPED_BY_CLIENT.get(getattr(data.context.client, "id", ""))
-    rc_host = bool(
-        pinned and pinned[1].get("rc") and data.client_hello.sni in RC_EXTRA_HOSTS
-    )
-    if (data.client_hello.sni or "") not in ANTHROPIC_HOSTS and not rc_host:
+    if (data.client_hello.sni or "") not in ANTHROPIC_HOSTS:
         data.ignore_connection = True
 
 
@@ -424,7 +416,7 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
     """Answer a non-model endpoint from the table, or leave it to go upstream.
 
     Unconditional, and before ANY upstream credential is attached — not behind
-    the RC check, not behind admission. Which pool the project runs on used to
+    admission. Which pool the project runs on used to
     decide who may answer these, and a session admission had positively placed
     on the subscription was let through to Anthropic — a real account asking
     about itself. That is the second half of 结论 46, and it is gone: a machine
@@ -444,13 +436,6 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
         flow.request.path,
         str(claims.get("p") or ""),
         str(claims.get("t") or ""),
-        # The RC bridge flags describe a transport this session has only if its
-        # token says so. Answering them on is what makes Claude Code open
-        # `/v1/code/…`, and for a session with no RC claim `_rc_route` has
-        # nowhere to send those — they would go upstream on the session's
-        # Claude credential, carrying control-session identifiers. Off is the honest
-        # answer, and it is the same one an unflagged session gets today.
-        rc=bool(claims.get("rc") and claims.get("p") and claims.get("t")),
     )
     if answer is None:
         return False
@@ -458,52 +443,6 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
     flow.response = http.Response.make(
         answer.status, answer.body, {"Content-Type": "application/json"}
     )
-    return True
-
-
-def _rc_route(flow: http.HTTPFlow, token: str, claims: dict | None) -> bool:
-    """Route RC before any upstream credential is attached.
-
-    RC ownership comes from the verified token's place, never the attribution
-    header (which may select another topic for metering).
-
-    The non-model startup endpoints are NOT here: they are answered by
-    `_answer_here`, which runs whether or not this session has RC.
-    """
-    rc = bool(claims and claims.get("rc") and claims.get("p") and claims.get("t"))
-    path = flow.request.path.split("?", 1)[0]
-    if not rc:
-        return False
-    if flow.request.host in RC_EXTRA_HOSTS and not path.startswith("/v1/code/"):
-        _refuse(
-            flow,
-            403,
-            "permission_error",
-            "This endpoint is outside the Cheese RC transport",
-        )
-        return True
-    if not path.startswith("/v1/code/"):
-        return False
-    if not RC_BASE:
-        _refuse(flow, 503, "api_error", "Cheese RC backend is not configured")
-        return True
-    parsed = urlparse(RC_BASE)
-    flow.request.scheme = parsed.scheme
-    flow.request.host = parsed.hostname
-    flow.request.port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    flow.request.path = parsed.path.rstrip("/") + flow.request.path
-    # Strip the caller's Claude credential: RC goes to our own backend.
-    for name in (
-        "authorization",
-        "x-api-key",
-        "cookie",
-        "proxy-authorization",
-        X_ATTR_HEADER,
-    ):
-        flow.request.headers.pop(name, None)
-    flow.request.headers["host"] = parsed.netloc
-    flow.request.headers["x-cheese-token"] = token
-    flow.metadata["cheese_rc"] = True
     return True
 
 
@@ -546,16 +485,14 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         flow.request.host = sni
     if (
         getattr(flow.client_conn, "tls_established", False)
-        and flow.request.host in ANTHROPIC_HOSTS | RC_EXTRA_HOSTS
+        and flow.request.host in ANTHROPIC_HOSTS
     ):
         flow.request.stream = True
-        # Before RC, before admission, before any credential: Claude Code's
-        # identity / settings / policy / feature-flag / telemetry calls are
-        # answered from the table and never leave this process (结论 46).
-        token, claims = _scoped_claims(flow)
+        # Before admission, before any credential: Claude Code's identity /
+        # settings / policy / feature-flag / telemetry calls are answered from
+        # the table and never leave this process (结论 46).
+        _, claims = _scoped_claims(flow)
         if _answer_here(flow, claims):
-            return
-        if _rc_route(flow, token, claims):
             return
         flow.request.headers["host"] = sni
 

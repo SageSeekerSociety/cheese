@@ -47,8 +47,10 @@ class Subscription(subscription.Subscription[PiBacklog]):
         consume: EventConsumer,
         activity: ActivityConsumer,
         session_id: str | None = None,
+        *,
+        pulse: subscription.Pulse | None = None,
     ):
-        super().__init__(session, path, call, consume, activity)
+        super().__init__(session, path, call, consume, activity, pulse=pulse)
         self.session_id = session_id
 
     async def receive(self) -> None:

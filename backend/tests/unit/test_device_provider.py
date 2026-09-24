@@ -1,4 +1,10 @@
-"""DeviceChannel: turn orchestration + hook→AgentEvent translation (injected hub)."""
+"""DeviceChannel: opening, reusing and retiring a room's screen on a machine.
+
+What runs in the screen is the harness's runner; the channel asks it things
+through the hub (``call_executor``), and every other step — the launcher, the
+per-turn files, the tunnel probe, the release — is an ``exec`` on the machine.
+``FakeHub`` answers both the way a connector with a live runner behind it does.
+"""
 
 import asyncio
 import json
@@ -9,29 +15,25 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import device_provider, place, remote_control
+from app.domain.agent import device_provider
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
 )
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
-from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.pi.device_launch import PiLaunch
-from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
-from app.domain.device.repository import TopicDevice
-from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
@@ -43,34 +45,38 @@ def _no_device_identity(monkeypatch):
 
     monkeypatch.setattr(DeviceChannel, "_device_api_base", public_base)
 
-    async def active_room(_self, topic_id):
-        return SimpleNamespace(id=topic_id, resource_id=None)
 
-    monkeypatch.setattr(
-        "app.domain.topic.services.TopicService.lock_for_execution", active_room
-    )
-
-
-@pytest.fixture(autouse=True)
-def _no_control_workflows(monkeypatch):
-    class NoControlSession:
-        async def current(self, *_args):
-            return None
-
-    monkeypatch.setattr(remote_control, "store", lambda: NoControlSession())
+def _release_step(stdin: str) -> str:
+    """Which resident-release function a `python3 -` exec runs."""
+    return stdin.rsplit("\nprint(json.dumps(", 1)[1].split("(", 1)[0]
 
 
 class FakeHub:
-    """Minimal DeviceHub stand-in recording what the provider drives."""
+    """A connector with one machine, whose screens run a Claude Code runner.
+
+    ``ping`` is what the runner answers (or the exception the call raises), the
+    tunnel probe answers ``tunnel``, and the resident-release steps answer from
+    ``release``. Every open gets a fresh sid, so a reopen is distinguishable
+    from a reassert."""
 
     def __init__(self) -> None:
         self.opened: list[HubScreen] = []
-        self.envs: list[dict | None] = []  # env injected into each opened screen
-        self.prompts: list[list] = []
-        self.reasserted: list[str] = []  # sids re-sent as adopt-creates
-        self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
-        self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
-        self.keys: list[tuple[str, bytes]] = []  # raw keystrokes into a screen
+        self.envs: list[dict | None] = []
+        self.reasserted: list[str] = []
+        self.closed: list[str] = []
+        self.execs: list[tuple[list, str | None]] = []
+        self.asked: list[tuple[str, dict]] = []  # (method, params) to the runner
+        self.ping: dict | BaseException = {"alive": True, "working": False}
+        self.tunnel = ("up", 0)
+        self.probed_homes: list[str] = []
+        self.release = {"stage": {"changed": True}, "acknowledge": {}}
+        # The release the machine's helpers are on, as its marker names it.
+        self.marker = ""
+        # A fresh launch installs the current release, as the launcher does.
+        self.launch_writes_marker = False
+        # Controls the running session never completes.
+        self.refused: set[str] = set()
+        self._sid = 0
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -91,8 +97,11 @@ class FakeHub:
         return 3.0 if device_id == "dev1" else None
 
     async def open_screen(self, device_id, command, **kw) -> HubScreen:
+        if self.launch_writes_marker and self._sid:
+            self.marker = resident_release.digest(resident_release.sources())
+        self._sid += 1
         screen = HubScreen(
-            sid="s1",
+            sid=f"s{self._sid}",
             device_id=device_id,
             command=command,
             token="tok",
@@ -100,7 +109,6 @@ class FakeHub:
             agent_handle=kw["agent_handle"],
             project_id=kw["project_id"],
             topic_id=kw["topic_id"],
-            hook_key=kw.get("hook_key", ""),
         )
         self.opened.append(screen)
         self.envs.append(kw.get("env"))
@@ -117,213 +125,88 @@ class FakeHub:
                 setattr(screen, name, value)
         return screen
 
+    async def close_screen(self, device_id, sid) -> bool:
+        self.closed.append(sid)
+        self.opened = [s for s in self.opened if s.sid != sid]
+        return True
+
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ) -> dict:
         self.execs.append((argv, stdin))
+        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
+            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
+            verdict, code = self.tunnel
+            return {"stdout": verdict, "stderr": "", "exit": code}
+        if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
+            return {"stdout": self.marker, "stderr": "", "exit": 0}
+        if argv == ["python3", "-"]:
+            answer = self.release[_release_step(stdin or "")]
+            return {"stdout": json.dumps(answer), "stderr": "", "exit": 0}
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
-    async def call_screen(self, device_id, sid, name, args) -> str:
-        self.prompts.append(args)
-        return "call1"
+    async def call_executor(self, device_id, state, method, params, timeout=None):
+        self.asked.append((method, params))
+        if method == "ping":
+            if isinstance(self.ping, BaseException):
+                raise self.ping
+            return dict(self.ping)
+        if method == "command":
+            return {"is_error": False}
+        subtype = params["request"]["subtype"]
+        if subtype in self.refused:
+            return {"subtype": "error", "error": "not completed"}
+        response = (
+            {"mcpServers": [{"name": "native", "status": "connected"}]}
+            if subtype == "mcp_status"
+            else {}
+        )
+        return {"subtype": "success", "response": response}
 
-    async def await_call(self, device_id, call_id, timeout=30):
-        return {"ok": True}
+    def commands(self) -> list[str]:
+        return [params["text"] for method, params in self.asked if method == "command"]
 
-    async def put_file(self, device_id, sid, path, data, timeout=30):
-        self.files.append((sid, path, data))
-        # A real machine answers with where the file actually landed, because
-        # only it can expand its own `$HOME`. The mention the agent gets is
-        # that answer, so a fake that withholds it tests a prompt nobody sends.
-        return {"ok": True, "path": "/home/owner/" + path.removeprefix("$HOME/")}
-
-    async def viewer_input(self, device_id, sid, data: bytes) -> None:
-        self.keys.append((sid, data))
+    def controls(self) -> list[str]:
+        return [
+            params["request"]["subtype"]
+            for method, params in self.asked
+            if method == "control"
+        ]
 
 
-def _provider(
-    hub: FakeHub, router: HookRouter, agent_id: uuid.UUID
-) -> ClaudeCodeRuntime:
-    """A device channel with the runtime that drives it — what the pool holds."""
-
-    async def resolver(_project_id, _topic_id):
-        return ("dev1", agent_id, "agent-x")
-
-    channel = DeviceChannel(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
-        public_base="http://test",
+def _room(hub, **fixed):
+    """One room on ``hub``: its channel, and a call that ensures its screen."""
+    channel = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    arguments = dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
-    return ClaudeCodeRuntime(channel, router=router, hard_ceiling_s=5)
+    arguments.update(fixed)
+
+    async def ensure(**changes) -> HubScreen:
+        return await channel._ensure_screen(**{**arguments, **changes})
+
+    return SimpleNamespace(channel=channel, arguments=arguments, ensure=ensure)
 
 
-async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
-    kw.setdefault("session_agent", "agent")
-    events: list = []
-
-    async def consume():
-        async for ev in provider.run_turn(**kw):
-            events.append(ev)
-
-    return events, asyncio.create_task(consume())
+def _retired(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("device_screen_retired")
+    ]
 
 
-async def _reached(check, *, timeout: float = 5.0) -> bool:
-    """Wait until the turn's background task got where this test needs it.
-
-    These waits used to be a flat `sleep(0.05)` covering the whole
-    resolve-device → open-screen → stage-files → send-prompt sequence. On a
-    loaded runner that is not enough — building the launcher alone measured
-    65 ms in CI — so the assertion (or the hook event pushed right after) landed
-    before the turn had got there and the test failed on machine speed instead
-    of on behaviour. Waiting on the condition costs nothing when it is already
-    true.
-    """
-    deadline = time.monotonic() + timeout
-    while not check():
-        if time.monotonic() >= deadline:
-            return False
-        await asyncio.sleep(0.005)
-    return True
-
-
-async def test_turn_streams_hook_events_until_stop():
-    hub = FakeHub()
-    router = HookRouter()
-    agent_id = uuid.uuid4()
-    provider = _provider(hub, router, agent_id)
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-
-    events, task = await _run(
-        provider,
-        project_id=project_id,
-        topic_id=topic_id,
-        prompt="1+1?",
-        system_prompt="",
-        resume_session_id=None,
-    )
-    # Let it resolve the device, open the screen, send the prompt, reach the drain.
-    assert await _reached(lambda: bool(hub.prompts))
-    assert hub.prompts == [["1+1?"]]  # prompt delivered over the socket
-    assert hub.opened[0].topic_id == topic_id
-    assert hub.opened[0].agent_user_id == agent_id
-
-    key = str(topic_id)
-    router.push(key, {"hook_event_name": "SessionStart", "session_id": "sid"})
-    router.push(key, {"hook_event_name": "MessageDisplay", "delta": "2"})
-    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "2"})
-    await asyncio.wait_for(task, timeout=5)
-
-    kinds = [type(e).__name__ for e in events]
-    assert kinds == ["AgentSessionInfo", "AgentMessage", "AgentResult"]
-    assert isinstance(events[0], AgentSessionInfo)
-    assert isinstance(events[1], AgentMessage) and events[1].text == "2"
-    assert isinstance(events[2], AgentResult) and events[2].text == "2"
-
-
-@pytest.mark.parametrize(
-    ("path", "mime"),
-    [("uploads/img-a.png", "image/png"), ("uploads/需求 文档.pdf", "application/pdf")],
-)
-async def test_every_device_image_is_staged_before_rendezvous_prompt(
-    monkeypatch, path, mime
-):
-    hub = FakeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.library.read_room_file",
-        lambda project, room, path: b"exact-image-bytes",
-    )
-
-    events, task = await _run(
-        provider,
-        project_id=project_id,
-        topic_id=topic_id,
-        prompt="[u] sent an image",
-        system_prompt="",
-        resume_session_id=None,
-        images=[{"path": path, "media_type": mime}],
-    )
-    # 文件先上去、提示词后发（hooks_substrate 里 `_stage` 在 `send_prompt` 之前），
-    # 所以等到提示词就意味着两件都做完了。
-    assert await _reached(lambda: bool(hub.prompts))
-
-    # 落在会话 home 里，不在检出目录里（结论 49，不变量 I21b）：从前它落在屏幕的
-    # 工作目录下，于是每张图都在别人的仓库里留下一个未跟踪文件。
-    home = device_provider.device_home_dir(project_id, topic_id)
-    staged = f"{home}/attachments/{path}"
-    assert hub.files == [("s1", staged, b"exact-image-bytes")]
-    assert f"/{place.CHECKOUT_DIR}/" not in staged.removeprefix("$HOME/")
-    # @ 的是机器答回来的那个绝对路径，不是后端猜的。
-    landed = "/home/owner/" + staged.removeprefix("$HOME/")
-    assert hub.prompts == [[f"[u] sent an image\n\n@{landed}"]]
-    router.push(
-        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
-    )
-    await asyncio.wait_for(task, timeout=5)
-    assert events[-1].text == "ok"
-
-
-async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-
-    class Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def get(self, _model, key):
-            if key == topic_id:
-                return SimpleNamespace(id=topic_id, project_id=project_id)
-            return None
-
-    class Service:
-        async def get_device(self, device_id):
-            # An enrolled box: this channel's to recover. A Cloud machine here
-            # would belong to the Cloud channel instead.
-            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
-
-        async def list_topic_bindings(self, device_id):
-            assert device_id == "dev1"
-            return [
-                TopicDevice(
-                    topic_id=topic_id,
-                    device_id=device_id,
-                    visibility=Visibility.host,
-                )
-            ]
-
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.sql_device_service",
-        lambda _session: Service(),
-    )
-    router = HookRouter()
-    channel = DeviceChannel(
-        hub=FakeHub(),  # type: ignore[arg-type]
-        session_factory=Session,  # type: ignore[arg-type]
-    )
-    provider = ClaudeCodeRuntime(channel, router=router)
-
-    recovered = await provider.recover("dev1")
-
-    assert recovered == [SessionRef(project_id, topic_id, harness="claude-code")]
-    assert channel._subscription_devices[topic_id] == "dev1"
-    await provider.replay(recovered[0], known_texts=set())
-    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
-    await provider._subscriptions[topic_id].sink.queue.join()
-
-    await provider.drop_device_subscriptions("dev1")
-    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+# --- recovery ---------------------------------------------------------------
 
 
 async def test_screen_inventory_failure_does_not_skip_the_next_device():
-    from app.domain.agent.device_hub import DeviceCallError
-
     visited = set()
 
     class Hub(FakeHub):
@@ -417,9 +300,6 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
         async def __aexit__(self, *args):
             pass
 
-        async def scalars(self, query):
-            return [room]
-
         async def commit(self):
             pass
 
@@ -431,19 +311,16 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )
     await hub.attach_device("center", Transport())
-    executor = DeviceChannel(hub=hub, session_factory=Session)
-    executor.discover = AsyncMock(return_value=[])
-    central = CentralChannel(executor)
+    central = CentralChannel(DeviceChannel(hub=hub, session_factory=Session))
     with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
-        result = await central.discover("center")
+        await central.restore("center")
     screen = hub.screen("survivor")
-    # 第四位是这条会话跑的骨架，从会话行上原样交回来的——中心通道不按骨架挑，
-    # 认领是 runtime 拿自己的骨架去判的（``Channel.discover`` 的契约）。
-    assert result == [(project_id, topic_id, screen, "claude-code")]
+    assert screen is not None
     assert screen.resource_id == resource_id
     assert screen.credential_expires == 1234567890
     assert screen.agent_configuration == "original-config"
     assert screen.execution_target == {"device_id": "executor"}
+    # A retired generation stays registered, so its cleanup can still reach it.
     assert hub.screen("retired") is not None
     assert {item.sid for item in hub.all_online_screens()} == {"survivor", "retired"}
     assert not any(msg["t"] == "session.create" for msg in sent)
@@ -452,129 +329,32 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     assert sent[-1]["t"] == "session.close"
 
 
-async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
-    monkeypatch, tmp_path
-):
-    """The same hook reaches the consumer twice on a reconnect: out of the spool
-    (replay) and live over /sandbox/hooks. Measured 2026-09-02 on dev (topic
-    0f139cd7): the flush landed once by event id, but the Stop's second copy
-    arrived in a fresh attribution that had never seen the flush, so the reply
-    was posted again. One hook is consumed once, whichever copy comes first."""
-    from app.domain.agent import event_spool
-    from app.domain.agent.harness.claude_code import hooks_substrate
-
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    spool = tmp_path / "spool"
-    monkeypatch.setattr(hooks_substrate.ws, "spool_dir", lambda _p, _t: spool)
-
-    class Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def get(self, _model, key):
-            if key == topic_id:
-                return SimpleNamespace(id=topic_id, project_id=project_id)
-            return None
-
-    class Service:
-        async def get_device(self, device_id):
-            return SimpleNamespace(device_id=device_id, supply=Supply.self_hosted)
-
-        async def list_topic_bindings(self, device_id):
-            return [
-                TopicDevice(
-                    topic_id=topic_id, device_id=device_id, visibility=Visibility.host
-                )
-            ]
-
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.sql_device_service",
-        lambda _session: Service(),
-    )
-    router = HookRouter()
-    channel = DeviceChannel(
-        hub=FakeHub(),  # type: ignore[arg-type]
-        session_factory=Session,  # type: ignore[arg-type]
-    )
-    provider = ClaudeCodeRuntime(channel, router=router)
-    landed: list[tuple[object, bool]] = []
-
-    async def consumer(_p, _t, _work, event, _eid, result_text_seen, _unsolicited):
-        landed.append((event, result_text_seen))
-
-    provider.bind_events(consumer)
-
-    flush = {"hook_event_name": "MessageDisplay", "delta": "ok", "_eid": "e-flush"}
-    stop = {"hook_event_name": "Stop", "last_assistant_message": "ok", "_eid": "e-stop"}
-    event_spool.append(spool, "e-flush", flush)
-    event_spool.append(spool, "e-stop", stop)
-
-    recovered = await provider.recover("dev1")
-    await provider.replay(recovered[0], known_texts=set())
-    # The live copy of the Stop, arriving after the replay already consumed it.
-    router.push(str(topic_id), dict(stop))
-    await provider._subscriptions[topic_id].sink.queue.join()
-
-    said = [
-        (type(event).__name__, seen)
-        for event, seen in landed
-        if isinstance(event, AgentMessage | AgentResult)
-    ]
-    assert ("AgentMessage", False) in said
-    assert [s for s in said if s == ("AgentResult", False)] == [], said
-    assert sum(1 for name, _ in said if name == "AgentMessage") == 1
+# --- reuse: a live screen is reasserted, never trusted, never relaunched -----
 
 
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
     """The hub's registry outlives what the device actually runs (a connector
     restart kills its sessions; a create sent on a dying transport was never
-    delivered), and the cli silently drops rpc.calls for unknown sids. So a
-    later turn must re-send the screen's adopt-create — idempotent on a live
-    session, a respawn for a lost one — rather than prompt a screen that may not
-    exist and die in a blank timeout."""
+    delivered). So a later turn re-sends the screen's adopt-create — idempotent
+    on a live session, a respawn for a lost one — rather than trust it."""
     hub = FakeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    key = str(topic_id)
+    room = _room(hub)
 
-    for turn in range(2):
-        _events, task = await _run(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=f"turn {turn}",
-            system_prompt="",
-            resume_session_id=None,
-        )
-        await _reached(lambda sent=turn: len(hub.prompts) > sent)
-        router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
-        await asyncio.wait_for(task, timeout=5)
+    first = await room.ensure()
+    second = await room.ensure()
 
-    assert len(hub.opened) == 1  # the topic keeps ONE screen …
-    assert hub.reasserted == [hub.opened[0].sid]  # … re-asserted on reuse
-    assert hub.prompts == [["turn 0"], ["turn 1"]]
+    assert second is first
+    assert [s.sid for s in hub.opened] == [first.sid]  # the room keeps ONE screen …
+    assert hub.reasserted == [first.sid]  # … re-asserted on reuse
+    assert hub.closed == []
 
 
 async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     monkeypatch,
 ):
     hub = FakeHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    arguments = dict(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
-        token="tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
-    )
-    screen = await provider._ensure_screen(**arguments)
+    room = _room(hub)
+    screen = await room.ensure()
     entered = set()
     ready = asyncio.Event()
 
@@ -586,8 +366,9 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
         assert hub.reasserted == []
         return result
 
-    async def alive(_screen):
-        return await operation("alive", True)
+    async def runner(_device_id, _state, method, params=None):
+        assert method == "ping"
+        return await operation("ping", {"alive": True})
 
     async def tunnel(_screen, _home):
         return await operation("tunnel", False)
@@ -595,12 +376,12 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
     async def refresh(*_arguments, **_keywords):
         return await operation("files", None)
 
-    monkeypatch.setattr(provider, "confirm_alive", alive)
-    monkeypatch.setattr(provider, "_tunnel_helper_is_down", tunnel)
-    monkeypatch.setattr(provider, "_refresh_screen_files", refresh)
-    reused = await asyncio.wait_for(provider._ensure_screen(**arguments), timeout=2)
+    monkeypatch.setattr(room.channel, "_runner", runner)
+    monkeypatch.setattr(room.channel, "_tunnel_helper_is_down", tunnel)
+    monkeypatch.setattr(room.channel, "_refresh_screen_files", refresh)
+    reused = await asyncio.wait_for(room.ensure(), timeout=2)
     assert reused is screen
-    assert entered == {"alive", "tunnel", "files"}
+    assert entered == {"ping", "tunnel", "files"}
     assert hub.reasserted == [screen.sid]
 
 
@@ -610,54 +391,50 @@ async def test_a_live_screen_is_not_sent_the_launcher_again():
     file already on the machine. A screen found dead gets a fresh launcher
     before it is reopened."""
     hub = FakeHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic = uuid.uuid4()
-    arguments = dict(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=topic,
-        token="tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt="a prompt the launcher embeds"),
-    )
-    screen = await provider._ensure_screen(**arguments)
-    shipped = [stdin for _argv, stdin in hub.execs if stdin is not None]
-    assert len(shipped) == 1 and "a prompt the launcher embeds" in shipped[0]
-    reused = await provider._ensure_screen(**arguments)
+    room = _room(hub, launch=ClaudeLaunch(system_prompt="a prompt the launcher embeds"))
+    topic = room.arguments["topic_id"]
+
+    def shipped(execs):
+        return [stdin for _argv, stdin in execs if stdin is not None]
+
+    screen = await room.ensure()
+    assert len(shipped(hub.execs)) == 1
+    assert "a prompt the launcher embeds" in shipped(hub.execs)[0]
+    reused = await room.ensure()
     assert reused is screen
-    refreshes = [
-        argv for argv, stdin in hub.execs if stdin is None and "cheese-hook" in argv[2]
-    ]
-    assert len(refreshes) == 1
-    assert len([stdin for _argv, stdin in hub.execs if stdin is not None]) == 1
+    assert len(shipped(hub.execs)) == 1
     assert screen.command == [
         "bash",
         "-lc",
         f'exec bash "$HOME/.cheese/launch/{topic}.sh"',
     ]
 
-    dead = DeadClaudeHub()
-    provider = DeviceChannel(hub=dead, public_base="http://cheese.test")
-    first = await provider._ensure_screen(**arguments)
-    replacement = await provider._ensure_screen(**arguments)
-    assert replacement is not first and dead.closed == [first.sid]
-    assert len([stdin for _argv, stdin in dead.execs if stdin is not None]) == 2
+    hub.ping = {"alive": False}
+    replacement = await room.ensure()
+    assert replacement is not screen and hub.closed == [screen.sid]
+    assert len(shipped(hub.execs)) == 2
 
 
-async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_path):
+async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_left_alone(
+    tmp_path,
+):
+    """A live session reads its forwarded-fs token from a file, so a reused
+    turn rewrites that file in place — as the machine's own shell runs it — and
+    touches nothing of the harness's own config under the same home."""
 
-    class LocalTransferHub(FakeHub):
-        async def exec(self, device_id, argv, *, stdin=None, **kwargs):
-            if stdin is None and "cheese-hook" not in argv[-1]:
-                return await super().exec(device_id, argv, **kwargs)
+    class LocalHub(FakeHub):
+        async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
+            if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+                return await super().exec(
+                    device_id, argv, env=env, stdin=stdin, **kwargs
+                )
+            self.execs.append((argv, stdin))
             result = subprocess.run(
                 argv,
                 input=stdin,
                 text=True,
                 capture_output=True,
-                env={**os.environ, "HOME": str(tmp_path)},
+                env={**os.environ, "HOME": str(tmp_path), **(env or {})},
                 timeout=10,
             )
             return {
@@ -666,248 +443,67 @@ async def test_reused_screen_refreshes_hook_without_restarting(monkeypatch, tmp_
                 "stderr": result.stderr,
             }
 
-    hook = "#!/bin/sh\nprintf '%s' 'updated hook'\n"
-    monkeypatch.setattr("app.domain.agent.device_provider.CHEESE_HOOK_SCRIPT", hook)
-    hub = LocalTransferHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    arguments = dict(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=project,
-        topic_id=topic,
-        token="tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
+    hub = LocalHub()
+    hub.release["stage"] = {"changed": False}
+    room = _room(
+        hub, env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})}
     )
-    screen = await provider._ensure_screen(**arguments)
-    home = device_home_dir(project, topic).replace("$HOME", str(tmp_path))
-    hook_path = Path(home) / ".cheese/cheese-hook"
-    # The harness config dir, which the refresh must not reach into — it does
-    # not even create it any more, so the test has to.
-    settings_path = Path(home) / ".claude/settings.json"
+    screen = await room.ensure(token="first")
+    home = Path(
+        device_home_dir(
+            room.arguments["project_id"], room.arguments["topic_id"]
+        ).replace("$HOME", str(tmp_path))
+    )
+    token = home / ".cheese/remote-session/execution.token"
+    assert token.read_text() == "first"
+    settings_path = home / ".claude/settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text('{"keep":true}')
-    hook_path.write_text("#!/bin/sh\necho old\n")
-    reused = await provider._ensure_screen(**arguments)
+
+    reused = await room.ensure(token="rotated")
+
     assert reused is screen and len(hub.opened) == 1
     assert hub.reasserted == [screen.sid]
-    assert subprocess.check_output([str(hook_path)], text=True) == "updated hook"
+    assert token.read_text() == "rotated"
+    assert token.stat().st_mode & 0o777 == 0o600
     assert settings_path.read_text() == '{"keep":true}'
 
 
-class DeadClaudeHub(FakeHub):
-    """A device whose `claude` DIED while the connector kept running: the hub's
-    registry still holds the screen, but the liveness probe (DEVICE_ALIVE_PROBE
-    over `exec`) answers `dead`. Records `close_screen` and hands out distinct
-    sids so a reopen is distinguishable from a reassert."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.closed: list[str] = []
-        self._sid_seq = 0
-
-    async def open_screen(self, device_id, command, **kw) -> HubScreen:
-        self._sid_seq += 1
-        screen = HubScreen(
-            sid=f"s{self._sid_seq}",
-            device_id=device_id,
-            command=command,
-            token="tok",
-            agent_user_id=kw["agent_user_id"],
-            agent_handle=kw["agent_handle"],
-            project_id=kw["project_id"],
-            topic_id=kw["topic_id"],
-            hook_key=kw.get("hook_key", ""),
-        )
-        self.opened.append(screen)
-        return screen
-
-    async def exec(
-        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
-    ) -> dict:
-        self.execs.append((argv, stdin))
-        # Only the liveness probe (no stdin) reports death; the launcher-ship exec
-        # (script on stdin) must still succeed or the turn never reaches a screen.
-        out = "dead" if stdin is None else ""
-        return {"stdout": out, "stderr": "", "exit": 0, "truncated": False}
-
-    async def close_screen(self, device_id, sid) -> bool:
-        self.closed.append(sid)
-        self.opened = [s for s in self.opened if s.sid != sid]  # hub forgets it
-        return True
-
-
-async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
-    """The registry holding a screen is NOT proof its `claude` still runs: an orphan
-    sweep or `tmux kill-server` can end the device session while the connector lives
-    on. Reasserting (adopt-create) would only re-attach to the dead
-    pane — the frozen connector re-Spawns solely for a sid it forgot (i.e. after IT
-    restarted), so a screen whose process died under a live connector is never
-    respawned and the turn dies in the delivery timeout with no model reached. So a
-    reused screen is probed first; a `dead` one is CLOSED (which makes the connector
-    forget the sid too) and reopened under a fresh sid the connector must Spawn."""
-    hub = DeadClaudeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    key = str(topic_id)
-
-    for turn in range(2):
-        _events, task = await _run(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=f"turn {turn}",
-            system_prompt="",
-            resume_session_id=None,
-        )
-        await _reached(lambda sent=turn: len(hub.prompts) > sent)
-        router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
-        await asyncio.wait_for(task, timeout=5)
-
-    assert hub.reasserted == []  # NEVER reasserted into the corpse …
-    assert hub.closed == ["s1"]  # … the stale screen was dropped …
-    assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
-    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
-
-
-@pytest.mark.parametrize("api", ["send", "run_turn"])
 @pytest.mark.parametrize(
-    ("failures", "code", "alive", "late_hook", "expected_calls", "success"),
+    ("ping", "retired"),
     [
-        (1, "prompt_socket_unavailable", False, False, 2, True),
-        (2, "prompt_socket_unavailable", False, False, 2, False),
-        (1, None, False, False, 1, False),
-        (1, "prompt_socket_unavailable", True, False, 1, False),
-        (1, "prompt_socket_unavailable", False, True, 1, False),
+        pytest.param({"alive": True}, False, id="alive"),
+        pytest.param({"alive": False}, True, id="says-it-is-gone"),
+        pytest.param(DeviceCallError("dial unix: refused"), True, id="no-runner"),
+        pytest.param(TimeoutError(), False, id="timed-out"),
+        pytest.param(httpx.ConnectError("reset"), False, id="link-lost"),
     ],
 )
-async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
-    api, failures, code, alive, late_hook, expected_calls, success
+async def test_only_the_machine_saying_so_retires_a_reused_session(
+    caplog, ping, retired
 ):
-    class InputHub(DeadClaudeHub):
-        def __init__(self):
-            super().__init__()
-            self.accepted = []
+    """Retiring a screen ends the `claude` behind it and whatever it was doing.
+    So it takes the machine's word: a runner that says the session is gone, or
+    no runner to ask at all. A timeout or a lost link says nothing about the
+    session and leaves it working."""
+    hub = FakeHub()
+    room = _room(hub)
+    first = await room.ensure()
+    hub.ping = ping
 
-        async def exec(self, device_id, argv, **kwargs):
-            result = await super().exec(device_id, argv, **kwargs)
-            if alive and (kwargs.get("env") or {}).get("CHEESE_ALIVE_TOPIC"):
-                result["stdout"] = "alive"
-            return result
+    with caplog.at_level("INFO"):
+        second = await room.ensure()
 
-        async def await_call(self, device_id, call_id, timeout=30):
-            if len(self.prompts) <= failures:
-                if late_hook:
-                    router.push(
-                        str(topic_id),
-                        {
-                            "hook_event_name": "PreToolUse",
-                            "tool_name": "Bash",
-                            "tool_input": {"command": "true"},
-                            "tool_use_id": "late-tool",
-                        },
-                    )
-                    await asyncio.sleep(0.01)
-                raise DeviceCallError("input unavailable", failure_code=code)
-            self.accepted.append(self.prompts[-1][0])
-            return {"ready": True}
-
-    hub = InputHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    session = SessionRef(project_id, topic_id, harness="claude-code")
-    try:
-        if api == "send":
-            call = provider.send(
-                session,
-                "finish the work",
-                Opening(system_prompt="", resume_token="existing-conversation"),
-                work_id=uuid.uuid4(),
-                on_mark=lambda _: None,
-            )
-            if success:
-                assert await call is True
-            else:
-                with pytest.raises(ScreenSetupError, match="input unavailable"):
-                    await call
-        else:
-            events, task = await _run(
-                provider,
-                project_id=project_id,
-                topic_id=topic_id,
-                prompt="finish the work",
-                system_prompt="",
-                resume_session_id="existing-conversation",
-            )
-            if success:
-                await _reached(lambda: bool(hub.accepted))
-                router.push(
-                    str(topic_id),
-                    {"hook_event_name": "Stop", "last_assistant_message": "done"},
-                )
-            await asyncio.wait_for(task, timeout=5)
-            assert (
-                any(
-                    isinstance(event, AgentResult) and event.is_error
-                    for event in events
-                )
-                is not success
-            )
-        assert len(hub.prompts) == expected_calls
-        assert hub.accepted == (["finish the work"] if success else [])
-        assert hub.closed == (["s1"] if expected_calls == 2 else [])
-    finally:
-        await provider.close(session)
-
-
-class DeadTunnelHub(DeadClaudeHub):
-    """A device whose `claude` is ALIVE and whose machine-local tunnel helper is
-    GONE — the state a data-plane swap leaves behind. Answers the two probes
-    independently so the tunnel gate can be told apart from the liveness gate."""
-
-    def __init__(self, tunnel_verdict: str = "down", tunnel_exit: int = 0) -> None:
-        super().__init__()
-        self.tunnel_verdict = tunnel_verdict
-        self.tunnel_exit = tunnel_exit
-        self.probed_homes: list[str] = []
-
-    async def exec(
-        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
-    ) -> dict:
-        self.execs.append((argv, stdin))
-        if env and "CHEESE_TUNNEL_PROBE_HOME" in env:
-            self.probed_homes.append(env["CHEESE_TUNNEL_PROBE_HOME"])
-            return {
-                "stdout": self.tunnel_verdict,
-                "stderr": "",
-                "exit": self.tunnel_exit,
-                "truncated": False,
-            }
-        if env and "CHEESE_ALIVE_TOPIC" in env:
-            return {"stdout": "alive", "stderr": "", "exit": 0, "truncated": False}
-        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
-
-
-async def _two_turns(provider, router, project_id, topic_id, hub):
-    router_key = str(topic_id)
-    for turn in range(2):
-        _events, task = await _run(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=f"turn {turn}",
-            system_prompt="",
-            resume_session_id=None,
-        )
-        await _reached(lambda sent=turn: len(hub.prompts) > sent)
-        router.push(
-            router_key, {"hook_event_name": "Stop", "last_assistant_message": "ok"}
-        )
-        await asyncio.wait_for(task, timeout=5)
+    if retired:
+        assert second is not first and hub.closed == [first.sid]
+        assert hub.reasserted == []
+        assert [s.sid for s in hub.opened] == [second.sid]
+        (line,) = _retired(caplog)
+        assert "reason=session_not_alive" in line
+    else:
+        assert second is first and hub.closed == []
+        assert hub.reasserted == [first.sid]
+        assert _retired(caplog) == []
 
 
 async def test_a_retired_screen_says_which_gate_decided(caplog):
@@ -916,353 +512,52 @@ async def test_a_retired_screen_says_which_gate_decided(caplog):
     connector's access log afterwards shows the close and never the why, and a
     release that replaces the deciding backend takes even that away — so the reason
     is written where it is read, at the moment the gate fires."""
-    hub = DeadClaudeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    hub = FakeHub()
+    room = _room(hub)
+    await room.ensure()
+    hub.ping = {"alive": False}
 
     with caplog.at_level("INFO"):
-        await _two_turns(provider, router, project_id, topic_id, hub)
+        await room.ensure()
 
-    retired = [
-        record.getMessage()
-        for record in caplog.records
-        if record.getMessage().startswith("device_screen_retired")
-    ]
-    assert len(retired) == 1, retired
-    assert f"topic={topic_id}" in retired[0]
-    assert "sid=s1" in retired[0]
-    assert "reason=claude_not_alive" in retired[0]
+    (line,) = _retired(caplog)
+    assert f"topic={room.arguments['topic_id']}" in line
+    assert "sid=s1" in line
+    assert "reason=session_not_alive" in line
 
 
-async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatch):
+# --- the tunnel helper -------------------------------------------------------
+
+
+async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
+    monkeypatch, caplog
+):
     """`claude` dials a machine-local tunnel helper it was handed at startup and
     never re-reads. That helper is brought up ONLY by the launcher's prefix, and a
-    reused screen is reasserted (an adopt-create) rather than relaunched —
-    so when the helper dies under a still-running `claude`, nothing on either side
-    restores it and every turn after that dies with ConnectionRefused while the
-    process-tree probe still answers `alive`.
-
-    Observed 2026-08-18: a standing data-plane swap left five screens in exactly
-    this state, one replaying the same 28-message batch for the 30th time. The
-    reuse gate must therefore retire such a screen so a FRESH launch runs the
-    prefix again — the same treatment a dead credential already gets."""
+    reused screen is reasserted rather than relaunched — so when the helper dies
+    under a still-running `claude`, nothing on either side restores it. The reuse
+    gate retires such a screen so a FRESH launch runs the prefix again."""
     monkeypatch.setattr(
         settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
     )
-    hub = DeadTunnelHub(tunnel_verdict="down")
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    hub = FakeHub()
+    hub.tunnel = ("down", 0)
+    room = _room(hub)
+    first = await room.ensure()
 
-    await _two_turns(provider, router, project_id, topic_id, hub)
+    with caplog.at_level("INFO"):
+        second = await room.ensure()
 
     assert hub.reasserted == []  # never reasserted onto the dead helper …
-    assert hub.closed == ["s1"]  # … the screen was retired …
-    assert [s.sid for s in hub.opened] == ["s2"]  # … and relaunched fresh
-    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+    assert hub.closed == [first.sid]  # … the screen was retired …
+    assert [s.sid for s in hub.opened] == [second.sid]  # … and relaunched fresh
+    (line,) = _retired(caplog)
+    assert "reason=tunnel_helper_down" in line
     # The probe reads the port from the room's own home, so concurrent rooms on
     # one machine are judged independently rather than sharing one verdict.
-    assert hub.probed_homes == [device_home_dir(project_id, topic_id)]
-
-
-class BehindReleaseHub(DeadTunnelHub):
-    """A live screen of a room whose work runs on an executor, left on the
-    release before this backend's: its marker names no current version. Answers
-    the release steps the way a machine that applies them does.
-
-    With ``launch_writes_marker``, a screen opened after the first one starts on
-    the current release, as a fresh launch does."""
-
-    def __init__(
-        self, *, launch_writes_marker: bool = False, busy: bool = False
-    ) -> None:
-        super().__init__()
-        self.envs: list[dict | None] = []
-        self.marker = ""
-        self.launch_writes_marker = launch_writes_marker
-        self.busy = busy
-        self.steps: list[str] = []
-
-    async def open_screen(self, device_id, command, **kw) -> HubScreen:
-        self.envs.append(kw.get("env"))
-        if self.launch_writes_marker and len(self.envs) > 1:
-            self.marker = resident_release.digest(resident_release.sources())
-        return await super().open_screen(device_id, command, **kw)
-
-    async def exec(
-        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
-    ) -> dict:
-        if argv != ["python3", "-"]:
-            if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
-                self.execs.append((argv, stdin))
-                return {"stdout": self.marker, "stderr": "", "exit": 0}
-            return await super().exec(
-                device_id, argv, cwd=cwd, env=env, timeout=timeout, stdin=stdin
-            )
-        self.execs.append((argv, stdin))
-        assert stdin is not None
-        step = stdin.rsplit("\nprint(json.dumps(", 1)[1].split("(", 1)[0]
-        self.steps.append(step)
-        if step == "stage" and self.busy:
-            answer = {"changed": False, "busy": True}
-        else:
-            answer = {"changed": step == "stage", "offsets": {}}
-        return {"stdout": json.dumps(answer), "stderr": "", "exit": 0}
-
-
-class NativeControl:
-    """The room's Remote Control store, holding ``session`` for every agent.
-    A control named in ``unanswered`` is never answered, as when the process
-    behind the session does not complete it."""
-
-    def __init__(self, session: dict | None, unanswered: tuple = ()) -> None:
-        self.session = session
-        self.unanswered = unanswered
-        self.requests: list[str] = []
-
-    async def current(self, topic_id, agent_handle=None):
-        return self.session
-
-    async def enqueue(self, sid, payload, actor):
-        self.requests.append(payload["request"]["subtype"])
-
-    async def result(self, sid, request_id, timeout):
-        if self.requests[-1] in self.unanswered:
-            return None
-        response = {}
-        if self.requests[-1] == "mcp_status":
-            response = {"mcpServers": [{"name": "native", "status": "connected"}]}
-        return {"response": {"subtype": "success", "response": response}}
-
-
-def _executor_screen_arguments(topic_id: uuid.UUID, target: dict | None = None) -> dict:
-    return dict(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=topic_id,
-        token="tok",
-        env={
-            "CHEESE_EXECUTION_TARGET": json.dumps(target or {"device_id": "executor"})
-        },
-        launch=ClaudeLaunch(system_prompt="", resume_session_id="conversation"),
-    )
-
-
-def _live(session: dict) -> dict:
-    """A control session whose worker is heartbeating."""
-    return {**session, "last_seen": time.time()}
-
-
-def _retire_reasons(caplog) -> list[str]:
-    return [
-        record.getMessage().rsplit("reason=", 1)[1]
-        for record in caplog.records
-        if record.getMessage().startswith("device_screen_retired")
+    assert hub.probed_homes == [
+        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
     ]
-
-
-@pytest.mark.parametrize(
-    "session",
-    [
-        None,
-        _live({"id": "rc", "status": "ended", "execution": None}),
-        _live(
-            {"id": "rc", "status": "active", "execution": {"resource_id": "earlier"}}
-        ),
-    ],
-    ids=["no_session", "inactive", "another_generation"],
-)
-async def test_a_reused_screen_a_release_cannot_reach_is_relaunched(
-    monkeypatch, caplog, session
-):
-    """A release reaches a running `claude` only through the room's native
-    control session. A screen without one stays on the old release whatever the
-    turn does, so failing the turn failed every retry too: measured on dev
-    2026-09-23, a room whose control session was not its own could not run one
-    turn after a release. A fresh launch starts on the current release, so the
-    turn gets a new screen instead of an error."""
-    from app.domain.agent import remote_control
-
-    control = NativeControl(session)
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    arguments = _executor_screen_arguments(topic_id)
-    first = await provider._ensure_screen(**arguments)
-
-    with caplog.at_level("INFO"):
-        replacement = await provider._ensure_screen(**arguments)
-
-    assert hub.closed == [first.sid]
-    assert replacement is not first and hub.all_online_screens() == [replacement]
-    assert hub.reasserted == []
-    assert control.requests == []
-    retired = [
-        record.getMessage()
-        for record in caplog.records
-        if record.getMessage().startswith("device_screen_retired")
-    ]
-    assert len(retired) == 1 and "reason=resident_release_unreachable" in retired[0]
-    # The new process is offered the room's conversation, as the first one was.
-    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
-
-
-async def test_a_control_session_whose_worker_stopped_cannot_carry_a_release(
-    monkeypatch, caplog
-):
-    """A session keeps reading `active` after the worker behind it stops. On dev
-    2026-09-24 one room's worker had last heartbeat seven hours before, and each
-    turn queued a reconnect that nobody would ever read, waited it out, and
-    failed. Its heartbeat says whether anyone is listening."""
-    from app.domain.agent import remote_control
-
-    session: dict = {
-        "id": "rc",
-        "status": "active",
-        "execution": None,
-        "last_seen": time.time() - 7 * 3600,
-    }
-    control = NativeControl(session)
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    arguments = _executor_screen_arguments(topic_id)
-    first = await provider._ensure_screen(**arguments)
-    session["execution"] = {"resource_id": str(first.resource_id)}
-
-    with caplog.at_level("INFO"):
-        replacement = await provider._ensure_screen(**arguments)
-
-    assert hub.closed == [first.sid]
-    assert hub.all_online_screens() == [replacement]
-    assert control.requests == []
-    assert _retire_reasons(caplog) == ["resident_release_unreachable"]
-
-
-async def test_a_reused_screen_is_released_in_place_through_its_control_session(
-    monkeypatch,
-):
-    """With the room's own control session live, the running `claude` is
-    brought to the current release in place and keeps serving the room."""
-    from app.domain.agent import remote_control
-
-    session: dict = _live({"id": "rc", "status": "active", "execution": None})
-    control = NativeControl(session)
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    arguments = _executor_screen_arguments(topic_id)
-    first = await provider._ensure_screen(**arguments)
-    session["execution"] = {"resource_id": str(first.resource_id)}
-
-    reused = await provider._ensure_screen(**arguments)
-
-    assert reused is first and hub.closed == []
-    assert hub.reasserted == [first.sid]
-    assert ["/reload-plugins"] in hub.prompts
-    assert control.requests[0] == "mcp_reconnect"
-
-
-async def test_a_release_that_fails_in_place_relaunches_the_screen(monkeypatch, caplog):
-    """The running process never completes the reconnect that would load the
-    new helpers. Measured on dev 2026-09-24: one room failed ten turns in a row
-    on exactly that. A fresh launch starts on the current release, so this turn
-    gets one — and the turn after reuses it rather than trying again."""
-    from app.domain.agent import remote_control
-
-    session: dict = _live({"id": "rc", "status": "active", "execution": None})
-    control = NativeControl(session, unanswered=("mcp_reconnect",))
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub(launch_writes_marker=True)
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    arguments = _executor_screen_arguments(topic_id)
-    first = await provider._ensure_screen(**arguments)
-    session["execution"] = {"resource_id": str(first.resource_id)}
-
-    with caplog.at_level("INFO"):
-        replacement = await provider._ensure_screen(**arguments)
-        again = await provider._ensure_screen(**arguments)
-
-    assert hub.closed == [first.sid]
-    assert replacement is not first and again is replacement
-    assert hub.all_online_screens() == [replacement]
-    assert hub.reasserted == [replacement.sid]
-    assert _retire_reasons(caplog) == ["resident_release_failed"]
-    # Only the first screen was asked to release in place.
-    assert control.requests == ["mcp_reconnect"]
-    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
-
-
-async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
-    monkeypatch, caplog
-):
-    """Helpers are not replaced under a conversation that is still running.
-    That is a reason to wait, not a failed turn: this turn runs on the release
-    the process has, and the next turn tries again."""
-    from app.domain.agent import remote_control
-
-    session: dict = _live({"id": "rc", "status": "active", "execution": None})
-    control = NativeControl(session)
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub(busy=True)
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    arguments = _executor_screen_arguments(topic_id)
-    first = await provider._ensure_screen(**arguments)
-    session["execution"] = {"resource_id": str(first.resource_id)}
-
-    with caplog.at_level("INFO"):
-        reused = await provider._ensure_screen(**arguments)
-        hub.busy = False
-        await provider._ensure_screen(**arguments)
-
-    assert reused is first and hub.closed == []
-    assert hub.reasserted == [first.sid, first.sid]
-    assert _retire_reasons(caplog) == []
-    # Refused on the first attempt, applied on the next.
-    assert hub.steps == ["stage", "stage", "wait_reloaded", "acknowledge"]
-    assert control.requests[0] == "mcp_reconnect"
-
-
-async def test_a_deferred_room_is_released_without_a_context_tree(monkeypatch):
-    """A room that has not leased a work machine yet carries a `deferred`
-    target, and no target carries a context tree: the machine's own transport
-    fetches the tree at launch and again when a lease arrives. Every such room
-    used to fail the turn after its release, looking the tree up on the target."""
-    from app.domain.agent import remote_control
-
-    session: dict = _live({"id": "rc", "status": "active", "execution": None})
-    control = NativeControl(session)
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = BehindReleaseHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    topic_id = uuid.uuid4()
-    target = {
-        "kind": "deferred",
-        "resource_id": str(topic_id),
-        "session_id": str(uuid.uuid4()),
-        "lease_path": f"/topics/{topic_id}/sessions/s/work-lease",
-        "setup_env": {},
-        "workspace": "/unavailable-project",
-        "mcp_servers": [],
-    }
-    arguments = _executor_screen_arguments(topic_id, target)
-    first = await provider._ensure_screen(**arguments)
-    session["execution"] = {"resource_id": str(first.resource_id)}
-
-    reused = await provider._ensure_screen(**arguments)
-
-    assert reused is first and hub.closed == []
-    assert hub.reasserted == [first.sid]
-    assert hub.steps == ["stage", "wait_reloaded", "acknowledge"]
-    assert reused.execution_target == target
 
 
 @pytest.mark.parametrize(
@@ -1273,20 +568,18 @@ async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit
     """The gate throws away a live screen and the work in flight behind it, so it
     fires only on proof. A helper that is up, a box with no /proc or no awk
     (`unknown`), a probe that failed to run (non-zero exit), and an empty answer
-    must all leave the screen alone — otherwise a hiccup on the probe path costs
-    a working agent its session."""
+    must all leave the screen alone."""
     monkeypatch.setattr(
         settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
     )
-    hub = DeadTunnelHub(tunnel_verdict=verdict, tunnel_exit=exit_code)
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    hub = FakeHub()
+    hub.tunnel = (verdict, exit_code)
+    room = _room(hub)
+    first = await room.ensure()
 
-    await _two_turns(provider, router, project_id, topic_id, hub)
-
-    assert hub.closed == []  # the screen survived …
-    assert hub.reasserted == ["s1"]  # … and the second turn reused it
+    assert await room.ensure() is first
+    assert hub.closed == []
+    assert hub.reasserted == [first.sid]
 
 
 async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
@@ -1294,12 +587,11 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     is no helper to lose, so the gate must not cost an extra round trip to every
     box on every turn."""
     monkeypatch.setattr(settings, "subscription_tunnel_url", "")
-    hub = DeadTunnelHub(tunnel_verdict="down")
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-
-    await _two_turns(provider, router, project_id, topic_id, hub)
+    hub = FakeHub()
+    hub.tunnel = ("down", 0)
+    room = _room(hub)
+    await room.ensure()
+    await room.ensure()
 
     assert hub.probed_homes == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
@@ -1388,36 +680,215 @@ def test_a_room_without_a_recorded_helper_pid_is_unknown_not_down(tmp_path):
     assert _tunnel_probe(tmp_path) == "unknown"
 
 
+# --- the resident release: new helpers into a running session ---------------
+
+
+def _executor_room(hub, *, target: dict | None = None):
+    return _room(
+        hub,
+        env={
+            "CHEESE_EXECUTION_TARGET": json.dumps(target or {"device_id": "executor"})
+        },
+        launch=ClaudeLaunch(system_prompt="", resume_session_id="conversation"),
+    )
+
+
+async def test_a_reused_screen_a_release_cannot_reach_is_relaunched(caplog):
+    """A release reaches a running `claude` only through its runner. One that
+    cannot be asked right now keeps the process on the old release whatever the
+    turn does, so failing the turn would fail every retry too. A fresh launch
+    starts on the current release, so the turn gets a new screen instead."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    hub.ping = TimeoutError()
+
+    with caplog.at_level("INFO"):
+        replacement = await room.ensure()
+
+    assert hub.closed == [first.sid]
+    assert replacement is not first and hub.all_online_screens() == [replacement]
+    assert hub.reasserted == []
+    assert hub.commands() == [] and hub.controls() == []
+    (line,) = _retired(caplog)
+    assert "reason=resident_release_unreachable" in line
+    # The new process is offered the room's conversation, as the first one was.
+    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
+
+
+async def test_a_reused_screen_is_released_in_place_through_its_runner():
+    """With the runner answering, the running `claude` is brought to the
+    current release in place and keeps serving the room: the plugin reloads,
+    and the MCP server carrying the tools reconnects and is waited on."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+
+    reused = await room.ensure()
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid]
+    assert hub.commands() == ["/reload-plugins"]
+    assert hub.controls() == ["mcp_reconnect", "mcp_status"]
+    steps = [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ]
+    assert steps == ["stage", "acknowledge"]
+    for method, params in hub.asked:
+        if method == "control":
+            assert params["request"]["serverName"] == "native"
+
+
+async def test_a_session_already_on_this_release_is_not_reloaded():
+    hub = FakeHub()
+    hub.release["stage"] = {"changed": False}
+    room = _executor_room(hub)
+    first = await room.ensure()
+
+    assert await room.ensure() is first
+    assert hub.commands() == [] and hub.controls() == []
+
+
+async def test_a_release_that_fails_in_place_relaunches_the_screen(caplog):
+    """The running process never completes the reconnect that would load the
+    new helpers. Measured on dev 2026-09-24: one room failed ten turns in a row
+    on exactly that. A fresh launch starts on the current release, so this turn
+    gets one — and the turn after reuses it rather than trying again."""
+    hub = FakeHub()
+    hub.refused = {"mcp_reconnect"}
+    hub.launch_writes_marker = True
+    room = _executor_room(hub)
+    first = await room.ensure()
+
+    with caplog.at_level("INFO"):
+        replacement = await room.ensure()
+        again = await room.ensure()
+
+    assert hub.closed == [first.sid]
+    assert replacement is not first and again is replacement
+    assert hub.all_online_screens() == [replacement]
+    assert hub.reasserted == [replacement.sid]
+    (line,) = _retired(caplog)
+    assert "reason=resident_release_failed" in line
+    # Only the first screen was asked to release in place.
+    assert hub.controls() == ["mcp_reconnect"]
+    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
+
+
+async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
+    caplog,
+):
+    """Helpers are not replaced under a conversation that is still running.
+    That is a reason to wait, not a failed turn: this turn runs on the release
+    the process has, and the next turn tries again."""
+    hub = FakeHub()
+    hub.release["stage"] = {"changed": False, "busy": True}
+    room = _executor_room(hub)
+    first = await room.ensure()
+
+    with caplog.at_level("INFO"):
+        reused = await room.ensure()
+        hub.release["stage"] = {"changed": True}
+        await room.ensure()
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid, first.sid]
+    assert _retired(caplog) == []
+    steps = [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ]
+    # Refused on the first attempt, applied on the next.
+    assert steps == ["stage", "stage", "acknowledge"]
+    assert hub.commands() == ["/reload-plugins"]
+
+
+async def test_a_deferred_room_is_released_without_a_context_tree():
+    """A room that has not leased a work machine yet carries a `deferred`
+    target, and no target carries a context tree: the machine's own transport
+    fetches the tree at launch and again when a lease arrives."""
+    hub = FakeHub()
+    topic_id = uuid.uuid4()
+    target = {
+        "kind": "deferred",
+        "resource_id": str(topic_id),
+        "session_id": str(uuid.uuid4()),
+        "lease_path": f"/topics/{topic_id}/sessions/s/work-lease",
+        "setup_env": {},
+        "workspace": "/unavailable-project",
+        "mcp_servers": [],
+    }
+    room = _executor_room(hub, target=target)
+    first = await room.ensure(topic_id=topic_id)
+
+    reused = await room.ensure(topic_id=topic_id)
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid]
+    steps = [
+        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+    ]
+    assert steps == ["stage", "acknowledge"]
+    assert reused.execution_target == target
+
+
+@pytest.mark.parametrize("gone", [True, False])
+async def test_a_room_whose_platform_tools_went_away_gets_them_back(gone):
+    """Asked after a turn that published nothing: the session is told to
+    reconnect the server carrying the room's tools only when it reports that
+    server gone, and True — the message is re-delivered — only then."""
+
+    class ToolsGone(FakeHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.native = ["failed", "connected"] if gone else ["connected"]
+
+        async def call_executor(self, device_id, state, method, params, timeout=None):
+            if method == "control" and params["request"]["subtype"] == "mcp_status":
+                self.asked.append((method, params))
+                status = self.native.pop(0) if len(self.native) > 1 else self.native[0]
+                return {
+                    "subtype": "success",
+                    "response": {"mcpServers": [{"name": "native", "status": status}]},
+                }
+            return await super().call_executor(device_id, state, method, params)
+
+    hub = ToolsGone()
+    room = _room(hub)
+    await room.ensure()
+
+    recovered = await room.channel.recover_native_tools(room.arguments["topic_id"])
+
+    assert recovered is gone
+    assert hub.controls() == (
+        ["mcp_status", "mcp_reconnect", "mcp_status"] if gone else ["mcp_status"]
+    )
+
+
+async def test_a_room_with_no_screen_here_is_not_resent():
+    hub = FakeHub()
+    room = _room(hub)
+
+    assert await room.channel.recover_native_tools(uuid.uuid4()) is False
+    assert hub.asked == []
+
+
+# --- the launcher -------------------------------------------------------------
+
+
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     """The frozen cli hands the screen command to `tmux new-session`, whose packed
     command tops out around 16KB — a launcher carrying the assembled system prompt
-    blows through that and every spawn dies with `command too long` (observed live:
-    a 57KB session.create, tmux exit 1, and a silent 3×60s prompt timeout). So the
-    script must travel over the link's `exec` (stdin → a per-topic file) and the
-    session command must stay a short runner, no matter how large the prompt is."""
+    blows through that and every spawn dies with `command too long`. So the
+    script travels over the link's `exec` (stdin → a per-topic file) and the
+    session command stays a short runner, no matter how large the prompt is."""
     hub = FakeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    room = _room(hub, launch=ClaudeLaunch(system_prompt="x" * 100_000))
+    topic_id = room.arguments["topic_id"]
 
-    _events, task = await _run(
-        provider,
-        project_id=project_id,
-        topic_id=topic_id,
-        prompt="hi",
-        system_prompt="x" * 100_000,  # a system prompt far past tmux's limit
-        resume_session_id=None,
-    )
-    await _reached(lambda: bool(hub.prompts))
-    router.push(
-        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
-    )
-    await asyncio.wait_for(task, timeout=5)
+    await room.ensure()
 
-    # The big script went over exec's stdin, into the per-topic launch file …
     (argv, stdin) = next((a, s) for a, s in hub.execs if s and "x" * 1000 in s)
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in argv[-1]
-    # … and the command the device passes to tmux stays tiny and points at it.
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
@@ -1477,21 +948,10 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
             return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
     hub = SilentHub()
-    provider = _provider(hub, HookRouter(), uuid.uuid4())
-    events = [
-        e
-        async for e in provider.run_turn(
-            session_agent="agent",
-            project_id=uuid.uuid4(),
-            topic_id=uuid.uuid4(),
-            prompt="hi",
-            system_prompt="",
-            resume_session_id=None,
-        )
-    ]
-    assert len(events) == 1 and isinstance(events[0], AgentResult)
-    assert events[0].is_error
-    text = events[0].text
+    with pytest.raises(ScreenSetupError) as raised:
+        await _room(hub).ensure()
+
+    text = str(raised.value)
     assert "写启动脚本" in text, text
     assert "andy 的笔记本" in text and "dev1" in text, text
     assert "没有应答" in text and "最近一帧是 3 秒前" in text, text
@@ -1499,63 +959,31 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
     assert not hub.opened, "no screen is opened on a machine that did not answer"
 
 
-async def test_no_topic_is_a_clean_error():
-    hub = FakeHub()
-    provider = _provider(hub, HookRouter(), uuid.uuid4())
-    events = [
-        e
-        async for e in provider.run_turn(
-            session_agent="agent",
-            project_id=uuid.uuid4(),
-            topic_id=None,
-            prompt="hi",
-            system_prompt="",
-            resume_session_id=None,
-        )
-    ]
-    assert len(events) == 1 and isinstance(events[0], AgentResult)
-    assert events[0].is_error
-
-
 async def test_no_online_device_is_a_clean_error():
-    hub = FakeHub()
-
     async def resolver(_project_id, _topic_id):
         return None  # nothing online / bound
 
-    provider = ClaudeCodeRuntime(
-        DeviceChannel(
-            hub=hub,  # type: ignore[arg-type]
-            device_resolver=resolver,
-        ),
-        router=HookRouter(),
-        hard_ceiling_s=5,
-    )
-    events = [
-        e
-        async for e in provider.run_turn(
-            session_agent="agent",
-            project_id=uuid.uuid4(),
-            topic_id=uuid.uuid4(),
-            prompt="hi",
-            system_prompt="",
-            resume_session_id=None,
+    channel = DeviceChannel(hub=FakeHub(), device_resolver=resolver)
+    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
+        await channel.precheck(
+            SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code"),
+            needs_place=True,
         )
-    ]
-    assert len(events) == 1 and isinstance(events[0], AgentResult)
-    assert events[0].is_error
+
+
+# --- where a room lives on the machine ---------------------------------------
 
 
 def test_rooms_never_share_a_home_but_always_share_their_project_store():
     """The two halves of the same layout, stated together because they pull
     opposite ways and both are load-bearing.
 
-    A room's HOME must be its own — hook events spool under it and the drainer
-    ships the spool with whichever token the last screen start wrote, so a
-    shared home sends every room's events to one topic. The packages installed
-    INTO that home must not be: every room of a project installs the same
-    lockfile, so a per-room store means a physical copy of the same dependency
-    tree per room, which is how 220 worktrees of one project came to hold 236GB.
+    A room's HOME must be its own — the session's config, transcripts and
+    credentials live in it, and two rooms sharing one would share a
+    conversation. The packages installed INTO that home must not be: every room
+    of a project installs the same lockfile, so a per-room store means a
+    physical copy of the same dependency tree per room, which is how 220
+    worktrees of one project came to hold 236GB.
     """
     project = uuid.uuid4()
     other = uuid.uuid4()
@@ -1577,37 +1005,15 @@ def test_every_device_work_dir_is_a_topic_scratch_dir():
     assert prov._work_dir(pid, tid) == f"$HOME/.cheese/home/{pid}/{tid}/room"
 
 
-@pytest.mark.anyio
 async def test_concurrent_topics_never_share_a_device_home():
-    """Two topics of one project must get two DIFFERENT device homes. Hook
-    events spool under $HOME/.claude and the drainer ships the spool with the
-    URL + token in cheese-drain.env, which every screen start overwrites — so
-    a project-shared home delivers every concurrent screen's events to
-    whichever session started last: its topic swallows all events, the other
-    topics' turns show zero output (dev, 2026-08-15)."""
+    """Two topics of one project get two DIFFERENT device homes, and each
+    screen is started pointed at its own."""
     hub = FakeHub()
-    router = HookRouter()
-    agent_id = uuid.uuid4()
-    provider = _provider(hub, router, agent_id)
     project_id = uuid.uuid4()
     topic_a, topic_b = uuid.uuid4(), uuid.uuid4()
 
     for topic_id in (topic_a, topic_b):
-        sent = len(hub.prompts)
-        _events, task = await _run(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt="hi",
-            system_prompt="",
-            resume_session_id=None,
-        )
-        await _reached(lambda seen=sent: len(hub.prompts) > seen)
-        router.push(
-            str(topic_id),
-            {"hook_event_name": "Stop", "last_assistant_message": "ok"},
-        )
-        await asyncio.wait_for(task, timeout=5)
+        await _room(hub, project_id=project_id, topic_id=topic_id).ensure()
 
     homes = [env["CHEESE_HOME"] for env in hub.envs]
     assert str(topic_a) in homes[0]
@@ -1615,26 +1021,6 @@ async def test_concurrent_topics_never_share_a_device_home():
     assert homes[0] != homes[1]
 
 
-def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
-    """Every device owns a clone and pushes; the local container edits the
-    backend worktree and must not also try to push it."""
-    from app.domain.agent.harness.claude_code.session_launch import hooks_settings
-
-    def stop_commands(settings_obj) -> list[str]:
-        return [
-            hook["command"]
-            for entry in settings_obj["hooks"]["Stop"]
-            for hook in entry["hooks"]
-        ]
-
-    assert stop_commands(hooks_settings()) == ["cheese-hook"]
-    assert stop_commands(hooks_settings(["cheese-sync"])) == [
-        "cheese-hook",
-        "cheese-sync",
-    ]
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("direct", [False, True])
 async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
     monkeypatch, direct
@@ -1644,14 +1030,10 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
     That is the contract `settings.connector_public_base` states — the base maps
     1:1 onto the backend ROOT — and it is a contract precisely because nothing
     downstream reports a violation: an extra path segment makes the CLI 404 with
-    「话题不存在」 and makes a hook POST land on the SPA, which answers 200 and
-    drops the event. Both look like the agent doing nothing.
-
-    It broke exactly that way. These URLs used to be built with an extra `/api`
-    because the 2.0 routes carried one; #370 step 2 made every route bare and
-    the extra segment turned `<origin>/api` into `<origin>/api/api`. So the
-    assertion is not "the string looks right" — it asks the live router whether
-    the remainder is a path this app actually serves.
+    「话题不存在」, which looks like the agent doing nothing. It broke exactly
+    that way once, when an extra `/api` turned `<origin>/api` into
+    `<origin>/api/api`. So the assertion asks the live router whether the
+    remainder is a path this app actually serves.
     """
     from starlette.routing import Match
 
@@ -1669,85 +1051,43 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
         # only thing under test here.
         return any(r.matches(scope)[0] is not Match.NONE for r in app.routes)
 
-    class RecordingHub(FakeHub):
-        def __init__(self) -> None:
-            super().__init__()
-            self.env: dict = {}
-
-        async def open_screen(self, device_id, command, **kw):
-            self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, **kw)
-
     # The production shape: behind the gateway the base carries the `/api` mount.
     base = "http://127.0.0.1:18080" if direct else "http://cheese.test/api"
-    hub = RecordingHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test/api")
+    hub = FakeHub()
+    room = _room(hub)
 
     async def api_base(_device_id):
         return base
 
-    monkeypatch.setattr(provider, "_device_api_base", api_base)
-    await provider._ensure_screen(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
-        token="tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
-    )
+    monkeypatch.setattr(room.channel, "_device_api_base", api_base)
+    await room.ensure()
 
-    for key in ("CHEESE_API", "CHEESE_HOOK_URL"):
-        url = hub.env[key]
-        assert url.startswith(base), f"{key}={url} does not extend {base}"
-        remainder = url[len(base) :]
-        if not remainder:  # CHEESE_API is the base itself
-            continue
-        assert served(remainder), (
-            f"{key}={url} leaves {remainder!r}, which this app does not serve"
-        )
+    env = hub.envs[0] or {}
+    assert env["CHEESE_API"] == base
+    for key, url in env.items():
+        if url.startswith(base) and url != base:
+            remainder = url[len(base) :]
+            assert served(remainder), (
+                f"{key}={url} leaves {remainder!r}, which this app does not serve"
+            )
 
 
-@pytest.mark.anyio
 async def test_every_device_gets_the_context_for_task_repository_lookup():
     """The CLI resolves the forge remote from authenticated task metadata."""
+    hub = FakeHub()
+    room = _room(hub)
+    await room.ensure()
 
-    class RecordingHub(FakeHub):
-        def __init__(self) -> None:
-            super().__init__()
-            self.env: dict = {}
-
-        async def open_screen(self, device_id, command, **kw):
-            self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, **kw)
-
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    hub = RecordingHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    await provider._ensure_screen(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=project,
-        topic_id=topic,
-        token="tok",
-        env=None,
-        launch=ClaudeLaunch(system_prompt=""),
-    )
-
-    assert hub.env["CHEESE_API"] == "http://cheese.test"
-    assert hub.env["CHEESE_PROJECT"] == str(project)
-    assert hub.env["CHEESE_TOKEN"] == "tok"
-    assert "CHEESE_GIT_REMOTE" not in hub.env
-    assert "CHEESE_GIT_BRANCH" not in hub.env
-    assert hub.env["CHEESE_TOPIC"] == str(topic)
+    env = hub.envs[0] or {}
+    assert env["CHEESE_API"] == "http://cheese.test"
+    assert env["CHEESE_PROJECT"] == str(room.arguments["project_id"])
+    assert env["CHEESE_TOKEN"] == "tok"
+    assert "CHEESE_GIT_REMOTE" not in env
+    assert "CHEESE_GIT_BRANCH" not in env
+    assert env["CHEESE_TOPIC"] == str(room.arguments["topic_id"])
 
 
-# --- release_topic: freeing a done topic's screen (the leak this fixes) --------
-
-
-def test_a_device_is_warned_about_a_box_local_model_endpoint(monkeypatch, caplog):
+def test_a_device_is_warned_about_a_box_local_model_endpoint(caplog):
     """Routing the box's turns through the local gateway is what makes spend
     visible — but the same URL means nothing on a machine elsewhere, and the
     failure there is a connection error with no hint why."""
@@ -1762,6 +1102,7 @@ def test_a_device_is_warned_about_a_box_local_model_endpoint(monkeypatch, caplog
             {"HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444"}, "machine-1"
         )
     assert any("only resolves on the backend" in r.getMessage() for r in caplog.records)
+    assert any("HTTPS_PROXY" in r.getMessage() for r in caplog.records)
 
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
@@ -1773,27 +1114,15 @@ def test_a_device_is_warned_about_a_box_local_model_endpoint(monkeypatch, caplog
 
 
 # --- subscription parity (#325 G2): device turns ride the metering proxy --------
-# On a subscription deployment a device screen must get the SAME supply a local
-# tmux container gets: fake credential + proxy CA + scoped session token, no
-# ANTHROPIC_BASE_URL, no gateway model pin. The regression this guards is dev
-# shipping device screens with CLAUDE_MODEL=deepseek-chat — users thought they
-# were talking to Claude and were not.
-
-
-class SubRecordingHub(FakeHub):
-    def __init__(self) -> None:
-        super().__init__()
-        self.env: dict = {}
-
-    async def open_screen(self, device_id, command, **kw):
-        self.env = kw.get("env") or {}
-        return await super().open_screen(device_id, command, **kw)
+# A device screen gets the one supply there is: fake credential + proxy CA +
+# scoped session token, no ANTHROPIC_BASE_URL, no gateway model pin. The
+# regression this guards is dev shipping device screens with
+# CLAUDE_MODEL=deepseek-chat — users thought they were talking to Claude and
+# were not.
 
 
 def _subscription_settings(monkeypatch, tmp_path) -> str:
     """Point the backend at a readable proxy CA whose text a test can assert on."""
-    from app.core.config import settings
-
     ca = "-----BEGIN CERTIFICATE-----\nMETERCA\n-----END CERTIFICATE-----\n"
     ca_path = tmp_path / "proxy-ca.pem"
     ca_path.write_text(ca)
@@ -1807,51 +1136,40 @@ def _subscription_settings(monkeypatch, tmp_path) -> str:
 async def _subscription_screen(
     env: dict | None = None,
     model: str | None = None,
-) -> tuple[SubRecordingHub, uuid.UUID, uuid.UUID]:
-    hub = SubRecordingHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    await provider._ensure_screen(
-        device_id="dev1",
-        agent_user_id=1,
-        agent_handle="cheese",
-        project_id=project,
-        topic_id=topic,
+) -> tuple[FakeHub, dict, uuid.UUID, uuid.UUID]:
+    hub = FakeHub()
+    room = _room(
+        hub,
         token="hook-token",
         env=env,
         launch=ClaudeLaunch(system_prompt="", model=model),
     )
-    return hub, project, topic
+    await room.ensure()
+    return (
+        hub,
+        hub.envs[0] or {},
+        room.arguments["project_id"],
+        room.arguments["topic_id"],
+    )
 
 
-# --- 一种启动环境，里面没有模型（结论 46、不变量 I17 ④）--------------------
-# Which model a request runs on is decided at one control point — admission,
-# when the request reaches the metering proxy — and the proxy writes the answer
-# into the request body. A model name in the launch environment would be a
-# second declaration of what the card's binding already says, and nobody could
-# write down which of the two wins.
-
-
-@pytest.mark.anyio
 async def test_the_launch_environment_is_the_same_whatever_model_is_bound(
     monkeypatch, tmp_path
 ):
     """启动环境里没有模型。绑定变了，启动环境一个键都不变。"""
     _subscription_settings(monkeypatch, tmp_path)
 
-    unbound, _, _ = await _subscription_screen()
-    subscription_bound, _, _ = await _subscription_screen(model="opus")
-    pool_bound, _, _ = await _subscription_screen(model="glm-5.2")
+    _, unbound, _, _ = await _subscription_screen()
+    _, subscription_bound, _, _ = await _subscription_screen(model="opus")
+    _, pool_bound, _, _ = await _subscription_screen(model="glm-5.2")
 
-    assert set(unbound.env) == set(subscription_bound.env) == set(pool_bound.env)
-    for hub in (unbound, subscription_bound, pool_bound):
+    assert set(unbound) == set(subscription_bound) == set(pool_bound)
+    for env in (unbound, subscription_bound, pool_bound):
         # CHEESE_MODEL_PROXY says the meter accepts model hosts; it names none.
-        assert [k for k in hub.env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
-        assert "CLAUDE_MODEL" not in hub.env
-        # And the one transport, whichever pool the project is on: no base URL
-        # (it flips the CLI out of subscription mode), the meter on HTTPS_PROXY.
-        assert "ANTHROPIC_BASE_URL" not in hub.env
-        assert hub.env["HTTPS_PROXY"]
+        assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
+        assert "CLAUDE_MODEL" not in env
+        assert "ANTHROPIC_BASE_URL" not in env
+        assert env["HTTPS_PROXY"]
 
 
 def test_a_machine_launch_script_never_names_a_model():
@@ -1859,7 +1177,7 @@ def test_a_machine_launch_script_never_names_a_model():
     second declaration on the command line."""
     from app.domain.agent.harness.claude_code.device_launch import launch_holes
 
-    machine = launch_holes(system_prompt="你是芝士。", remote_control=True)
+    machine = launch_holes(state="$HOME/.cheese/state", system_prompt="你是芝士。")
 
     assert not [k for k in machine.env if "MODEL" in k], machine.env
     script = "".join(
@@ -1875,23 +1193,19 @@ def test_a_machine_launch_script_never_names_a_model():
     assert "CLAUDE_MODEL" not in script
 
 
-@pytest.mark.anyio
 async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     monkeypatch, tmp_path
 ):
-    from app.core.config import settings
     from app.core.sandbox_auth import scoped_token_claims
 
     monkeypatch.setattr(settings, "anthropic_auth_token", "UPSTREAM-PROVIDER-KEY")
     _subscription_settings(monkeypatch, tmp_path)
-    hub, project, topic = await _subscription_screen()
+    _hub, env, project, topic = await _subscription_screen()
 
-    env = hub.env
     # No BASE_URL (it flips the CLI into API-key mode), no gateway key, no
     # deepseek/gateway model pin — the exact env dev observed is impossible.
     assert "ANTHROPIC_BASE_URL" not in env
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
-    # This marks the model-only proxy for script preparation; no model is pinned.
     assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
     assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
@@ -1901,21 +1215,18 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     claims = scoped_token_claims(env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert claims["p"] == str(project) and claims["t"] == str(topic)
-    assert claims["rc"] == 1
     assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
-@pytest.mark.anyio
 async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
     monkeypatch, tmp_path
 ):
     """A bare device process has no --add-host, so the capture is HTTPS_PROXY at
     the meter's CONNECT listener, with the scoped token as the proxy password —
-    and NO_PROXY keeps the platform's own wiring (hooks, git, CLI) out of it."""
+    and NO_PROXY keeps the platform's own wiring (git, CLI) out of it."""
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen()
+    _hub, env, _project, _topic = await _subscription_screen()
 
-    env = hub.env
     token = env["CHEESE_CONNECT_TOKEN"]
     assert env["HTTPS_PROXY"] == f"http://cheese:{token}@172.17.0.1:8444"
     for key in ("NO_PROXY", "no_proxy"):
@@ -1923,7 +1234,6 @@ async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
         assert "localhost" in env[key]
 
 
-@pytest.mark.anyio
 async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
     monkeypatch, tmp_path
 ):
@@ -1931,14 +1241,13 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
     shipped launch script, which writes them under the screen's isolated home
     and exports NODE_EXTRA_CA_CERTS itself."""
     ca = _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen()
+    hub, _env, _project, _topic = await _subscription_screen()
 
-    script = next(s for _a, s in hub.execs if s and "CHEESECA" in s)
-    assert "METERCA" in script and ca.strip() in script
+    script = next(s for _a, s in hub.execs if s and "METERCA" in s)
+    assert ca.strip() in script
     assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' in script
 
 
-@pytest.mark.anyio
 async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     monkeypatch, tmp_path
 ):
@@ -1946,38 +1255,31 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     CONNECT password), read ONCE at launch and never hot-refreshed while the
     screen is reused across turns. A 1h token
     therefore expires under a still-running agent and the metering proxy 407s
-    every later turn. Its exp must span the session, like the CHEESE_TOKEN minted
-    beside it — not the per-turn default."""
-    import time
-
+    every later turn. Its exp must span the session."""
     from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen()
+    _hub, env, _project, _topic = await _subscription_screen()
 
-    env = hub.env
     # The CONNECT credential …
     token = env["CHEESE_CONNECT_TOKEN"]
     assert f"cheese:{token}@" in env["HTTPS_PROXY"]
-    # … and it lives for the whole session, not one hour.
     claims = scoped_token_claims(token)
     assert claims is not None
     remaining = claims["exp"] - int(time.time())
     assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
     assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5
-    assert hub.env["NODE_EXTRA_CA_CERTS"] == "$HOME/.claude/proxy-ca.pem"
+    assert env["NODE_EXTRA_CA_CERTS"] == "$HOME/.claude/proxy-ca.pem"
 
 
-@pytest.mark.anyio
 async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     monkeypatch, tmp_path
 ):
     """The caller's env is the gateway shape (BASE_URL + model pins). Any of it
     surviving flips the CLI into API-key mode or pins a model the subscription
-    does not serve — dropped, not overridden (mirrors the tmux provider)."""
+    does not serve — dropped, not overridden."""
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _p, _t = await _subscription_screen(
+    _hub, env, _p, _t = await _subscription_screen(
         env={
             "ANTHROPIC_BASE_URL": "http://cheese.test/llm",
             "CLAUDE_MODEL": "deepseek-chat",
@@ -1986,35 +1288,29 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
             "SOME_OTHER": "kept",
         },
     )
-    env = hub.env
     assert "ANTHROPIC_BASE_URL" not in env
     assert "deepseek" not in repr(env)
     assert env["SOME_OTHER"] == "kept"
 
 
-@pytest.mark.anyio
 async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_path):
     """凭据里签一个型号，等于把启动那一刻的选择带到每一次准入 —— 同样是第二份
     声明，而且是准入唯一读得到的那一份，它会压过卡上的绑定。"""
     from app.core.sandbox_auth import scoped_token_claims
 
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(model="glm-5.2")
-    claims = scoped_token_claims(hub.env["CHEESE_CONNECT_TOKEN"])
+    _hub, env, _project, _topic = await _subscription_screen(model="glm-5.2")
+    claims = scoped_token_claims(env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert "m" not in claims
     assert "glm-5.2" not in repr(claims)
 
 
-@pytest.mark.anyio
 async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gateway(
     monkeypatch, tmp_path
 ):
     """Falling back to the gateway would silently swap the model — the failure
     #325 G2 exists to kill. A half-configured deployment must say what to fix."""
-    from app.core.config import settings
-    from app.domain.agent.harness.channel import ScreenSetupError
-
     _subscription_settings(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", "")
 
@@ -2022,550 +1318,97 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
         await _subscription_screen()
 
 
-def test_a_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
-    """The subscription's analogue of the box-local gateway URL: HTTPS_PROXY at
-    the docker bridge names nothing on a machine elsewhere."""
-    import logging
+async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path):
+    """The helper's port is the machine's: the kernel picks a free one when the
+    helper binds, and the launcher exports what it got. A port named here would be
+    a guess about another machine's free ports — the guess that put two rooms on
+    one helper, where the second room's `claude` spent the first room's
+    credential."""
+    _subscription_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
+    )
 
-    from app.domain.agent.device_provider import _warn_if_model_endpoint_is_box_local
+    _hub, env, _project, _topic = await _subscription_screen()
 
-    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
-        _warn_if_model_endpoint_is_box_local(
-            {"HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444"}, "machine-1"
-        )
-    assert any("HTTPS_PROXY" in r.getMessage() for r in caplog.records)
-
-    caplog.clear()
-    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
-        _warn_if_model_endpoint_is_box_local(
-            {"HTTPS_PROXY": "http://cheese:tok@proxy.cheese.example:8444"},
-            "machine-1",
-        )
-    assert not caplog.records, "a reachable proxy must not be flagged"
+    assert env["CHEESE_TUNNEL_URL"] == "wss://gateway.example/llm/tunnel"
+    assert "HTTPS_PROXY" not in env
+    assert not any("//127.0.0.1:" in value for value in env.values())
+    # The meter's allowlist still applies to the tunnelled route.
+    assert env["CHEESE_MODEL_PROXY"] == "1"
 
 
-# --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
-# The shared two-layer loop (`monitor_session_activity` idle-suspect / hard-ceiling +
-# `confirm_alive`) is exercised in test_hooks_substrate.py; these cover what is
-# device-SPECIFIC: the two layers are no longer collapsed into one deadline, the
-# device's own `_confirm_alive` maps a process-tree probe to a liveness verdict,
-# and run_turn actually wires that probe in with the split thresholds.
-
-
-class ProbingHub(FakeHub):
-    """FakeHub that also answers the liveness `exec` with a fixed verdict, so a
-    device turn can be driven through the idle-suspect probe path in-process."""
-
-    def __init__(self, verdict: str = "alive") -> None:
-        super().__init__()
-        self.verdict = verdict
-        self.probe_calls = 0
-        self.probe_topics: set[str] = set()
-        self.probe_devices: set[str] = set()
-        self.probed = asyncio.Event()
-        self.prompt_sent = asyncio.Event()
-
-    async def call_screen(self, device_id, sid, name, args) -> str:
-        result = await super().call_screen(device_id, sid, name, args)
-        self.prompt_sent.set()
-        return result
-
-    async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
-        self.probe_calls += 1
-        self.probe_devices.add(device_id)
-        if env and "CHEESE_ALIVE_TOPIC" in env:
-            self.probe_topics.add(env["CHEESE_ALIVE_TOPIC"])
-            self.probed.set()
-        return {"exit": 0, "stdout": self.verdict, "stderr": "", "truncated": False}
-
-
-def test_the_deployed_backends_split_the_two_timeout_layers():
-    """The bug: one 900s value fed BOTH layers, so the only thing that ever fired
-    was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
-    20-minute pytest emits no interim hook) died at minute 15. The layers must be
-    distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
-    the value AgentWorkRunner reschedules its outer wall-clock wrap to.
-
-    Asked of the pool the deployment actually builds, because that is where the
-    policy is decided — and every backend in it must get the SAME pair, which is
-    the other half of this bug (one transport drifting from another)."""
+def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
+    """How long a turn may talk without working, how long an input may sit
+    unread, and the ceiling over both are decided once for the deployment. A
+    transport that drifted from another would end the same turn at a different
+    moment depending on where it ran."""
     from app.domain.agent.compute import build_compute_pool
 
     pool = build_compute_pool()
     for name in pool.machines():
         backend = pool.select(provider_id=name)
-        assert backend._idle_suspect_s == 300.0
-        assert backend._hard_ceiling_s == 10800.0
-        assert backend._idle_suspect_s != backend._hard_ceiling_s
-        assert backend.hard_ceiling_s == 10800.0  # what the outer wrap is told
+        assert backend.no_progress_s == settings.agent_no_progress_s
+        assert backend.unread_grace_s == settings.agent_unread_grace_s
+        assert backend.hard_ceiling_s == settings.agent_turn_hard_ceiling_s
 
 
-async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
-    """`_confirm_alive` asks the box (over the hub's `exec`) whether a live `claude`
-    still carries THIS topic. ONLY an explicit `dead` ends the turn; alive, unknown,
-    a non-zero exit, or an exec that raised are all read as alive, so a link hiccup
-    never false-kills a turn that is really still working. The probe is per-topic
-    and targets the screen's own device."""
-    topic = uuid.uuid4()
-    screen = HubScreen(
-        sid="s1",
-        device_id="dev-remote",
-        command=[],
-        token="t",
-        agent_user_id=1,
-        agent_handle="a",
-        topic_id=topic,
-    )
-
-    class Hub:
-        def __init__(self, result=None, boom=False) -> None:
-            self.result = result
-            self.boom = boom
-            self.calls: list = []
-
-        async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
-            self.calls.append((device_id, env))
-            if self.boom:
-                raise RuntimeError("link down")
-            return self.result
-
-    async def confirm(result=None, boom=False):
-        hub = Hub(result=result, boom=boom)
-        prov = DeviceChannel(hub=hub)  # type: ignore[arg-type]
-        return await prov.confirm_alive(screen), hub
-
-    alive, hub = await confirm({"exit": 0, "stdout": "alive\n"})
-    assert alive is True
-    assert hub.calls[0][0] == "dev-remote"  # targets the screen's device
-    assert hub.calls[0][1] == {"CHEESE_ALIVE_TOPIC": str(topic)}  # per-topic
-
-    assert (await confirm({"exit": 0, "stdout": "dead\n"}))[0] is False
-    assert (await confirm({"exit": 0, "stdout": "unknown\n"}))[0] is True
-    # A non-zero exit is inconclusive, not death.
-    assert (await confirm({"exit": 3, "stdout": "dead\n"}))[0] is True
-    # An exec that raised (link hiccup / timeout) is not proof of death.
-    assert (await confirm(boom=True))[0] is True
-
-
-@pytest.mark.parametrize("setup_delay", [0, 0.1])
-async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop(
-    setup_delay,
-):
-    """The core regression: a long foreground command emits only a first and a last
-    hook, silent in between. Past idle-suspect the turn is re-probed; while the
-    probe says the screen is alive the turn must NOT be killed — it runs to the
-    Stop hook and ends normally."""
-    hub = ProbingHub(verdict="alive")
-    router = HookRouter()
-    tid = uuid.uuid4()
-
-    async def resolver(_p, _t):
-        await asyncio.sleep(setup_delay)
-        return ("dev1", 1, "agent-x")
-
-    provider = ClaudeCodeRuntime(
-        DeviceChannel(
-            hub=hub,  # type: ignore[arg-type]
-            device_resolver=resolver,
-            public_base="http://test",
-        ),
-        router=router,
-        idle_suspect_s=0.05,
-        hard_ceiling_s=5,
-    )
-    events, task = await _run(
-        provider,
-        project_id=uuid.uuid4(),
-        topic_id=tid,
-        prompt="run the tests",
-        system_prompt="",
-        resume_session_id=None,
-    )
-    await asyncio.wait_for(hub.prompt_sent.wait(), timeout=3)
-    key = str(tid)
-    # First hook = the prompt receipt / start of a long foreground command; then
-    # the hooks go SILENT for the run — the window this fix has to survive.
-    assert router.push(
-        key, {"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"}
-    )
-    await asyncio.wait_for(hub.probed.wait(), timeout=3)
-    assert hub.probe_calls >= 1, "idle-suspect must have re-probed liveness"
-    assert not any(isinstance(e, AgentResult) and e.is_error for e in events)
-    # The command finishes: the reply and the Stop hook arrive, ending the turn.
-    router.push(key, {"hook_event_name": "MessageDisplay", "delta": "tests pass"})
-    router.push(
-        key, {"hook_event_name": "Stop", "last_assistant_message": "tests pass"}
-    )
-    await asyncio.wait_for(task, timeout=3)
-
-    assert isinstance(events[-1], AgentResult) and not events[-1].is_error
-    assert events[-1].text == "tests pass"
-    assert hub.probe_topics == {key}  # the probe was keyed on this topic
-
-
-async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
-    """A genuinely dead screen must be caught by the idle-suspect probe and end the
-    turn promptly — not left running until the (many-hours) hard ceiling. The huge
-    hard ceiling here would hang the test if idle-suspect + `_confirm_alive` didn't
-    fire."""
-    hub = ProbingHub(verdict="dead")
-    router = HookRouter()
-    tid = uuid.uuid4()
-
-    async def resolver(_p, _t):
-        return ("dev1", 1, "agent-x")
-
-    provider = ClaudeCodeRuntime(
-        DeviceChannel(
-            hub=hub,  # type: ignore[arg-type]
-            device_resolver=resolver,
-            public_base="http://test",
-        ),
-        router=router,
-        idle_suspect_s=0.05,
-        hard_ceiling_s=100,  # would time the test out if idle-suspect didn't fire
-    )
-    events, task = await _run(
-        provider,
-        project_id=uuid.uuid4(),
-        topic_id=tid,
-        prompt="hi",
-        system_prompt="",
-        resume_session_id=None,
-    )
-    await _reached(lambda: bool(hub.prompts))
-    router.push(str(tid), {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
-    await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
-
-    assert isinstance(events[-1], AgentResult) and events[-1].is_error
-    assert events[-1].text == provider.channel.timeout_message
-    assert hub.probe_calls >= 1
+# --- credential freshness is part of the reuse decision (#388 缺陷二) ----------
+# A bare `claude` reads its credential once and never re-reads it, and a reused
+# screen is only reasserted, never relaunched — so a live process on a dead
+# credential is 401/407'd every turn while its runner reports it healthy. The
+# backend stamps the credential's expiry; it gates reuse too.
 
 
 async def test_each_launch_ships_a_fresh_now_based_token_expiry():
-    """The device screen env must carry ``CHEESE_TOKEN_EXPIRES`` — the expiry the
-    launcher stamps against the inner tmux session it creates, so a later launch
-    retires a session whose baked credential has DIED (a bare `claude` reads its
-    model credential once and never re-reads it) instead of adopting the corpse.
-
-    The regression: a relaunch used to reuse a cached, already-expired credential
-    (the inner session survived, and the freshly minted token never reached the
-    running process — the 407 that #385's TTL bump only delayed). So the value
-    shipped here must be minted from NOW: strictly in the future and no further
-    out than a session, never a reused past expiry."""
-    import time
-
-    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
-
+    """The device screen env carries ``CHEESE_TOKEN_EXPIRES`` — the expiry the
+    launcher stamps against the session it creates, so a later launch retires a
+    session whose baked credential has DIED instead of adopting the corpse. It is
+    minted from NOW: strictly in the future and no further out than a session."""
     hub = FakeHub()
-    router = HookRouter()
-    provider = _provider(hub, router, uuid.uuid4())
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    key = str(topic_id)
-
     before = int(time.time())
-    _events, task = await _run(
-        provider,
-        project_id=project_id,
-        topic_id=topic_id,
-        prompt="hi",
-        system_prompt="",
-        resume_session_id=None,
-    )
-    await _reached(lambda: bool(hub.prompts))
-    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
-    await asyncio.wait_for(task, timeout=5)
+    await _room(hub).ensure()
 
-    assert hub.envs and hub.envs[0] is not None
-    raw = hub.envs[0].get("CHEESE_TOKEN_EXPIRES")
+    raw = (hub.envs[0] or {}).get("CHEESE_TOKEN_EXPIRES")
     assert raw is not None, "the launch env must carry the credential expiry"
-    exp = int(raw)
-    # Minted from now — in the future (the reused corpse had exp in the PAST) and
-    # within a session's reach, never an unbounded or stale value.
-    assert before < exp <= int(time.time()) + SESSION_TOKEN_TTL_S + 5
+    assert before < int(raw) <= int(time.time()) + SESSION_TOKEN_TTL_S + 5
 
 
-# --- #388 缺陷二: credential freshness is part of the reuse decision -------------
-# `_confirm_alive` is a process-tree probe: it says a `claude` is running, never
-# whether the credential that `claude` was LAUNCHED with is still good. A bare
-# `claude` reads that credential once and never re-reads it, and a reused screen is
-# only reasserted (an adopt-create), never relaunched — so a live process on
-# a dead credential is 401/407'd every turn while the probe reports it healthy, and
-# the screen is reused forever. The backend already stamps the credential's expiry
-# (#386's CHEESE_TOKEN_EXPIRES); these pin that it now gates reuse too, so an
-# expired-credential screen is RETIRED and reopened rather than adopted.
+async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_adopted():
+    hub = FakeHub()
+    room = _room(hub)
 
-
-class ReuseGateHub(FakeHub):
-    """Hands out a fresh sid per open and records close_screen, but its liveness
-    probe ALWAYS answers `alive` — so the only thing that can retire a reused
-    screen here is the credential-freshness gate, never the process probe."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.closed: list[str] = []
-        self._sid_seq = 0
-
-    async def open_screen(self, device_id, command, **kw) -> HubScreen:
-        self._sid_seq += 1
-        screen = HubScreen(
-            sid=f"s{self._sid_seq}",
-            device_id=device_id,
-            command=command,
-            token="tok",
-            agent_user_id=kw["agent_user_id"],
-            agent_handle=kw["agent_handle"],
-            project_id=kw["project_id"],
-            topic_id=kw["topic_id"],
-            hook_key=kw.get("hook_key", ""),
-        )
-        self.opened.append(screen)
-        self.envs.append(kw.get("env"))
-        return screen
-
-    async def exec(
-        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
-    ) -> dict:
-        # The launcher-ship exec carries the script on stdin; the liveness probe
-        # carries none. Only the probe returns a verdict — and here it is always
-        # `alive`, isolating the credential gate as the sole retirement cause.
-        self.execs.append((argv, stdin))
-        out = "" if stdin is not None else "alive"
-        return {"stdout": out, "stderr": "", "exit": 0, "truncated": False}
-
-    async def close_screen(self, device_id, sid) -> bool:
-        self.closed.append(sid)
-        self.opened = [s for s in self.opened if s.sid != sid]
-        return True
-
-
-@pytest.mark.anyio
-async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_adopted(
-    monkeypatch,
-):
-    import time
-
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure() -> HubScreen:
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env=None,
-            launch=ClaudeLaunch(system_prompt=""),
-        )
-
-    first = await ensure()
+    first = await room.ensure()
     assert first.sid == "s1"
-    # The backend stamped a live expiry on the freshly-Spawned screen.
     assert isinstance(first.credential_expires, int)
     assert first.credential_expires > int(time.time())
 
     # The credential this screen was BORN with has since died.
     first.credential_expires = int(time.time()) - 1
-    second = await ensure()
+    second = await room.ensure()
 
-    # It is RETIRED (close_screen makes the connector forget the sid) and reopened
-    # under a fresh sid the connector must Spawn with THIS launch's live credential
-    # — never reasserted into the corpse (which would only re-attach to it).
     assert hub.closed == ["s1"]
     assert hub.reasserted == []
     assert second.sid == "s2"
     assert second.credential_expires > int(time.time())
 
 
-@pytest.mark.anyio
-async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
+async def test_a_reused_screen_with_a_live_credential_is_adopted():
+    hub = FakeHub()
+    room = _room(hub)
 
-    async def ensure() -> HubScreen:
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env=None,
-            launch=ClaudeLaunch(system_prompt=""),
-        )
+    first = await room.ensure()
+    second = await room.ensure()
 
-    first = await ensure()
-    second = await ensure()
-
-    # A still-good credential means normal reuse: the SAME screen, reasserted, never
-    # closed — no churn, and an in-flight turn is never interrupted.
     assert second is first
     assert hub.reasserted == ["s1"]
     assert hub.closed == []
     assert [s.sid for s in hub.opened] == ["s1"]
 
 
-@pytest.mark.anyio
-async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure(config):
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env={"CHEESE_AGENT_CONFIG": config},
-            launch=ClaudeLaunch(system_prompt="", model="requested-model"),
-        )
-
-    first = await ensure("original")
-    assert await ensure("original") is first
-    second = await ensure("edited")
-    assert second.sid != first.sid
-    assert hub.closed == [first.sid]
-    assert second.agent_configuration != first.agent_configuration
-    # And the machine is told what it is, so a backend that restarts can
-    # ask the connector rather than guess.
-    assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
-
-
-@pytest.mark.anyio
-async def test_config_change_preserves_a_running_background_workflow(monkeypatch):
-    class RunningWorkflow:
-        status = None
-
-        async def current(self, *_args):
-            return {"id": "old-session"}
-
-        async def snapshot(self, _session):
-            return {
-                "tasks": {
-                    "workflow": {
-                        "task_type": "local_workflow",
-                        "subtype": "task_progress",
-                        "status": self.status,
-                        "workflow_progress": [{"state": "done"}, {"state": "progress"}],
-                    }
-                }
-            }
-
-    control = RunningWorkflow()
-    monkeypatch.setattr(remote_control, "store", lambda: control)
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure(config, launch=None):
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env={"CHEESE_AGENT_CONFIG": config},
-            launch=launch or ClaudeLaunch(system_prompt=""),
-        )
-
-    first = await ensure("original")
-    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
-        await ensure("edited")
-    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
-        await ensure("edited", PiLaunch(system_prompt="", model="test"))
-    assert hub.closed == []
-    assert hub.opened == [first]
-
-    control.status = "completed"
-    second = await ensure("edited")
-    assert second.sid != first.sid
-    assert hub.closed == [first.sid]
-
-
-@pytest.mark.anyio
-async def test_a_changed_harness_argv_replaces_the_screen_that_has_the_old_one(
-    monkeypatch,
-):
-    """A running CLI holds the argv it was started with, and nothing can hand it
-    new ones — so a change to what the backend would start today has to close it.
-
-    This is the hole the launch contract was written for and never closed: the
-    contract was put on the machine and read by nobody, while the gate compared
-    the model and the role alone. Repin the harness version, add a flag, change
-    the executor it is handed, and every reused screen kept running the old
-    thing with nothing anywhere saying so.
-    """
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure(**extra_env):
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env={"CHEESE_AGENT_CONFIG": "unchanged", **extra_env},
-            launch=ClaudeLaunch(system_prompt=""),
-        )
-
-    first = await ensure()
-    assert await ensure() is first
-
-    # Same agent configuration, different argv — handing the room's work to an
-    # executor is decided by the harness out of what the room is, not by the
-    # caller's config hash.
-    second = await ensure(
-        CHEESE_EXECUTION_TARGET=json.dumps({"machine": "m1", "workdir": "/w"})
-    )
-
-    assert second.sid != first.sid
-    assert hub.closed == [first.sid]
-
-
-@pytest.mark.anyio
-async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
-    """What makes a move of the platform's own directory reach the rooms already
-    running. Their files are at the old place and their processes are pointed
-    there; a deploy that changed the root and reused them would leave each room
-    half under each."""
-    hub = ReuseGateHub()
-    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure():
-        return await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=pid,
-            topic_id=tid,
-            token="tok",
-            env={"CHEESE_AGENT_CONFIG": "unchanged"},
-            launch=ClaudeLaunch(system_prompt=""),
-        )
-
-    first = await ensure()
-    monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
-
-    assert (await ensure()).sid != first.sid
-    assert hub.closed == [first.sid]
-
-
 def test_topic_credential_expiry_reads_the_live_screens_stamp():
-    """The runtime fuse's lookup (#388 缺陷一): the credential expiry of a topic's
-    LIVE device screen, or None when it has none online / unrecorded — so a topic on
-    the local tmux/SDK path (no device screen) never perturbs the fuse."""
+    """The credential expiry of a topic's LIVE device screen, or None when it
+    has none online / unrecorded."""
     from app.domain.agent.device_provider import topic_credential_expiry
 
     tid = uuid.uuid4()
@@ -2594,128 +1437,107 @@ def test_topic_credential_expiry_reads_the_live_screens_stamp():
         s.credential_expires = exp
         return s
 
-    # A live screen with a recorded expiry → that value.
     hub = Hub({tid: [_screen_with("dev1", 12345)]}, {"dev1"})
     assert topic_credential_expiry(tid, hub=hub) == 12345  # type: ignore[arg-type]
-
-    # No screen for the topic (local backend, or none open) → None.
     assert topic_credential_expiry(tid, hub=Hub({}, set())) is None  # type: ignore[arg-type]
-
-    # An OFFLINE device's screen doesn't count — it isn't the one running the turn.
     hub_off = Hub({tid: [_screen_with("devX", 999)]}, set())
     assert topic_credential_expiry(tid, hub=hub_off) is None  # type: ignore[arg-type]
-
-    # A screen whose expiry was never recorded is skipped, not read as 0.
     hub_none = Hub({tid: [_screen_with("dev1", None)]}, {"dev1"})
     assert topic_credential_expiry(tid, hub=hub_none) is None  # type: ignore[arg-type]
 
 
-@pytest.mark.anyio
-async def test_a_tunnel_screen_is_handed_no_loopback_port(monkeypatch, tmp_path):
-    """The helper's port is the machine's: the kernel picks a free one when the
-    helper binds, and the launcher exports what it got. A port named here would be
-    a guess about another machine's free ports — the guess that put two rooms on
-    one helper, where the second room's `claude` spent the first room's
-    credential and took over its Remote Control session."""
-    _subscription_settings(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
-    )
-
-    hub, _project, _topic = await _subscription_screen()
-
-    assert hub.env["CHEESE_TUNNEL_URL"] == "wss://gateway.example/llm/tunnel"
-    assert "HTTPS_PROXY" not in hub.env
-    # NO_PROXY still names loopback; no value names a loopback proxy address.
-    assert not any("//127.0.0.1:" in value for value in hub.env.values())
-    # The meter's allowlist still applies to the tunnelled route.
-    assert hub.env["CHEESE_MODEL_PROXY"] == "1"
+# --- what a live session was started with -------------------------------------
 
 
-# --- interrupt: take the work away without saying anything -------------------
-
-
-@pytest.mark.anyio
-async def test_interrupt_presses_escape_rather_than_saying_something():
-    """Escape goes down the channel that carries a watching person's keystrokes
-    — NOT the rendezvous socket, which enqueues a message. A message is what
-    `send` is for; this is the platform taking the work away with nothing to
-    say about it, and the session survives it."""
+async def test_agent_config_change_replaces_screen_at_next_launch(caplog):
     hub = FakeHub()
-    provider = _provider(hub, HookRouter(), uuid.uuid4())
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
-    screen = await hub.open_screen(
-        "dev1",
-        "claude",
-        agent_user_id=uuid.uuid4(),
-        agent_handle="agent-x",
-        project_id=session.project_id,
-        topic_id=session.topic_id,
-    )
-    provider._live[session.topic_id] = screen
+    room = _room(hub, launch=ClaudeLaunch(system_prompt="", model="requested-model"))
 
-    assert await provider.interrupt(session) is True
+    first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
+    assert await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"}) is first
+    with caplog.at_level("INFO"):
+        second = await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
 
-    assert hub.keys == [(screen.sid, b"\x1b")]
-    assert hub.prompts == []  # nothing was said
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+    assert second.agent_configuration != first.agent_configuration
+    (line,) = _retired(caplog)
+    assert "reason=agent_configuration_changed" in line
+    # And the machine is told what it is, so a backend that restarts can
+    # ask the connector rather than guess.
+    assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
 
 
-class _Control:
-    """Stand-in for the room's native control session: answers `mcp_status` from
-    a scripted sequence and records what was asked."""
+async def test_config_change_preserves_a_running_background_workflow():
+    """A workflow the session runs would die with it, so a configuration change
+    waits for the workflow — whichever harness the new launch would start —
+    and replaces the session once the runner reports it finished."""
+    hub = FakeHub()
+    hub.ping = {"alive": True, "tasks": {"wf-1": "local_workflow"}}
+    room = _room(hub)
 
-    def __init__(self, statuses, session_status="active"):
-        self._statuses = list(statuses)
-        self._session = {"id": "sess", "status": session_status}
-        self.asked: list[str] = []
-
-    async def current(self, _topic_id, _agent_handle=None):
-        return self._session
-
-    async def enqueue(self, _session_id, payload, _source):
-        self.asked.append(payload["request"]["subtype"])
-        self._last = payload["request_id"]
-
-    async def result(self, _session_id, request_id, _timeout):
-        subtype = self.asked[-1]
-        response = (
-            {"mcpServers": [{"name": "native", "status": self._statuses.pop(0)}]}
-            if subtype == "mcp_status"
-            else {}
+    first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
+    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
+        await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
+    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
+        await room.ensure(
+            env={"CHEESE_AGENT_CONFIG": "edited"},
+            launch=PiLaunch(system_prompt="", model="test"),
         )
-        return {"response": {"subtype": "success", "response": response}}
+    assert hub.closed == []
+    assert hub.opened == [first]
+
+    hub.ping = {"alive": True, "tasks": {"agent-1": "local_agent"}}
+    second = await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
 
 
-async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
-    control = _Control(["connected"])
-    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
-    provider = DeviceChannel(hub=FakeHub())
-    assert (
-        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
-        is False
+async def test_a_config_change_on_a_session_nobody_can_ask_replaces_it():
+    """A runner that cannot be asked has nothing left running to lose."""
+    hub = FakeHub()
+    room = _room(hub)
+    first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
+    hub.ping = DeviceCallError("dial unix: refused")
+
+    second = await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
+
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
+
+
+async def test_a_changed_harness_argv_replaces_the_screen_that_has_the_old_one():
+    """A running CLI holds the argv it was started with, and nothing can hand it
+    new ones — so a change to what the backend would start today has to close it.
+    Handing the room's work to an executor is decided by the harness out of what
+    the room is, not by the caller's config hash."""
+    hub = FakeHub()
+    room = _room(hub, env={"CHEESE_AGENT_CONFIG": "unchanged"})
+
+    first = await room.ensure()
+    assert await room.ensure() is first
+
+    second = await room.ensure(
+        env={
+            "CHEESE_AGENT_CONFIG": "unchanged",
+            "CHEESE_EXECUTION_TARGET": json.dumps({"machine": "m1", "workdir": "/w"}),
+        }
     )
-    assert control.asked == ["mcp_status"]
+
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
 
 
-async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
-    control = _Control(["failed", "pending", "connected"])
-    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
-    provider = DeviceChannel(hub=FakeHub())
-    assert (
-        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
-        is True
-    )
-    assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
+async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
+    """What makes a move of the platform's own directory reach the rooms already
+    running. Their files are at the old place and their processes are pointed
+    there; a deploy that changed the root and reused them would leave each room
+    half under each."""
+    hub = FakeHub()
+    room = _room(hub, env={"CHEESE_AGENT_CONFIG": "unchanged"})
 
+    first = await room.ensure()
+    monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
 
-async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
-    """No session to ask is not evidence the tools were lost, and a resend on a
-    guess would repeat a message 芝士 may well have answered."""
-    control = _Control([], session_status="closed")
-    monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
-    provider = DeviceChannel(hub=FakeHub())
-    assert (
-        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
-        is False
-    )
-    assert control.asked == []
+    assert (await room.ensure()).sid != first.sid
+    assert hub.closed == [first.sid]

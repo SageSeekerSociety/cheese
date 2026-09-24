@@ -25,7 +25,6 @@ vi.mock('../CodeEditor.vue', () => ({
 }))
 
 const getTranscript = vi.fn()
-const getTerminal = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -33,7 +32,7 @@ vi.mock('../../api', async () => {
     ...actual,
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: (...a: unknown[]) => getTranscript(...a),
-    getTerminal: (...a: unknown[]) => getTerminal(...a),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     // Everything else the panel calls on mount — quiet, empty answers.
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),
@@ -133,7 +132,6 @@ describe('现场面板', () => {
       data: [block('b1', '最早的一条'), block('b2', '中间的一条'), block('b3', '最新的一条')],
       total: 3,
     })
-    getTerminal.mockResolvedValue({ available: false, backend: 'none' })
   })
 
   it('打开现场，停在最新的一条(底部)，而不是最早的那条', async () => {

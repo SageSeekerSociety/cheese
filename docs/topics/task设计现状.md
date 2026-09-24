@@ -121,7 +121,7 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 1. **`cheese-sync` 钩子漏推**（<&backend/app/domain/agent/harness/claude_code/device_launch.py>）：
    判据是「有没有未提交改动」而不是「有没有未推送的提交」，`git diff --cached --quiet && exit 0` 挡在 push 前面。
    **分身自己 commit 过就永不推送——越守规矩丢得越干净。** PR #608 整整 1010 行就是这么丢的
-   （`additions=0` 合进 main）。后来补上的只是**失败会留痕**（push 结果通过 `cheese-hook` 回报），
+   （`additions=0` 合进 main）。后来补上的只是**失败会留痕**（push 失败回报进房间），
    那一行提前退出还在。已有的 <&backend/tests/unit/test_device_sync_reports_failure.py> 两个用例
    都只造「有未提交改动」的仓库，所以这条路从没被测到。
 2. **轮询看起来像挂了，其实没挂**：当时手动打 `POST /admin/scheduler/poll-open-prs`（那个手动

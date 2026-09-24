@@ -308,36 +308,6 @@ class _Proposed:
     landed: dict | None
 
 
-# How long a message's spooled flushes may sit incomplete (no final flush, no
-# Stop) before the reconcile stops waiting for the missing one and lands what
-# arrived. Long enough for the device drainer's retry loop to fill a gap;
-# short enough that a mid-message death still surfaces its words.
-_SPOOL_PARTIAL_GRACE_S = 120
-# How long a read event stays on disk before retention drops it. A spool is not
-# only the backfill queue — it is the raw record of what a session emitted, and
-# the first thing anyone reaches for when a block looks wrong. A day is long
-# enough to answer that and short enough that a busy topic's directory stays
-# something a person can list.
-_SPOOL_RETENTION_S = 24 * 3600
-
-
-def _persisted_eids(blocks: list[Block]) -> set[str]:
-    """Event ids already materialized in the topic timeline. A coalesced
-    message block carries every constituent flush id in ``meta.eids``; each
-    one counts, or the flushes after the first would backfill as fragments."""
-    out: set[str] = set()
-    for block in blocks:
-        meta = block.meta if isinstance(block.meta, dict) else None
-        if not meta:
-            continue
-        if isinstance(meta.get("eid"), str):
-            out.add(meta["eid"])
-        eids = meta.get("eids")
-        if isinstance(eids, list):
-            out.update(e for e in eids if isinstance(e, str))
-    return out
-
-
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
 # "verb\npreview" (preview omitted when empty).
@@ -1338,11 +1308,6 @@ class ChatService:
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
-        # Debounce + strong refs for background spool settles (attach 收账,
-        # #316): topics with a settle already scheduled, and the tasks running
-        # them so they can't be GC'd mid-drain.
-        self._settle_pending: set[uuid.UUID] = set()
-        self._settle_tasks: set[asyncio.Task] = set()
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -1911,6 +1876,10 @@ class ChatService:
                     )
                 return
 
+    def session_controls(self, topic_id: uuid.UUID):
+        """The runtime whose live session in this room takes controls, if any."""
+        return self._compute.session_controls(topic_id)
+
     async def recover_native_tools(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool:
@@ -2163,38 +2132,6 @@ class ChatService:
         async with self._sessions() as session:
             return await BlockRepository(session).ai_turn_ids(turn_ids)
 
-    async def settle_spool(self, topic_id: uuid.UUID) -> int:
-        """Drain the topic's hook spool NOW, with no turn required. Returns how
-        many blocks were landed (each is also broadcast on the topic channel).
-
-        The reconcile normally runs at the next turn's start — which is exactly
-        never for an orphan the sweep attaches to instead of re-prompting
-        (#316): the events the surviving claude keeps sending (its Stop
-        included) would sit parked until a human happened to speak. This is
-        that missing drain: the same `_reconcile_spool`, under the same topic
-        lock so it can never race a turn's own reconcile, frames published to
-        the broker so open clients see the backfill live."""
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return 0
-            # 这间房的轮次跑在哪个骨架上（结论 28）——读 spool 的那个 ref 得和轮次
-            # 用的是同一个答案，不然读的是另一个骨架的日志。
-            project = await ProjectRepository(session).get(topic.project_id)
-        harness = harness_for(project.settings if project else None)
-        from app.domain.agent.runtime import get_broker
-
-        broker = get_broker()
-        channel = str(topic_id)
-        landed = 0
-        async with self._lock_for(topic_id):
-            async for frame in self._reconcile_spool(
-                topic.project_id, topic_id, None, harness=harness
-            ):
-                await broker.publish(channel, frame)
-                landed += 1
-        return landed
-
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and land what
         they said while nobody was.
@@ -2208,6 +2145,15 @@ class ChatService:
         unique = {session.topic_id: session for session in sessions}
         for session in unique.values():
             try:
+                # A turn still running there was fed by a process that is gone,
+                # and its result lands here. Without its bookkeeping that result
+                # closes nothing: the batch it answered is never stamped
+                # consumed, and the next turn sends it again.
+                work = self._compute.work_in_flight(session.topic_id)
+                if work is not None and (session.topic_id, work) not in self._hook_work:
+                    await self._begin_self_started_turn(
+                        session.project_id, session.topic_id, work, opened=True
+                    )
                 # What the room already shows, so a message the live path DID
                 # persist before this process died is not landed twice. The room
                 # is ours; which of the harness's own records are still unlanded
@@ -2248,39 +2194,6 @@ class ChatService:
             and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
-    def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
-        """Debounced background ``settle_spool``. Called after a live turn ends,
-        so idle time can advance its replay cursor; by the hooks
-        endpoint when an event arrives with no turn listening — nothing will
-        read what it just wrote until something goes looking, so a working
-        claude's progress (and its Stop) lands within seconds instead of waiting
-        for the next summon — and the orphan sweep when it attaches to an
-        interrupted turn, so anything already waiting lands now."""
-        if topic_id in self._settle_pending:
-            return
-        self._settle_pending.add(topic_id)
-
-        async def _later() -> None:
-            try:
-                await asyncio.sleep(delay_s)
-                # Cleared BEFORE the drain: a hook parked mid-settle must be
-                # able to schedule the next round rather than being missed.
-                self._settle_pending.discard(topic_id)
-                landed = await self.settle_spool(topic_id)
-                if landed:
-                    logger.info(
-                        "spool settle landed %d block(s) for topic %s",
-                        landed,
-                        topic_id,
-                    )
-            except Exception:  # noqa: BLE001 — a settle must never crash the loop
-                self._settle_pending.discard(topic_id)
-                logger.exception("spool settle failed for topic %s", topic_id)
-
-        task = asyncio.create_task(_later())
-        self._settle_tasks.add(task)
-        task.add_done_callback(self._settle_tasks.discard)
-
     async def _save_session_pointer(
         self,
         topic_id: uuid.UUID,
@@ -2303,20 +2216,27 @@ class ChatService:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
                 if place is not None:
-                    # New event streams carry their original owner. Legacy
-                    # hooks still require resolving the room's current agent.
-                    if agent_handle is None or harness is None:
-                        agent = await self._agent_at(session, place)
-                        agent_handle = agent_handle or agent.handle
-                        # 事件没说骨架（老的 hook 流），就问这个项目跑的是哪
-                        # 个——同一个答法，和开这一轮用的那一个（结论 28）。
-                        owner = await ProjectRepository(session).get(place.project_id)
-                        harness = harness or harness_for(
-                            owner.settings if owner else None
+                    # An event names who ACTED: the seat its session authors
+                    # under. The pointer is keyed by the agent that seat
+                    # belongs to, the key the next turn reads it back under
+                    # (the resume lookup in `_assemble_turn`); written under
+                    # the seat, it is never found and every cold start opens
+                    # a new conversation. A room-derived seat, the shared one
+                    # and an event that names nobody are the room's agent.
+                    owner = await ProjectRepository(session).get(place.project_id)
+                    agent = (
+                        await AgentInstanceService(session).for_seat_handle(
+                            owner, agent_handle
                         )
+                        if owner is not None
+                        else None
+                    ) or await self._agent_at(session, place)
+                    # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
+                    # 这一轮用的那一个（结论 28）。
+                    harness = harness or harness_for(owner.settings if owner else None)
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
-                        agent_handle=agent_handle,
+                        agent_handle=agent.handle,
                         resume_token=session_id,
                         harness=harness,
                     )
@@ -2411,7 +2331,12 @@ class ChatService:
         return task.id if task is not None else None
 
     async def _begin_self_started_turn(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        opened: bool = False,
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
         any other: an interval a sweep can find, and everything its Stop needs.
@@ -2433,6 +2358,10 @@ class ChatService:
         this turn. A message that merges into it mid-flight is stamped consumed
         by its own receipt (`confirm_prompt_receipt`), not from here.
 
+        ``opened`` is a turn whose interval already exists: one a previous
+        process of ours fed and delivered, which outlived it and is found again
+        by recovery. It gets the same context, and no second row.
+
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
@@ -2451,9 +2380,10 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
-            await get_work_runner().open_turn_the_session_started(
-                self, topic_id, turn_id, author=acting_agent
-            )
+            if not opened:
+                await get_work_runner().open_turn_the_session_started(
+                    self, topic_id, turn_id, author=acting_agent
+                )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
                 "could not open the turn a session started for itself "
@@ -2485,7 +2415,7 @@ class ChatService:
             known_commits=asyncio.ensure_future(
                 self._known_commits(project_id, topic_id)
             ),
-            self_started=True,
+            self_started=not opened,
         )
         self._hook_work[(topic_id, turn_id)] = state
         return state
@@ -2744,7 +2674,6 @@ class ChatService:
                     frame_out["code"] = error_code
                 await broker.publish(str(topic_id), frame_out)
             await broker.publish(str(topic_id), {"type": "done"})
-            self.schedule_spool_settle(topic_id)
 
     async def _delivered_unread(
         self, session: AsyncSession, state: _HookWorkState
@@ -3385,7 +3314,6 @@ class ChatService:
         topic_refs: list[dict],
         eid: str | None = None,
         eids: tuple[str, ...] = (),
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
@@ -3398,10 +3326,10 @@ class ChatService:
         """Persist output immediately; only explicit publications enter chat.
 
         Terminal output remains in activity without notifying mentioned members.
-        ``eid`` (hooks path) is stamped into meta so the spool reconcile can
-        dedup a backfilled copy against this live one; ``eids`` carries every
-        constituent flush id of a coalesced message, and any one of them
-        matching an existing block means this message already landed.
+        ``eid`` (the harness's own id for the event) is stamped into meta so a
+        record read twice lands once; ``eids`` carries every id a message was
+        delivered under, and any one of them matching an existing block means
+        this message already landed.
 
         Returns None when ``continuation_id`` says this exact message already
         landed in an earlier attempt at the same work (④ 重发): the re-sent
@@ -3413,8 +3341,8 @@ class ChatService:
         答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
         口的那句话）。"""
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
-        # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
-        # 三条路都经过这个方法,拦在门口才不会有一条漏网。
+        # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
+        # 拦在门口才不会有一条漏网。
         as_progress = not publish
         as_notice = None if publish else _cli_notice(text)
         if as_notice is not None:
@@ -3426,7 +3354,6 @@ class ChatService:
                 meta=notice_meta,
                 turn_id=turn_id,
                 eid=eid,
-                backfilled=backfilled,
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
                 author_type=AuthorType.platform,
@@ -3439,8 +3366,6 @@ class ChatService:
             meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
-        if backfilled:
-            meta = {**(meta or {}), "backfilled": True}
         if platform_unsolicited:
             meta = {**(meta or {}), "platform_unsolicited": True}
         known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
@@ -3610,17 +3535,15 @@ class ChatService:
         platform: bool,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
-        ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
-        spool reconcile can dedup a backfilled copy against this live one. Returns
-        the persisted block payload so a caller (live path or spool reconcile) can
-        broadcast it as a WS frame."""
+        ``eid`` (the harness's own id for the event) is stamped into meta so a
+        record read twice lands once. Returns the persisted block payload so the
+        caller can broadcast it as a WS frame."""
         preview = tool_preview(
             name, tool_input, work_dir=work_subpath(project_id, topic_id)
         )
@@ -3636,7 +3559,6 @@ class ChatService:
             ),
             turn_id=turn_id,
             eid=eid,
-            backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
@@ -3659,7 +3581,6 @@ class ChatService:
         meta: dict,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
         author_type: AuthorType = AuthorType.participant,
@@ -3686,8 +3607,6 @@ class ChatService:
         meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
-        if backfilled:
-            meta = {**meta, "backfilled": True}
         if platform_unsolicited:
             meta = {**meta, "platform_unsolicited": True}
         async with self._sessions() as session:
@@ -3726,7 +3645,6 @@ class ChatService:
         event: AgentToolResult,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
@@ -3738,7 +3656,6 @@ class ChatService:
             meta=_subagent_result_meta(event.name, event.description, event.text),
             turn_id=turn_id,
             eid=eid or event.eid,
-            backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
@@ -3973,327 +3890,6 @@ class ChatService:
             in_room=True,
             author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
         )
-
-    async def _reconcile_spool(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        *,
-        harness: str,
-    ) -> AsyncIterator[dict]:
-        """Land what a session said while nobody was listening (backend down, or
-        no listener during a prior turn) — idempotent by event id, best-effort,
-        and never blocking the turn.
-
-        ``harness`` is the one this room's turns run on, resolved by the caller
-        — the ref that reads the spool carries the same answer the turn used,
-        rather than asking again and possibly getting a different one. Nothing
-        downstream reads it today: the spool is addressed by (project, topic)
-        in ``hooks_substrate.read_log``/``acknowledge_log``, and no ``backlog``
-        implementation looks at it — so a spool is NOT partitioned by harness.
-        It is required because ``SessionRef`` has no default harness (不变量
-        I5) and every construction point must be able to state its answer.
-
-        The harness's ``backlog`` says WHAT was said; this decides what to do
-        about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
-        result — a copy the live path already persisted is skipped by id.
-        Backfilled messages skip mention-notify (the moment passed) but DO yield
-        a WS frame like the live path: something that missed its turn's listening
-        window must still reach the frontend, just without threading or an
-        @-notify (bug: it was landing as a silent DB row nobody saw).
-
-        The result is what lets an ORPHANED turn finish (#316): a backend restart
-        kills the waiter, not the working agent, and the sweep no longer
-        re-prompts one that heard the task — so its ending arrives with no turn
-        listening, gets parked, and has to close the books from here: save the
-        finished session's pointer, and land its final message unless a message
-        (live or in this same pass) already carries that text — the ending
-        normally echoes the last one.
-
-        Whether a message is whole is the harness's call, not ours: ``assemble``
-        answers with nothing until it is, ``unfinished`` names what is still
-        missing a piece — and the cursor must stop before those, so the pass that
-        completes them still sees what they are made of. ``give_up`` is for the
-        session that died mid-sentence: what arrived lands joined rather than
-        being lost."""
-        started = time.monotonic()
-        phases_ms: dict[str, float] = {}
-        event_count = 0
-        try:
-            session_ref = SessionRef(project_id, topic_id, harness=harness)
-            backlog = await asyncio.to_thread(self._compute.backlog, session_ref)
-            spooled = backlog.unread()
-            event_count = len(spooled)
-            phases_ms["read"] = (time.monotonic() - started) * 1000
-            if not spooled:
-                return
-            # Dedup against everything the live path already persisted (this +
-            # prior turns): event-ids stamped on this topic's blocks (any kind).
-            async with self._sessions() as session:
-                blocks = await BlockRepository(session).list_for_topic(topic_id)
-                topic = await TopicRepository(session).get(topic_id)
-                # The roster/topic table that STORED content was canonicalized
-                # with. Loaded here because the text dedup below has to compare
-                # like for like — see `_canon`.
-                roster = (
-                    []
-                    if topic is None or _is_dm(topic)
-                    else await roster_rows(session, project_id)
-                )
-                topic_refs, _ = _topic_ref_lists(
-                    await TopicRepository(session).list_for_project(project_id),
-                    exclude_id=topic_id,
-                )
-            phases_ms["history"] = (time.monotonic() - started) * 1000
-            seen = _persisted_eids(blocks)
-
-            def _canon(text: str) -> str:
-                """Stored form of a raw hook text.
-
-                Every persist path runs `_expand_mention_names` on the way in, so
-                a stored block holds `<@handle>` where the hook payload still
-                holds `@名字`. Comparing the two forms directly is why a message
-                that mentions ANYONE defeated the dedup below and landed twice.
-                """
-                return _expand_mention_names(text, roster, topic_refs).strip()
-
-            # Text-level dedup for the Stop's final message (it has its OWN eid,
-            # so eid dedup can never match it against the MessageDisplay twin).
-            known_texts = {
-                (b.content or "").strip()
-                for b in blocks
-                if looks_like_agent_handle(b.author)
-                and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
-            }
-            recovered = 0
-
-            async def _land_message(
-                message: AgentMessage, fallback_eid: str
-            ) -> dict | None:
-                # A chat message whose live delivery was lost — land it as
-                # history (no reply threading, no notify: the moment passed)
-                # but still broadcast it, exactly like the live path does.
-                #
-                # Unless the room already has it. A turn whose own
-                # MessageDisplay went to the spool instead of arriving live
-                # ends with a Stop that echoes the same words, and that echo is
-                # posted as an eid-less fallback — so the spooled copy would
-                # land beside it as a twin nobody can tell apart. eid dedup
-                # cannot see it (the fallback carries the Stop's id, or none at
-                # all), which is why this compares the words. Traced from
-                # production: 46 messages, exactly one with empty meta, sitting
-                # next to a backfilled duplicate of itself.
-                if (
-                    not message.complete_identity
-                    and _canon(message.text) in known_texts
-                ):
-                    seen.add(fallback_eid)
-                    seen.update(message.eids)
-                    return None
-                block_payload = await self._persist_assistant_message(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    text=message.text,
-                    turn_id=turn_id,
-                    reply_to=None,
-                    roster=roster,
-                    topic_refs=topic_refs,
-                    eid=message.eid or fallback_eid,
-                    eids=message.eids,
-                    backfilled=True,
-                    at=message.at,
-                    author=message.agent_handle,
-                    task_id=await self._work_of_worker(topic_id, message.thread_label),
-                )
-                seen.add(fallback_eid)
-                seen.update(message.eids)
-                known_texts.add(_canon(message.text))
-                return block_payload
-
-            for spooled_event in spooled:
-                eid = spooled_event.eid
-                if eid in seen:
-                    continue
-                events = backlog.assemble(spooled_event)
-                if events and isinstance(events[-1], AgentResult):
-                    # A Stop first drains still-buffered flushes. A drained
-                    # partial that is a PREFIX of the Stop's text is the same
-                    # message minus its lost tail — skip the fragment and let
-                    # the Stop's whole copy land, carrying the fragment's
-                    # flush ids so a redelivered flush still matches.
-                    result = events[-1]
-                    stop_text = (result.text or "").strip()
-                    carried: list[str] = []
-                    for partial in events[:-1]:
-                        if not isinstance(partial, AgentMessage):
-                            continue
-                        if stop_text.startswith(partial.text.strip()):
-                            carried.extend(partial.eids)
-                            continue
-                        block_payload = await _land_message(partial, eid)
-                        if block_payload is not None:
-                            recovered += 1
-                            yield {"type": "event_block", "block": block_payload}
-                    if result.session_id:
-                        # The finished session is what the next summon must
-                        # resume — without this the topic keeps pointing at
-                        # whatever SessionStart last managed to save live.
-                        await self._save_session_pointer(
-                            topic_id,
-                            result.session_id,
-                            agent_handle=result.agent_handle,
-                            harness=result.harness,
-                        )
-                    # `stop_text` stays RAW above (the prefix test matches it
-                    # against raw flush text); the dedup compares stored forms.
-                    if not stop_text or _canon(result.text or "") in known_texts:
-                        seen.add(eid)
-                        seen.update(carried)
-                        continue
-                    block_payload = await self._persist_assistant_message(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        text=result.text,
-                        turn_id=turn_id,
-                        reply_to=None,
-                        roster=roster,
-                        topic_refs=topic_refs,
-                        eid=eid,
-                        eids=tuple(dict.fromkeys((*carried, eid))),
-                        backfilled=True,
-                    )
-                    seen.add(eid)
-                    seen.update(carried)
-                    known_texts.add(_canon(stop_text))
-                    if block_payload is None:
-                        continue
-                    recovered += 1
-                    yield {"type": "event_block", "block": block_payload}
-                    continue
-                for event in events:
-                    if isinstance(event, AgentMessage):
-                        block_payload = await _land_message(event, eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if isinstance(event, AgentSubagentStart | AgentSubagentStop):
-                        # A worker's closing message reaches the platform exactly
-                        # once, in the Stop that carries it — its own transcript
-                        # dies with the container. So a lost delivery here is the
-                        # answer itself going missing, not a redraw.
-                        block_payload = await self._persist_worker_event(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            event=event,
-                            task_id=await self._work_of_worker(
-                                topic_id, event.thread_label
-                            ),
-                            turn_id=turn_id,
-                            eid=eid,
-                        )
-                        seen.add(eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if isinstance(event, AgentToolResult):
-                        # A subagent's conclusion whose live delivery was lost. Worth
-                        # backfilling for the same reason it is worth showing at all:
-                        # without it the timeline keeps the question and loses the
-                        # answer, and 现场 history is what a late reader reads.
-                        block_payload = await self._persist_subagent_result(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            event=event,
-                            turn_id=turn_id,
-                            eid=eid,
-                            backfilled=True,
-                            task_id=await self._work_of_worker(
-                                topic_id, event.thread_label
-                            ),
-                        )
-                        seen.add(eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if not isinstance(event, AgentToolUse):
-                        continue  # SessionStart has no historical counterpart
-                    name = _short_tool_name(event.name)
-                    if name in _TASK_TOOLS:
-                        continue  # task todos are process state, not persisted 现场
-                    args = event.input or {}
-                    block_payload = await self._persist_tool_event(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        name=name,
-                        tool_input=args,
-                        platform=_is_platform_tool(event.name, args),
-                        turn_id=turn_id,
-                        eid=eid,
-                        backfilled=True,
-                        task_id=await self._work_of_worker(
-                            topic_id, event.thread_label
-                        ),
-                    )
-                    seen.add(eid)
-                    if block_payload is None:
-                        continue
-                    recovered += 1
-                    yield {"type": "event_block", "block": block_payload}
-            pending = backlog.unfinished()
-            if pending:
-                newest = min(
-                    (event.age_s for event in spooled if event.eid in pending),
-                    default=0.0,
-                )
-                if newest > _SPOOL_PARTIAL_GRACE_S:
-                    # No Stop and nothing new for a while: the message will
-                    # never complete (the screen died mid-message). Land what
-                    # arrived, joined, rather than lose it.
-                    for partial in backlog.give_up():
-                        block_payload = await _land_message(partial, partial.eid or "")
-                        if block_payload is not None:
-                            recovered += 1
-                            yield {"type": "event_block", "block": block_payload}
-                    pending = set()
-            phases_ms["replay"] = (time.monotonic() - started) * 1000
-            # Reading is not consuming: the cursor moves over the events that
-            # reached the timeline, and retention — not this pass — is what
-            # eventually deletes them. It stops at the first still-buffered
-            # flush rather than stepping over it, so the pass that completes
-            # that message still sees the flushes it is made of.
-            for event in spooled:
-                if event.eid in pending:
-                    break
-                backlog.landed(through=event.key)
-            phases_ms["cursor"] = (time.monotonic() - started) * 1000
-            # Retention scans the whole on-disk log, even for one new event.
-            await asyncio.to_thread(backlog.forget, older_than_s=_SPOOL_RETENTION_S)
-            phases_ms["retention"] = (time.monotonic() - started) * 1000
-            if recovered:
-                logger.info(
-                    "reconciled %d spooled 现场 event(s) for topic %s",
-                    recovered,
-                    topic_id,
-                )
-        except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
-            logger.exception("spool reconcile failed for topic %s", topic_id)
-        finally:
-            logger.info(
-                "spool_reconcile_timing topic=%s turn=%s events=%d "
-                "elapsed_ms=%.3f phases_ms=%s",
-                topic_id,
-                turn_id,
-                event_count,
-                (time.monotonic() - started) * 1000,
-                phases_ms,
-            )
 
     async def _pass_policy_gate(
         self,
@@ -5229,8 +4825,8 @@ class ChatService:
             # failure mode this counter exists to expose.
             await session.commit()
             replay_notice = _replay_notice(replay_n, pending)
-            # turn 活跃度检测: the device channel runs hooks_substrate's two-layer
-            # idle-suspect + hard-ceiling loop and manages its own inner ceiling
+            # turn 活跃度检测: a driven runtime judges liveness itself
+            # (docs/agent-liveness.md) and holds its own inner ceiling
             # (which can be hours), so the outer wall-clock wrap (runtime.py) must
             # be told the REAL ceiling via a `turn_ceiling` frame instead of
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
@@ -5461,22 +5057,6 @@ class ChatService:
             )
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
-
-        # Backfill any 现场 events the live hook path missed (backend down / no
-        # listener during a prior turn) from the durable spool WAL — idempotent by
-        # event-id. No-op for an empty spool.
-        async for frame in self._reconcile_spool(
-            project_id, topic_id, turn_id, harness=prepared.harness
-        ):
-            yield frame
-        logger.info(
-            "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
-            "elapsed_ms=%.3f unix_ms=%.3f",
-            topic_id,
-            turn_id,
-            (time.monotonic() - preparation_started) * 1000,
-            time.time() * 1000,
-        )
 
         # The turn's own checklist starts EMPTY even when prior_progress is not
         # (see `_HookWorkState.todo`): _apply_task_event numbers items by

@@ -1,7 +1,7 @@
 //go:build claudee2e
 
-// Shared fixtures for the delivery e2e suite: a scripted Anthropic API, a tmux
-// server of the test's own, and a polling wait.
+// Shared fixtures for the Claude Code e2e suite: a scripted Anthropic API and a
+// polling wait.
 //
 // The details here are hard-won (ported in spirit from micro-connector's
 // testbed/e2e.sh): MockServer must be >= 7.5.0 (httpLlmResponse does not exist
@@ -12,10 +12,9 @@
 // must cover loopback (a developer machine's proxy would route the mock
 // request away as ECONNRESET).
 //
-// The mock is what makes delivery PROVABLE rather than plausible: it answers a
-// delivered prompt with a scripted Bash tool call, and the file that tool
-// writes is the evidence. A prompt that reaches the session but is never
-// enqueued leaves a pane that looks perfect and a file that never grows.
+// The mock is what makes a turn PROVABLE rather than plausible: it answers a
+// message with a scripted Bash tool call, and the file that tool writes is the
+// evidence.
 package e2e
 
 import (
@@ -63,9 +62,8 @@ func startMockAPI(t *testing.T, markFile, mark string) string {
 		"-p", "127.0.0.1::1080", mockImage).CombinedOutput()
 	if err != nil {
 		// On a laptop without docker the suite steps aside. In CI it must not:
-		// the canary ran two nights (2026-09-17, -18) with seven of eight tests
-		// skipped because the image pull failed, and reported green — a
-		// canary that skips is the silent one claude-canary.yml warns about.
+		// a run whose tests all skipped because the image pull failed reports
+		// green, and says nothing.
 		if os.Getenv("CHEESE_E2E_REQUIRE_DOCKER") != "" {
 			t.Fatalf("docker unavailable for the mock API: %v: %s", err, out)
 		}
@@ -96,7 +94,8 @@ func startMockAPI(t *testing.T, markFile, mark string) string {
 		time.Sleep(time.Second)
 	}
 
-	// remainingTimes 2: the short prompt and the 30KB prompt each spend one.
+	// remainingTimes 2: bounded, because an unlimited tool expectation answers
+	// each tool RESULT with another tool call and a turn never ends.
 	mockserverPut(t, base, "/mockserver/expectation", fmt.Sprintf(`
 { "httpRequest": { "method": "POST", "path": "/v1/messages",
                    "body": { "type": "JSON_PATH", "jsonPath": "$.tools[?(@.name=='Bash')]" } },
@@ -133,19 +132,4 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool,
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-}
-
-// isolateTmux points terminal.NewManager at a runtime dir of this test's own.
-// NewManager derives its socket from $TMPDIR, and on a machine that hosts agents
-// the default one is the LIVE connector's server — which holds every running
-// `claude` on the box, and which these tests kill on the way out. A short path
-// on purpose: a unix socket path is capped near 104 bytes.
-func isolateTmux(t *testing.T) {
-	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "cheesee2e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("TMPDIR", dir)
 }

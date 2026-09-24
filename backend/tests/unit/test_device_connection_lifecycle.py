@@ -264,7 +264,6 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
         project_id=project_id,
         topic_id=topic_id,
         resource_id=topic_id,
-        hook_key="hook",
         credential_expires=1234,
         agent_configuration="native",
         execution_target={"home": "/room"},
@@ -284,15 +283,6 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     )
     await backend.close()
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
-    from app.domain.agent.harness.claude_code import (
-        drop_device_subscriptions,
-        drop_screen_subscriptions,
-    )
-
-    backend.set_subscription_cleanup_callbacks(
-        drop_device=drop_device_subscriptions,
-        drop_screen=drop_screen_subscriptions,
-    )
     await backend.start()
     after_backend_restart = backend.screen("screen-1")
     assert after_backend_restart is not None
@@ -371,112 +361,6 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
     ]
     await backend.close()
     await device_hub.detach_device("new-cloud-machine", connector)
-
-
-@pytest.mark.anyio
-async def test_backend_drops_subscriptions_from_owner_snapshot_changes(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
-    device_hub._devices.clear()
-    device_hub._screens.clear()
-    device_hub._by_screen_token.clear()
-    dropped_devices = []
-    dropped_screens = []
-
-    async def drop_device(device_id):
-        dropped_devices.append(device_id)
-
-    async def drop_screen(screen):
-        dropped_screens.append(screen.sid)
-
-    monkeypatch.setattr(
-        "app.domain.agent.harness.claude_code.drop_device_subscriptions", drop_device
-    )
-    monkeypatch.setattr(
-        "app.domain.agent.harness.claude_code.drop_screen_subscriptions", drop_screen
-    )
-    connector = wire.RecordingDevice()
-    await device_hub.attach_device("machine", connector)
-    await connector.sent.get()
-    screen = device_hub.adopt_screen(
-        "machine",
-        "screen-1",
-        token="token",
-        agent_user_id=42,
-        agent_handle="agent",
-    )
-    transport = httpx.ASGITransport(app=device_connection_app.app)
-    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
-    backend.set_subscription_cleanup_callbacks(
-        drop_device=drop_device, drop_screen=drop_screen
-    )
-    await backend.start()
-
-    await device_hub.detach_device("machine", connector)
-    await backend.refresh()
-    assert dropped_devices == ["machine"]
-    assert dropped_screens == ["screen-1"]
-
-    device_hub._device("machine").screens.pop(screen.sid)
-    device_hub._screens.pop(screen.sid)
-    device_hub._by_screen_token.pop(screen.token)
-    await backend.refresh()
-    assert dropped_screens == ["screen-1", "screen-1"]
-    await backend.close()
-
-
-@pytest.mark.anyio
-async def test_fast_reconnect_drops_the_real_old_subscription_before_recovery(
-    monkeypatch,
-) -> None:
-    from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, HookRouter
-
-    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
-    device_hub._devices.clear()
-    device_hub._screens.clear()
-    device_hub._by_screen_token.clear()
-    first = wire.RecordingDevice()
-    await device_hub.attach_device("machine", first)
-    await first.sent.get()
-    transport = httpx.ASGITransport(app=device_connection_app.app)
-    backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
-    from app.domain.agent.harness.claude_code import (
-        drop_device_subscriptions,
-        drop_screen_subscriptions,
-    )
-
-    backend.set_subscription_cleanup_callbacks(
-        drop_device=drop_device_subscriptions,
-        drop_screen=drop_screen_subscriptions,
-    )
-    await backend.start()
-
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    router = HookRouter()
-    channel = DeviceChannel(hub=backend)
-    runtime = ClaudeCodeRuntime(channel, router=router)
-    await runtime.ensure_subscription(project_id, topic_id, paused=True)
-    channel._subscription_devices[topic_id] = "machine"
-    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
-
-    recovered_after_drop = asyncio.Event()
-
-    async def recover(_: str) -> object:
-        assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
-        recovered_after_drop.set()
-        return 1
-
-    backend.set_online_callback(recover)
-    await device_hub.detach_device("machine", first)
-    second = wire.RecordingDevice()
-    await device_hub.attach_device("machine", second)
-    await second.sent.get()
-    await backend.refresh()
-    await asyncio.wait_for(recovered_after_drop.wait(), 1)
-    await backend.close()
-    await device_hub.detach_device("machine", second)
 
 
 @pytest.mark.anyio
@@ -586,13 +470,8 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
         ).status_code == 200
 
         blocked = await client.post(
-            "/internal/device-connection/call/call_screen",
-            json={
-                "device_id": "machine",
-                "sid": "screen-1",
-                "name": "read",
-                "args": [],
-            },
+            "/internal/device-connection/call/list_screens",
+            json={"device_id": "machine"},
         )
         assert blocked.status_code == 503
         assert connector.sent.empty()

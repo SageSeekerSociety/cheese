@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, ProjectMemberRow, Topic } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
 
 import { computed, ref } from 'vue'
@@ -30,6 +30,8 @@ const emit = defineEmits<{
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
+  // 会话控制状态的那一帧。同样一路透传给现场那格的控制条。
+  (e: 'agent-control', state: AgentControlState): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
@@ -73,6 +75,7 @@ defineExpose({
       :unread-on-open="unreadOnOpen"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
+      @agent-control="emit('agent-control', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"

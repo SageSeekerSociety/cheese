@@ -61,6 +61,7 @@ class PiRuntime(DrivenRuntime[Handle]):
             self._consume,
             self._activity,
             handle.session_id,
+            pulse=self.pulse,
         )
 
     def backlog(self, session: SessionRef) -> PiBacklog:

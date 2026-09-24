@@ -1,13 +1,15 @@
-"""What the Claude Code driver needs headless stream-json mode to keep doing.
+"""What the Claude Code runner needs headless stream-json mode to keep doing.
 
-The driver (#1606) runs `claude -p --input-format stream-json --output-format
-stream-json --verbose` and holds its stdin for the life of the session: user
-messages, messages sent mid-turn and controls all go in there, and the timeline,
-turn ends and questions come back out of stdout. None of that protocol is
-published — the SDKs speak it, but no document pins it — so this script is the
-contract. Each check drives the given build against the deterministic Messages
-API in `model_fixture.py` and asserts only what the build does on the wire or on
-disk.
+The runner starts the build with `LAUNCH_ARGS` (`claude_code/cli.py`): `-p`
+with stream-json on both pipes, every input echoed back once it is read, and
+bypassPermissions with AskUserQuestion and the platform-managed tools taken
+away, so nothing on stdin ever waits for a person. It holds stdin for the life
+of the session: user messages, messages sent mid-turn and controls all go in
+there, and the timeline and turn ends come back out of stdout. None of that
+protocol is published — the SDKs speak it, but no document pins it — so this
+script is the contract. Each check drives the given build with exactly those
+arguments against the deterministic Messages API in `model_fixture.py` and
+asserts only what the build does on the wire or on disk.
 
 Point it at the pinned build to gate a merge, and at the newest published build
 to learn that the next upgrade breaks the driver before the upgrade is what we
@@ -23,6 +25,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import shlex
@@ -41,26 +44,24 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from model_fixture import Handler, Server  # noqa: E402
 
-# The combination the driver launches with: ordinary tools never wait for a
-# person, and AskUserQuestion still reaches the driver as `can_use_tool`.
-DRIVER = ["--permission-mode", "bypassPermissions", "--permission-prompt-tool", "stdio"]
-# The likely final shape (#1606): no prompt tool, and AskUserQuestion taken
-# away, so nothing on stdin ever waits for a person.
-UNATTENDED = ["--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion"]
+# The runner's launch arguments, read from the file the runner reads them from
+# (a leaf module with no imports, so this runs without the backend installed).
+_spec = importlib.util.spec_from_file_location(
+    "launch_args",
+    HERE.parents[1] / "backend/app/domain/agent/harness/claude_code/cli.py",
+)
+_cli = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cli)
+DRIVER = _cli.LAUNCH_ARGS
+STREAM = [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+]
 MODEL = "claude-sonnet-4-5"
-QUESTION = {
-    "questions": [
-        {
-            "question": "Which color?",
-            "header": "Color",
-            "options": [
-                {"label": "Red", "description": "red"},
-                {"label": "Blue", "description": "blue"},
-            ],
-            "multiSelect": False,
-        }
-    ]
-}
 
 
 def do(name, **arguments):
@@ -72,7 +73,9 @@ def directive(body):
     if not messages or messages[-1]["role"] != "user":
         return None
     content = messages[-1]["content"]
-    for block in [{"type": "text", "text": content}] if isinstance(content, str) else content:
+    for block in (
+        [{"type": "text", "text": content}] if isinstance(content, str) else content
+    ):
         text = block.get("text", "") if block.get("type") == "text" else ""
         start = text.find("DO:")
         if start >= 0:
@@ -99,7 +102,10 @@ class Refusing(Handler):
         data = json.dumps(
             {
                 "type": "error",
-                "error": {"type": "authentication_error", "message": "invalid x-api-key"},
+                "error": {
+                    "type": "authentication_error",
+                    "message": "invalid x-api-key",
+                },
             }
         ).encode()
         self.send_response(401)
@@ -150,7 +156,13 @@ def text_of(result):
 
 def workspace(path):
     """A git workspace with one committed file and one uncommitted change."""
-    git = ["git", "-c", "user.name=contract", "-c", "user.email=contract@example.invalid"]
+    git = [
+        "git",
+        "-c",
+        "user.name=contract",
+        "-c",
+        "user.email=contract@example.invalid",
+    ]
     (path / "target.txt").write_text("TARGET_CONTENT\n")
     subprocess.run([*git, "init", "-q"], cwd=path, check=True)
     subprocess.run([*git, "add", "."], cwd=path, check=True)
@@ -159,7 +171,14 @@ def workspace(path):
 
 
 def isolated_flags():
-    mcp = {"mcpServers": {"fixture": {"command": sys.executable, "args": [str(HERE / "custom_mcp.py")]}}}
+    mcp = {
+        "mcpServers": {
+            "fixture": {
+                "command": sys.executable,
+                "args": [str(HERE / "custom_mcp.py")],
+            }
+        }
+    }
     return [
         "--setting-sources",
         "user",
@@ -194,7 +213,16 @@ class Session:
     """One headless Claude Code process in an isolated HOME, driven over stdio."""
 
     def __init__(
-        self, binary, root, name, args, settings=None, refuse=False, env=None, home=None, launch=None
+        self,
+        binary,
+        root,
+        name,
+        args,
+        settings=None,
+        refuse=False,
+        env=None,
+        home=None,
+        launch=None,
     ):
         self.name = name
         self.root = root / name
@@ -213,16 +241,20 @@ class Session:
         if settings is not None:
             (self.config / "settings.json").write_text(json.dumps(settings, indent=2))
         self.server = Server(("127.0.0.1", 0), Refusing if refuse else Handler)
-        self.server.state = {"dir": self.fixture, "actions": Directives(), "requests": []}
+        self.server.state = {
+            "dir": self.fixture,
+            "actions": Directives(),
+            "requests": [],
+        }
         self.serving = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.serving.start()
-        stream = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+        # `args` carries the stream flags: the runner's own (DRIVER) or STREAM.
         if launch:
             # The remote-execution launch already carries its own settings
             # source, plugin, MCP config and disallowed tools.
-            self.argv = [*launch["command"], *stream, "--model", MODEL, *args]
+            self.argv = [*launch["command"], "--model", MODEL, *args]
         else:
-            self.argv = [binary, *stream, "--model", MODEL, *isolated_flags(), *args]
+            self.argv = [binary, "--model", MODEL, *isolated_flags(), *args]
         environment = {
             **fixture_env(self.home, self.root, self.server.server_port),
             **(launch["env"] if launch else {}),
@@ -322,8 +354,10 @@ class Session:
             {"type": "control_request", "request_id": identifier, "request": request}
         )
         _, answer = self.wait(
-            lambda event: event.get("type") == "control_response"
-            and event["response"].get("request_id") == identifier,
+            lambda event: (
+                event.get("type") == "control_response"
+                and event["response"].get("request_id") == identifier
+            ),
             timeout,
             mark,
         )
@@ -399,7 +433,11 @@ def controls(binary, root):
     session = Session(binary, root, "controls", DRIVER)
     try:
         answer = session.control({"subtype": "initialize"})
-        yield ("initialize is answered", answer.get("subtype") == "success", json.dumps(answer)[:160])
+        yield (
+            "initialize is answered",
+            answer.get("subtype") == "success",
+            json.dumps(answer)[:160],
+        )
         session.user("hello")
         session.wait(is_("result"), 60)
         target = session.workspace / "target.txt"
@@ -417,10 +455,16 @@ def controls(binary, root):
                 None,
             ),
             "apply_flag_settings": (
-                {"subtype": "apply_flag_settings", "settings": {"alwaysThinkingEnabled": False}},
+                {
+                    "subtype": "apply_flag_settings",
+                    "settings": {"alwaysThinkingEnabled": False},
+                },
                 None,
             ),
-            "rename_session": ({"subtype": "rename_session", "title": "Contract"}, None),
+            "rename_session": (
+                {"subtype": "rename_session", "title": "Contract"},
+                None,
+            ),
             "file_suggestions": (
                 {"subtype": "file_suggestions", "query": ""},
                 lambda body: {"path": "target.txt"} in body.get("suggestions", []),
@@ -433,13 +477,21 @@ def controls(binary, root):
                 {"subtype": "get_workspace_diff"},
                 lambda body: body["diff"]["stats"]["filesCount"] == 1,
             ),
-            "get_context_usage": ({"subtype": "get_context_usage", "detail": "summary"}, None),
+            "get_context_usage": (
+                {"subtype": "get_context_usage", "detail": "summary"},
+                None,
+            ),
             "get_usage": ({"subtype": "get_usage", "skip_behaviors": True}, None),
             "mcp_status": (
                 {"subtype": "mcp_status"},
-                lambda body: [server["status"] for server in body["mcpServers"]] == ["connected"],
+                lambda body: (
+                    [server["status"] for server in body["mcpServers"]] == ["connected"]
+                ),
             ),
-            "mcp_reconnect": ({"subtype": "mcp_reconnect", "serverName": "fixture"}, None),
+            "mcp_reconnect": (
+                {"subtype": "mcp_reconnect", "serverName": "fixture"},
+                None,
+            ),
         }
         for subtype, (request, check) in expected.items():
             answer = session.control(request)
@@ -450,7 +502,9 @@ def controls(binary, root):
                 except (KeyError, TypeError):
                     holds = False
             yield (f"control {subtype} succeeds", holds, json.dumps(answer)[:200])
-        answer = session.control({"subtype": "set_permission_mode", "mode": "bypassPermissions"})
+        answer = session.control(
+            {"subtype": "set_permission_mode", "mode": "bypassPermissions"}
+        )
         yield (
             "set_permission_mode can return to bypassPermissions",
             (answer.get("response") or {}).get("mode") == "bypassPermissions",
@@ -486,14 +540,28 @@ def background(binary, root, kind):
                     description="sleeper",
                     subagent_type="general-purpose",
                     run_in_background=False,
-                    prompt=do("Bash", command="sleep 12; echo SUB_DONE", description="sub sleep", timeout=120000),
+                    prompt=do(
+                        "Bash",
+                        command="sleep 12; echo SUB_DONE",
+                        description="sub sleep",
+                        timeout=120000,
+                    ),
                 )
             )
             task_type = "local_agent"
         else:
-            session.user(do("Bash", command="sleep 12; echo SLEEP_DONE", description="long sleep", timeout=120000))
+            session.user(
+                do(
+                    "Bash",
+                    command="sleep 12; echo SLEEP_DONE",
+                    description="long sleep",
+                    timeout=120000,
+                )
+            )
             task_type = "local_bash"
-        _, started = session.wait(is_("system", "task_started", task_type=task_type), 60)
+        _, started = session.wait(
+            is_("system", "task_started", task_type=task_type), 60
+        )
         if not started:
             yield (f"a foreground {kind} starts as a task", False, "no task_started")
             return
@@ -506,19 +574,26 @@ def background(binary, root, kind):
         time.sleep(2)
         by_id = kind != "bash-all"
         if by_id:
-            wrong = session.control({"subtype": "background_tasks", "tool_use_id": "toolu_wrong"})
+            wrong = session.control(
+                {"subtype": "background_tasks", "tool_use_id": "toolu_wrong"}
+            )
             yield (
                 "background_tasks for an unknown tool_use_id backgrounds nothing",
                 (wrong.get("response") or {}).get("backgrounded") is False,
                 json.dumps(wrong)[:160],
             )
         mark = len(session.events)
-        request = {"subtype": "background_tasks", **({"tool_use_id": tool} if by_id else {})}
+        request = {
+            "subtype": "background_tasks",
+            **({"tool_use_id": tool} if by_id else {}),
+        }
         answer = session.control(request)
         yield (
             f"background_tasks {'by tool_use_id' if by_id else 'without an id'} is accepted",
             answer.get("subtype") == "success"
-            and (not by_id or (answer.get("response") or {}).get("backgrounded") is True),
+            and (
+                not by_id or (answer.get("response") or {}).get("backgrounded") is True
+            ),
             json.dumps(answer)[:160],
         )
         moved, _ = session.wait(task_patched(task, "is_backgrounded", True), 10, mark)
@@ -535,7 +610,9 @@ def background(binary, root, kind):
             ended is not None and finished is not None and ended < finished,
             f"result at {ended}, task completed at {finished}",
         )
-        noted, notification = session.wait(is_("system", "task_notification", task_id=task), 30, mark)
+        noted, notification = session.wait(
+            is_("system", "task_notification", task_id=task), 30, mark
+        )
         yield (
             "the finished task is announced with task_notification for its tool_use_id",
             notification is not None
@@ -565,7 +642,9 @@ def subagents(binary, root):
                 prompt=do("Bash", command="echo CHILD_RAN", description="child echo"),
             )
         )
-        _, started = session.wait(is_("system", "task_started", task_type="local_agent"), 60)
+        _, started = session.wait(
+            is_("system", "task_started", task_type="local_agent"), 60
+        )
         yield (
             "an Agent call without run_in_background starts backgrounded",
             bool(started) and started.get("is_backgrounded") is True,
@@ -599,7 +678,9 @@ def subagents(binary, root):
             f"{len(child_lines)} child message(s) on stdout",
         )
         directory = session_dir(session)
-        transcript = directory / "subagents" / f"agent-{agent}.jsonl" if directory else None
+        transcript = (
+            directory / "subagents" / f"agent-{agent}.jsonl" if directory else None
+        )
         found = transcript is not None and transcript.exists()
         yield (
             "the child's transcript is subagents/agent-<agentId>.jsonl beside a .meta.json",
@@ -613,20 +694,35 @@ def subagents(binary, root):
             "await agent('Reply done', { label: 'one' })\n"
         )
         mark = session.user(do("Workflow", script=script))
-        _, workflow = session.wait(is_("system", "task_started", task_type="local_workflow"), 60, mark)
+        _, workflow = session.wait(
+            is_("system", "task_started", task_type="local_workflow"), 60, mark
+        )
         if workflow is None:
             _, workflow = session.wait(is_("system", "task_started"), 1, mark)
         if workflow:
-            session.wait(is_("system", "task_notification", task_id=workflow["task_id"]), 60, mark)
-        files = sorted(
-            str(path.relative_to(directory))
-            for path in (directory / "subagents" / "workflows").glob("wf_*/**/*")
-            if path.is_file()
-        ) if directory else []
+            session.wait(
+                is_("system", "task_notification", task_id=workflow["task_id"]),
+                60,
+                mark,
+            )
+        files = (
+            sorted(
+                str(path.relative_to(directory))
+                for path in (directory / "subagents" / "workflows").glob("wf_*/**/*")
+                if path.is_file()
+            )
+            if directory
+            else []
+        )
         yield (
             "a workflow's agents are under subagents/workflows/wf_*/",
-            any(Path(name).name.startswith("agent-") and name.endswith(".jsonl") for name in files),
-            json.dumps({"task": workflow and workflow.get("task_type"), "files": files})[:300],
+            any(
+                Path(name).name.startswith("agent-") and name.endswith(".jsonl")
+                for name in files
+            ),
+            json.dumps(
+                {"task": workflow and workflow.get("task_type"), "files": files}
+            )[:300],
         )
     finally:
         session.stop()
@@ -634,9 +730,11 @@ def subagents(binary, root):
 
 def steering(binary, root):
     """A message the user sends while a tool is running."""
-    session = Session(binary, root, "steering", [*DRIVER, "--replay-user-messages"])
+    session = Session(binary, root, "steering", DRIVER)
     try:
-        session.user(do("Bash", command="sleep 6; echo FIRST_DONE", description="sleep"))
+        session.user(
+            do("Bash", command="sleep 6; echo FIRST_DONE", description="sleep")
+        )
         started, _ = session.wait(is_("system", "task_started"), 60)
         time.sleep(1)
         sent = session.user("STEER_MARKER also note this")
@@ -654,16 +752,20 @@ def steering(binary, root):
             delivered[0][:200] if delivered else "not delivered",
         )
         tool_result, _ = session.wait(
-            lambda event: event.get("type") == "user"
-            and not event.get("isReplay")
-            and any(block.get("type") == "tool_result" for block in blocks(event)),
+            lambda event: (
+                event.get("type") == "user"
+                and not event.get("isReplay")
+                and any(block.get("type") == "tool_result" for block in blocks(event))
+            ),
             1,
             sent,
         )
         replay, _ = session.wait(
-            lambda event: event.get("type") == "user"
-            and event.get("isReplay")
-            and "STEER_MARKER" in json.dumps(event.get("message")),
+            lambda event: (
+                event.get("type") == "user"
+                and event.get("isReplay")
+                and "STEER_MARKER" in json.dumps(event.get("message"))
+            ),
             1,
             sent,
         )
@@ -681,10 +783,14 @@ def stopping(binary, root):
     session = Session(binary, root, "stopping", DRIVER)
     try:
         session.control({"subtype": "initialize"})
-        mark = session.user(do("Bash", command="sleep 30; echo NOT_STOPPED", description="to stop"))
+        mark = session.user(
+            do("Bash", command="sleep 30; echo NOT_STOPPED", description="to stop")
+        )
         _, started = session.wait(is_("system", "task_started"), 60, mark)
         time.sleep(1)
-        answer = session.control({"subtype": "stop_task", "task_id": started["task_id"]})
+        answer = session.control(
+            {"subtype": "stop_task", "task_id": started["task_id"]}
+        )
         _, result = session.wait(is_("result"), 20, mark)
         killed = [
             block
@@ -700,9 +806,17 @@ def stopping(binary, root):
             and killed[-1].get("is_error") is True
             and bool(result)
             and result.get("is_error") is False,
-            json.dumps({"tool_result": killed[-1:], "result": result and result.get("subtype")})[:240],
+            json.dumps(
+                {"tool_result": killed[-1:], "result": result and result.get("subtype")}
+            )[:240],
         )
-        mark = session.user(do("Bash", command="sleep 30; echo NOT_INTERRUPTED", description="to interrupt"))
+        mark = session.user(
+            do(
+                "Bash",
+                command="sleep 30; echo NOT_INTERRUPTED",
+                description="to interrupt",
+            )
+        )
         session.wait(is_("system", "task_started"), 60, mark)
         time.sleep(1)
         answer = session.control({"subtype": "interrupt"})
@@ -713,14 +827,23 @@ def stopping(binary, root):
             and bool(result)
             and result.get("is_error") is True
             and result.get("subtype") == "error_during_execution",
-            json.dumps(result and {key: result.get(key) for key in ("subtype", "is_error")}),
+            json.dumps(
+                result and {key: result.get(key) for key in ("subtype", "is_error")}
+            ),
         )
         mark = session.user(
-            do("Bash", command="sleep 30; echo NOT_STOPPED", description="background", run_in_background=True)
+            do(
+                "Bash",
+                command="sleep 30; echo NOT_STOPPED",
+                description="background",
+                run_in_background=True,
+            )
         )
         _, started = session.wait(is_("system", "task_started"), 60, mark)
         session.wait(is_("result"), 20, mark)
-        answer = session.control({"subtype": "stop_task", "task_id": started["task_id"]})
+        answer = session.control(
+            {"subtype": "stop_task", "task_id": started["task_id"]}
+        )
         _, notification = session.wait(
             is_("system", "task_notification", task_id=started["task_id"]), 10, mark
         )
@@ -737,7 +860,14 @@ def stopping(binary, root):
 
 def hooks(binary, root):
     """Hooks the platform keeps for context injection still fire in -p mode."""
-    names = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+    names = [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "SessionEnd",
+    ]
     log = root / "hooks" / "fired.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     settings = {
@@ -745,7 +875,9 @@ def hooks(binary, root):
             name: [
                 {
                     **({"matcher": "*"} if "ToolUse" in name else {}),
-                    "hooks": [{"type": "command", "command": f"echo {name} >> '{log}'"}],
+                    "hooks": [
+                        {"type": "command", "command": f"echo {name} >> '{log}'"}
+                    ],
                 }
             ]
             for name in names
@@ -767,75 +899,19 @@ def hooks(binary, root):
         session.stop()
 
 
-def questions(binary, root):
-    """Ordinary tools run unattended; AskUserQuestion alone reaches the driver."""
-    session = Session(binary, root, "questions", DRIVER)
-    try:
-        answer = session.control({"subtype": "initialize"})
-        yield (
-            "the driver's flags start the session in bypassPermissions",
-            (answer.get("response") or {}).get("current_permission_mode") == "bypassPermissions",
-            json.dumps((answer.get("response") or {}).get("current_permission_mode")),
-        )
-        protected = session.workspace / ".claude" / "settings.json"
-        mark = 0
-        for prompt in (
-            do("Bash", command="touch touched.txt && echo TOUCHED", description="touch"),
-            do("Write", file_path=str(protected), content="{}"),
-        ):
-            mark = session.user(prompt)
-            session.wait(lambda event: event.get("type") in ("result", "control_request"), 60, mark)
-        asked = [event for event in session.events if event.get("type") == "control_request"]
-        yield (
-            "Bash and a write under .claude/ run without any permission request",
-            not asked and (session.workspace / "touched.txt").exists() and protected.exists(),
-            f"{len(asked)} control_request(s)",
-        )
-        mark = session.user(do("AskUserQuestion", **QUESTION))
-        _, request = session.wait(
-            lambda event: event.get("type") in ("result", "control_request"), 60, mark
-        )
-        body = (request or {}).get("request") or {}
-        yield (
-            "AskUserQuestion arrives as can_use_tool needing a person",
-            body.get("subtype") == "can_use_tool"
-            and body.get("tool_name") == "AskUserQuestion"
-            and body.get("requires_user_interaction") is True
-            and body.get("input", {}).get("questions") == QUESTION["questions"],
-            json.dumps(body)[:240],
-        )
-        if body.get("subtype") != "can_use_tool":
-            return
-        session.answer(
-            request["request_id"],
-            {
-                "behavior": "allow",
-                "updatedInput": {**body["input"], "answers": {"Which color?": "Blue"}},
-            },
-        )
-        session.wait(is_("result"), 60, mark)
-        seen = [
-            text_of(result)
-            for request in session.requests()
-            for result in last_tool_results(request)
-            if result.get("tool_use_id") == body.get("tool_use_id")
-        ]
-        yield (
-            "allow with updatedInput.answers gives the model the answer",
-            bool(seen) and '"Which color?"="Blue"' in seen[0],
-            seen[0][:200] if seen else "no tool_result",
-        )
-    finally:
-        session.stop()
-
-
 def skipping(binary, root):
     """Why the driver cannot use --dangerously-skip-permissions on its own."""
-    session = Session(binary, root, "skipping", ["--dangerously-skip-permissions"])
+    session = Session(
+        binary, root, "skipping", [*STREAM, "--dangerously-skip-permissions"]
+    )
     try:
         session.user("hello")
         session.wait(is_("result"), 60)
-        tools = [tool["name"] for tool in session.requests()[0].get("tools", [])] if session.requests() else []
+        tools = (
+            [tool["name"] for tool in session.requests()[0].get("tools", [])]
+            if session.requests()
+            else []
+        )
         yield (
             "without a prompt tool, AskUserQuestion is not offered to the model",
             bool(tools) and "AskUserQuestion" not in tools,
@@ -851,19 +927,30 @@ def lifetime(binary, root):
     marker = f"contract-lifetime-{os.getpid()}-{time.monotonic_ns()}"
     try:
         session.user(
-            do("Bash", command=f"sleep 40; echo {marker}", description="background", run_in_background=True)
+            do(
+                "Bash",
+                command=f"sleep 40; echo {marker}",
+                description="background",
+                run_in_background=True,
+            )
         )
         ended, result = session.wait(is_("result"), 60)
         yield (
             "a completed turn is one result with is_error false",
-            bool(result) and result.get("subtype") == "success" and result.get("is_error") is False,
-            json.dumps(result and {key: result.get(key) for key in ("subtype", "is_error")}),
+            bool(result)
+            and result.get("subtype") == "success"
+            and result.get("is_error") is False,
+            json.dumps(
+                result and {key: result.get(key) for key in ("subtype", "is_error")}
+            ),
         )
         time.sleep(2)
         usage = session.control({"subtype": "get_usage", "skip_behaviors": True})
         mark = session.user("second turn")
         second, _ = session.wait(is_("result"), 60, mark)
-        running = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split()
+        running = subprocess.run(
+            ["pgrep", "-f", marker], capture_output=True, text=True
+        ).stdout.split()
         yield (
             "after result the process keeps reading stdin and the background task keeps running",
             session.process.poll() is None
@@ -879,7 +966,9 @@ def lifetime(binary, root):
         except subprocess.TimeoutExpired:
             code = None
         time.sleep(1)
-        left = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split()
+        left = subprocess.run(
+            ["pgrep", "-f", marker], capture_output=True, text=True
+        ).stdout.split()
         yield (
             "closing stdin exits the process and kills its background tasks",
             code == 0 and not left,
@@ -887,7 +976,9 @@ def lifetime(binary, root):
         )
     finally:
         session.stop()
-        for pid in subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split():
+        for pid in subprocess.run(
+            ["pgrep", "-f", marker], capture_output=True, text=True
+        ).stdout.split():
             try:
                 os.kill(int(pid), signal.SIGKILL)
             except ProcessLookupError:
@@ -902,7 +993,12 @@ def refused(binary, root):
     each message looks like.
     """
     session = Session(
-        binary, root, "refused", DRIVER, refuse=True, env={"CLAUDE_CODE_MAX_RETRIES": "1"}
+        binary,
+        root,
+        "refused",
+        DRIVER,
+        refuse=True,
+        env={"CLAUDE_CODE_MAX_RETRIES": "1"},
     )
     try:
         session.user("hello")
@@ -912,7 +1008,13 @@ def refused(binary, root):
             bool(retry)
             and retry.get("error_status") == 401
             and retry.get("error") == "authentication_failed",
-            json.dumps(retry and {key: retry.get(key) for key in ("attempt", "max_retries", "error_status", "error")}),
+            json.dumps(
+                retry
+                and {
+                    key: retry.get(key)
+                    for key in ("attempt", "max_retries", "error_status", "error")
+                }
+            ),
         )
         _, result = session.wait(is_("result"), 60)
         _, assistant = session.wait(is_("assistant"), 1)
@@ -924,13 +1026,19 @@ def refused(binary, root):
             and result.get("terminal_reason") == "api_error",
             json.dumps(
                 result
-                and {key: result.get(key) for key in ("subtype", "is_error", "terminal_reason", "result")}
+                and {
+                    key: result.get(key)
+                    for key in ("subtype", "is_error", "terminal_reason", "result")
+                }
             )[:300],
         )
         yield (
             "the assistant message before it carries the error kind",
             bool(assistant) and assistant.get("error") == "authentication_failed",
-            json.dumps(assistant and {"error": assistant.get("error"), "content": blocks(assistant)})[:300],
+            json.dumps(
+                assistant
+                and {"error": assistant.get("error"), "content": blocks(assistant)}
+            )[:300],
         )
         yield (
             "the process survives a refused turn",
@@ -962,33 +1070,58 @@ class Interactive:
         # The first-run dialogs an operator would click through once.
         gates.update(hasCompletedOnboarding=True, autoUpdates=False)
         # Keyed by the resolved path: on macOS the temp dir is under a symlink.
-        gates.setdefault("projects", {}).setdefault(str(self.workspace.resolve()), {}).update(
-            hasTrustDialogAccepted=True, hasCompletedProjectOnboarding=True
-        )
+        gates.setdefault("projects", {}).setdefault(
+            str(self.workspace.resolve()), {}
+        ).update(hasTrustDialogAccepted=True, hasCompletedProjectOnboarding=True)
         gate.write_text(json.dumps(gates))
         self.server = Server(("127.0.0.1", 0), Handler)
-        self.server.state = {"dir": self.fixture, "actions": Directives(), "requests": []}
+        self.server.state = {
+            "dir": self.fixture,
+            "actions": Directives(),
+            "requests": [],
+        }
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         environment = fixture_env(self.home, self.root, self.server.server_port)
         (self.root / "tmp").mkdir(exist_ok=True)
         # An API key in the environment makes the interactive CLI ask whether
         # to use it; a bearer token does not.
         environment.pop("ANTHROPIC_API_KEY")
-        environment.update(ANTHROPIC_AUTH_TOKEN="fixture-not-a-real-key", TERM="xterm-256color")
+        environment.update(
+            ANTHROPIC_AUTH_TOKEN="fixture-not-a-real-key", TERM="xterm-256color"
+        )
         argv = [binary, "--model", MODEL, *isolated_flags(), *args]
-        command = shlex.join(["env", "-i", *(f"{k}={v}" for k, v in environment.items()), *argv])
+        command = shlex.join(
+            ["env", "-i", *(f"{k}={v}" for k, v in environment.items()), *argv]
+        )
         subprocess.run(
-            [*self.tmux, "new-session", "-d", "-s", "cli", "-x", "160", "-y", "50", "-c", str(self.workspace), command],
+            [
+                *self.tmux,
+                "new-session",
+                "-d",
+                "-s",
+                "cli",
+                "-x",
+                "160",
+                "-y",
+                "50",
+                "-c",
+                str(self.workspace),
+                command,
+            ],
             check=True,
             capture_output=True,
         )
         self.socket = subprocess.run(
-            [*self.tmux, "display-message", "-p", "#{socket_path}"], capture_output=True, text=True
+            [*self.tmux, "display-message", "-p", "#{socket_path}"],
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def screen(self):
         return subprocess.run(
-            [*self.tmux, "capture-pane", "-p", "-t", "cli", "-S", "-200"], capture_output=True, text=True
+            [*self.tmux, "capture-pane", "-p", "-t", "cli", "-S", "-200"],
+            capture_output=True,
+            text=True,
         ).stdout
 
     def say(self, text, timeout=60):
@@ -1000,7 +1133,10 @@ class Interactive:
         time.sleep(0.5)
         subprocess.run([*self.tmux, "send-keys", "-t", "cli", "Enter"], check=True)
         while time.monotonic() < deadline:
-            if any(text in json.dumps(request.get("messages")) for request in self.server.state["requests"]):
+            if any(
+                text in json.dumps(request.get("messages"))
+                for request in self.server.state["requests"]
+            ):
                 return True
             time.sleep(0.2)
         return False
@@ -1049,24 +1185,34 @@ def resuming(binary, root):
         asked and written,
         f"asked={asked}, transcript={transcript_path(home, first)}",
     )
-    session = Session(binary, root, "resuming-headless", [*DRIVER, "--resume", first], home=home)
+    session = Session(
+        binary, root, "resuming-headless", [*DRIVER, "--resume", first], home=home
+    )
     try:
         mark = session.user("HEADLESS_AFTER second turn")
         _, init = session.wait(is_("system", "init"), 30, mark)
         _, result = session.wait(is_("result"), 60, mark)
         request = next(
-            (r for r in session.requests() if "HEADLESS_AFTER" in json.dumps(r.get("messages"))), None
+            (
+                r
+                for r in session.requests()
+                if "HEADLESS_AFTER" in json.dumps(r.get("messages"))
+            ),
+            None,
         )
         history = json.dumps(request.get("messages")) if request else ""
         yield (
             "-p --resume continues an interactive session: the model sees its history",
-            bool(result) and result.get("is_error") is False and "INTERACTIVE_MARKER" in history,
+            bool(result)
+            and result.get("is_error") is False
+            and "INTERACTIVE_MARKER" in history,
             f"init session {init and init.get('session_id')}, history carries the interactive turn: "
             f"{'INTERACTIVE_MARKER' in history}",
         )
         yield (
             "-p --resume keeps the session id and appends to the same transcript",
-            bool(init) and init.get("session_id") == first
+            bool(init)
+            and init.get("session_id") == first
             and settled(transcript_path(home, first), "HEADLESS_AFTER", 5),
             f"resumed {first}, init reports {init and init.get('session_id')}",
         )
@@ -1076,7 +1222,9 @@ def resuming(binary, root):
         session.stop()
 
     second = str(uuid.uuid4())
-    session = Session(binary, root, "resuming-origin", [*DRIVER, "--session-id", second], home=home)
+    session = Session(
+        binary, root, "resuming-origin", [*DRIVER, "--session-id", second], home=home
+    )
     try:
         mark = session.user("HEADLESS_MARKER first turn")
         session.wait(is_("result"), 60, mark)
@@ -1088,7 +1236,11 @@ def resuming(binary, root):
     try:
         asked = cli.say("INTERACTIVE_AFTER second turn")
         request = next(
-            (r for r in cli.server.state["requests"] if "INTERACTIVE_AFTER" in json.dumps(r.get("messages"))),
+            (
+                r
+                for r in cli.server.state["requests"]
+                if "INTERACTIVE_AFTER" in json.dumps(r.get("messages"))
+            ),
             None,
         )
         history = json.dumps(request.get("messages")) if request else ""
@@ -1105,7 +1257,11 @@ def resuming(binary, root):
 def probe(session, mark):
     """The kinds of event on stdout since `mark`, for a receipt."""
     return [
-        {key: event.get(key) for key in ("type", "subtype", "parent_tool_use_id") if event.get(key)}
+        {
+            key: event.get(key)
+            for key in ("type", "subtype", "parent_tool_use_id")
+            if event.get(key)
+        }
         for event in session.events[mark:]
     ]
 
@@ -1114,7 +1270,9 @@ def reloading(binary, root):
     """/reload-plugins and /reload-skills written to stdin as user messages."""
     plugin = root / "reloading-plugin"
     (plugin / ".claude-plugin").mkdir(parents=True)
-    (plugin / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "contract-plugin", "version": "0.1.0"}))
+    (plugin / ".claude-plugin/plugin.json").write_text(
+        json.dumps({"name": "contract-plugin", "version": "0.1.0"})
+    )
     session = Session(binary, root, "reloading", [*DRIVER, "--plugin-dir", str(plugin)])
     try:
         mark = session.user("hello")
@@ -1132,16 +1290,27 @@ def reloading(binary, root):
         ):
             created.parent.mkdir(parents=True)
             name = created.parent.name
-            created.write_text(f"---\nname: {name}\ndescription: Added after launch {name.upper()}_SENTINEL.\n---\nBody.\n")
+            created.write_text(
+                f"---\nname: {name}\ndescription: Added after launch {name.upper()}_SENTINEL.\n---\nBody.\n"
+            )
             before = len(session.requests())
             mark = session.user(f"/reload-{kind}")
             _, result = session.wait(is_("result"), 60, mark)
-            asked = [r for r in session.requests()[before:] if f"/reload-{kind}" in json.dumps(r.get("messages"))]
+            asked = [
+                r
+                for r in session.requests()[before:]
+                if f"/reload-{kind}" in json.dumps(r.get("messages"))
+            ]
             yield (
                 f"/reload-{kind} runs as a command: a result, and the model is not asked about it",
                 bool(result) and result.get("is_error") is False and not asked,
-                json.dumps({"result": result and result.get("result"), "model_requests": len(session.requests()) - before,
-                            "events": probe(session, mark)})[:600],
+                json.dumps(
+                    {
+                        "result": result and result.get("result"),
+                        "model_requests": len(session.requests()) - before,
+                        "events": probe(session, mark),
+                    }
+                )[:600],
             )
             mark = session.user("after reload")
             session.wait(is_("result"), 60, mark)
@@ -1160,14 +1329,27 @@ def nesting(binary, root):
     session = Session(binary, root, "nesting", DRIVER)
     try:
         inner = do(
-            "Agent", description="grandchild", subagent_type="general-purpose", run_in_background=False,
+            "Agent",
+            description="grandchild",
+            subagent_type="general-purpose",
+            run_in_background=False,
             prompt=do("Bash", command="echo NESTED_RAN", description="grandchild echo"),
         )
         mark = session.user(
-            do("Agent", description="child", subagent_type="general-purpose", run_in_background=False, prompt=inner)
+            do(
+                "Agent",
+                description="child",
+                subagent_type="general-purpose",
+                run_in_background=False,
+                prompt=inner,
+            )
         )
         session.wait(is_("result"), 90, mark)
-        started = [e for e in session.events[mark:] if is_("system", "task_started", task_type="local_agent")(e)]
+        started = [
+            e
+            for e in session.events[mark:]
+            if is_("system", "task_started", task_type="local_agent")(e)
+        ]
         outer = started[0]["tool_use_id"] if started else None
         calls = [
             b["id"]
@@ -1180,11 +1362,19 @@ def nesting(binary, root):
         yield (
             "a subagent's Agent call starts a nested agent, reported as task_started for that call",
             len(started) == 2 and nested is not None,
-            json.dumps([{k: e.get(k) for k in ("task_id", "tool_use_id")} for e in started]),
+            json.dumps(
+                [{k: e.get(k) for k in ("task_id", "tool_use_id")} for e in started]
+            ),
         )
         if nested is None:
             return
-        tags = sorted({e["parent_tool_use_id"] for e in session.events[mark:] if e.get("parent_tool_use_id")})
+        tags = sorted(
+            {
+                e["parent_tool_use_id"]
+                for e in session.events[mark:]
+                if e.get("parent_tool_use_id")
+            }
+        )
         yield (
             "a nested agent's own messages are not on stdout: only its parent subagent's are",
             tags == [outer],
@@ -1202,11 +1392,19 @@ def nesting(binary, root):
             f"await agent({json.dumps(do('Bash', command='echo WORKFLOW_RAN', description='workflow echo'))}, {{ label: 'one' }})\n"
         )
         mark = session.user(do("Workflow", script=script))
-        _, workflow = session.wait(is_("system", "task_started", task_type="local_workflow"), 60, mark)
+        _, workflow = session.wait(
+            is_("system", "task_started", task_type="local_workflow"), 60, mark
+        )
         if not workflow:
-            yield ("a workflow starts as a local_workflow task", False, "no task_started")
+            yield (
+                "a workflow starts as a local_workflow task",
+                False,
+                "no task_started",
+            )
             return
-        session.wait(is_("system", "task_notification", task_id=workflow["task_id"]), 90, mark)
+        session.wait(
+            is_("system", "task_notification", task_id=workflow["task_id"]), 90, mark
+        )
         session.wait(is_("result"), 30, len(session.events) - 1)
         tagged = [e for e in session.events[mark:] if e.get("parent_tool_use_id")]
         agents = {
@@ -1219,7 +1417,9 @@ def nesting(binary, root):
         files = [
             path
             for agent in agents
-            for path in (directory / "subagents" / "workflows").glob(f"wf_*/agent-{agent}.jsonl")
+            for path in (directory / "subagents" / "workflows").glob(
+                f"wf_*/agent-{agent}.jsonl"
+            )
         ]
         yield (
             "a workflow agent's messages are not on stdout",
@@ -1229,86 +1429,46 @@ def nesting(binary, root):
         yield (
             "task_progress names each workflow agent's agentId, whose transcript is wf_*/agent-<agentId>.jsonl",
             len(agents) == 1 and len(files) == 1 and ran_in(files[0], "WORKFLOW_RAN"),
-            json.dumps({"agents": sorted(agents), "files": [str(f.relative_to(directory)) for f in files]}),
-        )
-    finally:
-        session.stop()
-
-
-def refusal(session, mark):
-    """The error tool_results of a turn, whether it asked the driver, and how it ended."""
-    _, result = session.wait(is_("result"), 90, mark)
-    asked = [e for e in session.events[mark:] if e.get("type") == "control_request"]
-    errors = [text_of(r) for r in results_since(session, mark) if r.get("is_error")]
-    return result, asked, errors
-
-
-def asking(binary, root):
-    """AskUserQuestion from inside a subagent, and with the tool disallowed."""
-    ask = do("AskUserQuestion", **QUESTION)
-    from_subagent = do(
-        "Agent", description="asker", subagent_type="general-purpose", run_in_background=False, prompt=ask
-    )
-    session = Session(binary, root, "asking", DRIVER)
-    try:
-        result, asked, errors = refusal(session, session.user(from_subagent))
-        yield (
-            "with the stdio prompt tool, AskUserQuestion inside a subagent is refused as unavailable; no can_use_tool",
-            not asked
-            and len(errors) == 1
-            and "AskUserQuestion is not available inside subagents" in errors[0]
-            and bool(result) and result.get("is_error") is False,
-            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
-        )
-    finally:
-        session.stop()
-    session = Session(binary, root, "asking-disallowed", [*UNATTENDED])
-    try:
-        mark = session.user(ask)
-        result, asked, errors = refusal(session, mark)
-        offered = [tool["name"] for tool in session.requests()[0].get("tools", [])] if session.requests() else []
-        yield (
-            "with AskUserQuestion disallowed it is not offered, and a call to it is a tool error the turn survives",
-            "AskUserQuestion" not in offered
-            and bool(offered)
-            and not asked
-            and len(errors) == 1
-            and "No such tool available: AskUserQuestion" in errors[0]
-            and bool(result) and result.get("is_error") is False,
-            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
-        )
-        result, asked, errors = refusal(session, session.user(from_subagent))
-        yield (
-            "with AskUserQuestion disallowed, a subagent's call to it is a tool error the turn survives",
-            not asked
-            and len(errors) == 1
-            and "No such tool available: AskUserQuestion" in errors[0]
-            and bool(result) and result.get("is_error") is False,
-            json.dumps({"control_requests": len(asked), "errors": [e[:160] for e in errors]}),
+            json.dumps(
+                {
+                    "agents": sorted(agents),
+                    "files": [str(f.relative_to(directory)) for f in files],
+                }
+            ),
         )
     finally:
         session.stop()
 
 
 def unattended(binary, root):
-    """bypassPermissions with no prompt tool: no tool ever asks the driver."""
-    session = Session(binary, root, "unattended", UNATTENDED)
+    """The runner's flags: bypassPermissions with no prompt tool, so no tool ever asks the driver."""
+    session = Session(binary, root, "unattended", DRIVER)
     try:
         protected = session.workspace / ".claude" / "settings.json"
         outside = session.home / "outside.txt"
         calls = {
-            "Bash": do("Bash", command="touch touched.txt && echo TOUCHED", description="touch"),
+            "Bash": do(
+                "Bash", command="touch touched.txt && echo TOUCHED", description="touch"
+            ),
             "Write under .claude/": do("Write", file_path=str(protected), content="{}"),
-            "Write outside the workspace": do("Write", file_path=str(outside), content="OUTSIDE"),
+            "Write outside the workspace": do(
+                "Write", file_path=str(outside), content="OUTSIDE"
+            ),
             # WebFetch upgrades http to https, so against the plain-HTTP fixture
             # it fails on the TLS handshake — after deciding it may run.
-            "WebFetch": do("WebFetch", url=f"http://127.0.0.1:{session.server.server_port}/", prompt="Summarise"),
+            "WebFetch": do(
+                "WebFetch",
+                url=f"http://127.0.0.1:{session.server.server_port}/",
+                prompt="Summarise",
+            ),
             "an MCP tool": do("mcp__fixture__echo", message="MCP_MARKER"),
         }
         outputs = {}
         for name, prompt in calls.items():
             mark = session.user(prompt)
-            session.wait(lambda e: e.get("type") in ("result", "control_request"), 60, mark)
+            session.wait(
+                lambda e: e.get("type") in ("result", "control_request"), 60, mark
+            )
             outputs[name] = " ".join(text_of(r) for r in results_since(session, mark))
         asked = [e for e in session.events if e.get("type") == "control_request"]
         yield (
@@ -1317,16 +1477,20 @@ def unattended(binary, root):
             f"{len(asked)} control_request(s)",
         )
         ran = {
-            "Bash": "TOUCHED" in outputs["Bash"] and (session.workspace / "touched.txt").exists(),
+            "Bash": "TOUCHED" in outputs["Bash"]
+            and (session.workspace / "touched.txt").exists(),
             "Write under .claude/": protected.exists(),
             "Write outside the workspace": outside.exists(),
-            "WebFetch": "ssl" in outputs["WebFetch"].lower() and "permission" not in outputs["WebFetch"].lower(),
+            "WebFetch": "ssl" in outputs["WebFetch"].lower()
+            and "permission" not in outputs["WebFetch"].lower(),
             "an MCP tool": "MCP_MARKER" in outputs["an MCP tool"],
         }
         yield (
             "and each of them ran rather than being refused",
             all(ran.values()),
-            json.dumps({name: [ok, outputs[name][:100]] for name, ok in ran.items()})[:700],
+            json.dumps({name: [ok, outputs[name][:100]] for name, ok in ran.items()})[
+                :700
+            ],
         )
     finally:
         session.stop()
@@ -1345,14 +1509,19 @@ def turn_bytes(session, command):
     results = [
         (session.offsets[i] - session.offsets[i - 1], session.events[i])
         for i in range(mark, end + 1)
-        if session.events[i].get("type") == "user" and any(b.get("type") == "tool_result" for b in blocks(session.events[i]))
+        if session.events[i].get("type") == "user"
+        and any(b.get("type") == "tool_result" for b in blocks(session.events[i]))
     ]
     size, event = results[-1] if results else (0, {})
     return {
         "turn": session.offsets[end] - before,
         "tool_result_event": size,
-        "tool_use_result": event.get("tool_use_result") if isinstance(event.get("tool_use_result"), dict) else {},
-        "model": sum(len(text_of(r)) for r in last_tool_results(session.requests()[-1])) if session.requests() else 0,
+        "tool_use_result": event.get("tool_use_result")
+        if isinstance(event.get("tool_use_result"), dict)
+        else {},
+        "model": sum(len(text_of(r)) for r in last_tool_results(session.requests()[-1]))
+        if session.requests()
+        else 0,
     }
 
 
@@ -1360,7 +1529,9 @@ def summary(measured):
     return {
         "turn_bytes": measured["turn"],
         "tool_result_event_bytes": measured["tool_result_event"],
-        "tool_use_result.stdout_chars": len(measured["tool_use_result"].get("stdout", "")),
+        "tool_use_result.stdout_chars": len(
+            measured["tool_use_result"].get("stdout", "")
+        ),
         "persistedOutputSize": measured["tool_use_result"].get("persistedOutputSize"),
         "model_chars": measured["model"],
     }
@@ -1378,7 +1549,9 @@ def journal(binary, root):
             and len(large["tool_use_result"].get("stdout", "")) <= 32_000
             and large["tool_use_result"].get("persistedOutputSize") == 1_000_000
             and large["turn"] < 64_000,
-            json.dumps({"small": small and summary(small), "1MB": large and summary(large)}),
+            json.dumps(
+                {"small": small and summary(small), "1MB": large and summary(large)}
+            ),
         )
     finally:
         session.stop()
@@ -1415,7 +1588,9 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
         path.mkdir(parents=True)
     saved = {key: os.environ.get(key) for key in ("HOME", "CLAUDE_CONFIG_DIR")}
     # The executor's `claude mcp serve` inherits this process's environment.
-    os.environ.update(HOME=str(executor_home), CLAUDE_CONFIG_DIR=str(executor_home / ".claude"))
+    os.environ.update(
+        HOME=str(executor_home), CLAUDE_CONFIG_DIR=str(executor_home / ".claude")
+    )
     try:
         executor, target = acceptance.setup(
             folder, argparse.Namespace(ssh=None, claude=binary), "http://127.0.0.1:9"
@@ -1428,10 +1603,14 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
                 os.environ[key] = value
     release = acceptance.execution_release
     release.mount_state = lambda path: release.MOUNT_LIVE
-    acceptance.client.PINNED_VERSION = (
-        subprocess.run([binary, "--version"], capture_output=True, text=True).stdout.split()[0]
+    acceptance.client.PINNED_VERSION = subprocess.run(
+        [binary, "--version"], capture_output=True, text=True
+    ).stdout.split()[0]
+    settings = (
+        {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": trusted_hook}]}]}}
+        if trusted_hook
+        else None
     )
-    settings = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": trusted_hook}]}]}} if trusted_hook else None
     launch = acceptance.client.prepare(
         home / "session",
         target,
@@ -1444,11 +1623,15 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
         # Added after prepare, so the shell prefix does not know it: the
         # prefix sends any command it does not know to the executor.
         written = json.loads((home / ".claude" / "settings.json").read_text())
-        written["hooks"].setdefault("Stop", []).append({"hooks": [{"type": "command", "command": untrusted_hook}]})
+        written["hooks"].setdefault("Stop", []).append(
+            {"hooks": [{"type": "command", "command": untrusted_hook}]}
+        )
         (home / ".claude" / "settings.json").write_text(json.dumps(written))
     session = Session(binary, root, name, args, launch=launch, env=env)
     session.executor = executor
-    session.remote_workspace = Path(json.loads((home / "session" / "execution.json").read_text())["workspace"])
+    session.remote_workspace = Path(
+        json.loads((home / "session" / "execution.json").read_text())["workspace"]
+    )
     session.execution = home / "session" / "execution.json"
     return session
 
@@ -1462,17 +1645,28 @@ def functionhooks(binary, root):
     """The remote-execution plugin under -p: tools, the shell prefix and the guard."""
     trusted = root / "functionhooks" / "trusted-hook.txt"
     session = remote(
-        binary, root, "functionhooks", DRIVER,
+        binary,
+        root,
+        "functionhooks",
+        DRIVER,
         trusted_hook=f"printf CENTRAL > {shlex.quote(str(trusted))}",
         untrusted_hook="printf PREFIXED > prefix-marker.txt",
     )
     try:
-        mark = session.user(do("Bash", command='printf "%s " "$EXECUTION_ENV"; pwd', description="where"))
+        mark = session.user(
+            do(
+                "Bash",
+                command='printf "%s " "$EXECUTION_ENV"; pwd',
+                description="where",
+            )
+        )
         session.wait(is_("result"), 60, mark)
         out = [text_of(r) for r in results_since(session, mark)]
         yield (
             "function hooks: Bash runs on the executor, in its workspace and environment",
-            len(out) == 1 and "REMOTE_COMMAND_ENV" in out[0] and str(session.remote_workspace) in out[0],
+            len(out) == 1
+            and "REMOTE_COMMAND_ENV" in out[0]
+            and str(session.remote_workspace) in out[0],
             json.dumps(out)[:200],
         )
         target = session.workspace / "new.txt"
@@ -1481,12 +1675,20 @@ def functionhooks(binary, root):
         written = session.remote_workspace / "new.txt"
         yield (
             "function hooks: Write lands in the executor workspace, not the central one",
-            written.exists() and written.read_text() == "REMOTE_WRITE" and not target.exists(),
+            written.exists()
+            and written.read_text() == "REMOTE_WRITE"
+            and not target.exists(),
             f"executor {written.exists()}, central {target.exists()}",
         )
         # Stop hooks run after the result; give them a moment.
         deadline = time.monotonic() + 10
-        while not (trusted.exists() and (session.remote_workspace / "prefix-marker.txt").exists()) and time.monotonic() < deadline:
+        while (
+            not (
+                trusted.exists()
+                and (session.remote_workspace / "prefix-marker.txt").exists()
+            )
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.2)
         yield (
             "CLAUDE_CODE_SHELL_PREFIX: a platform hook runs centrally, any other command on the executor",
@@ -1501,7 +1703,13 @@ def functionhooks(binary, root):
         stop_remote(session)
     # Without the function hook the native tool reaches the harness, and the
     # PreToolUse guard prepare installs is what stops it running centrally.
-    session = remote(binary, root, "functionhooks-off", DRIVER, env={"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "0"})
+    session = remote(
+        binary,
+        root,
+        "functionhooks-off",
+        DRIVER,
+        env={"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "0"},
+    )
     try:
         target = session.workspace / "new.txt"
         mark = session.user(do("Write", file_path=str(target), content="CENTRAL_WRITE"))
@@ -1511,11 +1719,18 @@ def functionhooks(binary, root):
             "the PreToolUse guard denies a native call the plugin did not take, and the turn goes on",
             len(out) == 1
             and out[0].get("is_error") is True
-            and "the remote execution plugin did not handle this call" in text_of(out[0])
+            and "the remote execution plugin did not handle this call"
+            in text_of(out[0])
             and not target.exists()
             and not (session.remote_workspace / "new.txt").exists()
-            and bool(result) and result.get("is_error") is False,
-            json.dumps({"tool_result": text_of(out[0])[:200] if out else None, "result": result and result.get("is_error")}),
+            and bool(result)
+            and result.get("is_error") is False,
+            json.dumps(
+                {
+                    "tool_result": text_of(out[0])[:200] if out else None,
+                    "result": result and result.get("is_error"),
+                }
+            ),
         )
     finally:
         stop_remote(session)
@@ -1530,22 +1745,50 @@ def remotebackground(binary, root):
     """
     session = remote(binary, root, "remotebackground", DRIVER)
     try:
-        mark = session.user(do("Bash", command="sleep 12; echo REMOTE_SLEPT", description="remote sleep", timeout=120000))
-        _, call = session.wait(
-            lambda e: e.get("type") == "assistant" and any(b.get("type") == "tool_use" for b in blocks(e)), 60, mark
+        mark = session.user(
+            do(
+                "Bash",
+                command="sleep 12; echo REMOTE_SLEPT",
+                description="remote sleep",
+                timeout=120000,
+            )
         )
-        tool = [b["id"] for b in blocks(call) if b.get("type") == "tool_use"][0] if call else None
+        _, call = session.wait(
+            lambda e: (
+                e.get("type") == "assistant"
+                and any(b.get("type") == "tool_use" for b in blocks(e))
+            ),
+            60,
+            mark,
+        )
+        tool = (
+            [b["id"] for b in blocks(call) if b.get("type") == "tool_use"][0]
+            if call
+            else None
+        )
         time.sleep(3)
         started = [e for e in session.events[mark:] if is_("system", "task_started")(e)]
         answer = session.control({"subtype": "background_tasks", "tool_use_id": tool})
         ended, _ = session.wait(is_("result"), 3, mark)
         yield (
             "a Bash the plugin routes is no harness task: no task_started, and stdin background_tasks moves nothing",
-            not started and (answer.get("response") or {}).get("backgrounded") is False and ended is None,
-            json.dumps({"task_started": len(started), "answer": answer.get("response"), "result": ended}),
+            not started
+            and (answer.get("response") or {}).get("backgrounded") is False
+            and ended is None,
+            json.dumps(
+                {
+                    "task_started": len(started),
+                    "answer": answer.get("response"),
+                    "result": ended,
+                }
+            ),
         )
-        executor = __import__("acceptance").client.RemoteClient(json.loads(session.execution.read_text()))
-        tasks = executor.control({"subtype": "background_tasks", "tool_use_id": tool})["tasks"]
+        executor = __import__("acceptance").client.RemoteClient(
+            json.loads(session.execution.read_text())
+        )
+        tasks = executor.control({"subtype": "background_tasks", "tool_use_id": tool})[
+            "tasks"
+        ]
         ended, _ = session.wait(is_("result"), 10, mark)
         out = [text_of(r) for r in results_since(session, mark)]
         running = [t for t in tasks if t.get("request_id") == tool]
@@ -1555,19 +1798,35 @@ def remotebackground(binary, root):
             and len(running) == 1
             and running[0]["status"] == "running"
             and len(out) == 1
-            and f"Command running in background with ID: {running[0]['task_id']}" in out[0],
+            and f"Command running in background with ID: {running[0]['task_id']}"
+            in out[0],
             json.dumps({"result": ended, "tool_result": out[0][:120] if out else None}),
         )
         mark = len(session.events)
         noted, _ = session.wait(
-            lambda e: is_("system", "task_notification")(e) or is_("result")(e), 20, mark
+            lambda e: is_("system", "task_notification")(e) or is_("result")(e),
+            20,
+            mark,
         )
-        done = executor.control({"subtype": "task_output", "task_id": running[0]["task_id"]}) if running else {}
+        done = (
+            executor.control(
+                {"subtype": "task_output", "task_id": running[0]["task_id"]}
+            )
+            if running
+            else {}
+        )
         yield (
             "its completion is not announced on stdout: no task_notification and no follow-up turn "
             "(drop this check if it starts to be)",
-            noted is None and done.get("status") == "completed" and "REMOTE_SLEPT" in done.get("stdout", ""),
-            json.dumps({"announced at": noted, "executor": {k: done.get(k) for k in ("status", "exit_code")}}),
+            noted is None
+            and done.get("status") == "completed"
+            and "REMOTE_SLEPT" in done.get("stdout", ""),
+            json.dumps(
+                {
+                    "announced at": noted,
+                    "executor": {k: done.get(k) for k in ("status", "exit_code")},
+                }
+            ),
         )
     finally:
         stop_remote(session)
@@ -1582,14 +1841,12 @@ SCENARIOS = {
     "steering": steering,
     "stopping": stopping,
     "hooks": hooks,
-    "questions": questions,
     "skipping": skipping,
     "lifetime": lifetime,
     "refused": refused,
     "resuming": resuming,
     "reloading": reloading,
     "nesting": nesting,
-    "asking": asking,
     "unattended": unattended,
     "journal": journal,
     "functionhooks": functionhooks,
@@ -1601,22 +1858,43 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", required=True, help="the claude binary to check")
     parser.add_argument("--output", type=Path, help="where to write the receipt")
-    parser.add_argument("--only", nargs="*", choices=sorted(SCENARIOS), help="run only these")
+    parser.add_argument(
+        "--only", nargs="*", choices=sorted(SCENARIOS), help="run only these"
+    )
     arguments = parser.parse_args()
     binary = str(Path(arguments.claude).resolve())
 
-    version = subprocess.run([binary, "--version"], capture_output=True, text=True).stdout.strip()
+    version = subprocess.run(
+        [binary, "--version"], capture_output=True, text=True
+    ).stdout.strip()
     root = Path(tempfile.mkdtemp(prefix="headless-contract-"))
     results = []
     try:
         for name in arguments.only or SCENARIOS:
             try:
                 for check, holds, observed in SCENARIOS[name](binary, root):
-                    results.append({"scenario": name, "check": check, "holds": bool(holds), "observed": observed})
-                    print(f"{'PASS' if holds else 'FAIL'}  [{name}] {check}\n      {observed}", flush=True)
+                    results.append(
+                        {
+                            "scenario": name,
+                            "check": check,
+                            "holds": bool(holds),
+                            "observed": observed,
+                        }
+                    )
+                    print(
+                        f"{'PASS' if holds else 'FAIL'}  [{name}] {check}\n      {observed}",
+                        flush=True,
+                    )
             except Exception:
                 trace = traceback.format_exc()
-                results.append({"scenario": name, "check": "the scenario ran", "holds": False, "observed": trace})
+                results.append(
+                    {
+                        "scenario": name,
+                        "check": "the scenario ran",
+                        "holds": False,
+                        "observed": trace,
+                    }
+                )
                 print(f"FAIL  [{name}] the scenario ran\n{trace}", flush=True)
         receipt = {
             "claude": binary,
@@ -1626,12 +1904,16 @@ def main():
         }
         if arguments.output:
             arguments.output.mkdir(parents=True, exist_ok=True)
-            (arguments.output / "headless-contract.json").write_text(json.dumps(receipt, indent=2))
+            (arguments.output / "headless-contract.json").write_text(
+                json.dumps(receipt, indent=2)
+            )
             for scenario in root.iterdir():
                 for name in ("transcript.jsonl", "stderr.log", "screen.txt"):
                     if (scenario / name).exists():
                         (arguments.output / scenario.name).mkdir(exist_ok=True)
-                        shutil.copy(scenario / name, arguments.output / scenario.name / name)
+                        shutil.copy(
+                            scenario / name, arguments.output / scenario.name / name
+                        )
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print(f"\n{version}: {sum(r['holds'] for r in results)}/{len(results)} held")

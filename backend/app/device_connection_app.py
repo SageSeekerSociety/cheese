@@ -1,7 +1,6 @@
 """Stable process that owns device and terminal WebSockets across backend releases."""
 
 import asyncio
-import base64
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -30,15 +29,12 @@ _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False
 _active_rpc_calls = 0
 _RPC_METHODS = {
-    "await_call",
     "adopt_screen",
     "call_executor",
-    "call_screen",
     "close_screen",
     "exec",
     "list_screens",
     "open_screen",
-    "put_file",
     "reassert_screen",
     "update_screen",
 }
@@ -90,11 +86,7 @@ async def release_drain(
     _authorize(x_device_connection_secret)
     global _release_draining
     pending = any(
-        device.exec_pending
-        or device.call_pending
-        or device.file_pending
-        or device.executor_pending
-        or device.session_pending
+        device.exec_pending or device.executor_pending or device.session_pending
         for device in device_hub._devices.values()
     )
     if (
@@ -144,8 +136,6 @@ async def snapshot(
         "device_pending": {
             device_id: {
                 "exec": len(device.exec_pending),
-                "call": len(device.call_pending),
-                "file": len(device.file_pending),
                 "executor": len(device.executor_pending),
                 "session": len(device.session_pending),
             }
@@ -279,8 +269,6 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
     if name == "update_screen":
         result = device_hub.update_screen(**_uuids(body, "resource_id"))
         return screen_to_json(result)
-    if name == "put_file":
-        body["data"] = base64.b64decode(body["data"], validate=True)
     method = getattr(device_hub, name)
     return await method(**body)
 

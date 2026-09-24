@@ -29,6 +29,11 @@ from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
 
 
+def _said(message: dict) -> str:
+    content = message["message"]["content"]
+    return content if isinstance(content, str) else content[0]["text"]
+
+
 class SlowScreen(StubChannel):
     """A session that works for minutes: it takes the prompt and answers only
     once released."""
@@ -41,31 +46,33 @@ class SlowScreen(StubChannel):
         self.delivered: list[str] = []
         self._answering: set[asyncio.Task] = set()
 
-    async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
+    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+        prompt = _said(message)
         if self._answering:
-            # A write into a session that is already working: the transport
-            # cannot tell it from the one that opened the turn, and neither can
-            # a real screen.
+            # A write into a session that is already working: it reads it at
+            # its next tool boundary, and echoes it only then.
             self.delivered.append(prompt)
-            return True
+            return
         self.runs += 1
         self.last_prompt = prompt
+        self.acknowledges(topic_id, prompt)
         self.started.set()
-        task = asyncio.get_running_loop().create_task(self._answer(screen))
+        task = asyncio.get_running_loop().create_task(self._answer(topic_id))
         self._answering.add(task)
         task.add_done_callback(self._answering.discard)
-        return True
 
     async def _answer(self, topic_id: uuid.UUID) -> None:
         await self.release.wait()
-        self.starts(topic_id, session_id="s1")
+        self.says(topic_id, "done")
         self.stops(topic_id, "done", session_id="s1")
 
 
 class InstantScreen(StubChannel):
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-        del prompt, reply
+        del reply
         self.starts(topic_id, session_id="s-affinity")
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, "done")
         self.stops(topic_id, "done", session_id="s-affinity")
 
 
@@ -243,20 +250,13 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 
 
 class ProcessNotesScreen(StubChannel):
+    """A turn that narrates as it works: two assistant messages, then the end."""
+
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
-        self.hook(
-            topic_id,
-            hook_event_name="MessageDisplay",
-            delta="Read workspace files.",
-            _eid="process",
-        )
-        self.hook(
-            topic_id,
-            hook_event_name="MessageDisplay",
-            delta="The plan is ready.",
-            _eid="display",
-        )
+        self.says(topic_id, "Read workspace files.")
+        self.says(topic_id, "The plan is ready.")
         self.stops(topic_id, "The plan is ready.", session_id="s-notes")
 
 
@@ -524,9 +524,10 @@ async def test_first_turn_materializes_inherited_compute_before_running(
 ):
     """Changing a later default must never move an existing topic session."""
     factory = business_db_factory  # type: ignore[attr-defined]
+    screen = InstantScreen()
     svc = ChatService(
         session_factory=factory,
-        compute=stub_compute(InstantScreen()),
+        compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -551,6 +552,8 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         topic = await TopicRepository(session).get(topic_id)
         assert topic is not None
         assert topic.compute_profile == InstantScreen.name
+        # The room's own Cheese: its conversation is kept under the agent,
+        # whichever seat the session authored under.
         resumes_by = await AgentSessionService(session).resume_token(
             topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
@@ -624,10 +627,8 @@ class FailingScreen(StubChannel):
         self._text = text
         self._code = failure_code
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del screen, prompt, images
+    async def ensure(self, session, opening):
+        del session, opening
         raise ScreenSetupError(self._text, failure_code=self._code)
 
 
@@ -697,13 +698,11 @@ class StorageFullScreen(StubChannel):
 
     def __init__(self) -> None:
         super().__init__()
-        self.calls = 0
+        self.attempts = 0
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del screen, prompt, images
-        self.calls += 1
+    async def ensure(self, session, opening):
+        del session, opening
+        self.attempts += 1
         raise ScreenSetupError(
             "tmux 后端启动失败：[Errno 28] No space left on device: "
             "'/home/nictheboy/cheese-workspaces/private/SKILL.md'"
@@ -737,7 +736,7 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(
         pass
     await finish_turn(svc, topic_id)
 
-    assert agent.calls == 1
+    assert agent.attempts == 1
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     block = next(b for b in rows if b.kind == BlockKind.event)
@@ -819,8 +818,8 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     assert provider.runs == 1
 
     # The receipt is still the consumed boundary (#539 decision A) — but the
-    # write-accept alone must NOT stamp: until the session's UserPromptSubmit
-    # comes back, the message stays pending so a session death replays it.
+    # write-accept alone must NOT stamp: until the session echoes it back, the
+    # message stays pending so a session death replays it.
     async with factory() as session:
         history = await BlockRepository(session).list_for_topic(topic_id)
     merged = [b for b in history if b.content == "等一下，先别跑"]
@@ -870,12 +869,12 @@ async def test_failed_live_delivery_reports_error_then_queues_work(
             # still working or it does not happen at all.
             self.tried = asyncio.Event()
 
-        async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
-            if self._answering:
-                self.delivered.append(prompt)
+        async def call(self, handle, method: str, params: dict) -> dict:
+            if method == "steer":
+                self.delivered.append(params["text"])
                 self.tried.set()
                 raise ScreenSetupError("屏幕没了")
-            return await super().send_prompt(screen, prompt)
+            return await super().call(handle, method, params)
 
     provider = _NoScreen()
     svc = ChatService(
@@ -1006,7 +1005,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     business_db_factory, tmp_path, monkeypatch
 ):
     """#539 decision A: deliver() trusts the transport's write-accept, so the
-    consumed stamp moves to the UserPromptSubmit receipt. Before the receipt
+    consumed stamp moves to the session echoing it back. Before that receipt
     the message stays pending (a session death replays it — 宁可重复不可丢失);
     only a receipt carrying the SAME injected text stamps it."""
     from app.domain.block.models import consumed_turn

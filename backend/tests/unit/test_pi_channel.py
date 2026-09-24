@@ -73,7 +73,6 @@ class Hub:
             agent_handle=kw["agent_handle"],
             project_id=kw["project_id"],
             topic_id=kw["topic_id"],
-            hook_key=kw.get("hook_key", ""),
         )
         self.opened.append(screen)
         return screen
