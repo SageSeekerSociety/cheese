@@ -420,7 +420,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 // 查都看不见。
 test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await login(page);
+  await apiLogin(page);
   await openFirstProject(page);
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
