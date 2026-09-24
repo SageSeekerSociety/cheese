@@ -10,6 +10,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.agent.runtime import announce_stale
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.schemas import (
@@ -64,6 +65,10 @@ async def create_milestone(
     out = MilestoneOut.model_validate(milestone).model_dump(mode="json")
     if key is not None:
         await idem.record_result(db, key, out)
+    if milestone.source_topic_id is not None:
+        # `source_topic_id` references `topics`, so it is a room.
+        await db.commit()
+        await announce_stale(milestone.source_topic_id, "milestone")
     return ok(out)
 
 
