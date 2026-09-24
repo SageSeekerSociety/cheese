@@ -340,7 +340,7 @@ onMounted(async () => {
 }
 
 .my-work__inner {
-  max-width: 1140px;
+  max-width: var(--page-w-wide);
   margin: 0 auto;
   padding: 24px 16px 96px;
 }
@@ -369,7 +369,7 @@ onMounted(async () => {
 }
 
 .my-work__group-title {
-  margin: 28px 0 4px;
+  margin: 24px 0 4px;
 }
 
 .my-work__card {
@@ -377,12 +377,12 @@ onMounted(async () => {
   border-color: var(--line);
   background: var(--surface);
   transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease;
+    border-color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 
 .my-work__card:hover {
-  border-color: var(--accent);
+  border-color: var(--line-2);
   background: var(--fill);
 }
 
@@ -395,8 +395,9 @@ onMounted(async () => {
 }
 
 .my-work__space {
-  font-size: 12.5px;
-  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
 }
 
 /* 一行就是一行：长出来就截断。手机上一张卡的高度必须是可预期的。 */
@@ -405,7 +406,8 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: var(--lh-12);
   color: var(--muted);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -417,10 +419,11 @@ onMounted(async () => {
   align-items: center;
 }
 
-/* 「等我」是这一行里唯一要人动的东西，所以只有它拿到强调色。 */
+/* 「待处理」是这一行里唯一要人动的东西，所以只有它加重。不用琥珀：琥珀留给
+   这一页唯一的主操作，每张卡上一处就是满屏的琥珀。 */
 .my-work__part--awaiting {
-  color: var(--accent-ink);
-  font-weight: 500;
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .my-work__summary {
@@ -431,6 +434,6 @@ onMounted(async () => {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: var(--lh-13);
 }
 </style>
