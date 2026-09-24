@@ -2,7 +2,7 @@
   <v-container class="teams-container" fluid>
     <v-row>
       <v-col cols="12">
-        <v-card flat class="my-teams-card" title="我的小队">
+        <v-card flat class="my-teams-card" title="我的团队">
           <template #text>
             <!-- 加载状态 -->
             <div v-if="isLoadingMyTeams" class="d-flex flex-column align-center py-5">
@@ -22,7 +22,7 @@
                 <v-icon icon="mdi-alert-circle" size="large" color="error"></v-icon>
               </v-avatar>
               <p class="text-subtitle-1 font-weight-medium text-center mb-1">加载失败</p>
-              <p class="text-body-2 text-center text-medium-emphasis mb-3">无法获取小队信息</p>
+              <p class="text-body-2 text-center text-medium-emphasis mb-3">无法获取团队信息</p>
               <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" @click="fetchMyTeams">
                 重新加载
               </v-btn>
@@ -33,8 +33,8 @@
               <v-avatar size="50" class="mb-3 bg-surface-light">
                 <v-icon icon="mdi-account-group" size="large" color="on-surface-variant"></v-icon>
               </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">还没有加入小队</p>
-              <p class="text-body-2 text-center text-medium-emphasis">创建一个新的小队，或者加入一个现有的小队</p>
+              <p class="text-subtitle-1 font-weight-medium text-center mb-1">还没有加入团队</p>
+              <p class="text-body-2 text-center text-medium-emphasis">创建一个新的团队，或者加入一个现有的团队</p>
             </div>
 
             <!-- 小队列表 -->
@@ -46,7 +46,7 @@
                 v-for="team in myTeams"
                 :key="team.id"
                 :title="team.name"
-                :subtitle="team.personal ? '只有你自己的小队 · 个人项目与个人算力都在这里' : team.intro"
+                :subtitle="team.personal ? '只有你自己的团队 · 个人项目与个人算力都在这里' : team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"

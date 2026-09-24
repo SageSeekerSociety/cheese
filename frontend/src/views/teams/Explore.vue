@@ -20,7 +20,7 @@
                 v-model="searchQuery"
                 autocomplete="off"
                 density="comfortable"
-                placeholder="搜索小队 ID 或名称..."
+                placeholder="搜索团队 ID 或名称..."
                 prepend-inner-icon="mdi-magnify"
                 rounded="lg"
                 variant="outlined"
@@ -58,7 +58,7 @@
                   <v-icon icon="mdi-magnify" color="primary" class="mr-2"></v-icon>
                   <span class="text-h6">搜索结果</span>
                   <v-spacer></v-spacer>
-                  <span class="text-body-2 text-medium-emphasis">找到 {{ searchTeamsData.length }} 个小队</span>
+                  <span class="text-body-2 text-medium-emphasis">找到 {{ searchTeamsData.length }} 个团队</span>
                 </div>
                 <v-list class="team-list pa-0" rounded="md">
                   <v-list-item
@@ -79,7 +79,7 @@
             <!-- 搜索空状态 -->
             <div v-if="hasSearched && !searchTeamsData.length" class="empty-state-container py-6">
               <v-empty-state
-                title="没有找到小队"
+                title="没有找到团队"
                 text="请尝试其他搜索词"
                 icon="mdi-account-search-outline"
                 class="custom-empty-state"
@@ -101,7 +101,7 @@
                   </v-avatar>
                   <p class="text-subtitle-2 font-weight-medium text-center mb-1">敬请期待</p>
                   <p class="text-body-2 text-medium-emphasis mb-0">
-                    即将支持小队管理员发布招募信息，让更多人发现并加入你的小队。
+                    即将支持团队管理员发布招募信息，让更多人发现并加入你的团队。
                   </p>
                 </div>
               </div>

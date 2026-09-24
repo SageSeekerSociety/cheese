@@ -6,7 +6,7 @@ export default {
   path: '/teams',
   component: RouterPassThrough,
   meta: {
-    title: '小队',
+    title: '团队',
   },
   children: [
     {

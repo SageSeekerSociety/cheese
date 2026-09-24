@@ -433,7 +433,7 @@ async function submitInvite() {
                 v-if="m.source === 'team' && m.team_handle"
                 :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
                 class="t-meta"
-                >来自小队 · 在小队中管理</router-link
+                >来自团队 · 在团队中管理</router-link
               >
             </div>
             <v-spacer />

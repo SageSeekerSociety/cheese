@@ -99,10 +99,10 @@ describe('LeaveProjectDialog 的被拒语义', () => {
   })
 
   it('重开弹窗时旧错误清掉——上一次的拒绝不该还挂着', async () => {
-    leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属小队，退出项目要在小队里操作'))
+    leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属团队，退出项目要在团队里操作'))
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
-    expect(await screen.findByText(/退出项目要在小队里操作/)).toBeTruthy()
+    expect(await screen.findByText(/退出项目要在团队里操作/)).toBeTruthy()
 
     // 取消 = 关掉；reopen = 再点进来。watch(open) 那一行该在这一刻把旧错误清了。
     // （关掉之后 overlay 可能还挂着上一帧的节点，所以「清掉」断言放在**重开之后**
@@ -110,13 +110,13 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
     await fireEvent.click(screen.getByTestId('reopen'))
     expect(await screen.findByRole('button', { name: '退出' })).toBeTruthy()
-    expect(screen.queryByText(/退出项目要在小队里操作/)).toBeNull()
+    expect(screen.queryByText(/退出项目要在团队里操作/)).toBeNull()
 
     // 这一次的拒绝是新的那句，不是上一次的残留。
     leaveProject.mockRejectedValue(new Error('Not a member'))
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     expect(await screen.findByText(/Not a member/)).toBeTruthy()
-    expect(screen.queryByText(/退出项目要在小队里操作/)).toBeNull()
+    expect(screen.queryByText(/退出项目要在团队里操作/)).toBeNull()
   })
 
   it('确认之后退出、刷新、回首页；刷新失败也照样走', async () => {

@@ -172,7 +172,7 @@ class MemberService:
         # 该被这条挡成 409。放在任何写之前：这条路不许写任何数据。
         if await self._access_comes_from_the_team(project, user_handle):
             raise ConflictError(
-                "TA 的访问来自所属小队，移出要在小队里操作"
+                "TA 的访问来自所属团队，移出要在团队里操作"
                 "——删掉名册这一行 TA 还在项目里"
             )
         # 顺带把他在本项目各话题里的席位也撤掉。从前只删这一行，人就从名册上消失了
@@ -254,7 +254,7 @@ class MemberService:
             raise ForbiddenError("项目所有者不能退出项目，需要先把项目转让给别人")
         if await self._access_comes_from_the_team(project, actor.handle, actor.user_id):
             raise ConflictError(
-                "你对这个项目的访问来自所属小队，退出项目要在小队里操作"
+                "你对这个项目的访问来自所属团队，退出项目要在团队里操作"
             )
         member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
         revoked = await TopicMemberService(self._session).revoke_project_seats(

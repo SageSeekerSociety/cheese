@@ -178,7 +178,7 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
 )
 
 it.each([
-  { locale: 'zh-CN' as const, spaces: '空间', teams: '小队' },
+  { locale: 'zh-CN' as const, spaces: '空间', teams: '团队' },
   { locale: 'en' as const, spaces: 'Spaces', teams: 'Teams' },
 ])('mounts $locale home tabs into the mobile bar after a breakpoint change', async ({ locale, spaces, teams }) => {
   setLocale(locale)

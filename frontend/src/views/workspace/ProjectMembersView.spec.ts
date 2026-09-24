@@ -264,11 +264,11 @@ describe('成员页', () => {
 
   it('退不掉时把后端那句理由说出来，弹窗不关、人留在原地', async () => {
     meHandle = 'ligan'
-    leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属小队，退出项目要在小队里操作'))
+    leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属团队，退出项目要在团队里操作'))
     const { getByText } = mount()
     await fireEvent.click(getByText('退出项目'))
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
-    expect(await screen.findByText(/退出项目要在小队里操作/)).toBeTruthy()
+    expect(await screen.findByText(/退出项目要在团队里操作/)).toBeTruthy()
     expect(push).not.toHaveBeenCalled()
     // 弹窗**不关**：人还没退成，「取消」和「退出」都还在（老行为是关掉弹窗、把理由
     // 挂到页面顶上那条错误条里；新行为把理由留在弹窗里，因为那句话就是他要的下一步）。

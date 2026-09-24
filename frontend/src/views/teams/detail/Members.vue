@@ -153,7 +153,7 @@
         <div v-if="teamMembers.length === 0" class="text-center py-12">
           <v-icon icon="mdi-account-group" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">暂无成员</h3>
-          <p class="text-body-2 text-medium-emphasis mb-6">邀请成员加入小队，开始协作</p>
+          <p class="text-body-2 text-medium-emphasis mb-6">邀请成员加入团队，开始协作</p>
         </div>
       </v-window-item>
 
@@ -166,7 +166,7 @@
         <v-card v-else-if="joinRequests.length === 0" flat class="text-center py-12">
           <v-icon icon="mdi-account-arrow-right" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">暂无加入申请</h3>
-          <p class="text-body-2 text-medium-emphasis">没有用户申请加入小队</p>
+          <p class="text-body-2 text-medium-emphasis">没有用户申请加入团队</p>
         </v-card>
 
         <v-card v-else flat rounded="lg">
