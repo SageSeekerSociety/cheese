@@ -203,7 +203,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "start"); err != nil {
 				return err
 			}
-			ui.OK("Connected. The server can now open screens on this machine.")
+			ui.OK("Connected. The server can now run work on this machine.")
 			// Say what is true. Without linger this machine hosts until the
 			// session that started it ends, and a success line promising boot
 			// survival would be a lie the owner only catches after a reboot.
