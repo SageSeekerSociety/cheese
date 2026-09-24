@@ -149,6 +149,7 @@ async def patch_admin_feedback(
     body: FeedbackPatch,
     service: FeedbackServiceDep,
     handle: PlatformAdminDep,
+    db: DbSession,
 ) -> dict:
     """改优先级 / 指派人 / 是否安全问题。**不接受 visibility，也不接受 status。**
 
@@ -156,7 +157,9 @@ async def patch_admin_feedback(
     写 —— 从 PATCH 的字段里溜进去的话，就多了一条不写历史的路径。
     """
     row = await service.patch_admin(feedback_id, body, by_handle=handle)
-    return ok(await _detail(service, row, handle=handle))
+    response = ok(await _detail(service, row, handle=handle))
+    await db.commit()
+    return response
 
 
 @router.post("/{feedback_id}/status")
@@ -165,6 +168,7 @@ async def set_admin_feedback_status(
     body: FeedbackStatusIn,
     service: FeedbackServiceDep,
     handle: PlatformAdminDep,
+    db: DbSession,
 ) -> dict:
     """推一个状态。和它那条时间线在同一个事务里落库（`services.set_status`）。
 
@@ -172,7 +176,9 @@ async def set_admin_feedback_status(
     像历史出了 bug。
     """
     row = await service.set_status(feedback_id, body.status, by_handle=handle)
-    return ok(await _detail(service, row, handle=handle))
+    response = ok(await _detail(service, row, handle=handle))
+    await db.commit()
+    return response
 
 
 @router.post("/{feedback_id}/notes")
@@ -181,6 +187,7 @@ async def create_admin_feedback_note(
     body: NoteCreate,
     service: FeedbackServiceDep,
     handle: PlatformAdminDep,
+    db: DbSession,
 ) -> dict:
     """管理员之间的内部备注。只增不改。
 
@@ -189,4 +196,6 @@ async def create_admin_feedback_note(
     """
     await service.note(feedback_id, body.body, author_handle=handle)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=True)
-    return ok(await _detail(service, row, handle=handle))
+    response = ok(await _detail(service, row, handle=handle))
+    await db.commit()
+    return response
