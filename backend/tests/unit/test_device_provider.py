@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import device_provider, place
+from app.domain.agent import device_provider, place, remote_control
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -26,6 +26,7 @@ from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PRO
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
 from app.domain.device.supply import Supply, Visibility
@@ -50,6 +51,15 @@ def _no_device_identity(monkeypatch):
     monkeypatch.setattr(
         "app.domain.topic.services.TopicService.lock_for_execution", active_room
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_control_workflows(monkeypatch):
+    class NoControlSession:
+        async def current(self, *_args):
+            return None
+
+    monkeypatch.setattr(remote_control, "store", lambda: NoControlSession())
 
 
 class FakeHub:
@@ -2096,6 +2106,58 @@ async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
     # And the machine is told what it is, so a backend that restarts can
     # ask the connector rather than guess.
     assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
+
+
+@pytest.mark.anyio
+async def test_config_change_preserves_a_running_background_workflow(monkeypatch):
+    class RunningWorkflow:
+        status = None
+
+        async def current(self, *_args):
+            return {"id": "old-session"}
+
+        async def snapshot(self, _session):
+            return {
+                "tasks": {
+                    "workflow": {
+                        "task_type": "local_workflow",
+                        "subtype": "task_progress",
+                        "status": self.status,
+                        "workflow_progress": [{"state": "done"}, {"state": "progress"}],
+                    }
+                }
+            }
+
+    control = RunningWorkflow()
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = ReuseGateHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(config, launch=None):
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            env={"CHEESE_AGENT_CONFIG": config},
+            launch=launch or ClaudeLaunch(system_prompt=""),
+        )
+
+    first = await ensure("original")
+    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
+        await ensure("edited")
+    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
+        await ensure("edited", PiLaunch(system_prompt="", model="test"))
+    assert hub.closed == []
+    assert hub.opened == [first]
+
+    control.status = "completed"
+    second = await ensure("edited")
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
 
 
 @pytest.mark.anyio

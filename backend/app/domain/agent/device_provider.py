@@ -1476,6 +1476,23 @@ class DeviceChannel(Channel):
         if existing is not None and existing.agent_configuration != configuration:
             # Called between turns, and only now: what a session was started
             # with is not fully known until the harness has been asked.
+            # Inspect the old control session even when the replacement uses a
+            # different harness: an old Claude Code workflow still needs its screen.
+            from app.domain.agent.remote_control import store
+
+            control = store()
+            # An unreadable journal is unknown, never permission to kill work.
+            session = await control.current(str(topic_id), agent_handle)
+            if session is not None:
+                snapshot = await control.snapshot(session)
+                if any(
+                    task.get("task_type") == "local_workflow"
+                    and task.get("status") not in {"completed", "failed", "stopped"}
+                    for task in snapshot["tasks"].values()
+                ):
+                    raise ScreenSetupError(
+                        "后台工作流仍在运行；当前会话已保留，工作流结束后请重试。"
+                    )
             await self._retire_screen(
                 existing, topic_id=topic_id, reason="agent_configuration_changed"
             )
