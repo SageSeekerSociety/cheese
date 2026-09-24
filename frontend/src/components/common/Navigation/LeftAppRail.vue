@@ -183,14 +183,21 @@ const userMenu = useUserMenu()
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
-    // Keep fixed controls aligned with projects when the list has a scrollbar.
-    scrollbar-gutter: stable;
   }
 
+  // 项目多到要滚时，滚动条不画出来（滚轮、触控板照常滚）。画出来就得给它留一条
+  // 宽度：原来三段都 `scrollbar-gutter: stable`，右边常驻 10px 空槽，64px 的栏里
+  // 格子只在左边 54px 里居中，整列往左偏 5px；不留的话，列表一出滚动条，项目
+  // 那一段就和上下两段错开。藏起来，三段就都在整条栏里居中。
   .v-navigation-drawer__content {
     flex: 1;
     min-height: 0;
     padding-block: 8px;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
 
   .app-rail-item {

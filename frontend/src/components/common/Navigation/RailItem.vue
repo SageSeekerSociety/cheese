@@ -7,6 +7,7 @@
     v-if="item.type === 'item'"
     :to="item.to"
     rounded="lg"
+    :border="false"
     class="app-rail-item"
     :aria-label="item.title"
     :class="{
@@ -40,7 +41,7 @@
 
     <template v-if="item.img">
       <!-- project tile: just the colored rounded-square app icon (Discord-style) -->
-      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
+      <v-img :src="item.img" width="48" height="48" class="rounded-lg" cover />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
@@ -245,28 +246,24 @@ function warmDestination() {
 }
 
 // project tiles: the colored rounded-square IS the visual (like the 元思 app
-// icon), floating on the rail with its name below — no grey box around it.
+// icon) and it fills the whole 48px slot — no card box and no gap around it,
+// or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
-  height: auto;
-  min-height: 48px;
-  padding: 3px 0 4px;
-  gap: 3px;
   background-color: transparent;
-  // the amber ring is a box-shadow on the inner 40px avatar; a v-card clips its
-  // content (overflow:hidden) so the ring only showed at the corners. Let it
-  // render fully so the frame is a clean, symmetric square on all 4 sides.
+  // the amber ring is a box-shadow on the avatar; a v-card clips its content
+  // (overflow:hidden) so the ring only showed at the corners. Let it render
+  // fully so the frame is a clean, symmetric square on all 4 sides.
   overflow: visible;
 
-  // the colored avatar IS the tile — never draw a card box behind it (that made
-  // a messy second square around the icon).
   &:hover,
   &[aria-current] {
     background-color: transparent;
   }
 
-  // Selected project reads as selected via an amber ring FRAMING the square —
-  // the 40px avatar keeps a small gap to the ring (box-shadow: 0 spread = the
-  // avatar edge, then a transparent gap, then the 2px amber ring).
+  // Selected project reads as selected via an amber ring FRAMING the square:
+  // a 3px gap in the rail's own colour, then the 2px ring. The gap is --canvas
+  // (the rail sits on `background`), not --surface — on dark those differ and
+  // a surface-coloured gap would draw a second, lighter ring.
   .v-img {
     transition: box-shadow var(--dur-quick) var(--ease-standard);
   }
@@ -275,7 +272,7 @@ function warmDestination() {
     // #F57F17) and correctly lightened to #FFA733 on dark, where the original
     // amber only reaches 3.1:1.
     box-shadow:
-      0 0 0 3px rgb(var(--v-theme-surface)),
+      0 0 0 3px var(--canvas),
       0 0 0 5px rgb(var(--v-theme-primary));
   }
 }
@@ -310,7 +307,8 @@ function warmDestination() {
 .app-rail-item[aria-current]::before {
   content: '';
   position: absolute;
-  left: -10px;
+  /* 格子在 64px 的栏里居中，左边留 8px：-8px 让指示条贴着栏的左边缘。 */
+  left: -8px;
   top: 50%;
   transform: translateY(-50%);
   width: 4px;
