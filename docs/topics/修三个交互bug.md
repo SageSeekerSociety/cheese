@@ -24,7 +24,7 @@
 
 前端一直在监听一个 `state` 帧（<&frontend/src/components/ChatPanel.vue> 的 `case 'state'` → <&frontend/src/views/workspace/TopicView.vue> 的 `handleStateChanged` → `reloadAccept()`），**但后端已经没有任何地方发这个帧了**。`_CHEESE_RESOURCE` 那张表还在、注释还写着「restores mid-turn refresh now cheese runs as Bash」，但结果只被塞进轮末的动作卡，没有实时广播。
 
-**改法**：跑 `cheese <子命令>` 时把 `state` 帧发出去（<&backend/app/domain/agent/chat.py>）。
+**改法**：改动资源的那个 API 处理函数在提交后把 `state` 帧发给房间（<&backend/app/domain/agent/runtime.py> 的 `announce_stale`），不从 agent 的命令文字里猜。
 
 ### ③ 输出重复且顺序颠倒
 

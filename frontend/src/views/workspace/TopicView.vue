@@ -203,8 +203,8 @@ function handleTurnDone() {
   void store.refreshUnread()
 }
 
-// A `cheese <sub>` command changed a platform resource mid-turn (it runs as Bash,
-// so we can't key off a tool name) — refresh the affected panel live (§3.1.1).
+// A platform resource in this room changed (the API handler that changed it
+// sent the frame) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。

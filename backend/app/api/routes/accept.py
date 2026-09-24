@@ -21,7 +21,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.runtime import AgentWorkRunner, announce_stale
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -108,6 +108,7 @@ async def create_accept_card(
     # machine-gate dispatch is retired (cards are never born `pending_gate`
     # any more — see AcceptService.create_card).
     await db.commit()
+    await announce_stale(topic_id, "accept")
     if pr_publish.enabled():
         project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(
@@ -169,6 +170,7 @@ async def describe_card(
         change_body=body.change_body,
     )
     await db.commit()
+    await announce_stale(topic_id, "accept")
     return ok(await AcceptService(db).describe(card))
 
 

@@ -653,16 +653,14 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     return False
 
 
-# A platform-mutating `cheese <sub>` command → which UI panel should refresh live
-# (the doc/decisions/topics/... — restores mid-turn refresh now cheese runs as Bash).
+# A `cheese <sub>` command → the action card 芝士 files for it at the end of the
+# turn (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is
+# the job of the API handler that changed it (`announce_stale`), which knows the
+# change happened whoever called it.
 _CHEESE_RESOURCE = {
-    "doc": "doc",
     "decision": "decision",
     "split": "topics",
-    "conclude": "topics",
     "milestone": "milestone",
-    "accept-request": "accept",
-    "describe": "accept",
     "notify": "notify",
 }
 
@@ -677,8 +675,7 @@ _CHEESE_RESOURCE = {
 # No "accept" entry either, for the same reason: filing a card and correcting
 # one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
-# to them is the same fact told twice, worse. The resource stays in
-# `_CHEESE_RESOURCE` — that is what refreshes the accept panel.
+# to them is the same fact told twice, worse.
 _ACTION_LABEL = {
     "decision": "记录了决策",
     "topics": "更新了这个房间的活",
@@ -855,7 +852,7 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
 
 
 def _cheese_resource(command: str) -> str | None:
-    """Resource hint for a Bash `cheese <sub>` command, else None."""
+    """Which action card a Bash `cheese <sub>` command files, else None."""
     return _CHEESE_RESOURCE.get(cheese_subcommand(command))
 
 
@@ -2493,11 +2490,6 @@ class ChatService:
 
         broker = get_broker()
         frame: dict | None = None
-        # A second frame some events carry: "this panel is now out of date".
-        # Separate from `frame` because it is not the record of what happened
-        # (that is the event block) — it is the instruction to go re-read a
-        # panel, and both have to go out.
-        refresh_frame: dict | None = None
         state = self._hook_work.get((topic_id, turn_id))
         if state is None and platform_unsolicited and proves_output([event]):
             # Nobody fed this session anything and it is producing output anyway
@@ -2598,25 +2590,10 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
                     if state is not None and event.call_id:
                         state.steps[event.call_id] = uuid.UUID(payload["id"])
-                if name in SHELL_TOOLS:
+                if name in SHELL_TOOLS and state is not None:
                     resource = _cheese_resource(str(args.get("command", "")))
-                    if resource is not None:
-                        # Tell the room a panel just went stale, the moment it
-                        # did. Without this the verdict of `cheese accept-request`
-                        # / `cheese doc set` only reaches the screen when the
-                        # reader switches topics or reloads — a card filed while
-                        # someone is watching the conversation simply does not
-                        # appear. The frontend has handled this frame all along
-                        # (ChatPanel `case 'state'` → TopicView.handleStateChanged);
-                        # it was the sender that went missing when cheese moved
-                        # from a tool call to a Bash command.
-                        refresh_frame = {"type": "state", "resource": resource}
-                        if (
-                            state is not None
-                            and resource in _ACTION_LABEL
-                            and resource not in state.actions
-                        ):
-                            state.actions.append(resource)
+                    if resource is not None and resource not in state.actions:
+                        state.actions.append(resource)
         elif isinstance(event, AgentStepFailed):
             # No frame: 现场 rebuilds its timeline when the tab is opened, and
             # this changes a line that is already in it rather than adding one.
@@ -2714,10 +2691,6 @@ class ChatService:
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
-        if refresh_frame is not None:
-            # The room's, always: a panel going stale is a fact about the place
-            # the panel is in, and the worker that made it stale ran there.
-            await broker.publish(str(topic_id), refresh_frame)
         if isinstance(event, AgentResult):
             # 投喂 → Stop is the interval. Closing it HERE, rather than where the
             # turn's own coroutine ends, is what lets a turn survive the backend

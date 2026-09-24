@@ -3,7 +3,6 @@ plain work). The platform rule is deterministic — tool-name prefix or a litera
 `cheese <sub>` word pair in a Bash command — never natural-language guessing."""
 
 from app.domain.agent.chat import (
-    _cheese_resource,
     _format_tool_event,
     _is_platform_tool,
     _tool_event_meta,
@@ -204,9 +203,3 @@ def test_the_platform_step_is_the_one_the_line_shows():
     command = "make && cheese doc set"
     assert _text("Bash", {"command": command}) == "执行命令\ncheese doc set"
     assert _is_platform_tool("Bash", {"command": command})
-
-
-def test_a_doc_written_late_in_a_command_still_refreshes_the_panel():
-    # 这个返回值是「哪个面板过期了」的来源；漏掉它，卡片要等读的人刷新才出现。
-    assert _cheese_resource("make && cheese doc set") == "doc"
-    assert _cheese_resource("GH_TOKEN=$(cheese gh-token) gh pr list") is None
