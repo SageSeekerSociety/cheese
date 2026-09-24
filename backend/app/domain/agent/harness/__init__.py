@@ -666,12 +666,11 @@ HARNESSES: dict[str, Harness] = {
     ),
 }
 
-# Codex 与 pi 今天答不出这四条，所以不在上面（结论 43）。**这是一次产品收缩，不是
-# 一次重构副作用**：它们的适配层原样留在 `agent/harness/codex/` 与
-# `agent/harness/pi/`——契约夹具照跑、行为声明照写、pin 照被守卫管着——只是这套部
-# 署不跑它们，功能矩阵里也不占一列。两个出口里取的是这一个；另一个是给它们各写一
-# 层适配（两家上游都支持多线程），什么时候写出来、什么时候答得出四条，什么时候回
-# 到上面这张表。
+# Codex 与 pi 是 Cheese 要支持的骨架。它们不在上面，只因为还答不出
+# ``SubagentRequirement`` 那四条（结论 43）：``Harness.__post_init__`` 造不出答不
+# 全的条目。它们的适配层在 `agent/harness/codex/` 与 `agent/harness/pi/`，契约夹具
+# 照跑、行为声明照写、pin 照被守卫管着。各自还差什么，见 #1607；答出四条的那一
+# 天回到上面这张表。
 
 
 def harness_name(name: str | None) -> str:
