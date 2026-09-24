@@ -65,7 +65,15 @@
           />
         </AccountField>
 
-        <v-btn block color="primary" size="large" type="submit" class="account-submit" :loading="isSubmitting">
+        <v-btn
+          block
+          color="primary"
+          size="large"
+          type="submit"
+          class="account-submit"
+          :loading="isSubmitting"
+          :disabled="waiting"
+        >
           {{ t('account.signIn.submit') }}
         </v-btn>
       </v-form>
@@ -102,6 +110,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
 import { oauthProviderIcon } from './oauthProvider'
 import { passkeyWrongHostMessage } from './passkeyHost'
@@ -137,6 +146,7 @@ const [username, usernameProps] = defineField('username', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 
 const errorMessage = ref('')
+const { waiting, waitFor } = useAttemptWait()
 const notice = computed(() => signInNotice(route.query.message))
 const webAuthnSupported = browserSupportsWebAuthn()
 const last = lastSignIn()
@@ -196,6 +206,7 @@ function signedIn(method: SignInMethod, accessToken: string, user: User) {
 }
 
 const login = handleSubmit(async (value) => {
+  if (waiting.value) return
   errorMessage.value = ''
   try {
     const { data } = await UserApi.login(value)
@@ -209,7 +220,8 @@ const login = handleSubmit(async (value) => {
     }
     signedIn('password', data.accessToken!, data.user!)
   } catch (e) {
-    errorMessage.value = requestErrorMessage(e, t('account.signIn.failed'))
+    errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
+    waitFor(e)
   }
 })
 

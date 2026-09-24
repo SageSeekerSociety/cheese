@@ -10,6 +10,7 @@ import VerifyEmail from './VerifyEmail.vue'
 
 import { setLocale } from '@/i18n'
 import { UserApi } from '@/network/api/users'
+import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
 
@@ -172,6 +173,29 @@ describe('verifying the email', () => {
         expect.objectContaining({ consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' } })
       )
     )
+  })
+
+  it('states the wait after too many wrong codes, and holds the form back until it has passed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    await startSignup()
+    vi.mocked(UserApi.register).mockRejectedValue(
+      new BusinessError('Too many failed attempts from this network', 403, {
+        name: 'ForbiddenError',
+        message: '',
+        data: { reason: 'too_many_attempts', retryAfterSeconds: 90 },
+      })
+    )
+    const { view } = await open()
+    await fireEvent.update(view.getByLabelText('Password'), 'Secret#123')
+
+    await typeCode(view.container)
+
+    expect(await view.findByText('Too many attempts. Try again in 2 minutes.')).toBeTruthy()
+    const finish = view.getByRole('button', { name: 'Finish' })
+    expect(finish.hasAttribute('disabled')).toBe(true)
+
+    vi.advanceTimersByTime(90_000)
+    await waitFor(() => expect(finish.hasAttribute('disabled')).toBe(false))
   })
 
   it('sends the user back to the form when there is nothing to verify', async () => {

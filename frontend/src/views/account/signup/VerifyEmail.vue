@@ -40,7 +40,7 @@
         type="submit"
         class="account-submit"
         :loading="submitting"
-        :disabled="otp?.length !== 6"
+        :disabled="otp?.length !== 6 || waiting"
       >
         {{ t('account.verifyEmail.submit') }}
       </v-btn>
@@ -72,6 +72,8 @@ import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
+
+import { attemptMessage, useAttemptWait } from '../attemptWait'
 
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
@@ -113,6 +115,7 @@ const { handleSubmit, defineField } = useForm({
 const [otp, otpProps] = defineField('otp', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 const error = ref('')
+const { waiting, waitFor } = useAttemptWait()
 
 // Validation only; the request is sent by `submit` below. The form is not
 // "submitting" while the consent prompt waits for an answer, so the button
@@ -121,7 +124,7 @@ const validated = handleSubmit((value) => value)
 const submitting = ref(false)
 
 const submit = async () => {
-  if (submitting.value) return
+  if (submitting.value || waiting.value) return
   const value = await validated()
   if (!value) return
   error.value = ''
@@ -140,7 +143,8 @@ const submit = async () => {
     toast.success(t('account.verifyEmail.accountCreated'))
     router.replace('/')
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.verifyEmail.failed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.failed'))
+    waitFor(e)
   } finally {
     submitting.value = false
   }

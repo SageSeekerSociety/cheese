@@ -1659,7 +1659,9 @@ def _too_many_from_client(wait_seconds: int) -> ForbiddenError:
 
 def _wrong_password(wait_seconds: int) -> AuthenticationRequiredError:
     if wait_seconds == 0:
-        return AuthenticationRequiredError("Invalid username or password")
+        return AuthenticationRequiredError(
+            "Invalid username or password", {"reason": "invalid_credentials"}
+        )
     return AuthenticationRequiredError(
         f"Invalid username or password. Try again in {wait_seconds} seconds",
         {"reason": "invalid_credentials", "retryAfterSeconds": wait_seconds},

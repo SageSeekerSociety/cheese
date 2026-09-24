@@ -68,6 +68,13 @@
     },
     "lastUsed": "Last used"
   },
+  "attempts": {
+    "wrongPassword": "Wrong username or password.",
+    "wrongPasswordWait": "Wrong username or password. Try again in {wait}.",
+    "tooManyWait": "Too many attempts. Try again in {wait}.",
+    "seconds": "1 second | {count} seconds",
+    "minutes": "1 minute | {count} minutes"
+  },
   "signUp": {
     "title": "Create account",
     "submit": "Create account",
@@ -118,7 +125,6 @@
     "useTotp": "Use an authenticator code",
     "wrongCode": "Wrong code. Please try again.",
     "wrongCodeRemaining": "Wrong code. Attempts left: {count}",
-    "tooManyAttempts": "Too many attempts. Try again in {minutes} min.",
     "sessionExpired": "Verification expired. Please sign in again.",
     "backupUsedTitle": "Backup code used",
     "backupUsedBody": "Each backup code works only once. Consider generating a new set now.",

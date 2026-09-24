@@ -3,12 +3,14 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
+import { toast } from 'vuetify-sonner'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Verify2FA from './Verify2FA.vue'
 
+import { setLocale } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { forgetOAuthRedirect, stashOAuthRedirect } from '@/router/loginRedirect'
 
@@ -117,5 +119,20 @@ describe('过完 2FA 落在哪', () => {
     await submitCode(view)
 
     await settle(router, '/projects/7')
+  })
+})
+
+describe('尝试次数过多', () => {
+  it('按后端给的等待时间说明要等多久，并回到登录页', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockRejectedValue({
+      error: { data: { reason: 'too_many_attempts', retryAfterSeconds: 42 } },
+    })
+    const { view, router } = await open({ token: 'ticket' })
+
+    await submitCode(view)
+
+    await settle(router, '/account/signin')
+    expect(toast.error).toHaveBeenCalledWith('尝试次数过多，请在 42 秒后重试')
   })
 })
