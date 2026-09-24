@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { api, login, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject } from './helpers';
 
 // 表单字段的几何不变量。
 //
@@ -158,7 +158,7 @@ async function fieldDefects(scope: Locator): Promise<Defect[]> {
 
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
@@ -219,7 +219,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('「修改 AI 队友」对话框', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
@@ -240,7 +240,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('反馈中心 · 提交反馈页', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.goto('/feedback');
 
     // 提交是一条**真路由**（`/feedback/new`），不是浮层：页头那颗渲染成链接。
@@ -257,7 +257,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('管理后台 · 反馈队列里打开一条', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
 
     // 这条反馈是**这条用例自己造的**：详情面板上的字段只在某一条被打开之后才
     // 存在，而 e2e 的库是干净的、用例之间的顺序也不是契约（别指望别的用例留下
@@ -286,7 +286,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('管理后台 · 队列页宽档（1920 视口）', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto('/admin/queue');
     await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
@@ -310,7 +310,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.goto('/admin/members');
 
     // 这一页唯一的一组字段在对话框里：名单本身是张表，一个 `.v-field` 都没有，
@@ -324,7 +324,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('管理后台 · 模型页的「新增模型」对话框', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.goto('/admin/models');
 
     // 模型表本身是张表（一个 `.v-field` 都没有），字段只在对话框里。所以范围取对话
@@ -343,7 +343,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('管理后台 · 模型页的「导入订阅」对话框', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await page.goto('/admin/models');
 
     // 导入对话框在 start 态只有「备注名」一个字段（授权码那一段是点完「开始授权」
@@ -356,7 +356,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
 
     // 三个分类都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
     // 写死 263px 宽，比窗口还宽，直接压到隔壁那张上）。
@@ -386,7 +386,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 
   test('看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
 
     // 宽度变档的回执：1920 视口下内容列曾经停在 1100（约 1/3 是死空白）。admin 档
     // 是 1440，网格跟着容器查询升档 —— 这两条断言量的就是「宽出来的部分有人用」。

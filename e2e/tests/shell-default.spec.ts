@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { login } from './helpers';
+import { apiLogin } from './helpers';
 
 // `default` 壳的验收：没声明壳的项目必须和今天逐屏一样。
 //
@@ -19,7 +19,7 @@ const PINNED = ['全局', '资料库', '成员', '项目文档'];
 const MENU = ['日历'];
 
 test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
 
   // 从 rail 点进第一个项目。`--tile` 才是一个项目；不带 `--tile` 的第一格是首页。
   //
@@ -71,7 +71,7 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
 // 它是一个**菜单**：底下有反馈中心 / 我的反馈 / 管理后台 / 了解知是。改形状最容易弄丢
 // 的是「点得开、项都在」，所以这一条同时钉住点开之后各项都在、管理员那一项按身份出现。
 test('顶栏的帮助与反馈：和铃铛同高、字装得下、点开各项都在', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
 
   // 登录后语言在「我」的菜单里，顶栏不再有语言开关。
   await expect(page.locator('.app-system-bar .language-toggle')).toHaveCount(0);

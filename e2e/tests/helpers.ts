@@ -7,46 +7,65 @@ import type { Page } from "@playwright/test";
 export const DEMO_USERNAME = "alice";
 export const DEMO_PASSWORD = "demo12345";
 
-// Drives the real sign-in form (not a localStorage shortcut) so this doubles as
-// the login flow's own e2e coverage. Leaves the page on the authenticated app
-// shell (rail visible) before returning.
-export async function login(
-  page: Page,
-  username = DEMO_USERNAME,
-  password = DEMO_PASSWORD,
-) {
-  await page.goto("/account/signin");
-  await page.getByLabel("用户名").fill(username);
-  // exact: true — the show-password toggle is labelled 「显示密码」, which is a
-  // substring match for the bare label and trips Playwright's strict mode (two
-  // elements match `getByLabel('密码')`). The same goes for the submit button:
-  // 「使用通行密钥登录」 also contains 「登录」.
-  await page.getByLabel("密码", { exact: true }).fill(password);
-  // The seeded accounts never accepted the terms, so the first sign-in of a run
-  // is stopped by the re-consent dialog (#1486) that covers the whole app. Read
-  // the app's own answer to "is anything pending" instead of racing the dialog.
-  const pending = page.waitForResponse(
-    (r) =>
-      r.url().includes("/users/me/consents") && r.request().method() === "GET",
+// Set up non-auth browser scenarios through the real login and consent APIs.
+// Each Playwright test has a fresh context; the UI login path is covered in
+// auth.spec.ts instead of paying for that form navigation in every scenario.
+export async function apiLogin(page: Page) {
+  const signedIn = await page.request.post("/api/users/auth/login", {
+    data: { username: DEMO_USERNAME, password: DEMO_PASSWORD },
+  });
+  if (!signedIn.ok())
+    throw new Error(`API login → ${signedIn.status()} ${await signedIn.text()}`);
+  const loginData = (await signedIn.json()).data as {
+    accessToken?: string;
+    user?: Record<string, unknown>;
+    requires2FA?: boolean;
+  };
+  if (loginData.requires2FA || !loginData.accessToken || !loginData.user)
+    throw new Error("Demo login did not return a complete session");
+
+  const headers = { Authorization: `Bearer ${loginData.accessToken}` };
+  const pendingResponse = await page.request.get("/api/users/me/consents", {
+    headers,
+  });
+  if (!pendingResponse.ok())
+    throw new Error(`GET consents → ${pendingResponse.status()} ${await pendingResponse.text()}`);
+  const pending = ((await pendingResponse.json()).data as {
+    pending: { document: string; version: string }[];
+  }).pending;
+  if (pending.length) {
+    const documents = Object.fromEntries(
+      pending.map(({ document, version }) => [document, version]),
+    );
+    const accepted = await page.request.post("/api/users/me/consents", {
+      headers,
+      data: { documents },
+    });
+    if (!accepted.ok())
+      throw new Error(`POST consents → ${accepted.status()} ${await accepted.text()}`);
+    const current = await page.request.get("/api/users/me/consents", { headers });
+    if (!current.ok())
+      throw new Error(`GET consents → ${current.status()} ${await current.text()}`);
+    if (((await current.json()).data as { pending: unknown[] }).pending.length)
+      throw new Error("Demo account still has pending consents");
+  }
+
+  // This static asset gives the page the application's origin without booting
+  // the SPA. Write storage once so later navigation cannot resurrect a session.
+  const asset = await page.goto("/favicon.ico");
+  if (!asset?.ok()) throw new Error("Could not initialize app-origin storage");
+  await page.evaluate(
+    ({ accessToken, user }) => {
+      localStorage.setItem("accessToken", accessToken);
+      localStorage.setItem("user", JSON.stringify(user));
+    },
+    { accessToken: loginData.accessToken, user: loginData.user },
   );
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.goto("/spaces");
   await page
     .locator(".app-rail-item:not(.app-rail-item--add)")
     .first()
     .waitFor();
-  const { data } = await (await pending).json();
-  if (data.pending.length > 0) {
-    const accepted = page.waitForResponse(
-      (r) =>
-        r.url().includes("/users/me/consents") &&
-        r.request().method() === "POST",
-    );
-    await page.getByRole("button", { name: "同意并继续" }).click();
-    if (!(await accepted).ok()) throw new Error("接受协议失败");
-    await page
-      .getByRole("button", { name: "同意并继续" })
-      .waitFor({ state: "hidden" });
-  }
 }
 
 // The signed-in JWT the app itself uses (see frontend/src/api.ts — one token,
@@ -56,7 +75,7 @@ export async function login(
 // person actually gets.
 export async function apiToken(page: Page): Promise<string> {
   const raw = await page.evaluate(() => localStorage.getItem("accessToken"));
-  if (!raw) throw new Error("没有登录态：apiToken 必须在 login() 之后调用");
+  if (!raw) throw new Error("没有登录态：apiToken 必须在 apiLogin() 之后调用");
   return raw.replace(/^"|"$/g, "");
 }
 

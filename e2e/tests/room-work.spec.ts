@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiToken, login, openFirstProject } from './helpers';
+import { api, apiToken, apiLogin, openFirstProject } from './helpers';
 
 function projectIdOf(page: Page): string {
   const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
@@ -31,7 +31,7 @@ async function dispatch(page: Page, roomId: string, title: string) {
 
 test.describe('房间里派出去的活', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await openFirstProject(page);
   });
 
@@ -92,7 +92,7 @@ test.describe('房间里派出去的活', () => {
 test('同名文件按任务打开，切换来源后草稿仍在', async ({ page }, testInfo) => {
   // This case also clones and pushes two worktrees before exercising the UI.
   test.setTimeout(120_000);
-  await login(page);
+  await apiLogin(page);
   await openFirstProject(page);
   const project = projectIdOf(page);
   const room = await freshRoom(page, `文件来源 ${Date.now()}`);
