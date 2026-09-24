@@ -84,6 +84,8 @@ import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/br
 
 import { sudoPurposeFor } from '@/utils/sudo'
 
+import { passkeyWrongHostMessage } from './passkeyHost'
+
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
@@ -164,18 +166,24 @@ async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
   } catch (error: any) {
     // The browser's own WebAuthn error text is English and names internals.
     errorMessage.value =
-      error?.name === 'NotAllowedError'
+      passkeyWrongHostMessage(error, passkeyRpId) ??
+      (error?.name === 'NotAllowedError'
         ? t('account.sudo.passkeyCanceled')
-        : requestErrorMessage(error, t('account.sudo.failed'))
+        : requestErrorMessage(error, t('account.sudo.failed')))
     totpCode.value = ''
   } finally {
     loading.value = false
   }
 }
 
+// The site the server asked the passkey for, to say where it works if this
+// address is not covered by it.
+let passkeyRpId: string | undefined
+
 const handlePasskeyVerify = () =>
   verify(async () => {
     const { data } = await UserApi.getPasskeyAuthenticationOptions(currentUserId.value)
+    passkeyRpId = data.options.rpId
     const assertion = await startAuthentication({ optionsJSON: data.options })
     return UserApi.verifySudoPasskey(assertion, purpose.value)
   })

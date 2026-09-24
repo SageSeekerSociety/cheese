@@ -14,6 +14,7 @@
   "legalEffectiveDate": "Effective {date}",
   "legalLoadFailed": "This page could not be loaded. Refresh and try again",
   "legalVersion": "Version {version}",
+  "passkeyWrongHost": "Passkeys can’t be used at this address. Go to {host} instead.",
   "privacyPolicy": "Privacy Policy",
   "registrationSettingsCouldNotBeLoadedRefresh": "Registration settings could not be loaded. Refresh the page to try again.",
   "rulesUpdated": "Our terms have changed",
@@ -32,7 +33,8 @@
     "password": "Password",
     "showPassword": "Show password",
     "username": "Username",
-    "capsLock": "Caps Lock is on"
+    "capsLock": "Caps Lock is on",
+    "capsLockShort": "Caps Lock"
   },
   "rule": {
     "displayName": "Use letters, numbers, underscores, or Chinese characters",

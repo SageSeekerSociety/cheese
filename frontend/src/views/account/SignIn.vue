@@ -104,6 +104,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { lastSignIn, rememberSignIn } from './lastSignIn'
 import { oauthProviderIcon } from './oauthProvider'
+import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 
 import AccountField from '@/components/account/AccountField.vue'
@@ -217,9 +218,11 @@ async function finishPasskey(assertion: AuthenticationResponseJSON) {
   signedIn('passkey', data.accessToken!, data.user!)
 }
 
-function passkeyError(error: any): string {
+function passkeyError(error: any, rpId?: string): string {
   // The browser's own error text is English and names WebAuthn internals, so
   // it is never shown; the cases a person can act on get their own sentence.
+  const wrongHost = passkeyWrongHostMessage(error, rpId)
+  if (wrongHost) return wrongHost
   if (error?.name === 'NotAllowedError') return t('account.signIn.passkeyCanceled')
   if (error?.response?.data?.code === 'PASSKEY_NOT_FOUND') return t('account.signIn.passkeyNotFound')
   return t('account.signIn.passkeyFailed')
@@ -228,12 +231,14 @@ function passkeyError(error: any): string {
 const handlePasskeyLogin = async () => {
   errorMessage.value = ''
   busy.value = 'passkey'
+  let rpId: string | undefined
   try {
     // Starting a ceremony cancels the waiting autofill one.
     const { data } = await UserApi.getPasskeyAuthenticationOptions()
+    rpId = data.options.rpId
     await finishPasskey(await startAuthentication({ optionsJSON: data.options }))
   } catch (error) {
-    errorMessage.value = passkeyError(error)
+    errorMessage.value = passkeyError(error, rpId)
     startAutofill()
   } finally {
     busy.value = null
