@@ -187,6 +187,20 @@
     "progress": {
       "title": "Progress",
       "tally": "{done}/{total} done"
+    },
+    "accept": {
+      "pending": "Ready for review",
+      "conflict": "Merge conflict · Cheese is resolving it",
+      "gateFailed": "Platform check failed",
+      "gateBlocked": "Platform check could not run",
+      "delivering": "Accepted, merge not finished",
+      "accepted": "Accepted",
+      "waitingOn": "Waiting for {'@'}{handle}",
+      "waitingOnYou": "Waiting for you",
+      "decidedBy": "Accepted by {'@'}{handle}",
+      "review": "Review",
+      "expand": "Show details",
+      "collapse": "Hide details"
     }
   }
 }

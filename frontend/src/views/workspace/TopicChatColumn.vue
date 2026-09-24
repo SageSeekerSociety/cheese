@@ -80,17 +80,21 @@ defineExpose({
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
     >
-      <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
-      <template #timeline-end>
+      <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
+           见，但平时只占一行，不把对话挤到只剩几行。 -->
+      <template #above-composer>
         <TopicAcceptCard
           ref="acceptRef"
+          docked
           :topic-id="topic.id"
           :topic-status="topic.status"
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
-        <!-- Agent 反馈卡。和采纳框同一个位置：都是「这一轮结束时，平台要人做的
-             一个决定」。
+      </template>
+      <template #timeline-end>
+        <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
+             对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；

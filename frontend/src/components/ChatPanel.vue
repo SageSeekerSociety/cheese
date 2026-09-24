@@ -1379,6 +1379,10 @@ onBeforeUnmount(() => {
         {{ errorMsg }}
       </v-alert>
 
+      <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
+           又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
+      <slot name="above-composer" />
+
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>

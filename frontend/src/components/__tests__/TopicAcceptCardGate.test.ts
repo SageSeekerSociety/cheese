@@ -31,6 +31,8 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import { setLocale } from '@/i18n'
+
 let seq = 0
 function card(over: Partial<AcceptCard>): AcceptCard {
   seq += 1
@@ -92,6 +94,8 @@ async function mountWith(cards: AcceptCard[]) {
 }
 
 beforeEach(() => {
+  // 卡上的标题走文案目录，而 happy-dom 起步是英文。
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
 })
