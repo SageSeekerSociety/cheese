@@ -135,7 +135,7 @@ class TestRegistrationEmailCode:
 
         resp = api_client.post("/users", json=_registration(email, code))
         assert resp.status_code == 422, resp.text
-        assert "verification code" in resp.json()["error"]["message"]
+        assert resp.json()["error"]["data"]["reason"] == "invalid_email_code"
 
     def test_the_right_code_still_works_after_fewer_misses(
         self, api_client: TestClient, outbox: Outbox
@@ -180,6 +180,9 @@ class TestRegistrationEmailCode:
 
         refused = api_client.post("/users/verify/email", json={"email": email})
         assert refused.status_code == 400, refused.text
+        data = refused.json()["error"]["data"]
+        assert data["reason"] == "email_code_too_soon"
+        assert 0 < data["retryAfterSeconds"] <= 60 * 60
         assert len(outbox.sent) == 5
 
 

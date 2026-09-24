@@ -73,7 +73,9 @@
     "wrongPasswordWait": "Wrong username or password. Try again in {wait}.",
     "tooManyWait": "Too many attempts. Try again in {wait}.",
     "seconds": "1 second | {count} seconds",
-    "minutes": "1 minute | {count} minutes"
+    "minutes": "1 minute | {count} minutes",
+    "wrongEmailCode": "The code is wrong or has expired.",
+    "codeTooSoon": "Request a new code in {wait}."
   },
   "signUp": {
     "title": "Create account",

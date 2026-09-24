@@ -38,6 +38,18 @@ describe('the wait a refused attempt states', () => {
     expect(attemptMessage(refusal({ reason: 'invalid_credentials' }, 401))).toBe('用户名或密码错误')
   })
 
+  it('words a mailed code that is wrong, and a new one asked for too soon', () => {
+    setLocale('zh-CN')
+    expect(attemptMessage(refusal({ reason: 'invalid_email_code' }, 401))).toBe('验证码不正确或已过期')
+    expect(attemptMessage(refusal({ reason: 'email_code_too_soon', retryAfterSeconds: 42 }, 400))).toBe(
+      '请在 42 秒后重新获取验证码'
+    )
+    setLocale('en')
+    expect(attemptMessage(refusal({ reason: 'email_code_too_soon', retryAfterSeconds: 600 }, 400))).toBe(
+      'Request a new code in 10 minutes.'
+    )
+  })
+
   it('leaves any other error to the screen', () => {
     expect(attemptMessage(refusal({ reason: 'invalid_code', attemptsRemaining: 3 }, 401))).toBeNull()
     expect(attemptMessage(new BusinessError('Not found', 404))).toBeNull()

@@ -171,7 +171,7 @@ const handleResend = async () => {
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
   } finally {
     resending.value = false
   }

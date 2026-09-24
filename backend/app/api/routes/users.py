@@ -1511,7 +1511,10 @@ async def register_user(
         service = EmailVerificationService(redis)
         is_valid = await service.verify_code(email, email_code)
         if not is_valid:
-            raise UnprocessableEntityError("Invalid or expired verification code")
+            raise UnprocessableEntityError(
+                "Invalid or expired verification code",
+                {"reason": "invalid_email_code"},
+            )
         await client_budget.refund(client)
     finally:
         await redis.aclose()

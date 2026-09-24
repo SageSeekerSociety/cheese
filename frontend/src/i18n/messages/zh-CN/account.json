@@ -73,7 +73,9 @@
     "wrongPasswordWait": "用户名或密码错误，请在 {wait}后重试",
     "tooManyWait": "尝试次数过多，请在 {wait}后重试",
     "seconds": "{count} 秒",
-    "minutes": "{count} 分钟"
+    "minutes": "{count} 分钟",
+    "wrongEmailCode": "验证码不正确或已过期",
+    "codeTooSoon": "请在 {wait}后重新获取验证码"
   },
   "signUp": {
     "title": "创建账号",
