@@ -420,14 +420,24 @@ def adopt_room(directory: Path) -> int:
     config = Path(state["home"]) / ".claude"
 
     def adopt(environment, work):
-        for variable, helper in (
-            ("CHEESE_TUNNEL_URL", "cheese-tunnel-up"),
-            ("CHEESE_PREVIEW_URL", "cheese-preview-up"),
-        ):
-            if environment.get(variable):
-                subprocess.run(
-                    ["sh", str(config / helper)], env=environment, check=True
-                )
+        platform = Path(state["home"]) / ".cheese"
+        if environment.get("CHEESE_TUNNEL_URL"):
+            # The helper's port is the machine's choice, printed by the script
+            # that brought the helper up; the claim below is what hands it over.
+            port = subprocess.run(
+                ["sh", str(platform / "cheese-tunnel-up")],
+                env=environment,
+                check=True,
+                stdout=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            environment["HTTPS_PROXY"] = f"http://127.0.0.1:{port}"
+        if environment.get("CHEESE_PREVIEW_URL"):
+            subprocess.run(
+                ["sh", str(platform / "cheese-preview-up")],
+                env=environment,
+                check=True,
+            )
         settings = json.loads((config / "settings.json").read_text())
         settings["env"] = {**settings.get("env", {}), **environment}
         bind(

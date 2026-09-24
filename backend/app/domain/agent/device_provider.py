@@ -215,22 +215,6 @@ def uses_tunnel(*, tunnel_url: str) -> bool:
     return bool(tunnel_url.strip())
 
 
-def tunnel_port_for_topic(topic_id: uuid.UUID) -> int:
-    """The tunnel helper's loopback port for THIS topic — derived, not fixed.
-
-    One fixed port (#425) meant two concurrent topics on one remote machine
-    raced for the same bind: the second helper failed and its turns died
-    looking like a dead model. Deriving from the topic id keeps the port
-    stable across screen reuse/reassert (claude bakes its HTTPS_PROXY at
-    launch and never re-reads it, #385) while giving concurrent topics
-    distinct listeners. Collisions inside the 2000-port window are possible
-    but loud: the second helper's bind fails and the launch surfaces a
-    visible setup error instead of a silent share.
-    """
-    base = settings.subscription_tunnel_local_port
-    return base + (int(hashlib.sha1(str(topic_id).encode()).hexdigest(), 16) % 2000)
-
-
 def _preview_ws_url(public_base: str) -> str:
     """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
 
@@ -247,23 +231,22 @@ def _preview_ws_url(public_base: str) -> str:
     return f"{base}/preview/tunnel"
 
 
-def connect_transport(
-    *, session_token: str, via_tunnel: bool, tunnel_port: int | None = None
-) -> str:
-    """The ``HTTPS_PROXY`` value that steers this screen to the meter.
+def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
+    """The ``HTTPS_PROXY`` value that steers this screen to the meter, or None
+    when the backend does not know it.
 
-    Through the tunnel the address is loopback and carries NO credential: the
-    helper is the only thing listening there, and it reads the scoped token from
-    a file the launcher writes — kept out of the URL so a refreshed token takes
-    effect without relaunching `claude`, which reads this value exactly once at
-    startup (#385).
+    Through the tunnel it does not: the address is the helper's loopback port,
+    and that port is the machine's to choose — the launcher asks the kernel for
+    a free one and exports it itself. It carries NO credential either way: the
+    helper reads the scoped token from a file the launcher writes, so a refreshed
+    token takes effect without relaunching `claude`, which reads HTTPS_PROXY
+    exactly once at startup (#385).
 
     Direct, the scoped token rides as the proxy password, which is what stops an
     exposed listener relaying for anyone who cannot prove which project to bill.
     """
     if via_tunnel:
-        port = tunnel_port or settings.subscription_tunnel_local_port
-        return f"http://127.0.0.1:{port}"
+        return None
     host = (
         settings.subscription_device_proxy_host.strip()
         or settings.subscription_proxy_host
@@ -319,10 +302,6 @@ def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) ->
     # only way its traffic reaches a model at all. Pointing it at a box-local
     # address fails off-box.
     value = env.get("HTTPS_PROXY", "")
-    # A configured tunnel intentionally points HTTPS_PROXY at the helper on
-    # the device's own loopback; that address is not a backend-host leak.
-    if env.get("CHEESE_TUNNEL_URL"):
-        return
     if any(h in value for h in _BOX_LOCAL_HOSTS):
         logger.error(
             "device %s received HTTPS_PROXY=%s, which only "
@@ -1012,6 +991,36 @@ class DeviceChannel(Channel):
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
 
+    @staticmethod
+    def _resident_release_due(state: dict) -> bool:
+        """Whether the screen's release marker is behind this backend's release."""
+        return state.get("version") != resident_release.digest(
+            resident_release.sources()
+        )
+
+    async def _resident_control(self, screen: HubScreen) -> dict | None:
+        """The live native control session through which a resident release
+        reaches this screen's running process, or None when it has none.
+
+        None is not a hiccup the next attempt outlives. Measured on dev
+        2026-09-23: a screen whose control session had registered under another
+        room was asked for it on every turn after a release, got the same None
+        every time, and the room could not run a turn at all while it failed."""
+        from app.domain.agent.remote_control import store
+
+        # A screen is launched as one named agent and records it, so this is
+        # the agent whose control session to look for — no second answer.
+        session = await store().current(str(screen.topic_id), screen.agent_handle)
+        if not session or session["status"] != "active":
+            return None
+        if screen.resource_id is not None and (
+            (session.get("execution") or {}).get("resource_id")
+            != str(screen.resource_id)
+        ):
+            # Belongs to another execution generation of this room.
+            return None
+        return session
+
     async def _refresh_resident(
         self, screen: HubScreen, home_dir: str, state: dict
     ) -> bool:
@@ -1019,22 +1028,12 @@ class DeviceChannel(Channel):
         version = resident_release.digest(sources)
         if state.get("version") == version:
             return False
-        from app.domain.agent.remote_control import store
-
-        # A screen is launched as one named agent and records it, so this is
-        # the agent whose control session to look for — no second answer.
-        control = store()
-        session = await control.current(str(screen.topic_id), screen.agent_handle)
-        if not session or session["status"] != "active":
+        session = await self._resident_control(screen)
+        if session is None:
+            # The reuse gate relaunches a screen without one; reaching here
+            # means the session went away since, and the next turn relaunches.
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
-            )
-        if screen.resource_id is not None and (
-            (session.get("execution") or {}).get("resource_id")
-            != str(screen.resource_id)
-        ):
-            raise ScreenSetupError(
-                "Native control belongs to another execution generation"
             )
 
         async def execute(function, *args):
@@ -1348,11 +1347,8 @@ class DeviceChannel(Channel):
         )
         tunnel_url = settings.subscription_tunnel_url.strip()
         via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
-        tunnel_port = tunnel_port_for_topic(topic_id)
         connect_proxy_url = connect_transport(
-            session_token=session_token,
-            via_tunnel=via_tunnel,
-            tunnel_port=tunnel_port,
+            session_token=session_token, via_tunnel=via_tunnel
         )
         sub = provider_env.subscription_provider(
             ca_path=_DEVICE_PROXY_CA_PATH,
@@ -1392,17 +1388,15 @@ class DeviceChannel(Channel):
         model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
             "user:inference user:profile user:sessions:claude_code"
         )
-        if connect_proxy_url:
-            # The meter accepts model hosts, not package registries.
-            model_env["CHEESE_MODEL_PROXY"] = "1"
+        # The meter accepts model hosts, not package registries.
+        model_env["CHEESE_MODEL_PROXY"] = "1"
         if via_tunnel:
             # Read by the launch script: it writes the helper and the token
-            # file, and starts the helper before `claude`. Carried on the env
-            # rather than as arguments because a remote machine's launch is
-            # built entirely from `extra_env` — there is no other channel
-            # into that builder.
+            # file, starts the helper before `claude`, and exports the port the
+            # helper bound as HTTPS_PROXY. Carried on the env rather than as
+            # arguments because a remote machine's launch is built entirely from
+            # `extra_env` — there is no other channel into that builder.
             model_env["CHEESE_TUNNEL_URL"] = tunnel_url
-            model_env["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
         elif await self._device_ccproxy_upstream(device_id):
             # A device with its own ccproxy identity runs on the machine-ticket
             # model: the launcher's reconcile hands claude the device's
@@ -1476,6 +1470,23 @@ class DeviceChannel(Channel):
         if existing is not None and existing.agent_configuration != configuration:
             # Called between turns, and only now: what a session was started
             # with is not fully known until the harness has been asked.
+            # Inspect the old control session even when the replacement uses a
+            # different harness: an old Claude Code workflow still needs its screen.
+            from app.domain.agent.remote_control import store
+
+            control = store()
+            # An unreadable journal is unknown, never permission to kill work.
+            session = await control.current(str(topic_id), agent_handle)
+            if session is not None:
+                snapshot = await control.snapshot(session)
+                if any(
+                    task.get("task_type") == "local_workflow"
+                    and task.get("status") not in {"completed", "failed", "stopped"}
+                    for task in snapshot["tasks"].values()
+                ):
+                    raise ScreenSetupError(
+                        "后台工作流仍在运行；当前会话已保留，工作流结束后请重试。"
+                    )
             await self._retire_screen(
                 existing, topic_id=topic_id, reason="agent_configuration_changed"
             )
@@ -1500,7 +1511,7 @@ class DeviceChannel(Channel):
             )
             alive, tunnel_down, _ = await asyncio.gather(
                 self.confirm_alive(existing),
-                self._tunnel_helper_is_down(existing),
+                self._tunnel_helper_is_down(existing, home_dir),
                 self._refresh_screen_files(
                     device_id,
                     home_dir,
@@ -1508,14 +1519,26 @@ class DeviceChannel(Channel):
                     execution_token=execution_token,
                 ),
             )
-            if not alive or tunnel_down:
-                # Adopt-create cannot restart a dead process or its tunnel while
-                # the connector still knows the sid. A new sid runs the launcher,
-                # which is why it is shipped only now.
+            retire_reason = None
+            if not alive:
+                retire_reason = "claude_not_alive"
+            elif tunnel_down:
+                retire_reason = "tunnel_helper_down"
+            elif (
+                release_state is not None
+                and self._resident_release_due(release_state)
+                and await self._resident_control(existing) is None
+            ):
+                # A release reaches a running process only through its native
+                # control session; without one the process stays on the old
+                # release for good. A fresh launch starts on the current one.
+                retire_reason = "resident_release_unreachable"
+            if retire_reason is not None:
+                # Adopt-create cannot restart a dead process, its tunnel or its
+                # release while the connector still knows the sid. A new sid
+                # runs the launcher, which is why it is shipped only now.
                 await self._retire_screen(
-                    existing,
-                    topic_id=topic_id,
-                    reason="claude_not_alive" if not alive else "tunnel_helper_down",
+                    existing, topic_id=topic_id, reason=retire_reason
                 )
                 existing = None
                 command = await self._ship_launcher(
@@ -1989,7 +2012,7 @@ class DeviceChannel(Channel):
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
-    async def _tunnel_helper_is_down(self, screen: HubScreen) -> bool:
+    async def _tunnel_helper_is_down(self, screen: HubScreen, home_dir: str) -> bool:
         """Whether the machine-local tunnel helper this screen's `claude` dials has
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
@@ -2005,10 +2028,15 @@ class DeviceChannel(Channel):
         directly, so there is no helper to lose) — that keeps the per-turn cost at
         zero everywhere the failure cannot happen.
 
+        Which port to ask about is the machine's answer, not ours: the helper
+        bound whatever the kernel gave it and recorded it in the room's home, so
+        the probe reads it from there.
+
         Conservative in the same direction as `confirm_alive`: only an explicit
         `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
-        (no /proc, no awk) is read as "still up", so a probe hiccup never throws
-        away a healthy screen and its in-progress work."""
+        (no /proc, no awk, no readable port file) is read as "still up", so a
+        probe hiccup never throws away a healthy screen and its in-progress
+        work."""
         topic_id = screen.topic_id
         if topic_id is None:
             return False
@@ -2019,7 +2047,7 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={"CHEESE_TUNNEL_PROBE_PORT": str(tunnel_port_for_topic(topic_id))},
+                env={"CHEESE_TUNNEL_PROBE_HOME": home_dir},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

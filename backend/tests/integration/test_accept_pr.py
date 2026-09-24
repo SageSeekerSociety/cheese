@@ -2735,6 +2735,30 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
     assert len(sweeping["readied"]) == 1
 
 
+def test_ready_reports_github_installation_rate_limit_without_changing_pr(
+    client, sweeping, monkeypatch
+):
+    from app.domain.project import forge as project_forge
+    from app.domain.review.github_pr import GitHubPRRateLimited
+
+    _, tid = _room_with_work(client)
+    _sweep(client)
+    pr = sweeping["prs_by_head"][_disk_branch(client, tid)]
+
+    async def limited(_self, _number):
+        raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
+
+    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    response = _ready(client, tid)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["ready"] is False
+    assert "额度暂时用尽" in payload["reason"]
+    assert pr["draft"] is True
+    assert sweeping["readied"] == []
+
+
 def test_ready_never_opens_a_pr(client, sweeping):
     """`ready` 不承担「首次建 PR」。没有 PR 时它说清楚为什么，一个 PR 也不开。"""
     tid = _make_topic(client, _make_project(client))

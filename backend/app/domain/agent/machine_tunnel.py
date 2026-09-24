@@ -419,16 +419,31 @@ def serve(
     ca_path: str | None = None,
     insecure: bool = False,
     listen_host: str = "127.0.0.1",
+    port_file: str | None = None,
 ) -> None:
     """Accept CONNECT clients forever. Loopback only by default: this endpoint
     carries a scoped token in its own configuration, so anything that can reach
     it can spend the project's budget — and on a shared machine that must mean
-    only processes already running as this user."""
+    only processes already running as this user.
+
+    ``listen_port`` 0 lets the kernel pick: only the machine knows which of its
+    ports are free, and ~50 rooms on one host choosing theirs any other way will
+    collide. ``port_file`` receives the port actually bound, written only once
+    the socket is listening — so its existence is the proof that THIS process
+    holds the port, which "something answers there" never was. A bind that fails
+    raises before anything is written."""
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((listen_host, listen_port))
     server.listen(64)
-    logger.info("tunnel listening on %s:%s → %s", listen_host, listen_port, url)
+    bound = server.getsockname()[1]
+    if port_file:
+        # Temp then rename: a reader must never see a half-written number.
+        staged = f"{port_file}.{os.getpid()}.tmp"
+        with open(staged, "w") as handle:
+            handle.write(f"{bound}\n")
+        os.replace(staged, port_file)
+    logger.info("tunnel listening on %s:%s → %s", listen_host, bound, url)
     while True:
         client, _ = server.accept()
         client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -442,7 +457,12 @@ def serve(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port", type=int, required=True, help="0 = kernel-assigned")
+    parser.add_argument(
+        "--port-file",
+        default=None,
+        help="written with the bound port once listening; never written on failure",
+    )
     parser.add_argument("--url", required=True, help="wss://…/llm/tunnel")
     parser.add_argument(
         "--token-file",
@@ -465,7 +485,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     source = TokenSource(value=args.token, path=args.token_file)
-    serve(args.port, args.url, source, ca_path=args.ca, insecure=args.insecure)
+    serve(
+        args.port,
+        args.url,
+        source,
+        ca_path=args.ca,
+        insecure=args.insecure,
+        port_file=args.port_file,
+    )
     return 0
 
 

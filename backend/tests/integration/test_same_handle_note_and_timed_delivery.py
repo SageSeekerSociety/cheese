@@ -465,9 +465,35 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
         monkeypatch.setattr(stub_hooks, "acknowledges", lambda *args: None)
 
     async def run():
+        receipt_started = asyncio.Event()
+        release_receipt = asyncio.Event()
+        receipt_committed = asyncio.Event()
+        original_receipt = chat.confirm_prompt_receipt
+
+        async def observe_receipt(topic_id, prompt):
+            receipt_started.set()
+            await release_receipt.wait()
+            await original_receipt(topic_id, prompt)
+            receipt_committed.set()
+
+        chat._compute.bind_receipts(observe_receipt)
         runner = AgentWorkRunner(InProcessBroker())
-        await deliver_due(client.test_factory, chat=chat, runner=runner)
-        await asyncio.gather(*runner._tasks)
+        try:
+            await deliver_due(client.test_factory, chat=chat, runner=runner)
+            await asyncio.gather(*runner._tasks)
+            if native_receipt:
+                async with asyncio.timeout(5):
+                    await receipt_started.wait()
+                async with client.test_factory() as session:
+                    timer = await session.get(
+                        TimedDelivery, uuid.UUID(response.json()["data"]["id"])
+                    )
+                    assert timer.delivered_at is None
+        finally:
+            release_receipt.set()
+        if native_receipt:
+            async with asyncio.timeout(5):
+                await receipt_committed.wait()
         async with client.test_factory() as session:
             timer = await session.get(
                 TimedDelivery, uuid.UUID(response.json()["data"]["id"])
