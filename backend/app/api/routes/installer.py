@@ -148,12 +148,14 @@ echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays con
 # The platform string is the vendor's (`linux-x64`, `linux-arm64-musl`, …), not
 # our `<os>-<arch>` connector target: only the machine knows whether its libc is
 # musl, and our target names cannot express that distinction.
-@router.get("/claude/{version}/{platform}/claude")
-async def download_claude(version: str, platform: str) -> Response:
+@router.get("/claude/{version}/{platform}/{name}")
+async def download_claude(version: str, platform: str, name: str) -> Response:
     if not claude_dist.VERSION_RE.match(version):
         return PlainTextResponse("bad version", status_code=400)
     if not claude_dist.PLATFORM_RE.match(platform):
         return PlainTextResponse("unknown platform", status_code=400)
+    if name != claude_dist.binary_name(platform):
+        return PlainTextResponse("unknown file", status_code=404)
     try:
         binary = await claude_dist.ensure_cached(_dist_dir(), version, platform)
     except claude_dist.ClaudeDistError as exc:
@@ -162,9 +164,7 @@ async def download_claude(version: str, platform: str) -> Response:
         return PlainTextResponse(
             f"claude {version} unavailable: {exc}", status_code=503
         )
-    return FileResponse(
-        binary, media_type="application/octet-stream", filename="claude"
-    )
+    return FileResponse(binary, media_type="application/octet-stream", filename=name)
 
 
 # pi, served for the same reason and in the same shape. The artifact is a
@@ -220,10 +220,12 @@ async def download_toolchain(tool: str, platform: str) -> Response:
     )
 
 
-@router.get("/latest/{target}/cheesehost")
-async def download_binary(target: str) -> Response:
+@router.get("/latest/{target}/{name}")
+async def download_binary(target: str, name: str) -> Response:
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
+    if name != connector_build.binary_name(target):
+        return PlainTextResponse("unknown file", status_code=404)
     binary = connector_build.binary_path(target)
     if binary is None:
         return PlainTextResponse(

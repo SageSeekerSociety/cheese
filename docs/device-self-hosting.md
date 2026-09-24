@@ -115,7 +115,7 @@ Ordinary execution devices run a persistent Python service and the pinned `claud
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
 | **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |
 
-平台：Linux / macOS（需 pty），**无 Windows**。
+平台：Linux / macOS / Windows。Windows 上不用 WSL：连接器原生运行，不承载终端屏幕（屏幕只在中心会话主机上），首次 `link connect` 从服务器的 toolchain 路由取 python3 和 Git for Windows（bash、git、curl、coreutils）放到 `~/.cheese/runtime`，并排到自己 PATH 的最前面；后台常驻靠当前用户的登录启动项（`HKCU\...\Run`），不需要管理员。上表的依赖在 Windows 上都由它带来。
 
 **claude 由平台安装，不由机器去厂商那里下。** 入册（`bootstrap_script`）和启动器共用同一个 pin，二进制从 `<origin>/connector/claude/<version>/<platform>/claude` 取——平台拉一次、按厂商发布的 SHA-256 校验、缓存、本地供给。三个理由每个都单独成立：机器未必到得了 `claude.ai`（云节点在私有子网、自托管机器在我们看不见的网里，而厂商安装脚本把"你所在地区不可用"列为一种失败）；拿到的版本未必过门槛，而**低于门槛启动器拒绝启动**；只有平台自己发二进制，pin 才从"希望机器下到对的版本"变成"我们递给它的就是那个"。
 

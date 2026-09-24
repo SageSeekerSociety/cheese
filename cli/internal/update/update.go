@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -29,9 +30,9 @@ import (
 // (amd64/arm64), NOT uname-style (x86_64/aarch64). Kept pure so it is unit-testable.
 func platformDir(goos, goarch string) (string, error) {
 	switch goos {
-	case "linux", "darwin":
+	case "linux", "darwin", "windows":
 	default:
-		return "", fmt.Errorf("update: unsupported OS %q (cheese runs on Linux and macOS)", goos)
+		return "", fmt.Errorf("update: unsupported OS %q (cheese runs on Linux, macOS and Windows)", goos)
 	}
 	switch goarch {
 	case "amd64", "arm64":
@@ -39,6 +40,15 @@ func platformDir(goos, goarch string) (string, error) {
 		return "", fmt.Errorf("update: unsupported arch %q (cheese ships amd64 and arm64)", goarch)
 	}
 	return goos + "-" + goarch, nil
+}
+
+// BinaryName is the file the server publishes for dir: `cheesehost`, with
+// Windows' `.exe`.
+func BinaryName(dir string) string {
+	if strings.HasPrefix(dir, "windows-") {
+		return "cheesehost.exe"
+	}
+	return "cheesehost"
 }
 
 // PlatformDir returns the artifact directory for the running platform.
@@ -57,7 +67,7 @@ func binaryURL(base, dir string) (string, error) {
 		return "", fmt.Errorf("update: bad base %q: %v", base, err)
 	}
 	origin := u.Scheme + "://" + u.Host
-	return origin + "/connector/latest/" + dir + "/cheesehost", nil
+	return origin + "/connector/latest/" + dir + "/" + BinaryName(dir), nil
 }
 
 // Fetch downloads the current platform's `cheese` binary from base's origin into a
@@ -83,7 +93,9 @@ func Fetch(ctx context.Context, base string) (string, error) {
 	self, _ = filepath.EvalSymlinks(self)
 	destDir := filepath.Dir(self)
 
-	tmp, err := os.CreateTemp(destDir, ".cheese-update-*")
+	// Same extension as the running binary: Windows only runs a file by its
+	// .exe, which verify needs before anything is swapped.
+	tmp, err := os.CreateTemp(destDir, ".cheese-update-*"+filepath.Ext(self))
 	if err != nil {
 		// This is where a connector installed into a directory it cannot write
 		// dies — every time, forever, and until now with an error that named
@@ -163,7 +175,7 @@ func verify(ctx context.Context, path string) error {
 // executable's path is fine on Linux/macOS (the old inode stays mapped until the
 // process exits).
 func Replace(tmpPath, selfPath string) error {
-	if err := os.Rename(tmpPath, selfPath); err != nil {
+	if err := replace(tmpPath, selfPath); err != nil {
 		return fmt.Errorf("update: replace %s: %w", selfPath, err)
 	}
 	return nil

@@ -2,21 +2,30 @@
 
 The Unix socket is reachable only by the owning user. SSH carries MCP to it;
 closing an SSH connection does not discard the command registry or replay writes.
+
+Windows has no Unix socket to put the owner's permission on, so there the
+service listens on loopback TCP and the permission is a token instead: it is
+written beside the port in ``executor.endpoint``, a file only the owner can
+read, and a connection that does not open with it is closed. After that line
+the protocol is the same one. What else differs on Windows is in portable.py.
 """
 
 from __future__ import annotations
 
 import base64
 import contextlib
-import fcntl
+import functools
 import hashlib
+import hmac
 import json
 import os
 import queue
 import re
 import runpy
+import secrets
 import select
 import shlex
+import shutil
 import signal
 import socket
 import socketserver
@@ -28,6 +37,24 @@ import uuid
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
+
+    NOFOLLOW = os.O_NOFOLLOW
+    BINARY = 0
+    pwrite = os.pwrite
+else:
+    # No symlink flag to open with: `workflow_path` has already refused a path
+    # with a link anywhere in it. BINARY because a descriptor Windows opens in
+    # text mode writes every \n as \r\n.
+    NOFOLLOW = 0
+    BINARY = os.O_BINARY
+
+    def pwrite(fd, data, offset):
+        os.lseek(fd, offset, os.SEEK_SET)
+        return os.write(fd, data)
+
 
 SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 PROTOCOL_VERSION = 1
@@ -66,14 +93,47 @@ def write_json(path, value):
 OUTPUT_AFTER_EXIT_S = 10.0
 
 
+@functools.cache
+def portable():
+    """The Windows primitives shipped beside this file; see portable.py."""
+    return runpy.run_path(str(Path(__file__).with_name("portable.py")))
+
+
+def lock(file, blocking=True):
+    if sys.platform == "win32":
+        portable()["lock"](file, blocking)
+    else:
+        fcntl.flock(file, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def resolve_program(argv):
+    return portable()["which"](argv) if sys.platform == "win32" else argv
+
+
 def socket_path(state):
+    """Where a client finds this state's service: its socket, or on Windows the
+    file naming its port and token. It exists only while the service may."""
+    if sys.platform == "win32":
+        return str(Path(state) / "executor.endpoint")
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
     return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
 
 
+def connect(state):
+    if sys.platform == "win32":
+        # A missing file is FileNotFoundError and a port nobody listens on is
+        # ConnectionRefusedError: the two a Unix socket gives for the same cases.
+        endpoint = json.loads(Path(socket_path(state)).read_text())
+        connection = socket.create_connection(("127.0.0.1", endpoint["port"]))
+        connection.sendall(endpoint["token"].encode() + b"\n")
+        return connection
+    connection = socket.socket(socket.AF_UNIX)
+    connection.connect(socket_path(state))
+    return connection
+
+
 def request(state, method, params=None):
-    with socket.socket(socket.AF_UNIX) as connection:
-        connection.connect(socket_path(state))
+    with connect(state) as connection:
         with connection.makefile("rwb") as stream:
             stream.write(
                 json.dumps({"method": method, "params": params or {}}).encode() + b"\n"
@@ -84,7 +144,15 @@ def request(state, method, params=None):
         raise RuntimeError(
             "Executor disconnected; request outcome must be queried by its original ID"
         )
-    response = json.loads(line)
+    try:
+        response = json.loads(line)
+    except ValueError:
+        if sys.platform != "win32":
+            raise
+        # An endpoint left behind by a service that died with the machine can
+        # name a port something else has taken since; what answers there is
+        # not an executor.
+        raise ConnectionRefusedError("No executor answers at this endpoint") from None
     if "error" in response:
         raise RuntimeError(response["error"])
     return response["result"]
@@ -190,6 +258,10 @@ class MCPProcess:
         return self.finish(key, answers)
 
     def close(self):
+        if sys.platform == "win32":
+            portable()["terminate_tree"](self.process.pid)
+            self.process.wait()
+            return
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGTERM)
         try:
@@ -260,7 +332,9 @@ class Executor:
         self.cli_worker_ready = False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
-        if worker.is_file() and cli.is_file():
+        # The worker forks and passes descriptors; Windows has neither, and
+        # there `cheese` runs the CLI in its own process instead.
+        if worker.is_file() and cli.is_file() and sys.platform != "win32":
             address = socket_path(self.state) + ".cli"
             Path(address).unlink(missing_ok=True)
             with (self.state / "cli-worker.log").open("a") as log:
@@ -441,7 +515,7 @@ class Executor:
                     # the repository ships), blocks on exit 2 alone, and lets
                     # the call go ahead on any other failing exit.
                     response = subprocess.run(
-                        ["bash", "-c", hook["command"]],
+                        resolve_program(["bash", "-c", hook["command"]]),
                         cwd=self.current_directory(),
                         env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
                         input=json.dumps(payload),
@@ -523,8 +597,10 @@ class Executor:
 
     def current_directory(self):
         """The shell's working directory, which lives in the serve process."""
+        # Git Bash's own `pwd` answers /c/Users/..., a path only it can open.
+        shell = "pwd -W" if sys.platform == "win32" else "pwd"
         answer = self.client("native").call(
-            "tools/call", {"name": "Bash", "arguments": {"command": "pwd"}}
+            "tools/call", {"name": "Bash", "arguments": {"command": shell}}
         )
         return Path(json.loads(answer["content"][0]["text"])["stdout"].strip())
 
@@ -722,6 +798,16 @@ class Executor:
 
     def _pids(self, marker):
         """Processes carrying the marker in their command line, parents first."""
+        if sys.platform == "win32":
+            rows = portable()["processes"]()
+            return portable()["tree"](
+                [
+                    (row["pid"], row["created"])
+                    for row in rows
+                    if marker in row["command"] and row["pid"] != os.getpid()
+                ],
+                rows,
+            )
         rows = []
         if Path("/proc").is_dir():
             # /proc rather than `ps`: the private execution image has no `ps`.
@@ -876,6 +962,9 @@ class Executor:
         # that carried the marker and is re-parented, so a second look would
         # not find it.
         pids = self._pids(marker)
+        if sys.platform == "win32":
+            portable()["terminate"](pids)
+            pids = []
         for pid in pids:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
@@ -906,7 +995,7 @@ class Executor:
             query = params.get("query", "").casefold()
             if self.config.get("private"):
                 files = [
-                    str(p.relative_to(self.root))
+                    p.relative_to(self.root).as_posix()
                     for p in self.root.rglob("*")
                     if p.is_file()
                     and not any(
@@ -1017,7 +1106,7 @@ class Executor:
         file_names = []
         for path in paths:
             if path.is_file():
-                name = str(path.relative_to(self.root))
+                name = path.relative_to(self.root).as_posix()
                 file_names.append(name)
                 content = path.read_bytes()
                 if (known_files or {}).get(name) != hashlib.sha256(content).hexdigest():
@@ -1250,6 +1339,14 @@ class Executor:
 
         root = self.root.resolve()
         operation = params.get("operation", "tree")
+        if operation == "statfs" and sys.platform == "win32":
+            usage = shutil.disk_usage(root)
+            return {
+                "f_bsize": 1,
+                "f_blocks": usage.total,
+                "f_bfree": usage.free,
+                "f_bavail": usage.free,
+            }
         if operation == "statfs":
             fs = os.statvfs(root)
             return {
@@ -1296,11 +1393,11 @@ class Executor:
                 path.mkdir(mode=0o700)
             elif operation == "create":
                 fd = os.open(
-                    path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                    path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600
                 )
                 os.close(fd)
             elif operation in {"write", "truncate"}:
-                fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+                fd = os.open(path, os.O_WRONLY | NOFOLLOW | BINARY)
                 try:
                     if operation == "write":
                         data = base64.b64decode(params["data"], validate=True)
@@ -1313,7 +1410,7 @@ class Executor:
                             raise ValueError("Invalid workflow write range")
                         written = 0
                         while written < len(data):
-                            written += os.pwrite(fd, data[written:], offset + written)
+                            written += pwrite(fd, data[written:], offset + written)
                     else:
                         size = params["size"]
                         if (
@@ -1375,7 +1472,7 @@ class Executor:
             if candidate is None:
                 if path.is_symlink():
                     try:
-                        unsupported_paths.add(str(path.relative_to(root)))
+                        unsupported_paths.add(path.relative_to(root).as_posix())
                     except ValueError:
                         pass
                 return
@@ -1392,7 +1489,7 @@ class Executor:
             if path.is_symlink():
                 target = project_path(path.resolve())
                 if target is None:
-                    unsupported_paths.add(str(path.relative_to(root)))
+                    unsupported_paths.add(path.relative_to(root).as_posix())
                 elif target != path:
                     include(target, imports=imports, depth=depth)
                 return
@@ -1436,7 +1533,7 @@ class Executor:
 
         entries = {}
         for path in selected:
-            relative = str(path.relative_to(root))
+            relative = path.relative_to(root).as_posix()
             stat = path.lstat()
             if path.is_symlink():
                 kind = "symlink"
@@ -1457,7 +1554,7 @@ class Executor:
                 entries[relative]["target"] = os.readlink(path)
             parent = path.parent
             while parent != root:
-                name = str(parent.relative_to(root))
+                name = parent.relative_to(root).as_posix()
                 if name not in entries:
                     parent_stat = parent.lstat()
                     entries[name] = {
@@ -1624,31 +1721,57 @@ class Executor:
 
 
 def serve(state):
-    lock = (state / "service.lock").open("a")
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    lock_file = (state / "service.lock").open("a")
+    lock(lock_file, blocking=False)
     executor = Executor(state)
+    token = secrets.token_hex(32)
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
+            if sys.platform == "win32" and not hmac.compare_digest(
+                self.rfile.readline(256).rstrip(b"\r\n"), token.encode()
+            ):
+                return
             try:
                 value = json.loads(self.rfile.readline())
-                response = {
-                    "result": executor.dispatch(
-                        value["method"], value.get("params", {})
-                    )
-                }
+                if sys.platform == "win32" and value["method"] == "shutdown":
+                    # What SIGTERM is on POSIX: Windows can only kill a process
+                    # outright, and this one has children to stop first.
+                    stop(None, None)
+                    response = {"result": {}}
+                else:
+                    response = {
+                        "result": executor.dispatch(
+                            value["method"], value.get("params", {})
+                        )
+                    }
             except Exception as exc:
                 response = {"error": str(exc)}
             with contextlib.suppress(BrokenPipeError):
                 self.wfile.write(json.dumps(response).encode() + b"\n")
 
-    class Server(socketserver.ThreadingUnixStreamServer):
-        daemon_threads = False
+    if sys.platform == "win32":
+
+        class Server(socketserver.ThreadingTCPServer):
+            daemon_threads = False
+
+        address = ("127.0.0.1", 0)
+    else:
+
+        class Server(socketserver.ThreadingUnixStreamServer):
+            daemon_threads = False
+
+        address = socket_path(state)
 
     path = Path(socket_path(state))
     path.unlink(missing_ok=True)
-    with Server(str(path), Handler) as server:
-        path.chmod(0o600)
+    with Server(address, Handler) as server:
+        if sys.platform == "win32":
+            # Written only once the port is listening, so a client that finds
+            # the file finds a service behind it.
+            write_json(path, {"port": server.server_address[1], "token": token})
+        else:
+            path.chmod(0o600)
 
         def stop(_signum, _frame):
             threading.Thread(target=server.shutdown, daemon=True).start()
@@ -1746,12 +1869,15 @@ def main():
                 return
             info = None
         if info is not None:
-            os.kill(info["pid"], signal.SIGTERM)
-        with (state / "service.lock").open("a") as lock:
+            if sys.platform == "win32":
+                request(state, "shutdown")
+            else:
+                os.kill(info["pid"], signal.SIGTERM)
+        with (state / "service.lock").open("a") as lock_file:
             for _ in range(100):
                 try:
                     # The socket closes before handlers finish; the lock marks shutdown.
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock(lock_file, blocking=False)
                     return
                 except BlockingIOError:
                     time.sleep(0.1)
@@ -1761,7 +1887,7 @@ def main():
         configuration = json.load(sys.stdin)
         start_lock = (state / "start.lock").open("a")
         with start_lock:
-            fcntl.flock(start_lock, fcntl.LOCK_EX)
+            lock(start_lock)
             if (state / "config.json").exists():
                 if json.loads((state / "config.json").read_text()) != configuration:
                     raise ValueError(
@@ -1773,19 +1899,19 @@ def main():
                 except (OSError, RuntimeError):
                     pass
             write_json(state / "config.json", configuration)
+            argv = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "serve",
+                "--state",
+                str(state),
+            ]
             with (state / "service.log").open("a") as log:
-                process = subprocess.Popen(
-                    [
-                        sys.executable,
-                        str(Path(__file__).resolve()),
-                        "serve",
-                        "--state",
-                        str(state),
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=log,
-                    stderr=log,
-                    start_new_session=True,
+                options = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log}
+                process = (
+                    portable()["popen_daemon"](argv, **options)
+                    if sys.platform == "win32"
+                    else subprocess.Popen(argv, start_new_session=True, **options)
                 )
             for _ in range(100):
                 if process.poll() is not None:
