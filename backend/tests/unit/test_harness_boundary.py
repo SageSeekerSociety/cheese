@@ -64,13 +64,8 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # 它只拿这一个名字，而且拿的是「这个 harness 自己说自己是什么」——不是
     # 适配器的内部零件。
     "app.domain.agent.capability.matrix": ("declaration",),
-    # Enrollment prepares the native cache and idle process before advertising capacity.
-    "app.domain.machine.enrollment": (
-        "CLAUDE_MIN_VERSION",
-        "CLAUDE_PINNED_VERSION",
-        "build_startup_cache_prepare",
-        "build_warm_session_prepare",
-    ),
+    # Enrollment places the pinned build and checks it against the floor.
+    "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
     "app.domain.agent.compute": ("ClaudeCodeRuntime", "executor_launch"),
     "app.domain.agent.device_hub": (

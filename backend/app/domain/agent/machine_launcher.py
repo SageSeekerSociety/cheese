@@ -12,12 +12,9 @@ were the same 559-line f-string inside ``harness/claude_code``. A second harness
 could only start by copying it, and the copy would drift the way four native
 tool lists drifted.
 
-So the skeleton lives here and the harness fills five holes. They are named for
+So the skeleton lives here and the harness fills four holes. They are named for
 WHEN they run, because that is the only thing this side knows about them:
 
-``staging``     after the session's home and workdir are resolved, before they
-                are exported — the one place a harness can substitute a
-                pre-warmed home for the one we were about to create.
 ``configure``   after ``cheese-environment.py`` is on disk: the harness's own
                 config files, written before anything can read them.
 ``credentials`` after the platform CLI is on PATH, so this hole may report its
@@ -79,11 +76,8 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # hanging the launch would be a worse failure than a loud one.
 #
 # The recorded port is tried first when a helper has to be started again, and a
-# fresh one only when that bind fails. Both callers hand the printed port to the
-# agent they start or claim next, which is what makes a new number safe. The old
-# one is still preferred because a warm process claimed earlier keeps the address
-# it was claimed with, and a re-run claim of it (`warm_session.bind` resuming a
-# bound process) hands it nothing new.
+# fresh one only when that bind fails. The launcher hands whichever port was
+# printed to the agent it starts next, so either one is safe.
 #
 # Adopt-if-alive for the same reason the drainer does: a screen is reused across
 # turns, and restarting a working helper each time would reset every in-flight
@@ -421,7 +415,6 @@ def screen_launch(
             "bash",
             "-lc",
             launch_script(
-                staging=spec.staging,
                 configure=spec.configure,
                 credentials=spec.credentials,
                 prepare=spec.prepare,
@@ -496,13 +489,12 @@ def build_drain_script() -> str:
 
 def launch_script(
     *,
-    staging: str = "",
     configure: str = "",
     credentials: str = "",
     prepare: str = "",
     command: str,
 ) -> str:
-    """The launcher a device runs, with this harness's five holes filled.
+    """The launcher a device runs, with this harness's four holes filled.
 
     Every value the harness needs beyond these reaches it as environment: the
     channel builds one environment for the session and both halves read it.
@@ -559,10 +551,7 @@ case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
 # `uv run` rebuilds them. Sweeping `uv-cache` costs a download; sweeping
 # `uv-python` breaks rooms until they repair themselves.
 #
-# Placed before the `staging` hole, not after it: staging can spawn a process of
-# its own — claude-code's warm recovery restarts a room's runner from there —
-# and that process installs with whatever environment it inherited. Nothing here
-# needs HOME to have been swapped yet, only REAL_HOME.
+# Nothing here needs HOME to have been swapped yet, only REAL_HOME.
 #
 # `mkdir` guarded because `set -e` is in force and nothing here is worth failing
 # a launch over — a store that cannot be made leaves every tool on its own
@@ -584,8 +573,7 @@ if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export CHEESE_STORE="$CS"
   CSLIVE=1
 fi
-{staging}export HOME="$CH" CHEESE_WORK="$CW"
-cheese_launch_phase warm_staged
+export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.

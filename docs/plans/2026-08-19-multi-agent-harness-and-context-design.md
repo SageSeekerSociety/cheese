@@ -416,8 +416,8 @@ Room（我们的，多方）
 实际落地下来，**接一类的那道缝不在事件契约上，在启动上**：三个 harness 的事件
 形状差别有限，真正各不相同的是「这台机器上怎么把它起起来」。所以设备启动脚本
 被切成平台骨架（`machine_launcher`，写平台文件、起 tunnel/preview/drainer、
-监管 agent 进程）加五个洞（`staging`/`configure`/`credentials`/`prepare`/
-`command`），harness 只填洞。
+监管 agent 进程）加四个洞（`configure`/`credentials`/`prepare`/`command`），
+harness 只填洞。
 
 **权限要两道**仍然成立，且第一道已经在用：pi 的 `--tools` 一类的启动时裁剪，
 比运行时弹窗可靠——基准数据说模型在权限判断上准确率不到一半。ACP 的
