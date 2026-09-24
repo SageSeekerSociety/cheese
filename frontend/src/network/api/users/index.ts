@@ -78,13 +78,6 @@ export namespace UserApi {
       data: { email, ...(inviteCode ? { inviteCode } : {}) },
     })
 
-  export const refreshAccessToken = () =>
-    ApiInstance.request<AuthResponseDataType>({
-      url: '/users/auth/refresh-token',
-      method: 'POST',
-      withCredentials: true,
-    })
-
   export const recoverPasswordRequest = (email: string) =>
     ApiInstance.request({
       url: '/users/recover/password/request',
