@@ -64,7 +64,6 @@ def _machine(tmp_path, *, transcript_for: str | None = SESSION_ID):
         "CLAUDE_CONFIG_DIR": str(config_dir),
         "CLAUDE_BIN": str(agent),
         "AGENT_ARGS": str(tmp_path / "agent-args.jsonl"),
-        "WARM_ROOT": "",
         "CHEESE_TUNNEL_URL": "",
         "CHEESE_PREVIEW_URL": "",
         "CLAUDE_MODEL": "",

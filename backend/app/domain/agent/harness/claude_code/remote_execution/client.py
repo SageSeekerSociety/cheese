@@ -381,6 +381,15 @@ def prepare(
     env["CLAUDE_CODE_SHELL_PREFIX"] = str(prefix)
     command = [
         claude,
+        # The session's working directory sits under the session host's home,
+        # and Claude Code reads CLAUDE.md, CLAUDE.local.md, .claude/CLAUDE.md
+        # and .claude/rules from every directory between it and `/`. This flag
+        # limits it to the user source, which is our config dir, so none of the
+        # host owner's files reach the room. Nothing else keeps them out:
+        # dropping it puts them back into every session's prompt without any
+        # error. The room's own instructions arrive through the config dir
+        # (`link_forwarded_user_context`). Guarded by
+        # tests/unit/test_session_host_files_stay_out_of_the_prompt.py.
         "--setting-sources",
         "user",
         "--plugin-dir",

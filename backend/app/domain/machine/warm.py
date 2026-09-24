@@ -489,7 +489,6 @@ class WarmPoolService:
                 origin=settings.connector_public_base,
                 token=device.token,
                 device_id=device.device_id,
-                prepare_native_session=not bool(settings.agent_session_device_id),
             )
             output = await enrollment.run_bootstrap(
                 ip=ip,
