@@ -2,6 +2,7 @@
 
 import ast
 import base64
+import errno
 import hashlib
 import importlib.util
 import json
@@ -1716,6 +1717,44 @@ class RemoteExecutionTests(unittest.TestCase):
         (skill / "SKILL.md").write_text("changed skill body")
         changed = runtime.request(self.state, "context_fs", {"operation": "tree"})
         self.assertNotEqual(changed["generation"], tree["generation"])
+
+    def test_project_workflow_save_reaches_executor_and_other_paths_stay_read_only(
+        self,
+    ):
+        spec = importlib.util.spec_from_file_location(
+            "forwarded_fs", RUNTIME.with_name("forwarded_fs.py")
+        )
+        forwarded_fs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(forwarded_fs)
+
+        workflows = self.workspace / ".claude/workflows"
+        view = forwarded_fs.ForwardedProject(
+            lambda method, params: runtime.request(self.state, method, params)
+        )
+        view.refresh()
+        view.mkdir("/.claude", 0o700)
+        view.mkdir("/.claude/workflows", 0o700)
+        view.create("/.claude/workflows/draft.js", 0o600)
+        view.write("/.claude/workflows/draft.js", b"export default 1\n", 0)
+        view.rename("/.claude/workflows/draft.js", "/.claude/workflows/saved.js")
+        assert (workflows / "saved.js").read_text() == "export default 1\n"
+        assert ".claude/workflows/saved.js" in view.entries
+        assert view.read("/.claude/workflows/saved.js", 100, 0) == b"export default 1\n"
+        view.open("/.claude/workflows/saved.js", os.O_WRONLY | os.O_TRUNC)
+        view.write("/.claude/workflows/saved.js", b"export default 2\n", 0)
+        assert (workflows / "saved.js").read_text() == "export default 2\n"
+
+        with pytest.raises(OSError) as outside:
+            view.create("/.claude/settings.json", 0o600)
+        assert outside.value.errno == errno.EROFS
+        (workflows / "outside").symlink_to(self.root)
+        with pytest.raises(RuntimeError, match="Only project workflows"):
+            runtime.request(
+                self.state,
+                "context_fs",
+                {"operation": "create", "path": ".claude/workflows/outside/leak"},
+            )
+        assert not (self.root / "leak").exists()
 
     def test_context_fs_reports_imports_outside_project_boundary(self):
         absolute_project_import = str(self.workspace / "inside.md")

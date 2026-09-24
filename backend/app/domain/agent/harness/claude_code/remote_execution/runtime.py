@@ -1332,11 +1332,99 @@ class Executor:
         return {"searched": True, "hits": hits}
 
     def context_fs(self, params):
-        """Expose the native project context as a bounded read-only file view."""
+        """Expose project context, with writes limited to project workflows."""
         if self.config.get("private"):
+            if params.get("operation", "tree") != "tree":
+                raise ValueError("Private project context is not writable")
             return {"generation": hashlib.sha256(b"private").hexdigest(), "entries": {}}
 
         root = self.root.resolve()
+        operation = params.get("operation", "tree")
+        if operation == "statfs":
+            fs = os.statvfs(root)
+            return {
+                "f_bsize": fs.f_bsize,
+                "f_blocks": fs.f_blocks,
+                "f_bfree": fs.f_bfree,
+                "f_bavail": fs.f_bavail,
+            }
+        if operation in {
+            "mkdir",
+            "create",
+            "write",
+            "truncate",
+            "rename",
+            "unlink",
+            "rmdir",
+        }:
+
+            def workflow_path(name):
+                relative = Path(name)
+                parts = relative.parts
+                claude_directory = operation == "mkdir" and parts == (".claude",)
+                if (
+                    relative.is_absolute()
+                    or not (
+                        claude_directory
+                        or len(parts) >= 2
+                        and parts[:2] == (".claude", "workflows")
+                    )
+                    or (len(parts) == 2 and operation not in {"mkdir", "rmdir"})
+                    or ".." in parts
+                    or any(
+                        (root.joinpath(*parts[:index])).is_symlink()
+                        for index in range(1, len(parts) + 1)
+                    )
+                ):
+                    raise ValueError("Only project workflows may be changed")
+                path = root / relative
+                path.resolve().relative_to(root)
+                return path
+
+            path = workflow_path(params.get("path", ""))
+            if operation == "mkdir":
+                path.mkdir(mode=0o700)
+            elif operation == "create":
+                fd = os.open(
+                    path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                )
+                os.close(fd)
+            elif operation in {"write", "truncate"}:
+                fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+                try:
+                    if operation == "write":
+                        data = base64.b64decode(params["data"], validate=True)
+                        offset = params["offset"]
+                        if (
+                            not isinstance(offset, int)
+                            or offset < 0
+                            or offset + len(data) > 10 * 1024 * 1024
+                        ):
+                            raise ValueError("Invalid workflow write range")
+                        written = 0
+                        while written < len(data):
+                            written += os.pwrite(fd, data[written:], offset + written)
+                    else:
+                        size = params["size"]
+                        if (
+                            not isinstance(size, int)
+                            or not 0 <= size <= 10 * 1024 * 1024
+                        ):
+                            raise ValueError("Invalid workflow size")
+                        os.ftruncate(fd, size)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                if operation == "write":
+                    return {"written": written}
+            elif operation == "rename":
+                destination = workflow_path(params["destination"])
+                os.replace(path, destination)
+            elif operation == "unlink":
+                path.unlink()
+            else:
+                path.rmdir()
+            return {"ok": True}
         if params.get("operation") == "read":
             name = params.get("path", "")
             entry = self.context_fs_entries.get(name)
@@ -1431,7 +1519,10 @@ class Executor:
             for path in root.rglob(name):
                 if ".git" not in path.relative_to(root).parts:
                     include(path, imports=True)
+        if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
+            selected.add(root / ".claude")
         include(root / ".claude/skills")
+        include(root / ".claude/workflows")
 
         entries = {}
         for path in selected:
