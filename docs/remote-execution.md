@@ -41,7 +41,7 @@ backend/.venv/bin/python scripts/remote_execution/suite.py \
   --output tmp/remote-execution/acceptance-1
 ```
 
-The device-launcher and ordinary-room cases require Linux amd64, Docker, and access to GHCR. They use the released owner image and packaged Go connector pinned in `scripts/remote_execution/owner_fixture.py`, with an isolated database upgraded to the current schema. CI supplies the same image and revision through `ACCEPTANCE_OWNER_IMAGE` and `ACCEPTANCE_OWNER_REVISION`, and assigns `ACCEPTANCE_OWNER_PORT` per runner slot. Suite receipts include the selected image, revision, and shared transport source hashes.
+The device-launcher and ordinary-room cases require Linux amd64 and Docker. A runner without the pinned owner image also needs authenticated GHCR access. They use the released owner image and packaged Go connector pinned in `scripts/remote_execution/owner_fixture.py`, with an isolated database upgraded to the current schema. CI supplies the same image and revision through `ACCEPTANCE_OWNER_IMAGE` and `ACCEPTANCE_OWNER_REVISION`, and assigns `ACCEPTANCE_OWNER_PORT` per runner slot. Suite receipts include the selected image, revision, and shared transport source hashes.
 
 The suite runs the native terminal with deterministic model responses and a loopback RC service. It checks file operations, commands, custom MCP, project instructions, dynamic skill commands, remote background output and cancellation, request replay, platform hook events and RC file controls. Failure cases disable the plugin, throw from it, stall it and disconnect the executor. All must leave the central sentinel files unchanged.
 
