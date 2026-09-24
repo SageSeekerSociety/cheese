@@ -49,6 +49,12 @@ async fn connect_this_machine(
     .await
 }
 
+/// Which device this computer is, so the page can tell whether it is already connected.
+#[tauri::command]
+async fn this_device() -> Option<String> {
+    connect::stored_device_id().await
+}
+
 #[tauri::command]
 fn cancel_connect(running: State<'_, connect::Running>) {
     connect::cancel(&running);
@@ -58,9 +64,9 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(connect::Running::default())
-        .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect])
+        .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect, this_device])
         .setup(|app| {
-            // A page from the server may call the two commands above; by default
+            // A page from the server may call the commands above; by default
             // a remote page reaches no IPC at all.
             app.add_capability(
                 CapabilityBuilder::new("server")
@@ -68,7 +74,8 @@ fn main() {
                     .window("main")
                     .permission("core:default")
                     .permission("allow-connect-this-machine")
-                    .permission("allow-cancel-connect"),
+                    .permission("allow-cancel-connect")
+                    .permission("allow-this-device"),
             )?;
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();

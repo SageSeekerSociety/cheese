@@ -60,6 +60,13 @@ pub async fn sh(script: &str) -> Result<String, String> {
     run_script(platform::shell(), &format!("{}{script}", platform::PRELUDE)).await
 }
 
+/// The device this computer's cheesehost is logged in as, if any.
+pub async fn stored_device_id() -> Option<String> {
+    let config = sh(&format!("cat \"{}\" 2>/dev/null || true", platform::CHEESEHOST_CONFIG)).await.ok()?;
+    let config: serde_json::Value = serde_json::from_str(&config).ok()?;
+    config.get("device_id")?.as_str().map(str::to_string)
+}
+
 /// The running `cheesehost link connect`, so the page can cancel it.
 #[derive(Default)]
 pub struct Running(pub Mutex<Option<u32>>);
@@ -82,11 +89,7 @@ pub async fn connect(
     // A credential on disk for a device the signed-in user does not own (unbound
     // since, or someone else's) would connect as that device or be refused, so
     // it is dropped and the login runs again.
-    let config = sh(&format!("cat \"{}\" 2>/dev/null || true", platform::CHEESEHOST_CONFIG)).await?;
-    let stored = serde_json::from_str::<serde_json::Value>(&config)
-        .ok()
-        .and_then(|c| c.get("device_id")?.as_str().map(str::to_string));
-    if stored.is_some_and(|id| !known_device_ids.contains(&id)) {
+    if stored_device_id().await.is_some_and(|id| !known_device_ids.contains(&id)) {
         let _ = sh("\"$HOME/.local/bin/cheesehost\" auth logout").await;
     }
 

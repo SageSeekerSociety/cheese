@@ -28,6 +28,7 @@ function mount() {
 // login code it is waiting on, and finishes once that code has been approved.
 function desktopHost(finish: Promise<void>) {
   const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === 'this_device') return null
     if (cmd !== 'connect_this_machine') return
     const progress = args!.progress as { onmessage: (m: unknown) => void }
     progress.onmessage({ kind: 'step', text: '正在接入' })
@@ -96,7 +97,11 @@ describe('adding a device', () => {
     let finish!: () => void
     const invoke = desktopHost(new Promise<void>((r) => (finish = r)))
     invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'cancel_connect') return finish()
+      if (cmd === 'cancel_connect') {
+        finish()
+        return undefined
+      }
+      if (cmd === 'this_device') return null
       const progress = args!.progress as { onmessage: (m: unknown) => void }
       progress.onmessage({ kind: 'code', text: 'c0de' })
       await new Promise<void>((r) => (finish = r))

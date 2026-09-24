@@ -4,11 +4,18 @@
 // agent (screen) currently running on them — a read-only real terminal in the browser.
 import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
-import { connectDevice, deviceProposedName, listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
-import { desktopBridge, downloadsForThisComputer } from '../lib/desktop'
+import {
+  connectThisComputer,
+  desktopBridge,
+  downloadsForThisComputer,
+  isThisComputer,
+  setAutoConnect,
+  thisComputer,
+} from '../lib/desktop'
 
 import accountService from '@/services/account'
 
@@ -68,42 +75,32 @@ async function copyInstall() {
   }
 }
 
-// Inside the desktop app (desktop/) this computer can be connected in place: the app
-// installs and starts cheesehost, and this page approves the login it starts with
-// the session it is already signed in with — no terminal, no link to open.
+// Inside the desktop app (desktop/) this computer connects on its own at sign-in
+// (lib/desktop.ts); the button here is for connecting it again by hand. Either
+// way the progress is the shared `thisComputer` state.
 const desktop = desktopBridge()
 const downloads = downloadsForThisComputer()
-const connecting = ref(false)
-const connectStep = ref('')
-const connectError = ref<string | null>(null)
 
 async function connectThisMachine() {
-  if (!desktop) return
-  connecting.value = true
-  connectError.value = null
-  connectStep.value = '正在准备'
-  try {
-    await desktop.connectThisMachine({
-      knownDeviceIds: devices.value.map((d) => d.device_id),
-      onStep: (text) => (connectStep.value = text),
-      approve: async (code) => {
-        const { device_name } = await deviceProposedName(code)
-        await connectDevice(code, device_name ?? undefined)
-      },
-    })
+  const userId = accountService.user?.id
+  if (userId !== undefined) setAutoConnect(userId, true)
+  await connectThisComputer()
+}
+
+// However the connection started, once it ends the list is reloaded until the
+// computer shows up online — the service dials in a moment after it starts.
+watch(
+  () => thisComputer.connecting,
+  async (connecting) => {
+    if (connecting || thisComputer.error) return
     addDeviceOpen.value = false
-    // The service dials in a moment after it starts; list until it is online.
     for (let i = 0; i < 10; i++) {
       await load()
       if (devices.value.some((d) => d.online)) break
       await new Promise((r) => setTimeout(r, 1500))
     }
-  } catch (e) {
-    connectError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    connecting.value = false
   }
-}
+)
 
 async function load() {
   // Client-side gate: the device UI is only meaningful for a signed-in human. When
@@ -168,6 +165,8 @@ async function confirmUnbind() {
   unbinding.value = true
   try {
     await unbindMyDevice(d.device_id)
+    const userId = accountService.user?.id
+    if (desktop && userId !== undefined && (await isThisComputer(d.device_id))) setAutoConnect(userId, false)
     devices.value = devices.value.filter((x) => x.device_id !== d.device_id)
     unbindTarget.value = null
   } catch (e) {
@@ -213,9 +212,11 @@ onMounted(load)
           <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
           <div class="t-body c-muted mb-1">暂无已连接的设备</div>
           <div class="t-caption c-muted mb-5">把这台电脑接入后，智能体就能在这里干活</div>
-          <v-btn color="primary" variant="flat" :loading="connecting" @click="connectThisMachine">接入这台电脑</v-btn>
-          <div v-if="connecting" class="t-caption c-muted mt-3">{{ connectStep }}</div>
-          <div v-if="connectError" class="t-caption c-danger mt-3">{{ connectError }}</div>
+          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
+            >接入这台电脑</v-btn
+          >
+          <div v-if="thisComputer.connecting" class="t-caption c-muted mt-3">{{ thisComputer.step }}</div>
+          <div v-if="thisComputer.error" class="t-caption c-danger mt-3">{{ thisComputer.error }}</div>
         </div>
 
         <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
@@ -336,9 +337,11 @@ onMounted(load)
         <template v-if="desktop">
           <div class="t-title mt-3 mb-1">这台电脑</div>
           <div class="t-caption c-muted mb-3">自动安装连接程序并完成批准，不用打开终端</div>
-          <v-btn color="primary" variant="flat" :loading="connecting" @click="connectThisMachine">接入这台电脑</v-btn>
-          <div v-if="connecting" class="t-caption c-muted mt-2">{{ connectStep }}</div>
-          <div v-if="connectError" class="t-caption c-danger mt-2">{{ connectError }}</div>
+          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
+            >接入这台电脑</v-btn
+          >
+          <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
+          <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
         </template>
         <template v-else>
           <div class="t-title mt-3 mb-1">Mac 或 Windows 电脑</div>
