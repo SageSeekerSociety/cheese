@@ -688,17 +688,6 @@ class Settings(BaseSettings):
 
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
-    # Where the platform keeps the raw Claude session files of every place that
-    # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
-    # the device home, as `<project>/<place>/<utc timestamp>.tar.gz`, one file
-    # per upload and never overwritten. The room's conversation is in the
-    # `blocks` table; these are the agent's own transcripts, and this is their
-    # only copy once the home is gone. On a deployment it must be a persistent
-    # mount (compose: /data/transcripts), like the memory tree.
-    transcripts_dir: str = "./.transcripts"
-    # The most one upload may carry. A device that sends more gets 413 and
-    # keeps its home; the sweep says so every tick until somebody looks.
-    transcripts_max_bytes: int = 512 * 1024 * 1024
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
     # default: it consumes no model calls unless it actually finds a killed
     # turn, and its whole purpose is catching the case where nothing else will
@@ -817,7 +806,9 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # Explicit private bucket; public upload bucket is never used for transcripts.
+    # The private bucket, for task snapshot bundles (room_task/snapshots.py);
+    # the public upload bucket is never used for them. The name is the bucket's
+    # first use: it also holds the transcript objects `raw_transcripts` indexes.
     transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None

@@ -265,6 +265,8 @@ class _TurnContext:
     overview_doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
+    # Chat messages already in the room, apart from the ones this turn delivers.
+    earlier_messages: int
     topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
@@ -653,16 +655,14 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     return False
 
 
-# A platform-mutating `cheese <sub>` command → which UI panel should refresh live
-# (the doc/decisions/topics/... — restores mid-turn refresh now cheese runs as Bash).
+# A `cheese <sub>` command → the action card 芝士 files for it at the end of the
+# turn (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is
+# the job of the API handler that changed it (`announce_stale`), which knows the
+# change happened whoever called it.
 _CHEESE_RESOURCE = {
-    "doc": "doc",
     "decision": "decision",
     "split": "topics",
-    "conclude": "topics",
     "milestone": "milestone",
-    "accept-request": "accept",
-    "describe": "accept",
     "notify": "notify",
 }
 
@@ -677,8 +677,7 @@ _CHEESE_RESOURCE = {
 # No "accept" entry either, for the same reason: filing a card and correcting
 # one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
-# to them is the same fact told twice, worse. The resource stays in
-# `_CHEESE_RESOURCE` — that is what refreshes the accept panel.
+# to them is the same fact told twice, worse.
 _ACTION_LABEL = {
     "decision": "记录了决策",
     "topics": "更新了这个房间的活",
@@ -855,7 +854,7 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
 
 
 def _cheese_resource(command: str) -> str | None:
-    """Resource hint for a Bash `cheese <sub>` command, else None."""
+    """Which action card a Bash `cheese <sub>` command files, else None."""
     return _CHEESE_RESOURCE.get(cheese_subcommand(command))
 
 
@@ -922,12 +921,14 @@ def _session_opening_lines(
     *,
     progress: list[dict] | None = None,
     sandbox: tuple[int, int] | None = None,
+    earlier_messages: int = 0,
 ) -> list[str]:
     """盲飞防护: what a session cannot find out for itself, at the moment it opens.
 
-    Both survive being written once. The machine's size does not change under a
-    session, and the checklist is here to answer 「我做到哪了」 for a session that
-    was not there — once one is running, its own history answers that.
+    Each survives being written once. The machine's size does not change under
+    a session; the checklist answers 「我做到哪了」 and the pointer to the chat
+    answers 「之前说了什么」 for a session that was not there — once one is
+    running, its own history answers both.
 
     This is what is left of a per-turn header that came from #175, where the
     complaint was 29 turns timing out against a 900s ceiling nobody had been
@@ -957,6 +958,15 @@ def _session_opening_lines(
             "有问题，也不是工具链坏了。"
         )
     lines.extend(_progress_lines(progress or []))
+    # A session that opens in a room with history has read none of it, while
+    # the people in the room assume it has. The living docs, memory and the
+    # checklist reach it as conclusions; what was said is only in the chat.
+    if earlier_messages:
+        lines.append(
+            f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
+            "动手之前先用 `cheese chat list` 读最近的记录；"
+            "要找某句原话或某个决定，用 `cheese chat search <关键词>`。"
+        )
     return lines
 
 
@@ -2493,11 +2503,6 @@ class ChatService:
 
         broker = get_broker()
         frame: dict | None = None
-        # A second frame some events carry: "this panel is now out of date".
-        # Separate from `frame` because it is not the record of what happened
-        # (that is the event block) — it is the instruction to go re-read a
-        # panel, and both have to go out.
-        refresh_frame: dict | None = None
         state = self._hook_work.get((topic_id, turn_id))
         if state is None and platform_unsolicited and proves_output([event]):
             # Nobody fed this session anything and it is producing output anyway
@@ -2598,25 +2603,10 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
                     if state is not None and event.call_id:
                         state.steps[event.call_id] = uuid.UUID(payload["id"])
-                if name in SHELL_TOOLS:
+                if name in SHELL_TOOLS and state is not None:
                     resource = _cheese_resource(str(args.get("command", "")))
-                    if resource is not None:
-                        # Tell the room a panel just went stale, the moment it
-                        # did. Without this the verdict of `cheese accept-request`
-                        # / `cheese doc set` only reaches the screen when the
-                        # reader switches topics or reloads — a card filed while
-                        # someone is watching the conversation simply does not
-                        # appear. The frontend has handled this frame all along
-                        # (ChatPanel `case 'state'` → TopicView.handleStateChanged);
-                        # it was the sender that went missing when cheese moved
-                        # from a tool call to a Bash command.
-                        refresh_frame = {"type": "state", "resource": resource}
-                        if (
-                            state is not None
-                            and resource in _ACTION_LABEL
-                            and resource not in state.actions
-                        ):
-                            state.actions.append(resource)
+                    if resource is not None and resource not in state.actions:
+                        state.actions.append(resource)
         elif isinstance(event, AgentStepFailed):
             # No frame: 现场 rebuilds its timeline when the tab is opened, and
             # this changes a line that is already in it rather than adding one.
@@ -2714,10 +2704,6 @@ class ChatService:
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
-        if refresh_frame is not None:
-            # The room's, always: a panel going stale is a fact about the place
-            # the panel is in, and the worker that made it stale ran there.
-            await broker.publish(str(topic_id), refresh_frame)
         if isinstance(event, AgentResult):
             # 投喂 → Stop is the interval. Closing it HERE, rather than where the
             # turn's own coroutine ends, is what lets a turn survive the backend
@@ -4947,6 +4933,9 @@ class ChatService:
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
+            earlier_messages = await blocks.count_messages(
+                place.room_id, excluding=pending_ids
+            )
             # Read for the stage derivation below, and for nothing else: what
             # the cards SAY is `cheese_status`'s answer, and restating it in a
             # prompt only froze one turn's copy of it into the whole session.
@@ -5218,6 +5207,7 @@ class ChatService:
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
+            earlier_messages=earlier_messages,
             private_owner=private_owner,
             project_id=project_id,
             prompt_text=prompt_text,
@@ -5346,6 +5336,10 @@ class ChatService:
             session_opening=_session_opening_lines(
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
+                # A resumed conversation already holds what was said in it.
+                earlier_messages=(
+                    prepared.earlier_messages if resume_session_id is None else 0
+                ),
             ),
             stage_guide=load_scenario(stage_scenario(topic_stage)),
         )

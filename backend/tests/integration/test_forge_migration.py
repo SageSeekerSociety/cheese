@@ -26,7 +26,7 @@ async def test_github_local_work_survives_migration_without_remote_writes(
     monkeypatch.setattr(settings, "workspace_root", str(root))
     monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
     storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
-    monkeypatch.setattr(snapshots, "transcript_storage", lambda: storage)
+    monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     tokens = AsyncMock(side_effect=AssertionError("GitHub must remain unchanged"))
     monkeypatch.setattr(migrate_forge, "tokens_for_project", tokens)
     async with db_factory() as session:

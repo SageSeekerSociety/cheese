@@ -176,7 +176,8 @@ class S3StorageBackend(StorageBackend):
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
             region_name=self._region,
-            # Leave time to retry a stalled socket within the 60s transcript deadline.
+            # Short socket timeouts, so a stalled socket is retried well within
+            # a caller's transfer deadline.
             config=AioConfig(
                 connect_timeout=5,
                 read_timeout=15,

@@ -1,4 +1,4 @@
-"""pi 在会话机器上怎么起来：平台那五个洞，填的是 pi 的东西。
+"""pi 在会话机器上怎么起来：平台那四个洞，填的是 pi 的东西。
 
 Same machine as the workspace, which is the whole reason this harness exists.
 pi does not run on a subscription, so nothing about it needs a box we can put a
@@ -259,8 +259,8 @@ class PiLaunch:
     def on(self, place: MachinePlace) -> MachineLaunch:
         """pi, now that a machine has said where.
 
-        Most of what ``place`` states is not pi's business: it has no warm pool
-        to stage, no subscription CA to trust, and no executor to hand its tools
+        Most of what ``place`` states is not pi's business: it has no
+        subscription CA to trust, and no executor to hand its tools
         to — on this machine the tools ARE local. What it takes is where the
         session lives and how to reach the model.
         """

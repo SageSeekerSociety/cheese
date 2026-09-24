@@ -64,6 +64,7 @@ class RequiredCITest(unittest.TestCase):
             "mcp": [
                 "scripts/remote_execution/package-lock.json",
                 ".github/workflows/mcp-contract.yml",
+                "scripts/remote_execution/headless_contract.py",
             ],
         }
         for suite, paths in previous.items():

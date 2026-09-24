@@ -19,15 +19,12 @@ import logging
 import os
 import tempfile
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import connector_build
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
-    build_startup_cache_prepare,
-    build_warm_session_prepare,
 )
 from app.domain.agent.harness.pi import device_launch as pi_launch
 from app.domain.machine import claude_dist
@@ -42,7 +39,6 @@ SSH_TIMEOUT_S = 180.0
 STARTUP_STEPS = {
     "tools": "正在检查并安装基础工具",
     "runtime": "正在安装运行程序",
-    "cache": "正在准备运行缓存",
     "connector": "正在下载连接器",
     "connect": "正在启动连接器",
     "verify": "正在检查连接器服务",
@@ -96,9 +92,7 @@ async def generate_keypair() -> tuple[str, str]:
     return private, public
 
 
-def bootstrap_script(
-    *, origin: str, token: str, device_id: str, prepare_native_session: bool = False
-) -> str:
+def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     """What runs on the machine. Writes the cli's config, then connects.
 
     Deliberately arch-agnostic: the same script serves an LXC container and a VM
@@ -136,22 +130,6 @@ def bootstrap_script(
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
     pi_script = pi_launch.install(home="$HOME", base=origin_clean)
-    preparation_script = ""
-    if prepare_native_session:
-        # Every machine talks to a model through the metering proxy, so the
-        # warm session has to trust its CA — there is no second shape that
-        # would not need it. Refusing here names the missing piece; the
-        # alternative is a machine that enrols cleanly and fails every turn
-        # with an opaque TLS error.
-        if not settings.subscription_ca_backend_path.strip():
-            raise EnrollmentError(
-                "SUBSCRIPTION_CA_BACKEND_PATH is required for native preparation"
-            )
-        ca_pem = Path(settings.subscription_ca_backend_path).read_text()
-        if not ca_pem.strip():
-            raise EnrollmentError("Subscription proxy CA is empty")
-        preparation_script = build_startup_cache_prepare(pinned_version)
-        preparation_script += build_warm_session_prepare(pinned_version, ca_pem=ca_pem)
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -260,8 +238,6 @@ fi
 echo CHEESE_STARTUP:runtime
 {pi_script}
 umask 077
-echo CHEESE_STARTUP:cache
-{preparation_script}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 echo CHEESE_STARTUP:connector
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\

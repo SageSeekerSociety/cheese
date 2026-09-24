@@ -1698,7 +1698,6 @@ def test_a_machine_launch_script_never_names_a_model():
         (
             machine.command,
             machine.contract,
-            machine.staging,
             machine.configure,
             machine.credentials,
             machine.prepare,

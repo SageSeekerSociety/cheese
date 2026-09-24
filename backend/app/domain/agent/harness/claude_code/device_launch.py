@@ -27,7 +27,6 @@ from uuid import uuid4
 # this module's launcher and its callers build on it.
 from app.core.config import settings
 from app.domain.agent import machine_launcher
-from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, disallowed_tools
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -211,13 +210,6 @@ print("ok (ticket extracted)")
 # exec error are read conservatively as alive, so a probe hiccup never false-kills.
 DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
 [ -n "$topic" ] || { echo unknown; exit 0; }
-# A prepared process acquired its topic after exec; its original /proc environ
-# cannot identify that assignment. Check the durable binding and native pane.
-if [ -f "$HOME/.cheese/native-warm/state.json" ]; then
-  warm_status="$(python3 "$HOME/.cheese/warm-native-runner.py" probe-topic \
-    "$HOME/.cheese/native-warm" "$topic" 2>/dev/null)"
-  case "$warm_status" in alive|dead) echo "$warm_status"; exit 0;; esac
-fi
 # Linux: match the topic on each process's own environ → per-topic precise. The
 # connector (same user as the screen it spawned) can read that same-uid /proc entry.
 if [ -d /proc ] && [ -r /proc/self/environ ]; then
@@ -358,11 +350,10 @@ def launch_holes(
     system_prompt: str = "",
     ca_pem: str = "",
     remote_control: bool = False,
-    remote_execution: bool = False,
     resume_session_id: str | None = None,
     topic_id: str | None = None,
 ) -> MachineLaunch:
-    """Claude Code's half of a device launch: the five holes, and its own env.
+    """Claude Code's half of a device launch: the four holes, and its own env.
 
     The platform half is ``machine_launcher``; nothing below belongs to it. It
     reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
@@ -394,7 +385,6 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     sync_script = CHEESE_SYNC_SCRIPT
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
-    startup_cache_source = Path(startup_cache.__file__).read_text()
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     skill_setup = "\n".join(
         f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
@@ -415,25 +405,22 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         if remote_control
         else CLAUDE_BASE_ARGS
     )
-    execution_setup = ""
     pinned_version = CLAUDE_PINNED_VERSION
-    minimum_version = CLAUDE_PINNED_VERSION if remote_execution else CLAUDE_MIN_VERSION
-    if remote_execution:
-        helper_sources = release.sources()
-        execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
-        for name, source in helper_sources.items():
-            execution_setup += (
-                f'cat > "$HOME/.cheese/remote-execution/{name}" '
-                "<<'CHEESE_EXECUTION_SOURCE'\n"
-                + source
-                + ("" if source.endswith("\n") else "\n")
-                + "CHEESE_EXECUTION_SOURCE\n"
-            )
+    helper_sources = release.sources()
+    execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
+    for name, source in helper_sources.items():
         execution_setup += (
-            f"printf %s {release.digest(helper_sources)} "
-            '> "$HOME/.cheese/remote-execution/release-ready"\n'
+            f'cat > "$HOME/.cheese/remote-execution/{name}" '
+            "<<'CHEESE_EXECUTION_SOURCE'\n"
+            + source
+            + ("" if source.endswith("\n") else "\n")
+            + "CHEESE_EXECUTION_SOURCE\n"
         )
-        execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
+    execution_setup += (
+        f"printf %s {release.digest(helper_sources)} "
+        '> "$HOME/.cheese/remote-execution/release-ready"\n'
+    )
+    execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
   > "$HOME/.cheese/remote-target.json"
 EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
 EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
@@ -482,37 +469,6 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
     # never expands them. ~/.claude.json is written by the shell (see below) so a
     # machine without node can still launch.
     return MachineLaunch(
-        staging="""WARM_ROOT=""
-if [ -z "${CHEESE_EXECUTION_TARGET:-}" ] && \\
-   [ -f "$REAL_HOME/.cheese/native-warm/binding.json" ]; then
-  python3 "$REAL_HOME/.cheese/warm-native-runner.py" recover-room \\
-    "$REAL_HOME/.cheese/native-warm"
-fi
-# Reuse one interpreter for the check and staging, including on existing spares.
-if [ -z "${CHEESE_EXECUTION_TARGET:-}" ] && \\
-   [ -f "$REAL_HOME/.cheese/native-warm/state.json" ]; then
-  WARM_ROOT="$(python3 - "$REAL_HOME/.cheese/native-warm" "$CH" "$CW" \\
-    <<'CHEESE_WARM_STAGE'
-import json, os, runpy, sys
-from pathlib import Path
-directory = Path(sys.argv[1])
-runner = runpy.run_path(str(directory.parent / "warm-native-runner.py"))
-state = json.loads((directory / "state.json").read_text())
-if (directory / "ready").exists() and runner["_native_alive"](state):
-    runner["stage"](
-        directory,
-        project_id=os.environ["CHEESE_PROJECT"],
-        topic_id=os.environ["CHEESE_TOPIC"],
-        home=Path(sys.argv[2]),
-        work=Path(sys.argv[3]),
-        rendezvous=Path(os.environ["CHEESE_RV_SOCK"]),
-        token_file=Path(os.environ["CHEESE_RV_TOKEN_FILE"]),
-    )
-    print(directory)
-CHEESE_WARM_STAGE
-)"
-fi
-""",
         configure=f"""\
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
@@ -523,7 +479,9 @@ fi
 # os.homedir() ignores our exported $HOME and claude lands in the machine
 # owner's real ~/.claude — which is why earlier launches had to REWRITE the
 # owner's settings.json to be routed at all, hijacking every claude the owner
-# starts by hand. With it, the owner's files are never read and never written.
+# starts by hand. With it, claude never reads or writes the owner's files; the
+# one step that opens them is the credentials hole below, which only reads the
+# machine's ticket out of the owner's settings.json.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # Ours to create now that the platform keeps its own files in $HOME/.cheese:
 # this directory is this harness's, and everything below writes into it.
@@ -554,11 +512,9 @@ rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 # claude reads the onboarding/trust gates from THERE (verified — the gate in the
 # dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
 # just be dead weight in the isolated home.
-if [ -z "$WARM_ROOT" ]; then
 cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
 {{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
-fi
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
@@ -671,10 +627,10 @@ if [ -z "$CLAUDE_BIN" ]; then
 fi
 CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')"
 cheese_launch_phase version_checked
-if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{minimum_version}" "$CLAUDE_V" \\
-    | sort -V | head -n 1)" != "{minimum_version}" ]; then
+if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{pinned_version}" "$CLAUDE_V" \\
+    | sort -V | head -n 1)" != "{pinned_version}" ]; then
   echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
-{minimum_version}, and the platform's pinned build is not at $_pin; prompt \\
+{pinned_version}, and the platform's pinned build is not at $_pin; prompt \\
 delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
@@ -694,11 +650,6 @@ if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
   CLAUDE_BG_RV_AUTH="$(cat "$CHEESE_RV_TOKEN_FILE" 2>/dev/null || true)"
   export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH
 fi
-python3 - restore "$REAL_HOME" "$CLAUDE_V" \\
-  "$CLAUDE_CONFIG_DIR" <<'CHEESE_NATIVE_CACHE'
-{startup_cache_source}
-CHEESE_NATIVE_CACHE
-cheese_launch_phase cache_restored
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 # 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
 # nothing to do with the conversation — an expired credential, a `claude` that
@@ -742,49 +693,6 @@ fi
 CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 {execution_setup}
-if [ -n "$WARM_ROOT" ]; then
-  cheese_launch_phase workspace_ready
-  # Reuse the loaded helper for adoption and terminal attachment. The shipped
-  # helper already exposes both operations, including on existing warm machines.
-  exec python3 - "$REAL_HOME/.cheese/warm-native-runner.py" \\
-    "$WARM_ROOT" 3<&0 <<'WARM_ATTACH'
-import os
-import runpy
-import sys
-import json
-import subprocess
-from pathlib import Path
-
-# The heredoc carries code; tmux and environment scripts still need the PTY.
-os.dup2(3, 0)
-os.close(3)
-runner = runpy.run_path(sys.argv[1])
-directory = Path(sys.argv[2])
-code = runner["adopt_room"](directory)
-if code:
-    raise SystemExit(code)
-terminal = runner["connection"](
-    directory, os.environ["CHEESE_PROJECT"], os.environ["CHEESE_TOPIC"]
-)
-outer_socket = os.environ["TMUX"].split(",", 1)[0]
-outer_session = subprocess.check_output(
-    ["tmux", "-S", outer_socket, "display-message", "-p", "-t",
-     os.environ["TMUX_PANE"], "#S"],
-    text=True,
-).strip()
-owned_terminal = {{
-    "socket": terminal["command"][2],
-    "session": terminal["command"][-1],
-}}
-subprocess.run(
-    ["tmux", "-S", outer_socket, "set-option", "-t", outer_session,
-     "@cheese-terminal", json.dumps(owned_terminal)],
-    check=True,
-)
-os.environ.pop("TMUX", None)
-os.execvp("tmux", terminal["command"])
-WARM_ATTACH
-fi
 """,
         contract=claude_args,
         command="$CLAUDE",
@@ -796,7 +704,6 @@ def build_launch_script(**named) -> str:
     """The launcher a device runs for a Claude Code session."""
     holes = launch_holes(**named)
     return machine_launcher.launch_script(
-        staging=holes.staging,
         configure=holes.configure,
         credentials=holes.credentials,
         prepare=holes.prepare,
@@ -812,8 +719,7 @@ def on_machine(
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
 
-    ``place`` states facts; what they mean is decided here. A project room
-    syncs at turn end (a Stop hook), one with an execution target ships
+    ``place`` states facts; what they mean is decided here. Every room ships
     the executor client and hands ``claude`` to it, one whose operator may drive
     it directly runs without the permission prompt, and a CA to trust is a file
     only the script can name an absolute path for.
@@ -825,7 +731,6 @@ def on_machine(
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         remote_control=place.remote_control,
-        remote_execution=place.execution_target is not None,
         resume_session_id=resume_session_id,
         topic_id=place.topic_id,
     )

@@ -1,9 +1,15 @@
 """Archival persists a configurable grace period without deleting resources."""
 
+import asyncio
+import json
 import os
 import subprocess
+import tarfile
+import threading
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -78,17 +84,17 @@ async def test_cancel_before_claim_reuses_environment_without_device_commands(
     action.assert_not_awaited()
 
 
-async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
+async def test_failed_event_delivery_keeps_resources_and_retries_after_restart(
     client, monkeypatch
 ):
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     inventory = AsyncMock(return_value=[entry])
     action = AsyncMock()
-    flush = AsyncMock(side_effect=RuntimeError("object store offline"))
+    deliver = AsyncMock(side_effect=RuntimeError("final hook event delivery failed"))
     monkeypatch.setattr(retire, "_inventory", inventory)
     monkeypatch.setattr(retire, "_device_action", action)
-    monkeypatch.setattr(retire, "_flush_transcripts", flush)
+    monkeypatch.setattr(retire, "_deliver_events", deliver)
     result = client.portal.call(
         lambda: retire.sweep_retired_storage(client.test_request_factory)
     )
@@ -100,10 +106,9 @@ async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "pending"
-        assert operation.last_error == "object store offline"
+        assert operation.last_error == "final hook event delivery failed"
     # A fresh worker/session resumes the same recorded resource, not a fresh inventory.
-    flush.side_effect = None
-    flush.return_value = []
+    deliver.side_effect = None
     assert client.portal.call(
         lambda: retire.sweep_retired_storage(client.test_request_factory)
     ) == {
@@ -171,7 +176,7 @@ async def test_unpublished_backend_source_can_be_reopened_before_parking(
     assert (work / "unfinished.py").read_text() == "unpublished source"
 
 
-async def test_cloud_inventory_cannot_discard_unrecognized_transcripts(
+async def test_cloud_inventory_cannot_discard_unrecognized_directories(
     client, monkeypatch
 ):
     room_id, cleanup_id = await archived_room(client, monkeypatch)
@@ -258,7 +263,7 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
             raise RuntimeError("old device offline")
 
     monkeypatch.setattr(retire, "_device_action", old_device)
-    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(retire, "_deliver_events", AsyncMock())
     client.portal.call(
         lambda: retire.sweep_retired_storage(client.test_request_factory)
     )
@@ -289,7 +294,6 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
                 "kind": "device",
                 "device_id": "fixture",
                 "resource_id": str(room_id),
-                "transcripts": [],
             },
             # Deletion succeeded before a crash; the old pathname now holds new work.
             {
@@ -301,7 +305,7 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
         await session.commit()
     action = AsyncMock(side_effect=RuntimeError("device offline"))
     monkeypatch.setattr(retire, "_device_action", action)
-    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(retire, "_deliver_events", AsyncMock())
     client.portal.call(
         lambda: retire.sweep_retired_storage(client.test_request_factory)
     )
@@ -379,7 +383,7 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
     monkeypatch.setattr(retire, "_device_action", AsyncMock())
-    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(retire, "_deliver_events", AsyncMock())
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         operation.lease_until = datetime.now(UTC) + timedelta(minutes=10)
@@ -442,3 +446,186 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
         }
         with pytest.raises(RuntimeError, match="inventory failed"):
             await retire._inventory(session, operation, {"new-hands": []})
+
+
+class LocalDevice:
+    """A device whose commands run on this machine, with HOME at a directory of
+    the test's, so cleanup runs the real device-side script."""
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ):
+        result = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env={**os.environ, **(env or {}), "HOME": str(self.home)},
+            timeout=timeout,
+        )
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit": result.returncode,
+            "truncated": False,
+        }
+
+
+@pytest.fixture
+def platform_requests():
+    """Every request a device sends to the platform, answered as accepted."""
+    seen: list[str] = []
+
+    class Accept(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self._accept()
+
+        do_PUT = do_POST
+
+        def _accept(self):
+            seen.append(f"{self.command} {self.path}")
+            body = json.dumps({"code": 200, "data": {}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Accept)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", seen
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+async def session_host_room(client, monkeypatch, tmp_path, platform_requests):
+    """An archived room whose home, on the session host, holds a main session
+    transcript, a subagent's, and one hook event its sender had not sent yet."""
+    base, _seen = platform_requests
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        project_id, resource_id = operation.project_id, operation.resource_id
+    machine = tmp_path / "session-host"
+    home = machine / ".cheese/home" / str(project_id) / str(resource_id)
+    sessions = home / ".claude/projects/-room"
+    (sessions / "s1/subagents").mkdir(parents=True)
+    (sessions / "s1.jsonl").write_bytes(b'{"said":"main"}\n')
+    (sessions / "s1/subagents/agent-a.jsonl").write_bytes(b'{"said":"sub"}\n')
+    (home / ".cheese/cheese-spool").mkdir(parents=True)
+    (home / ".cheese/cheese-spool/0001").write_text('{"hook_event_name":"Stop"}')
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    monkeypatch.setattr(settings, "connector_public_base", base)
+    monkeypatch.setattr(retire.device_hub, "exec", LocalDevice(machine).exec)
+    entry = {
+        "kind": "device",
+        "device_id": "center",
+        "resource_id": str(resource_id),
+    }
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    archive = (
+        machine
+        / ".cheese/transcripts"
+        / str(project_id)
+        / str(room_id)
+        / f"{resource_id}.tar.gz"
+    )
+    return SimpleNamespace(
+        room_id=room_id, cleanup_id=cleanup_id, home=home, archive=archive
+    )
+
+
+def _sweep(client) -> dict:
+    return client.portal.call(
+        lambda: retire.sweep_retired_storage(client.test_request_factory)
+    )
+
+
+def _archived_files(archive: Path) -> dict[str, bytes]:
+    with tarfile.open(archive) as bundle:
+        return {
+            member.name: bundle.extractfile(member).read()
+            for member in bundle.getmembers()
+            if member.isfile()
+        }
+
+
+async def _make_due(client, cleanup_id) -> None:
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        operation.due_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+
+async def test_cleanup_keeps_transcripts_on_the_session_host_for_thirty_days(
+    client, session_host_room, platform_requests
+):
+    room = session_host_room
+    _base, seen = platform_requests
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+
+    # The home is gone, its transcripts kept compressed beside the platform's
+    # other files on the host, and the only thing sent anywhere was the event.
+    assert not room.home.exists()
+    assert _archived_files(room.archive) == {
+        "projects/-room/s1.jsonl": b'{"said":"main"}\n',
+        "projects/-room/s1/subagents/agent-a.jsonl": b'{"said":"sub"}\n',
+    }
+    assert seen == [f"POST /sandbox/hooks/{room.room_id}"]
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        assert operation.state == "retained"
+        kept_for = operation.due_at - datetime.now(UTC)
+        assert timedelta(days=29, hours=23) < kept_for <= timedelta(days=30)
+
+    # Not due yet: a sweep leaves them alone.
+    assert _sweep(client) == {"completed": 0, "pending": 0}
+    assert room.archive.exists()
+
+    await _make_due(client, room.cleanup_id)
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.archive.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "complete"
+    assert seen == [f"POST /sandbox/hooks/{room.room_id}"]
+
+
+async def test_a_room_reopened_while_its_transcripts_are_kept_lets_them_expire(
+    client, session_host_room
+):
+    room = session_host_room
+    _sweep(client)
+    async with client.test_factory() as session:
+        reopened = await TopicService(session).unarchive(room.room_id, by="owner")
+        assert reopened.resource_id not in {None, room.room_id}
+        await session.commit()
+        # Nothing is restored into the new generation; the kept copy stays put.
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "retained"
+    assert room.archive.exists()
+    await _make_due(client, room.cleanup_id)
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.archive.exists()
+
+
+async def test_a_device_other_than_the_session_host_keeps_no_transcripts(
+    client, session_host_room, monkeypatch
+):
+    room = session_host_room
+    monkeypatch.setattr(settings, "agent_session_device_id", "some-other-host")
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.home.exists()
+    assert not room.archive.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "complete"
