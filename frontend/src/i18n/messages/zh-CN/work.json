@@ -169,5 +169,20 @@
     "failed": "资源限制加载失败",
     "retry": "重试",
     "loading": "正在加载资源限制…"
+  },
+  "room": {
+    "noTasks": "暂无任务",
+    "menu": {
+      "more": "更多",
+      "focus": "专注模式",
+      "exitFocus": "退出专注模式",
+      "compute": "运行环境",
+      "usage": "用量",
+      "thisTopic": "本话题",
+      "wholeProject": "全项目",
+      "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
+      "usageSplit": "输入 {input} · 输出 {output}",
+      "noUsage": "暂无数据"
+    }
   }
 }

@@ -169,5 +169,20 @@
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
+  },
+  "room": {
+    "noTasks": "No tasks",
+    "menu": {
+      "more": "More",
+      "focus": "Focus mode",
+      "exitFocus": "Exit focus mode",
+      "compute": "Runtime",
+      "usage": "Usage",
+      "thisTopic": "This topic",
+      "wholeProject": "Whole project",
+      "usageLine": "{turns} runs · {tokens} tokens · {cost}",
+      "usageSplit": "Input {input} · Output {output}",
+      "noUsage": "No data"
+    }
   }
 }

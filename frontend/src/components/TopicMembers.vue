@@ -156,7 +156,6 @@ async function onSetRole(handle: string, role: string) {
             >+{{ overflow }}</span
           >
         </span>
-        <span class="members-mini__count">{{ members.length }}</span>
       </button>
     </template>
 
@@ -325,16 +324,6 @@ async function onSetRole(handle: string, role: string) {
   color: rgb(var(--v-theme-on-primary));
   background: var(--accent);
   font-size: 0.6rem;
-}
-.members-mini__count {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--muted);
-  line-height: 1;
-}
-.members-mini:hover .members-mini__count,
-.members-mini--open .members-mini__count {
-  color: var(--ink);
 }
 
 .roster {
