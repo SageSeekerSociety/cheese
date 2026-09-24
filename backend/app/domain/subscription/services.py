@@ -96,6 +96,7 @@ class SubscriptionService:
         label: str | None,
         target_id: uuid.UUID | None,
         upstream_model: str | None = None,
+        upstream_provided: bool = True,
     ) -> dict:
         """开一次导入（或定向重授权）。
 
@@ -106,6 +107,10 @@ class SubscriptionService:
         非定向开启时若已有一条活跃订阅，拒绝并说明两条出路（先移除，或从它
         发起重新授权）——静默顶掉一条还在干活的订阅不是按钮该有的语义。
         """
+        if upstream_model is not None and not upstream_model.strip():
+            # 与 update_upstream_model 同一条规矩：空白不是「跟随默认」（那是
+            # None），是一个写错的值。
+            raise BadRequestError("上游模型标识不能为空")
         try:
             started = await self._oauth.start_device_flow()
         except SubscriptionOAuthError as exc:
@@ -124,9 +129,10 @@ class SubscriptionService:
                 raise NotFoundError("要重新授权的订阅不存在")
             if target.status not in _REAUTHABLE:
                 raise BadRequestError("这条订阅当前不在可重新授权的状态")
-            # 重授权换的是凭据，不是配置：请求没带显式上游时继承旧行的选择，
-            # 否则一次换号会把网关上的模型静默打回部署默认。
-            if upstream_model is None:
+            # 重授权换的是凭据，不是配置：请求**没提**上游（字段缺省）时继承旧行
+            # 的选择；显式传了 null 才是「清除选择、回落部署默认」——两种意思都
+            # 得说得出，否则一次换号要么静默打回默认、要么永远清不掉。
+            if upstream_model is None and not upstream_provided:
                 upstream_model = target.upstream_model
             target.status = "superseded"
         else:
@@ -768,6 +774,10 @@ class SubscriptionService:
                 secrets={access_token},
             )
             raise
+        # 推成了：上一次网关失败的原话不再是现状（刷新成功路径同规），
+        # 并在审计落库**之前**清 —— `_record` 自带独立 commit，之后改的要
+        # 靠路由收尾才落库。
+        sub.last_refresh_error = None
         await self._record(
             handle=handle,
             action="subscription.update_upstream",

@@ -861,6 +861,76 @@ def test_targeted_reauth_inherits_the_old_rows_upstream(client, as_admin, rig):
     assert sent["litellm_params"]["model"] == "openai/gpt-5.6-luna"
 
 
+def test_targeted_reauth_with_explicit_null_clears_the_upstream(client, as_admin, rig):
+    """定向重授权显式传 null = 清除选择（与「字段缺省 = 继承」是两句不同的话）：
+    新行回落 NULL，推进网关的是部署默认。"""
+    old_id = _seed_active(client, upstream="openai/gpt-5.6-luna")
+    _linked_model_fixture(rig, upstream="openai/gpt-5.6-luna")
+
+    started = client.post(
+        "/admin/subscriptions/device-flows",
+        json={
+            "provider": "openai_codex",
+            "target_subscription_id": str(old_id),
+            "upstream_model": None,
+        },
+        headers=session_auth_headers(as_admin),
+    )
+    assert started.status_code == 200, started.text
+    flow_id = started.json()["data"]["flow_id"]
+
+    rig.openai_state["poll"] = "complete"
+    done = client.post(
+        f"/admin/subscriptions/device-flows/{flow_id}/poll",
+        headers=session_auth_headers(as_admin),
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["subscription"]["upstream_model"] is None
+
+    active = [r for r in _subs_rows(client) if r.status == "active"]
+    assert len(active) == 1
+    assert active[0].upstream_model is None
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.2-codex"
+
+
+def test_start_flow_with_a_whitespace_upstream_is_a_400(client, as_admin, rig):
+    """空白上游在开启流程这一侧同样拒掉（与 PATCH 同一条规矩）。"""
+    r = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "upstream_model": "   "},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert _subs_rows(client) == []
+
+
+def test_update_upstream_model_success_clears_the_stale_error(client, as_admin, rig):
+    """改完推成：上一次网关失败的原话不再是现状（刷新成功路径同规）。"""
+    sub_id = _seed_active(client)
+    _linked_model_fixture(rig)
+
+    async def _stale():
+        async with client.test_factory() as session:
+            row = await session.get(LlmSubscription, sub_id)
+            row.last_refresh_error = "凭据已刷新，但推进网关失败：gateway 503"
+            await session.commit()
+
+    asyncio.run(_stale())
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["last_refresh_error"] is None
+    (row,) = _subs_rows(client)
+    assert row.last_refresh_error is None
+
+
 def test_update_upstream_model_with_an_undecryptable_credential_marks_reauth(
     client, as_admin, rig
 ):

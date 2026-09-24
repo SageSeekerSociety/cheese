@@ -305,6 +305,7 @@ const AUDIT_ACTION_KEY: Record<string, string> = {
   'subscription.cancel': 'models.audit.action.subscriptionCancel',
   'subscription.refresh': 'models.audit.action.subscriptionRefresh',
   'subscription.revoke': 'models.audit.action.subscriptionRevoke',
+  'subscription.update_upstream': 'models.audit.action.subscriptionUpdateUpstream',
 }
 
 function auditActionLabel(action: string): string {

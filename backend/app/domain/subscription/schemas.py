@@ -21,9 +21,10 @@ class DeviceFlowStart(BaseModel):
     provider: Literal["openai_codex"] = "openai_codex"
     label: str | None = Field(default=None, max_length=200)
     target_subscription_id: uuid.UUID | None = None
-    # 显式指定上游模型（如 openai/gpt-5.6-luna）；空 = 跟随部署默认
+    # 显式指定上游模型（如 openai/gpt-5.6-luna）；null = 跟随部署默认
     # （settings.subscription_upstream_model），行里存 NULL，热配保留。
-    # 定向重授权时空 = **继承旧行的选择**（重授权换凭据不换配置，服务层兑现）。
+    # 定向重授权时语义细分（服务层靠 model_fields_set 兑现）：字段**缺省** =
+    # 继承旧行的选择；显式 **null** = 清除选择、回落部署默认。
     upstream_model: str | None = Field(default=None, min_length=1, max_length=200)
 
 

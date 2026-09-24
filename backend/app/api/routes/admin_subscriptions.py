@@ -109,6 +109,9 @@ async def start_device_flow(
                 label=payload.label,
                 target_id=payload.target_subscription_id,
                 upstream_model=payload.upstream_model,
+                # 「没提」与「显式 null」是两句话：定向重授权时前者继承旧行的
+                # 选择，后者是清除（service 的语义，靠 fields_set 区分）。
+                upstream_provided="upstream_model" in payload.model_fields_set,
             )
         )
     )
