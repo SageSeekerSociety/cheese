@@ -1,11 +1,9 @@
 """Minimal fusion-demo seed: one CheeseX project so the rail shows a project
 tile you can click into.
 
-The canonical scripts/seed_demo.py is written against cheesex's pre-merge User
-model (flat handle/name); the merged app splits identity into main's User
-(username) + UserProfile. Rather than port that whole script, this creates just
-what the rail/workspace demo needs, reusing the users that already exist after a
-fresh `alembic upgrade head` (alice from the seed migration, 芝士 from boot).
+It creates just what the rail/workspace demo needs, reusing the users that
+already exist after a fresh `alembic upgrade head` (alice from the seed
+migration, 芝士 from boot).
 
 Idempotent: keyed on the project name, so re-running never duplicates.
 """
