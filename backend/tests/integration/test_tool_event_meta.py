@@ -20,7 +20,7 @@ class ToolScreen(StubChannel):
         self.acknowledges(topic_id, prompt)
         self.uses(topic_id, "Grep", pattern="TODO", path="src")
         self.uses(topic_id, "mcp__cheese__update_doc", content="# 文档")
-        self.uses(topic_id, "Bash", command='cheese title "新标题"')
+        self.uses(topic_id, "Bash", command="cheese sync --all")
         self.uses(topic_id, "Bash", command="ls -la")
         self.uses(topic_id, "FutureTool", x=1)
         self.stops(topic_id, "done")
@@ -69,7 +69,7 @@ def test_event_blocks_persist_structured_meta(client):
     # Bash running the cheese CLI → platform; plain Bash → not.
     bash_events = [b for b in tr if (b.get("meta") or {}).get("tool") == "Bash"]
     platforms = {b["meta"]["arg"]: b["meta"]["platform"] for b in bash_events}
-    assert platforms['cheese title "新标题"'] is True
+    assert platforms["cheese sync --all"] is True
     assert platforms["ls -la"] is False
 
     # A tool missing from the verb table: content bakes the raw name (legacy

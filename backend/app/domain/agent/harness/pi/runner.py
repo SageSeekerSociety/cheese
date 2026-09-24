@@ -49,6 +49,8 @@ class Runner(runner.Runner[Journal]):
         self.doorbell = asyncio.Event()
         self.refresher: asyncio.Task | None = None
         self.working = False
+        # 读到的是哪一版实况文档，写回时要出示（平台工具表的 `_doc_get`）。
+        self.doc_versions: dict[str, int] = {}
 
     # --- reading -------------------------------------------------------------
 
@@ -157,9 +159,11 @@ class Runner(runner.Runner[Journal]):
         return home
 
     async def run_cli(self, tool: str, arguments: dict, cwd: str | None) -> dict:
-        """One platform tool call, as the CLI would have been typed.
+        """One platform tool call.
 
-        argparse is the authority twice over: it says what the arguments mean,
+        A tool from the platform's table runs in-process against the backend.
+        Anything else is a CLI command, run as the CLI would have been typed:
+        argparse is the authority twice over — it says what the arguments mean,
         and ``catalog.argv`` re-parses what it built, so a call that could not
         have been typed fails here rather than reaching the CLI as a malformed
         command line.
@@ -167,6 +171,19 @@ class Runner(runner.Runner[Journal]):
         source = catalog.cli_path()
         if source is None:
             raise RuntimeError(f"{catalog.CLI} is not installed on this machine")
+        if catalog.is_platform_tool(source, tool):
+            try:
+                text = await asyncio.to_thread(
+                    catalog.run_platform_tool,
+                    source,
+                    tool,
+                    arguments,
+                    cwd=cwd,
+                    doc_versions=self.doc_versions,
+                )
+            except Exception as error:  # noqa: BLE001 — the agent reads the reason
+                return {"status": 1, "stdout": "", "stderr": str(error)}
+            return {"status": 0, "stdout": text, "stderr": ""}
         process = await asyncio.create_subprocess_exec(
             str(source),
             *catalog.argv(source, tool, arguments),

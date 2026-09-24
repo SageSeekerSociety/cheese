@@ -332,17 +332,18 @@ def test_an_enormous_argument_is_capped_and_says_so():
     assert detail.endswith("…")
 
 
-# ---- 平台命令和后台任务：pi 房间里它们是工具，不是一行 shell ----
+# ---- 平台工具和后台任务：它们是工具，不是一行 shell ----
 
 
 def test_a_platform_command_shows_the_argument_that_says_which_one():
-    assert tool_preview("cheese_accept_request", {"reviewer": "alice"}).text == "alice"
+    accepted = tool_preview("cheese_accept_request", {"task": "t", "subject": "fix: x"})
+    assert accepted.text == "fix: x"
     remembered = tool_preview("cheese_remember", {"fact": "构建走 pnpm"})
     assert remembered.text == "构建走 pnpm"
 
 
 def test_a_platform_command_writing_a_file_is_cut_to_the_workspace():
-    preview = tool_preview("cheese_doc_set", {"file": f"{ABS}/notes.md"}, work_dir=WORK)
+    preview = tool_preview("cheese_doc_set", {"path": f"{ABS}/notes.md"}, work_dir=WORK)
     assert preview == ToolPreview("notes.md")
 
 
@@ -381,13 +382,13 @@ def test_a_command_that_only_sets_a_variable_is_shown_as_it_is():
 
 def test_the_platform_step_is_the_segment_shown():
     # 做的两件事里，房间要看见的是改了这个项目的那件。
-    assert command_preview("make && cheese doc set").text == "cheese doc set"
+    assert command_preview("make && cheese sync").text == "cheese sync"
 
 
 def test_a_platform_action_is_read_off_the_segment_that_is_shown():
-    assert cheese_subcommand("cheese doc set") == "doc"
-    assert cheese_subcommand("make && cheese accept-request nic") == "accept-request"
-    assert cheese_subcommand("/usr/local/bin/cheese notify hi") == "notify"
+    assert cheese_subcommand("cheese sync") == "sync"
+    assert cheese_subcommand("make && cheese push-fix --task nic") == "push-fix"
+    assert cheese_subcommand("/usr/local/bin/cheese show report.html") == "show"
 
 
 def test_the_cheese_word_somewhere_else_is_not_a_platform_action():
@@ -449,6 +450,6 @@ def test_an_assignment_prefix_that_never_matches_still_returns():
 
 @pytest.mark.timeout(10)
 def test_a_long_assignment_prefix_is_still_dropped():
-    command = "TOKEN=" + "x" * 4000 + " cheese doc set"
+    command = "TOKEN=" + "x" * 4000 + " cheese sync"
 
-    assert cheese_subcommand(command) == "doc"
+    assert cheese_subcommand(command) == "sync"

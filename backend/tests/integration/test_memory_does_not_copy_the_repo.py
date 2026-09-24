@@ -1,4 +1,4 @@
-"""`cheese remember` 不收 repo 里已经写着的事实（结论 61 后半）。
+"""`cheese_remember` 不收 repo 里已经写着的事实（结论 61 后半）。
 
 `docs` 和 `code` 是 repo 自己的事，memory 只记 repo 里查不到的。判据落在写入端而不
 是提示词里：提示词只在模型愿意照做时成立，而要挡的正是它没照做的那几次。

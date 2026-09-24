@@ -105,35 +105,48 @@ def main():
         record("reuse", shell_and_reuse)
 
         def document():
-            # The HTTP fixture lives inside the disposable executor and opens no
-            # host port. It records the same request consumed by the backend.
-            source = """from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-import json
-class Handler(BaseHTTPRequestHandler):
- def do_GET(self):
-  self.send_response(200); self.end_headers()
-  self.wfile.write(b'{"data":{"content":"","doc_version":1}}')
- def do_PUT(self):
-  value = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-  assert value['expected_version'] == 1
-  Path('/work/published.json').write_text(json.dumps(value))
-  self.send_response(200); self.end_headers()
-  self.wfile.write(b'{"data":{"doc_version":2}}')
-HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
-"""
-            invoke("Write", file_path="/work/api-fixture.py", content=source)
-            job = invoke(
-                "Bash", command="python3 /work/api-fixture.py", run_in_background=True
+            # A living doc's text is a file on the machine, and the session reads
+            # it through the executor, the way `cheese_doc_set` does (结论 63).
+            # The backend half is recorded here rather than served: what this
+            # acceptance owns is the executor.
+            from importlib.machinery import SourceFileLoader
+
+            from executor_transport import read_file_on_the_machine
+
+            cheese = SourceFileLoader(
+                "cheese_platform_tools", str(ROOT / "backend/sandbox/cheese")
+            ).load_module()
+            sent = []
+
+            def through_the_executor(payload, arguments):
+                return client.call(
+                    "invoke",
+                    {"id": payload["id"], "tool": payload["tool"], "args": arguments},
+                )
+
+            class Host:
+                environ = {"CHEESE_TOPIC": config["topic"], "CHEESE_AUTHOR": "cheese"}
+                doc_versions = {config["topic"]: 1}
+
+                def request(self, plan):
+                    sent.append(plan)
+                    return {"data": {"doc_version": 2}}
+
+                def read_file(self, path):
+                    return read_file_on_the_machine(
+                        through_the_executor, path, uuid.uuid4().hex
+                    )
+
+                def sync_task(self, task_id):
+                    raise AssertionError("a living doc pushes no task")
+
+            said = cheese.run_platform_tool(
+                "cheese_doc_set", {"path": "/work/draft.md"}, Host()
             )
-            result = shell(
-                "python3 - <<'PY'\nimport socket, time\nfor _ in range(50):\n try:\n  socket.create_connection(('127.0.0.1',8765),.1).close(); break\n except OSError: time.sleep(.1)\nelse: raise RuntimeError('fixture unavailable')\nPY\nexport CHEESE_API=http://127.0.0.1:8765\ncheese doc get && cheese doc set /work/draft.md"
-            )
-            assert "已更新" in result["stdout"], result
-            saved = json.loads(shell("cat published.json")["stdout"])
-            assert saved["content"] == "Second draft\n"
-            client.control({"subtype": "stop_task", "task_id": job["backgroundTaskId"]})
-            return saved
+            assert "已更新" in said, said
+            assert sent[0]["body"]["content"] == "Second draft\n", sent
+            assert sent[0]["body"]["expected_version"] == 1, sent
+            return sent[0]["body"]
 
         record("document-publication", document)
 

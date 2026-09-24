@@ -129,7 +129,8 @@ def test_isolated_subagents_are_refused_with_the_way_that_works():
             tool: 'Agent', tool_use_id: 'spawn', description: 'look',
             prompt: 'list files', isolation,
           }, () => {throw new Error('spawned on the session host')});
-          assert.match(result.deny, /cheese split/);
+          assert.match(result.deny, /omit isolation/);
+          assert.match(result.deny, /cheese_task/);
         }
         const spawned = await handlers['tool.call']({}, {
           tool: 'Agent', tool_use_id: 'spawn', description: 'look',
@@ -700,18 +701,18 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert runtime.request(state, "ping")["workspace"] == str(home / "room")
-        publication_help = runtime.request(
+        sync_help = runtime.request(
             state,
             "invoke",
             {
                 "id": "cli-worker-help",
                 "tool": "Bash",
                 "args": {
-                    "command": 'test -S "$CHEESE_CLI_SOCKET" && cheese chat send --help'
+                    "command": 'test -S "$CHEESE_CLI_SOCKET" && cheese sync --help'
                 },
             },
         )
-        assert "--request-id" in publication_help["value"]["stdout"]
+        assert "--all" in sync_help["value"]["stdout"]
         payload["files"]["cheese"] = base64.b64encode(
             b"import sys\n"
             b"if __name__ == 'preload':\n"
@@ -1248,91 +1249,6 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         capsys.readouterr()
         assert ready()["pid"] == updated["pid"]
     finally:
-        subprocess.run(
-            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
-            capture_output=True,
-            timeout=15,
-        )
-
-
-def test_a_platform_tool_answers_while_a_shell_command_still_holds_the_room(
-    tmp_path, monkeypatch, capsys
-):
-    """The listing a new session needs cannot be made to wait for the shell.
-
-    Claude Code allows the native server 30s to answer `tools/list` and drops it
-    for the whole session when the answer is late — the room then denies every
-    file, shell and chat tool. On 2026-09-17 one listing queued behind a 60s
-    command and a room stayed dead for three hours, so the listing has to answer
-    while a command is still running, not after it.
-    """
-    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
-    project, resource = uuid.uuid4(), uuid.uuid4()
-    payload = payload_for(
-        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
-    )
-    home = tmp_path / ".cheese/home" / str(project) / str(resource)
-    state = home / ".cheese/executor"
-    release = home / "room/release"
-    try:
-        bootstrap.configure(payload)
-        capsys.readouterr()
-        _await_socket(state)
-        held = threading.Thread(
-            target=runtime.request,
-            args=(
-                state,
-                "invoke",
-                {
-                    "id": "holds-the-shell",
-                    "tool": "Bash",
-                    "args": {
-                        "command": (
-                            "touch running; while [ ! -f release ]; do sleep 0.05; done"
-                        ),
-                        "timeout": 5000,
-                    },
-                },
-            ),
-            daemon=True,
-        )
-        held.start()
-        running = home / "room/running"
-        deadline = time.monotonic() + 10
-        while not running.exists():
-            assert time.monotonic() < deadline, "the command never started"
-            time.sleep(0.01)
-
-        started = time.monotonic()
-        listing = runtime.request(state, "cli", {"method": "tools/list"})
-        waited = time.monotonic() - started
-
-        assert waited < 2, f"the listing waited {waited:.1f}s for the shell"
-        assert "cheese_status" in {tool["name"] for tool in listing["tools"]}
-        assert not release.exists(), "the command had already finished"
-        deferred = runtime.request(state, "begin_upgrade", {"release": "next"})
-        assert deferred["ready"] is False
-        assert runtime.request(state, "ping")["upgrading"] is False
-        release.touch()
-        held.join(timeout=10)
-        assert not held.is_alive()
-        assert runtime.request(state, "begin_upgrade", {"release": "next"})["ready"]
-        with pytest.raises(RuntimeError, match="not accepted"):
-            runtime.request(
-                state,
-                "invoke",
-                {"id": "late", "tool": "Bash", "args": {"command": "touch late"}},
-            )
-        assert not (home / "room/late").exists()
-        assert runtime.request(state, "control", {"subtype": "background_tasks"})[
-            "tasks"
-        ]
-    finally:
-        release.touch()
         subprocess.run(
             [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
             capture_output=True,

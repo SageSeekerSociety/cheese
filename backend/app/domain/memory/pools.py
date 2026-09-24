@@ -30,7 +30,7 @@ def pools_for_turn(
     根本拼不出来（结论 8）。
 
     名册给什么就照单拼什么：两个调用者（`chat.py` 的召回、`api/routes/projects.py`
-    的 `cheese recall`）传进来的都是 `people_handles` 读的那一份名册，而
+    的 `cheese_recall`）传进来的都是 `people_handles` 读的那一份名册，而
     `topic_memberships` 上有 `(topic_id, member_handle)` 的唯一约束、``member_handle``
     非空——去重和空 handle 那两道挡在这里挡不到任何东西。
     """

@@ -332,7 +332,7 @@ class Settings(BaseSettings):
         ),
     )
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a

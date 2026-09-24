@@ -19,9 +19,12 @@ SHARED = (
 )
 
 
-def build(entry: str, modules: tuple[str, ...]) -> bytes:
-    """``entry`` is the dotted module whose ``main`` the archive runs, and
-    ``modules`` the harness's own files as paths under ``app/``."""
+def build(
+    entry: str, modules: tuple[str, ...], extra: dict[str, str] | None = None
+) -> bytes:
+    """``entry`` is the dotted module whose ``main`` the archive runs,
+    ``modules`` the harness's own files as paths under ``app/``, and ``extra``
+    any archive entry, by name, whose source is not a module under ``app/``."""
     source = Path(__file__).resolve().parents[4]
     package = entry.rpartition(".")[0].replace(".", "/")
     files = {
@@ -34,6 +37,7 @@ def build(entry: str, modules: tuple[str, ...]) -> bytes:
     }
     for relative in SHARED + modules:
         files[f"app/{relative}"] = (source / relative).read_text()
+    files.update(extra or {})
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         for name, content in sorted(files.items()):

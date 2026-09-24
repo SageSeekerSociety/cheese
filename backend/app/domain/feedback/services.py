@@ -675,7 +675,7 @@ class FeedbackService:
         """
         if await IdentityService(self._session).is_agent(actor_handle):
             raise ForbiddenError(
-                "agent 不能直接发布反馈：用 `cheese feedback propose` 提案，"
+                "agent 不能直接发布反馈：用 `cheese_feedback_propose` 提案，"
                 "由人确认后再发送"
             )
         if proposal is not None:

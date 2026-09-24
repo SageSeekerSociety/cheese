@@ -22,7 +22,7 @@ task machine.
 1. A task declares its branch and base. The machine pushes its first changes.
 2. `pr_publish.sweep_draft_prs` observes a branch ahead of its base and opens a
    draft pull request for the task. Subsequent pushes update that request.
-3. `cheese ready` removes the draft state. Filing an acceptance card also makes
+3. `cheese_ready` removes the draft state. Filing an acceptance card also makes
    the request ready for review; marking it ready alone does not create a card.
 4. The panel displays the changes, checks and review state. The agent runs its
    own checks; any forge-hosted checks run on that forge's configured runners.

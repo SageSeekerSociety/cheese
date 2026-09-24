@@ -284,17 +284,16 @@ _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 #: that only says "缺少 change_subject" costs a whole turn to act on. The
 #: example is a real, valid subject — copy-pasteable, not a placeholder.
 _MISSING_SUBJECT = (
-    "递卡必须带提交标题（--subject）。它不是给人看的说明，是这次改动留在 "
+    "递卡必须带提交标题（subject）。它不是给人看的说明，是这次改动留在 "
     "git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
     "提交，标题还是它。\n"
     "写法：`type(scope): description`，type 取值 "
     f"{', '.join(commit_message.TYPES)}；英文祈使句，"
     f"≤{commit_message.MAX_SUBJECT} 字符，结尾不加句号。\n"
     "例：\n"
-    '  cheese accept-request lisi "最懂这块" \\\n'
-    "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
-    "    --body 'PRs opened with the App token belong to the bot on GitHub, "
-    "so the person whose work it is gets no attribution.'"
+    "  subject: fix(accept): open the PR as the requester, not the bot\n"
+    "  body: PRs opened with the App token belong to the bot on GitHub, "
+    "so the person whose work it is gets no attribution."
 )
 
 #: Where an alembic revision lives. Two live cards each ADDING a file under
@@ -304,8 +303,8 @@ _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 #: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
 #: 简报; naming the room is what makes that visible instead of "not found".
 _NOT_THIS_ROOMS_WORK = (
-    "这个房间里没有活 {task_id}。--task 只认本房间派出的活的 id"
-    "（`cheese split` 当时打印的那个）。"
+    "这个房间里没有活 {task_id}。task 只认本房间派出的活的 id"
+    "（`cheese_task` 当时返回的那个）。"
 )
 
 
@@ -352,14 +351,14 @@ def approvals_required_of(project: Project | None) -> int:
 #: 合并型的交付走不到这里，见 `_ARTIFACT_ACTION_UNWANTED`。
 _ARTIFACT_ACTION_MISSING = (
     "没说这次交付动的是哪一项产物。交出去一份文件或一个地址时，两种说法选一种：\n"
-    "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
-    "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
+    "  artifact=<清单上那一项的 id>    这次交付是那一项的新一版\n"
+    "  new_artifact=<新的真名>          这次交付做出了一样清单上还没有的东西\n"
     "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
     "新建的那一次会把新的 id 返回来。"
 )
 
 _ARTIFACT_ACTION_BOTH = (
-    "--artifact 和 --new-artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
+    "artifact 和 new_artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
     "要么做出了一样清单上还没有的东西。"
 )
 
@@ -370,8 +369,8 @@ _ARTIFACT_ACTION_BOTH = (
 #: 传它的那一方正以为自己说清了一件要紧的事。
 _ARTIFACT_ACTION_UNWANTED = (
     "合并交出去的是这个项目的仓库本身，不用声明产物 —— 平台认得出是清单上哪一项，"
-    "这次交付会成为它的新一版。--artifact / --new-artifact / --about 是交一份文件"
-    "（--deliver）或一个地址（--deliver-url）时才要说的。"
+    "这次交付会成为它的新一版。artifact / new_artifact / about 是交一份文件"
+    "（deliver）或一个地址（deliver_url）时才要说的。"
 )
 
 
@@ -404,8 +403,7 @@ def _no_artifact_action(
 #: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
 #: 那就是交出去这次合并本身（代码仓库这类项目交的就是主干往前走一步）。
 _DELIVERABLE_BOTH = (
-    "--deliver 和 --deliver-url 只能给一个：这次交出去的要么是一份文件，"
-    "要么是一个地址。"
+    "deliver 和 deliver_url 只能给一个：这次交出去的要么是一份文件，要么是一个地址。"
 )
 
 #: 单份交付物的上限。成品不进库，所以这个数管的是平台那块盘，而不是用户的仓库。
@@ -417,9 +415,7 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
     if path and url:
         raise ValidationError(_DELIVERABLE_BOTH)
     if url and not url.startswith(("http://", "https://")):
-        raise ValidationError(
-            "--deliver-url 要是一个能打开的网址（http:// 或 https://）"
-        )
+        raise ValidationError("deliver_url 要是一个能打开的网址（http:// 或 https://）")
 
 
 async def _read_deliverable(
@@ -436,7 +432,7 @@ async def _read_deliverable(
         raise ValidationError(
             f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
             f"{_DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
-            "交出去的是一个地址时用 --deliver-url 记地址。"
+            "交出去的是一个地址时用 deliver_url 记地址。"
         )
     return PurePosixPath(path).name, data
 
@@ -540,7 +536,7 @@ class AcceptService:
             return default
         raise ValidationError(
             "没说验收卡递给谁，项目也没有设默认验收人。"
-            "点名一个人（`cheese members` 查准确 handle），"
+            "点名一个人（`cheese_members` 查准确 handle），"
             "或者在项目设置的「分支保护 → 任务默认 reviewer」里填一个。"
         )
 

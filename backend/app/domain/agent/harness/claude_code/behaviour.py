@@ -37,7 +37,7 @@ def declaration() -> Declaration:
                 "--disallowedTools，harness/claude_code/session_launch.py 的 "
                 "hooks_settings 同时把它写进 settings.json 的 deny；"
                 "remote-control 会话两侧都不拒绝，答案走 RC 通道。"
-                "平台的等价物是 `cheese ask`"
+                "平台的等价物是 `cheese_ask`"
             ),
             BuiltIn.TODO: (
                 "TodoWrite and TaskCreate/Update/List/Get are denied by CLI "

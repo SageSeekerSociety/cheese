@@ -52,6 +52,6 @@ def test_no_product_code_reads_or_writes_the_project_pool() -> None:
         "这些地方还在读写项目记忆池：\n  "
         + "\n  ".join(offenders)
         + "\n\n没有项目记忆池（结论 7）。所有人都该看见的事实写进项目总览的实况"
-        "文档（`cheese remember --everyone`，落到根房间的 doc 块）；一个实例自己"
+        "文档（`cheese_remember` 带 `everyone`，落到根房间的 doc 块）；一个实例自己"
         "学到的写进它自己的池（`memory_pool`）。"
     )

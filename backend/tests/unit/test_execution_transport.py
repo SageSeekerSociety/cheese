@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import io
 import json
 import os
 import shutil
@@ -21,9 +20,6 @@ from app.domain.agent import cli_worker, execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
-from app.domain.agent.harness.claude_code.remote_execution.client import (
-    _local_chat_send_argv,
-)
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
 from tests.support import wire
@@ -66,78 +62,6 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     token.write_text("rotated")
     client.call("context_fs")
     assert seen == ["first", "rotated"]
-
-
-def test_chat_publication_fast_path_accepts_only_standalone_cli_invocations():
-    assert _local_chat_send_argv("cheese chat send 'hello world'") == [
-        "cheese",
-        "chat",
-        "send",
-        "hello world",
-    ]
-    assert _local_chat_send_argv("cheese chat send --file ./update.txt")[-1] == (
-        "./update.txt"
-    )
-    assert _local_chat_send_argv("cheese chat send '$(touch escaped)'") == [
-        "cheese",
-        "chat",
-        "send",
-        "$(touch escaped)",
-    ]
-    assert _local_chat_send_argv("cheese chat send hello; touch escaped") is None
-    assert _local_chat_send_argv("cheese chat send $(touch escaped)") is None
-    assert _local_chat_send_argv("printf x; cheese chat send hello") is None
-
-
-def test_chat_publication_fast_path_posts_with_session_credentials(monkeypatch, capsys):
-    from app.domain.agent.harness.claude_code.remote_execution import client
-
-    class Response(io.BytesIO):
-        def __init__(self):
-            super().__init__(b'{"data":{"id":"published"}}')
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-    seen = {}
-
-    def urlopen(request, timeout):
-        seen.update(
-            {
-                "url": request.full_url,
-                "timeout": timeout,
-                "headers": dict(request.headers),
-                "body": json.loads(request.data),
-            }
-        )
-        return Response()
-
-    monkeypatch.setattr(
-        client.os,
-        "environ",
-        {
-            "CHEESE_API": "http://cheese.test/api",
-            "CHEESE_TOKEN": "scoped-token",
-            "CHEESE_TOPIC": "room",
-            "CHEESE_TURN": "turn",
-        },
-    )
-    import urllib.request
-
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    status = client._publish_chat_locally(
-        ["cheese", "chat", "send", "published", "--reply-to", "parent"]
-    )
-    assert status == 0
-    assert seen["url"] == "http://cheese.test/api/topics/room/messages"
-    assert seen["headers"]["X-cheese-token"] == "scoped-token"
-    assert seen["headers"]["X-cheese-turn"] == "turn"
-    assert seen["body"]["content"] == "published"
-    assert seen["body"]["reply_to"] == "parent"
-    assert json.loads(capsys.readouterr().out) == {"id": "published"}
 
 
 @pytest.fixture
@@ -895,53 +819,6 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == "second receipt"
 
 
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            event: [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "cat >> publication-hooks.jsonl; "
-                            "printf '\\n' >> publication-hooks.jsonl",
-                        }
-                    ],
-                }
-            ]
-            for event in ("PreToolUse", "PostToolUse")
-        }
-    ],
-    indirect=True,
-)
-def test_chat_publication_uses_resident_connection_and_stable_request_id(
-    central_transport,
-    tmp_path,
-):
-    process, clients, _, _ = central_transport
-    for _ in range(2):
-        result = native_call(process, "publication", "cheese chat send 'hello 世界'")
-        assert json.loads(result["result"]["stdout"]) == {"content": "hello 世界"}
-    assert len(process.publications) == 2
-    assert (
-        process.publications[0]["request_id"] == process.publications[1]["request_id"]
-    )
-    assert clients[0] == clients[1]
-    events = [
-        json.loads(line)
-        for line in (tmp_path / "publication-hooks.jsonl").read_text().splitlines()
-    ]
-    assert [event["hook_event_name"] for event in events] == [
-        "PreToolUse",
-        "PostToolUse",
-        "PreToolUse",
-        "PostToolUse",
-    ]
-    assert events[1]["tool_response"]["stdout"] == result["result"]["stdout"]
-
-
 def test_publication_connection_survives_worker_thread_exit(
     central_transport, tmp_path, monkeypatch
 ):
@@ -968,16 +845,6 @@ def test_publication_connection_survives_worker_thread_exit(
     finally:
         if publisher.publication:
             publisher.publication.transport.connection.close()
-
-
-def test_chat_lost_response_is_not_replayed_or_sent_to_device(central_transport):
-    process, _, drop, _ = central_transport
-    drop.append(True)
-    with pytest.raises(RuntimeError):
-        native_call(process, "lost-publication", "cheese chat send 'hello'")
-    assert len(process.publications) == 1
-    native_call(process, "lost-publication", "cheese chat send 'hello'")
-    assert process.publications[0] == process.publications[1]
 
 
 def test_structured_chat_publishes_literal_content_without_executor(central_transport):
@@ -1067,10 +934,6 @@ def test_resident_transport_keeps_policy_denials(central_transport):
         "deny": "blocked by policy"
     }
     assert not clients and not (work / "forbidden").exists()
-    assert native_call(process, "denied-chat", "cheese chat send 'forbidden'") == {
-        "deny": "blocked by policy"
-    }
-    assert not process.publications and not clients
 
 
 @pytest.mark.parametrize(

@@ -1,13 +1,9 @@
 """Explicit agent publication persists chat without starting another turn."""
 
 import asyncio
-import importlib.util
-import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from importlib.machinery import SourceFileLoader
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -125,36 +121,6 @@ def test_only_authenticated_in_scope_agents_can_publish(client, monkeypatch):
 def test_blank_message_is_rejected(client, content):
     topic, headers = room(client)
     assert publish(client, topic, headers, content).status_code in (400, 422)
-
-
-def test_cli_file_send_uses_the_publication_route(
-    client, monkeypatch, tmp_path, capsys
-):
-    topic, headers = room(client)
-    loader = SourceFileLoader(
-        "publication_cli", str(Path(__file__).parents[2] / "sandbox/cheese")
-    )
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None
-    cli = importlib.util.module_from_spec(spec)
-    loader.exec_module(cli)
-    message = tmp_path / "update.txt"
-    message.write_text("检查通过了。\n`$HOME` 和 $(echo hi) 是原文。", encoding="utf-8")
-    monkeypatch.setattr(cli, "TOPIC", topic)
-    monkeypatch.setattr(
-        cli.sys, "argv", ["cheese", "chat", "send", "--file", str(message)]
-    )
-
-    def request(method, path, body):
-        response = client.request(method, path, json=body, headers=headers)
-        assert response.status_code == 200, response.text
-        return response.json()
-
-    monkeypatch.setattr(cli, "_call", request)
-    cli.main()
-    block = json.loads(capsys.readouterr().out)
-    assert block["content"] == message.read_text(encoding="utf-8")
-    assert block["kind"] == "message"
 
 
 def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks):

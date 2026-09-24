@@ -416,8 +416,7 @@ def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
     # The refusal has to teach, not just refuse: the reader is an agent one
     # turn away from re-filing, so the shape AND a copy-pasteable example.
     assert "type(scope): description" in r.text
-    assert "cheese accept-request" in r.text
-    assert "--subject" in r.text
+    assert "subject: fix(accept):" in r.text
     assert client.get(f"/topics/{tid}/accept-card").json()["data"]["total"] == 0
 
 
