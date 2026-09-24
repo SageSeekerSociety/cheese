@@ -544,6 +544,8 @@ defineExpose({
 
 <style scoped>
 .composer {
+  /* @ 菜单按它定位（见 .mention-menu）。 */
+  position: relative;
   background: var(--surface);
   /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
@@ -653,10 +655,18 @@ defineExpose({
 }
 
 /* @-autocomplete popup — mirrors TopicView's composer picker. */
+/* 浮在输入区上方，不占位置。它原来是输入区里的一个普通块：菜单一出现输入区就长高，
+   贴在输入框上面的验收横条被整条顶上去，菜单一收又掉回来。浮层本来就该带投影、
+   盖在别的东西上面。 */
 .mention-menu {
+  position: absolute;
+  right: 12px;
+  bottom: 100%;
+  left: 12px;
+  z-index: 5;
   display: flex;
   flex-direction: column;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   border: 1px solid var(--line-2);
   border-radius: 8px;
   /* 横向仍旧裁边（圆角靠它），纵向改自滚：规范只在某一侧是 `visible` 时才把另一
