@@ -721,6 +721,12 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 
     selected_model = flow.request.headers.pop("x-cheese-child-model", "")
     child_model = selected_model if is_subagent else ""
+    if child_model and child_model == PARENT_MODEL.get((project_id, topic_id)):
+        # CC 的 hint 头对每个分身都打上它解析出的分身模型:没指定时那个值就
+        # 是父会话(被改写前的)模型 —— 是「继承」不是「指定」。快路把它当显式
+        # 送准入,gateway 项目的普通分身全灭(2026-09-24 实测,昨晚事故换了个
+        # 头)。认出回显,按未指定走,与推迟路的体回显同一个判据。
+        child_model = ""
 
     # A subagent's /v1/messages defers everything from here to the `request`
     # hook: admission honours the model the parent named for this subagent,

@@ -1557,6 +1557,57 @@ def test_a_subagent_echoing_the_parents_model_reads_as_inherit(monkeypatch, tmp_
     assert json.loads(fork.request.content)["model"] == "kimi-k3"
 
 
+def test_a_subagent_hint_header_echoing_the_parent_also_reads_as_inherit(
+    monkeypatch, tmp_path
+):
+    """hint 头（x-cheese-child-model）回显父模型 = 继承，不是显式指定。
+
+    CC 2.1.277 的 GATEWAY_HINT_HEADERS 对每个分身都打上它解析出的分身模
+    型：没指定时就是父会话（被改写前的）模型。快路若把它当显式送准入，
+    gateway 项目的普通分身全灭 —— 2026-09-23 事故换了个头卷土重来（当日
+    实测：review 分身被线上闸门 400 打死）。判据与推迟路的体回显一致：
+    == 主对话改写前的原模型即未指定。"""
+    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(
+        project, topic, bearer, *, subagent=False, requested_model="", child_model=""
+    ):
+        calls.append((subagent, requested_model, child_model))
+        return _verdict(model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    # 主对话：体里写着 CC 的内建默认，被改写成绑定模型 —— 改写前的值被记住。
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    out = main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    # 分身：hint 头回显同一个名字 —— 不当显式送准入；照未指定的老路推迟，
+    # 体回显在 request 钩子里同样被认掉，准入按「未指定」问。
+    fork = _make_flow()
+    fork.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "x-cheese-child-model": "claude-sonnet-5",
+            "content-length": "42",
+        }
+    )
+    calls.clear()
+    asyncio.run(mod.requestheaders(fork))
+    assert calls == [], "回显不该在头部时刻就触发准入"
+    assert "x-cheese-child-model" not in fork.request.headers
+    fork.request.content = b'{"model":"claude-sonnet-5","messages":[]}'
+    asyncio.run(mod.request(fork))
+    assert calls[-1] == (True, "", "")
+    assert json.loads(fork.request.content)["model"] == "kimi-k3"
+
+
 def test_the_parents_haiku_background_requests_do_not_overwrite_the_record(
     monkeypatch, tmp_path
 ):
