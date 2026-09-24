@@ -228,7 +228,8 @@
       "updateRealName": "修改实名信息"
     },
     "sendEmailCode": "发送邮箱验证码",
-    "sendFailed": "发送失败，请重试"
+    "sendFailed": "发送失败，请重试",
+    "emailCodeUnavailable": "此账号已开启两步验证，请使用其他方式"
   },
   "security": {
     "title": "密码与安全",

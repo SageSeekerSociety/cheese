@@ -228,7 +228,8 @@
       "updateRealName": "change your real-name information"
     },
     "sendEmailCode": "Email me a code",
-    "sendFailed": "Couldn't send the code. Try again."
+    "sendFailed": "Couldn't send the code. Try again.",
+    "emailCodeUnavailable": "Two-step verification is on for this account. Use another way."
   },
   "security": {
     "title": "Password and security",

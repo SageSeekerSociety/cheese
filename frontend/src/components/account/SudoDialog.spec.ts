@@ -308,6 +308,25 @@ describe('confirming with a code mailed to the account', () => {
     expect(outcome.settled).toBe(false)
   })
 
+  it('says so when two-step verification was turned on meanwhile', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
+    vi.mocked(UserApi.verifySudoEmailCode).mockRejectedValue(
+      new BusinessError('An email code cannot confirm this account', 403, {
+        name: 'ForbiddenError',
+        message: 'An email code cannot confirm this account',
+        data: { reason: 'email_code_unavailable' },
+      })
+    )
+    const { outcome } = await ask()
+    setLocale('zh-CN')
+
+    await fireEvent.click(await screen.findByRole('button', { name: '发送邮箱验证码' }))
+    await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '135790' } })
+
+    expect(await screen.findByText('此账号已开启两步验证，请使用其他方式')).toBeTruthy()
+    expect(outcome.settled).toBe(false)
+  })
+
   it('says how long to wait when a code was sent too recently', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
     vi.mocked(UserApi.requestSudoEmailCode).mockRejectedValue(

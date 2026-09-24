@@ -316,6 +316,14 @@ function cancel() {
   request.value?.settle(null)
 }
 
+// An email code stops being accepted once two-step verification is on, which
+// can happen in another tab while this dialog is open.
+function emailCodeMessage(error: unknown): string | null {
+  const reason = (error as { error?: { data?: { reason?: unknown } } } | null)?.error?.data?.reason
+  if (reason === 'email_code_unavailable') return t('account.sudo.emailCodeUnavailable')
+  return attemptMessage(error)
+}
+
 async function sendEmailCode() {
   const current = request.value
   if (!current || sending.value) return
@@ -330,7 +338,7 @@ async function sendEmailCode() {
     ticker = setInterval(() => (now.value = Date.now()), 1000)
   } catch (error: unknown) {
     if (request.value !== current) return
-    errorMessage.value = attemptMessage(error) ?? t('account.sudo.sendFailed')
+    errorMessage.value = emailCodeMessage(error) ?? t('account.sudo.sendFailed')
   } finally {
     sending.value = false
   }
@@ -354,7 +362,7 @@ async function verify(run: () => Promise<{ data: { sudoTicket?: string } }>) {
     if (request.value !== current) return
     // The browser's own WebAuthn error text is English and names internals.
     errorMessage.value =
-      (method.value === 'email_code' ? attemptMessage(error) : null) ??
+      (method.value === 'email_code' ? emailCodeMessage(error) : null) ??
       passkeyWrongHostMessage(error, passkeyRpId) ??
       ((error as { name?: string } | null)?.name === 'NotAllowedError'
         ? t('account.sudo.passkeyCanceled')
