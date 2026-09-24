@@ -172,7 +172,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
     old process's subscription — and the new process listens to the screen that
     outlived it. Returns the room, the new process's screen and its service.
     """
-    project_id = client.post("/projects", json={"name": "Restart"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "Restart"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "换进程", "created_by": "user-1"},
@@ -272,7 +272,7 @@ class DiesOnceScreen(SilentScreen):
 def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
     """送达不等于读过：那一轮是死掉的，它的消息必须留给下一轮重发。之后会话自己
     起的一轮干干净净地停下，也不能顺手把这批消息标成已读 —— 否则就是丢消息。"""
-    project_id = client.post("/projects", json={"name": "Dies"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "Dies"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "死过一次", "created_by": "user-1"},
