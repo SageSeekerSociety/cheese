@@ -112,6 +112,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
     consumed_turn,
+    prompted_turn,
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -1103,7 +1104,7 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
     轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
     排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
     切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
-    consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
+    consumed 戳」的块，戳由干净收尾的轮次盖上（BlockRepository.mark_consumed）。
 
     New inputs carry an explicit ``consumed_turn: null`` marker while pending.
     That presence matters: a newer mid-turn input can be receipted before an
@@ -1124,6 +1125,12 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
+
+
+def _addressed_to(block: Block, handle: str) -> bool:
+    """Is this input for the agent `handle`? One without a recipient is for
+    whichever agent the room resolves to, which the caller passes in."""
+    return (block.meta or {}).get("agent_recipient", {}).get("handle", handle) == handle
 
 
 def _pending_platform_notices(history: list[Block]) -> list[Block]:
@@ -2725,6 +2732,8 @@ class ChatService:
                         # No coroutine owns this one, so there is no `finally`
                         # anywhere else to drop the marks it left in the runner.
                         get_work_runner().close_turn_the_session_started(turn_id)
+            elif event.is_error:
+                await self._forget_room_claims(topic_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2736,6 +2745,54 @@ class ChatService:
                 await broker.publish(str(topic_id), frame_out)
             await broker.publish(str(topic_id), {"type": "done"})
             self.schedule_spool_settle(topic_id)
+
+    async def _delivered_unread(
+        self, session: AsyncSession, state: _HookWorkState
+    ) -> list[uuid.UUID]:
+        """This agent's inputs that a delivered prompt carried and no Stop has
+        stamped yet.
+
+        A clean Stop means the session got through every prompt written into it,
+        so these are read — whichever turn fed them. `state.pending_ids` cannot
+        answer that alone: it lives in this process, and a backend replaced
+        mid-turn hands the session's Stop to a process that never saw the
+        prompt, so the batch went unstamped and every later turn re-sent it.
+        Undelivered prompts stay out: the session never heard them.
+        """
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        handle = state.agent_instance_handle
+        if handle is None:
+            return []
+        history = await BlockRepository(session).turn_history(state.topic_id)
+        fed = {
+            block.id: turn
+            for block in _pending_input_blocks(history)
+            if (turn := prompted_turn(block)) is not None
+            and _addressed_to(block, handle)
+        }
+        delivered = await AgentTurnRepository(session).delivered(set(fed.values()))
+        return [block_id for block_id, turn in fed.items() if turn in delivered]
+
+    async def _forget_room_claims(self, topic_id: uuid.UUID) -> None:
+        """A session failed and this process holds no turn for it — the
+        backend was replaced before the session produced anything here. Which
+        agent's batch it was is unknown, so every delivered claim in the room
+        is withdrawn: the cost is a replay, never a lost message."""
+        try:
+            async with self._sessions() as session:
+                blocks = BlockRepository(session)
+                history = await blocks.turn_history(topic_id)
+                await blocks.forget_prompted_turn(
+                    [
+                        block.id
+                        for block in _pending_input_blocks(history)
+                        if prompted_turn(block) is not None
+                    ]
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — the failure notice matters more
+            logger.exception("could not withdraw delivered claims (topic=%s)", topic_id)
 
     async def _close_hook_work(
         self, state: _HookWorkState, result: AgentResult
@@ -2823,8 +2880,17 @@ class ChatService:
                         "block": _block_payload(BlockOut.model_validate(block)),
                     }
                 )
+            # What this session was fed, including by a process that is gone.
+            # Settled either way: a failed session must also drop the batches
+            # an earlier process fed it, or a later clean Stop would read them
+            # as heard — and a self-started turn's own set is always empty.
+            fed = list(
+                state.pending_ids | set(await self._delivered_unread(session, state))
+            )
             if not result.is_error:
-                await blocks.mark_consumed(list(state.pending_ids), state.work_id)
+                await blocks.mark_consumed(fed, state.work_id)
+            else:
+                await blocks.forget_prompted_turn(fed)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -4800,14 +4866,7 @@ class ChatService:
                         instance_id=uuid.UUID(recipient["instance_id"]),
                     )
                 )
-            pending = [
-                block
-                for block in pending
-                if (block.meta or {})
-                .get("agent_recipient", {})
-                .get("handle", agent.handle)
-                == agent.handle
-            ]
+            pending = [block for block in pending if _addressed_to(block, agent.handle)]
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
@@ -5162,7 +5221,7 @@ class ChatService:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
-            replay_n = await blocks.bump_prompt_attempts(pending_ids)
+            replay_n = await blocks.bump_prompt_attempts(pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
             # down: that one only fires on a topic's FIRST turn (compute_profile
             # still None), so on every later turn this session closes without a

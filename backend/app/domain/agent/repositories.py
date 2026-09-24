@@ -87,6 +87,18 @@ class AgentTurnRepository:
             .values(delivered_at=at)
         )
 
+    async def delivered(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these turns had their prompt accepted by the transport."""
+        ids = set(turn_ids)
+        if not ids:
+            return set()
+        rows = await self._session.scalars(
+            select(AgentTurn.id).where(
+                AgentTurn.id.in_(ids), AgentTurn.delivered_at.is_not(None)
+            )
+        )
+        return set(rows)
+
     async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
         """Stamp that admission refused this turn for spent credits (#715).
 

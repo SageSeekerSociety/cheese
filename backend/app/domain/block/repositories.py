@@ -15,6 +15,7 @@ from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
+    PROMPTED_TURN_META_KEY,
     AuthorType,
     Block,
     BlockKind,
@@ -260,7 +261,8 @@ class BlockRepository:
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
-        """Stamp human blocks as read into turn `turn_id`'s prompt.
+        """Stamp human blocks as read, by the turn `turn_id` whose clean Stop
+        showed the session got through them.
 
         This is what makes the next turn's pending window a fact instead of a
         guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
@@ -274,9 +276,11 @@ class BlockRepository:
             block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
         await self._session.flush()
 
-    async def bump_prompt_attempts(self, block_ids: list[uuid.UUID]) -> int:
-        """Record that these blocks went into a prompt AGAIN, and return the
-        highest attempt count in the batch.
+    async def bump_prompt_attempts(
+        self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+    ) -> int:
+        """Record that these blocks went into turn `turn_id`'s prompt AGAIN,
+        and return the highest attempt count in the batch.
 
         Called when the prompt is built, not when the turn ends — that is the
         whole point. `mark_consumed` runs only on a turn that finished, so a
@@ -292,10 +296,27 @@ class BlockRepository:
         stmt = select(Block).where(Block.id.in_(block_ids))
         for block in (await self._session.scalars(stmt)).all():
             n = prompt_attempts(block) + 1
-            block.meta = {**(block.meta or {}), PROMPT_ATTEMPTS_META_KEY: n}
+            block.meta = {
+                **(block.meta or {}),
+                PROMPT_ATTEMPTS_META_KEY: n,
+                PROMPTED_TURN_META_KEY: str(turn_id),
+            }
             highest = max(highest, n)
         await self._session.flush()
         return highest
+
+    async def forget_prompted_turn(self, block_ids: list[uuid.UUID]) -> None:
+        """Withdraw these blocks' claim to a delivered prompt: the turn that
+        carried them failed, so a later clean Stop must not read them as heard.
+        The next prompt that carries them records its own turn again."""
+        if not block_ids:
+            return
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            meta = dict(block.meta or {})
+            if meta.pop(PROMPTED_TURN_META_KEY, None) is not None:
+                block.meta = meta
+        await self._session.flush()
 
     async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
         """Record on a 现场 step that its tool came back an error.
