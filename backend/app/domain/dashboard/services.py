@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
@@ -177,10 +178,15 @@ class DashboardService:
             ],
         }
 
-    async def user_profile(self, handle: str) -> dict:
+    async def user_profile(self, handle: str, *, viewer: str) -> dict:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
-        them (个人记忆, §8.4). This is the "项目过程即简历" view."""
+        them (个人记忆, §8.4). This is the "项目过程即简历" view.
+
+        Cut to what ``viewer`` may see. Their own page has everything; on
+        anyone else's, a project is listed only when the viewer may read it
+        too, and the understanding is empty — what the agents remember about a
+        person is not for other people to read."""
         from app.domain.memory.models import (
             MemoryEntry,
             MemoryScope,
@@ -199,9 +205,16 @@ class DashboardService:
 
         # Every project they are in — owned, through a team, or as an external
         # member — with how they are in it and how much they started/contributed.
-        visible = await self._projects.list_visible_to(
+        theirs = await self._projects.list_visible_to(
             handle=handle, user_id=user.id if user else None
         )
+        is_self = viewer == handle
+        visible = [
+            project
+            for project in theirs
+            if is_self
+            or await may_read_project(self._s, project_id=project.id, handle=viewer)
+        ]
         from app.domain.team.models import TeamUserRelation
 
         teams = (
@@ -267,23 +280,27 @@ class DashboardService:
         # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
         # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
         # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
-        understanding = [
-            row.content
-            for row in (
-                await self._s.scalars(
-                    select(MemoryEntry)
-                    .where(
-                        MemoryEntry.scope == MemoryScope.user,
-                        MemoryEntry.scope_id.endswith(
-                            user_scope_about(handle), autoescape=True
-                        ),
-                        live_entries(),
+        understanding = (
+            [
+                row.content
+                for row in (
+                    await self._s.scalars(
+                        select(MemoryEntry)
+                        .where(
+                            MemoryEntry.scope == MemoryScope.user,
+                            MemoryEntry.scope_id.endswith(
+                                user_scope_about(handle), autoescape=True
+                            ),
+                            live_entries(),
+                        )
+                        .order_by(MemoryEntry.created_at.desc())
+                        .limit(50)
                     )
-                    .order_by(MemoryEntry.created_at.desc())
-                    .limit(50)
-                )
-            ).all()
-        ][::-1]
+                ).all()
+            ][::-1]
+            if is_self
+            else []
+        )
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is

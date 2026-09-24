@@ -13,6 +13,7 @@ from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
+from app.core.client_address import resolved_client_address
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -1650,7 +1651,7 @@ async def export_space_analytics_participants(
         f"participationApproved={participationApproved}, "
         f"completionStatus={completionStatus}, realName={realName}"
     )
-    ip_address = request.client.host if request.client else ""
+    ip_address = resolved_client_address(request) or ""
     seen_target_ids: set[int] = set()
     for m in memberships:
         if m.is_team:

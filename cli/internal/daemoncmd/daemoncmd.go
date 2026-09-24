@@ -76,7 +76,7 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				return err
 			}
 			ui.OK("Logged in.")
-			ui.Hint("`cheese link connect` to connect · `cheese link auto-connect` to also reconnect on boot")
+			ui.Hint("`cheesehost link connect` to connect · `cheesehost link auto-connect` to also reconnect on boot")
 			return nil
 		},
 	})
@@ -98,7 +98,7 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := config.Save(*cfgPath, cfg); err != nil {
 				return err
 			}
-			fmt.Println("Logged out and disconnected. `cheese auth login` to log in again.")
+			fmt.Println("Logged out and disconnected. `cheesehost auth login` to log in again.")
 			return nil
 		},
 	})
@@ -119,7 +119,7 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 		cfg.Base = serverArg
 	}
 	if cfg.Base == "" {
-		return nil, fmt.Errorf("no server known yet — run `cheese auth login <server-url>` once (installers can pre-set it)")
+		return nil, fmt.Errorf("no server known yet — run `cheesehost auth login <server-url>` once (installers can pre-set it)")
 	}
 	res, err := auth.Login(context.Background(), cfg.Base, func(approveURL string) {
 		fmt.Println("Open this link and approve this machine:")
@@ -166,7 +166,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		Use:   "connect [server-url]",
 		Short: "Connect this machine to the server",
 		Long: "Connects now (and, as a side effect of installing the background service,\n" +
-			"also reconnects after a reboot — `cheese link no-auto-connect` turns that off).\n" +
+			"also reconnects after a reboot — `cheesehost link no-auto-connect` turns that off).\n" +
 			"If this machine is not logged in yet, the login flow runs first.\n\n" +
 			"Never asks for root. The service is installed for your account only — a\n" +
 			"systemd --user unit or a launchd LaunchAgent. On Linux it is then set to\n" +
@@ -210,7 +210,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.KeepRunningAfterLogout(); err != nil {
 				ui.Warn("%v", err)
 			}
-			ui.Hint("`cheese status` to check · `cheese link disconnect` to disconnect")
+			ui.Hint("`cheesehost status` to check · `cheesehost link disconnect` to disconnect")
 			return nil
 		},
 	})
@@ -230,8 +230,8 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				return err
 			}
 			endHostedSessions()
-			fmt.Println("Disconnected. `cheese link connect` to reconnect.")
-			fmt.Println("(Note: it will still reconnect after a reboot; `cheese link no-auto-connect` prevents that.)")
+			fmt.Println("Disconnected. `cheesehost link connect` to reconnect.")
+			fmt.Println("(Note: it will still reconnect after a reboot; `cheesehost link no-auto-connect` prevents that.)")
 			return nil
 		},
 	})
@@ -262,7 +262,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "uninstall"); err != nil {
 				return err
 			}
-			fmt.Println("Disconnected and removed from boot. `cheese link connect` to connect again.")
+			fmt.Println("Disconnected and removed from boot. `cheesehost link connect` to connect again.")
 			return nil
 		},
 	})
@@ -284,7 +284,7 @@ func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			cfg, err := config.Load(*cfgPath)
 			if err != nil || cfg.Token == "" {
 				ui.Field("login", ui.Red("not logged in"))
-				ui.Hint("run `cheese auth login <server-url>` to get started")
+				ui.Hint("run `cheesehost auth login <server-url>` to get started")
 				return nil
 			}
 			ui.Field("login", ui.Green("logged in"))
@@ -309,7 +309,7 @@ func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			ui.Field("screens", screens)
 
 			if serr != nil {
-				ui.Hint("run `cheese link connect` to connect")
+				ui.Hint("run `cheesehost link connect` to connect")
 			}
 			return nil
 		},
@@ -364,7 +364,7 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			// No running service: nothing to preserve — download + replace directly.
 			cfg, err := config.Load(*cfgPath)
 			if err != nil || cfg.Base == "" {
-				return fmt.Errorf("no server configured — run `cheese auth login` first")
+				return fmt.Errorf("no server configured — run `cheesehost auth login` first")
 			}
 			fmt.Println("Downloading the latest cheese…")
 			tmp, err := update.Fetch(context.Background(), cfg.Base)
@@ -382,10 +382,10 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 				if err := service.Control(*cfgPath, "start"); err != nil {
 					return err
 				}
-				ui.OK("cheese updated and restarted.")
+				ui.OK("cheesehost updated and restarted.")
 				return nil
 			}
-			ui.OK("cheese updated.")
+			ui.OK("cheesehost updated.")
 			ui.Hint("no service was running; the new binary is in place and used from now on")
 			return nil
 		},
@@ -465,7 +465,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err := removeSelf(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove binary %s: %w (delete it manually)", exe, err)
 			}
-			fmt.Println("cheese uninstalled — service, config, footprint, and binary removed.")
+			fmt.Println("cheesehost uninstalled — service, config, footprint, and binary removed.")
 			return nil
 		},
 	})
