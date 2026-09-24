@@ -55,6 +55,15 @@ def _titles(client, project_id: str, handle: str | None = None, **params) -> lis
     return [n["title"] for n in r.json()["data"]["data"]]
 
 
+def _inbox_titles(client, project_id: str, handle: str) -> list[str]:
+    """收件箱里摆出来的那几条，新的在前。"""
+    r = client.get(
+        f"/projects/{project_id}/inbox", headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return [n["title"] for n in r.json()["data"]["data"]]
+
+
 def test_create_notification(client):
     pid = _create_project(client)
     data = _one(
@@ -170,12 +179,28 @@ def test_list_unread_only(client):
     assert _titles(client, pid, "alice", unread_only="true") == ["B"]
 
 
-def test_inbox_only_unread_decision_and_accept(client):
+def test_inbox_carries_decisions_accepts_and_change_alerts(client):
     pid = _create_project(client)
     _roster(client, pid, "alice", "bob")
-    # 不进收件箱：change_alert + heartbeat。
-    _post_notif(client, pid, level="light", kind="change_alert", title="alert")
-    _post_notif(client, pid, level="silent", kind="heartbeat", title="beat")
+    # 进收件箱：还没读的变更提醒（spec §8.5 的第一种典型通知）。
+    alert = _one(
+        client,
+        pid,
+        level="light",
+        kind="change_alert",
+        title="提醒",
+        target_handle="alice",
+    )
+    # 不进收件箱：silent 的提醒（它的意思就是「记下来，别打扰」）+ 巡检。
+    _one(
+        client,
+        pid,
+        level="silent",
+        kind="change_alert",
+        title="安静的提醒",
+        target_handle="alice",
+    )
+    _one(client, pid, level="light", kind="heartbeat", title="beat", target_handle="alice")
     # 进收件箱：decision_request + accept_request。
     decision = _one(
         client,
@@ -194,36 +219,56 @@ def test_inbox_only_unread_decision_and_accept(client):
         target_handle="bob",
     )
 
-    # 决定进不进收件箱的是类别，不是发给谁：那条提醒和那次巡检两个人都收到了，
-    # 而谁的收件箱里都没有它们。
-    alice = client.get(
-        f"/projects/{pid}/inbox", headers=session_auth_headers("alice")
-    ).json()["data"]
-    bob = client.get(
-        f"/projects/{pid}/inbox", headers=session_auth_headers("bob")
-    ).json()["data"]
-    assert [n["title"] for n in alice["data"]] == ["拍板"]
-    assert [n["title"] for n in bob["data"]] == ["验收"]
-    assert {n["kind"] for n in alice["data"] + bob["data"]} == {
-        "decision_request",
-        "accept_request",
-    }
+    # 决定进不进收件箱的是类别 + 读没读，不是发给谁：那两条提醒和那次巡检 alice
+    # 都收到了，收件箱里只多出「提醒」。
+    assert _inbox_titles(client, pid, "alice") == ["拍板", "提醒"]
+    assert _inbox_titles(client, pid, "bob") == ["验收"]
+
+    # 变更提醒读过就收起来 —— 和验收卡同一条规矩（不是「拍板了才走」）。
+    client.post(f"/alerts/{alert['id']}/read", headers=session_auth_headers("alice"))
+    assert _inbox_titles(client, pid, "alice") == ["拍板"]
 
     # 决策请求被读过之后照样留在收件箱里 —— 拍板了才走。
     client.post(
         f"/alerts/{decision['id']}/read",
         headers=session_auth_headers("alice"),
     )
-    r = client.get(f"/projects/{pid}/inbox", headers=session_auth_headers("alice"))
-    assert r.json()["data"]["total"] == 1
+    assert _inbox_titles(client, pid, "alice") == ["拍板"]
 
     client.post(
         f"/alerts/{decision['id']}/resolve",
         json={"chosen": "随便"},
         headers=session_auth_headers("alice"),
     )
-    r = client.get(f"/projects/{pid}/inbox", headers=session_auth_headers("alice"))
-    assert r.json()["data"]["total"] == 0
+    assert _inbox_titles(client, pid, "alice") == []
+
+
+def test_the_project_badge_counts_what_the_inbox_lists(client):
+    """角标亮着的每一条，收件箱里都读得到。
+
+    这就是 change_alert 曾经的那个缺陷：`unread_count_in_project` 把未读、非
+    silent 的变更提醒数进了项目角标，而收件箱查询把它们滤掉了 —— 角标亮着，
+    人进去一条也读不到，只能靠「全部已读」把它按掉。两边读的是同一批规则。
+    """
+    pid = _create_project(client)
+    _roster(client, pid, "alice")
+    _one(client, pid, level="strong", kind="change_alert", title="提醒", target_handle="alice")
+    _one(
+        client,
+        pid,
+        level="light",
+        kind="change_alert",
+        title="提醒二",
+        target_handle="alice",
+    )
+    # silent 的两边都不算。
+    _one(client, pid, level="silent", kind="change_alert", title="安静的", target_handle="alice")
+
+    badge = client.get(
+        f"/projects/{pid}/alerts/unread-count", headers=session_auth_headers("alice")
+    ).json()["data"]["unread"]
+    listed = _inbox_titles(client, pid, "alice")
+    assert badge == len(listed) == 2
 
 
 def test_resolve_records_choice_and_posts_block(client):

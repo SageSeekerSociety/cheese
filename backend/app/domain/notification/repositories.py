@@ -270,7 +270,15 @@ class NotificationRepository:
         *,
         recipient_handle: str,
     ) -> list[Notification]:
-        """等你处理的事 (spec G2): 决策请求挂到拍板为止，验收卡挂到读过为止。"""
+        """等你处理的事 (spec G2): 决策请求挂到拍板为止，验收卡挂到读过为止；
+        变更提醒 (spec §8.5 的第一种典型通知) 也挂到读过为止。
+
+        变更提醒本来一条都读不到（<#不带@的消息没有通知> 的事实 2），而
+        `unread_count_in_project` 却把它数进项目角标 —— 于是角标亮着，人进去一条
+        也读不到，只能靠「全部已读」把角标按掉。这里是那个角标的落地名单。
+
+        `silent` 的不进来：它的意思就是「记下来，别打扰」，而它本来也不点亮角标。
+        """
         stmt = self._mine_in(select(Notification), project_id, recipient_handle).where(
             or_(
                 and_(
@@ -280,6 +288,14 @@ class NotificationRepository:
                 and_(
                     Notification.type == NotificationType.ACCEPT_REQUEST.value,
                     Notification.read.is_(False),
+                ),
+                and_(
+                    Notification.type == NotificationType.CHANGE_ALERT.value,
+                    Notification.read.is_(False),
+                    or_(
+                        Notification.level.is_(None),
+                        Notification.level != NotificationLevel.silent.value,
+                    ),
                 ),
             )
         )
