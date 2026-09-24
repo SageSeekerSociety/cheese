@@ -210,9 +210,9 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     else:
         assert selected is not None
         device_id = selected.device_id
-    host = (row.runtime_location or {}).get("device_id")
-    if not host:
-        raise ConflictError("Session has no recorded host to dial its tools")
+    # Placement records the session host before the screen that asks opens.
+    assert row.runtime_location is not None
+    host = row.runtime_location["device_id"]
     if device_id == host:
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
