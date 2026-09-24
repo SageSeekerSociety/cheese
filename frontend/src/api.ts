@@ -67,6 +67,7 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
+import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
 
@@ -223,7 +224,6 @@ export class RequestTimeoutError extends Error {
 }
 
 export const READ_BUDGET_MS = 20_000
-export const TOKEN_REFRESH_BUDGET_MS = 10_000
 
 async function withinBudget<T>(
   work: (signal: AbortSignal) => Promise<T>,
@@ -268,11 +268,6 @@ export function isEndpointMissing(e: unknown): boolean {
 // as one that was already dead, so leave room for the round trip.
 const TOKEN_REFRESH_LEEWAY_MS = 60_000
 
-// One refresh in flight at a time. Without this, a page that fires eight
-// requests on mount fires eight refreshes, and the losers race to overwrite
-// `accessToken` with each other's result.
-let refreshInFlight: Promise<void> | null = null
-
 export function tokenExpiresWithin(token: string, ms: number): boolean {
   try {
     const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
@@ -311,41 +306,18 @@ export async function ensureFreshToken(): Promise<void> {
  * `ensureFreshToken` trusts `exp`, and `exp` is not the only way a token dies.
  * Measured on dev: a token minted 443s earlier, with 457s of its 900s life
  * left, was rejected 24 times out of 24 by BOTH api layers, while one minted
- * seconds later worked — and `decode_token` does pure JWT verification with no
- * revocation store, so the signing secret must have changed under us (a backend
+ * seconds later worked — the signing secret had changed under us (a backend
  * restart). Trusting `exp` alone means a signed-in user then 401s on every
  * request for up to 14 minutes, until the token nears the expiry that would
  * finally trigger a refresh. That is the 「通知铃铛必 401」 shape.
  *
- * Shares `refreshInFlight` with `ensureFreshToken`, so a burst of 401s costs one
- * refresh, not one each.
+ * Goes through `refreshSession`, so a burst of 401s costs one refresh, not one
+ * each, and never races a refresh in another tab.
  */
 export async function refreshNow(): Promise<void> {
-  if (!refreshInFlight) {
-    refreshInFlight = (async () => {
-      try {
-        const next = await withinBudget(async (signal) => {
-          const res = await fetch('/api/users/auth/refresh-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            signal,
-          })
-          if (!res.ok) return undefined
-          const body = (await res.json()) as { data?: { accessToken?: string } }
-          signal.throwIfAborted()
-          return body?.data?.accessToken
-        }, TOKEN_REFRESH_BUDGET_MS)
-        if (next) localStorage.setItem('accessToken', next)
-      } catch {
-        // Offline, or the refresh cookie is gone. Sending the stale token is
-        // no worse than sending nothing, and the caller still sees the result.
-      } finally {
-        refreshInFlight = null
-      }
-    })()
-  }
-  await refreshInFlight
+  // A failed refresh leaves the stored token as it was; the caller still sees
+  // its own request's result.
+  await refreshSession()
 }
 
 // Room chrome, chat and the work panel request the same roster/task summary

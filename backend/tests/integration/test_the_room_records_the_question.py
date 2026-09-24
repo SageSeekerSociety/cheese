@@ -19,7 +19,9 @@ from tests.integration.conftest import session_auth_headers
 
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
-    monkeypatch.setattr("app.core.tokens._SECRET", "rc-record-test-key-at-least-32b")
+    monkeypatch.setattr(
+        "app.core.config.settings.jwt_secret", "rc-record-test-key-at-least-32b"
+    )
 
 
 @pytest.fixture

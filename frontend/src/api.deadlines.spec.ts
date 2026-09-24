@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { ApiError, listTopics, READ_BUDGET_MS, refreshNow, RequestTimeoutError, TOKEN_REFRESH_BUDGET_MS } from './api'
+import { TOKEN_REFRESH_BUDGET_MS } from './lib/session'
+import { ApiError, listTopics, READ_BUDGET_MS, refreshNow, RequestTimeoutError } from './api'
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()

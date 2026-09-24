@@ -16,7 +16,9 @@ from app.domain.agent.remote_control import key
 
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
-    monkeypatch.setattr("app.core.tokens._SECRET", "rc-push-test-key-at-least-32-bytes")
+    monkeypatch.setattr(
+        "app.core.config.settings.jwt_secret", "rc-push-test-key-at-least-32-bytes"
+    )
 
 
 @pytest.fixture

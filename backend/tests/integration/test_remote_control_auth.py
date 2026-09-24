@@ -255,7 +255,9 @@ def test_reading_a_session_is_open_to_whoever_is_in_the_room(client, place):
 
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
-    monkeypatch.setattr("app.core.tokens._SECRET", "rc-http-test-key-at-least-32-bytes")
+    monkeypatch.setattr(
+        "app.core.config.settings.jwt_secret", "rc-http-test-key-at-least-32-bytes"
+    )
 
 
 @pytest.fixture

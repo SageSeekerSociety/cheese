@@ -9,6 +9,7 @@ import type {
   GetPasskeysResponse,
   GetQuestionListResponse,
   GetRealNameInfoResponse,
+  GetSessionsResponse,
   GetUserInfoResponse,
   OAuthBindUserRequest,
   OAuthBindUserResponse,
@@ -88,13 +89,6 @@ export namespace UserApi {
       url: '/users/verify/email',
       method: 'POST',
       data: { email, ...(inviteCode ? { inviteCode } : {}) },
-    })
-
-  export const refreshAccessToken = () =>
-    ApiInstance.request<AuthResponseDataType>({
-      url: '/users/auth/refresh-token',
-      method: 'POST',
-      withCredentials: true,
     })
 
   export const recoverPasswordRequest = (email: string) =>
@@ -231,6 +225,24 @@ export namespace UserApi {
     })
 
   // Passkey 管理相关
+  export const listSessions = () =>
+    ApiInstance.request<GetSessionsResponse>({
+      url: '/users/me/sessions',
+      method: 'GET',
+    })
+
+  export const revokeSession = (sessionId: string) =>
+    ApiInstance.request({
+      url: `/users/me/sessions/${encodeURIComponent(sessionId)}`,
+      method: 'DELETE',
+    })
+
+  export const revokeOtherSessions = () =>
+    ApiInstance.request<{ revokedCount: number }>({
+      url: '/users/me/sessions',
+      method: 'DELETE',
+    })
+
   export const getUserPasskeys = (userId: number) =>
     ApiInstance.request<GetPasskeysResponse>({
       url: `/users/${userId}/passkeys`,

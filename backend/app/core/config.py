@@ -175,7 +175,16 @@ class Settings(BaseSettings):
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
+    # A sign-in lasts this long from the moment it happened; refreshing does
+    # not extend it.
     refresh_token_expires_seconds: int = 60 * 60 * 24 * 30
+    # A sign-in nobody has refreshed for this long is over, however much of
+    # its lifetime remains.
+    refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
+    # How long a refresh token that was just rotated away still answers.
+    # Two tabs refreshing at the same moment both present the old token; the
+    # slower one must not read as a stolen copy and sign the user out.
+    refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
     # The SDK talks to the model via the `claude` CLI. We route to a provider
@@ -819,12 +828,6 @@ class Settings(BaseSettings):
     s3_public_url: str | None = None
 
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
-    # Session tokens (JWT HS256) are signed AND verified with the one
-    # ``jwt_secret`` (same secret as main's access/refresh tokens) — no
-    # per-module signing secret.
-    # Session token lifetime. Login is passwordless (handle IS the identity), so
-    # this only bounds how long a minted token stays valid before re-login.
-    auth_token_ttl_s: int = 7 * 24 * 3600
     # Enforce topic access for TOKEN-authenticated actors (成员/角色/项目 checks).
     # The Phase-0 handle fallback stays permissive regardless, so existing
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the

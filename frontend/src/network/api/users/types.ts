@@ -44,6 +44,22 @@ export type GetPasskeysResponse = {
   passkeys: PasskeyInfo[]
 }
 
+/** One sign-in: a device that holds a refresh token for the account. */
+export type SessionInfo = {
+  id: string
+  loginMethod: string
+  ipAddress: string
+  userAgent: string
+  createdAt: string
+  lastActiveAt: string
+  /** The sign-in this request was made from. */
+  current: boolean
+}
+
+export type GetSessionsResponse = {
+  sessions: SessionInfo[]
+}
+
 export type AuthMethodsResponse = {
   supports_password: boolean
   supports_passkey: boolean

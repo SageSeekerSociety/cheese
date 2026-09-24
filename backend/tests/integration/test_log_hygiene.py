@@ -216,12 +216,12 @@ def test_the_request_line_names_the_user_client_and_site(client, caplog, monkeyp
     into X-Forwarded-For), the raw header for forensics, and the Host the
     request was sent to.
     """
-    from app.common.auth import decode_token
+    from app.common.auth import verify_access_token
     from app.main import app
     from tests.conftest import seed_user
 
     token = seed_user(client, "log_attrib_user")
-    user_id = int(decode_token(token)["sub"])
+    user_id = verify_access_token(token).user_id
 
     # Served as the image serves it: uvicorn's defaults plus the proxy list
     # from the environment, reached through docker's bridge gateway.

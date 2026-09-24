@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.domain.passkey.services import PasskeyService
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import UserCreator
 
 from .test_passkey import _fake_credential
 
@@ -24,16 +24,26 @@ def _decode(token: str) -> dict:
 
 class TestRefreshTokenCarriesHandle:
     def test_refresh_token_response_carries_handle(
-        self, authenticated_user: CreatedUser, api_client: TestClient
+        self, user_client: UserCreator, api_client: TestClient
     ):
-        # login() already left REFRESH_TOKEN cookie set on api_client's jar.
-        resp = api_client.post("/users/auth/refresh-token")
+        user = user_client.create_user()
+        login = api_client.post(
+            "/users/auth/login",
+            json={"username": user.username, "password": user.password},
+        )
+        refresh_cookie = login.cookies.get("cheese_refresh")
+        assert refresh_cookie, login.headers.get_list("set-cookie")
+
+        resp = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={refresh_cookie}"},
+        )
         assert resp.status_code == 200, (
             f"Expected 200, got {resp.status_code}: {resp.text}"
         )
         access_token = resp.json()["data"]["accessToken"]
         claims = _decode(access_token)
-        assert claims["handle"] == authenticated_user.username
+        assert claims["handle"] == user.username
 
 
 class TestPasskeyVerifyCarriesHandle:

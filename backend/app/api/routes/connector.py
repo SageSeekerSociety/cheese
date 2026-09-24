@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
+from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -47,7 +48,6 @@ from app.core.errors import (
     NotFoundError,
     UnauthorizedError,
 )
-from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
@@ -359,14 +359,11 @@ async def _may_view_screen(
     """
     if not token:
         return False
-    claims = verify_session_token(token)
+    claims = verify_access_token(token)
     if claims is None:
         return False
-    # main-minted tokens carry the int user id in ``sub`` and the handle in the
-    # ``handle`` claim; membership is keyed by handle, so prefer it (mirrors
-    # _token_verifier / the rest of the auth layer). Falling back to ``sub`` keeps
-    # legacy cheesex handle-in-sub tokens working.
-    handle = claims["handle"] or claims["sub"]
+    # Membership is keyed by handle.
+    handle = claims.handle
     if screen.project_id is not None:
         if await owner_reads.project_member(session, screen.project_id, handle):
             return True
