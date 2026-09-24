@@ -1,7 +1,7 @@
 """Unbinding an OAuth connection changes how the account can be signed into,
 so it takes a fresh re-authentication, and it must not leave an account nobody
-can sign in to: a password, a passkey or another sign-in connection has to
-remain."""
+can sign in to: a real email, a password, a passkey or another sign-in
+connection has to remain."""
 
 import uuid
 
@@ -33,6 +33,20 @@ class _Account:
         async def _run() -> None:
             await self._db.execute(
                 update(User).where(User.id == self.id).values(hashed_password=None)
+            )
+            await self._db.flush()
+
+        self._portal.call(_run)
+
+    def use_placeholder_email(self) -> None:
+        """The address a third-party sign-up makes up when the provider gives
+        none: no code can be mailed to it, so it is no way in."""
+
+        async def _run() -> None:
+            await self._db.execute(
+                update(User)
+                .where(User.id == self.id)
+                .values(email=f"oauth-github-{self.id}@placeholder.internal")
             )
             await self._db.flush()
 
@@ -137,6 +151,7 @@ def test_last_sign_in_method_cannot_be_unbound(
 ):
     ticket = account.sudo_ticket(api_client)
     account.drop_password()
+    account.use_placeholder_email()
     conn_id = account.connect("github")
     # A link-only connection is not a way to sign in, so it does not help.
     account.connect("github_app")
@@ -145,6 +160,16 @@ def test_last_sign_in_method_cannot_be_unbound(
 
     assert resp.status_code == 409
     assert conn_id in account.connection_ids(api_client)
+
+
+def test_unbind_allowed_with_an_email_codes_can_be_mailed_to(
+    account: _Account, api_client: TestClient
+):
+    ticket = account.sudo_ticket(api_client)
+    account.drop_password()
+    conn_id = account.connect("github")
+
+    assert account.unbind(api_client, conn_id, ticket).status_code == 200
 
 
 def test_unbind_allowed_with_a_password(account: _Account, api_client: TestClient):
@@ -159,6 +184,7 @@ def test_unbind_allowed_with_a_password(account: _Account, api_client: TestClien
 def test_unbind_allowed_with_a_passkey(account: _Account, api_client: TestClient):
     ticket = account.sudo_ticket(api_client)
     account.drop_password()
+    account.use_placeholder_email()
     account.add_passkey()
     conn_id = account.connect("google")
 
@@ -170,6 +196,7 @@ def test_unbind_allowed_with_another_sign_in_connection(
 ):
     tickets = [account.sudo_ticket(api_client), account.sudo_ticket(api_client)]
     account.drop_password()
+    account.use_placeholder_email()
     first = account.connect("github")
     second = account.connect("ruc")
 
@@ -183,6 +210,7 @@ def test_link_only_connection_can_always_be_unbound(
 ):
     ticket = account.sudo_ticket(api_client)
     account.drop_password()
+    account.use_placeholder_email()
     account.connect("github")
     link_id = account.connect("github_app")
 

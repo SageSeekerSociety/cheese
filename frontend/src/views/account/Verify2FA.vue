@@ -74,7 +74,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { attemptMessage } from './attemptWait'
-import { landingAfterSignIn, takePasswordStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
+import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
@@ -131,7 +131,7 @@ const handleVerify = async () => {
     // 登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signIn.signedIn'))
-    const upgrade = takePasswordStep() ? upgradeAfterPasswordSignIn(data.user!.id, data.passkeyEnrollment) : null
+    const upgrade = upgradeAfterSecondStep(takeFirstStep(), data.user!.id, data.passkeyEnrollment)
 
     // 如果使用了备用码，显示提醒对话框。它已经是登录后的下一件事，不再接着
     // 提议添加通行密钥。

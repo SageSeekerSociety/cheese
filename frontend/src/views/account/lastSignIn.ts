@@ -2,7 +2,7 @@
 // Kept on the device only: it is a convenience, and clearing site data simply
 // brings back the default order.
 
-export type SignInMethod = 'password' | 'passkey' | `oauth:${string}`
+export type SignInMethod = 'password' | 'passkey' | 'email_code' | `oauth:${string}`
 
 const KEY = 'cheese.lastSignIn'
 
@@ -17,7 +17,8 @@ export function rememberSignIn(method: SignInMethod): void {
 export function lastSignIn(): SignInMethod | null {
   try {
     const value = localStorage.getItem(KEY)
-    if (value === 'password' || value === 'passkey' || value?.startsWith('oauth:')) return value as SignInMethod
+    if (value === 'password' || value === 'passkey' || value === 'email_code' || value?.startsWith('oauth:'))
+      return value as SignInMethod
   } catch {
     // as above
   }

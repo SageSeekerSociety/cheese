@@ -66,14 +66,18 @@
     "notice": {
       "passwordReset": "Your password has been reset. Sign in with the new one."
     },
-    "lastUsed": "Last used"
+    "lastUsed": "Last used",
+    "emailCode": "Sign in with an email code"
   },
   "attempts": {
     "wrongPassword": "Wrong username or password.",
     "wrongPasswordWait": "Wrong username or password. Try again in {wait}.",
     "tooManyWait": "Too many attempts. Try again in {wait}.",
     "seconds": "1 second | {count} seconds",
-    "minutes": "1 minute | {count} minutes"
+    "minutes": "1 minute | {count} minutes",
+    "wrongEmailCode": "The code is wrong or has expired.",
+    "codeTooSoon": "Request a new code in {wait}.",
+    "mailLimit": "Email can't be sent right now. Try again later."
   },
   "signUp": {
     "title": "Create account",
@@ -204,7 +208,8 @@
     "noMethod": "No way to confirm your identity is set up",
     "method": {
       "password": "Enter your password",
-      "totp": "Enter a code from your authenticator app"
+      "totp": "Enter a code from your authenticator app",
+      "emailCode": "Get a code by email"
     },
     "submit": "Confirm",
     "passwordRequired": "Enter your password",
@@ -221,7 +226,10 @@
       "unbindOAuthConnection": "unlink a connected account",
       "viewRealName": "view your full real-name information",
       "updateRealName": "change your real-name information"
-    }
+    },
+    "sendEmailCode": "Email me a code",
+    "sendFailed": "Couldn't send the code. Try again.",
+    "emailCodeUnavailable": "Two-step verification is on for this account. Use another way."
   },
   "security": {
     "title": "Password and security",
@@ -313,6 +321,12 @@
     "unlinked": "Unlinked",
     "unlinkFailed": "Could not unlink. Try again.",
     "lastWayIn": "This is your only way to sign in. Set a password or add a passkey first.",
-    "loadFailed": "Some details could not load. Refresh the page."
+    "loadFailed": "Some details could not load. Refresh the page.",
+    "methodEmailCode": "Email code sign-in"
+  },
+  "emailCode": {
+    "title": "Sign in with an email code",
+    "send": "Send code",
+    "codeTitle": "Enter the code"
   }
 }

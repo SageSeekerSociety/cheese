@@ -142,6 +142,12 @@ def is_valid_username(username: str) -> bool:
     return _USERNAME_RE.fullmatch(username) is not None
 
 
+def is_placeholder_email(email: str | None) -> bool:
+    """An address a third-party sign-up made up because the provider gave
+    none. Nobody reads it, so it is never mailed and never proves anything."""
+    return not email or email.strip().lower().endswith("@placeholder.internal")
+
+
 async def faces_by_handle(
     session: AsyncSession, handles: Iterable[str]
 ) -> dict[str, tuple[str | None, int | None]]:

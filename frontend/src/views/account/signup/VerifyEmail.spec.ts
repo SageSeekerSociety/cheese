@@ -198,6 +198,43 @@ describe('verifying the email', () => {
     await waitFor(() => expect(finish.hasAttribute('disabled')).toBe(false))
   })
 
+  it('says a wrong code is wrong in the interface language', async () => {
+    await startSignup()
+    vi.mocked(UserApi.register).mockRejectedValue(
+      new BusinessError('Invalid or expired verification code', 422, {
+        name: 'UnprocessableEntityError',
+        message: 'Invalid or expired verification code',
+        data: { reason: 'invalid_email_code' },
+      })
+    )
+    setLocale('zh-CN')
+    const { view } = await open()
+    await fireEvent.update(view.getByLabelText('密码'), 'Secret#123')
+
+    await typeCode(view.container)
+
+    expect(await view.findByText('验证码不正确或已过期')).toBeTruthy()
+    expect(view.queryByText(/Invalid or expired/)).toBeNull()
+  })
+
+  it('says how long to wait when a new code is asked for too soon', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    await startSignup()
+    const { view } = await open()
+    vi.mocked(UserApi.sendEmailCode).mockRejectedValue(
+      new BusinessError('Please wait before requesting a new code', 400, {
+        name: 'BadRequestError',
+        message: 'Please wait before requesting a new code',
+        data: { reason: 'email_code_too_soon', retryAfterSeconds: 1800 },
+      })
+    )
+
+    vi.advanceTimersByTime(61_000)
+    await fireEvent.click(await view.findByRole('button', { name: 'Resend' }))
+
+    expect(await view.findByText('Request a new code in 30 minutes.')).toBeTruthy()
+  })
+
   it('sends the user back to the form when there is nothing to verify', async () => {
     const { router } = await open()
     await waitFor(() => expect(router.currentRoute.value.name).toBe('SignUpStart'))

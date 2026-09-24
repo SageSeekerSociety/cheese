@@ -66,14 +66,18 @@
     "notice": {
       "passwordReset": "密码已重置，请使用新密码登录"
     },
-    "lastUsed": "上次使用"
+    "lastUsed": "上次使用",
+    "emailCode": "使用邮箱验证码登录"
   },
   "attempts": {
     "wrongPassword": "用户名或密码错误",
     "wrongPasswordWait": "用户名或密码错误，请在 {wait}后重试",
     "tooManyWait": "尝试次数过多，请在 {wait}后重试",
     "seconds": "{count} 秒",
-    "minutes": "{count} 分钟"
+    "minutes": "{count} 分钟",
+    "wrongEmailCode": "验证码不正确或已过期",
+    "codeTooSoon": "请在 {wait}后重新获取验证码",
+    "mailLimit": "暂时无法发送邮件，请稍后重试"
   },
   "signUp": {
     "title": "创建账号",
@@ -204,7 +208,8 @@
     "noMethod": "暂无可用于确认身份的方式",
     "method": {
       "password": "输入密码",
-      "totp": "输入验证器中的验证码"
+      "totp": "输入验证器中的验证码",
+      "emailCode": "接收邮箱验证码"
     },
     "submit": "验证",
     "passwordRequired": "请输入密码",
@@ -221,7 +226,10 @@
       "unbindOAuthConnection": "解除第三方账号关联",
       "viewRealName": "查看完整实名信息",
       "updateRealName": "修改实名信息"
-    }
+    },
+    "sendEmailCode": "发送邮箱验证码",
+    "sendFailed": "发送失败，请重试",
+    "emailCodeUnavailable": "此账号已开启两步验证，请使用其他方式"
   },
   "security": {
     "title": "密码与安全",
@@ -313,6 +321,12 @@
     "unlinked": "已解除关联",
     "unlinkFailed": "解除关联失败，请重试",
     "lastWayIn": "这是你唯一的登录方式。请先设置密码或添加通行密钥",
-    "loadFailed": "部分信息加载失败，请刷新页面"
+    "loadFailed": "部分信息加载失败，请刷新页面",
+    "methodEmailCode": "邮箱验证码登录"
+  },
+  "emailCode": {
+    "title": "邮箱验证码登录",
+    "send": "发送验证码",
+    "codeTitle": "输入验证码"
   }
 }

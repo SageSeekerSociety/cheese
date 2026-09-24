@@ -18,11 +18,13 @@ const browser = vi.hoisted(() => ({ webAuthn: true }))
 
 vi.mock('@/network/api/users', () => ({
   UserApi: {
-    getAuthMethods: vi.fn(),
+    getMyAuthMethods: vi.fn(),
     getPasskeyAuthenticationOptions: vi.fn(),
     verifySudoPasskey: vi.fn(),
     verifySudoPassword: vi.fn(),
     verifySudoTOTP: vi.fn(),
+    requestSudoEmailCode: vi.fn(),
+    verifySudoEmailCode: vi.fn(),
   },
 }))
 vi.mock('@/services/account', () => ({
@@ -41,21 +43,33 @@ beforeEach(() => {
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.mocked(UserApi.verifySudoPassword).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-1' } } as never)
   vi.mocked(UserApi.verifySudoTOTP).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-2' } } as never)
+  vi.mocked(UserApi.requestSudoEmailCode).mockResolvedValue({ data: { email: 'alice@example.com' } } as never)
+  vi.mocked(UserApi.verifySudoEmailCode).mockResolvedValue({
+    data: { verified: true, sudoTicket: 'ticket-4' },
+  } as never)
 })
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
 
-function accountWith(methods: { password?: boolean; passkey: boolean; twoFactor: boolean }) {
-  vi.mocked(UserApi.getAuthMethods).mockResolvedValue({
+function accountWith(methods: { password?: boolean; passkey: boolean; twoFactor: boolean; emailCode?: boolean }) {
+  vi.mocked(UserApi.getMyAuthMethods).mockResolvedValue({
     data: {
-      supports_password: methods.password ?? true,
-      supports_passkey: methods.passkey,
-      supports_2fa: methods.twoFactor,
-      requires_2fa: methods.twoFactor,
+      password: methods.password ?? true,
+      passkey: methods.passkey,
+      twoFactor: methods.twoFactor,
+      emailCode: methods.emailCode ?? false,
     },
   } as never)
+}
+
+async function codeField() {
+  return waitFor(() => {
+    const input = document.querySelector('.v-otp-input input')
+    if (!input) throw new Error('no code field yet')
+    return input
+  })
 }
 
 /** Mount the dialog the way the app does, then run an operation behind it. */
@@ -247,6 +261,86 @@ describe('confirming', () => {
     expect(password.getAttribute('autocomplete')).toBe('current-password')
     const username = password.closest('form')!.querySelector<HTMLInputElement>('input[autocomplete="username"]')
     expect(username?.value).toBe('alice')
+  })
+})
+
+describe('confirming with a code mailed to the account', () => {
+  it('lists it under the other ways, and choosing it sends the code', async () => {
+    accountWith({ passkey: false, twoFactor: false, emailCode: true })
+    await ask()
+
+    await screen.findByLabelText('Password')
+    await fireEvent.click(screen.getByRole('button', { name: 'Get a code by email' }))
+
+    expect(await screen.findByText('We sent a code to alice@example.com')).toBeTruthy()
+    expect(UserApi.requestSudoEmailCode).toHaveBeenCalledTimes(1)
+  })
+
+  it('is the way in for an account that has no other, sent only when asked', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
+    const { result } = await ask('oauth:unbind')
+
+    const send = await screen.findByRole('button', { name: 'Email me a code' })
+    expect(UserApi.requestSudoEmailCode).not.toHaveBeenCalled()
+    await fireEvent.click(send)
+    await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '246810' } })
+
+    await expect(result).resolves.toBe('done with ticket-4')
+    expect(UserApi.verifySudoEmailCode).toHaveBeenCalledWith('246810', 'oauth:unbind')
+  })
+
+  it('says a wrong code is wrong in the interface language, and stays open', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
+    vi.mocked(UserApi.verifySudoEmailCode).mockRejectedValue(
+      new BusinessError('Invalid or expired code', 401, {
+        name: 'AuthenticationRequiredError',
+        message: 'Invalid or expired code',
+        data: { reason: 'invalid_email_code' },
+      })
+    )
+    const { outcome } = await ask()
+    setLocale('zh-CN')
+
+    await fireEvent.click(await screen.findByRole('button', { name: '发送邮箱验证码' }))
+    await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '000000' } })
+
+    expect(await screen.findByText('验证码不正确或已过期')).toBeTruthy()
+    expect(outcome.settled).toBe(false)
+  })
+
+  it('says so when two-step verification was turned on meanwhile', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
+    vi.mocked(UserApi.verifySudoEmailCode).mockRejectedValue(
+      new BusinessError('An email code cannot confirm this account', 403, {
+        name: 'ForbiddenError',
+        message: 'An email code cannot confirm this account',
+        data: { reason: 'email_code_unavailable' },
+      })
+    )
+    const { outcome } = await ask()
+    setLocale('zh-CN')
+
+    await fireEvent.click(await screen.findByRole('button', { name: '发送邮箱验证码' }))
+    await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '135790' } })
+
+    expect(await screen.findByText('此账号已开启两步验证，请使用其他方式')).toBeTruthy()
+    expect(outcome.settled).toBe(false)
+  })
+
+  it('says how long to wait when a code was sent too recently', async () => {
+    accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
+    vi.mocked(UserApi.requestSudoEmailCode).mockRejectedValue(
+      new BusinessError('Please wait before requesting a new code', 400, {
+        name: 'BadRequestError',
+        message: 'Please wait before requesting a new code',
+        data: { reason: 'email_code_too_soon', retryAfterSeconds: 20 },
+      })
+    )
+    await ask()
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Email me a code' }))
+
+    expect(await screen.findByText('Request a new code in 20 seconds.')).toBeTruthy()
   })
 })
 

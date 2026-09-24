@@ -109,8 +109,9 @@ class UserRepository:
         return result.scalar_one_or_none() is not None
 
     async def get_by_email(self, email: str) -> User | None:
+        """Case-insensitive, matching ``uq_user_email_lower``."""
         stmt: Select[tuple[User]] = select(User).where(
-            User.email == email, User.deleted_at.is_(None)
+            func.lower(User.email) == email.lower(), User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
