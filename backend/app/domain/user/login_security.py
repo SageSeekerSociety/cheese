@@ -87,6 +87,35 @@ PASSWORD_RESET_TTL = 30 * 60
 SESSION_TTL = 30 * 24 * 60 * 60
 
 
+# Failures one client address may make at each credential step, per window.
+# Generous on purpose: a campus puts many of its users behind a few NAT
+# addresses, so this only stops one source spraying guesses across accounts,
+# and the per-account limits above do the fine work.
+CLIENT_FAILURE_PREFIX = "cheese:client_failures:"
+CLIENT_MAX_FAILURES = 100
+CLIENT_FAILURE_WINDOW_SECONDS = 15 * 60
+
+# Counted in one script for the reason consume_attempt gives. A refused attempt
+# is handed straight back, so it neither counts nor extends the window.
+_CLIENT_SPEND_SCRIPT = """
+local failures = redis.call('INCR', KEYS[1])
+if failures == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+if failures > tonumber(ARGV[1]) then
+  redis.call('DECR', KEYS[1])
+  return math.max(redis.call('TTL', KEYS[1]), 1)
+end
+return 0
+"""
+
+_CLIENT_REFUND_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('DECR', KEYS[1])
+end
+return 1
+"""
+
 # Checked and counted in one script, for the reason consume_attempt gives.
 # Returns {1, wait this attempt starts if it fails} or {0, seconds still to wait}.
 _LOGIN_ADMIT_SCRIPT = """
@@ -149,6 +178,47 @@ class LoginDelay:
 
     async def clear(self, username: str) -> None:
         await self._redis.delete(*self._keys(username))
+
+
+class ClientFailureBudget:
+    """Failures one client address may make at one credential step.
+
+    ``client`` is the address ``resolved_client_address`` gives, and None
+    where the server cannot tell clients apart; with None nothing is counted
+    or refused, since every client would share one budget.
+
+    Counts failures, not attempts: the slot is taken before the credential
+    is checked, as everywhere here, and handed back when it holds. Handed
+    back, never cleared: clearing on success would let anyone reset their
+    address's count by signing in to an account of their own.
+    """
+
+    def __init__(self, redis: Redis, step: str) -> None:
+        self._redis = redis
+        self._step = step
+
+    def _key(self, client: str) -> str:
+        return f"{CLIENT_FAILURE_PREFIX}{self._step}:{client}"
+
+    async def spend(self, client: str | None) -> int:
+        """Take a slot. 0 when taken; otherwise the seconds until the window
+        ends, and the attempt must be refused."""
+        if client is None:
+            return 0
+        wait = await self._redis.eval(  # type: ignore[misc]
+            _CLIENT_SPEND_SCRIPT,
+            1,
+            self._key(client),
+            CLIENT_MAX_FAILURES,
+            CLIENT_FAILURE_WINDOW_SECONDS,
+        )
+        return int(wait)
+
+    async def refund(self, client: str | None) -> None:
+        """Hand back a slot whose attempt did not fail."""
+        if client is None:
+            return
+        await self._redis.eval(_CLIENT_REFUND_SCRIPT, 1, self._key(client))  # type: ignore[misc]
 
 
 class AttemptLimiter:

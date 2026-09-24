@@ -82,3 +82,72 @@ async def test_unset_trusts_no_proxy_beyond_the_box_itself(monkeypatch):
     seen = await _client_seen(BRIDGE_GATEWAY, "203.0.113.9")
 
     assert seen == BRIDGE_GATEWAY
+
+
+# Per-address limits key on the address only when it is the client's; asked
+# of the same request uvicorn has resolved, as a route asks it.
+
+
+async def _limit_key_seen(peer: str, forwarded_for: str | None) -> str:
+    from starlette.requests import Request
+
+    from app.core.client_address import resolved_client_address
+
+    async def echo(scope, receive, send) -> None:
+        key = resolved_client_address(Request(scope)) or "-"
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send({"type": "http.response.body", "body": key.encode()})
+
+    config = uvicorn.Config(echo, log_config=None)
+    config.load()
+    served = cast(Any, config.loaded_app)
+    transport = httpx.ASGITransport(app=served, client=(peer, 40000))
+    headers = {"X-Forwarded-For": forwarded_for} if forwarded_for else {}
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get("/", headers=headers)
+    return r.text
+
+
+async def test_limits_key_on_the_client_behind_the_trusted_proxies(monkeypatch):
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", DEV_PROXIES)
+
+    key = await _limit_key_seen(
+        BRIDGE_GATEWAY, "203.0.113.9, 127.0.0.1, 172.18.0.10, 127.0.0.1"
+    )
+
+    assert key == "203.0.113.9"
+
+
+async def test_limits_key_on_a_peer_that_is_not_a_proxy(monkeypatch):
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", DEV_PROXIES)
+
+    assert await _limit_key_seen("198.51.100.7", "203.0.113.9") == "198.51.100.7"
+
+
+async def test_unset_keys_no_limit_on_the_proxy(monkeypatch):
+    """Unset, every request carries the proxy's address, and a limit on it
+    would refuse every client at once."""
+    monkeypatch.delenv("FORWARDED_ALLOW_IPS", raising=False)
+
+    assert await _limit_key_seen(BRIDGE_GATEWAY, "203.0.113.9") == "-"
+
+
+async def test_a_request_with_no_client_behind_a_proxy_keys_no_limit(monkeypatch):
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", DEV_PROXIES)
+
+    assert await _limit_key_seen(BRIDGE_GATEWAY, None) == "-"
+    assert await _limit_key_seen(BRIDGE_GATEWAY, "127.0.0.1") == "-"
+
+
+async def test_trusting_every_peer_keys_no_limit(monkeypatch):
+    """With ``*`` the address is whatever the client wrote into the header,
+    so keying on it would let anyone spend somebody else's budget."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
+
+    assert await _limit_key_seen(BRIDGE_GATEWAY, "203.0.113.9") == "-"

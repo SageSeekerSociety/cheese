@@ -280,6 +280,7 @@ async def _spend_2fa_attempt(
     step_up: bool = False,
     is_backup_code: bool = False,
     reissue_until: int | None = None,
+    client: str | None = None,
 ) -> None:
     """Check a second-factor code against a per-user attempt budget (#357).
 
@@ -305,6 +306,10 @@ async def _spend_2fa_attempt(
     starting a new one, so wrong guesses cannot extend the half-authenticated
     window.
 
+    ``client`` also counts a wrong code against the client's address (see
+    ``ClientFailureBudget``); the login entrances pass it, step-up does not,
+    being reachable only from a live session.
+
     Every rejection carries a machine-readable ``reason``. "Wrong code, try
     again here", "your session died, go sign in" and "you are locked out for
     fifteen minutes" need three different things from the user, and a client
@@ -314,6 +319,7 @@ async def _spend_2fa_attempt(
         LOCKOUT_DURATION_SECONDS,
         AttemptLimiter,
         BackupCodeRateLimiter,
+        ClientFailureBudget,
         StepUpTwoFactorRateLimiter,
         TwoFactorRateLimiter,
     )
@@ -328,28 +334,39 @@ async def _spend_2fa_attempt(
     if is_backup_code:
         limiters.append(BackupCodeRateLimiter(redis))
 
-    for limiter in limiters:
-        if await limiter.is_locked_out(subject):
-            remaining = await limiter.get_remaining_lockout_seconds(subject)
-            raise ForbiddenError(
-                f"Too many 2FA attempts. Try again in {remaining} seconds",
-                {"reason": "too_many_attempts", "retryAfterSeconds": remaining},
-            )
-
+    client_budget = ClientFailureBudget(redis, "2fa")
+    wait = await client_budget.spend(client)
+    if wait:
+        raise _too_many_from_client(wait)
     budget: int | None = None
-    for limiter in limiters:
-        left = await limiter.consume_attempt(subject)
-        if left is None:
-            raise ForbiddenError(
-                "Too many 2FA attempts. Try again later",
-                {
-                    "reason": "too_many_attempts",
-                    "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
-                },
-            )
-        budget = left if budget is None else min(budget, left)
+    wrong = False
+    try:
+        for limiter in limiters:
+            if await limiter.is_locked_out(subject):
+                remaining = await limiter.get_remaining_lockout_seconds(subject)
+                raise ForbiddenError(
+                    f"Too many 2FA attempts. Try again in {remaining} seconds",
+                    {"reason": "too_many_attempts", "retryAfterSeconds": remaining},
+                )
 
-    if not await verify():
+        for limiter in limiters:
+            left = await limiter.consume_attempt(subject)
+            if left is None:
+                raise ForbiddenError(
+                    "Too many 2FA attempts. Try again later",
+                    {
+                        "reason": "too_many_attempts",
+                        "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
+                    },
+                )
+            budget = left if budget is None else min(budget, left)
+
+        wrong = not await verify()
+    finally:
+        if not wrong:
+            await client_budget.refund(client)
+
+    if wrong:
         if budget == 0:
             raise ForbiddenError(
                 "Too many failed 2FA attempts. Account locked for 15 minutes",
@@ -1252,6 +1269,7 @@ async def get_user_answers(
 )
 async def send_register_email_code(
     payload: SendEmailCodeRequest,
+    request: Request,
     db=Depends(get_db),
 ) -> dict:
     """Send email verification code for registration.
@@ -1265,6 +1283,7 @@ async def send_register_email_code(
 
     from redis.asyncio import Redis as AsyncRedis
 
+    from app.core.client_address import resolved_client_address
     from app.core.config import settings
     from app.core.errors import ConflictError
     from app.domain.user.verification_service import EmailVerificationService
@@ -1293,7 +1312,7 @@ async def send_register_email_code(
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         service = EmailVerificationService(redis)
-        await service.send_verification_code(email)
+        await service.send_verification_code(email, resolved_client_address(request))
     finally:
         await redis.aclose()
 
@@ -1335,6 +1354,8 @@ async def register_user(
     """Registration flow with email verification."""
     from redis.asyncio import Redis as AsyncRedis
 
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import ClientFailureBudget
     from app.domain.user.verification_service import EmailVerificationService
 
     username = payload.username
@@ -1382,12 +1403,18 @@ async def register_user(
     _require_new_password(password)
 
     # Always verify email code, regardless of invite code
+    client = resolved_client_address(request)
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
+        client_budget = ClientFailureBudget(redis, "email_code")
+        wait = await client_budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
         service = EmailVerificationService(redis)
         is_valid = await service.verify_code(email, email_code)
         if not is_valid:
             raise UnprocessableEntityError("Invalid or expired verification code")
+        await client_budget.refund(client)
     finally:
         await redis.aclose()
 
@@ -1622,6 +1649,14 @@ async def _admit_login_attempt(delay: "LoginDelay", username: str) -> int:
     return admission.wait_seconds
 
 
+def _too_many_from_client(wait_seconds: int) -> ForbiddenError:
+    return ForbiddenError(
+        "Too many failed attempts from this network. "
+        f"Try again in {wait_seconds} seconds",
+        {"reason": "too_many_attempts", "retryAfterSeconds": wait_seconds},
+    )
+
+
 def _wrong_password(wait_seconds: int) -> AuthenticationRequiredError:
     if wait_seconds == 0:
         return AuthenticationRequiredError("Invalid username or password")
@@ -1644,8 +1679,10 @@ async def user_login(
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
+    from app.core.client_address import resolved_client_address
     from app.core.config import settings
     from app.domain.user.login_security import (
+        ClientFailureBudget,
         LoginDelay,
         SessionManager,
         TOTPService,
@@ -1654,16 +1691,28 @@ async def user_login(
     username = payload.username
     password = payload.password
     totp_code = payload.totp_code
+    client = resolved_client_address(request)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         login_delay = LoginDelay(redis)
+        client_budget = ClientFailureBudget(redis, "login")
 
-        wait_if_wrong = await _admit_login_attempt(login_delay, username)
-
-        auth_result = await auth_service.authenticate(
-            username=username, password=password
-        )
+        wait = await client_budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        wrong = False
+        try:
+            wait_if_wrong = await _admit_login_attempt(login_delay, username)
+            auth_result = await auth_service.authenticate(
+                username=username, password=password
+            )
+            wrong = auth_result is None
+        finally:
+            # Only a wrong password counts against the address; an attempt
+            # refused or broken off before the check proved nothing.
+            if not wrong:
+                await client_budget.refund(client)
         if auth_result is None:
             raise _wrong_password(wait_if_wrong)
 
@@ -1692,7 +1741,10 @@ async def user_login(
             # ticket, so the single-use ticket does nothing for it — without
             # its own budget it stays exactly the oracle #357 describes.
             await _spend_2fa_attempt(
-                redis, user.id, lambda: totp_service.verify_2fa(user.id, totp_code)
+                redis,
+                user.id,
+                lambda: totp_service.verify_2fa(user.id, totp_code),
+                client=client,
             )
 
         session_manager = SessionManager(redis)
@@ -1735,6 +1787,7 @@ async def user_login(
 )
 async def verify_2fa_login(
     payload: dict,
+    request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
@@ -1755,6 +1808,7 @@ async def verify_2fa_login(
         create_refresh_token,
         verify_2fa_pending_token,
     )
+    from app.core.client_address import resolved_client_address
     from app.core.config import settings
     from app.core.single_use_state import SingleUseUnavailableError, claim
     from app.domain.user.login_security import SessionManager, TOTPService
@@ -1807,6 +1861,7 @@ async def verify_2fa_login(
             ),
             is_backup_code=is_backup_code,
             reissue_until=claims.expires_at,
+            client=resolved_client_address(request),
         )
         used_backup_code = is_backup_code
 
@@ -2339,6 +2394,7 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
 )
 async def recover_password_request(
     payload: ForgotPasswordRequest,
+    request: Request,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     import re
@@ -2346,6 +2402,7 @@ async def recover_password_request(
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.background import spawn
+    from app.core.client_address import resolved_client_address
     from app.domain.user.mail_quota import MailQuota
 
     email = payload.email.strip()
@@ -2359,7 +2416,9 @@ async def recover_password_request(
     # the same success body and simply sends nothing.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        allowed = await MailQuota(redis, "password_recovery").take(email)
+        allowed = await MailQuota(redis, "password_recovery").take(
+            email, resolved_client_address(request)
+        )
     finally:
         await redis.aclose()
     if not allowed:
