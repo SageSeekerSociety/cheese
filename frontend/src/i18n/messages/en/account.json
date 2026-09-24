@@ -131,6 +131,13 @@
     "later": "Later",
     "regenerate": "Generate new codes"
   },
+  "passkeyOffer": {
+    "title": "Sign in without a password next time",
+    "lede": "On this device, sign in with your fingerprint, face or screen lock",
+    "add": "Add a passkey",
+    "later": "Not now",
+    "stopAsking": "Don’t ask again"
+  },
   "oauth": {
     "provider": {
       "wechat": "WeChat",

@@ -7,7 +7,7 @@ those records named no refresh token, so every signed-in user signs in once
 more after this revision.
 
 Revision ID: c5e1a9d3f742
-Revises: b3a91c7e52f0
+Revises: e2ccbf34a7bd
 """
 
 from collections.abc import Sequence
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c5e1a9d3f742"
-down_revision: str | Sequence[str] | None = "b3a91c7e52f0"
+down_revision: str | Sequence[str] | None = "e2ccbf34a7bd"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -131,6 +131,13 @@
     "later": "稍后",
     "regenerate": "生成新备用码"
   },
+  "passkeyOffer": {
+    "title": "下次登录无需密码",
+    "lede": "在这台设备上登录时，使用指纹、面容或屏幕锁定即可",
+    "add": "添加通行密钥",
+    "later": "暂不添加",
+    "stopAsking": "不再提醒"
+  },
   "oauth": {
     "provider": {
       "wechat": "微信",

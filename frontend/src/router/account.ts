@@ -61,6 +61,17 @@ export default {
       },
     },
     {
+      // Right after a password sign-in, still on the way in: the brand scene
+      // stays, so arriving here from the sign-in page does not redraw it.
+      path: 'passkey',
+      name: 'PasskeyOffer',
+      component: () => import('@/views/account/PasskeyOffer.vue'),
+      meta: {
+        title: '添加通行密钥',
+        titleKey: 'account.passkeyOffer.add',
+      },
+    },
+    {
       path: 'verify-2fa',
       name: 'Verify2FA',
       component: () => import('@/views/account/Verify2FA.vue'),

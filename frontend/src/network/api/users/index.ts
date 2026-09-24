@@ -31,6 +31,18 @@ export namespace UserApi {
     accessToken?: string
     requires2FA?: boolean
     tempToken?: string
+    passkeyEnrollment?: PasskeyEnrollment
+  }
+
+  /**
+   * What a finished sign-in hands back for adding a passkey: a ticket that
+   * opens one registration within a few minutes, and whether this account is
+   * due the screen offering one.
+   */
+  export interface PasskeyEnrollment {
+    ticket: string
+    offer: boolean
+    canStopAsking: boolean
   }
 
   export type RegisterResponseDataType = {
@@ -184,6 +196,15 @@ export namespace UserApi {
       method: 'POST',
       data: { response },
       withCredentials: true,
+    })
+
+  /** Decline the offer to add a passkey shown after signing in; `forever`
+   *  stops it for good instead of holding it back for a while. */
+  export const dismissPasskeyPrompt = (userId: number, forever: boolean) =>
+    ApiInstance.request({
+      url: `/users/${userId}/passkeys/prompt/dismiss`,
+      method: 'POST',
+      data: { forever },
     })
 
   // Passkey 认证相关

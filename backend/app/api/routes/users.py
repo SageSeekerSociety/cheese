@@ -50,6 +50,7 @@ from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS, ConsentService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
+from app.domain.passkey.prompt import PasskeyPromptService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.questions.repositories import (
@@ -532,6 +533,27 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
         logger.exception("sudo: cannot reserve ticket uid=%s", user_id)
         raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
     return minted.token
+
+
+async def _passkey_enrollment(user_id: int, session: AsyncSession) -> dict[str, Any]:
+    """What a finished sign-in hands back for adding a passkey.
+
+    The person has just proved more than the sudo page would ask of them, so
+    sending them there before a passkey can be added would only make them
+    prove it twice. The ticket is an ordinary sudo ticket for ``PASSKEY_ADD``:
+    the same few minutes, the same single use, good for nothing else. It
+    travels in the response body and never in a URL.
+
+    ``offer`` says whether this account is due the screen offering a passkey
+    (it has none, and has not declined recently); the client adds what only
+    it can know, such as where the sign-in is headed.
+    """
+    prompt = await PasskeyPromptService(session).state(user_id)
+    return {
+        "ticket": await _issue_sudo_ticket(user_id, SudoPurpose.PASSKEY_ADD),
+        "offer": prompt.due,
+        "canStopAsking": prompt.can_stop_asking,
+    }
 
 
 async def _spend_sudo_ticket(
@@ -1845,6 +1867,7 @@ async def user_login(
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
+                "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
         }
     finally:
@@ -1963,6 +1986,7 @@ async def verify_2fa_login(
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
+                "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
         }
     finally:
@@ -3156,6 +3180,7 @@ async def passkey_register_verify(
     payload: dict = Body(default={}),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -3184,12 +3209,35 @@ async def passkey_register_verify(
         challenge=challenge,
         credential=credential,
     )
+    await PasskeyPromptService(session).end(auth_user.user_id)
 
     return {
         "code": 201,
         "message": "Passkey registered successfully.",
         "data": {"passkey": result},
     }
+
+
+class PasskeyPromptDismissal(BaseModel):
+    forever: bool = False
+
+
+@router.post(
+    "/{userId}/passkeys/prompt/dismiss",
+    summary="Decline the offer to add a passkey",
+)
+async def dismiss_passkey_prompt(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: PasskeyPromptDismissal = Body(default_factory=PasskeyPromptDismissal),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Hold the offer back for a while, or with ``forever`` stop it."""
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can answer this offer.")
+
+    await PasskeyPromptService(session).dismiss(user_id, forever=payload.forever)
+    return {"code": 200, "message": "OK", "data": {}}
 
 
 @router.post(
