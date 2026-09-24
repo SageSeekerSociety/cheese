@@ -265,6 +265,8 @@ class _TurnContext:
     overview_doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
+    # Chat messages already in the room, apart from the ones this turn delivers.
+    earlier_messages: int
     topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
@@ -919,12 +921,14 @@ def _session_opening_lines(
     *,
     progress: list[dict] | None = None,
     sandbox: tuple[int, int] | None = None,
+    earlier_messages: int = 0,
 ) -> list[str]:
     """盲飞防护: what a session cannot find out for itself, at the moment it opens.
 
-    Both survive being written once. The machine's size does not change under a
-    session, and the checklist is here to answer 「我做到哪了」 for a session that
-    was not there — once one is running, its own history answers that.
+    Each survives being written once. The machine's size does not change under
+    a session; the checklist answers 「我做到哪了」 and the pointer to the chat
+    answers 「之前说了什么」 for a session that was not there — once one is
+    running, its own history answers both.
 
     This is what is left of a per-turn header that came from #175, where the
     complaint was 29 turns timing out against a 900s ceiling nobody had been
@@ -954,6 +958,15 @@ def _session_opening_lines(
             "有问题，也不是工具链坏了。"
         )
     lines.extend(_progress_lines(progress or []))
+    # A session that opens in a room with history has read none of it, while
+    # the people in the room assume it has. The living docs, memory and the
+    # checklist reach it as conclusions; what was said is only in the chat.
+    if earlier_messages:
+        lines.append(
+            f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
+            "动手之前先用 `cheese chat list` 读最近的记录；"
+            "要找某句原话或某个决定，用 `cheese chat search <关键词>`。"
+        )
     return lines
 
 
@@ -4920,6 +4933,9 @@ class ChatService:
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
+            earlier_messages = await blocks.count_messages(
+                place.room_id, excluding=pending_ids
+            )
             # Read for the stage derivation below, and for nothing else: what
             # the cards SAY is `cheese_status`'s answer, and restating it in a
             # prompt only froze one turn's copy of it into the whole session.
@@ -5191,6 +5207,7 @@ class ChatService:
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
+            earlier_messages=earlier_messages,
             private_owner=private_owner,
             project_id=project_id,
             prompt_text=prompt_text,
@@ -5319,6 +5336,10 @@ class ChatService:
             session_opening=_session_opening_lines(
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
+                # A resumed conversation already holds what was said in it.
+                earlier_messages=(
+                    prepared.earlier_messages if resume_session_id is None else 0
+                ),
             ),
             stage_guide=load_scenario(stage_scenario(topic_stage)),
         )
