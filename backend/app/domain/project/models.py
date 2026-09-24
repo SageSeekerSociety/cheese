@@ -85,6 +85,10 @@ class Project(UuidPk, Timestamps, Base):
     )
     # 一页纸总结 (spec §7.3/F2): AI-maintained one-pager, 老师 30 秒读懂。
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # 用户自己写的一句话：这个项目打算做什么（#946 片 C，建项目时问的那一句）。
+    # 与 summary 的分工是「谁说的」：summary 是 AI 维护的一页纸，这一条是用户的
+    # 原话——平台不改写它，只把它搬进新生的房间（见 ProjectService.create）。
+    intent: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
     # When the 本体 last ran a heartbeat — used to schedule ≤1 patrol/day/project.

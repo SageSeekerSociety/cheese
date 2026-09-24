@@ -8,6 +8,8 @@ export interface Project {
   created_at: string
   // 一页纸总结 (may be empty until 芝士 generates it).
   summary?: string
+  // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
+  intent?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
