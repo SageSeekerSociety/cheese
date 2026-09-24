@@ -27,7 +27,7 @@ from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
-from app.domain.agent.remote_control import CONTROLS, key, store
+from app.domain.agent.remote_control import CONTROLS, connected, key, store
 from app.domain.agent.runtime import get_broker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
@@ -364,7 +364,7 @@ async def rc_heartbeat(sid: str, request: Request) -> dict:
     # `connected` is this heartbeat's recency, so a worker that has been quiet
     # long enough to read as gone comes back on this call and nowhere else.
     # Announcing every heartbeat would be a frame a minute saying nothing moved.
-    revived = time.time() - session["last_seen"] >= 90
+    revived = not connected(session)
     await store().update(sid, {"last_seen": time.time()}, epoch=session["epoch"])
     if revived:
         await announce(await store().get(sid))

@@ -74,6 +74,16 @@ def live_key(topic_id: str, agent_handle: str | None) -> str:
     return key(topic_id, f"current:{agent_handle}" if agent_handle else "current")
 
 
+def connected(session: dict) -> bool:
+    """Whether a worker is attached to this session right now.
+
+    `status` stays `active` after the worker behind it stops: measured on dev
+    2026-09-24, a room's session read active seven hours after its last
+    heartbeat, and every control request sent to it waited in a stream nobody
+    read. The heartbeat is the only thing that says someone is listening."""
+    return session["status"] == "active" and time.time() - session["last_seen"] < 90
+
+
 def text(value: bytes | str) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
@@ -525,8 +535,7 @@ return 1
             "id": sid,
             "title": session["title"],
             "status": session["status"],
-            "connected": session["status"] == "active"
-            and time.time() - session["last_seen"] < 90,
+            "connected": connected(session),
             "controls": CONTROLS,
             **groups,
         }

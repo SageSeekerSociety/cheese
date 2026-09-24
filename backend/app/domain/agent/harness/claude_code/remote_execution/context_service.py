@@ -52,17 +52,23 @@ def serve(target, synchronize):
                 result = {"error": str(exc)}
             self.wfile.write(json.dumps(result).encode() + b"\n")
 
+    # The address belongs to the newest service. Two can overlap in one home:
+    # a relaunched screen's `claude` started while the old one was still
+    # running (2026-09-20), and a reconnect starts the new server as soon as
+    # the old one's wrapper shell exits, not when its Python has finished. An
+    # older service keeping the address made the newer one exit at startup, and
+    # the room lost its platform tools. Either service synchronizes the same
+    # target file, so which one answers a prompt does not matter.
     path = address(target)
-    if os.path.exists(path):
-        with socket.socket(socket.AF_UNIX) as existing:
-            try:
-                existing.connect(path)
-            except ConnectionRefusedError:
-                os.unlink(path)
-            else:
-                raise RuntimeError("Context synchronization service already running")
-    with socketserver.UnixStreamServer(path, Handler) as server:
-        os.chmod(path, 0o600)
+    with _address_lock(path):
+        staged = f"{path}.{os.getpid()}"
+        if os.path.exists(staged):
+            os.unlink(staged)
+        server = socketserver.UnixStreamServer(staged, Handler)
+        os.chmod(staged, 0o600)
+        os.replace(staged, path)
+        identity = os.stat(path).st_ino
+    with server:
         thread = threading.Thread(
             target=server.serve_forever,
             kwargs={"poll_interval": 0.05},
@@ -74,7 +80,24 @@ def serve(target, synchronize):
         finally:
             server.shutdown()
             thread.join()
-            os.unlink(path)
+            with _address_lock(path):
+                # Only its own: a newer service may hold the address by now.
+                if os.path.exists(path) and os.stat(path).st_ino == identity:
+                    os.unlink(path)
+
+
+@contextmanager
+def _address_lock(path):
+    """Serialize taking and releasing one address. Held on the directory rather
+    than on a lock file of its own, which would be left behind for every room."""
+    import fcntl
+
+    descriptor = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 if __name__ == "__main__":
