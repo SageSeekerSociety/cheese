@@ -69,7 +69,6 @@ import type {
 
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
-import { SudoRequiredError } from './network/types/error'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -501,9 +500,6 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const said = body as { message?: string; error?: { name?: string; message?: string } }
-    // The one refusal the caller answers differently: withSudo sends the user
-    // through re-authentication and retries, so it must see the typed error.
-    if (said.error?.name === 'SudoRequiredError') throw new SudoRequiredError(said.message)
     const serverSaid = said.message || said.error?.message || ''
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }

@@ -191,13 +191,15 @@
   },
   "sudo": {
     "title": "Confirm it’s you",
-    "lede": "Confirm it’s you to continue",
-    "ledeFor": "Confirm it’s you before you {action}",
+    "ledeFor": "Before you {action}, you need to confirm your identity",
     "passkey": "Confirm with a passkey",
+    "otherMethods": "Other ways",
+    "noMethod": "No way to confirm your identity is set up",
+    "method": {
+      "password": "Enter your password",
+      "totp": "Enter a code from your authenticator app"
+    },
     "submit": "Confirm",
-    "usePasskey": "Use a passkey",
-    "usePassword": "Use your password",
-    "useTotp": "Use an authenticator code",
     "passwordRequired": "Enter your password",
     "passkeyCanceled": "Passkey confirmation was canceled",
     "failed": "Could not confirm. Try again.",
@@ -209,7 +211,9 @@
       "addPasskey": "add a passkey",
       "deletePasskey": "delete a passkey",
       "changePassword": "change your password",
-      "unbindOAuthConnection": "unlink a connected account"
+      "unbindOAuthConnection": "unlink a connected account",
+      "viewRealName": "view your full real-name information",
+      "updateRealName": "change your real-name information"
     }
   },
   "security": {

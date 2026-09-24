@@ -190,14 +190,16 @@
     }
   },
   "sudo": {
-    "title": "验证身份",
-    "lede": "继续之前，请先验证身份",
-    "ledeFor": "{action}之前，请先验证身份",
+    "title": "确认是你本人",
+    "ledeFor": "{action}前，需要确认你的身份",
     "passkey": "使用通行密钥验证",
+    "otherMethods": "其他方式",
+    "noMethod": "暂无可用于确认身份的方式",
+    "method": {
+      "password": "输入密码",
+      "totp": "输入验证器中的验证码"
+    },
     "submit": "验证",
-    "usePasskey": "改用通行密钥",
-    "usePassword": "改用密码",
-    "useTotp": "改用验证器验证码",
     "passwordRequired": "请输入密码",
     "passkeyCanceled": "已取消通行密钥验证",
     "failed": "验证失败，请重试",
@@ -209,7 +211,9 @@
       "addPasskey": "添加通行密钥",
       "deletePasskey": "删除通行密钥",
       "changePassword": "修改密码",
-      "unbindOAuthConnection": "解除第三方账号关联"
+      "unbindOAuthConnection": "解除第三方账号关联",
+      "viewRealName": "查看完整实名信息",
+      "updateRealName": "修改实名信息"
     }
   },
   "security": {

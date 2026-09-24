@@ -244,12 +244,11 @@ import type { OAuthConnectionInfo } from '@/cx_types'
 import type { PasskeyInfo } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
 
 import { REGEX_PASSWORD } from '@/utils/form'
-import { withSudo } from '@/utils/sudo'
+import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import { deleteOAuthConnection, listOAuthConnections } from '@/api'
 import PasswordField from '@/components/account/PasswordField.vue'
@@ -258,11 +257,9 @@ import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
-import { useSudoStore } from '@/stores/sudo'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
-const router = useRouter()
 const dialogs = useDialog()
 const webAuthnSupported = browserSupportsWebAuthn()
 
@@ -302,24 +299,19 @@ const handleChangePassword = async () => {
     await submitNewPassword(newPassword.value)
     showChangePassword.value = false
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     fail(error, t('account.security.changePasswordFailed'))
   } finally {
     changingPassword.value = false
   }
 }
 
-// 按钮和验证后的重试都走这里，重试时才拿得到票
 const submitNewPassword = (password: string) =>
-  withSudo(
-    async (sudoTicket) => {
-      if (!currentUserId.value) return
-      await UserApi.changePassword(currentUserId.value, { password, sudoTicket })
-      toast.success(t('account.security.passwordChanged'))
-    },
-    'changePassword',
-    { newPassword: password },
-    router
-  )
+  withSudo('password:change', async (sudoTicket) => {
+    if (!currentUserId.value) return
+    await UserApi.changePassword(currentUserId.value, { password, sudoTicket })
+    toast.success(t('account.security.passwordChanged'))
+  })
 
 // ---- Passkeys ----
 
@@ -342,20 +334,16 @@ const handleAddPasskey = async () => {
   addingPasskey.value = true
   let rpId: string | undefined
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        const { data } = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
-        rpId = data.options.rp?.id
-        const attestation = await startRegistration({ optionsJSON: data.options })
-        await UserApi.verifyPasskeyRegistration(currentUserId.value!, attestation)
-        await fetchPasskeys()
-        toast.success(t('account.security.passkeyAddedToast'))
-      },
-      'addPasskey',
-      null,
-      router
-    )
+    await withSudo('passkey:add', async (sudoTicket) => {
+      const { data } = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
+      rpId = data.options.rp?.id
+      const attestation = await startRegistration({ optionsJSON: data.options })
+      await UserApi.verifyPasskeyRegistration(currentUserId.value!, attestation)
+      await fetchPasskeys()
+      toast.success(t('account.security.passkeyAddedToast'))
+    })
   } catch (error: any) {
+    if (error instanceof SudoCancelledError) return
     // The browser's own WebAuthn error text is English and names internals.
     const wrongHost = passkeyWrongHostMessage(error, rpId)
     if (wrongHost) toast.error(wrongHost)
@@ -374,22 +362,17 @@ const handleDeletePasskey = async (credentialId: string) => {
   if (confirmed) await deletePasskey(credentialId)
 }
 
-// 验证后回到本页时从这里重试：用户已经确认过，不再弹确认框
 const deletePasskey = async (credentialId: string) => {
   if (!currentUserId.value) return
   deletingPasskey.value = credentialId
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        await UserApi.deletePasskey(currentUserId.value!, credentialId, sudoTicket)
-        await fetchPasskeys()
-        toast.success(t('account.security.passkeyRemoved'))
-      },
-      'deletePasskey',
-      { credentialId },
-      router
-    )
+    await withSudo('passkey:delete', async (sudoTicket) => {
+      await UserApi.deletePasskey(currentUserId.value!, credentialId, sudoTicket)
+      await fetchPasskeys()
+      toast.success(t('account.security.passkeyRemoved'))
+    })
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     fail(error, t('account.security.passkeyRemoveFailed'))
   } finally {
     deletingPasskey.value = null
@@ -429,20 +412,16 @@ const handleInitTOTP = async () => {
   if (!currentUserId.value) return
   totpBusy.value = true
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        const { data } = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
-        totpSecret.value = data.secret
-        qrCodeData.value = data.qrcode
-        codesOnly.value = false
-        setupStep.value = 'qr'
-        showTotp.value = true
-      },
-      'initTOTP',
-      null,
-      router
-    )
+    await withSudo('2fa:enable', async (sudoTicket) => {
+      const { data } = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
+      totpSecret.value = data.secret
+      qrCodeData.value = data.qrcode
+      codesOnly.value = false
+      setupStep.value = 'qr'
+      showTotp.value = true
+    })
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     fail(error, t('account.security.setupFailed'))
   } finally {
     totpBusy.value = false
@@ -489,17 +468,13 @@ const disableTOTP = async () => {
   if (!currentUserId.value) return
   totpBusy.value = true
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        await UserApi.disableTOTP(currentUserId.value!, sudoTicket)
-        await fetch2FAStatus()
-        toast.success(t('account.security.turnedOff'))
-      },
-      'disableTOTP',
-      null,
-      router
-    )
+    await withSudo('2fa:disable', async (sudoTicket) => {
+      await UserApi.disableTOTP(currentUserId.value!, sudoTicket)
+      await fetch2FAStatus()
+      toast.success(t('account.security.turnedOff'))
+    })
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     fail(error, t('account.security.turnOffFailed'))
   } finally {
     totpBusy.value = false
@@ -517,19 +492,15 @@ const generateBackupCodes = async () => {
   if (!currentUserId.value) return
   generatingCodes.value = true
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        const { data } = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
-        backupCodes.value = data.backup_codes
-        codesOnly.value = true
-        setupStep.value = 'backup'
-        showTotp.value = true
-      },
-      'generateBackupCodes',
-      null,
-      router
-    )
+    await withSudo('2fa:backup-codes', async (sudoTicket) => {
+      const { data } = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
+      backupCodes.value = data.backup_codes
+      codesOnly.value = true
+      setupStep.value = 'backup'
+      showTotp.value = true
+    })
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     fail(error, t('account.security.regenerateFailed'))
   } finally {
     generatingCodes.value = false
@@ -569,17 +540,13 @@ const unbind = async (connectionId: number) => {
   if (!currentUserId.value) return
   unbinding.value = connectionId
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        await deleteOAuthConnection(String(currentUserId.value), connectionId, sudoTicket)
-        await fetchConnections()
-        toast.success(t('account.security.unlinked'))
-      },
-      'unbindOAuthConnection',
-      { connectionId },
-      router
-    )
+    await withSudo('oauth:unbind', async (sudoTicket) => {
+      await deleteOAuthConnection(String(currentUserId.value), connectionId, sudoTicket)
+      await fetchConnections()
+      toast.success(t('account.security.unlinked'))
+    })
   } catch (error) {
+    if (error instanceof SudoCancelledError) return
     // The server refuses to remove the last way in (409).
     const lastWayIn = error instanceof Error && /HTTP 409/.test(error.message)
     toast.error(lastWayIn ? t('account.security.lastWayIn') : t('account.security.unlinkFailed'))
@@ -592,31 +559,6 @@ onMounted(async () => {
   if (webAuthnSupported) fetchPasskeys()
   fetch2FAStatus()
   fetchConnections()
-
-  // Back from the verification page: finish what the person already asked for.
-  const sudoStore = useSudoStore()
-  if (sudoStore.retryOperation && sudoStore.isVerified) {
-    // 不打印 retryOperation：changePassword 的 opData 里装着用户刚输入的新密码，
-    // 打出来就等于把明文密码留在浏览器控制台里。
-    const { opKey, opData } = sudoStore.retryOperation
-    const retry: Record<string, () => Promise<unknown>> = {
-      changePassword: () =>
-        opData?.newPassword
-          ? submitNewPassword(opData.newPassword).catch((e) => fail(e, t('account.security.changePasswordFailed')))
-          : Promise.resolve(),
-      addPasskey: handleAddPasskey,
-      deletePasskey: () => (opData?.credentialId ? deletePasskey(opData.credentialId) : Promise.resolve()),
-      initTOTP: handleInitTOTP,
-      disableTOTP,
-      generateBackupCodes,
-      unbindOAuthConnection: () =>
-        typeof opData?.connectionId === 'number' ? unbind(opData.connectionId) : Promise.resolve(),
-    }
-    // 等这次重试真的跑完再清。清除会把票和 opData 一起抹掉，而重试是在
-    // 第一个 await 之后才去读它们的——不等，就是让操作去读自己刚被清掉的输入。
-    if (retry[opKey]) await retry[opKey]()
-    sudoStore.clearRetryState()
-  }
 })
 </script>
 
