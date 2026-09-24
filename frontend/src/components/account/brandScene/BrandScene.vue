@@ -4,7 +4,7 @@ import type { SceneId } from './scenes'
 
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { sceneForThisVisit, SCENES } from './scenes'
+import { sceneForThisPage, SCENES } from './scenes'
 
 import { useAppTheme } from '@/theme'
 
@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{ narrow?: boolean; scene?: SceneId }>(),
 
 const host = ref<HTMLElement | null>(null)
 const shown = ref(false)
-const scene = props.scene ?? sceneForThisVisit()
+const scene = props.scene ?? sceneForThisPage()
 const { isDark } = useAppTheme()
 
 // Where the animation starts, in ms. A fixed start keeps the still frame under
