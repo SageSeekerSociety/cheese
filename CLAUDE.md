@@ -99,6 +99,8 @@ Not stashing by hand is not enough: with `autoStash` on, a plain `git pull` is a
 
 Write functional tests. Do not read the source to work out what to assert — a test derived from the implementation passes by construction and proves nothing, including after the implementation breaks.
 
+A test earns its place by guarding a rule someone could state before the code existed: a product, security or data rule that a person who has never read the implementation can judge right or wrong. That holds at every layer. A component test that cancelling a dialog leaves the operation unrun is worth keeping; one that the dialog renders a particular sentence, class or DOM shape is not. Put the test at the lowest layer where the rule is observable without faking most of the system, assert what a user or caller can observe, and make sure it fails when the rule breaks — and only then. A test that goes red when the copy changes, or stays green when the rule is broken, costs more than it protects.
+
 ## Report real bugs, not theoretical ones
 
 When auditing, a finding needs a way to actually happen: crash, corruption, security hole, wrong result. Style opinions and "this could in principle" are noise that buries the real ones.
