@@ -29,5 +29,19 @@
     "models": "Models",
     "spaces": "Space applications",
     "members": "Members"
+  },
+  "userMenu": {
+    "profile": "Profile",
+    "settings": "Settings",
+    "devices": "My devices",
+    "appearance": "Appearance",
+    "language": "Language",
+    "logout": "Log out",
+    "noIntro": "No bio yet",
+    "theme": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    }
   }
 }

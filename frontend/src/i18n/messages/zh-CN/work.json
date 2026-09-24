@@ -45,8 +45,8 @@
   },
   "teammate": {
     "title": "项目的 AI 队友",
-    "intro": "“{project}”将拥有自己的 AI 队友，为它起个名字吧",
-    "more": "这位队友会在项目中与你协作，之后也能添加更多队友",
+    "intro": "为“{project}”的 AI 队友命名",
+    "more": "项目创建后可添加更多队友",
     "name": "队友名字",
     "random": "随机取名",
     "next": "下一步",
@@ -62,22 +62,21 @@
     }
   },
   "allSpaces": "全部空间",
-  "awaiting": "{count} 件等你",
-  "emptyBody": "建一个{project}，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。",
-  "emptyTitle": "从这里开始",
+  "awaiting": "{count} 项待处理",
+  "emptyTitle": "暂无{project}",
   "groupTitle": "我的{project}",
   "joinAction": "用邀请码加入",
   "joinBody": "向题目版的创建者要一串邀请码，填进来就加入了。加入后才能看到这个题目版。",
   "joinCancel": "取消",
-  "joinFailed": "这个邀请码不对，或者已经过期、用完了。",
+  "joinFailed": "邀请码无效、已过期或已达使用上限",
   "joinLabel": "邀请码",
   "joinSubmit": "加入",
   "joinTitle": "用邀请码加入题目版",
   "lastActivity": "最近活动 {time}",
-  "loading": "正在看你的项目…",
+  "loading": "正在加载…",
   "mySpaces": "我加入的空间",
-  "quiet": "最近没有动静",
-  "running": "{count} 个在跑",
+  "quiet": "暂无近期活动",
+  "running": "{count} 个运行中",
   "sessionMachine": {
     "title": "更换工作电脑",
     "teammate": "队友",
@@ -139,5 +138,36 @@
     "loading": "加载中",
     "joinHint": "确认后你将成为团队成员，可以使用团队的项目和算力",
     "join": "加入团队"
+  },
+  "newProject": {
+    "title": "新建项目",
+    "fromTask": "来自题目：{task}",
+    "name": "项目名称",
+    "intent": "你打算做什么（可选）",
+    "intentExample": "例如：帮我把这学期的课程材料整理成一份大纲",
+    "team": "所属团队",
+    "personalTeam": "个人",
+    "teamsEmpty": "暂无可用团队，请先创建或加入团队",
+    "teamsFailed": "团队列表加载失败",
+    "forge": "代码仓库",
+    "forgeHosted": "由芝士托管（默认）",
+    "forgeGithub": "连接 GitHub",
+    "forgeHint": "托管服务在项目创建后不可更改",
+    "forgeGithubHint": "创建后在项目设置中连接 GitHub。托管服务在项目创建后不可更改。",
+    "retry": "重试",
+    "cancel": "取消",
+    "createFailed": "创建项目失败"
+  },
+  "projectList": {
+    "stale": "项目列表刷新失败，正在显示上次成功加载的内容",
+    "unavailable": "项目列表暂时无法加载，请稍后重试"
+  },
+  "resourceLimits": {
+    "projects": "项目数量：当前未设置上限",
+    "concurrent": "运行环境按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
+    "machines": "云虚拟机：团队默认共享 {count} 台名额，实际额度与用量可在团队算力页查看",
+    "failed": "资源限制加载失败",
+    "retry": "重试",
+    "loading": "正在加载资源限制…"
   }
 }

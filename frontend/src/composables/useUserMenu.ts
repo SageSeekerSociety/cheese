@@ -1,14 +1,11 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import dayjs from 'dayjs'
 
 import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
-import { AIApi } from '@/network/api/ai'
-import { QuotaInfo } from '@/network/api/ai/types'
 import { UserApi } from '@/network/api/users'
 import AccountService from '@/services/account'
 
@@ -44,20 +41,6 @@ export function useUserMenu() {
   // 那个接口要登录，所以等登录了再问（已登录的话 immediate 当场就问）。
   watch(loggedIn, (yes) => yes && ensureDefaultAvatarId(), { immediate: true })
 
-  // AI 配额状态
-  const aiQuota = ref<QuotaInfo | null>(null)
-
-  // 获取 AI 配额
-  const fetchAIQuota = async () => {
-    if (!loggedIn.value) return
-    try {
-      const { data } = await AIApi.getQuota()
-      aiQuota.value = data.quota
-    } catch (error) {
-      console.error('Failed to fetch AI quota:', error)
-    }
-  }
-
   // 退出登录
   const onLogout = async () => {
     try {
@@ -70,13 +53,6 @@ export function useUserMenu() {
     }
   }
 
-  // 当菜单打开时获取 AI 配额
-  watch(menuOpen, (newValue) => {
-    if (newValue) {
-      fetchAIQuota()
-    }
-  })
-
   return {
     // 状态
     menuOpen,
@@ -87,13 +63,8 @@ export function useUserMenu() {
     avatarColor: avatarColorRef,
     nickname,
     intro,
-    aiQuota,
 
     // 方法
-    fetchAIQuota,
     onLogout,
-
-    // 工具函数
-    dayjs,
   }
 }

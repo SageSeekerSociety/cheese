@@ -43,6 +43,12 @@ const route = useRoute()
   flex: 1 1 auto;
   min-width: 0;
 }
+/* 当前那一格的滑条是琥珀（导航位置指示），字不是：--accent 做文字在浅色下只有
+   2.7:1，写字用 --accent-ink，同左栏选中项的名字。!important 是被逼的：Vuetify
+   给选中的那一格挂的是 .text-primary，那个工具类自己就带 !important。 */
+.home-sections :deep(.v-tab--selected) {
+  color: var(--accent-ink) !important;
+}
 /* 内容区照旧撑满：底下的页面（teams/Explore 那个满高页头）按百分比取高，
    父级不给一个真实高度它就塌成 auto。 */
 .home-shell {
