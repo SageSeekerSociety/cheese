@@ -1832,12 +1832,19 @@ def main():
         try:
             info = request(state, "ping")
         except (FileNotFoundError, ConnectionRefusedError):
-            return
-        os.kill(info["pid"], signal.SIGTERM)
-        for _ in range(100):
-            if not Path(socket_path(state)).exists():
+            if not state.exists():
                 return
-            time.sleep(0.1)
+            info = None
+        if info is not None:
+            os.kill(info["pid"], signal.SIGTERM)
+        with (state / "service.lock").open("a") as lock:
+            for _ in range(100):
+                try:
+                    # The socket closes before handlers finish; the lock marks shutdown.
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return
+                except BlockingIOError:
+                    time.sleep(0.1)
         raise RuntimeError("Executor did not stop")
     else:
         state.mkdir(parents=True, exist_ok=True, mode=0o700)
