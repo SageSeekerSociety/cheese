@@ -178,7 +178,7 @@ def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
         f"/projects/{pid}/members/mate", headers=session_auth_headers("captain")
     )
     assert r.status_code == 409, r.text
-    assert "小队" in r.json()["error"]["message"]
+    assert "团队" in r.json()["error"]["message"]
     assert "mate" in _project_handles(client, pid)
 
 
@@ -441,5 +441,5 @@ def test_a_teammate_is_told_to_leave_the_team(client):
 
     r = _leave(client, pid, "mate")
     assert r.status_code == 409, r.text
-    assert "小队" in r.json()["error"]["message"]
+    assert "团队" in r.json()["error"]["message"]
     assert "mate" in _project_handles(client, pid)
