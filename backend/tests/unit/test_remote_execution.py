@@ -117,6 +117,28 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
     """)
 
 
+def test_isolated_subagents_are_refused_with_the_way_that_works():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        for (const isolation of ['worktree', 'remote']) {
+          const result = await handlers['tool.call']({}, {
+            tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+            prompt: 'list files', isolation,
+          }, () => {throw new Error('spawned on the session host')});
+          assert.match(result.deny, /cheese split/);
+        }
+        const spawned = await handlers['tool.call']({}, {
+          tool: 'Agent', tool_use_id: 'spawn', description: 'look',
+          prompt: 'list files',
+        }, (event) => ({spawned: event.tool}));
+        assert.deepEqual(spawned, {spawned: 'Agent'});
+    """)
+
+
 def test_offline_work_does_not_prevent_session_bootstrap(tmp_path):
     from app.domain.agent.executor_transport import MachineOutOfReach, RemoteClient
     from app.domain.agent.harness.claude_code.remote_execution.client import (
