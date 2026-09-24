@@ -12,10 +12,12 @@ an error, and assert what a person sitting in the room would see.
 
 import uuid
 
+import pytest
+
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.main import app
-from tests.conftest import StubChannel, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
@@ -151,3 +153,152 @@ def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkey
     # 8 failing turns, but only the third one speaks (the next is the 10th).
     assert len(notices) == 1, notices
     assert "第 3 次" in notices[0]
+
+
+class WorkingScreen(StubChannel):
+    """A session that takes the prompt, starts on it, and is still working."""
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.uses(topic_id, "Bash", command="sleep 600")
+
+
+def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatService]:
+    """A room whose turn was delivered, then the backend was replaced under it.
+
+    Nothing in memory survives — not the platform's record of the turn, not the
+    old process's subscription — and the new process listens to the screen that
+    outlived it. Returns the room, the new process's screen and its service.
+    """
+    project_id = client.post("/projects", json={"name": "Restart"}).json()["data"]["id"]
+    topic_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "换进程", "created_by": "user-1"},
+    ).json()["data"]["id"]
+    room = uuid.UUID(topic_id)
+
+    before = WorkingScreen()
+    app.dependency_overrides[get_chat_service] = lambda: ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(before),
+    )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": f"{first} @芝士"})
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
+                break
+
+    client.portal.call(before.runtime._close_topic, room)
+    after = StubChannel()
+    service = ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(after),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+    client.portal.call(after.runtime.ensure_subscription, uuid.UUID(project_id), room)
+    return topic_id, after, service
+
+
+def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
+    """dev 一合并就重新部署：一轮跑到一半，后端进程被换掉，机器上的会话照常把活
+    干完，Stop 落到新进程上。那一轮送进去的消息芝士已经读过、答过了 —— 下一次
+    @ 它，prompt 里不该再出现它们，更不该一次次累加成「第 3 次送进轮次」。"""
+    topic_id, after, service = _restarted_mid_turn(client, "第一句")
+    room = uuid.UUID(topic_id)
+
+    after.returns(room, "Bash", "done", command="sleep 600")
+    after.says(room, "第一句已处理")
+    after.stops(room, "第一句已处理")
+    client.portal.call(settle_turn, service, room)
+
+    _say(client, topic_id, "第二句")
+    assert after.last_prompt is not None
+    assert "第二句" in after.last_prompt
+    assert "第一句" not in after.last_prompt, after.last_prompt
+
+
+@pytest.mark.parametrize("worked_first", [True, False])
+def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
+    client, worked_first
+):
+    """换进程之后，会话在新进程上以失败收尾（额度用完、API 拒绝）。那批消息没有被
+    处理完，之后会话自己起的一轮干净地停下，也不能把它们标成已读。失败前它可能
+    还在新进程上干过活，也可能一句话都没来得及说。"""
+    topic_id, after, service = _restarted_mid_turn(client, "第一句")
+    room = uuid.UUID(topic_id)
+
+    if worked_first:
+        after.uses(room, "Bash", command="make test")
+    after.hook(
+        room,
+        hook_event_name="StopFailure",
+        session_id="sess-test-1",
+        error="rate_limit",
+    )
+    client.portal.call(settle_turn, service, room)
+
+    after.uses(room, "Bash", command="ls")
+    after.stops(room, "顺手看了一眼")
+    client.portal.call(settle_turn, service, room)
+
+    _say(client, topic_id, "第二句")
+    assert after.last_prompt is not None
+    assert "第二句" in after.last_prompt
+    assert "第一句" in after.last_prompt, after.last_prompt
+
+
+class DiesOnceScreen(SilentScreen):
+    """The first session dies on its prompt; the machine is healthy after."""
+
+    def __init__(self, **timeouts: float) -> None:
+        super().__init__(**timeouts)
+        self.dead = True
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        if not self.dead:
+            StubChannel.emit_turn(self, topic_id, prompt, reply)
+
+    async def confirm_alive(self, screen: object) -> bool:
+        return not self.dead
+
+
+def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
+    """送达不等于读过：那一轮是死掉的，它的消息必须留给下一轮重发。之后会话自己
+    起的一轮干干净净地停下，也不能顺手把这批消息标成已读 —— 否则就是丢消息。"""
+    project_id = client.post("/projects", json={"name": "Dies"}).json()["data"]["id"]
+    topic_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "死过一次", "created_by": "user-1"},
+    ).json()["data"]["id"]
+    room = uuid.UUID(topic_id)
+    screen = DiesOnceScreen(
+        idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
+    )
+    service = ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(screen),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    _say(client, topic_id, "死掉那句")
+    screen.dead = False
+
+    # A turn the session starts by itself, ending cleanly.
+    client.portal.call(screen.runtime.ensure_subscription, uuid.UUID(project_id), room)
+    screen.uses(room, "Bash", command="ls")
+    screen.stops(room, "顺手看了一眼")
+    client.portal.call(settle_turn, service, room)
+
+    _say(client, topic_id, "下一句")
+    assert screen.last_prompt is not None
+    assert "下一句" in screen.last_prompt
+    assert "死掉那句" in screen.last_prompt, screen.last_prompt

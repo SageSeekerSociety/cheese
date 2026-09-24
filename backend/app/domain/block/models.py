@@ -77,10 +77,10 @@ class AuthorType(enum.StrEnum):
 
 
 # `meta` key carried by every new message/attachment that arrives as an input.
-# Its value is null
-# while the input is pending, then the id of the agent turn that actually read
-# it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
-# tracked pending input from a legacy block created before turn accounting.
+# Its value is null while the input is pending, then the id of the agent turn
+# whose clean Stop showed the session had read it (BlockRepository.mark_consumed).
+# Presence of the null key distinguishes a tracked pending input from a legacy
+# block created before turn accounting.
 #
 # 为什么是运行时事实而不是位置：一轮的 prompt 窗口是在**拿到锁的那一刻**按当时
 # 的 history 算的，而消息是无锁落库的 —— 于是"这条被哪一轮读进去了"根本不可能
@@ -102,6 +102,13 @@ CONSUMED_TURN_META_KEY = "consumed_turn"
 # 这个键只决定**要不要把重放说出来**。合并成一个的话，"说出来"就得改动窗口语义，
 # 而那正是原注释在防的事。
 PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
+
+# The turn whose prompt last carried this block. The attempt count above says
+# how often; this says where to, and it is what lets a clean Stop stamp the
+# block when the process that fed it is gone: which blocks a turn was fed also
+# lives in memory, and a backend replaced mid-turn loses it while the session
+# on the machine runs on and stops against the new process.
+PROMPTED_TURN_META_KEY = "prompted_turn"
 
 # What this block has to say to 芝士, written by whoever created it — and absent
 # on the blocks that have nothing to say to it, which is most of them.
@@ -131,6 +138,12 @@ def agent_notice(block: "Block") -> str | None:
 def prompt_attempts(block: "Block") -> int:
     """How many turns have put this block into a prompt, finished or not."""
     return int((block.meta or {}).get(PROMPT_ATTEMPTS_META_KEY) or 0)
+
+
+def prompted_turn(block: "Block") -> uuid.UUID | None:
+    """The turn whose prompt last carried this block (None = never prompted)."""
+    value = (block.meta or {}).get(PROMPTED_TURN_META_KEY)
+    return uuid.UUID(value) if value else None
 
 
 class Block(UuidPk, Timestamps, Base):
