@@ -28,8 +28,6 @@ tmp_frontend.log
 /dump.rdb
 # machine-local DSNs left by a dev-db run
 /.devdb-env.*
-# sqlite file scripts/preview_sqlite.py creates fresh on every run
-backend/preview.db
 
 # 反馈原型的单文件产物与它的中间目录：`pack-feedback-prototype.py` 每次现生成，
 # 1.2MB、内容随构建变，进仓库只会让每个 PR 的 diff 里多一份没法 review 的 HTML。
