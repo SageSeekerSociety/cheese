@@ -3469,7 +3469,6 @@ async def get_user_2fa_status(
 
     totp_service = TOTPService(session)
     enabled = await totp_service.is_2fa_enabled(user_id)
-    always_required = await totp_service.is_always_required(user_id)
     passkeys = await PasskeyRepository(session).list_by_user(user_id)
 
     return {
@@ -3478,7 +3477,6 @@ async def get_user_2fa_status(
         "data": {
             "enabled": enabled,
             "has_passkey": len(passkeys) > 0,
-            "always_required": always_required,
         },
     }
 
@@ -3513,39 +3511,6 @@ async def regenerate_backup_codes(
         "code": 201,
         "message": "New backup codes generated successfully",
         "data": {"backup_codes": backup_codes},
-    }
-
-
-@router.put(
-    "/{userId}/2fa/settings",
-    summary="Update 2FA settings",
-)
-async def update_2fa_settings(
-    user_id: Annotated[int, Path(ge=0, alias="userId")],
-    payload: dict = Body(default={}),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    from app.domain.user.login_security import TOTPService
-
-    if auth_user.user_id != user_id:
-        raise ForbiddenError("Only the user themselves can change 2FA settings.")
-
-    always_required = payload.get("always_required")
-    if not isinstance(always_required, bool):
-        raise BadRequestError("always_required (boolean) is required")
-
-    await _spend_sudo_ticket(
-        payload.get("sudoTicket"),
-        user_id=auth_user.user_id,
-        purpose=SudoPurpose.TWO_FA_SETTINGS,
-    )
-
-    await TOTPService(session).set_always_required(user_id, always_required)
-    return {
-        "code": 200,
-        "message": "2FA settings updated successfully",
-        "data": {"success": True, "always_required": always_required},
     }
 
 

@@ -119,7 +119,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
         f"cheese:totp_backup:{_USER}",
         *[hashlib.sha256(code.encode()).hexdigest() for code in codes],
     )
-    old_redis.set(f"cheese:totp_always:{_USER}", b"1")
     # A key for an account that no longer exists is not an error.
     old_redis.set(f"cheese:totp_secret:{_GONE}", pyotp.random_base32())
 
@@ -131,7 +130,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
 
     async def check(totp: TOTPService):
         assert await totp.is_2fa_enabled(_USER) is True
-        assert await totp.is_always_required(_USER) is True
         assert await totp.verify_2fa(_USER, pyotp.TOTP(secret).now()) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is False

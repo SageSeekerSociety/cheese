@@ -179,9 +179,6 @@ class UserTwoFactor(Base):
         Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
     )
     secret: Mapped[str | None] = mapped_column(Text, nullable=True)
-    always_required: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
     pending_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     pending_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

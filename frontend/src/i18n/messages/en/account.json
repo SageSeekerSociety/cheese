@@ -233,7 +233,6 @@
       "initTOTP": "turn on two-step verification",
       "disableTOTP": "turn off two-step verification",
       "generateBackupCodes": "generate new backup codes",
-      "update2FASettings": "change two-step verification settings",
       "addPasskey": "add a passkey",
       "deletePasskey": "delete a passkey",
       "changePassword": "change your password",

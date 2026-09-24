@@ -287,7 +287,6 @@ export namespace UserApi {
     | '2fa:enable'
     | '2fa:disable'
     | '2fa:backup-codes'
-    | '2fa:settings'
     | 'passkey:add'
     | 'passkey:delete'
     | 'password:change'
@@ -382,12 +381,6 @@ export namespace UserApi {
   export interface Get2FAStatusResponseDataType {
     enabled: boolean
     has_passkey: boolean
-    always_required: boolean
-  }
-
-  export interface Update2FASettingsResponseDataType {
-    success: boolean
-    always_required: boolean
   }
 
   // 获取 2FA 状态
@@ -395,14 +388,6 @@ export namespace UserApi {
     ApiInstance.request<Get2FAStatusResponseDataType>({
       url: `/users/${userId}/2fa/status`,
       method: 'GET',
-    })
-
-  // 添加更新 2FA 设置的方法
-  export const update2FASettings = (userId: number, alwaysRequired: boolean, sudoTicket: string) =>
-    ApiInstance.request<Update2FASettingsResponseDataType>({
-      url: `/users/${userId}/2fa/settings`,
-      method: 'PUT',
-      data: { always_required: alwaysRequired, sudoTicket },
     })
 
   export const verifySudoTOTP = (code: string, purpose?: SudoPurpose) =>

@@ -233,7 +233,6 @@
       "initTOTP": "开启两步验证",
       "disableTOTP": "关闭两步验证",
       "generateBackupCodes": "生成新的备用码",
-      "update2FASettings": "修改两步验证设置",
       "addPasskey": "添加通行密钥",
       "deletePasskey": "删除通行密钥",
       "changePassword": "修改密码",
