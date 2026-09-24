@@ -169,5 +169,8 @@
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
+  },
+  "room": {
+    "noTasks": "No tasks"
   }
 }

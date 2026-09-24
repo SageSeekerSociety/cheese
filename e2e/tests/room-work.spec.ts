@@ -48,6 +48,8 @@ test.describe('房间里派出去的活', () => {
 
     // 两条都在，而且总数说得出来 —— 折起来的时候这一行是唯一的线索。
     await expect(progress.locator('.task-progress__tally')).toContainText('2 件');
+    // 默认折着，清单要点开才有。
+    await progress.locator('.task-progress__head').click();
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
     // 每条活带一个状态圆点。不断言是哪个状态：这一条钉的是「有没有」，
