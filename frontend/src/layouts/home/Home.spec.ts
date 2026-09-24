@@ -63,11 +63,11 @@ describe('首页外框', () => {
     // v-tabs 把每一格渲染两遍（一份用来量宽度），所以取第一个。
     const tabs = Array.from(slot.querySelectorAll('a'))
     expect(tabs.map((a) => a.textContent?.trim())).toContain('我的工作')
-    expect(tabs.map((a) => a.textContent?.trim())).toContain('小队')
+    expect(tabs.map((a) => a.textContent?.trim())).toContain('团队')
     // 手机上「换个项目」走的是这一格：底栏「工作区」那一格只落到上次打开的项目。
     await fireEvent.click(tabs.find((a) => a.textContent?.includes('我的工作'))!)
     expect(await findByText('我的项目')).toBeTruthy()
-    await fireEvent.click(tabs.find((a) => a.textContent?.includes('小队'))!)
+    await fireEvent.click(tabs.find((a) => a.textContent?.includes('团队'))!)
     expect(await findByText('小队列表')).toBeTruthy()
   })
 

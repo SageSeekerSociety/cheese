@@ -646,13 +646,15 @@ const methodLabel = (method: string) =>
     ? t('account.security.methodOAuth', { provider: oauthProviderName(method.slice('oauth:'.length)) })
     : METHOD_LABELS[method]?.() ?? ''
 
-// When, how it signed in, and from where — whichever of these is known.
+// When, how it signed in, whether it may skip two-step verification, and from
+// where — whichever of these is known.
 const sessionDetails = (session: SessionInfo) =>
   [
     session.current
       ? t('account.security.thisDevice')
       : t('account.security.lastActive', { date: formatDateTime(session.lastActiveAt) }),
     methodLabel(session.loginMethod),
+    session.trusted ? t('account.security.trusted') : '',
     session.ipAddress,
   ].filter(Boolean)
 

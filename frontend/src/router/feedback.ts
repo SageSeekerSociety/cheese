@@ -99,7 +99,7 @@ export default [
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
-        meta: { title: '开板申请', isFullPage: true },
+        meta: { title: '空间申请', isFullPage: true },
       },
       {
         // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字

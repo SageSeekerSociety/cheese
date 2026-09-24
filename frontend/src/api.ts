@@ -3,7 +3,6 @@
 import type {
   AcceptCard,
   AgentConfiguration,
-  AgentControlRequest,
   AgentControlState,
   AgentType,
   ApiEnvelope,
@@ -1644,17 +1643,6 @@ export function getTranscript(
   )
 }
 
-// 现场实时终端 (施工现场): whether this topic has a live pane to watch, and the
-// screen WebSocket ("/connector/session/{sid}/screen") the 现场 renders with
-// DeviceLiveViewer. A turn runs on a machine we reach only over that link.
-export interface TerminalInfo {
-  available: boolean
-  ws?: string
-}
-export function getTerminal(topicId: string): Promise<TerminalInfo> {
-  return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
-}
-
 export interface PreviewSession {
   url: string
   grant: string
@@ -1670,16 +1658,10 @@ export interface AgentControlResult {
   result: { response: { subtype: string; error?: string; response?: Record<string, unknown> } } | null
 }
 
-export type { AgentControlRequest, AgentControlState }
+export type { AgentControlState }
 
 export function getAgentControl(topicId: string) {
   return request<AgentControlState>(`/topics/${encodeURIComponent(topicId)}/agent/control`)
-}
-
-export function getAgentControlResult(topicId: string, sessionId: string, requestId: string) {
-  return request<{ result: AgentControlResult['result']; status: string }>(
-    `/topics/${encodeURIComponent(topicId)}/agent/control/${encodeURIComponent(requestId)}?session_id=${encodeURIComponent(sessionId)}`
-  )
 }
 
 export function sendAgentControl(
@@ -1691,18 +1673,6 @@ export function sendAgentControl(
   return request<AgentControlResult>(`/topics/${encodeURIComponent(topicId)}/agent/control`, {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId, request_id: requestId, request: control }),
-  })
-}
-
-export function answerAgentControl(
-  topicId: string,
-  sessionId: string,
-  requestId: string,
-  response: Record<string, unknown>
-) {
-  return request<{ status: string }>(`/topics/${encodeURIComponent(topicId)}/agent/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, request_id: requestId, response }),
   })
 }
 
@@ -2499,17 +2469,10 @@ export interface StatsPerformance {
   uptime_seconds: number
   /** 事件循环的滞后：接口慢而 p95 不高时，答案常常在这里。 */
   loop_lag: { recent_ms: number; worst_ms: number }
-  /** 投递账本积压 + 本机 spool 未读（**上界**，读不等于消费）。 */
+  /** 投递账本积压。 */
   reliability: {
     delivery_unsent: number
     delivery_dead_letters: number
-    spool: {
-      available: boolean
-      unread: number
-      oldest_age_seconds: number | null
-      spools: number
-      note_key: string
-    }
   }
 }
 

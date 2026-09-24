@@ -51,7 +51,7 @@ const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.queue': '队列',
   'navigation.admin.dashboard': '看板',
   'navigation.admin.models': '模型',
-  'navigation.admin.spaces': '开板申请',
+  'navigation.admin.spaces': '空间申请',
   'navigation.admin.members': '成员',
 }
 vi.mock('vue-i18n', async () => {

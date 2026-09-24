@@ -55,7 +55,6 @@ def mint_scoped_token(
     ttl_s: int = _SCOPED_TTL_S,
     agent_handle: str | None = None,
     access_scope: Literal["topic", "project"] = "topic",
-    remote_control: bool = False,
     resource_id: str | None = None,
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
@@ -94,10 +93,6 @@ def mint_scoped_token(
         payload["s"] = "project"
     if actor:
         payload["a"] = actor
-    if remote_control:
-        if not topic_id:
-            raise ValueError("RC credentials require a place")
-        payload["rc"] = 1
     if resource_id is not None:
         payload["r"] = resource_id
     raw = json.dumps(payload, separators=(",", ":")).encode()

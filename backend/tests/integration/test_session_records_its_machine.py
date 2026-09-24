@@ -22,7 +22,7 @@ from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef, deployment_harness
-from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
@@ -318,12 +318,11 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     房间。
 
     认领的判据在 runtime 那一侧，是它自己的骨架——通道答不出这个，一条
-    ``CentralChannel`` 同时被 Claude Code 和 Codex 两个 runtime 包着
-    （``build_compute_pool``）。所以通道把落在自己这儿的会话原样交出来，骨架的名
-    字当 ``running`` 一起交（``Channel.discover`` 的契约）。
+    ``CentralChannel`` 同时被几个骨架的 runtime 包着（``build_compute_pool``）。
+    所以通道只把落在自己这儿的屏原样认回来（``CentralChannel.restore``），
+    哪条会话归谁由各骨架按会话行自己认。
     """
     project, topic = room
-    del project
     for harness in ("claude-code", "pi"):
         async with client.test_factory() as db:
             await AgentSessionService(db).remember_place(
@@ -345,11 +344,10 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     assert [(row[1], row[3]) for row in placed] == [(topic, "pi")]
 
     central = channel(client, monkeypatch)
-    central.restore_screens = AsyncMock(
-        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
-    )
-    central.executor.discover = AsyncMock(return_value=[])
+    central.restore_screens = AsyncMock()
 
-    assert [found[3] for found in client.portal.call(central.discover)] == ["pi"]
+    client.portal.call(central.restore)
+    central.restore_screens.assert_awaited_once_with([(project, topic, "center")])
     # 这块屏是 pi 开的，所以 Claude Code 那一侧一条都不认领。
-    assert client.portal.call(lambda: ClaudeCodeRuntime(central).recover()) == []
+    runtime = ClaudeCodeRuntime(ClaudeCodeChannel(central))
+    assert client.portal.call(runtime.recover) == []

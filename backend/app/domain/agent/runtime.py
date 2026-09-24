@@ -1122,9 +1122,9 @@ class AgentWorkRunner:
         nothing had happened. Nothing is said, because nothing broke.
 
         That used to be inferred rather than known. The sweep read the topic's
-        blocks and its hook spool looking for traces that claude had been
-        talking, because the platform had no way to ask whether the screen was
-        still there. It can ask now, so the tracing is gone.
+        blocks looking for traces that claude had been talking, because the
+        platform had no way to ask whether the session was still there. It can
+        ask now, so the tracing is gone.
 
         What is left needs a remedy:
 
@@ -1372,8 +1372,8 @@ class AgentWorkRunner:
         #
         # （这条事件原来每个被打断的轮次都发一次，理由是 #316：部署静默打断轮次、
         # 房间里不留痕迹，查的人只能猜，为此误诊过两次（#188）。那是取消 turn 之前
-        # 的世界 —— 那时后端一死，会话的输出要等 spool 收口才浮出来，房间看着像
-        # 停了。现在没有那个断裂，理由跟着不成立。）
+        # 的世界 —— 那时后端一死，会话的输出要等下一轮才浮出来，房间看着像停了。
+        # 现在没有那个断裂，理由跟着不成立。）
         #
         # 剩下真正会伤到人的只有一种：消息卡在「已落库」和「已送进会话」中间，
         # 而且平台明确不会替他重发。这时候用户的话是真的消失了，芝士永远不会回，
@@ -1458,13 +1458,8 @@ class AgentWorkRunner:
         if not allow_actions:
             return 0
         if attach:
-            # Collect whatever the surviving claude already parked (a Stop
-            # included) — and whatever it sends next lands the same way via the
-            # hooks endpoint's own settle trigger.
-            try:
-                chat_service.schedule_spool_settle(topic_id)
-            except Exception:  # noqa: BLE001 — best-effort, the event already told the room
-                logger.exception("spool settle scheduling failed for %s", topic_id)
+            # What the surviving session said, and says next, lands through its
+            # runtime's reader, which recovery already restarted.
             logger.info(
                 "orphan turn(s) %s attached on topic %s (delivered=%d)",
                 [record.turn_id for record in entries],
@@ -2067,9 +2062,9 @@ class AgentWorkRunner:
             # This wrap is transport-INDEPENDENT — one AgentWorkRunner singleton, same
             # `self._timeout` for every backend (SDK / tmux / device). Most
             # backends have no activity signal of their own, so this stays their
-            # only ceiling. The tmux backend now has one (turn 活跃度检测:
-            # hooks_substrate's two-layer idle-suspect + hard-ceiling loop can run
-            # well past `self._timeout`) — it signals its actual ceiling back via
+            # only ceiling. A driven session has one (turn 活跃度检测: the
+            # runtime's own liveness rules and hard ceiling can run well past
+            # `self._timeout`) — it signals its actual ceiling back via
             # a `turn_ceiling` frame, and ONLY that reschedules this wrap
             # (`Timeout.reschedule`), relative to when the turn started so a late
             # frame can't silently grant more time than the backend promised.

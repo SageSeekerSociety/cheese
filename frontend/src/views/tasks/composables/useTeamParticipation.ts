@@ -103,12 +103,12 @@ export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskDa
       updateTeamsFromTaskData()
 
       if (eligibleTeams.value.length === 0) {
-        toast.info('您没有符合条件的小队可以参与此题目')
+        toast.info('您没有符合条件的团队可以参与此题目')
       }
 
       teamSelectionDialogOpen.value = true
     } catch (error) {
-      toast.error('获取小队信息失败')
+      toast.error('获取团队信息失败')
       console.error('Failed to process teams:', error)
     } finally {
       loadingTeams.value = false
@@ -146,7 +146,7 @@ export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskDa
     const teamName = joinedTeams.value.find((team) => team.id === selectedLeaveTeamId.value)?.name
 
     const confirmed = await dialogs
-      .confirm(`确定要让小队"${teamName}"退出该题目吗？`, {
+      .confirm(`确定要让团队"${teamName}"退出该题目吗？`, {
         title: '确认退出',
       })
       .wait()

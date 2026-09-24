@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 
 REMOTE_CASES = {
     "executor",
-    "native-terminal-rc",
+    "device-launcher",
     "plugin-disabled",
     "plugin-throws",
     "plugin-timeout",

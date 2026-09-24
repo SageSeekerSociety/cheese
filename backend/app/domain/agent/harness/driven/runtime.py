@@ -8,6 +8,13 @@ poller per room, and ``recover`` finds it again after a restart. The iterator
 A harness supplies its handle, its subscription, and the three verbs its
 protocol spells differently: what a runner's ``ping`` says about a turn in
 flight, what words said mid-turn are sent as, and how a turn is taken away.
+
+What ends a turn the session did not end itself is decided here, the same way
+for every harness (``docs/agent-liveness.md``): the process is gone, or the
+runner has not answered for ``RUNNER_GONE_S`` while a turn is open; the session
+has been talking without working for ``no_progress_s``; or something said to it
+has gone unread for ``unread_grace_s``. The last two read the clocks a
+subscription keeps from what its records say (``subscription.marks_of``).
 """
 
 import asyncio
@@ -15,6 +22,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -30,7 +38,19 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
-from app.domain.agent.harness.driven.subscription import Subscription
+from app.domain.agent.harness.driven.subscription import (
+    OUTPUT,
+    PROGRESS,
+    TOOL_RETURNED,
+    TOOL_STARTED,
+    Subscription,
+)
+from app.domain.agent.platform_failures import (
+    PROMPT_UNDELIVERED_CODE,
+    PROMPT_UNDELIVERED_MESSAGE,
+    TURN_TIMEOUT_CODE,
+    TURN_TIMEOUT_MESSAGE,
+)
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 
 # Every read of a room's journal is a call to its device, and an idle room
@@ -38,6 +58,40 @@ from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 # let the wait grow towards the ceiling once the journal has gone quiet.
 READ_FLOOR_S = 0.1
 READ_CEILING_S = 1.0
+# How long a runner may go unanswered while a turn is open before the turn is
+# called dead. Longer than the connection owner takes to come back after a
+# release, and than a device takes to reconnect after a network blip: those
+# are waited out, and a runner that is still there answers again.
+RUNNER_GONE_S = 120.0
+# Output this recent means the session is talking right now. Talking without a
+# tool call or an ending for ``no_progress_s`` is a loop; a session that has
+# gone quiet is judged by whether its process is alive, not by this.
+TALKING_S = 300.0
+
+
+@dataclass
+class Clock:
+    """What one open turn has done lately, on the monotonic clock."""
+
+    opened: float
+    progressed: float
+    said: float | None = None
+    returned: float | None = None
+    running: set[str] = field(default_factory=set)
+    seen: bool = False
+
+    def pulse(self, marks: frozenset[str], now: float) -> None:
+        self.seen = True
+        for mark in marks:
+            if mark == PROGRESS:
+                self.progressed = now
+            elif mark == OUTPUT:
+                self.said = now
+            elif mark.startswith(TOOL_STARTED):
+                self.running.add(mark.removeprefix(TOOL_STARTED))
+            elif mark.startswith(TOOL_RETURNED):
+                self.running.discard(mark.removeprefix(TOOL_RETURNED))
+                self.returned = now
 
 
 class Handle(Protocol):
@@ -91,10 +145,29 @@ class DrivenRuntime[H: Handle]:
     logger: logging.Logger
     #: The runner method that takes words said to a session mid-turn.
     steer: str
+    #: Whether the runner's acceptance of an input is the session reading it.
+    #: False for a harness whose records say when an input was read; its
+    #: subscription reports the receipt from there (``Subscription.receipt``).
+    receipt_on_accept = True
 
-    def __init__(self, channel: SessionChannel[H], *, hard_ceiling_s: float = 900):
+    def __init__(
+        self,
+        channel: SessionChannel[H],
+        *,
+        hard_ceiling_s: float = 900,
+        no_progress_s: float = 0.0,
+        unread_grace_s: float = 0.0,
+    ):
         self.channel = channel
         self.hard_ceiling_s = hard_ceiling_s
+        self.no_progress_s = no_progress_s
+        self.unread_grace_s = unread_grace_s
+        self.clocks: dict[uuid.UUID, Clock] = {}
+        # Work a verdict already ended. What the session goes on saying still
+        # lands; a second ending for it does not.
+        self.closed: set[uuid.UUID] = set()
+        self.unreachable: dict[uuid.UUID, float] = {}
+        self.unread: UnreadProbe | None = None
         self.live: dict[uuid.UUID, H] = {}
         self.subscriptions: dict[uuid.UUID, Subscription] = {}
         self.tasks: dict[uuid.UUID, asyncio.Task] = {}
@@ -160,11 +233,96 @@ class DrivenRuntime[H: Handle]:
         self.receipts = consumer
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
-        # The runner answers a send once the session has taken the input, so
-        # there is no input sitting unread whose age anyone would ask about.
-        pass
+        self.unread = probe
+
+    def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
+        """What the subscription just read about the open turn."""
+        if clock := self.clocks.get(topic):
+            clock.pulse(marks, time.monotonic())
+
+    def verdict(self, topic: uuid.UUID) -> AgentResult | None:
+        """Is the open turn stuck in a way only its own clocks can show?"""
+        clock = self.clocks.get(topic)
+        if clock is None:
+            return None
+        now = time.monotonic()
+        if (
+            self.no_progress_s > 0
+            and clock.said is not None
+            and now - clock.said < TALKING_S
+            and now - clock.progressed >= self.no_progress_s
+        ):
+            self.logger.warning(
+                "%s output for %.0fs with no tool call or ending topic=%s",
+                self.label,
+                now - clock.progressed,
+                topic,
+            )
+            return AgentResult(
+                text=TURN_TIMEOUT_MESSAGE,
+                session_id=None,
+                is_error=True,
+                failure_code=TURN_TIMEOUT_CODE,
+            )
+        # Input is read at tool boundaries, so while a tool runs the clock does
+        # not run, and after one it runs from the return: a message that sat
+        # behind a 40-minute command gets its grace from the first moment the
+        # session could have read it. Before the turn said anything there is no
+        # evidence of reading at all, which is the process's business.
+        if (
+            self.unread_grace_s > 0
+            and self.unread is not None
+            and clock.seen
+            and not clock.running
+        ):
+            waiting = self.unread(topic)
+            if waiting is not None:
+                waiting = max(waiting, clock.returned or 0.0, clock.opened)
+                if now - waiting >= self.unread_grace_s:
+                    self.logger.warning(
+                        "%s input unread for %.0fs topic=%s",
+                        self.label,
+                        now - waiting,
+                        topic,
+                    )
+                    return AgentResult(
+                        text=PROMPT_UNDELIVERED_MESSAGE,
+                        session_id=None,
+                        is_error=True,
+                        failure_code=PROMPT_UNDELIVERED_CODE,
+                    )
+        return None
+
+    async def _end_by_verdict(self, handle: H, result: AgentResult) -> None:
+        """End the turn in the room's books, and take the work away."""
+        topic = handle.session.topic_id
+        work = self.work[topic]
+        await self._consume(
+            handle.session.project_id,
+            topic,
+            work,
+            AgentResult(
+                text=result.text,
+                session_id=self.conversation(handle),
+                is_error=True,
+                failure_code=result.failure_code,
+                agent_handle=handle.agent_handle,
+                harness=self.harness,
+            ),
+            f"{self.harness}:{self.conversation(handle)}:verdict:{work}",
+            False,
+            False,
+        )
+        await self._activity(handle.session.project_id, topic, work, False)
+        self.closed.add(work)
+        try:
+            await self.interrupt(handle.session)
+        except Exception:  # noqa: BLE001 — the turn is already ended here
+            self.logger.exception("%s interrupt after a verdict failed", self.label)
 
     async def _consume(self, project, topic, work, event, eid, seen, unsolicited):
+        if isinstance(event, AgentResult) and work in self.closed:
+            return
         if queue := self.queues.get(work):
             await queue.put(event)
         elif self.consumer:
@@ -173,10 +331,15 @@ class DrivenRuntime[H: Handle]:
             raise RuntimeError(f"{self.label} room persistence is not bound")
 
     async def _activity(self, project, topic, work, active):
+        if work in self.closed:
+            return
         if active:
             self.work[topic] = work
+            now = time.monotonic()
+            self.clocks[topic] = Clock(opened=now, progressed=now)
         elif self.work.get(topic) == work:
             self.work.pop(topic, None)
+            self.clocks.pop(topic, None)
         if self.activity and work not in self.queues:
             await self.activity(project, topic, work, active)
 
@@ -222,6 +385,7 @@ class DrivenRuntime[H: Handle]:
         while topic in self.subscriptions:
             try:
                 delivered = await self.subscriptions[topic].drain()
+                self.unreachable.pop(topic, None)
                 if topic in self.work and time.monotonic() - checked_at >= 1:
                     handle = self.live[topic]
                     status = await self.channel.call(handle, "ping", {})
@@ -229,6 +393,8 @@ class DrivenRuntime[H: Handle]:
                     if not status.get("alive", True):
                         await self._died(handle)
                         return
+                    if verdict := self.verdict(topic):
+                        await self._end_by_verdict(handle, verdict)
             except DeviceOffline:
                 # A room whose machine is switched off is the ordinary state of
                 # a platform nobody is using this minute, and this loop exists
@@ -241,6 +407,8 @@ class DrivenRuntime[H: Handle]:
                     self.logger.warning(
                         "%s waiting for the device topic=%s", self.records, topic
                     )
+                if await self._gone(topic):
+                    return
                 await asyncio.sleep(2)
             except DeviceCallError as exc:
                 # The machine is there and said no — the runner's socket is not
@@ -255,6 +423,8 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
+                if await self._gone(topic):
+                    return
                 await asyncio.sleep(2)
             except httpx.TransportError as exc:
                 # The connection owner is being replaced, or the socket to it
@@ -270,6 +440,8 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
+                if await self._gone(topic):
+                    return
                 await asyncio.sleep(2)
             except Exception:
                 # The runner outlives a backend or connector outage. Re-reading
@@ -294,6 +466,22 @@ class DrivenRuntime[H: Handle]:
                     delay = min(delay * 2, READ_CEILING_S)
                 await self._wait(topic, delay)
 
+    async def _gone(self, topic: uuid.UUID) -> bool:
+        """Has the runner of an open turn been out of reach for too long?
+
+        A turn nobody can reach is not one that will ever report an ending,
+        and the room waits on it until somebody says so.
+        """
+        if topic not in self.work or topic not in self.live:
+            self.unreachable.pop(topic, None)
+            return False
+        since = self.unreachable.setdefault(topic, time.monotonic())
+        if time.monotonic() - since < RUNNER_GONE_S:
+            return False
+        self.unreachable.pop(topic, None)
+        await self._died(self.live[topic])
+        return True
+
     async def _died(self, handle: H) -> None:
         """The process is gone with a turn open. Say so where the turn is, or
         the room waits on something that will never answer."""
@@ -315,6 +503,7 @@ class DrivenRuntime[H: Handle]:
             False,
         )
         await self._activity(handle.session.project_id, topic, work, False)
+        self.closed.add(work)
         self.live.pop(topic, None)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
@@ -367,7 +556,7 @@ class DrivenRuntime[H: Handle]:
                     "images": payload,
                 },
             )
-            if self.receipts:
+            if self.receipts and self.receipt_on_accept:
                 await self.receipts(session.topic_id, message)
         finally:
             # A lost acknowledgement does not mean the session stopped working.
@@ -399,7 +588,7 @@ class DrivenRuntime[H: Handle]:
                 "images": await self.channel.images(handle, images or []),
             },
         )
-        if self.receipts:
+        if self.receipts and self.receipt_on_accept:
             await self.receipts(topic_id, text)
         return True
 
@@ -415,6 +604,8 @@ class DrivenRuntime[H: Handle]:
         self.live.pop(topic, None)
         self.work.pop(topic, None)
         self.woken.pop(topic, None)
+        self.clocks.pop(topic, None)
+        self.unreachable.pop(topic, None)
 
     async def close(self, session: SessionRef) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
@@ -439,7 +630,10 @@ class DrivenRuntime[H: Handle]:
                 continue
             await self._attach(handle)
             if self.working(status) and status.get("work_id"):
-                self.work[handle.session.topic_id] = uuid.UUID(status["work_id"])
+                topic = handle.session.topic_id
+                self.work[topic] = uuid.UUID(status["work_id"])
+                now = time.monotonic()
+                self.clocks[topic] = Clock(opened=now, progressed=now)
             recovered.append(handle.session)
         # Chat restores room bookkeeping before replay starts consumption.
         return recovered

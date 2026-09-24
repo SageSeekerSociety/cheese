@@ -442,9 +442,6 @@ TABLE_PATH = Path(__file__).resolve().with_name("control_answers.json")
 _TABLE = json.loads(TABLE_PATH.read_text(encoding="utf-8"))
 
 _ROWS: list[dict] = _TABLE["rows"]
-# Cheese supplies its own feature flags; these three are what turn on the
-# remote-control bridge the platform drives every session through.
-RC_FLAGS: dict = _TABLE["rc_flags"]
 # The host a row serves when it names none. Three names are MITM'd here and
 # only one of them carries a sandbox's boot: console.anthropic.com and
 # platform.claude.com carry interactive Claude Code's login and refresh, which
@@ -453,17 +450,6 @@ RC_FLAGS: dict = _TABLE["rc_flags"]
 # synthesised Cheese account, and the setup-token that IS this proxy's
 # subscription credential is what that login exists to produce.
 DEFAULT_ANSWER_HOSTS = frozenset({"api.anthropic.com"})
-# Telemetry hosts: the rows matched by host alone, whatever the path. RC
-# payloads carry control-session identifiers, so neither they nor an upstream
-# credential may cross this boundary. A row that also matches a path is not one
-# of these — its host is where the boot happens, and the caller treats a
-# telemetry host as one nothing else may be asked of.
-TELEMETRY_HOSTS = frozenset(
-    host
-    for row in _ROWS
-    if "exact" not in row and "prefix" not in row
-    for host in row["hosts"]
-)
 # How much of a /v1/messages head ModelRewrite may hold while it looks for the
 # top-level `model` member. See ModelRewrite.
 #
@@ -483,9 +469,7 @@ class Answer:
     body: bytes
 
 
-def control_answer(
-    host: str, path: str, project: str, topic: str, rc: bool = False
-) -> Answer | None:
+def control_answer(host: str, path: str, project: str, topic: str) -> Answer | None:
     """The proxy's own answer for a non-model endpoint, or None to forward.
 
     ``host`` is part of the question, not decoration: a row answers only the
@@ -495,12 +479,6 @@ def control_answer(
 
     ``project``/``topic`` are the VERIFIED place from the caller's scoped token:
     the identity Cheese asserts is Cheese's own, never an Anthropic account's.
-
-    ``rc`` says whether that token grants this session the Cheese RC transport.
-    Every path below is answered either way — the point is that none of them
-    reaches Anthropic — but only an RC session is told the bridge is on, because
-    those flags are what make Claude Code open `/v1/code/…`, and a session
-    without the claim has no RC route for them to take.
     """
     path = path.split("?", 1)[0]
     for row in _ROWS:
@@ -509,9 +487,7 @@ def control_answer(
         body = row["body"]
         if body is None:
             return Answer(row["status"], b"")
-        return Answer(
-            row["status"], json.dumps(_fill(body, project, topic, rc)).encode()
-        )
+        return Answer(row["status"], json.dumps(_fill(body, project, topic)).encode())
     return None
 
 
@@ -528,18 +504,16 @@ def _row_matches(row: dict, host: str, path: str) -> bool:
     return True
 
 
-def _fill(value, project: str, topic: str, rc: bool):
+def _fill(value, project: str, topic: str):
     """Substitute the table's placeholders with this caller's own facts."""
     if isinstance(value, dict):
-        return {k: _fill(v, project, topic, rc) for k, v in value.items()}
+        return {k: _fill(v, project, topic) for k, v in value.items()}
     if isinstance(value, list):
-        return [_fill(v, project, topic, rc) for v in value]
+        return [_fill(v, project, topic) for v in value]
     if value == "{project}":
         return project
     if value == "{topic}":
         return topic
-    if value == "{rc_flags}":
-        return dict(RC_FLAGS) if rc else {}
     return value
 
 

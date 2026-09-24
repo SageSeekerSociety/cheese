@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import time
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -62,8 +61,7 @@ def release_mount(path):
 
 
 def sources():
-    from app.domain.agent import event_spool, executor_transport
-    from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+    from app.domain.agent import executor_transport
 
     directory = Path(__file__).parent
     result = {
@@ -89,8 +87,6 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
-            "event_spool.py": Path(event_spool.__file__).read_text(),
-            "platform-hook-source": CHEESE_HOOK_SCRIPT,
         }
     )
     return result
@@ -188,19 +184,6 @@ def stage(home, sources):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)
-    for event in ("PreToolUse", "PostToolUse"):
-        for group in settings.get("hooks", {}).get(event, []):
-            matcher = group.get("matcher", "")
-            for previous in (
-                "^(?!mcp__native__invoke$)",
-                "^(?!mcp__native__(?:invoke|chat_send)$)",
-                "^(?!mcp__native__(?:invoke|chat_send|platform_request)$)",
-            ):
-                matcher = matcher.replace(
-                    previous,
-                    "^(?!mcp__native__(?:invoke|chat_send|platform_request|cheese_.*)$)",
-                )
-            group["matcher"] = matcher
     if target.get("kind") != "private" and target.get("helper"):
         managed_context_hook = {
             "type": "command",
@@ -225,28 +208,7 @@ def stage(home, sources):
                     groups.append({**group, "hooks": hooks})
             settings.get("hooks", {})[event] = groups
     replace(settings_path, json.dumps(settings))
-    offsets = {str(path): path.stat().st_size for path in transcripts}
-    return {"changed": True, "version": version, "offsets": offsets}
-
-
-def reloaded(offsets):
-    for name, offset in offsets.items():
-        with Path(name).open() as stream:
-            stream.seek(offset)
-            for line in stream:
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    event.get("type") == "system"
-                    and event.get("subtype") == "local_command"
-                    and event.get("content", "").startswith(
-                        "<local-command-stdout>Reloaded:"
-                    )
-                ):
-                    return True
-    return False
+    return {"changed": True, "version": version}
 
 
 def acknowledge(home, version):
@@ -254,15 +216,6 @@ def acknowledge(home, version):
         Path(os.path.expandvars(home)) / ".cheese/remote-execution/release-ready",
         version,
     )
-
-
-def wait_reloaded(offsets):
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if reloaded(offsets):
-            return True
-        time.sleep(0.05)
-    raise TimeoutError("Native plugin reload did not produce a completion receipt")
 
 
 def link_forwarded_user_context(directory, config, forwarded, tree, helpers):

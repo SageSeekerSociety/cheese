@@ -31,9 +31,9 @@ PREVIOUS_PLATFORM_DIR = ".claude"
 # The checkout this room's agent works in, inside the room's home. A copy of
 # `place.CHECKOUT_DIR` for the same reason as the pair above — this file is
 # exec'd on the machine out of a string — and held to it by test_footprint_root.py.
-# This is the side that CREATES the directory, so drift from the name
-# `place.write` refuses would leave the platform writing into a checkout it
-# believes it is staying out of.
+# This is the side that CREATES the directory, so drift from the platform's own
+# name for it would leave the platform writing into a checkout it believes it
+# is staying out of.
 CHECKOUT_DIR = "room"
 
 

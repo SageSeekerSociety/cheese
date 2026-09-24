@@ -1,9 +1,9 @@
 """2FA set up while it lived in Redis keeps working after the move (#1482).
 
-Seeds Redis the way the previous code wrote it — the TOTP secret in the clear,
-backup codes as SHA-256 digests, the "always required" flag as a key — runs the
-real ``alembic upgrade`` into Postgres, and then signs in through the service:
-the same authenticator and the same backup codes must still work. A deployment
+Seeds Redis the way the previous code wrote it — the TOTP secret in the clear
+and backup codes as SHA-256 digests — runs the real ``alembic upgrade`` into
+Postgres, and then signs in through the service: the same authenticator and
+the same backup codes must still work. A deployment
 that cannot reach Redis must stop instead of dropping everyone's factor.
 """
 
@@ -119,7 +119,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
         f"cheese:totp_backup:{_USER}",
         *[hashlib.sha256(code.encode()).hexdigest() for code in codes],
     )
-    old_redis.set(f"cheese:totp_always:{_USER}", b"1")
     # A key for an account that no longer exists is not an error.
     old_redis.set(f"cheese:totp_secret:{_GONE}", pyotp.random_base32())
 
@@ -131,7 +130,6 @@ def test_a_factor_set_up_in_redis_still_signs_in(db_before_the_migration, old_re
 
     async def check(totp: TOTPService):
         assert await totp.is_2fa_enabled(_USER) is True
-        assert await totp.is_always_required(_USER) is True
         assert await totp.verify_2fa(_USER, pyotp.TOTP(secret).now()) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is True
         assert await totp.verify_backup_code(_USER, codes[0]) is False

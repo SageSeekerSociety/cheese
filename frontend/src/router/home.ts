@@ -64,7 +64,7 @@ export default {
       name: 'HomeSpaces',
       component: () => import('@/views/spaces/Index.vue'),
       meta: {
-        title: '题目板',
+        title: '空间',
         titleKey: 'navigation.spaces',
         isFullPage: true,
       },
@@ -76,7 +76,7 @@ export default {
       // 落在「我的」：发现是有意图才去的一段，而从底栏点进来的人是回自己队里。
       redirect: { name: 'HomeTeamsMine' },
       meta: {
-        title: '小队',
+        title: '团队',
         titleKey: 'navigation.teams',
         isFullPage: true,
       },
@@ -86,7 +86,7 @@ export default {
           name: 'HomeTeamsExplore',
           component: () => import('@/views/teams/Explore.vue'),
           meta: {
-            title: '发现小队',
+            title: '发现团队',
             isFullPage: true,
           },
         },
@@ -95,7 +95,7 @@ export default {
           name: 'HomeTeamsMine',
           component: () => import('@/views/teams/Mine.vue'),
           meta: {
-            title: '我的小队',
+            title: '我的团队',
             isFullPage: true,
           },
         },

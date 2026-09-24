@@ -63,41 +63,25 @@ class CentralChannel(DeviceChannel):
         own = await self._session_host_agent(session)
         return own._replace(deferred=needs_place)
 
-    async def discover(self, device_id=None):
+    async def restore(self, device_id: str | None = None) -> None:
+        """Adopt the screens of this channel's sessions that outlived the backend.
+
+        The hub forgets every screen when the backend restarts, and a screen it
+        does not know is one the next turn opens a second copy of. Which harness
+        runs in each is not this channel's to say; the runtime that recovers them
+        claims its own by the session row.
+        """
         factory = self._session_factory or async_session_factory
-        scopes = []
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        placed = {room_id for _, room_id, _, _, _ in sessions}
-        # 这条通道认领的是「落在我这里的会话」，不是「某个骨架的会话」：同一条
-        # CentralChannel 被 Claude Code 和 Codex 两个 runtime 各包一次
-        # (``compute.build_compute_pool``)，所以通道答不出哪一条是谁的。骨架的名
-        # 字原样交回去当 ``running``，认领由 runtime 拿自己的 ``self.harness`` 去
-        # 做（``Channel.discover`` 的契约就是这么写的）。
-        runs: dict[uuid.UUID, str] = {}
-        for project_id, room_id, _handle, harness, place in sessions:
-            if place.channel != self.name:
-                continue
-            center = place.machine
-            if (device_id is None or center == device_id) and self._hub.is_online(
-                center
-            ):
-                self._subscription_devices[room_id] = center
-                runs[room_id] = harness
-                scopes.append((project_id, room_id, center))
-        found = [
-            (project_id, room_id, screen, runs.get(room_id))
-            for project_id, room_id, screen, _ in await self.restore_screens(scopes)
+        scopes = [
+            (project_id, room_id, place.machine)
+            for project_id, room_id, _handle, _harness, place in sessions
+            if place.channel == self.name
+            and (device_id is None or place.machine == device_id)
+            and self._hub.is_online(place.machine)
         ]
-        # Finish consuming turns that began before this deployment. This only
-        # reattaches live screens; it does not hydrate a lost session transcript.
-        for scope in await self.executor.discover(device_id):
-            if scope[1] not in placed:
-                found.append(scope)
-                old_device = self.executor._subscription_devices.get(scope[1])
-                if old_device:
-                    self._subscription_devices[scope[1]] = old_device
-        return found
+        await self.restore_screens(scopes)
 
     async def ensure_ready(
         self,
@@ -110,6 +94,7 @@ class CentralChannel(DeviceChannel):
         memory_scope=None,
         owner=None,
         turn_id=None,
+        runtime_factory=None,
     ):
         # Central screens require a launch plan supporting remote execution.
         # Their independent hands are acquired later by the first project tool.
@@ -128,6 +113,7 @@ class CentralChannel(DeviceChannel):
             memory_scope=memory_scope,
             owner=owner,
             turn_id=turn_id,
+            runtime_factory=runtime_factory,
         ) as prepared:
             return await self._ensure_screen(
                 device_id=prepared.device_id,
@@ -283,4 +269,3 @@ class CentralChannel(DeviceChannel):
             env=values,
         )
         mark("screen_ready")
-        self._subscription_devices[topic_id] = center

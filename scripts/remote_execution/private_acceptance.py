@@ -151,31 +151,20 @@ def main():
         record("document-publication", document)
 
         def controls():
-            import base64
-
-            # Into the executor's own HOME (结论 49): a staged file is the
-            # platform's, so it goes where that executor's platform directory
-            # is, at the relative path the control was given. Asked of the
-            # container rather than written down here, because which directory
-            # that is belongs to whoever launched it.
-            home = shell("printf %s \"$HOME\"")["stdout"].strip()
-            landed = client.control(
-                {
-                    "subtype": "stage_file",
-                    "path": "attachments/input.txt",
-                    "data": base64.b64encode(b"input data").decode(),
-                }
-            )["path"]
-            assert landed == f"{home}/attachments/input.txt", (landed, home)
+            # Outside the workspace, so the diff below still reads clean.
+            home = shell('printf %s "$HOME"')["stdout"].strip()
+            shell(f"printf 'input data' > {home}/input.txt")
             assert (
-                client.control({"subtype": "read_file", "path": landed})["contents"]
+                client.control({"subtype": "read_file", "path": f"{home}/input.txt"})[
+                    "contents"
+                ]
                 == "input data"
             )
             assert (
                 "draft.md" in client.control({"subtype": "file_suggestions"})["files"]
             )
             assert client.control({"subtype": "get_workspace_diff"}) == {"diff": ""}
-            return "staged input and RC file controls"
+            return "file controls"
 
         record("file-controls", controls)
 

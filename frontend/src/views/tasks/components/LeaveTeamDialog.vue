@@ -10,9 +10,9 @@
       <v-divider></v-divider>
       <v-card-text class="pa-0">
         <div class="px-4 pt-4 pb-3">
-          <div class="text-body-1">请选择要退出的小队：</div>
+          <div class="text-body-1">请选择要退出的团队：</div>
           <div class="text-caption text-medium-emphasis mt-1">
-            退出后，该小队将不再参与此题目。如需重新参与，可重新领取题目。
+            退出后，该团队将不再参与此题目。如需重新参与，可重新领取题目。
           </div>
         </div>
 
@@ -25,8 +25,8 @@
             <!-- info 底上的反白图标：深色下 info 是 #AEB4BD，白色只有 2.1:1 -->
             <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
           </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">没有已参与的小队</div>
-          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何小队参与此题目</div>
+          <div class="text-h6 font-weight-medium mb-2">没有已参与的团队</div>
+          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何团队参与此题目</div>
         </div>
 
         <div v-else class="px-4 pt-2 pb-4">

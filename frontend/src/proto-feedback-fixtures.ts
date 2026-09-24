@@ -2074,7 +2074,6 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       reliability: {
         delivery_unsent: 2,
         delivery_dead_letters: 1,
-        spool: { available: true, unread: 3, oldest_age_seconds: 120, spools: 2, note_key: 'perf.spoolNote' },
       },
     }
   }

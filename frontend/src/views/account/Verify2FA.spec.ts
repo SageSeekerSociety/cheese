@@ -52,7 +52,7 @@ async function open(query: Record<string, string>) {
 
 // 填满六位即提交，和人输入时一样。
 async function submitCode(view: ReturnType<typeof render>, code = '123456') {
-  const inputs = view.container.querySelectorAll('input')
+  const inputs = view.container.querySelectorAll('.v-otp-input input')
   for (const [i, digit] of [...code].entries()) {
     await fireEvent.focus(inputs[i])
     await fireEvent.update(inputs[i], digit)
@@ -134,5 +134,36 @@ describe('尝试次数过多', () => {
 
     await settle(router, '/account/signin')
     expect(toast.error).toHaveBeenCalledWith('尝试次数过多，请在 42 秒后重试')
+  })
+})
+
+describe('在这台设备上不再询问', () => {
+  const trustBox = (view: ReturnType<typeof render>) =>
+    view.getByRole('checkbox', { name: '在这台设备上 30 天内不再询问' }) as HTMLInputElement
+
+  it('默认不勾，提交时不信任这台设备', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
+
+    expect(trustBox(view).checked).toBe(false)
+    await submitCode(view)
+
+    await vi.waitFor(() =>
+      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: false })
+    )
+  })
+
+  it('勾上后，提交时请后端信任这台设备', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
+
+    await fireEvent.input(trustBox(view), { target: { checked: true } })
+    await submitCode(view)
+
+    await vi.waitFor(() =>
+      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: true })
+    )
   })
 })

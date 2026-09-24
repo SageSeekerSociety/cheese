@@ -5,11 +5,11 @@ paths:
 
 # e2e specs — determinism pitfalls (each one has bitten us)
 
-- **Login rate limiter**: the backend locks a username out after 5 failed
-  attempts, and that state lives in Redis/Valkey which OUTLIVES runs on any
-  persistent box. Negative-auth tests must use a throwaway username — and
-  remember `retries: 2` burns 3 attempts per run. Never fail-login as `alice`;
-  every other spec depends on her.
+- **Login delay**: after 5 wrong passwords for a username, every further
+  attempt has to wait (30 s, doubling to 5 minutes), and the count lives in
+  Redis/Valkey for an hour, which outlives runs on any persistent box.
+  Negative-auth tests use a throwaway username — `retries: 2` spends 3 attempts
+  per run. Never fail a sign-in as `alice`; every other spec signs in as her.
 - **Transient toasts**: vuetify-sonner toasts auto-dismiss. Asserting one is a
   timing bet; prefer asserting the resulting state (URL, storage, rendered
   element) or accept the flake risk knowingly.

@@ -79,15 +79,14 @@ jobs:
       - name: go test
         run: go test -race ./...
 
-  # The delivery e2e (ported in spirit from micro-connector's testbed): a REAL
-  # Claude Code at a pinned version, driven through the real rendezvous socket
-  # and the real tmux layer, against a MockServer Anthropic emulation. It
-  # asserts the one thing unit tests cannot — that a prompt handed to the
-  # connector is enqueued and ACTED on (the mock's scripted tool call runs),
-  # including a 30KB body. Pinned npm version so this leg only breaks when WE
-  # change something; bump the pin deliberately, and expect intelligence (not
-  # blockage) from it when Anthropic changes the first-run flow.
-  delivery-e2e:
+  # The boot e2e: a REAL Claude Code at the pinned version, started headless the
+  # way a room's session is, against a MockServer Anthropic emulation that
+  # answers every non-model request from the metering proxy's own answer table.
+  # It asserts what unit tests cannot — that a real boot asks for nothing the
+  # table does not answer, and that a real request names its model inside the
+  # proxy's head budget (e2e/control_table_e2e_test.go). Pinned npm version so
+  # this leg only breaks when WE change something.
+  boot-e2e:
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 40
     steps:
@@ -106,11 +105,9 @@ jobs:
         with:
           node-version: 22
 
-      # MUST match device_launch.CLAUDE_PINNED_VERSION: prompt delivery rides
-      # the rendezvous socket, which is undocumented private surface whose
-      # frames moved between 2.1.220 and 2.1.224. A CI pin below the launcher's
-      # floor tests a transport production never uses (and the socket simply
-      # never binds). Raising either one means raising both, in the same PR.
+      # MUST match device_launch.CLAUDE_PINNED_VERSION: the boot this checks is
+      # the one production launches. Raising either one means raising both, in
+      # the same PR.
       #
       # NPM_CONFIG_PREFIX keeps the install inside the workspace: runners are
       # shared, and a global install would fight concurrent jobs (and
@@ -141,7 +138,7 @@ jobs:
           echo "could not pull $image through the mirror" >&2
           exit 1
 
-      - name: Delivery e2e
+      - name: Boot e2e
         env:
           CHEESE_E2E_REQUIRE_DOCKER: "1"
         run: |

@@ -56,7 +56,7 @@ vi.mock('../../api', async () => {
     putDoc: vi.fn().mockResolvedValue({}),
     writeFile: vi.fn().mockResolvedValue({ path: 'a.py', version: 'v2' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getTerminal: vi.fn().mockResolvedValue({ available: false, backend: 'none' }),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),

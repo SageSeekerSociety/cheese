@@ -2,10 +2,10 @@
 
 Route discovery imports every module under app/api/routes and SWALLOWS import
 errors, so anything that can raise at import time silently removes that module's
-whole router. That is exactly how `/sandbox/hooks/{topic}` disappeared from a
-deployed image once: an unrelated module-level read of `backend/sandbox/cheese`
-(a path the production image did not copy) raised FileNotFoundError, and every
-agent hook 404'd with no error anywhere.
+whole router. That is how this router once vanished from a deployed image: an
+unrelated module-level read of `backend/sandbox/cheese` (a path the production
+image did not copy) raised FileNotFoundError, and every route on it 404'd with
+no error anywhere.
 """
 
 import importlib
@@ -20,14 +20,14 @@ def test_sandbox_module_imports_without_the_cli_asset(monkeypatch, tmp_path):
     assert reloaded.router is not None
 
 
-def test_hook_route_is_mounted_even_with_the_asset_missing(monkeypatch, tmp_path):
-    """The hooks path — the agent event lifeline — must exist regardless."""
+def test_routes_are_mounted_even_with_the_asset_missing(monkeypatch, tmp_path):
+    """The router's paths exist regardless of the asset."""
     monkeypatch.setattr(sandbox_routes, "_CLI_PATH", tmp_path / "definitely-absent")
     # Inspect the router itself: this FastAPI version keeps included routers
     # wrapped rather than flattening their paths onto the app.
     paths = {getattr(route, "path", None) for route in sandbox_routes.router.routes}
-    assert "/sandbox/hooks/{topic_id}" in paths
     assert "/sandbox/cli/cheese" in paths
+    assert "/sandbox/storage-sweep" in paths
 
 
 def test_cli_source_returns_none_instead_of_raising(monkeypatch, tmp_path):

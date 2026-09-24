@@ -1,7 +1,7 @@
 """Gateway L1/L2 wired into a turn: the sandbox env gets the project's VIRTUAL
-key (minted once, persisted), and a turn that ends with usage=0 (the hooks
-backends) gets its REAL usage drained from the gateway spend log into the
-usage table."""
+key (minted once, persisted), and a turn that ends with no usage of its own (a
+Claude Code session reports none) gets its REAL usage drained from the gateway
+spend log into the usage table."""
 
 import asyncio
 import uuid
@@ -69,12 +69,7 @@ class QuietScreen(StubChannel):
         del reply
         self.starts(topic_id, session_id="s1")
         self.acknowledges(topic_id, prompt)
-        self.hook(
-            topic_id,
-            hook_event_name="Stop",
-            session_id="s1",
-            last_assistant_message="ok",
-        )
+        self.stops(topic_id, "ok", session_id="s1")
 
 
 class FakeGateway:
@@ -779,8 +774,6 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
     ):
         pass
     await finish_turn(svc, tid)
-    # Stop also starts spool settlement, which may still hold a DB transaction.
-    await asyncio.gather(*svc._settle_tasks)
 
     from sqlalchemy import select
 
@@ -816,25 +809,11 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
 async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
     business_db_factory, tmp_path
 ):
-    """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
-    is 'unknown', not 'this turn was free'. Without a meter for the route, the
-    row must say unmetered."""
-
-    class ZeroUsageScreen(StubChannel):
-        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-            del reply
-            self.starts(topic_id, session_id="s1")
-            self.acknowledges(topic_id, prompt)
-            self.hook(
-                topic_id,
-                hook_event_name="Stop",
-                session_id="s1",
-                last_assistant_message="ok",
-                usage={"input": 0, "output": 0},
-            )
-
+    """A Claude Code session's turn ends with no usage of its own — that is
+    'unknown', not 'this turn was free'. Without a meter for the route, the row
+    must say unmetered."""
     svc, factory, pid, tid = await _mk_service(
-        business_db_factory, tmp_path, None, screen=ZeroUsageScreen()
+        business_db_factory, tmp_path, None, screen=QuietScreen()
     )
 
     async for _ in svc.converse(

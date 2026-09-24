@@ -292,14 +292,11 @@ def _scoped_token(
     *,
     project: str = "p1",
     ttl_s: float = 3600.0,
-    rc: bool = False,
 ) -> str:
     """A token shaped exactly like the backend's mint_scoped_token. Signed for
     real: the addon verifies the HMAC, so a hand-written string would only ever
     exercise the reject path."""
-    raw = json.dumps(
-        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc)}
-    )
+    raw = json.dumps({"p": project, "t": "t1", "exp": time.time() + ttl_s})
     body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{base64.urlsafe_b64encode(digest).decode().rstrip('=')}"
@@ -307,28 +304,6 @@ def _scoped_token(
 
 def _basic(password: str) -> str:
     return "Basic " + base64.b64encode(f"cheese:{password}".encode()).decode()
-
-
-def test_rc_bootstrap_routes_to_cheese_without_the_sessions_credential(
-    monkeypatch, tmp_path
-):
-    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
-    mod.RC_BASE = "https://backend.example/api"
-    token = _scoped_token("test-secret", rc=True)
-    mod.http_connect(_make_connect_flow(_basic(token)))
-    flow = _make_flow(path="/v1/code/sessions")
-    flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
-    flow.request.headers["x-api-key"] = SESSION_CREDENTIAL
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.request.host == "backend.example"
-    assert flow.request.path == "/api/v1/code/sessions"
-    assert flow.request.headers["x-cheese-token"] == token
-    assert "authorization" not in flow.request.headers
-    assert "x-api-key" not in flow.request.headers
-    assert "x-cheese-attr" not in flow.request.headers
-    assert flow.server_conn.via is None
-    assert not any(SESSION_CREDENTIAL in v for v in flow.request.headers.values())
-    assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
 
 
 def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
@@ -344,7 +319,7 @@ def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
     fail-open 的调用后面 —— 答错一次就泄露一次，而泄露出去的身份收不回来。
     """
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
-    token = _scoped_token("test-secret", rc=True)
+    token = _scoped_token("test-secret")
     mod.http_connect(_make_connect_flow(_basic(token)))
     for path in (
         "/api/oauth/profile",
@@ -353,7 +328,7 @@ def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
     ):
         flow = _make_flow(path=path)
         # 归账那一侧允许 header 在已证明的项目内部挑房间；身份这一侧不允许 ——
-        # 答出去的是这条 RC 会话被签在哪儿。
+        # 答出去的是这条会话被签在哪儿。
         flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
         asyncio.run(mod.requestheaders(flow))
         assert flow.response.status_code == (204 if path.endswith("settings") else 200)
@@ -367,12 +342,7 @@ def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
         elif path.endswith("settings"):
             assert flow.response.content == b""
         else:
-            assert (
-                json.loads(flow.response.content)["restrictions"][
-                    "allow_remote_control"
-                ]["allowed"]
-                is True
-            )
+            assert json.loads(flow.response.content) == {"restrictions": {}}
 
 
 def _assert_answered_by_cheese(mod, flow) -> None:
@@ -400,7 +370,7 @@ def test_an_unconfigured_admission_does_not_echo_the_platform_account(
     那次。
     """
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
-    mod.http_connect(_make_connect_flow(_basic(_scoped_token("test-secret", rc=True))))
+    mod.http_connect(_make_connect_flow(_basic(_scoped_token("test-secret"))))
     _assert_answered_by_cheese(mod, _make_flow(path="/api/oauth/profile"))
 
 
@@ -420,26 +390,17 @@ def test_an_unreachable_admission_does_not_echo_the_platform_account(
     url = "http://control-plane.invalid/admission"
     monkeypatch.setattr(mod, "ADMISSION_URL", url)
     monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=unreachable))
-    token = _scoped_token("test-secret", rc=True)
+    token = _scoped_token("test-secret")
     _assert_answered_by_cheese(
         mod, _make_flow(path="/api/oauth/profile", caller_bearer=token)
     )
 
 
-def test_rc_without_backend_never_falls_through_to_official_service(
+def test_telemetry_is_consumed_without_attaching_provider_credential(
     monkeypatch, tmp_path
 ):
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
-    token = _scoped_token("test-secret", rc=True)
-    flow = _make_flow(path="/v1/code/sessions", caller_bearer=token)
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.response.status_code == 503
-    assert flow.request.host == "api.anthropic.com"
-
-
-def test_rc_telemetry_is_consumed_here(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
-    token = _scoped_token("test-secret", rc=True)
+    token = _scoped_token("test-secret")
     mod.http_connect(_make_connect_flow(_basic(token)))
     flow = _make_flow(path="/api/event_logging/v2/batch", caller_bearer="")
     asyncio.run(mod.requestheaders(flow))
@@ -1127,12 +1088,12 @@ _BOOT_PATHS = (
 )
 
 
-def test_the_boot_endpoints_are_answered_here_without_an_rc_claim(
+def test_the_boot_endpoints_are_answered_here_for_a_caller_that_proves_nothing(
     monkeypatch, tmp_path
 ):
-    """一台机器只有一种启动环境（结论 46），所以开机不能取决于这个会话有没有 RC。
+    """一台机器只有一种启动环境（结论 46），所以开机不能取决于这个会话证明了什么。
 
-    The caller below proves no place at all — no scoped secret, no rc claim, the
+    The caller below proves no place at all — no scoped secret, the
     weakest caller the proxy ever serves. Every startup path still has to be
     answered from the table: the alternative is Anthropic answering "who am I"
     for a sandbox running someone else's code, with the platform subscription's
@@ -1156,29 +1117,6 @@ def test_the_identity_answered_here_is_cheeses_own(monkeypatch, tmp_path):
     asyncio.run(mod.requestheaders(flow))
     body = json.loads(flow.response.content)
     assert "anthropic.com" not in body["account"]["email"]
-
-
-def test_the_rc_bridge_is_announced_only_to_a_session_that_has_rc(
-    monkeypatch, tmp_path
-):
-    """The flags are what make Claude Code open `/v1/code/…`. A session whose
-    token carries no rc claim has no route for those, so announcing the bridge
-    to it would send control traffic upstream on the session's Claude credential."""
-    secret = "scoped-secret"
-    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
-
-    plain = _make_flow(path="/api/eval/sdk-client")
-    asyncio.run(mod.requestheaders(plain))
-    assert json.loads(plain.response.content)["features"] == {}
-
-    rc_flow = _make_flow(
-        path="/api/eval/sdk-client",
-        caller_bearer=_scoped_token(secret, rc=True),
-    )
-    asyncio.run(mod.requestheaders(rc_flow))
-    features = json.loads(rc_flow.response.content)["features"]
-    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
-    assert rc_flow.server_conn.via is None
 
 
 # --- a refusal has to REACH the caller --------------------------------------
