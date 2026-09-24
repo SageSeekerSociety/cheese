@@ -469,11 +469,6 @@ class Settings(BaseSettings):
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
-    # Loopback port the machine-side helper listens on. Fixed rather than chosen
-    # per launch: `claude` reads HTTPS_PROXY once at startup and a screen is
-    # reused across turns, so a port that moved between launches would leave an
-    # adopted session pointed at a helper that no longer exists.
-    subscription_tunnel_local_port: int = 8445
     # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.
