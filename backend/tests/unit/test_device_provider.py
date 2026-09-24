@@ -2110,6 +2110,8 @@ async def test_agent_config_change_replaces_screen_at_next_launch(monkeypatch):
 @pytest.mark.anyio
 async def test_config_change_preserves_a_running_background_workflow(monkeypatch):
     class RunningWorkflow:
+        status = None
+
         async def current(self, *_args):
             return {"id": "old-session"}
 
@@ -2119,12 +2121,14 @@ async def test_config_change_preserves_a_running_background_workflow(monkeypatch
                     "workflow": {
                         "task_type": "local_workflow",
                         "subtype": "task_progress",
+                        "status": self.status,
                         "workflow_progress": [{"state": "done"}, {"state": "progress"}],
                     }
                 }
             }
 
-    monkeypatch.setattr(remote_control, "store", lambda: RunningWorkflow())
+    control = RunningWorkflow()
+    monkeypatch.setattr(remote_control, "store", lambda: control)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -2146,6 +2150,11 @@ async def test_config_change_preserves_a_running_background_workflow(monkeypatch
         await ensure("edited")
     assert hub.closed == []
     assert hub.opened == [first]
+
+    control.status = "completed"
+    second = await ensure("edited")
+    assert second.sid != first.sid
+    assert hub.closed == [first.sid]
 
 
 @pytest.mark.anyio
