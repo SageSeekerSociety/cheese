@@ -66,7 +66,9 @@ fn main() {
                 CapabilityBuilder::new("server")
                     .remote(format!("{ORIGIN}/*"))
                     .window("main")
-                    .permission("core:default"),
+                    .permission("core:default")
+                    .permission("allow-connect-this-machine")
+                    .permission("allow-cancel-connect"),
             )?;
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();

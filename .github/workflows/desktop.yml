@@ -46,14 +46,15 @@ jobs:
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: rustup target add ${{ matrix.target }}
 
+      # Before anything compiles: tauri-build checks the bundled resources exist.
+      - name: Build tmux for the bundle
+        if: runner.os == 'macOS'
+        run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
+
       - name: Test
         if: matrix.target != 'x86_64-apple-darwin'
         working-directory: desktop/src-tauri
         run: cargo test --target ${{ matrix.target }}
-
-      - name: Build tmux for the bundle
-        if: runner.os == 'macOS'
-        run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
 
       - run: pnpm tauri build --target ${{ matrix.target }}
 
