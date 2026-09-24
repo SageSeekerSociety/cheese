@@ -23,14 +23,17 @@ class DeviceFlowStart(BaseModel):
     target_subscription_id: uuid.UUID | None = None
     # 显式指定上游模型（如 openai/gpt-5.6-luna）；空 = 跟随部署默认
     # （settings.subscription_upstream_model），行里存 NULL，热配保留。
+    # 定向重授权时空 = **继承旧行的选择**（重授权换凭据不换配置，服务层兑现）。
     upstream_model: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class UpstreamModelUpdate(BaseModel):
     """`PATCH /admin/subscriptions/{id}/upstream-model` 的体 —— 授权完成后改上游模型。
 
-    ``upstream_model`` 为 ``None`` 表示**清除显式选择**、回落到部署默认 ——
-    网关那一下推的是回落后的解析值，不是 NULL（网关的合并语义里缺省才是「不动」）。
+    字段**必填但可为 null**（BudgetUpdate 同规）：缺省（`{}`）直接 400 ——
+    「忘了传」绝不能被读成「清除选择」；``None`` 才是显式的清除，回落到部署
+    默认 —— 网关那一下推的是回落后的解析值，不是 NULL（网关的合并语义里
+    缺省才是「不动」）。
     """
 
-    upstream_model: str | None = Field(default=None, min_length=1, max_length=200)
+    upstream_model: str | None = Field(min_length=1, max_length=200)

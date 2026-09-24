@@ -37,8 +37,11 @@ const props = withDefaults(
     modelValue: boolean
     /** 定向重授权的旧订阅 id；空 = 新导入。 */
     targetSubscriptionId?: string | null
+    /** 定向重授权时上游模型的现值：重授权换凭据不换配置，输入框从这里起填，
+     *  否则一次换号会把行上的显式选择静默换成部署默认。 */
+    initialUpstreamModel?: string | null
   }>(),
-  { targetSubscriptionId: null }
+  { targetSubscriptionId: null, initialUpstreamModel: null }
 )
 
 const emit = defineEmits<{
@@ -93,7 +96,7 @@ function reset() {
   copyTimer = null
   phase.value = 'start'
   label.value = ''
-  upstreamModel.value = ''
+  upstreamModel.value = props.initialUpstreamModel ?? ''
   flow.value = null
   subscription.value = null
   errorText.value = null

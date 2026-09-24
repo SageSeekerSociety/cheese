@@ -230,16 +230,26 @@ describe('详情抽屉 · 订阅块', () => {
     await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', 'openai/gpt-5.6-sol'))
   })
 
-  it('上游模型：没有显式选择时显示「默认（网关现值）」；清空后保存发 null', async () => {
+  it('上游模型：没有显式选择时显示「跟随部署默认」；清空后保存发 null', async () => {
     const page = mountDrawer()
     await page.findByText('models.detail.subscription.title')
-    expect(page.getByText(/upstreamModelDefault.*gpt-5.2-codex/)).toBeTruthy()
+    // 默认值是多少前端不知道，不猜：只显示「跟随部署默认」，不带具体值。
+    expect(page.getByText('models.subscription.upstreamModelDefault')).toBeTruthy()
 
     await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
     const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
     expect(input.value).toBe('')
     await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
     await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', null))
+  })
+
+  it('pending 状态的订阅不给上游编辑入口（后端接不住，不给人必败的按钮）', async () => {
+    const payload = detailPayload()
+    ;(payload.model.subscription as Record<string, unknown>).status = 'pending'
+    getGatewayModel.mockResolvedValue(payload)
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    expect(page.queryByRole('button', { name: 'models.subscription.upstreamModelEdit' })).toBeNull()
   })
 
   it('上游模型保存失败：服务端原话就地显示，编辑框不关', async () => {

@@ -200,6 +200,24 @@ describe('导入订阅 · 状态机', () => {
       upstream_model: null,
     })
   })
+
+  it('定向重授权带上游现值：输入框从现值起填，start 原样发回 —— 换号不换配置', async () => {
+    const page = mountDialog({
+      targetSubscriptionId: 'sub-old',
+      initialUpstreamModel: 'openai/gpt-5.6-luna',
+    })
+    await page.findByText('models.subscription.reauthIntro')
+
+    const input = page.getByTestId('upstream-model-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('openai/gpt-5.6-luna')
+    await toWaiting(page)
+    expect(startSubscriptionDeviceFlow).toHaveBeenCalledWith({
+      provider: 'openai_codex',
+      label: null,
+      target_subscription_id: 'sub-old',
+      upstream_model: 'openai/gpt-5.6-luna',
+    })
+  })
 })
 
 describe('导入订阅 · 取消与关闭', () => {

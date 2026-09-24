@@ -124,6 +124,10 @@ class SubscriptionService:
                 raise NotFoundError("要重新授权的订阅不存在")
             if target.status not in _REAUTHABLE:
                 raise BadRequestError("这条订阅当前不在可重新授权的状态")
+            # 重授权换的是凭据，不是配置：请求没带显式上游时继承旧行的选择，
+            # 否则一次换号会把网关上的模型静默打回部署默认。
+            if upstream_model is None:
+                upstream_model = target.upstream_model
             target.status = "superseded"
         else:
             live = await self._repo.live_for_provider(provider)
@@ -720,13 +724,18 @@ class SubscriptionService:
             raise NotFoundError("这条订阅不存在")
         if sub.status not in _REAUTHABLE:
             raise BadRequestError("这条订阅当前不在可改上游模型的状态")
+        if upstream_model is not None and not upstream_model.strip():
+            raise BadRequestError("上游模型标识不能为空")
         before = _audit_snapshot(sub)
         sub.upstream_model = _normalize_upstream(upstream_model)
 
         access_token = _decrypt(sub, "access_token_enc")
         if not access_token:
-            # 凭据读不出来时不推网关：选择已落库，凭据恢复（或重授权）后的
-            # 第一次推进会带上它。这不是失败 —— 按凭据不可用的既有路径回答。
+            # 凭据读不出来时不推网关，按凭据不可用的既有路径走：置
+            # reauth_required（与 `_refresh_locked` 的解密失败分支同规）。
+            # 选择已落库 —— 重授权继承它（start_flow 的定向分支），凭据
+            # 恢复后的第一次推进会带上它。
+            sub.status = "reauth_required"
             sub.last_refresh_error = "凭据无法解密（密钥可能已轮换），需要重新授权"
             await self._record(
                 handle=handle,

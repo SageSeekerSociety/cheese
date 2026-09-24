@@ -189,6 +189,12 @@ const subDotClass = computed(() => {
   return 'amdd__dot--danger'
 })
 
+/** 上游模型编辑入口给哪些状态：与后端 `_REAUTHABLE` 同一个集合 —— 其余状态
+ *  （pending 等）点了也是 400，不该给人一个必败的按钮。 */
+const upstreamEditable = computed(() =>
+  ['active', 'refresh_failed', 'reauth_required'].includes(sub.value?.status ?? '')
+)
+
 /** 额度读数：活读数（刚刷的）优先，否则详情自带的快照；都没有 = 「暂无额度读数」。 */
 const quota = computed<{ tiers: SubscriptionQuotaTier[]; fetched_at: string | null; stale: boolean } | null>(() => {
   if (quotaLive.value) return quotaLive.value
@@ -288,6 +294,15 @@ async function saveUpstream() {
   } catch (e) {
     // 失败照原话就地显示（那句话里带着网关的原话）；编辑框不关。
     upstreamError.value = e instanceof Error && e.message ? e.message : t('models.page.loadFailed')
+    // 「行已落库、网关那一下失败」时服务端也是这个回答 —— 选择其实生效了，
+    // 后台静默重读（不动 loading，不把编辑框换成骨架），显示与库里一致。
+    if (props.name) {
+      getGatewayModel(props.name, props.days)
+        .then((fresh) => {
+          if (sub.value?.id === current.id) detail.value = fresh as unknown as DetailPayload
+        })
+        .catch(() => {})
+    }
   } finally {
     upstreamSaving.value = false
   }
@@ -409,16 +424,22 @@ function close() {
                 </span>
               </dd>
             </dl>
-            <!-- 上游模型：订阅行上的显式选择是唯一权威（没有显式选择 = 部署默认，
-                 默认的解析值就是网关现值）。就地改，保存即推网关。 -->
+            <!-- 上游模型：订阅行上的显式选择是唯一权威（没有显式选择 = 跟随部署
+                 默认；默认值是多少前端不知道，不猜）。就地改，保存即推网关。
+                 编辑入口只给后端接得住的状态（与 _REAUTHABLE 同一个集合）。 -->
             <div class="amdd__upstream">
               <p class="amdd__note t-meta-read t-num">
                 {{
                   sub.upstream_model
                     ? t('models.subscription.upstreamModelCurrent', { model: sub.upstream_model })
-                    : t('models.subscription.upstreamModelDefault', { model: model.upstream.model })
+                    : t('models.subscription.upstreamModelDefault')
                 }}
-                <v-btn v-if="!upstreamEditing" variant="text" size="x-small" @click="startUpstreamEdit">
+                <v-btn
+                  v-if="!upstreamEditing && upstreamEditable"
+                  variant="text"
+                  size="x-small"
+                  @click="startUpstreamEdit"
+                >
                   {{ t('models.subscription.upstreamModelEdit') }}
                 </v-btn>
               </p>
@@ -595,11 +616,13 @@ function close() {
       </v-card>
     </v-dialog>
 
-    <!-- 定向重新授权：带着这条订阅的 id 开导入对话框（服务端校验同一身份）。 -->
+    <!-- 定向重新授权：带着这条订阅的 id 与上游模型的现值开导入对话框（服务端
+         校验同一身份；上游现值起填进输入框 —— 重授权换凭据不换配置）。 -->
     <AdminSubscriptionImportDialog
       v-if="sub"
       v-model="reauthOpen"
       :target-subscription-id="sub.id"
+      :initial-upstream-model="sub.upstream_model ?? null"
       @imported="onReauthImported"
     />
   </v-navigation-drawer>
