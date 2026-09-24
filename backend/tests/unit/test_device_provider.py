@@ -26,6 +26,7 @@ from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PRO
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
 from app.domain.device.supply import Supply, Visibility
@@ -2133,7 +2134,7 @@ async def test_config_change_preserves_a_running_background_workflow(monkeypatch
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
 
-    async def ensure(config):
+    async def ensure(config, launch=None):
         return await provider._ensure_screen(
             device_id="dev1",
             agent_user_id=1,
@@ -2142,12 +2143,14 @@ async def test_config_change_preserves_a_running_background_workflow(monkeypatch
             topic_id=tid,
             token="tok",
             env={"CHEESE_AGENT_CONFIG": config},
-            launch=ClaudeLaunch(system_prompt=""),
+            launch=launch or ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure("original")
     with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
         await ensure("edited")
+    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
+        await ensure("edited", PiLaunch(system_prompt="", model="test"))
     assert hub.closed == []
     assert hub.opened == [first]
 
