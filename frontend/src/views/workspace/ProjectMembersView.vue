@@ -45,6 +45,7 @@ import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
 import { UserApi } from '@/network/api/users'
 import { useWorkspaceStore } from '@/stores/workspace'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 defineOptions({ name: 'ProjectMembersView' })
 
@@ -358,226 +359,221 @@ async function submitInvite() {
 </script>
 
 <template>
-  <div class="members-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-4 d-flex align-center flex-wrap ga-2">
-        <div>
-          <div class="t-eyebrow mb-1">项目</div>
-          <h1 class="t-page-title">成员</h1>
-        </div>
-        <v-spacer />
-        <v-btn v-if="canLeave" variant="text" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
-          退出项目
-        </v-btn>
-        <v-btn
-          v-if="canTransfer"
-          variant="text"
-          prepend-icon="mdi-account-arrow-right-outline"
-          class="ms-2"
-          @click="transferOpen = true"
-        >
-          转让项目
-        </v-btn>
-        <v-btn v-if="canManage" variant="text" prepend-icon="mdi-link-variant" @click="joinLinkOpen = true">
-          {{ t('work.joinLink.title') }}
-        </v-btn>
-        <v-btn
-          v-if="canManage"
-          color="primary"
-          variant="flat"
-          prepend-icon="mdi-account-plus-outline"
-          class="ms-2"
-          @click="inviteOpen = true"
-        >
-          邀请成员
-        </v-btn>
-      </div>
+  <ProjectPage :title="t('navigation.project.members')">
+    <template v-if="canLeave || canTransfer || canManage" #actions>
+      <v-btn v-if="canLeave" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">退出项目</v-btn>
+      <v-btn v-if="canTransfer" prepend-icon="mdi-account-arrow-right-outline" @click="transferOpen = true">
+        转让项目
+      </v-btn>
+      <v-btn v-if="canManage" prepend-icon="mdi-link-variant" @click="joinLinkOpen = true">
+        {{ t('work.joinLink.title') }}
+      </v-btn>
+      <v-btn
+        v-if="canManage"
+        color="primary"
+        variant="flat"
+        prepend-icon="mdi-account-plus-outline"
+        @click="inviteOpen = true"
+      >
+        邀请成员
+      </v-btn>
+    </template>
+    <ProjectJoinLinkDialog v-if="canManage" v-model="joinLinkOpen" :project-id="projectId" />
 
-      <ProjectJoinLinkDialog v-if="canManage" v-model="joinLinkOpen" :project-id="projectId" />
+    <v-text-field
+      v-if="store.members.length > 8"
+      v-model="query"
+      autocomplete="off"
+      density="compact"
+      variant="outlined"
+      hide-details
+      clearable
+      placeholder="搜名字或 handle"
+      prepend-inner-icon="mdi-magnify"
+      class="mb-5"
+    />
 
-      <p class="t-body c-muted mb-5" style="max-width: 640px">
-        {{ people.length }} 个人<span v-if="agents.length"> + {{ agents.length }} 个 AI 队友</span
-        >。点一个人打开他的主页，点右边的对话图标直接私聊<span v-if="!canManage">。改角色和移出成员由组长来做</span>
-      </p>
+    <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+      {{ error }}
+    </v-alert>
 
-      <v-text-field
-        v-if="store.members.length > 8"
-        v-model="query"
-        autocomplete="off"
-        density="compact"
-        variant="outlined"
-        hide-details
-        clearable
-        placeholder="搜名字或 handle"
-        prepend-inner-icon="mdi-magnify"
-        class="mb-5"
-      />
-
-      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
-        {{ error }}
-      </v-alert>
-
-      <div v-for="g in groups" :key="g.role" class="mb-6">
-        <div class="t-eyebrow mb-2">{{ g.title }} · {{ g.rows.length }}</div>
-        <v-card v-for="m in g.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
-          <div class="d-flex align-center pa-3" @click="openProfile(m)">
-            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
-            <div class="min-w-0">
-              <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">{{ m.name || m.user_handle }}</span>
-                <span v-if="m.user_handle === ownerHandle" class="chip-neutral">所有者</span>
-                <span v-else-if="m.user_handle === me" class="chip-neutral">我</span>
-              </div>
-              <div class="t-meta c-muted">@{{ m.user_handle }}</div>
-              <router-link
-                v-if="m.source === 'team' && m.team_handle"
-                :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
-                class="t-meta"
-                >来自小队 · 在小队中管理</router-link
-              >
+    <div v-for="g in groups" :key="g.role" class="mb-6">
+      <div class="t-eyebrow mb-2">{{ g.title }} · {{ g.rows.length }}</div>
+      <v-card v-for="m in g.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
+        <div class="d-flex align-center pa-3" @click="openProfile(m)">
+          <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
+          <div class="min-w-0">
+            <div class="d-flex align-center ga-2">
+              <span class="t-title text-truncate">{{ m.name || m.user_handle }}</span>
+              <span v-if="m.user_handle === ownerHandle" class="chip-neutral">所有者</span>
+              <span v-else-if="m.user_handle === me" class="chip-neutral">我</span>
             </div>
-            <v-spacer />
-            <span v-if="m.user_handle !== me" class="dm-slot">
-              <v-btn
-                variant="text"
-                size="small"
-                icon="mdi-message-outline"
-                aria-label="私聊"
-                title="私聊"
-                @click.stop="openDm(m)"
-              />
-              <span v-if="unreadWith(m.user_handle) > 0" class="dm-unread">
-                {{ countLabel(unreadWith(m.user_handle)) }}
-              </span>
-            </span>
-            <v-menu v-if="manageable(m)" location="bottom end">
-              <template #activator="{ props: menuProps }">
-                <v-btn
-                  v-bind="menuProps"
-                  variant="text"
-                  size="small"
-                  icon="mdi-dots-horizontal"
-                  aria-label="管理成员"
-                  :loading="busyHandle === m.user_handle"
-                  @click.stop
-                />
-              </template>
-              <v-list density="compact" nav>
-                <v-list-subheader class="t-eyebrow">角色</v-list-subheader>
-                <v-list-item
-                  v-for="r in ROLES"
-                  :key="r"
-                  :active="(m.role || 'member') === r"
-                  :disabled="(m.role || 'member') === r"
-                  @click="setRole(m, r)"
-                >
-                  <v-list-item-title class="t-body">设为{{ label(PROJECT_ROLE, r) }}</v-list-item-title>
-                </v-list-item>
-                <v-divider class="my-1" />
-                <v-list-item @click="removeTarget = m">
-                  <v-list-item-title class="t-body c-danger">移出项目</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
-          </div>
-        </v-card>
-      </div>
-
-      <div v-if="invitations.length" class="mb-6">
-        <div class="t-eyebrow mb-2">等待接受 · {{ invitations.length }}</div>
-        <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
-          <div class="d-flex align-center pa-3">
-            <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
-            <div class="min-w-0">
-              <div class="d-flex align-center ga-2">
-                <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
-                <span class="chip-neutral">{{ label(PROJECT_ROLE, inv.role) }}</span>
-              </div>
-              <div class="t-meta c-muted">{{ inv.inviter_handle }} 邀请 · 还没答复</div>
-            </div>
-            <v-spacer />
-            <v-btn v-if="canManage" variant="text" size="small" :loading="revoking === inv.id" @click="takeBack(inv)">
-              撤回
-            </v-btn>
-          </div>
-        </v-card>
-      </div>
-
-      <div v-if="joinRequests.length" class="mb-6">
-        <div class="t-eyebrow mb-2">申请加入 · {{ joinRequests.length }}</div>
-        <v-card v-for="req in joinRequests" :key="req.id" class="mb-2" variant="outlined">
-          <div class="d-flex align-center pa-3">
-            <UserAvatar
-              :name="req.name || req.requester_handle"
-              :avatar="req.avatar_id == null ? '' : getAvatarUrl(req.avatar_id)"
-              :size="36"
-              class="mr-3"
-            />
-            <div class="min-w-0">
-              <span class="t-title text-truncate">{{ req.name || req.requester_handle }}</span>
-              <div class="t-meta c-muted">@{{ req.requester_handle }} · 通过邀请链接申请</div>
-              <div v-if="req.message" class="t-body mt-1">{{ req.message }}</div>
-            </div>
-            <v-spacer />
-            <v-btn variant="text" size="small" :disabled="deciding === req.id" @click="decide(req, 'reject')">
-              拒绝
-            </v-btn>
-            <v-btn
-              color="primary"
-              variant="flat"
-              size="small"
-              class="ms-2"
-              :loading="deciding === req.id"
-              @click="decide(req, 'approve')"
+            <div class="t-meta c-muted">@{{ m.user_handle }}</div>
+            <router-link
+              v-if="m.source === 'team' && m.team_handle"
+              :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
+              class="t-meta"
+              >来自小队 · 在小队中管理</router-link
             >
-              批准
-            </v-btn>
           </div>
-        </v-card>
-      </div>
-
-      <div v-if="agents.length" class="mb-6">
-        <div class="t-eyebrow mb-2">AI 队友 · {{ agents.length }}</div>
-        <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
-          <div class="d-flex align-center pa-3">
-            <UserAvatar :name="a.display_name || a.handle" avatar="" :size="36" class="mr-3" />
-            <div class="min-w-0">
-              <div class="t-title text-truncate">
-                {{ a.display_name || a.handle }}
-                <span v-if="a.is_default" class="chip-neutral">默认</span>
-              </div>
-              <div class="t-meta c-muted">@{{ a.handle }}</div>
-            </div>
-            <v-spacer />
-            <span class="dm-slot">
-              <v-btn
-                variant="text"
-                size="small"
-                icon="mdi-message-outline"
-                aria-label="私聊"
-                title="私聊"
-                @click.stop="openAgentDm(a)"
-              />
-              <span v-if="unreadWith(agentDmKey(a.handle)) > 0" class="dm-unread">
-                {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
-              </span>
-            </span>
+          <v-spacer />
+          <span v-if="m.user_handle !== me" class="dm-slot">
             <v-btn
               variant="text"
+              color="on-surface-variant"
               size="small"
-              @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
-            >
-              设置
-            </v-btn>
-          </div>
-        </v-card>
-      </div>
+              icon="mdi-message-outline"
+              aria-label="私聊"
+              title="私聊"
+              @click.stop="openDm(m)"
+            />
+            <span v-if="unreadWith(m.user_handle) > 0" class="dm-unread">
+              {{ countLabel(unreadWith(m.user_handle)) }}
+            </span>
+          </span>
+          <v-menu v-if="manageable(m)" location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                variant="text"
+                color="on-surface-variant"
+                size="small"
+                icon="mdi-dots-horizontal"
+                aria-label="管理成员"
+                :loading="busyHandle === m.user_handle"
+                @click.stop
+              />
+            </template>
+            <v-list density="compact" nav>
+              <v-list-subheader class="t-eyebrow">角色</v-list-subheader>
+              <v-list-item
+                v-for="r in ROLES"
+                :key="r"
+                :active="(m.role || 'member') === r"
+                :disabled="(m.role || 'member') === r"
+                @click="setRole(m, r)"
+              >
+                <v-list-item-title class="t-body">设为{{ label(PROJECT_ROLE, r) }}</v-list-item-title>
+              </v-list-item>
+              <v-divider class="my-1" />
+              <v-list-item @click="removeTarget = m">
+                <v-list-item-title class="t-body c-danger">移出项目</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-menu>
+        </div>
+      </v-card>
+    </div>
 
-      <div v-if="store.members.length === 0" class="text-center py-10">
-        <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
-        <div class="t-body c-muted">还没有成员</div>
-      </div>
-    </v-container>
+    <div v-if="invitations.length" class="mb-6">
+      <div class="t-eyebrow mb-2">等待接受 · {{ invitations.length }}</div>
+      <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
+        <div class="d-flex align-center pa-3">
+          <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
+          <div class="min-w-0">
+            <div class="d-flex align-center ga-2">
+              <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
+              <span class="chip-neutral">{{ label(PROJECT_ROLE, inv.role) }}</span>
+            </div>
+            <div class="t-meta c-muted">{{ inv.inviter_handle }} 邀请 · 还没答复</div>
+          </div>
+          <v-spacer />
+          <v-btn
+            v-if="canManage"
+            variant="text"
+            color="on-surface-variant"
+            size="small"
+            :loading="revoking === inv.id"
+            @click="takeBack(inv)"
+          >
+            撤回
+          </v-btn>
+        </div>
+      </v-card>
+    </div>
+
+    <div v-if="joinRequests.length" class="mb-6">
+      <div class="t-eyebrow mb-2">申请加入 · {{ joinRequests.length }}</div>
+      <v-card v-for="req in joinRequests" :key="req.id" class="mb-2" variant="outlined">
+        <div class="d-flex align-center pa-3">
+          <UserAvatar
+            :name="req.name || req.requester_handle"
+            :avatar="req.avatar_id == null ? '' : getAvatarUrl(req.avatar_id)"
+            :size="36"
+            class="mr-3"
+          />
+          <div class="min-w-0">
+            <span class="t-title text-truncate">{{ req.name || req.requester_handle }}</span>
+            <div class="t-meta c-muted">@{{ req.requester_handle }} · 通过邀请链接申请</div>
+            <div v-if="req.message" class="t-body mt-1">{{ req.message }}</div>
+          </div>
+          <v-spacer />
+          <v-btn
+            variant="text"
+            color="on-surface-variant"
+            size="small"
+            :disabled="deciding === req.id"
+            @click="decide(req, 'reject')"
+          >
+            拒绝
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            size="small"
+            class="ms-2"
+            :loading="deciding === req.id"
+            @click="decide(req, 'approve')"
+          >
+            批准
+          </v-btn>
+        </div>
+      </v-card>
+    </div>
+
+    <div v-if="agents.length" class="mb-6">
+      <div class="t-eyebrow mb-2">AI 队友 · {{ agents.length }}</div>
+      <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
+        <div class="d-flex align-center pa-3">
+          <UserAvatar :name="a.display_name || a.handle" avatar="" :size="36" class="mr-3" />
+          <div class="min-w-0">
+            <div class="t-title text-truncate">
+              {{ a.display_name || a.handle }}
+              <span v-if="a.is_default" class="chip-neutral">默认</span>
+            </div>
+            <div class="t-meta c-muted">@{{ a.handle }}</div>
+          </div>
+          <v-spacer />
+          <span class="dm-slot">
+            <v-btn
+              variant="text"
+              color="on-surface-variant"
+              size="small"
+              icon="mdi-message-outline"
+              aria-label="私聊"
+              title="私聊"
+              @click.stop="openAgentDm(a)"
+            />
+            <span v-if="unreadWith(agentDmKey(a.handle)) > 0" class="dm-unread">
+              {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
+            </span>
+          </span>
+          <v-btn
+            variant="text"
+            color="on-surface-variant"
+            size="small"
+            @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
+          >
+            设置
+          </v-btn>
+        </div>
+      </v-card>
+    </div>
+
+    <div v-if="store.members.length === 0" class="text-center py-10">
+      <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
+      <div class="t-body c-muted">暂无成员</div>
+    </div>
 
     <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
       <v-card>
@@ -627,7 +623,7 @@ async function submitInvite() {
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="resetInvite">取消</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="resetInvite">取消</v-btn>
           <v-btn
             color="primary"
             variant="flat"
@@ -654,18 +650,15 @@ async function submitInvite() {
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="removeTarget = null">取消</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="removeTarget = null">取消</v-btn>
           <v-btn color="error" variant="flat" @click="confirmRemove">移出</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </div>
+  </ProjectPage>
 </template>
 
 <style scoped>
-.members-page {
-  background: var(--canvas);
-}
 .member-row {
   cursor: pointer;
 }

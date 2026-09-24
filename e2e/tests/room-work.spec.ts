@@ -74,10 +74,10 @@ test.describe('房间里派出去的活', () => {
     await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/running/);
 
     const view = page.locator('.board');
-    // 这一页只有一个标题，就是项目名：板是这一页的主体，不再另起一个「看板」的二级
-    // 标题，列头自己已经说明了它是什么。
-    await expect(view.locator('h1')).toBeVisible();
-    await expect(view.locator('h2')).toHaveCount(0);
+    // 这一页只有一个标题，写在和侧栏对齐的那条页头上：它说这一页是看板，项目名在
+    // 侧栏顶上。板里不再另起标题，列头自己已经说明了它是什么。
+    await expect(page.locator('.project-page__title')).toHaveText('看板');
+    await expect(view.locator('h1, h2')).toHaveCount(0);
     // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
     // 最右边那一列是「做出了什么」：三列任务从左到右是一条流水线，产物接在后面。
     await expect(view.locator('.board-col')).not.toHaveCount(0);

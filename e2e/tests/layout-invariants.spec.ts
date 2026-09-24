@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { api, login } from './helpers';
+import { api, login, openFirstProject } from './helpers';
 
 // 表单字段的几何不变量。
 //
@@ -412,4 +412,27 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
     expect(tracks).toBeGreaterThanOrEqual(4);
   });
+});
+
+// 侧栏顶上项目名那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底
+// 线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
+// 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
+// 查都看不见。
+test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page);
+  await openFirstProject(page);
+  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+  expect(projectPath).toBeTruthy();
+
+  for (const sub of ['running', 'members', 'docs/charter', 'library', 'settings', 'calendar']) {
+    await page.goto(`${projectPath}/${sub}`);
+    const head = page.locator('.project-page__head');
+    await expect(head).toBeVisible();
+    const [side, main] = await Promise.all([page.locator('.rail-header').boundingBox(), head.boundingBox()]);
+    expect(side, sub).not.toBeNull();
+    expect(main, sub).not.toBeNull();
+    expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);
+    expect(main!.height, `${sub} · height`).toBeCloseTo(side!.height, 0);
+  }
 });

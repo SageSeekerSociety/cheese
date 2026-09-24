@@ -7,7 +7,9 @@
     "board": "看板",
     "calendar": "日历",
     "library": "资料库",
-    "members": "成员"
+    "members": "成员",
+    "docs": "项目文档",
+    "settings": "项目设置"
   },
   "spaces": "题目板",
   "teams": "小队",

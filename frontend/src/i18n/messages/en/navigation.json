@@ -7,7 +7,9 @@
     "board": "Board",
     "calendar": "Calendar",
     "library": "Library",
-    "members": "Members"
+    "members": "Members",
+    "docs": "Project docs",
+    "settings": "Project settings"
   },
   "spaces": "Problem boards",
   "teams": "Teams",

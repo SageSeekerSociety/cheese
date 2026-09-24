@@ -5,7 +5,10 @@ import { computed } from 'vue'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
-import { getCalendar, getProject, listMilestones } from '../api'
+import { getCalendar, listMilestones } from '../api'
+
+import { t } from '@/i18n'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.
@@ -16,19 +19,12 @@ const props = defineProps<{ projectId: string }>()
 // 进过一次的日历，再进来第一帧就是上次那一屏，请求在背后跑（useCachedResource）。
 const { data, loading, error } = useCachedResource(
   () => `calendar:${props.projectId}`,
-  async (): Promise<{ projectName: string; upcoming: MilestoneFull[]; milestones: MilestoneFull[] }> => {
+  async (): Promise<{ upcoming: MilestoneFull[]; milestones: MilestoneFull[] }> => {
     const [cal, all] = await Promise.all([getCalendar(props.projectId), listMilestones(props.projectId)])
-    let projectName = ''
-    try {
-      projectName = (await getProject(props.projectId)).name
-    } catch {
-      projectName = ''
-    }
-    return { projectName, upcoming: cal.data, milestones: all.data }
+    return { upcoming: cal.data, milestones: all.data }
   }
 )
 
-const projectName = computed<string>(() => data.value?.projectName ?? '')
 const upcoming = computed<MilestoneFull[]>(() => data.value?.upcoming ?? [])
 const allMilestones = computed<MilestoneFull[]>(() => data.value?.milestones ?? [])
 const errorMessage = computed<string | null>(() => (error.value ? error.value.message || '加载日历失败' : null))
@@ -69,82 +65,72 @@ function countdownDotClass(d: string | null): string {
 </script>
 
 <template>
-  <div class="calendar-page fill-height overflow-y-auto">
-    <v-container class="py-6 page-container">
-      <div v-if="loading" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-      <v-alert v-else-if="errorMessage" type="error" density="comfortable">
-        {{ errorMessage }}
-      </v-alert>
+  <ProjectPage :title="t('navigation.project.calendar')">
+    <div v-if="loading" class="d-flex justify-center py-10">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
+    <v-alert v-else-if="errorMessage" type="error" density="comfortable">
+      {{ errorMessage }}
+    </v-alert>
 
-      <template v-else>
-        <div class="mb-6">
-          <div class="t-eyebrow mb-1">日历</div>
-          <h1 class="t-page-title">{{ projectName || '项目日历' }}</h1>
-        </div>
+    <template v-else>
+      <!-- Upcoming deadlines as a timeline -->
+      <v-card class="mb-6">
+        <v-card-title class="d-flex align-center ga-2 t-title pt-4">
+          <v-icon size="19" class="c-faint">mdi-calendar-clock</v-icon>
+          即将到来
+          <span v-if="upcoming.length" class="chip-neutral">{{ upcoming.length }}</span>
+        </v-card-title>
+        <v-card-text>
+          <div v-if="upcoming.length === 0" class="c-faint t-body py-2">暂无即将到来的里程碑</div>
+          <v-list v-else density="comfortable" class="py-0">
+            <v-list-item v-for="m in upcoming" :key="m.id" class="px-0">
+              <template #prepend>
+                <span class="status-dot me-3" :class="countdownDotClass(m.due_date)" />
+              </template>
+              <v-list-item-title style="font-weight: 500; color: var(--ink)">
+                {{ m.title }}
+              </v-list-item-title>
+              <v-list-item-subtitle class="c-muted"> 截止 {{ fmtDate(m.due_date) }} </v-list-item-subtitle>
+              <template #append>
+                <span
+                  class="d-inline-flex align-center ga-1"
+                  :class="countdownDotClass(m.due_date) === 'status-dot--danger' ? 'c-danger' : 'c-muted'"
+                  style="font-size: 12.5px; font-family: var(--font-mono)"
+                >
+                  {{ countdownLabel(m.due_date) }}
+                </span>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+      </v-card>
 
-        <!-- Upcoming deadlines as a timeline -->
-        <v-card class="mb-6">
-          <v-card-title class="d-flex align-center ga-2 t-title pt-4">
-            <v-icon size="19" class="c-faint">mdi-calendar-clock</v-icon>
-            即将到来
-            <span v-if="upcoming.length" class="chip-neutral">{{ upcoming.length }}</span>
-          </v-card-title>
-          <v-card-text>
-            <div v-if="upcoming.length === 0" class="c-faint t-body py-2">暂无即将到来的里程碑</div>
-            <v-list v-else density="comfortable" class="py-0">
-              <v-list-item v-for="m in upcoming" :key="m.id" class="px-0">
-                <template #prepend>
-                  <span class="status-dot me-3" :class="countdownDotClass(m.due_date)" />
-                </template>
-                <v-list-item-title style="font-weight: 500; color: var(--ink)">
-                  {{ m.title }}
-                </v-list-item-title>
-                <v-list-item-subtitle class="c-muted"> 截止 {{ fmtDate(m.due_date) }} </v-list-item-subtitle>
-                <template #append>
-                  <span
-                    class="d-inline-flex align-center ga-1"
-                    :class="countdownDotClass(m.due_date) === 'status-dot--danger' ? 'c-danger' : 'c-muted'"
-                    style="font-size: 12.5px; font-family: var(--font-mono)"
-                  >
-                    {{ countdownLabel(m.due_date) }}
-                  </span>
-                </template>
-              </v-list-item>
-            </v-list>
-          </v-card-text>
-        </v-card>
-
-        <!-- Done milestones (faded) -->
-        <v-card v-if="done.length">
-          <v-card-title class="d-flex align-center ga-2 t-title pt-4">
-            <v-icon size="19" class="c-faint">mdi-check-circle-outline</v-icon>
-            已完成
-          </v-card-title>
-          <v-card-text>
-            <v-list density="compact" class="py-0 done-list">
-              <v-list-item v-for="m in done" :key="m.id" class="px-0">
-                <template #prepend>
-                  <span class="status-dot status-dot--ok me-3" />
-                </template>
-                <v-list-item-title>{{ m.title }}</v-list-item-title>
-                <template #append>
-                  <span class="t-meta">{{ fmtDate(m.due_date) }}</span>
-                </template>
-              </v-list-item>
-            </v-list>
-          </v-card-text>
-        </v-card>
-      </template>
-    </v-container>
-  </div>
+      <!-- Done milestones (faded) -->
+      <v-card v-if="done.length">
+        <v-card-title class="d-flex align-center ga-2 t-title pt-4">
+          <v-icon size="19" class="c-faint">mdi-check-circle-outline</v-icon>
+          已完成
+        </v-card-title>
+        <v-card-text>
+          <v-list density="compact" class="py-0 done-list">
+            <v-list-item v-for="m in done" :key="m.id" class="px-0">
+              <template #prepend>
+                <span class="status-dot status-dot--ok me-3" />
+              </template>
+              <v-list-item-title>{{ m.title }}</v-list-item-title>
+              <template #append>
+                <span class="t-meta">{{ fmtDate(m.due_date) }}</span>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+      </v-card>
+    </template>
+  </ProjectPage>
 </template>
 
 <style scoped>
-.calendar-page {
-  background: var(--canvas);
-}
 .done-list {
   opacity: 0.55;
 }
