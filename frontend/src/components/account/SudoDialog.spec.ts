@@ -6,7 +6,7 @@ import { startAuthentication } from '@simplewebauthn/browser'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { confirmIdentity, SudoCancelledError } from '@/utils/sudo'
+import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import SudoDialog from './SudoDialog.vue'
 
@@ -53,17 +53,18 @@ function accountWith(methods: { passkey: boolean; twoFactor: boolean }) {
   } as never)
 }
 
-/** Mount the dialog the way the app does, then ask it for a confirmation. */
-async function ask(purpose: Parameters<typeof confirmIdentity>[0] = 'password:change') {
+/** Mount the dialog the way the app does, then run an operation behind it. */
+async function ask(purpose: Parameters<typeof withSudo>[0] = 'password:change') {
   render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
+  const operation = vi.fn(async (ticket: string) => `done with ${ticket}`)
   const outcome = { settled: false }
-  const ticket = confirmIdentity(purpose)
-  ticket.then(
+  const result = withSudo(purpose, operation)
+  result.then(
     () => (outcome.settled = true),
     () => (outcome.settled = true)
   )
   await screen.findByRole('heading', { name: 'Confirm it’s you' })
-  return { ticket, outcome }
+  return { result, operation, outcome }
 }
 
 // happy-dom does not submit a form from a click on its submit button.
@@ -132,19 +133,21 @@ describe('moving between methods', () => {
 })
 
 describe('confirming', () => {
-  it('hands over the ticket the password earns for this purpose', async () => {
+  it('runs the operation with the ticket the password earns, and returns its result', async () => {
     accountWith({ passkey: false, twoFactor: false })
-    const { ticket } = await ask('password:change')
+    const { result, operation } = await ask('password:change')
 
     await fireEvent.update(await screen.findByLabelText('Password'), 'correct horse!1')
+    expect(operation).not.toHaveBeenCalled()
     await submit(screen.getByLabelText('Password'))
 
-    await expect(ticket).resolves.toBe('ticket-1')
+    await expect(result).resolves.toBe('done with ticket-1')
+    expect(operation).toHaveBeenCalledTimes(1)
     expect(UserApi.verifySudoPassword).toHaveBeenCalledWith('correct horse!1', 'password:change')
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull())
   })
 
-  it('hands over the ticket a passkey earns for this purpose', async () => {
+  it('runs the operation with the ticket a passkey earns', async () => {
     accountWith({ passkey: true, twoFactor: false })
     vi.mocked(UserApi.getPasskeyAuthenticationOptions).mockResolvedValue({
       data: { options: { challenge: 'c', rpId: 'example.test' } },
@@ -153,11 +156,11 @@ describe('confirming', () => {
     vi.mocked(UserApi.verifySudoPasskey).mockResolvedValue({
       data: { verified: true, sudoTicket: 'ticket-3' },
     } as never)
-    const { ticket } = await ask('passkey:delete')
+    const { result } = await ask('passkey:delete')
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Confirm with a passkey' }))
 
-    await expect(ticket).resolves.toBe('ticket-3')
+    await expect(result).resolves.toBe('done with ticket-3')
     expect(UserApi.verifySudoPasskey).toHaveBeenCalledWith({ id: 'assertion' }, 'passkey:delete')
   })
 
@@ -177,7 +180,7 @@ describe('confirming', () => {
 
   it('submits the authenticator code as soon as the sixth digit is in', async () => {
     accountWith({ passkey: false, twoFactor: true })
-    const { ticket } = await ask('2fa:disable')
+    const { result } = await ask('2fa:disable')
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Enter a code from your authenticator app' }))
     const firstDigit = await waitFor(() => {
@@ -187,7 +190,7 @@ describe('confirming', () => {
     })
     await fireEvent.paste(firstDigit, { clipboardData: { getData: () => '123456' } })
 
-    await expect(ticket).resolves.toBe('ticket-2')
+    await expect(result).resolves.toBe('done with ticket-2')
     expect(UserApi.verifySudoTOTP).toHaveBeenCalledWith('123456', '2fa:disable')
   })
 
@@ -215,23 +218,25 @@ describe('confirming', () => {
 })
 
 describe('backing out', () => {
-  it('ends the request as cancelled without verifying anything', async () => {
+  it('does not run the operation, and tells the caller it was cancelled', async () => {
     accountWith({ passkey: false, twoFactor: false })
-    const { ticket } = await ask()
+    const { result, operation } = await ask()
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
 
-    await expect(ticket).rejects.toBeInstanceOf(SudoCancelledError)
+    await expect(result).rejects.toBeInstanceOf(SudoCancelledError)
+    expect(operation).not.toHaveBeenCalled()
     expect(UserApi.verifySudoPassword).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull())
   })
 
   it('cancels on Escape', async () => {
     accountWith({ passkey: false, twoFactor: false })
-    const { ticket } = await ask()
+    const { result, operation } = await ask()
 
     await fireEvent.keyDown(await screen.findByLabelText('Password'), { key: 'Escape' })
 
-    await expect(ticket).rejects.toBeInstanceOf(SudoCancelledError)
+    await expect(result).rejects.toBeInstanceOf(SudoCancelledError)
+    expect(operation).not.toHaveBeenCalled()
   })
 })

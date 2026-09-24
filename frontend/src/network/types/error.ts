@@ -23,15 +23,6 @@ export class ServerError extends BusinessError {
   }
 }
 
-export class SudoRequiredError extends BusinessError {
-  constructor(message: string = 'Sudo verification required') {
-    super(message, 403, {
-      name: 'SudoRequiredError',
-      message,
-    })
-  }
-}
-
 export class TeamLockedError extends Error {
   code: number
   data?: {
