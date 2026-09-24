@@ -1,37 +1,20 @@
-"""mitmproxy addon: meter every Claude turn, cap it, and get it authenticated.
+"""mitmproxy addon: meter every Claude turn, cap it, and route it.
 
-This sits between a caller's Claude Code and the upstream. The caller MUST NOT
-hold a credential that is spendable on its own (hard requirement: a machine that
-leaks an auth key is a machine that leaks the subscription). There are two ways
-to satisfy that, and this addon serves both:
+This sits between a caller's Claude Code and the upstream. The caller is a
+session on the platform's own central session host, logged in with that host's
+Claude credential; the request's Authorization is that credential and goes to
+Anthropic untouched. This proxy holds no model credential of its own.
 
-  PASS THROUGH — the caller is an enrolled machine carrying a ccproxy ticket
-    issued to its own identity. That ticket is not spendable: ccproxy swaps it
-    for the real credential at its own edge. So the bearer is forwarded
-    untouched and this host holds nothing. It works only because the upstream
-    hop is authenticated as that same machine (http_connect_upstream) — ccproxy
-    scopes the swap to the authenticated connection.
-
-  SWAP — nothing places the caller on a machine identity (the local container
-    path; a machine enrolled before identities were recorded). The caller ships
-    a scoped cheese token, enough to make Claude Code believe it is logged in
-    and to authenticate "bill this project", and this proxy rewrites the
-    Authorization header to the credential the HOST holds. That credential never
-    touches the caller's disk or environment.
-
-That placement also makes this the only point that can:
+That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
     skips LiteLLM — no per-call key to meter, and re-originating from our own
     client would change what the provider sees),
   - enforce a cap BEFORE forwarding, so an exhausted budget cannot overspend:
     per-project via the backend's /llm/admission (#218), plus the rolling
     token window as the deployment-wide backstop,
-  - hold, for the SWAP path only, the one durable credential those callers never
-    see: a non-refreshing one-year `claude setup-token` (or a stable ccproxy
-    ticket). There is no refresh loop and no daemon — a setup-token does not
-    rotate — so no two callers can race a rotation and kill it. Rotation is a
-    planned, roughly annual manual swap of the token file, not a background
-    process.
+  - send a project that admission places on the API-key pool to LiteLLM
+    instead, with the project's virtual key in place of the caller's
+    credential, which must never reach the gateway.
 
 Attribution comes from the VERIFIED claims of the caller's scoped token (#198)
 when CHEESE_SCOPED_SECRET is set; the legacy x-cheese-attr header is honored
@@ -49,14 +32,12 @@ listener demands the scoped token as Proxy-Authorization before it relays
 anything and MITMs only the Anthropic names; either way every request that
 reaches the `requestheaders` hook below is handled identically.
 
-Config (env): CHEESE_USAGE_LOG, CHEESE_INJECT_TOKEN, CHEESE_TOKEN_CAP,
-CHEESE_CAP_WINDOW_S, CHEESE_UPSTREAM_VIA, CHEESE_SCOPED_SECRET,
-CHEESE_ALLOW_HEADER_ATTR, CHEESE_ADMISSION_URL, CHEESE_ADMISSION_CACHE_S,
-CHEESE_UPSTREAM_AUTH.
+Config (env): CHEESE_USAGE_LOG, CHEESE_TOKEN_CAP, CHEESE_CAP_WINDOW_S,
+CHEESE_SCOPED_SECRET, CHEESE_ALLOW_HEADER_ATTR, CHEESE_ADMISSION_URL,
+CHEESE_ADMISSION_CACHE_S, CHEESE_GATEWAY_BASE.
 """
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -74,6 +55,7 @@ from cheese_billing_core import (  # noqa: E402
     BINDING,
     GATEWAY,
     MODEL_REWRITE_LIMIT,
+    NO_LOGIN_PLACEHOLDER,
     TELEMETRY_HOSTS,
     AdmissionGate,
     Meter,
@@ -93,17 +75,6 @@ USAGE_LOG = Path(os.environ.get("CHEESE_USAGE_LOG", "/var/log/cheese/usage.jsonl
 # 0 disables the backstop cap. Set per deployment from the subscription's ceiling.
 TOKEN_CAP = int(os.environ.get("CHEESE_TOKEN_CAP", "0"))
 CAP_WINDOW_S = int(os.environ.get("CHEESE_CAP_WINDOW_S", str(5 * 3600)))
-# File holding the REAL durable credential (just the token string, no JSON): a
-# non-refreshing one-year `claude setup-token`, or the stable ccproxy fake
-# token. Nothing writes it at runtime — a setup-token does not rotate, so there
-# is no refresh loop and no daemon; rotation is a planned manual swap. The addon
-# re-reads the file on every request, so a manual atomic replace inside the
-# mounted secrets dir is picked up without a proxy restart. Absent/empty = fail
-# closed with a local 503 (see request()), never a silent forward of the
-# sandbox's own scoped token upstream.
-INJECT_TOKEN_FILE = Path(
-    os.environ.get("CHEESE_INJECT_TOKEN", "/etc/cheese/secrets/inject.token")
-)
 # Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token.
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
 ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
@@ -118,27 +89,8 @@ RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
 RC_EXTRA_HOSTS = frozenset({"claude.ai", "cdn.growthbook.io"}) | TELEMETRY_HOSTS
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
-# Route the upstream through the EXPLICIT ccproxy (m161): measured, the OAuth
-# token is only accepted on that path — going direct to api.anthropic.com (the
-# ghg transparent layer) returns "OAuth access token is invalid", while the same
-# token through m161 gets a real request_id. reverse mode does not honour
-# HTTPS_PROXY for its upstream, so the route is set per-flow via server_conn.via.
-UPSTREAM_VIA = os.environ.get("CHEESE_UPSTREAM_VIA", "")  # "host:port"
-
-# Which ccproxy identity to authenticate that hop as, `user:password`. This used
-# to be mitmdump's own --upstream-auth, which stamps ONE identity onto every
-# upstream connection. It cannot stay global: ccproxy scopes its fake->real
-# ticket swap to the authenticated connection, so a machine's own ticket is only
-# honoured over that machine's identity (measured 2026-08-14 — m516's ticket over
-# an m161 connection returns 401 with no request_id, the same ticket over m516's
-# own connection reaches Anthropic). The per-request identity therefore comes
-# from the admission verdict, and this env is only the fallback for traffic the
-# control plane cannot place: machines enrolled before the identity was recorded,
-# and the local container path.
-UPSTREAM_AUTH = os.environ.get("CHEESE_UPSTREAM_AUTH", "")  # "user:password"
-
 # Where the API-key pool lives (LiteLLM). A project whose supply decision says
-# `gateway` is rewritten to this base instead of going out through ccproxy —
+# `gateway` is rewritten to this base instead of going out to Anthropic —
 # same interception point, different destination (#243). Empty = this
 # deployment has no API-key pool, and such a project is refused rather than
 # silently served from the subscription it did not ask for.
@@ -149,22 +101,14 @@ ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
 
 if not ADMISSION_URL:
     # Said once, loudly, at load: an unset env var produces no error anywhere
-    # downstream, and both things it switches off are invisible from outside —
-    # the budget never refuses, and no enrolled machine is ever placed on its
-    # own identity. A deployment that means it can read this line and move on.
+    # downstream, and what it switches off is invisible from outside — the
+    # budget never refuses, and no project is ever routed to the API-key pool.
+    # A deployment that means it can read this line and move on.
     logger.warning(
         "CHEESE_ADMISSION_URL is unset: per-project budgets are NOT enforced "
-        "(only the rolling token cap), and no enrolled machine can be placed on "
-        "its own ccproxy identity — every such turn will be refused instead of "
-        "falling back to the platform credential."
+        "(only the rolling token cap), and every request goes to the "
+        "subscription."
     )
-
-# Which identity each client connection's traffic goes out as, keyed by the
-# client connection's id. Two hooks have to agree and neither can tell the other
-# directly: `request` learns the identity from the admission verdict, while the
-# upstream CONNECT is a DIFFERENT flow raised later, when the lazy server
-# connection is finally opened. The client connection is what they share.
-_UPSTREAM_BY_CLIENT: dict[str, str] = {}
 
 # 每个 (project, topic) 的主对话最近一次被改写前体里的 model —— CC 给这个
 # 会话起分身时回显的就是它。推迟路径拿它认「继承」（见 `_write_bound_model`
@@ -173,28 +117,12 @@ PARENT_MODEL: dict[tuple[str, str], str] = {}
 _PARENT_MODEL_CAP = 10000
 
 # What each client connection PROVED at CONNECT time: (scoped token, claims).
-# The pass-through path needs this because its two halves otherwise contradict
-# each other — relaying a machine's own ccproxy ticket means the request Bearer
-# is that ticket, while attribution wants a scoped cheese token in the very same
-# header. Only one can be there. The scoped token is not missing though: the
-# tunnel helper stamps it as the CONNECT's proxy password, which http_connect
-# already verifies to open the tunnel at all. Keeping the verified result turns
-# that check into a second source of attribution instead of a fact thrown away.
+# The request's Bearer is the caller's Claude credential, so attribution cannot
+# come from it. The scoped token is not missing though: the tunnel helper
+# stamps it as the CONNECT's proxy password, which http_connect already
+# verifies to open the tunnel at all. Keeping the verified result turns that
+# check into the source of attribution instead of a fact thrown away.
 _SCOPED_BY_CLIENT: dict[str, tuple[str, dict]] = {}
-
-
-def _real_token() -> str:
-    try:
-        return INJECT_TOKEN_FILE.read_text().strip()
-    except OSError:
-        return ""
-
-
-def _via() -> tuple[str, tuple[str, int]] | None:
-    if not UPSTREAM_VIA:
-        return None
-    host, _, port = UPSTREAM_VIA.rpartition(":")
-    return ("http", (host, int(port)))
 
 
 def _caller_bearer(flow: http.HTTPFlow) -> str:
@@ -228,85 +156,61 @@ def _topic_within(flow: http.HTTPFlow, project: str, claims: dict) -> str:
     return str(claims.get("t") or "")
 
 
-def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str, bool]:
-    """(project_id, topic_id, scoped_token, carries_own_credential) for this
-    request.
+def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str]:
+    """(project_id, topic_id, scoped_token) for this request.
 
     Verified claims first; the spoofable header only where explicitly allowed.
     Empty project = unattributable (recorded as such; refused separately when
     scoped auth is required).
 
-    Two places carry verified claims, and the second is not a fallback for a
-    weaker caller — it is the ONLY one an enrolled machine can use. Such a
-    caller's Bearer is its own ccproxy ticket by design (that is what
-    pass-through relays), so its scoped token can only be the one it proved when
-    it opened the tunnel.
+    Two places carry verified claims. A session's Bearer is its Claude
+    credential, so its scoped token is the one it proved when it opened the
+    tunnel; a Bearer that is itself a scoped token is honoured too.
 
     The third element is what authenticates the admission call, so it must be
     the scoped token and not merely whatever was in the Authorization header —
-    handing admission a ccproxy ticket 401s, and the proxy fails OPEN on
+    handing admission a Claude credential 401s, and the proxy fails OPEN on
     admission errors, which would leave the budget brake silently not braking.
-
-    The fourth element says the caller PUT a credential of its own in the
-    Authorization header — it sent a bearer, and that bearer is not a scoped
-    cheese token. That is the one header the platform's credential must never
-    overwrite (see request()).
-
-    An ABSENT bearer is deliberately not that. Claude Code calls some endpoints
-    (`/api/event_logging/v2/batch` among them) with no Authorization at all, and
-    treating "no credential" as "someone else's credential" refused telemetry
-    for every caller on the CONNECT listener whose project has no machine —
-    observed on dev the moment this shipped, as a burst of 503s from a project
-    that owns no machine at all.
     """
     bearer = _caller_bearer(flow)
     if SCOPED_SECRET:
         claims = verify_scoped_token(bearer, SCOPED_SECRET)
         if claims:
-            return str(claims.get("p") or ""), str(claims.get("t") or ""), bearer, False
+            return str(claims.get("p") or ""), str(claims.get("t") or ""), bearer
         pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
         if pinned:
             token, connect_claims = pinned
             project = str(connect_claims.get("p") or "")
-            return (
-                project,
-                _topic_within(flow, project, connect_claims),
-                token,
-                bool(bearer),
-            )
+            return project, _topic_within(flow, project, connect_claims), token
     if ALLOW_HEADER_ATTR:
         attr = flow.request.headers.get(X_ATTR_HEADER, "")
         project, _, topic = attr.partition("/")
-        return project, topic, bearer, False
-    return "", "", bearer, False
+        return project, topic, bearer
+    return "", "", bearer
 
 
 def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
-    """Send this request to the API-key pool (LiteLLM) instead of ccproxy.
+    """Send this request to the API-key pool (LiteLLM) instead of Anthropic.
 
     Returns False when the deployment has no gateway configured or the control
     plane could not supply the project's virtual key — the caller refuses in
     that case. Serving such a request from the subscription instead would bill
     a pool the project did not choose, which is the exact confusion this whole
     routing decision exists to remove.
-
-    The upstream hop is direct: `via` is cleared because ccproxy's egress is
-    only needed for Anthropic, and sending Zhipu/DeepSeek traffic through it
-    would route domestic providers out through an overseas exit for no reason.
     """
     if not GATEWAY_BASE or not key:
         return False
     parsed = urlparse(GATEWAY_BASE)
     if not parsed.hostname:
         return False
-    flow.server_conn.via = None
     flow.request.scheme = parsed.scheme or "http"
     flow.request.host = parsed.hostname
     flow.request.port = parsed.port or (443 if flow.request.scheme == "https" else 80)
     flow.request.headers["host"] = parsed.netloc
-    # LiteLLM authenticates with the project's virtual key; the subscription
-    # credential must NOT ride along (x-api-key would also override the bearer
-    # downstream, which is how a swapped credential silently 401s).
+    # LiteLLM authenticates with the project's virtual key. The caller's own
+    # Claude credential is in this header and must NOT ride along to the
+    # gateway, where it would sit in another service's reach and logs;
+    # x-api-key would also override the bearer downstream.
     flow.request.headers["authorization"] = f"Bearer {key}"
     flow.request.headers.pop("x-api-key", None)
     # LiteLLM records API spend; the subscription ledger must not charge it again.
@@ -465,9 +369,9 @@ def http_connect(flow: http.HTTPFlow) -> None:
         else None
     )
     if claims:
-        # Kept, not discarded: for an enrolled machine this is the only scoped
-        # token on the whole connection — its request Bearer is the ccproxy
-        # ticket that pass-through exists to relay. See _attribution.
+        # Kept, not discarded: this is the only scoped token on the whole
+        # connection — the request Bearer is the session's Claude credential.
+        # See _attribution.
         _SCOPED_BY_CLIENT[getattr(flow.client_conn, "id", "")] = (password, claims)
         return
     flow.response = http.Response.make(
@@ -477,32 +381,11 @@ def http_connect(flow: http.HTTPFlow) -> None:
     )
 
 
-def http_connect_upstream(flow: http.HTTPFlow) -> None:
-    """Authenticate the ccproxy hop as the MACHINE whose traffic this carries.
-
-    mitmproxy's own upstream_auth addon does this from a single --upstream-auth
-    option; that option is deliberately NOT passed any more, so this is the only
-    writer of the header and there is no ordering race between two addons over
-    the same value.
-
-    Falls back to the deployment-wide identity for any connection the control
-    plane could not place. That fallback is not merely a default: the request
-    hook only forwards a caller's own ticket when it HAS a per-machine identity,
-    and swaps in the platform credential otherwise — so the two always agree
-    about which identity the ticket belongs to.
-    """
-    auth = _UPSTREAM_BY_CLIENT.get(getattr(flow.client_conn, "id", "")) or UPSTREAM_AUTH
-    if auth:
-        encoded = base64.b64encode(auth.encode()).decode()
-        flow.request.headers["Proxy-Authorization"] = f"Basic {encoded}"
-
-
 def client_disconnected(client) -> None:
     """A long-lived proxy must not accumulate one entry per connection ever
-    made; neither the identity nor the proven project outlives the connection
-    that established it — and a recycled connection id must not inherit the
-    previous caller's project."""
-    _UPSTREAM_BY_CLIENT.pop(getattr(client, "id", ""), None)
+    made; the proven project does not outlive the connection that established
+    it — and a recycled connection id must not inherit the previous caller's
+    project."""
     _SCOPED_BY_CLIENT.pop(getattr(client, "id", ""), None)
 
 
@@ -564,14 +447,13 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
         # The RC bridge flags describe a transport this session has only if its
         # token says so. Answering them on is what makes Claude Code open
         # `/v1/code/…`, and for a session with no RC claim `_rc_route` has
-        # nowhere to send those — they would go upstream on the platform's
-        # credential, carrying control-session identifiers. Off is the honest
+        # nowhere to send those — they would go upstream on the session's
+        # Claude credential, carrying control-session identifiers. Off is the honest
         # answer, and it is the same one an unflagged session gets today.
         rc=bool(claims.get("rc") and claims.get("p") and claims.get("t")),
     )
     if answer is None:
         return False
-    flow.server_conn.via = None
     flow.request.stream = False
     flow.response = http.Response.make(
         answer.status, answer.body, {"Content-Type": "application/json"}
@@ -606,12 +488,11 @@ def _rc_route(flow: http.HTTPFlow, token: str, claims: dict | None) -> bool:
         _refuse(flow, 503, "api_error", "Cheese RC backend is not configured")
         return True
     parsed = urlparse(RC_BASE)
-    flow.server_conn.via = None
     flow.request.scheme = parsed.scheme
     flow.request.host = parsed.hostname
     flow.request.port = parsed.port or (443 if parsed.scheme == "https" else 80)
     flow.request.path = parsed.path.rstrip("/") + flow.request.path
-    # Strip provider credentials even when the caller carries a ccproxy ticket.
+    # Strip the caller's Claude credential: RC goes to our own backend.
     for name in (
         "authorization",
         "x-api-key",
@@ -655,11 +536,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # refusal and a streamed body cannot both stand, and that is where the flag
     # is taken back.
 
-    # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
-    # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
-    # interactive Claude Code's login/refresh also gets the real token injected.
-    # Reverse mode would pin every request to api.anthropic.com; instead forward
-    # each to the host it was actually for, read from the TLS SNI.
+    # Multi-host by SNI: api.anthropic.com AND the login hosts
+    # (console.anthropic.com, platform.claude.com) arrive here, the latter
+    # carrying the session's own token refresh. Reverse mode would pin every
+    # request to api.anthropic.com; instead forward each to the host it was
+    # actually for, read from the TLS SNI.
     sni = getattr(flow.client_conn, "sni", None)
     if sni:
         flow.request.host = sni
@@ -679,12 +560,12 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         flow.request.headers["host"] = sni
 
     # Only the Anthropic names are served, and only over TLS the proxy
-    # terminated. This request handler injects the REAL credential below — so a
-    # caller naming any other host (an arbitrary SNI on the reverse listener, a
-    # plain-HTTP proxy request on the CONNECT one) must be refused, not
-    # forwarded: forwarding would hand the subscription token to whatever host
-    # the caller chose. Non-Anthropic HTTPS through the CONNECT listener never
-    # reaches here (tls_clienthello tunnels it raw).
+    # terminated. A caller naming any other host (an arbitrary SNI on the
+    # reverse listener, a plain-HTTP proxy request on the CONNECT one) is
+    # refused, not forwarded: this proxy relays Claude credentials and meters
+    # Anthropic traffic, and is no general-purpose relay. Non-Anthropic HTTPS
+    # through the CONNECT listener never reaches here (tls_clienthello tunnels
+    # it raw).
     if flow.request.host not in ANTHROPIC_HOSTS or not flow.client_conn.tls_established:
         _refuse(
             flow,
@@ -701,13 +582,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # error in mitmproxy, not a harmless contradiction.
     flow.request.stream = True
 
-    via = _via()
-    if via is not None:
-        flow.server_conn.via = via
-
-    # Attribution BEFORE anything else: the caller's own Bearer is the scoped
-    # token.
-    project_id, topic_id, bearer, carries_own_credential = _attribution(flow)
+    # Attribution BEFORE anything else.
+    project_id, topic_id, bearer = _attribution(flow)
     flow.metadata["cheese_attr"] = (project_id, topic_id)
 
     is_messages = "/v1/messages" in flow.request.path
@@ -746,12 +622,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         declared = flow.request.headers.get("content-length", "")
         if declared.isdigit() and int(declared) <= DEFER_BODY_LIMIT:
             flow.request.stream = False
-            flow.metadata["cheese_deferred"] = (
-                project_id,
-                topic_id,
-                bearer,
-                carries_own_credential,
-            )
+            flow.metadata["cheese_deferred"] = (project_id, topic_id, bearer)
             return
 
     verdict = None
@@ -771,7 +642,6 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         is_messages=is_messages,
         project_id=project_id,
         bearer=bearer,
-        carries_own_credential=carries_own_credential,
         keep_haiku=not is_subagent,
     )
 
@@ -781,13 +651,7 @@ async def _admit(
 ):
     """One admission call, off the event loop and timed.
 
-    Asked for EVERY request, not only /v1/messages. The upstream connection is
-    opened by whichever request comes first, and Claude Code's startup
-    api/oauth/profile check beats the first turn to it — so the identity that
-    connection authenticates as has to be settled by then, or the turn's own
-    ticket goes out over the wrong one. Cheap: verdicts are cached per
-    (project, topic) — the topic is part of the answer, not just of the
-    question, because the identity it resolves belongs to that topic's machine.
+    Cheap: verdicts are cached per (project, topic).
     """
     # Off-loop: urllib blocks, and one slow admission call must not stall
     # every other flow through the proxy.
@@ -836,7 +700,7 @@ async def request(flow: http.HTTPFlow) -> None:
     deferred = flow.metadata.get("cheese_deferred")
     if not deferred:
         return
-    project_id, topic_id, bearer, carries_own_credential = deferred
+    project_id, topic_id, bearer = deferred
     requested = requested_model_of(flow.request.content or b"")
     if requested and is_haiku_name(requested):
         # CLI 自己的后台请求类(会话标题、路径建议),不是主 agent 的指定:照
@@ -865,7 +729,6 @@ async def request(flow: http.HTTPFlow) -> None:
         is_messages=True,
         project_id=project_id,
         bearer=bearer,
-        carries_own_credential=carries_own_credential,
         keep_haiku=False,
         buffered=True,
     )
@@ -878,7 +741,6 @@ def _route(
     is_messages,
     project_id,
     bearer,
-    carries_own_credential,
     keep_haiku,
     buffered=False,
 ):
@@ -900,8 +762,8 @@ def _route(
                 return
             # Supply decision (#243): the same answer says WHERE this project's
             # traffic goes. The subscription is the default and keeps every
-            # step below (ccproxy egress, the rolling cap); a gateway project
-            # leaves here and none of it applies.
+            # step below (the rolling cap); a gateway project leaves here and
+            # none of it applies.
             if verdict.pool == GATEWAY:
                 if not _route_to_gateway(flow, verdict.key or ""):
                     _refuse(
@@ -918,6 +780,20 @@ def _route(
                 else:
                     _write_bound_model(flow, verdict.model)
                 return
+
+    # Everything from here goes to Anthropic on the session's own credential.
+    if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER:
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            "cheese: the session host has no Claude login, so this project's "
+            "subscription model cannot be served; an operator has to log the "
+            "host in (or give it a setup-token)",
+        )
+        return
+
+    if is_messages:
         if METER.would_exceed(TOKEN_CAP):
             used = METER.used()
             _refuse(
@@ -936,101 +812,8 @@ def _route(
             else:
                 _write_bound_model(flow, verdict.model, keep_haiku=keep_haiku)
 
-    # A stale x-api-key would override whatever bearer goes upstream, on either
-    # path below — so it is dropped before the branch, not inside one.
+    # A stale x-api-key would override the session's bearer upstream.
     flow.request.headers.pop("x-api-key", None)
-
-    # PASS THROUGH. The caller is a machine whose own ccproxy ticket we can
-    # relay, because http_connect_upstream will authenticate this connection as
-    # that same machine. Its ticket is not a credential we could spend anyway —
-    # ccproxy swaps it for the real one at its own edge — so the platform holds
-    # no model credential for this path at all.
-    if verdict is not None and verdict.upstream:
-        _UPSTREAM_BY_CLIENT[getattr(flow.client_conn, "id", "")] = verdict.upstream
-        return
-
-    # Reaching here with a caller that brought its OWN credential means the
-    # control plane could not place it, and the swap below would replace that
-    # caller's ticket with the platform's — spending the wrong account, and
-    # reporting it as an auth failure that reads like the caller's own.
-    #
-    # This is the failure that cost a day (2026-08-15): the box had no
-    # CHEESE_ADMISSION_URL, so no verdict ever carried an identity, so every
-    # enrolled machine silently fell back to the platform credential and every
-    # turn died with an upstream "OAuth access token has been revoked" naming a
-    # token the machine never held. Nothing anywhere said "admission is not
-    # configured" — an unset env var looks exactly like a working one. Refusing
-    # here turns that into one line that names the missing piece.
-    if carries_own_credential:
-        if verdict is not None and not verdict.allow:
-            # A refusal also produces no identity (admission only resolves one
-            # for a turn it is allowing), so it would otherwise be reported as
-            # the misconfiguration below — pointing whoever reads it at the
-            # box's env instead of at the project's balance or its card.
-            _refuse_verdict(flow, verdict)
-            return
-        # Which of the three it was, on the box, at the moment it happened. The
-        # refusal body has to name all three because the caller cannot see the
-        # deployment; the operator can, and guessing between them is what turned
-        # this into a day. Project id only — never the token.
-        caller = _caller_bearer(flow)
-        logger.warning(
-            "refusing a machine turn: no identity to send it as "
-            "(project=%s admission_url=%s verdict=%s upstream=%s path=%s "
-            "bearer=len:%d/dot:%s/%s)",
-            project_id or "<none>",
-            "set" if ADMISSION_URL else "UNSET",
-            "none" if verdict is None else "received",
-            "absent" if verdict is None or not verdict.upstream else "present",
-            flow.request.path,
-            # Shape only — enough to tell a ccproxy ticket from a stale scoped
-            # token from something unexpected, and never the value itself.
-            len(caller),
-            "." in caller,
-            caller[:12],
-        )
-        _refuse(
-            flow,
-            503,
-            "api_error",
-            "cheese: this machine carries its own ccproxy ticket but the "
-            "control plane did not say which identity to send it as — "
-            "CHEESE_ADMISSION_URL unset, admission unreachable, or the machine "
-            "has no recorded ccproxy identity; refusing rather than spending "
-            "the platform's credential",
-        )
-        return
-
-    # SWAP. Nothing placed this caller on a machine identity, so its bearer is a
-    # scoped cheese token that means nothing upstream, and the hop goes out on
-    # the deployment-wide identity — whose ticket is the one this host holds.
-    #
-    # On EVERY request that gets this far, not just messages. What gets this far
-    # is everything the table did not answer, and the table answers one host —
-    # so the login and refresh calls a human's `claude /login` makes against
-    # console.anthropic.com and platform.claude.com come through here too, as
-    # does any api.anthropic.com path Anthropic adds that no row names yet. One
-    # credential for all of them; the alternative is forwarding the sandbox's
-    # scoped bearer, which means nothing upstream and 401s as if the caller's
-    # own auth had failed.
-    token = _real_token()
-    # Fail closed BEFORE forwarding when the platform has no credential of its
-    # own either. Return a clear local 503 so the caller learns the PLATFORM
-    # credential is the problem, instead of forwarding the sandbox's scoped
-    # bearer upstream only to collect an opaque 401 that reads like the caller's
-    # own auth failing. The fix is host-side: (re)install the durable
-    # setup-token in the secrets dir.
-    if not token:
-        _refuse(
-            flow,
-            503,
-            "api_error",
-            "cheese: subscription credential unavailable — the platform's "
-            "Claude setup-token is missing or expired; host-side configuration "
-            "is required before requests can be served",
-        )
-        return
-    flow.request.headers["authorization"] = f"Bearer {token}"
 
 
 class GatewayStream(StreamingUsageExtractor):

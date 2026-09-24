@@ -3,7 +3,7 @@
 The metering proxy is the one interception point every sandbox's traffic passes
 through. It has to decide, per request, where that request actually goes:
 
-  subscription  the Claude subscription, reached through ccproxy's egress
+  subscription  Anthropic, on the session's own Claude credential
   gateway       an API-key pool (Zhipu / DeepSeek), reached through LiteLLM
 
 The backend chooses the route at admission, from the model binding this request
@@ -32,10 +32,8 @@ class Supply:
     """Where one project's traffic goes, and what it authenticates with.
 
     ``key`` is only meaningful for ``gateway`` — the project's virtual LiteLLM
-    key. The subscription's real credential is never sent here: it lives on the
-    proxy and only the proxy ever holds it (a credential that reaches the
-    control plane's responses is a credential in one more place than it needs
-    to be).
+    key. The subscription needs nothing from here: the session's request already
+    carries its host's Claude credential.
     """
 
     pool: str

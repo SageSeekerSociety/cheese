@@ -45,7 +45,6 @@ from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
-from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -319,30 +318,6 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
-    if decision.allow:
-        # Which identity the proxy should authenticate as on its ccproxy hop.
-        # ccproxy scopes its ticket swap to the authenticated connection, so
-        # relaying a machine's OWN ticket only works from that machine's
-        # identity — carrying it here is what lets the proxy forward the ticket
-        # untouched instead of holding a credential to swap in. Absent (an
-        # unpinned room, a machine enrolled before this was recorded) means
-        # "use the deployment-wide identity", i.e. exactly today's behaviour.
-        #
-        # The claim is a PLACE id, not necessarily a room's: a thread's per-turn
-        # token carries the thread's own id, and the repository is what turns
-        # that back into the room whose machine the thread runs on.
-        place = claims.get("t")
-        if isinstance(place, str) and place:
-            try:
-                place_uuid = uuid.UUID(place)
-            except ValueError:
-                place_uuid = None
-            if place_uuid is not None:
-                upstream = await ProjectMachineRepository(
-                    db
-                ).ccproxy_upstream_for_place(place_uuid)
-                if upstream:
-                    supply["upstream"] = upstream
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent

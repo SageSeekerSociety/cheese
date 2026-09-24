@@ -810,31 +810,6 @@ class DeviceChannel(Channel):
         async with factory() as session:
             return await device_api_base(session, device_id, self._public_base)
 
-    async def _device_ccproxy_upstream(self, device_id: str) -> str:
-        """The ccproxy identity this DEVICE brings, '' when it brings none.
-
-        Non-empty means the device runs on the machine-ticket model — claude
-        carries the device's own ccproxy ticket and the meter relays it over
-        this identity — the same credential shape as an enrolled MicroCloud
-        machine (whose identity lives on `ProjectMachine` and whose launches are
-        already steered by CHEESE_TUNNEL_URL)."""
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        async with factory() as session:
-            device = await sql_device_service(session).get_device(device_id)
-        if device is None:
-            return ""
-        # Direct attribute access, not getattr-with-default: this field was added
-        # to the model but not the domain dataclass at first, and a
-        # getattr(..., None) fallback turned that gap into a silent "" — the
-        # signal was never sent and the box looped on the swap path. A missing
-        # field must now be an AttributeError at the first turn, not a quiet
-        # miss (2026-08-15).
-        return (device.ccproxy_upstream or "").strip()
-
     def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
         """The screen's cwd on the device.
 
@@ -1343,14 +1318,13 @@ class DeviceChannel(Channel):
         # CLAUDE_MODEL=deepseek-chat while users thought they were talking to
         # Claude). This is what ``builds_model_env`` declares.
         #
-        # The machine holds no real credential: the env ships a scoped cheese
-        # token as the fake login, and the proxy injects the real one.
+        # The Claude login is the host's own, established by the launch script;
+        # the scoped cheese token below only proves which project to bill.
         ca_pem = _read_proxy_ca()
         # Session-length TTL, not the 1h default. This token is baked into the
-        # bare process's HTTPS_PROXY (CONNECT credential) and
-        # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
-        # hot-refreshed; the screen is reused across turns (a reassert only
-        # re-attaches, it does not relaunch claude). A 1h token
+        # bare process's HTTPS_PROXY (CONNECT credential), read ONCE at process
+        # start and never hot-refreshed; the screen is reused across turns (a
+        # reassert only re-attaches, it does not relaunch claude). A 1h token
         # thus expires under a still-running process, and every turn after the
         # first hour is rejected by the metering proxy (407) — the agent looks
         # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
@@ -1373,7 +1347,6 @@ class DeviceChannel(Channel):
             ca_path=_DEVICE_PROXY_CA_PATH,
             project_id=str(project_id),
             topic_id=str(topic_id),
-            session_token=session_token,
             connect_proxy_url=connect_proxy_url,
             no_proxy=self._no_proxy_hosts(),
         )
@@ -1402,8 +1375,10 @@ class DeviceChannel(Channel):
         # The tunnel's CONNECT credential must carry the same place and RC
         # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
         model_env["CHEESE_CONNECT_TOKEN"] = session_token
-        # These scopes describe the Cheese control credential. The model
-        # provider still authenticates inference at its existing proxy hop.
+        # Read by Claude Code only when its login comes from the environment (a
+        # host with a setup-token): the scopes it then believes it holds. RC is
+        # served by Cheese, not Anthropic, so the sessions scope enables it
+        # whatever the token grants upstream. A stored login has its own.
         model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
             "user:inference user:profile user:sessions:claude_code"
         )
@@ -1416,14 +1391,6 @@ class DeviceChannel(Channel):
             # arguments because a remote machine's launch is built entirely from
             # `extra_env` — there is no other channel into that builder.
             model_env["CHEESE_TUNNEL_URL"] = tunnel_url
-        elif await self._device_ccproxy_upstream(device_id):
-            # A device with its own ccproxy identity runs on the machine-ticket
-            # model: the launcher's reconcile hands claude the device's
-            # own ticket instead of our scoped token, and admission tells
-            # the meter which identity to relay it over. Without this flag
-            # such a device silently falls onto the platform-credential swap
-            # path — the #393 dependency this model exists to remove.
-            model_env["CHEESE_MACHINE_TICKET"] = "1"
         # Preserve the birth expiry across device and backend restarts.
         credential_expires = _credential_expiry(session_token)
         model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)

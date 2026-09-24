@@ -33,11 +33,7 @@ from app.domain.device.supply import Supply, Visibility
 
 @pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
-    """The backend addresses this device at the base it was built with.
-
-    (A device that brings no ccproxy identity is the whole layer's default, in
-    `tests/unit/conftest.py`; the tests about the machine-ticket signal
-    override it with a real value.)"""
+    """The backend addresses this device at the base it was built with."""
 
     async def public_base(self, _device_id):
         return self._public_base
@@ -1737,13 +1733,13 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
     assert [k for k in env if "MODEL" in k] == ["CHEESE_MODEL_PROXY"]
     assert env["CHEESE_MODEL_PROXY"] == "1"
     assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
-    # The login credential is a scoped cheese token the proxy can verify —
-    # never a real subscription credential.
-    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
+    # What the backend hands over is a scoped cheese token the proxy can
+    # verify; the Claude login is the host's own and never travels from here.
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    claims = scoped_token_claims(env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert claims["p"] == str(project) and claims["t"] == str(topic)
     assert claims["rc"] == 1
-    assert env["CHEESE_CONNECT_TOKEN"] == env["CLAUDE_CODE_OAUTH_TOKEN"]
     assert env["CHEESE_CONNECT_TOKEN"] != env["CHEESE_TOKEN"]
 
 
@@ -1758,7 +1754,7 @@ async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
     hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
-    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    token = env["CHEESE_CONNECT_TOKEN"]
     assert env["HTTPS_PROXY"] == f"http://cheese:{token}@172.17.0.1:8444"
     for key in ("NO_PROXY", "no_proxy"):
         assert "cheese.test" in env[key]
@@ -1784,9 +1780,9 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
 async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     monkeypatch, tmp_path
 ):
-    """The proxy/OAuth token is baked into the bare process's env (HTTPS_PROXY
-    CONNECT password + CLAUDE_CODE_OAUTH_TOKEN Bearer), read ONCE at launch and
-    never hot-refreshed while the screen is reused across turns. A 1h token
+    """The proxy token is baked into the bare process's env (the HTTPS_PROXY
+    CONNECT password), read ONCE at launch and never hot-refreshed while the
+    screen is reused across turns. A 1h token
     therefore expires under a still-running agent and the metering proxy 407s
     every later turn. Its exp must span the session, like the CHEESE_TOKEN minted
     beside it — not the per-turn default."""
@@ -1799,8 +1795,8 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
-    # The Bearer and the CONNECT credential are one and the same token …
-    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    # The CONNECT credential …
+    token = env["CHEESE_CONNECT_TOKEN"]
     assert f"cheese:{token}@" in env["HTTPS_PROXY"]
     # … and it lives for the whole session, not one hour.
     claims = scoped_token_claims(token)
@@ -1842,7 +1838,7 @@ async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_p
 
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model="glm-5.2")
-    claims = scoped_token_claims(hub.env["CLAUDE_CODE_OAUTH_TOKEN"])
+    claims = scoped_token_claims(hub.env["CHEESE_CONNECT_TOKEN"])
     assert claims is not None
     assert "m" not in claims
     assert "glm-5.2" not in repr(claims)
@@ -2450,40 +2446,6 @@ def test_topic_credential_expiry_reads_the_live_screens_stamp():
     # A screen whose expiry was never recorded is skipped, not read as 0.
     hub_none = Hub({tid: [_screen_with("dev1", None)]}, {"dev1"})
     assert topic_credential_expiry(tid, hub=hub_none) is None  # type: ignore[arg-type]
-
-
-@pytest.mark.anyio
-async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
-    monkeypatch, tmp_path
-):
-    """A device can run without a tunnel while bringing a ccproxy identity on its
-    device row. The launcher must be told to hand claude the
-    DEVICE's ticket (CHEESE_MACHINE_TICKET) — without the signal the reconcile
-    injects our scoped token and every turn dies upstream as
-    `401 Invalid bearer token` (measured on the box, 2026-08-15)."""
-    _subscription_settings(monkeypatch, tmp_path)
-
-    async def own_identity(_self, _device_id):
-        return "m161:pw161"
-
-    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", own_identity)
-    hub, _project, _topic = await _subscription_screen()
-
-    assert hub.env["CHEESE_MACHINE_TICKET"] == "1"
-    # The identity itself must NOT travel: the machine authenticates the meter
-    # hop with its scoped token, and admission tells the meter the identity.
-    assert "m161" not in repr(hub.env)
-
-
-@pytest.mark.anyio
-async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_path):
-    """No identity, no signal: the reconcile keeps asserting our scoped token,
-    which the meter swaps for the platform credential — today's behaviour for
-    every laptop-class device."""
-    _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen()
-
-    assert "CHEESE_MACHINE_TICKET" not in hub.env
 
 
 @pytest.mark.anyio
