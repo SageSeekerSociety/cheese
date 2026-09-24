@@ -325,7 +325,8 @@ async function submitInvite() {
           <v-spacer />
           <span v-if="m.user_handle !== me" class="dm-slot">
             <v-btn
-              variant="text" color="on-surface-variant"
+              variant="text"
+              color="on-surface-variant"
               size="small"
               icon="mdi-message-outline"
               :aria-label="t('work.members.dm')"
@@ -340,7 +341,8 @@ async function submitInvite() {
             <template #activator="{ props: menuProps }">
               <v-btn
                 v-bind="menuProps"
-                variant="text" color="on-surface-variant"
+                variant="text"
+                color="on-surface-variant"
                 size="small"
                 icon="mdi-dots-horizontal"
                 :aria-label="t('work.members.manage')"
@@ -371,7 +373,14 @@ async function submitInvite() {
             <div class="t-meta c-muted">{{ t('work.members.pendingBy', { inviter: inv.inviter_handle }) }}</div>
           </div>
           <v-spacer />
-          <v-btn v-if="canManage" variant="text" color="on-surface-variant" size="small" :loading="revoking === inv.id" @click="takeBack(inv)">
+          <v-btn
+            v-if="canManage"
+            variant="text"
+            color="on-surface-variant"
+            size="small"
+            :loading="revoking === inv.id"
+            @click="takeBack(inv)"
+          >
             {{ t('work.members.revoke') }}
           </v-btn>
         </div>
@@ -393,7 +402,8 @@ async function submitInvite() {
           <v-spacer />
           <span class="dm-slot">
             <v-btn
-              variant="text" color="on-surface-variant"
+              variant="text"
+              color="on-surface-variant"
               size="small"
               icon="mdi-message-outline"
               :aria-label="t('work.members.dm')"
@@ -405,7 +415,8 @@ async function submitInvite() {
             </span>
           </span>
           <v-btn
-            variant="text" color="on-surface-variant"
+            variant="text"
+            color="on-surface-variant"
             size="small"
             @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
           >
@@ -480,7 +491,9 @@ async function submitInvite() {
         <v-card-text class="t-body c-muted">{{ t('work.members.removeBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removeTarget = null">{{ t('work.members.cancel') }}</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="removeTarget = null">{{
+            t('work.members.cancel')
+          }}</v-btn>
           <v-btn color="error" variant="flat" @click="confirmRemove">{{ t('work.members.confirmRemove') }}</v-btn>
         </v-card-actions>
       </v-card>

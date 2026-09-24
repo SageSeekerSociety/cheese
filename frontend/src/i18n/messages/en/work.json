@@ -156,14 +156,9 @@
     }
   },
   "members": {
-    "eyebrow": "Project",
-    "title": "Members",
     "leave": "Leave project",
     "transfer": "Transfer project",
     "invite": "Invite external member",
-    "countPeople": "{n} people",
-    "countAgents": "{n} AI teammates",
-    "hint": "Open someone's page by clicking them, or message them with the chat icon on the right",
     "teamHint": "Team members join and leave in the team",
     "search": "Search by name or handle",
     "me": "Me",

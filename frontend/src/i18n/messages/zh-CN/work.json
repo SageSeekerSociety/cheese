@@ -156,14 +156,9 @@
     }
   },
   "members": {
-    "eyebrow": "项目",
-    "title": "成员",
     "leave": "退出项目",
     "transfer": "转让项目",
     "invite": "邀请外部成员",
-    "countPeople": "{n} 个人",
-    "countAgents": "{n} 个 AI 队友",
-    "hint": "点一个人打开他的主页，点右边的对话图标直接私聊",
     "teamHint": "团队成员的加入和退出在团队里管理",
     "search": "搜名字或 handle",
     "me": "我",
