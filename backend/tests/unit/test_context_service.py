@@ -125,3 +125,27 @@ def test_context_entry_response_compatibility(tmp_path, response, error):
     else:
         assert result.returncode != 0
         assert error in result.stderr
+
+
+def test_a_newer_service_takes_the_address_from_one_still_running(tmp_path):
+    """Two services can overlap in one home: a relaunched `claude` starts before
+    the old one exits, and a reconnect starts its server before the old one has
+    finished. The newer one used to exit at startup, taking the room's platform
+    tools with it; now it answers, and the older one leaving does not take the
+    address away from it."""
+    target = tmp_path / "execution.json"
+    calls = []
+    older = serve(target, lambda: calls.append("older"))
+    older.__enter__()
+    assert call(target)
+    newer = serve(target, lambda: calls.append("newer"))
+    newer.__enter__()
+    try:
+        assert call(target)
+        older.__exit__(None, None, None)
+        assert call(target)
+    finally:
+        newer.__exit__(None, None, None)
+    assert calls == ["older", "newer", "newer"]
+    assert not os.path.exists(address(target))
+    assert call(target) is False

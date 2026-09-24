@@ -17,10 +17,11 @@ from app.api.deps import get_work_runner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.main import app
+from tests.integration.conftest import post_project
 
 
 def _project_and_topic(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "做一个东西"}
     ).json()["data"]["id"]

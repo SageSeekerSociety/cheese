@@ -20,7 +20,12 @@ trips" are separate claims and only one of them is visible in the JSON.
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client, owner: str = "alice") -> str:
@@ -30,16 +35,11 @@ def _project(client, owner: str = "alice") -> str:
     (`authorize_project` 403s an outsider), which is what makes 「无关」 a real
     case rather than an authorization failure wearing its clothes.
     """
-    pid = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]["id"]
     for handle in ("bob", "carol", "dave"):
-        r = client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": handle, "role": "member"},
-            headers=session_auth_headers(owner),
-        )
-        assert r.status_code == 200, r.text
+        join_project_team(client, pid, handle)
     return pid
 
 

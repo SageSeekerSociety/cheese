@@ -16,6 +16,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.integration.conftest import (
+    post_project,
     room_agent_seat,
     session_auth_headers,
     session_token,
@@ -23,7 +24,7 @@ from tests.integration.conftest import (
 
 
 def _project(client, name: str = "Mailbox") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -726,6 +727,7 @@ def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
     """
     pid = _project(client)
     tid = _topic(client, pid, "只有芝士在")
+    _leave_only_the_agent(client, tid)
 
     r = client.post(
         f"/projects/{pid}/alerts",
@@ -747,3 +749,25 @@ def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
         )["target_handle"]
         == "alice"
     )
+
+
+def _leave_only_the_agent(client, topic_id: str) -> None:
+    """Take every person's seat out of the room, so only 芝士 sits in it (a new
+    room seats the project's owner, and every project has one)."""
+    import uuid as _uuid
+
+    from sqlalchemy import delete
+
+    from app.domain.topic.models import TopicMembership
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                delete(TopicMembership).where(
+                    TopicMembership.topic_id == _uuid.UUID(topic_id),
+                    ~TopicMembership.member_handle.startswith("cheese"),
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_run())

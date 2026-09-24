@@ -206,23 +206,29 @@ describe('工作面板 · Tab 容器', () => {
     expect(container.querySelector('.changes-bar__path')?.textContent?.trim()).toBe('src/b.ts')
   })
 
-  // 规则 1: 能力不存在时，入口就不该存在。判定读的是「这个话题手上有什么」，
-  // 不是它的 kind —— 后端给每个话题都建了 worktree 和分支，按 kind 分只是猜。
-  it('谁也没在里面干过活的话题：只剩总览，连 tab 栏都不出现', async () => {
+  // 规则 1: 四格永远都在、位置不变，这一格此刻有没有东西只决定它的字深浅。判定
+  // 读的是「这个话题手上有什么」，不是它的 kind —— 后端给每个话题都建了 worktree
+  // 和分支，按 kind 分只是猜。
+  const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
+
+  it('谁也没在里面干过活的话题：四格都在，除了总览都是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
     await flush()
 
-    expect(container.querySelector('.tabbar')).toBeNull()
+    expect(tabLabels(container)).toEqual(['总览', '现场', '改动', '预览'])
+    expect(isEmpty(findTab(container, '总览'))).toBe(false)
+    expect(['现场', '改动', '预览'].every((label) => isEmpty(findTab(container, label)))).toBe(true)
     expect(visible(container, '.panel-overview')).toBe(true)
   })
 
-  it('跑过活但没产生改动：有现场，没有改动', async () => {
+  it('跑过活但没产生改动：现场有东西，改动是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: true })
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['总览', '现场'])
+    expect(isEmpty(findTab(container, '现场'))).toBe(false)
+    expect(isEmpty(findTab(container, '改动'))).toBe(true)
   })
 
   it('第一轮还在跑、session 还没落库：现场立刻就在', async () => {
@@ -233,16 +239,16 @@ describe('工作面板 · Tab 容器', () => {
     expect(findTab(container, '现场')).toBeTruthy()
   })
 
-  it('芝士指定了预览，预览 tab 才出现', async () => {
+  it('芝士指定了预览，预览那一格才有东西', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: true })
     const { container } = mountPanel()
     await flush()
-    expect(findTab(container, '预览')).toBeUndefined()
+    expect(isEmpty(findTab(container, '预览'))).toBe(true)
 
     getPreview.mockResolvedValue({ kind: 'file', path: 'r.html', mime: 'text/html', artifact_id: 'a1' })
     const { container: c2 } = mountPanel('topic-B')
     await flush()
-    expect(findTab(c2, '预览')).toBeTruthy()
+    expect(isEmpty(findTab(c2, '预览'))).toBe(false)
   })
 
   // 「信号上 Tab，不抢占视图」的另一半：正开着的 tab 不会在脚下消失。改动被

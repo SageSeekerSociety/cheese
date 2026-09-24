@@ -117,6 +117,54 @@
       </div>
     </section>
 
+    <section class="settings-card">
+      <div class="settings-card__head">
+        <h2 class="settings-card__title">{{ t('account.security.sessions') }}</h2>
+        <v-btn
+          v-if="sessions.some((s) => !s.current)"
+          variant="text"
+          color="on-surface"
+          size="small"
+          :loading="signingOutOthers"
+          @click="handleSignOutOthers"
+        >
+          {{ t('account.security.signOutOthers') }}
+        </v-btn>
+      </div>
+
+      <div v-for="session in sessions" :key="session.id" class="srow">
+        <span class="srow__k">
+          <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
+          {{ deviceLabel(session.userAgent) }}
+        </span>
+        <span class="srow__v srow__v--parts">
+          <!-- The separator belongs to the part after it, so a wrapped row
+               never leaves a dot alone at the end of a line; one that lands
+               at the start of a line is clipped (see .srow__v--parts). -->
+          <span
+            v-for="(part, i) in sessionDetails(session)"
+            :key="i"
+            class="srow__part"
+            :class="{ srow__strong: i === 0 && session.current }"
+            ><span v-if="i" class="srow__sep" aria-hidden="true">·</span>{{ part }}</span
+          >
+        </span>
+        <v-btn
+          v-if="!session.current"
+          variant="text"
+          color="on-surface"
+          size="small"
+          :loading="signingOut === session.id"
+          @click="signOutDevice(session.id)"
+        >
+          {{ t('account.security.signOutDevice') }}
+        </v-btn>
+      </div>
+      <div v-if="sessionsLoaded && !sessions.length" class="srow srow--empty">
+        {{ t('account.security.noSessions') }}
+      </div>
+    </section>
+
     <!-- Changing the password -->
     <v-dialog v-model="showChangePassword" max-width="440" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
@@ -241,7 +289,7 @@
 
 <script setup lang="ts">
 import type { OAuthConnectionInfo } from '@/cx_types'
-import type { PasskeyInfo } from '@/network/api/users/types'
+import type { PasskeyInfo, SessionInfo } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -259,6 +307,7 @@ import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
+import { deviceOf } from '@/views/user/settings/deviceName'
 
 const dialogs = useDialog()
 const webAuthnSupported = browserSupportsWebAuthn()
@@ -267,6 +316,9 @@ const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessa
 
 const formatDate = (value: string | Date) =>
   new Intl.DateTimeFormat(i18n.global.locale.value, { dateStyle: 'long' }).format(new Date(value))
+
+const formatDateTime = (value: string | Date) =>
+  new Intl.DateTimeFormat(i18n.global.locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 
 async function copy(text: string) {
   try {
@@ -311,6 +363,8 @@ const submitNewPassword = (password: string) =>
     if (!currentUserId.value) return
     await UserApi.changePassword(currentUserId.value, { password, sudoTicket })
     toast.success(t('account.security.passwordChanged'))
+    // Every other device was signed out with it.
+    await fetchSessions()
   })
 
 // ---- Passkeys ----
@@ -555,10 +609,91 @@ const unbind = async (connectionId: number) => {
   }
 }
 
+// ---- Signed-in devices ----
+
+const sessions = ref<SessionInfo[]>([])
+const sessionsLoaded = ref(false)
+const signingOut = ref<string | null>(null)
+const signingOutOthers = ref(false)
+
+const fetchSessions = async () => {
+  try {
+    const { data } = await UserApi.listSessions()
+    sessions.value = data.sessions
+  } catch (error) {
+    fail(error, t('account.security.loadFailed'))
+  } finally {
+    sessionsLoaded.value = true
+  }
+}
+
+const deviceLabel = (userAgent: string) => {
+  const device = deviceOf(userAgent)
+  return device ? t('account.security.deviceName', device) : t('account.security.unknownDevice')
+}
+
+const METHOD_LABELS: Record<string, () => string> = {
+  password: () => t('account.security.methodPassword'),
+  passkey: () => t('account.security.methodPasskey'),
+  totp: () => t('account.security.methodTotp'),
+  backup_code: () => t('account.security.methodBackupCode'),
+  email_code: () => t('account.security.methodEmailCode'),
+  signup: () => t('account.security.methodSignup'),
+}
+
+const methodLabel = (method: string) =>
+  method.startsWith('oauth:')
+    ? t('account.security.methodOAuth', { provider: oauthProviderName(method.slice('oauth:'.length)) })
+    : METHOD_LABELS[method]?.() ?? ''
+
+// When, how it signed in, and from where — whichever of these is known.
+const sessionDetails = (session: SessionInfo) =>
+  [
+    session.current
+      ? t('account.security.thisDevice')
+      : t('account.security.lastActive', { date: formatDateTime(session.lastActiveAt) }),
+    methodLabel(session.loginMethod),
+    session.ipAddress,
+  ].filter(Boolean)
+
+const sessionIcon = (userAgent: string) =>
+  ['iOS', 'Android'].includes(deviceOf(userAgent)?.os ?? '') ? 'mdi-cellphone' : 'mdi-monitor'
+
+const signOutDevice = async (sessionId: string) => {
+  signingOut.value = sessionId
+  try {
+    await UserApi.revokeSession(sessionId)
+    await fetchSessions()
+    toast.success(t('account.security.signedOutDevice'))
+  } catch (error) {
+    fail(error, t('account.security.signOutFailed'))
+  } finally {
+    signingOut.value = null
+  }
+}
+
+const handleSignOutOthers = async () => {
+  const confirmed = await dialogs
+    .confirm(t('account.security.signOutOthersBody'), { title: t('account.security.signOutOthersTitle') })
+    .wait()
+  if (!confirmed) return
+  signingOutOthers.value = true
+  try {
+    const { data } = await UserApi.revokeOtherSessions()
+    await fetchSessions()
+    toast.success(t('account.security.signedOutOthers', { count: data.revokedCount }))
+  } catch (error) {
+    fail(error, t('account.security.signOutFailed'))
+  } finally {
+    signingOutOthers.value = false
+  }
+}
+
 onMounted(async () => {
   if (webAuthnSupported) fetchPasskeys()
   fetch2FAStatus()
   fetchConnections()
+  fetchSessions()
 })
 </script>
 
@@ -582,6 +717,20 @@ onMounted(async () => {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+}
+
+.settings-card__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-right: 16px;
+}
+
+/* Centred on the title's line, not on the head as a whole. */
+.settings-card__head > .v-btn {
+  flex-shrink: 0;
+  margin-top: 16px;
 }
 
 .settings-card__title {
@@ -657,6 +806,34 @@ onMounted(async () => {
 
 .srow__strong {
   color: var(--text);
+}
+
+/* A row of parts joined by dots. Every part reserves the width of one
+   separator after it, and every part but the first pulls its own separator
+   back into that space. A part that wraps to the start of a line pulls its
+   separator past the left edge instead, where the clip hides it. */
+.srow__v--parts {
+  --sep: 20px;
+
+  column-gap: 0;
+  row-gap: 2px;
+  overflow: hidden;
+}
+
+.srow__part {
+  margin-right: var(--sep);
+  white-space: nowrap;
+}
+
+.srow__part + .srow__part {
+  margin-left: calc(-1 * var(--sep));
+}
+
+.srow__sep {
+  display: inline-block;
+  width: var(--sep);
+  color: var(--faint);
+  text-align: center;
 }
 
 .status-dot {

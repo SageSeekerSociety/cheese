@@ -6,11 +6,16 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
+from app.common.auth import verify_access_token
 from app.core.config import settings
-from app.core.tokens import verify_session_token
 from app.domain.library import service as library
 from app.domain.site.hosting import content_origin, mint_site_token
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import (
+    add_external_member,
+    join_project_team,
+    session_auth_headers,
+    session_token,
+)
 from tests.integration.test_app_preview_proxy import (
     _open_preview,
     _project_topic,
@@ -124,10 +129,10 @@ def test_grant_is_topic_scoped_expiring_and_separate_from_platform_and_site_toke
         ).status_code
         == 401
     )
-    assert verify_session_token(grant["grant"]) is None
+    assert verify_access_token(grant["grant"]) is None
     _, exchange = _open_preview(client, topic_id)
     preview_session = exchange.cookies.get(cookie_name())
-    assert verify_session_token(preview_session) is None
+    assert verify_access_token(preview_session) is None
     client.headers.clear()
     for token in (grant["grant"], preview_session):
         assert (
@@ -400,14 +405,7 @@ def test_a_room_file_is_addressed_by_its_own_path_not_the_artifacts(
 def test_revocation_blocks_an_already_issued_grant_and_cookie(client, static_preview):
     project_id, topic_id, _, _ = static_preview
     owner = session_auth_headers("alice")
-    assert (
-        client.post(
-            f"/projects/{project_id}/members",
-            json={"user_handle": "bob", "role": "member"},
-            headers=owner,
-        ).status_code
-        == 200
-    )
+    add_external_member(client, project_id, "bob", by="alice")
     grant, _ = _open_preview(client, topic_id, "bob")
     assert client.get(preview_origin(topic_id) + "/").status_code == 200
     assert (
@@ -435,14 +433,7 @@ def test_private_room_roster_is_required_even_for_project_members(
     project, _ = _project_topic(client)
     owner = session_auth_headers("alice")
     for handle in ("bob", "outsider"):
-        assert (
-            client.post(
-                f"/projects/{project['id']}/members",
-                json={"user_handle": handle},
-                headers=owner,
-            ).status_code
-            == 200
-        )
+        join_project_team(client, project["id"], handle)
     response = client.get(
         f"/projects/{project['id']}/private-chat",
         params={"user_handle": "alice", "peer_handle": "bob"},

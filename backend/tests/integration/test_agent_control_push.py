@@ -12,17 +12,20 @@ import time
 import pytest
 
 from app.domain.agent.remote_control import key
+from tests.integration.conftest import post_project
 
 
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
-    monkeypatch.setattr("app.core.tokens._SECRET", "rc-push-test-key-at-least-32-bytes")
+    monkeypatch.setattr(
+        "app.core.config.settings.jwt_secret", "rc-push-test-key-at-least-32-bytes"
+    )
 
 
 @pytest.fixture
 def place(client):
-    project = client.post(
-        "/projects", json={"name": "RC push", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "RC push", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",

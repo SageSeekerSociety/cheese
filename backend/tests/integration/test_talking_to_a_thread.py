@@ -14,13 +14,13 @@ from sqlalchemy import select
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 def _project(client) -> dict:
-    return client.post(
-        "/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    return post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
 
 
 def _room(client, project_id: str) -> dict:

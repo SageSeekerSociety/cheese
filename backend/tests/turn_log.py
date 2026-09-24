@@ -13,12 +13,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 
 async def a_topic(factory, *, title: str = "T") -> uuid.UUID:
     """A real project + topic to hang turns off."""
     async with factory() as session:
         # Turn lifecycle tests need a room, not a provisioned code repository.
+        await registered(session, "u")
         project = await ProjectService(session).create(
             name="P", owner_handle="u", forge_kind="github_app"
         )

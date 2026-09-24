@@ -12,7 +12,7 @@ import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { topicPhase } from '@/lib/topicState'
+import { topicPhase, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -77,7 +77,7 @@ const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
   selectedTopic,
   (topic) => {
-    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
   },
   { immediate: true }
@@ -397,14 +397,23 @@ watch(
 .col {
   min-width: 0;
 }
-/* Draggable splitter between chat and panel (replaces the static divider). */
+/* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
+   的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，
+   比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
 .pane-resizer {
-  flex: 0 0 5px;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 1px;
   cursor: col-resize;
   background: var(--line);
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
 }
 .pane-resizer:hover {
-  background: var(--accent);
+  background: var(--faint);
 }
 </style>

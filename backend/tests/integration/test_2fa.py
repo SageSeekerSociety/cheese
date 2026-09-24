@@ -175,7 +175,7 @@ class TestTwoFactorIntegration:
         assert data["requires2FA"] is False
         assert data["usedBackupCode"] is False
         assert data["user"]["id"] == self.user.user_id
-        assert resp.cookies.get("REFRESH_TOKEN")
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
         # the minted access token is a real session
         me = self.client.get(

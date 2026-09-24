@@ -1491,25 +1491,77 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     assert checked.returncode == 0, checked.stderr
 
 
-def test_the_launcher_adopts_that_ticket_as_the_model_credential():
-    """It has to reach claude through the process environment, because the file
-    that would otherwise carry it is in a home claude does not read."""
+def _run_credentials_step(real_home, *, inherited_token: str | None = None) -> dict:
+    """Run the shipped credentials step under sh; return the env it leaves."""
     script = device_launch.build_launch_script()
-
-    assert '"$HOME/.claude/cheese-machine.token"' in script
-    assert 'CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/cheese-machine.token")"' in (
-        script
+    start = script.index("# The session's Claude login is its host's own.")
+    end = script.index("cheese_launch_phase credentials_selected")
+    step = script[start:end]
+    env = {"PATH": "/usr/bin:/bin", "REAL_HOME": str(real_home)}
+    if inherited_token is not None:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = inherited_token
+    result = subprocess.run(
+        ["sh", "-c", step + "\nenv"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    # Before claude starts, and before the tunnel helper's token is written.
-    adopt = script.index("cheese-machine.token")
-    assert adopt < script.index("cheese-tunnel.token.tmp")
+    return dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+
+
+def test_a_session_shares_the_host_users_own_claude_login(tmp_path):
+    """One store for every session on the host: Claude Code's own refresh,
+    under its own lock, then renews the login for all of them. An inherited env
+    token would win over that store and never refresh, so it is not let through."""
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".credentials.json").write_text('{"claudeAiOauth": {}}')
+
+    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
+
+    assert env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == f"{tmp_path}/.claude"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+
+def test_a_host_with_no_claude_login_still_boots_on_the_meters_placeholder(tmp_path):
+    """A deployment without a Claude login still runs projects on the API-key
+    pool, so Claude Code has to boot; the value it boots on is the one the
+    metering proxy refuses for a subscription turn."""
+    import importlib.util
+
+    core_path = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "metering-proxy"
+        / "cheese_billing_core.py"
+    )
+    spec = importlib.util.spec_from_file_location("cheese_billing_core", core_path)
+    assert spec and spec.loader
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
+
+    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
+
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == core.NO_LOGIN_PLACEHOLDER
+    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in env
+
+
+def test_a_host_with_a_setup_token_logs_its_sessions_in_with_it(tmp_path):
+    (tmp_path / ".cheese").mkdir()
+    (tmp_path / ".cheese" / "claude-setup-token").write_text("sk-ant-oat01-SETUP\n")
+
+    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
+
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-SETUP"
+    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in env
 
 
 def test_the_tunnel_password_stays_the_scoped_token():
     """The helper's token proves which project may open a tunnel — the scoped
-    cheese token's job. Those two strings used to be equal, so reading either
-    worked by accident; now CLAUDE_CODE_OAUTH_TOKEN is the machine's ccproxy
-    ticket, and stamping it as the CONNECT password would 407 every tunnel."""
+    cheese token's job. A Claude login in CLAUDE_CODE_OAUTH_TOKEN is a different
+    credential, and stamping it as the CONNECT password would 407 every tunnel."""
     script = device_launch.build_launch_script()
     start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
     written = script[start : script.index("\nTUNNELTOK", start)]
@@ -1520,176 +1572,13 @@ def test_the_tunnel_password_stays_the_scoped_token():
             env={
                 "CHEESE_CONNECT_TOKEN": connect,
                 "CHEESE_TOKEN": "hook-token",
-                "CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket",
+                "CLAUDE_CODE_OAUTH_TOKEN": "host-setup-token",
             },
             check=True,
             capture_output=True,
             text=True,
         )
         assert result.stdout.strip() == connect
-
-
-# --- the read-only reconcile (#5: never touch the machine owner's files) ------
-# CLAUDE_CONFIG_DIR keeps claude out of the owner's ~/.claude entirely, so the
-# reconcile's only remaining job is EXTRACTION: on the machine-ticket path, read
-# the machine's own ccproxy ticket out of wherever the machine keeps it and hand
-# it to the launcher through a file. It must never write to the owner's files —
-# the old write is what hijacked every claude the owner started by hand.
-
-
-def _run_reconcile(
-    tmp: str,
-    *,
-    settings: dict | None,
-    credentials: str | None = None,
-    backup: dict | None = None,
-    env: dict | None = None,
-) -> tuple[str, str | None, dict[str, float]]:
-    """Run the shipped reconcile against an owner dir laid out per the args.
-
-    Returns (stdout, handoff_or_None, mtimes) where mtimes maps each owner file
-    to its post-run mtime — compared by the caller against pre-run to prove the
-    reconcile never writes there.
-    """
-    import json
-    import os
-    import subprocess
-
-    from app.domain.agent.harness.claude_code.device_launch import (
-        CHEESE_SETTINGS_RECONCILE,
-    )
-
-    live = f"{tmp}/settings.json"
-    if settings is not None:
-        with open(live, "w") as handle:
-            json.dump(settings, handle)
-    if credentials is not None:
-        with open(f"{tmp}/.credentials.json", "w") as handle:
-            json.dump({"claudeAiOauth": {"accessToken": credentials}}, handle)
-    if backup is not None:
-        with open(live + ".cheese-orig", "w") as handle:
-            json.dump(backup, handle)
-    proc = subprocess.run(
-        ["python3", "-", live, f"{tmp}/handoff.token"],
-        input=CHEESE_SETTINGS_RECONCILE,
-        text=True,
-        capture_output=True,
-        env={"PATH": "/usr/bin:/bin", **(env or {})},
-        check=True,
-    )
-    handoff = None
-    if os.path.exists(f"{tmp}/handoff.token"):
-        with open(f"{tmp}/handoff.token") as handle:
-            handoff = handle.read()
-    mtimes = {
-        name: os.path.getmtime(f"{tmp}/{name}")
-        for name in ("settings.json", ".credentials.json", "settings.json.cheese-orig")
-        if os.path.exists(f"{tmp}/{name}")
-    }
-    return proc.stdout.strip(), handoff, mtimes
-
-
-_MT = {"CHEESE_MACHINE_TICKET": "1", "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token"}
-
-
-def test_the_reconcile_never_writes_the_owners_files(tmp_path):
-    """The whole point of #5: the old reconcile REWROTE the owner's
-    settings.json to be routed at all, which hijacked every claude the owner
-    started by hand. With CLAUDE_CONFIG_DIR that premise is gone, so any write
-    here is a regression — proven by content, not just mtime."""
-    import hashlib
-    import json
-
-    tmp = str(tmp_path)
-    settings = {"env": {"CLAUDE_CODE_OAUTH_TOKEN": "owner-ticket", "HTTPS_PROXY": "x"}}
-    before = {}
-    _, handoff, _ = _run_reconcile(
-        tmp, settings=settings, credentials="store-ticket", backup={"env": {}}, env=_MT
-    )
-    for name in ("settings.json", ".credentials.json", "settings.json.cheese-orig"):
-        with open(f"{tmp}/{name}", "rb") as handle:
-            before[name] = hashlib.sha256(handle.read()).hexdigest()
-    # Run it again — a second run over already-reconciled files is the shape
-    # that used to rewrite; the content must be byte-identical afterwards.
-    _, _, _ = _run_reconcile(tmp, settings=None, env=_MT)
-    for name, digest in before.items():
-        with open(f"{tmp}/{name}", "rb") as handle:
-            assert hashlib.sha256(handle.read()).hexdigest() == digest, name
-    assert handoff == "owner-ticket"
-    assert json.loads(open(f"{tmp}/settings.json").read()) == settings
-
-
-def test_off_the_machine_ticket_path_it_does_nothing_at_all(tmp_path):
-    """Swap and gateway shapes are fully described by the process environment
-    now; the reconcile must not even need the owner's settings.json to exist."""
-    out, handoff, _ = _run_reconcile(
-        str(tmp_path),
-        settings=None,
-        env={"CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token"},
-    )
-    assert out == "ok (env only)"
-    assert handoff is None
-
-
-def test_a_live_unrotated_ticket_wins(tmp_path):
-    """MicroCloud seeds the ticket into settings.json's env, and a refresh lands
-    there too — so a dot-less live value is the freshest copy and is extracted
-    first (measured 2026-08-14: the backup's copy had already expired)."""
-    _, handoff, _ = _run_reconcile(
-        str(tmp_path),
-        settings={"env": {"CLAUDE_CODE_OAUTH_TOKEN": "fresh-live-ticket"}},
-        credentials="older-store-ticket",
-        env=_MT,
-    )
-    assert handoff == "fresh-live-ticket"
-
-
-def test_residue_of_the_old_writing_launcher_is_not_a_ticket(tmp_path):
-    """A dotted live value is OUR scoped token, left by a launcher that wrote
-    into this file — never a ticket. The store is the recovery source; without
-    it the box looped forever on the swap path (measured 2026-08-15)."""
-    _, handoff, _ = _run_reconcile(
-        str(tmp_path),
-        settings={"env": {"CLAUDE_CODE_OAUTH_TOKEN": "our.old.residue"}},
-        credentials="store-ticket",
-        env=_MT,
-    )
-    assert handoff == "store-ticket"
-
-
-def test_a_box_with_no_settings_json_still_yields_its_store_ticket(tmp_path):
-    """A login-style box (the dev box, a BYO machine) may keep its ticket ONLY
-    in .credentials.json and have no settings.json at all."""
-    _, handoff, _ = _run_reconcile(
-        str(tmp_path), settings=None, credentials="store-ticket", env=_MT
-    )
-    assert handoff == "store-ticket"
-
-
-def test_the_backup_serves_machines_the_old_launcher_touched(tmp_path):
-    """A machine the WRITING launcher reconciled has a .cheese-orig holding the
-    original ticket, and its live field may hold our residue with no separate
-    credentials store. Last resort, and a dotted backup value is residue too."""
-    _, handoff, _ = _run_reconcile(
-        str(tmp_path),
-        settings={"env": {"CLAUDE_CODE_OAUTH_TOKEN": "our.old.residue"}},
-        backup={"env": {"CLAUDE_CODE_OAUTH_TOKEN": "original-ticket"}},
-        env=_MT,
-    )
-    assert handoff == "original-ticket"
-
-
-def test_no_ticket_anywhere_is_named_loudly_not_handed_off(tmp_path):
-    """Without a ticket the launcher keeps the scoped token as bearer and the
-    turn dies upstream as an opaque 401 — the reconcile's output line is the
-    only thing that tells that apart from a routing failure."""
-    out, handoff, _ = _run_reconcile(
-        str(tmp_path),
-        settings={"env": {"CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.residue"}},
-        env=_MT,
-    )
-    assert out == "no-machine-ticket"
-    assert handoff is None
 
 
 def test_the_launcher_exports_the_config_dir_and_passes_it_into_tmux():
@@ -1699,9 +1588,6 @@ def test_the_launcher_exports_the_config_dir_and_passes_it_into_tmux():
     — same reasoning as the credential below it)."""
     script = device_launch.build_launch_script()
     assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in script
-    # And the stale handoff from a previous launch is cleared before the
-    # extraction runs, so an old ticket can never be exported by mistake.
-    assert 'rm -f "$HOME/.claude/cheese-machine.token"' in script
 
 
 # --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------

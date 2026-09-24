@@ -13,12 +13,13 @@ import uuid
 import pytest
 
 from app.api.routes import terminal
+from tests.integration.conftest import post_project
 
 
 def _project_topic(client, handle: str = "alice"):
-    project = client.post(
-        "/projects", json={"name": "T", "owner_handle": handle}
-    ).json()["data"]
+    project = post_project(client, json={"name": "T", "owner_handle": handle}).json()[
+        "data"
+    ]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "t"}
     ).json()["data"]

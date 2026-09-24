@@ -12,10 +12,11 @@
 """
 
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import post_project
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    return post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
 

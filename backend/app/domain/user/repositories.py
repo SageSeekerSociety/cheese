@@ -69,6 +69,36 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return [(username, nickname or username) for username, nickname in result]
 
+    async def lookup_account(self, q: str) -> tuple[str, str, int | None] | None:
+        """(handle, 昵称, avatar_id) of the one person whose username or email is
+        exactly ``q``, case aside — or None.
+
+        Exact on purpose: this is how someone outside a team is found to be
+        invited, and a partial match would let anyone page through who is
+        registered. AI accounts are never returned; they are not invited.
+        """
+        wanted = q.strip().lower()
+        if not wanted:
+            return None
+        stmt = (
+            select(User.username, UserProfile.nickname, UserProfile.avatar_id)
+            .outerjoin(UserProfile, UserProfile.user_id == User.id)
+            .where(
+                User.deleted_at.is_(None),
+                or_(
+                    func.lower(User.username) == wanted,
+                    func.lower(User.email) == wanted,
+                ),
+                ~exists().where(AgentBinding.user_id == User.id),
+            )
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).first()
+        if row is None:
+            return None
+        username, nickname, avatar_id = row
+        return username, nickname or username, avatar_id
+
     async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
         """Batch handle → user. Roster-wide lookups run on every agent turn, so
         they must not go N+1 over ``get_by_handle``."""
@@ -109,8 +139,9 @@ class UserRepository:
         return result.scalar_one_or_none() is not None
 
     async def get_by_email(self, email: str) -> User | None:
+        """Case-insensitive, matching ``uq_user_email_lower``."""
         stmt: Select[tuple[User]] = select(User).where(
-            User.email == email, User.deleted_at.is_(None)
+            func.lower(User.email) == email.lower(), User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
@@ -139,6 +170,15 @@ class UserRepository:
             self._session.add(user)
             await self._session.flush()
         return user
+
+    async def update_email(self, user: User, email: str) -> None:
+        """Raises ``IntegrityError`` when a live account already holds it
+        (``uq_user_email_lower``); the session stays usable."""
+        async with self._session.begin_nested():
+            user.email = email
+            user.email_domain = email.split("@", 1)[1].lower()
+            user.updated_at = datetime.now(UTC)
+            await self._session.flush()
 
     async def update_password(self, user_id: int, hashed_password: str) -> None:
         stmt: Select[tuple[User]] = select(User).where(User.id == user_id)

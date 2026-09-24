@@ -13,14 +13,14 @@ from tests.delivery import (
     delivery_task,
     delivery_task_id,
 )
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
+    r = post_project(client, json={"name": "P", "owner_handle": "alice"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

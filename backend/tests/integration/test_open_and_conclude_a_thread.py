@@ -13,7 +13,7 @@ names another room's work, a thread that already finished.
 import uuid
 
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, session_token
+from tests.integration.conftest import chat_ws_url, post_project, session_token
 
 
 def _bearer(handle: str) -> dict:
@@ -21,9 +21,7 @@ def _bearer(handle: str) -> dict:
 
 
 def _room(client, owner: str = "alice") -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 

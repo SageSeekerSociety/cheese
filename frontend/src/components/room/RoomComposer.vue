@@ -18,11 +18,12 @@ import { listProjectLibrary } from '../../api'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import AttachmentTile from '../AttachmentTile.vue'
+import ExternalTag from '../common/ExternalTag.vue'
 
 const props = defineProps<{
   topic: Topic | null
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
-  mentionPool: { handle: string; label: string; agent: boolean }[]
+  mentionPool: { handle: string; label: string; agent: boolean; external?: boolean }[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
   topicList: Topic[]
   /** 这个房间交给的那位 AI 队友。名册还没到时是 null，两个召唤入口都关着。 */
@@ -102,6 +103,8 @@ interface MentionItem {
   // Secondary line: @handle for people, status for topics, hint for broadcast.
   sub: string
   agent: boolean
+  // 团队以外、被邀请进这个项目的人：候选里挂「外部」，@ 之前就知道他不是自己人。
+  external?: boolean
   // 二级菜单里这一项属于哪一组（同一组的标题只画一次）。
   group?: string
 }
@@ -181,6 +184,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       insert: m.label,
       sub: `@${m.handle}`,
       agent: m.agent,
+      external: !!m.external,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -418,6 +422,7 @@ defineExpose({
           </span>
           <span class="mention-menu-name">{{ mm.label }}</span>
           <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+          <ExternalTag v-else-if="mm.external" />
           <span class="mention-menu-sub">{{ mm.sub }}</span>
           <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
           <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>

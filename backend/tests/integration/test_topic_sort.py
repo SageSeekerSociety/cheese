@@ -5,10 +5,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.topic.models import Topic
+from tests.integration.conftest import post_project
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

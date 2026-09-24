@@ -24,7 +24,6 @@ from app.domain.project.models import (
     Project,
     ProjectInvitation,
     ProjectMember,
-    ProjectRole,
 )
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -74,63 +73,69 @@ class MemberService:
             raise NotFoundError("Project not found")
         return project
 
+    async def manages(self, project_id: uuid.UUID, handle: str) -> bool:
+        """Is ``handle`` someone who manages this project — its owner, or an owner
+        or admin of the project's team? For callers that hold a handle, not an
+        authenticated actor; :meth:`require_manager` is the gate for a request."""
+        project = await self._projects.get(project_id)
+        if project is None:
+            return False
+        if project.owner_handle == handle:
+            return True
+        return await self._team_admin(project, handle)
+
+    async def _team_admin(self, project: Project, handle: str) -> bool:
+        from app.domain.team.services import team_service
+        from app.domain.user.services import user_by_handle
+
+        user = await user_by_handle(self._session, handle)
+        if user is None:
+            return False
+        return await team_service(self._session).is_team_at_least_admin(
+            project.team_id, user.id
+        )
+
     async def require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Only the project's owner or a lead (verified by token) may write the
-        roster. Called AFTER ``_ensure_project`` so a missing project still reads
-        as 404 rather than 403 for everyone."""
+        """Only the project's owner or an owner/admin of its team (verified by
+        token) may manage it. Called AFTER ``_ensure_project`` so a missing
+        project still reads as 404 rather than 403 for everyone."""
 
         async def owner_of(pid: uuid.UUID) -> str | None:
             project = await self._projects.get(pid)
             return project.owner_handle if project is not None else None
 
-        async def role_of(pid: uuid.UUID, handle: str) -> ProjectRole | None:
-            member = await self._repo.get(project_id=pid, user_handle=handle)
-            return member.role if member is not None else None
+        async def team_manager(pid: uuid.UUID, handle: str) -> bool:
+            project = await self._projects.get(pid)
+            return project is not None and await self._team_admin(project, handle)
 
         allowed = await can_manage_project_members(
             actor,
             project_id=project_id,
             project_owner=owner_of,
-            project_role=role_of,
+            team_manager=team_manager,
         )
         if not allowed:
-            raise ForbiddenError("只有项目的 owner / lead 能管理项目成员")
+            raise ForbiddenError("只有项目所有者或团队管理员能管理这个项目")
 
-    async def add(
-        self,
-        *,
-        project_id: uuid.UUID,
-        user_handle: str,
-        role: ProjectRole,
-        actor: Actor,
+    async def seat_agent(
+        self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
     ) -> ProjectMember:
+        """Give an AI teammate's execution identity a place on the roster.
+
+        People never come in this way: a person outside the team is an external
+        member only through an invitation they accept (:class:`InvitationService`),
+        and a person on the team is already in every project of it.
+        """
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
+        from app.domain.identity.services import IdentityService
+
+        if not await IdentityService(self._session).is_agent(user_handle):
+            raise ValidationError("人通过邀请加入项目；这里只能给 AI 队友放座位")
         existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if existing is not None:
             raise ValidationError("User is already a member of this project")
-        return await self._repo.add(
-            project_id=project_id, user_handle=user_handle, role=role
-        )
-
-    async def ensure_member(
-        self, *, project_id: uuid.UUID, user_handle: str, role: ProjectRole
-    ) -> ProjectMember | None:
-        """把一个人放上名册，已经在上面就什么也不做。
-
-        **没有 actor，因为这不是谁发起的写**：它只有一个调用场景——建项目时按小队
-        铺名册。那一刻还没有请求者在对这个项目做动作，硬凑一个演员出来只会让「谁被
-        授权做了什么」这件事变得更难读。所有由人发起的加人都走 ``add``，那条路要
-        actor、也会授权。
-
-        幂等，所以重复铺不会撞上唯一约束。
-        """
-        existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
-        if existing is not None:
-            return None
-        return await self._repo.add(
-            project_id=project_id, user_handle=user_handle, role=role
-        )
+        return await self._repo.add(project_id=project_id, user_handle=user_handle)
 
     async def list_for_project(
         self, project_id: uuid.UUID
@@ -141,132 +146,60 @@ class MemberService:
             await self._repo.count_for_project(project_id),
         )
 
-    async def update_role(
-        self,
-        *,
-        project_id: uuid.UUID,
-        user_handle: str,
-        role: ProjectRole,
-        actor: Actor,
-    ) -> ProjectMember:
+    async def remove(
+        self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
+    ) -> None:
+        """Take an external member (or an AI teammate's seat) out of the project.
+
+        Team members have no row here: they are in the project because they are
+        in the team, and they leave it by leaving the team.
+        """
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if member is None:
             raise NotFoundError("Member not found")
-        return await self._repo.update_role(member, role=role)
-
-    async def remove(
-        self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
-    ) -> None:
-        project = await self._ensure_project(project_id)
-        await self.require_manager(project_id, actor)
-        member = await self._repo.get(project_id=project_id, user_handle=user_handle)
-        if member is None:
-            raise NotFoundError("Member not found")
-        # 小队带进来的人删不得，理由和 ``leave`` 里那条一模一样（那里解释得细）：名册
-        # 里还有一份小队读时补出来的行，删掉表里这一行，下一次读名册他又在，接口却回
-        # 了成功 —— 管理者以为清理干净了，其实什么都没变。他真正退得出的地方是小队。
-        #
-        # 位置放在取到成员行之后：人本来就不在名册上时，404 才是那句话该有的答复，不
-        # 该被这条挡成 409。放在任何写之前：这条路不许写任何数据。
-        if await self._access_comes_from_the_team(project, user_handle):
-            raise ConflictError(
-                "TA 的访问来自所属团队，移出要在团队里操作"
-                "——删掉名册这一行 TA 还在项目里"
-            )
-        # 顺带把他在本项目各话题里的席位也撤掉。从前只删这一行，人就从名册上消失了
-        # 却还是每个房间都进得来（``authorize_topic_access`` 认话题角色），移出项目
-        # 于是成了一件没做完的事。退项目走的是同一条撤销（返回值在那儿有用，这里不看）。
+        # Their seats in this project's rooms go too: a room seat admits on its
+        # own (``authorize_topic_access`` reads the topic role), so leaving them
+        # behind would leave the person in every room they had joined.
         await TopicMemberService(self._session).revoke_project_seats(
             project_id=project_id, member_handle=user_handle
         )
         await self._repo.delete(member)
 
-    async def _access_comes_from_the_team(
-        self, project: Project, handle: str, user_id: int | None = None
-    ) -> bool:
-        """他在这个项目里的位置，是所属小队给的吗。
-
-        「小队带进来的」有两种长相：名册上读时补出来的 ``source: "team"`` 那一行
-        （没有成员行），和 ``ProjectService._seed_roster`` 在建项目时替小队成员落下
-        的那份真行。只挡前一种是不够的 —— 后一种删得掉，删完人也没走：小队第二天
-        照样把他带回来，重新读一次名册他又在，接口却回了成功。他真正退得出的是小
-        队，所以两种都挡在这里。
-
-        ``ProjectRepository.list_members`` 里那句 ``if handle in explicit: continue``
-        就是这件事的根据：小队那一行只在名册上没有同名成员行时才补出来，所以「删掉
-        表里那一行」不是让他离开项目，只是把盖在小队行上的那块布掀开。
-
-        问的是 handle 而不是 ``Actor``：``remove`` 的管理者问的是**别人**在不在小队
-        里，手上只有名册上的 handle，没有对方的 actor。调用方已知 uid 就传进来
-        （``leave`` 有，省一次查用户行），否则按 handle 查用户行；查不到（脚本、夹具
-        的 handle 没有用户行）就按「不是」走，别把路堵死。
-
-        没有 ``team_id`` 的项目（旧数据）不进这一支：那时小队带不出访问，他走了就
-        是走了。
-        """
-        if project.team_id is None:
-            return False
-        from app.domain.team.services import team_service
-        from app.domain.user.services import user_by_handle
-
-        if user_id is None:
-            user = await user_by_handle(self._session, handle)
-            if user is None:
-                return False
-            user_id = user.id
-        return await team_service(self._session).is_team_member(
-            project.team_id, user_id
-        )
-
     async def leave(self, *, project_id: uuid.UUID, actor: Actor) -> None:
-        """退出项目 —— 成员自己走的那条路。
+        """An external member leaves the project on their own.
 
-        今天只有 owner / lead 能把人移出去，成员自己想走只能去求人。而项目成员身份
-        是进得来这个项目**全部话题**的凭据，所以「离开」必须是一条本人可用的路。
-
-        和写名册那三条路不同，这里没有 manager 授权：动作的对象恒是动作人自己
-        （身份从 resolver 来，代退没有入口）。被拒的几种情况各自对应一条真实的死
-        路，所以每一种都说得出下一步：
-
-        - 身份没核实（403，和写名册那三条路同一种拒绝）：连「你是谁」都没说清。
-        - 所有者：他在名册上只有 ``list_members`` 读时补出来的那一行，一走项目就
-          没人管得了 —— 得先把项目转让给别人。文案只说这一步；界面上有「转让项目」
-          指向 ``PUT /projects/{id}/owner``，那句话说的事在界面上做得到。
-        - 访问来自所属小队（``_access_comes_from_the_team``）：在小队里退，不在这里。
-        - 某个话题的最后一个 owner：``revoke_project_seats`` 拒绝并点名那间房。
-        - 什么都不是：没有成员行、在本项目也没有任何席位、名册上也没有他 —— 409，
-          和 ``leave_group`` 的「Not a member」一样。
-
-        次序是有意的，**每一个拒绝都在动手之前**：所有者和小队那两条在最前面，席位
-        的撤销自己会在删任何东西之前拒掉「最后一个 owner」；最后那条「什么都不是」
-        也只在撤销的返回值为空（即一个字节都没动）时才说出口。
-
-        所以「名册上没有成员行」不能当作「你不是成员」：所有者从来不落成员行，项目
-        转让之后他手上就只剩话题席位了（总览那一份），而他确实还进得来那些房间。用
-        那句答复他，既不是事实，又把他那份残留留在库里 —— 他走得掉，席位跟着走。
+        Refused, each before anything is written: an unverified caller; the
+        owner, who must first hand the project to someone else; a team member,
+        whose access is the team's and ends by leaving the team; and anyone with
+        neither a row nor a seat here. Removing the last owner of a room is
+        refused inside ``revoke_project_seats``, before it deletes anything.
         """
         project = await self._ensure_project(project_id)
         if not actor.authenticated:
             raise ForbiddenError("需要登录后才能退出项目")
         if project.owner_handle and project.owner_handle == actor.handle:
             raise ForbiddenError("项目所有者不能退出项目，需要先把项目转让给别人")
-        if await self._access_comes_from_the_team(project, actor.handle, actor.user_id):
-            raise ConflictError(
-                "你对这个项目的访问来自所属团队，退出项目要在团队里操作"
-            )
         member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
+        if member is None and await self._on_team(project, actor):
+            raise ConflictError("你是这个团队的成员，退出团队才会离开它的项目")
         revoked = await TopicMemberService(self._session).revoke_project_seats(
             project_id=project_id, member_handle=actor.handle
         )
-        # 名册的三个来源到这里都问过了：成员行（上面这行）、所有者（前面那两条）、
-        # 小队（``_access_comes_from_the_team``）。两样都没有，他才真的和这个项目
-        # 没有关系。
         if member is None and not revoked:
             raise ConflictError("Not a member")
         if member is not None:
             await self._repo.delete(member)
+
+    async def _on_team(self, project: Project, actor: Actor) -> bool:
+        from app.domain.team.services import team_service
+
+        if actor.user_id is None:
+            return False
+        return await team_service(self._session).is_team_member(
+            project.team_id, actor.user_id
+        )
 
 
 # The two answers on an invitee's decision card, affirmative first. Choosing one
@@ -315,7 +248,6 @@ class InvitationService:
         *,
         project_id: uuid.UUID,
         invitee_handle: str,
-        role: ProjectRole,
         actor: Actor,
     ) -> ProjectInvitation:
         project = await self._project_or_404(project_id)
@@ -327,7 +259,9 @@ class InvitationService:
             raise ValidationError("不用邀请自己")
         await _reject_execution_identity(self._session, invitee_handle)
         if await self._is_on_project_roster(project_id, invitee_handle):
-            raise ValidationError("这个人已经在项目里了")
+            # Someone on the team is already in every project of it; an invitation
+            # is only for a person from outside it.
+            raise ValidationError("这个人已经在项目里了（团队成员不需要邀请）")
         if (
             await self._repo.pending_for(
                 project_id=project_id, invitee_handle=invitee_handle
@@ -339,7 +273,6 @@ class InvitationService:
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
-            role=role,
         )
         # 一条强提醒，而且是**待办**：decision_request 在被答复之前不会从收件箱里
         # 消失（resolved_at 才让它消失），正好是「等你回一句」这种东西该有的样子。
@@ -353,12 +286,11 @@ class InvitationService:
             level=NotificationLevel.strong,
             kind=NotificationType.DECISION_REQUEST,
             title=f"{actor.handle} 邀请你加入项目「{project.name}」",
-            body="接受之后你能看到这个项目的全部话题。",
+            body="接受之后你会以外部成员的身份加入这个项目，能看到它的公开房间。",
             target_handle=invitee_handle,
             payload={
                 "invitation_id": str(invitation.id),
                 "project_name": project.name,
-                "role": role.value,
                 "options": list(INVITATION_OPTIONS),
             },
         )
@@ -383,6 +315,11 @@ class InvitationService:
         row = InvitationOut.model_validate(invitation).model_dump(mode="json")
         project = await self._projects.get(invitation.project_id)
         row["project_name"] = project.name if project else ""
+        # And who it is for, so a pending invitation reads as a person, not a
+        # bare handle, on the project's members page.
+        invitee = await self._projects.person(invitation.invitee_handle)
+        row["invitee_name"] = invitee["name"]
+        row["invitee_avatar_id"] = invitee["avatar_id"]
         return row
 
     async def _pending_or_404(self, invitation_id: uuid.UUID) -> ProjectInvitation:
@@ -415,7 +352,6 @@ class InvitationService:
                 await self._members.add(
                     project_id=invitation.project_id,
                     user_handle=invitation.invitee_handle,
-                    role=invitation.role,
                 )
         settled = await self._repo.settle(
             invitation,

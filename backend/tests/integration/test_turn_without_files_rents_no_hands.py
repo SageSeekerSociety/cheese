@@ -44,7 +44,7 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.conftest import StubChannel, finish_turn, settle_turn
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, registered, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -57,8 +57,8 @@ INSTALLED = {
 
 @pytest.fixture
 def room(client):
-    project = client.post(
-        "/projects", json={"name": "No hands", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "No hands", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",
@@ -328,6 +328,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     )
     channel.reply = "上一轮的结论是先把闸门做出来。"
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).get_or_create_private(
             project_id=project.id, user_handle="u"
@@ -363,6 +364,7 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="Work", created_by="u"

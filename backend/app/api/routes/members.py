@@ -20,113 +20,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.domain.membership.join_links import JoinLinkService
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
     InvitationCreate,
     InvitationOut,
     InvitationRespond,
-    JoinLinkSettings,
-    JoinThroughLink,
     MemberCreate,
     MemberOut,
-    MemberRoleUpdate,
 )
 from app.domain.membership.services import InvitationService, MemberService
 
 router = APIRouter(prefix="", tags=["members"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-
-
-@router.get("/projects/{project_id}/join-link")
-async def get_join_link(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    link = await JoinLinkService(db).current(project_id, actor)
-    await db.commit()
-    return ok(link)
-
-
-@router.patch("/projects/{project_id}/join-link")
-async def update_join_link(
-    project_id: uuid.UUID,
-    body: JoinLinkSettings,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    link = await JoinLinkService(db).set_approval(project_id, body.approval, actor)
-    await db.commit()
-    return ok(link)
-
-
-@router.post("/projects/{project_id}/join-link/reset")
-async def reset_join_link(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    link = await JoinLinkService(db).reset(project_id, actor)
-    await db.commit()
-    return ok(link)
-
-
-@router.get("/project-invites/{token}")
-async def preview_join_link(
-    token: str, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    return ok(await JoinLinkService(db).describe(token, actor))
-
-
-@router.post("/project-invites/{token}/join")
-async def join_through_link(
-    token: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    body: JoinThroughLink | None = None,
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    result = await JoinLinkService(db).join(
-        token, actor, message=body.message if body else ""
-    )
-    await db.commit()
-    return ok(result)
-
-
-@router.get("/projects/{project_id}/join-requests")
-async def list_join_requests(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    return ok(await JoinLinkService(db).list_pending(project_id, actor))
-
-
-@router.post("/projects/{project_id}/join-requests/{request_id}/approve")
-async def approve_join_request(
-    project_id: uuid.UUID,
-    request_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    await JoinLinkService(db).decide(project_id, request_id, approve=True, actor=actor)
-    await db.commit()
-    return ok({"approved": True})
-
-
-@router.post("/projects/{project_id}/join-requests/{request_id}/reject")
-async def reject_join_request(
-    project_id: uuid.UUID,
-    request_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    actor = await resolver.require_verified_caller()
-    await JoinLinkService(db).decide(project_id, request_id, approve=False, actor=actor)
-    await db.commit()
-    return ok({"rejected": True})
 
 
 @router.post("/projects/{project_id}/members")
@@ -137,8 +43,8 @@ async def add_member(
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    member = await MemberService(db).add(
-        project_id=project_id, user_handle=body.user_handle, role=body.role, actor=who
+    member = await MemberService(db).seat_agent(
+        project_id=project_id, user_handle=body.user_handle, actor=who
     )
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
@@ -157,44 +63,22 @@ async def list_members(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     members, _ = await MemberService(db).list_for_project(project_id)
-    # 走名册，不走成员行：名册更宽（所有者、小队带进来的人、这个项目的队友都没有成员
-    # 行），而且已经是界面该显示的顺序。有成员行的那些，由成员行补上只有它有的字段
-    # （id、created_at、存下来的角色）。
+    # The roster is the answer; a stored row adds only its id and when it was
+    # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
     items = []
     for member in await roster(db, project_id):
         row = row_of.get(member.handle)
+        d = {
+            **member.as_dict(),
+            "id": str(row.id) if row is not None else None,
+            "project_id": str(project_id),
+            "user_handle": member.handle,
+        }
         if row is not None:
-            d = MemberOut.model_validate(row).model_dump(mode="json")
-            d["name"] = member.name
-            d["avatar_id"] = member.avatar_id
-        else:
-            d = {
-                **member.as_dict(),
-                "id": None,
-                "project_id": str(project_id),
-                "user_handle": member.handle,
-            }
-        d["agent"] = member.agent
-        d["active"] = member.active
-        d["project_default"] = member.project_default
+            d["created_at"] = row.created_at.isoformat()
         items.append(d)
     return ok(page(items, len(items)))
-
-
-@router.put("/projects/{project_id}/members/{user_handle}")
-async def update_member_role(
-    project_id: uuid.UUID,
-    user_handle: str,
-    body: MemberRoleUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    member = await MemberService(db).update_role(
-        project_id=project_id, user_handle=user_handle, role=body.role, actor=who
-    )
-    return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
 
 @router.delete("/projects/{project_id}/members/{user_handle}")
@@ -246,7 +130,6 @@ async def invite_member(
     invitation = await InvitationService(db).invite(
         project_id=project_id,
         invitee_handle=body.user_handle,
-        role=body.role,
         actor=who,
     )
     await db.commit()
@@ -259,8 +142,8 @@ async def list_project_invitations(
 ) -> dict:
     """这个项目还在等谁答复。
 
-    Same door as the roster next door. It lists handles and roles of people
-    who have not even joined yet, so "读是开放的" stopped being true the day
+    Same door as the roster next door. It lists people who have not even
+    joined yet, so "读是开放的" stopped being true the day
     the roster was guarded - this route was left behind holding the old
     promise.
     """

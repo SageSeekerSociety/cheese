@@ -21,7 +21,9 @@ StateToken = Callable[..., str]
 @pytest.fixture
 def state_token(_portal) -> StateToken:
     """A stateToken issued the way the callback issues one — minted AND
-    reserved, so the endpoints that spend it can actually claim it."""
+    reserved, so the endpoints that spend it can actually claim it.
+    ``verifiedEmail`` stands for an address already proven on the decision
+    page (test_account_email.py covers proving it)."""
 
     def issue(provider: str = "ruc", **info) -> str:
         payload = {
@@ -31,6 +33,8 @@ def state_token(_portal) -> StateToken:
             "username": info.get("username"),
             "preferredUsername": info.get("preferredUsername", "provuser"),
         }
+        if "verifiedEmail" in info:
+            payload["verifiedEmail"] = info["verifiedEmail"]
         return _portal.call(_issue_oauth_state_token, provider, payload)
 
     return issue
@@ -107,17 +111,6 @@ class TestOAuthState:
         assert data["userInfo"]["id"] == "uid-state-1"
         assert data["suggestedUsername"].startswith("alice_prov")
         assert data["suggestedNickname"]
-        assert data["emailConflict"] is False
-
-    def test_state_reports_email_conflict(
-        self,
-        api_client: TestClient,
-        authenticated_user: CreatedUser,
-        state_token: StateToken,
-    ):
-        token = state_token(email=authenticated_user.email)
-        resp = api_client.get(f"/users/auth/oauth/state?token={token}")
-        assert resp.json()["data"]["emailConflict"] is True
 
     def test_state_rejects_garbage_token(self, api_client: TestClient):
         resp = api_client.get("/users/auth/oauth/state?token=garbage")
@@ -139,7 +132,7 @@ class TestOAuthCreate:
     def test_create_account_and_login_redirect(
         self, api_client: TestClient, state_token: StateToken
     ):
-        token = state_token(id="uid-create-1")
+        token = state_token(id="uid-create-1", verifiedEmail="uid-create-1@example.com")
         resp = api_client.post(
             "/users/oauth/create",
             data={
@@ -158,14 +151,24 @@ class TestOAuthCreate:
         params = _q(loc)
         assert params["created"] == "true"
         assert params["authMode"] == "none"
-        assert params["token"]
-        assert "REFRESH_TOKEN" in resp.headers.get("set-cookie", "")
+        # No token in the URL: it would land in history, Referer and logs.
+        assert "token" not in params
 
-        # the minted token is a live session for the new account
-        me = api_client.get(
-            "/users/auth/methods/oauth_created_1",
+        # The cookie alone signs the landing page in, as the new account.
+        refresh_cookie = resp.cookies.get("cheese_refresh")
+        assert refresh_cookie
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={refresh_cookie}"},
         )
-        assert me.status_code == 200
+        assert refreshed.status_code == 200, refreshed.text
+        me = api_client.get(
+            "/users/me",
+            headers={
+                "Authorization": f"Bearer {refreshed.json()['data']['accessToken']}"
+            },
+        )
+        assert me.json()["data"]["user"]["username"] == "oauth_created_1"
 
         # the stateToken is spent: a replay cannot mint a second account
         replay = api_client.post(
@@ -188,7 +191,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-plain"),
+                "stateToken": state_token(
+                    id="uid-create-plain", verifiedEmail="uid-create-plain@example.com"
+                ),
                 "username": "oauth_created_plain",
                 "nickname": "plain_user",
                 "passwordMode": "password",
@@ -213,7 +218,9 @@ class TestOAuthCreate:
     def test_create_refuses_a_password_before_spending_the_state_token(
         self, api_client: TestClient, state_token: StateToken, password: str
     ):
-        token = state_token(id="uid-create-weak")
+        token = state_token(
+            id="uid-create-weak", verifiedEmail="uid-create-weak@example.com"
+        )
         form = {
             "stateToken": token,
             "username": "oauth_created_weak",
@@ -245,7 +252,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-2"),
+                "stateToken": state_token(
+                    id="uid-create-2", verifiedEmail="uid-create-2@example.com"
+                ),
                 "username": authenticated_user.username,
                 "nickname": "x",
             },
@@ -260,7 +269,9 @@ class TestOAuthCreate:
             "/users/oauth/create",
             data={
                 **OAUTH_CONSENT_FORM,
-                "stateToken": state_token(id="uid-create-3"),
+                "stateToken": state_token(
+                    id="uid-create-3", verifiedEmail="uid-create-3@example.com"
+                ),
                 "username": "ab",  # too short
                 "nickname": "x",
             },
@@ -289,7 +300,8 @@ class TestOAuthBindPassword:
         )
         params = _q(_loc(resp))
         assert params["bound"] == "true"
-        assert params["token"]
+        assert "token" not in params
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
     def test_bind_rejects_wrong_password(
         self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
@@ -393,7 +405,7 @@ class TestOAuthRespectsTwoFactor:
     def _assert_2fa_ticket(self, client: TestClient, resp, secret: str) -> None:
         loc = _loc(resp)
         assert loc.startswith(f"{settings.frontend_url}/account/verify-2fa?")
-        assert "REFRESH_TOKEN" not in resp.headers.get("set-cookie", "")
+        assert "cheese_refresh=" not in resp.headers.get("set-cookie", "")
         done = client.post(
             "/users/auth/verify-2fa",
             json={"temp_token": _q(loc)["token"], "code": pyotp.TOTP(secret).now()},
@@ -514,7 +526,8 @@ class TestOAuthVerifyPending:
         )
         params = _q(_loc(resp))
         assert params["linked"] == "true"
-        assert params["token"]
+        assert "token" not in params
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
         # one-shot: the pending session is consumed
         replay = api_client.post(

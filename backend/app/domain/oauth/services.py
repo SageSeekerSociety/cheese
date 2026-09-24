@@ -766,12 +766,14 @@ class OAuthService:
     async def delete_connection(self, connection_id: int, user_id: int) -> bool:
         """Remove a connection unless it is the user's last way to sign in.
 
-        Password, passkey and every other sign-in connection each count as a
-        way in; link-only connections never produce a session, so they neither
-        count nor are ever protected. Raises ``ConflictError`` when refused.
+        A real email (codes are mailed to it), a password, a passkey and every
+        other sign-in connection each count as a way in; link-only connections
+        never produce a session, so they neither count nor are ever protected.
+        Raises ``ConflictError`` when refused.
         """
         from sqlalchemy import select
 
+        from app.core.email import is_placeholder_email
         from app.domain.passkey.services import PasskeyService
         from app.domain.user.models import User
 
@@ -792,7 +794,12 @@ class OAuthService:
                 for c in await self._repo.list_by_user(user_id)
             )
             has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
-            if not (user.hashed_password or has_passkey or other_sign_in):
+            if not (
+                user.hashed_password
+                or has_passkey
+                or other_sign_in
+                or not is_placeholder_email(user.email)
+            ):
                 raise ConflictError(
                     "这是你唯一的登录方式，请先设置密码或添加通行密钥后再解绑"
                 )

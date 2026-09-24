@@ -18,6 +18,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.memory.redundant import agent_checkout_search
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -35,6 +36,7 @@ def _at(device: str, *, generation: str) -> dict:
 
 
 async def _room(session):
+    await registered(session, "andyl")
     project = await ProjectService(session).create(
         name="两位队友一间房", owner_handle="andyl", forge_kind="github_app"
     )

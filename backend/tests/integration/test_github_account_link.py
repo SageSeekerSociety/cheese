@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.common.auth import decode_token
+from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.github_install_state import (
     ACCOUNT_LINK_TTL_S,
@@ -165,7 +165,7 @@ class TestAccountLinkTokenPersistence:
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
 
         token = seed_user(client, "bob_ghlink")
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
         state = _link_state(user_id)
 
         r = client.get(
@@ -209,7 +209,7 @@ class TestAccountLinkTokenPersistence:
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
 
         token = seed_user(client, "judy_ghcn")
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
         r = client.get(
             "/users/me/github-account/callback",
             params={
@@ -231,7 +231,7 @@ class TestAccountLinkTokenPersistence:
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
 
         token = seed_user(client, "carol_ghlink")
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
 
         async def fake_exchange_1(self, code):
             return {"access_token": "gh-token-1"}
@@ -278,7 +278,7 @@ class TestAccountLinkTokenPersistence:
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
 
         token = seed_user(client, "dave_ghlink")
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
         r = client.get(
             "/users/me/github-account/callback",
             params={
@@ -317,9 +317,9 @@ class TestAccountLinkTokenPersistence:
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
 
         owner_token = seed_user(client, "henry_ghowner")
-        owner_id = int(decode_token(owner_token)["sub"])
+        owner_id = verify_access_token(owner_token).user_id
         victim_token = seed_user(client, "iris_ghvictim")
-        victim_id = int(decode_token(victim_token)["sub"])
+        victim_id = verify_access_token(victim_token).user_id
 
         route_logger = "app.api.routes.github_account_link"
         with caplog.at_level(logging.INFO, logger=route_logger):
@@ -377,7 +377,7 @@ class TestAccountLinkTokenPersistence:
         from app.domain.oauth.services import OAuthService
 
         token = seed_user(client, "erin_ghtoken")
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
 
         async def _scenario() -> None:
             async with client.test_factory() as session:  # type: ignore[attr-defined]
@@ -477,7 +477,7 @@ class TestAccountLinkTokenPersistence:
         )
 
         handle = "frank_ghhandle"
-        user_id = int(decode_token(seed_user(client, handle))["sub"])
+        user_id = verify_access_token(seed_user(client, handle)).user_id
         plaintext = "ghu_plaintext_secret"
 
         async def _scenario() -> None:
@@ -520,7 +520,7 @@ class TestAccountLinkTokenPersistence:
         )
 
         handle = "grace_ghhandle"
-        user_id = int(decode_token(seed_user(client, handle))["sub"])
+        user_id = verify_access_token(seed_user(client, handle)).user_id
 
         async def _scenario() -> None:
             async with client.test_factory() as session:  # type: ignore[attr-defined]
@@ -580,7 +580,7 @@ class TestTheConnectionShowsAName:
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
         token = seed_user(client, handle)
-        user_id = int(decode_token(token)["sub"])
+        user_id = verify_access_token(token).user_id
         r = client.get(
             "/users/me/github-account/callback",
             params={"code": "x", "state": _link_state(user_id)},

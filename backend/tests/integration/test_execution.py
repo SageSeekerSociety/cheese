@@ -1,10 +1,10 @@
 """施工现场 transcript + 资源用量 (spec §7.1/§9.1)."""
 
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 def _topic(client) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},

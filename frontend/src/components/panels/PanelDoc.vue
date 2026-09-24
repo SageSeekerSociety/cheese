@@ -35,6 +35,7 @@ import {
 } from '../../lib/docEditState'
 import { compareRoundTrip, docExtensions, docReplaceRange, serializeDoc } from '../../lib/docMarkdown'
 import { createSlashCommands } from '../../lib/docSlashMenu'
+import { topicTitle } from '../../lib/topicState'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -1522,7 +1523,7 @@ onBeforeUnmount(() => {
         >
           <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
             <!-- Large document title (Feishu Docs), = the topic title -->
-            <h1 class="doc-page__title">{{ topic.title }}</h1>
+            <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
             <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
             <div v-if="lossy" class="doc-lossy-banner">
@@ -1732,13 +1733,15 @@ onBeforeUnmount(() => {
   background: transparent;
   padding: 32px 48px 72px;
 }
+/* 和项目页的大标题同一档（.t-page-title 23/33）：这一栏只有对话那么宽，30px 的
+   标题和 16px 的正文放在 14px 的对话旁边，像另一个产品。 */
 .doc-page__title {
   max-width: 720px;
   margin: 0 auto 0.4em;
   font-family: var(--font-display);
-  font-size: 1.85rem;
+  font-size: 23px;
   font-weight: 650;
-  line-height: 1.3;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -1885,8 +1888,9 @@ onBeforeUnmount(() => {
   min-height: 240px;
   max-width: 720px;
   margin: 0 auto;
-  line-height: 1.8;
-  font-size: 16px;
+  /* 连续正文那一档（.t-reading 15/24）。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   color: var(--text);
 }
 .doc-editor :deep(.doc-prose:focus) {
@@ -1995,29 +1999,28 @@ onBeforeUnmount(() => {
    evenly; vertical space leans UP (more before than after) so headings bind
    to their section. ---- */
 .doc-editor :deep(h1) {
-  font-size: 1.6em;
+  font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.015em;
-  line-height: 1.35;
+  line-height: var(--lh-18);
   margin: 1.1em 0 0.4em;
 }
 .doc-editor :deep(h2) {
-  font-size: 1.32em;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.4;
+  line-height: var(--lh-15-reading);
   margin: 1.15em 0 0.35em;
 }
 .doc-editor :deep(h3) {
-  font-size: 1.13em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: var(--lh-14);
   margin: 1em 0 0.3em;
 }
 .doc-editor :deep(h4) {
-  font-size: 1em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-14);
   margin: 0.9em 0 0.25em;
   color: var(--ink);
 }

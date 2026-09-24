@@ -7,12 +7,15 @@ the refused write, the card — not a request someone expected to be sent.
 """
 
 import importlib.util
+import json
+import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import post_project
 
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
@@ -63,7 +66,7 @@ class BackendHost:
 
 @pytest.fixture
 def room(client):
-    project = client.post("/projects", json={"name": "Tools"}).json()["data"]
+    project = post_project(client, json={"name": "Tools"}).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Work", "created_by": "alice"},
@@ -81,6 +84,34 @@ def test_a_message_is_published_as_written(client, room):
     assert [b["content"] for b in history if b["kind"] == "message"] == [content]
     listed = cheese.run_platform_tool("cheese_chat_list", {}, host)
     assert "检查通过了。" in listed
+
+
+def test_an_explicit_chat_retry_keeps_the_message_after_a_lost_response(client, room):
+    class LostResponseHost(BackendHost):
+        calls = 0
+        responses = []
+
+        def request(self, plan):
+            self.calls += 1
+            response = super().request(plan)
+            self.responses.append(response)
+            if self.calls == 1:
+                raise ConnectionError("response lost after the message committed")
+            return response
+
+    host = LostResponseHost(client, *room)
+    arguments = {"content": "Deliver this once", "request_id": str(uuid.uuid4())}
+    with pytest.raises(ConnectionError, match="response lost"):
+        cheese.run_platform_tool("chat_send", arguments, host)
+    assert host.calls == 1
+
+    first_id = host.responses[0]["data"]["id"]
+    retried = json.loads(cheese.run_platform_tool("chat_send", arguments, host))
+    assert host.calls == 2
+    history = client.get(f"/topics/{room[1]}/blocks").json()["data"]["data"]
+    messages = [b for b in history if b["kind"] == "message"]
+    assert [b["content"] for b in messages] == [arguments["content"]]
+    assert messages[0]["id"] == retried["id"] == first_id
 
 
 def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, room):

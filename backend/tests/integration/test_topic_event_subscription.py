@@ -35,6 +35,7 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.integration.conftest import registered
 from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
@@ -139,6 +140,7 @@ class _RecoveringChannel(_IdleChannel):
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:  # type: ignore[operator]
+        await registered(session, "u1")
         project = await ProjectService(session).create(name="P", owner_handle="u1")
         topic = await TopicService(session).create(
             project_id=project.id,
@@ -392,6 +394,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
                 "_eid": "stop-autonomous-1",
             },
         )
+        await subscription.sink.queue.join()
         started_frame = await asyncio.wait_for(room.get(), 1)
         progress_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
@@ -481,6 +484,7 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
                 "_eid": "stop-english-1",
             },
         )
+        await provider._subscriptions[topic_id].sink.queue.join()
         await asyncio.wait_for(room.get(), 1)  # turn_started
         progress_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
@@ -598,6 +602,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
                 "_eid": "stop-subagent-1",
             },
         )
+        await provider._subscriptions[topic_id].sink.queue.join()
         frames = [await asyncio.wait_for(room.get(), 1) for _ in range(6)]
 
     kinds = [frame["type"] for frame in frames]
@@ -701,6 +706,8 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
                 "_eid": "late-stop-1",
             },
         )
+        # The consumer acknowledges each hook after persistence and broadcast.
+        await provider._subscriptions[topic_id].sink.queue.join()
         started = await asyncio.wait_for(room.get(), 1)
         progress = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}

@@ -38,7 +38,8 @@ export default defineConfig({
     locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
     // Keep the failed attempt even when its retry passes. The workflow uploads
-    // the retained trace after a passing retry, while clean runs upload no artifacts.
+    // the retained trace after a passing retry, while clean runs retain only the
+    // JSON results and CI evidence.
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     // The CI runner IS the dev box, so a failed run cannot be reproduced by

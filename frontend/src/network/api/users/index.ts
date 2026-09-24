@@ -1,7 +1,6 @@
 import type { User } from '@/types'
 import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
-  AuthMethodsResponse,
   FollowUserResponse,
   GetAnswerListResponse,
   GetOAuthProvidersResponse,
@@ -9,7 +8,9 @@ import type {
   GetPasskeysResponse,
   GetQuestionListResponse,
   GetRealNameInfoResponse,
+  GetSessionsResponse,
   GetUserInfoResponse,
+  MyAuthMethods,
   OAuthBindUserRequest,
   OAuthBindUserResponse,
   OAuthCreateUserRequest,
@@ -19,6 +20,7 @@ import type {
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
   UserList,
+  VerifyOAuthEmailResponse,
 } from './types'
 
 import { API_BASE_URL } from '../../utils'
@@ -30,6 +32,18 @@ export namespace UserApi {
     accessToken?: string
     requires2FA?: boolean
     tempToken?: string
+    passkeyEnrollment?: PasskeyEnrollment
+  }
+
+  /**
+   * What a finished sign-in hands back for adding a passkey: a ticket that
+   * opens one registration within a few minutes, and whether this account is
+   * due the screen offering one.
+   */
+  export interface PasskeyEnrollment {
+    ticket: string
+    offer: boolean
+    canStopAsking: boolean
   }
 
   export type RegisterResponseDataType = {
@@ -71,18 +85,26 @@ export namespace UserApi {
       withCredentials: true,
     })
 
+  export const requestSignInCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/auth/email-code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const signInWithEmailCode = (data: { email: string; code: string }) =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/email-code/verify',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
   export const sendEmailCode = (email: string, inviteCode?: string) =>
     ApiInstance.request({
       url: '/users/verify/email',
       method: 'POST',
       data: { email, ...(inviteCode ? { inviteCode } : {}) },
-    })
-
-  export const refreshAccessToken = () =>
-    ApiInstance.request<AuthResponseDataType>({
-      url: '/users/auth/refresh-token',
-      method: 'POST',
-      withCredentials: true,
     })
 
   export const recoverPasswordRequest = (email: string) =>
@@ -192,6 +214,15 @@ export namespace UserApi {
       withCredentials: true,
     })
 
+  /** Decline the offer to add a passkey shown after signing in; `forever`
+   *  stops it for good instead of holding it back for a while. */
+  export const dismissPasskeyPrompt = (userId: number, forever: boolean) =>
+    ApiInstance.request({
+      url: `/users/${userId}/passkeys/prompt/dismiss`,
+      method: 'POST',
+      data: { forever },
+    })
+
   // Passkey 认证相关
   export const getPasskeyAuthenticationOptions = (userId?: number) =>
     ApiInstance.request<{ options: any }>({
@@ -210,6 +241,24 @@ export namespace UserApi {
     })
 
   // Passkey 管理相关
+  export const listSessions = () =>
+    ApiInstance.request<GetSessionsResponse>({
+      url: '/users/me/sessions',
+      method: 'GET',
+    })
+
+  export const revokeSession = (sessionId: string) =>
+    ApiInstance.request({
+      url: `/users/me/sessions/${encodeURIComponent(sessionId)}`,
+      method: 'DELETE',
+    })
+
+  export const revokeOtherSessions = () =>
+    ApiInstance.request<{ revokedCount: number }>({
+      url: '/users/me/sessions',
+      method: 'DELETE',
+    })
+
   export const getUserPasskeys = (userId: number) =>
     ApiInstance.request<GetPasskeysResponse>({
       url: `/users/${userId}/passkeys`,
@@ -367,10 +416,27 @@ export namespace UserApi {
       },
     })
 
-  // 获取认证方法
-  export const getAuthMethods = (username: string) =>
-    ApiInstance.request<AuthMethodsResponse>({
-      url: `/users/auth/methods/${username}`,
+  /** Mail a code that confirms the signed-in user's identity to their own address. */
+  export const requestSudoEmailCode = () =>
+    ApiInstance.request<{ email: string }>({
+      url: '/users/me/sudo/email-code',
+      method: 'POST',
+    })
+
+  export const verifySudoEmailCode = (code: string, purpose?: SudoPurpose) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'email_code',
+        credentials: { code },
+        purpose,
+      },
+    })
+
+  export const getMyAuthMethods = () =>
+    ApiInstance.request<MyAuthMethods>({
+      url: '/users/me/auth-methods',
       method: 'GET',
     })
 
@@ -462,6 +528,36 @@ export namespace UserApi {
     ApiInstance.request<GetOAuthStateResponse>({
       url: `/users/auth/oauth/state?token=${encodeURIComponent(stateToken)}`,
       method: 'GET',
+    })
+
+  // The address a new third-party account will hold is proven with a code.
+  export const sendOAuthEmailCode = (data: { stateToken: string; email: string }) =>
+    ApiInstance.request({
+      url: '/users/auth/oauth/email/code',
+      method: 'POST',
+      data,
+    })
+
+  export const verifyOAuthEmail = (data: { stateToken: string; email: string; code: string }) =>
+    ApiInstance.request<VerifyOAuthEmailResponse>({
+      url: '/users/auth/oauth/email/verify',
+      method: 'POST',
+      data,
+    })
+
+  // An account without an address of its own adds one.
+  export const sendAddEmailCode = (email: string) =>
+    ApiInstance.request({
+      url: '/users/me/email/code',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const addEmail = (data: { email: string; code: string }) =>
+    ApiInstance.request<{ user: User }>({
+      url: '/users/me/email',
+      method: 'POST',
+      data,
     })
 
   // 从 OAuth 创建新用户 (通过表单提交，会重定向)

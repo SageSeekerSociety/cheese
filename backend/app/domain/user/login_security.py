@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import logging
 import secrets
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -14,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt, keyed_digest, keyed_digests
-from app.core.errors import ForbiddenError
 from app.domain.user.models import UserBackupCode, UserTwoFactor
 
 logger = logging.getLogger(__name__)
@@ -52,8 +50,6 @@ STEP_UP_PASSWORD_LOCKOUT_PREFIX = "cheese:sudo_password_lockout:"
 # confirming code. Only an offered secret can be confirmed, so the
 # re-authentication the first step asks for covers the whole setup.
 TOTP_PENDING_TTL_S = 600
-SESSION_PREFIX = "cheese:session:"
-USER_SESSIONS_PREFIX = "cheese:user_sessions:"
 PASSWORD_RESET_PREFIX = "cheese:password_reset:"
 
 # Wrong passwords a username takes before each further one makes the next
@@ -84,7 +80,6 @@ MAX_STEP_UP_2FA_ATTEMPTS = 5
 MAX_STEP_UP_PASSWORD_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60
 PASSWORD_RESET_TTL = 30 * 60
-SESSION_TTL = 30 * 24 * 60 * 60
 
 
 # Failures one client address may make at each credential step, per window.
@@ -518,111 +513,6 @@ class TOTPService:
         factor = await self._factor_for_update(user_id)
         factor.always_required = value
         await self._session.flush()
-
-
-class SessionManager:
-    def __init__(self, redis: Redis) -> None:
-        self._redis = redis
-
-    async def create_session(
-        self,
-        user_id: int,
-        device_info: str = "",
-        ip_address: str = "",
-        user_agent: str = "",
-    ) -> str:
-        session_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
-
-        session_data = {
-            "session_id": session_id,
-            "user_id": str(user_id),
-            "device_info": device_info,
-            "ip_address": ip_address,
-            "user_agent": user_agent,
-            "created_at": now,
-            "last_active_at": now,
-        }
-
-        session_key = f"{SESSION_PREFIX}{session_id}"
-        await self._redis.hset(session_key, mapping=session_data)  # type: ignore[misc]
-        await self._redis.expire(session_key, SESSION_TTL)
-
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.sadd(user_sessions_key, session_id)  # type: ignore[misc]
-        await self._redis.expire(user_sessions_key, SESSION_TTL)
-
-        logger.info("Created session %s for user %d", session_id, user_id)
-        return session_id
-
-    async def get_session(self, session_id: str) -> dict | None:
-        key = f"{SESSION_PREFIX}{session_id}"
-        data = await self._redis.hgetall(key)  # type: ignore[misc]
-        if not data:
-            return None
-
-        # redis client is decode_responses=False → values are bytes at runtime,
-        # but the redis-py stubs don't model that and type them as str.
-        return {k.decode(): v.decode() for k, v in data.items()}  # type: ignore[attr-defined]
-
-    async def update_last_active(self, session_id: str) -> None:
-        key = f"{SESSION_PREFIX}{session_id}"
-        now = datetime.now(UTC).isoformat()
-        await self._redis.hset(key, "last_active_at", now)  # type: ignore[misc]
-        await self._redis.expire(key, SESSION_TTL)
-
-    async def list_user_sessions(self, user_id: int) -> list[dict]:
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
-
-        sessions = []
-        for sid in session_ids:
-            sid_str = sid.decode() if isinstance(sid, bytes) else sid
-            session = await self.get_session(sid_str)
-            if session:
-                sessions.append(session)
-            else:
-                await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
-
-        sessions.sort(key=lambda s: s.get("last_active_at", ""), reverse=True)
-        return sessions
-
-    async def revoke_session(self, session_id: str, user_id: int) -> bool:
-        session = await self.get_session(session_id)
-        if not session:
-            return False
-
-        if int(session.get("user_id", 0)) != user_id:
-            raise ForbiddenError("Cannot revoke session of another user")
-
-        session_key = f"{SESSION_PREFIX}{session_id}"
-        await self._redis.delete(session_key)
-
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.srem(user_sessions_key, session_id)  # type: ignore[misc]
-
-        logger.info("Revoked session %s for user %d", session_id, user_id)
-        return True
-
-    async def revoke_all_sessions(
-        self, user_id: int, except_session_id: str | None = None
-    ) -> int:
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
-
-        count = 0
-        for sid in session_ids:
-            sid_str = sid.decode() if isinstance(sid, bytes) else sid
-            if except_session_id and sid_str == except_session_id:
-                continue
-
-            session_key = f"{SESSION_PREFIX}{sid_str}"
-            await self._redis.delete(session_key)
-            await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
-            count += 1
-
-        logger.info("Revoked %d sessions for user %d", count, user_id)
-        return count
 
 
 class PasswordResetService:

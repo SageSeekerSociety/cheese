@@ -7,7 +7,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.mark.parametrize(
@@ -255,13 +255,15 @@ def test_reading_a_session_is_open_to_whoever_is_in_the_room(client, place):
 
 @pytest.fixture(autouse=True)
 def signing_key(monkeypatch):
-    monkeypatch.setattr("app.core.tokens._SECRET", "rc-http-test-key-at-least-32-bytes")
+    monkeypatch.setattr(
+        "app.core.config.settings.jwt_secret", "rc-http-test-key-at-least-32-bytes"
+    )
 
 
 @pytest.fixture
 def place(client):
-    project = client.post(
-        "/projects", json={"name": "RC test", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "RC test", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
         "/topics",
@@ -336,9 +338,9 @@ def test_agent_cannot_approve_or_control_itself(client, place, endpoint, payload
 
 def test_bootstrap_rejects_a_place_from_another_project(client, place):
     _, topic = place
-    other = client.post(
-        "/projects", json={"name": "Other", "owner_handle": "bob"}
-    ).json()["data"]
+    other = post_project(client, json={"name": "Other", "owner_handle": "bob"}).json()[
+        "data"
+    ]
     token = mint_scoped_token(
         project_id=other["id"], topic_id=topic, remote_control=True
     )

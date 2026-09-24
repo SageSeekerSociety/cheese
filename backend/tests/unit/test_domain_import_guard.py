@@ -84,7 +84,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
         #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
         ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
-        ("app.domain.dashboard.services", "app.domain.membership.repositories"),
         ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
         ("app.domain.dashboard.services", "app.domain.space.repositories"),
@@ -121,7 +120,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.gate_sweep", "app.domain.block.repositories"),
         ("app.domain.review.gate_sweep", "app.domain.topic.repositories"),
         ("app.domain.review.services", "app.domain.block.repositories"),
-        ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
         ("app.domain.review.services", "app.domain.topic.repositories"),
         # --- space ---
@@ -145,14 +143,11 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.services", "app.domain.user.repositories"),
         ("app.domain.task.visibility_service", "app.domain.space.repositories"),
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
-        # --- team / team_project ---
+        # --- team ---
         ("app.domain.team.services", "app.domain.task.repositories"),
-        ("app.domain.team_project.services", "app.domain.team.repositories"),
-        ("app.domain.team_project.services", "app.domain.user.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.membership.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
         # --- webhook / workspace ---
@@ -161,7 +156,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 路由一个领域都不属于，所以它碰的每一个 repository 都是别人家的。下面
         # 98 条是守卫扩到这棵树那一刻就在的存量，和上面的领域内债一样入账：还法
         # 是路由改调对方的 service，然后把这里对应的行删掉。
-        ("app.api.routes.agent_credential", "app.domain.membership.repositories"),
         ("app.api.routes.agent_credential", "app.domain.project.repositories"),
         ("app.api.routes.ai", "app.domain.llm.repositories"),
         ("app.api.routes.answers", "app.domain.answers.repositories"),
@@ -200,10 +194,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.knowledge", "app.domain.knowledge.repositories"),
         ("app.api.routes.knowledge", "app.domain.team.repositories"),
         ("app.api.routes.knowledge", "app.domain.user.repositories"),
-        ("app.api.routes.llm_proxy", "app.domain.machine.repositories"),
         ("app.api.routes.llm_proxy", "app.domain.project.repositories"),
         ("app.api.routes.llm_proxy", "app.domain.usage.repositories"),
-        ("app.api.routes.machines", "app.domain.membership.repositories"),
         ("app.api.routes.machines", "app.domain.project.repositories"),
         ("app.api.routes.machines", "app.domain.team.repositories"),
         ("app.api.routes.materialbundles", "app.domain.materials.repositories"),
@@ -212,10 +204,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.notifications_flat", "app.domain.team.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
         ("app.api.routes.project_environment", "app.domain.machine.repositories"),
-        ("app.api.routes.project_environment", "app.domain.membership.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
         ("app.api.routes.projects", "app.domain.block.repositories"),
-        ("app.api.routes.projects", "app.domain.membership.repositories"),
         ("app.api.routes.projects", "app.domain.project.repositories"),
         ("app.api.routes.projects", "app.domain.review.repositories"),
         ("app.api.routes.projects", "app.domain.room_task.repositories"),

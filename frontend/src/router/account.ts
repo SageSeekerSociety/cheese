@@ -18,6 +18,24 @@ export default {
       },
     },
     {
+      path: 'signin/email',
+      name: 'SignInEmailCode',
+      component: () => import('@/views/account/emailCode/Request.vue'),
+      meta: {
+        title: '邮箱验证码登录',
+        titleKey: 'account.emailCode.title',
+      },
+    },
+    {
+      path: 'signin/email/verify',
+      name: 'SignInEmailCodeVerify',
+      component: () => import('@/views/account/emailCode/Verify.vue'),
+      meta: {
+        title: '输入验证码',
+        titleKey: 'account.emailCode.codeTitle',
+      },
+    },
+    {
       path: 'signup',
       name: 'SignUpStart',
       component: () => import('@/views/account/signup/Start.vue'),
@@ -58,6 +76,28 @@ export default {
         } else {
           next()
         }
+      },
+    },
+    {
+      // Right after a password sign-in, still on the way in: the brand scene
+      // stays, so arriving here from the sign-in page does not redraw it.
+      path: 'passkey',
+      name: 'PasskeyOffer',
+      component: () => import('@/views/account/PasskeyOffer.vue'),
+      meta: {
+        title: '添加通行密钥',
+        titleKey: 'account.passkeyOffer.add',
+      },
+    },
+    {
+      // Required of an account without an address of its own before it goes
+      // anywhere else (router/emailRequired.ts).
+      path: 'add-email',
+      name: 'AccountAddEmail',
+      component: () => import('@/views/account/AddEmail.vue'),
+      meta: {
+        title: '添加邮箱',
+        titleKey: 'account.addEmail.title',
       },
     },
     {

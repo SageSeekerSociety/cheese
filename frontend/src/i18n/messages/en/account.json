@@ -46,7 +46,8 @@
     "usernameRequired": "Enter a username",
     "displayNameRequired": "Enter a display name",
     "passwordRequired": "Enter your password",
-    "confirmPasswordRequired": "Enter the password again"
+    "confirmPasswordRequired": "Enter the password again",
+    "emailInvalid": "Enter a valid email address"
   },
   "signIn": {
     "title": "Sign in",
@@ -66,14 +67,18 @@
     "notice": {
       "passwordReset": "Your password has been reset. Sign in with the new one."
     },
-    "lastUsed": "Last used"
+    "lastUsed": "Last used",
+    "emailCode": "Sign in with an email code"
   },
   "attempts": {
     "wrongPassword": "Wrong username or password.",
     "wrongPasswordWait": "Wrong username or password. Try again in {wait}.",
     "tooManyWait": "Too many attempts. Try again in {wait}.",
     "seconds": "1 second | {count} seconds",
-    "minutes": "1 minute | {count} minutes"
+    "minutes": "1 minute | {count} minutes",
+    "wrongEmailCode": "The code is wrong or has expired.",
+    "codeTooSoon": "Request a new code in {wait}.",
+    "mailLimit": "Email can't be sent right now. Try again later."
   },
   "signUp": {
     "title": "Create account",
@@ -94,7 +99,18 @@
     "resent": "Code sent again",
     "resendFailed": "Couldn't send the code. Please try again later.",
     "accountCreated": "Account created",
-    "failed": "Couldn't verify. Please try again."
+    "failed": "Couldn't verify. Please try again.",
+    "changeEmail": "Use another address"
+  },
+  "addEmail": {
+    "title": "Add an email address",
+    "lede": "Your email is used to recover your account and to sign in",
+    "send": "Send code",
+    "submit": "Verify and continue",
+    "added": "Email address added",
+    "signOut": "Sign out",
+    "signInAgain": "Sign in again to add an email address",
+    "emailTaken": "This email is used by another account"
   },
   "recover": {
     "title": "Reset password",
@@ -131,6 +147,13 @@
     "later": "Later",
     "regenerate": "Generate new codes"
   },
+  "passkeyOffer": {
+    "title": "Sign in without a password next time",
+    "lede": "On this device, sign in with your fingerprint, face or screen lock",
+    "add": "Add a passkey",
+    "later": "Not now",
+    "stopAsking": "Don’t ask again"
+  },
   "oauth": {
     "provider": {
       "wechat": "WeChat",
@@ -157,7 +180,8 @@
       "usernameReserved": "This username is reserved. Please choose another.",
       "usernameTaken": "This username is taken",
       "verificationFailed": "Verification failed. Please try again.",
-      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account"
+      "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account",
+      "emailUnverified": "Verify your email address first"
     },
     "success": {
       "processing": "Signing in",
@@ -165,7 +189,7 @@
       "done": "Signed in",
       "doneLede": "Redirecting",
       "failed": "Couldn't sign in. Please try again.",
-      "missingToken": "Sign-in details are incomplete. Please sign in again.",
+      "incomplete": "Sign-in details are incomplete. Please sign in again.",
       "signedIn": "Signed in with {provider}",
       "linked": "{provider} account linked"
     },
@@ -186,7 +210,8 @@
       "setPassword": "Also set a password",
       "setPasswordHint": "You can then sign in with your username and password too",
       "bindSubmit": "Link and sign in",
-      "unavailable": "Cannot continue signing in"
+      "unavailable": "Cannot continue signing in",
+      "emailBelongsToAccount": "This email is used by an existing account"
     }
   },
   "sudo": {
@@ -197,7 +222,8 @@
     "noMethod": "No way to confirm your identity is set up",
     "method": {
       "password": "Enter your password",
-      "totp": "Enter a code from your authenticator app"
+      "totp": "Enter a code from your authenticator app",
+      "emailCode": "Get a code by email"
     },
     "submit": "Confirm",
     "passwordRequired": "Enter your password",
@@ -214,11 +240,14 @@
       "unbindOAuthConnection": "unlink a connected account",
       "viewRealName": "view your full real-name information",
       "updateRealName": "change your real-name information"
-    }
+    },
+    "sendEmailCode": "Email me a code",
+    "sendFailed": "Couldn't send the code. Try again.",
+    "emailCodeUnavailable": "Two-step verification is on for this account. Use another way."
   },
   "security": {
     "title": "Password and security",
-    "lede": "Manage how you sign in and two-step verification",
+    "lede": "Manage how you sign in, two-step verification and signed-in devices",
     "signIn": "Ways to sign in",
     "password": "Password",
     "passwordNote": "Used to sign in with your username",
@@ -245,10 +274,29 @@
     "linkedOn": "Linked {date}",
     "unlink": "Unlink",
     "noConnections": "No linked accounts",
+    "sessions": "Signed-in devices",
+    "thisDevice": "This device",
+    "lastActive": "Last active {date}",
+    "unknownDevice": "Unknown device",
+    "deviceName": "{browser} on {os}",
+    "methodPassword": "Password sign-in",
+    "methodPasskey": "Passkey sign-in",
+    "methodTotp": "Two-step verification",
+    "methodBackupCode": "Backup code",
+    "methodSignup": "Signed up",
+    "methodOAuth": "{provider} sign-in",
+    "signOutDevice": "Sign out",
+    "signOutOthers": "Sign out other devices",
+    "signOutOthersTitle": "Sign out other devices",
+    "signOutOthersBody": "Every device except this one will have to sign in again. Sign them out?",
+    "signedOutDevice": "Device signed out",
+    "signedOutOthers": "Signed out {count} devices",
+    "signOutFailed": "Could not sign out. Try again.",
+    "noSessions": "No signed-in devices",
     "changePasswordTitle": "Change password",
     "changePasswordSubmit": "Change password",
     "changePasswordFailed": "Could not change the password. Try again.",
-    "passwordChanged": "Password changed",
+    "passwordChanged": "Password changed. Other devices have been signed out.",
     "setupTitle": "Turn on two-step verification",
     "newCodesTitle": "New backup codes",
     "step": "Step {step} of {total}",
@@ -287,6 +335,12 @@
     "unlinked": "Unlinked",
     "unlinkFailed": "Could not unlink. Try again.",
     "lastWayIn": "This is your only way to sign in. Set a password or add a passkey first.",
-    "loadFailed": "Some details could not load. Refresh the page."
+    "loadFailed": "Some details could not load. Refresh the page.",
+    "methodEmailCode": "Email code sign-in"
+  },
+  "emailCode": {
+    "title": "Sign in with an email code",
+    "send": "Send code",
+    "codeTitle": "Enter the code"
   }
 }

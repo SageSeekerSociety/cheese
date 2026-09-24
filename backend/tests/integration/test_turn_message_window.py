@@ -20,6 +20,7 @@ from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
+from tests.integration.conftest import registered
 
 
 class RecordingScreen(StubChannel):
@@ -73,6 +74,7 @@ async def _service(factory, agent: StubChannel, tmp_path) -> ChatService:
 
 async def _new_topic(factory) -> uuid.UUID:
     async with factory() as session:
+        await registered(session, "u0")
         project = await ProjectService(session).create(name="P", owner_handle="u0")
         topic = await TopicService(session).create(
             project_id=project.id, title="话题", created_by="u0"

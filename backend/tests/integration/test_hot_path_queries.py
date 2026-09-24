@@ -20,6 +20,8 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 
+from tests.integration.conftest import a_team, join_project_team, post_project
+
 OWNER = "roster-owner"
 PROJECT = "00000000-0000-0000-0000-0000000000aa"
 TOPIC_ONE = "00000000-0000-0000-0000-000000000001"
@@ -60,19 +62,14 @@ def _seeded_rooms(client, project_id: str, headers: dict) -> list[dict]:
 
 
 def _create_project(client, name: str = "Hot path") -> str:
-    r = client.post("/projects", json={"name": name, "owner_handle": OWNER})
+    r = post_project(client, json={"name": name, "owner_handle": OWNER})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _add_members(client, bearer, project_id: str, handles: list[str]) -> None:
     for handle in handles:
-        r = client.post(
-            f"/projects/{project_id}/members",
-            json={"user_handle": handle},
-            headers=bearer(OWNER),
-        )
-        assert r.status_code == 200
+        join_project_team(client, project_id, handle)
 
 
 # --------------------------------------------------------------------------
@@ -260,11 +257,11 @@ async def _seed_blocks(session, *, topics: int = 40, blocks: int = 4000) -> None
     """
     await session.execute(
         text(
-            "INSERT INTO projects (name,owner_handle,ai_mode,settings,id,"
-            "created_at,updated_at,summary) VALUES ('p','o','collaborative',"
+            "INSERT INTO projects (name,owner_handle,team_id,ai_mode,settings,id,"
+            "created_at,updated_at,summary) VALUES ('p','o',:team,'collaborative',"
             "'{}',:pid,now(),now(),'')"
         ),
-        {"pid": PROJECT},
+        {"pid": PROJECT, "team": await a_team(session)},
     )
     await session.execute(
         text(

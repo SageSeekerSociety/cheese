@@ -12,10 +12,11 @@ from app.domain.agent import clone
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.repository import service as ws
+from tests.integration.conftest import post_project
 
 
 def _project_and_topics(client) -> tuple[str, str, str]:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     src = client.post(
         "/topics", json={"project_id": p["id"], "title": "源话题"}
     ).json()["data"]
@@ -109,8 +110,8 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
 
 
 def test_clone_cross_project_rejected(client, monkeypatch):
-    p1 = client.post("/projects", json={"name": "P1"}).json()["data"]
-    p2 = client.post("/projects", json={"name": "P2"}).json()["data"]
+    p1 = post_project(client, json={"name": "P1"}).json()["data"]
+    p2 = post_project(client, json={"name": "P2"}).json()["data"]
     src = client.post("/topics", json={"project_id": p1["id"], "title": "A"}).json()[
         "data"
     ]

@@ -20,6 +20,7 @@ from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.topic.repositories import TopicRepository
 from tests.conftest import seed_user
+from tests.integration.conftest import post_project
 
 
 def git(path, *args):
@@ -30,7 +31,7 @@ def git(path, *args):
 def exported_project(client, monkeypatch, tmp_path):
     token = seed_user(client, "export-owner")
     headers = {"Authorization": f"Bearer {token}"}
-    response = client.post("/projects", json={"name": "Export"}, headers=headers)
+    response = post_project(client, json={"name": "Export"}, headers=headers)
     assert response.status_code == 200, response.text
     pid = uuid.UUID(response.json()["data"]["id"])
     workspace = tmp_path / "workspace"

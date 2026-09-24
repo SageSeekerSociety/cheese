@@ -20,11 +20,11 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client) -> dict:
-    return client.post("/projects", json={"name": "P"}).json()["data"]
+    return post_project(client, json={"name": "P"}).json()["data"]
 
 
 def _topic(client, project_id: str, title: str = "房间") -> dict:

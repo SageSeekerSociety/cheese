@@ -217,79 +217,8 @@ async def test_human_management_never_lists_or_mutates_a_cloud_endpoint():
         )
 
 
-# --- #420: deleting a device revokes its ccproxy ticket first ---------------
-
-
-async def test_delete_owned_revokes_ccproxy_ticket_before_forgetting():
-    from types import SimpleNamespace
-    from typing import cast
-    from unittest.mock import AsyncMock
-
-    from app.domain.device.ccproxy_tenant import CcproxyTenantClient
-
-    ccproxy = SimpleNamespace(delete_machine=AsyncMock(return_value=None))
-    repo = InMemoryDeviceRepository()
-    service = DeviceService(repo, ccproxy=cast(CcproxyTenantClient, ccproxy))
-    owner = uuid.uuid4()
-    device = await service.approve(
-        await service.start("dev-box"),
-        owner_user_id=owner,
-        supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
-    )
-    device.ccproxy_machine_id = 161  # registered at ccproxy (part 2 writes this)
-
-    await service.delete_owned(device.device_id, actor_user_id=owner)
-
-    ccproxy.delete_machine.assert_awaited_once_with(161)
-    assert await service.get_device(device.device_id) is None
-
-
-async def test_delete_owned_keeps_the_device_when_revocation_is_unconfirmed():
-    """A deleted row with a live ticket is the hazard #420 closes — so an
-    unconfirmed revocation must fail the deletion, not the other way round."""
-    from types import SimpleNamespace
-    from typing import cast
-    from unittest.mock import AsyncMock
-
-    from app.domain.device.ccproxy_tenant import (
-        CcproxyTenantClient,
-        CcproxyTenantError,
-    )
-
-    ccproxy = SimpleNamespace(
-        delete_machine=AsyncMock(
-            side_effect=CcproxyTenantError("engine unreachable", status=502)
-        )
-    )
-    repo = InMemoryDeviceRepository()
-    service = DeviceService(repo, ccproxy=cast(CcproxyTenantClient, ccproxy))
-    owner = uuid.uuid4()
-    device = await service.approve(
-        await service.start("dev-box"),
-        owner_user_id=owner,
-        supply=Supply.self_hosted,
-        visibility=Visibility.isolated,
-    )
-    device.ccproxy_machine_id = 161
-
-    with pytest.raises(CcproxyTenantError):
-        await service.delete_owned(device.device_id, actor_user_id=owner)
-
-    assert await service.get_device(device.device_id) is not None
-
-
-async def test_delete_owned_of_a_plain_device_never_dials_ccproxy():
-    from types import SimpleNamespace
-    from typing import cast
-    from unittest.mock import AsyncMock
-
-    from app.domain.device.ccproxy_tenant import CcproxyTenantClient
-
-    ccproxy = SimpleNamespace(delete_machine=AsyncMock())
-    service = DeviceService(
-        InMemoryDeviceRepository(), ccproxy=cast(CcproxyTenantClient, ccproxy)
-    )
+async def test_delete_owned_forgets_the_device():
+    service = DeviceService(InMemoryDeviceRepository())
     owner = uuid.uuid4()
     device = await service.approve(
         await service.start("laptop"),
@@ -300,4 +229,4 @@ async def test_delete_owned_of_a_plain_device_never_dials_ccproxy():
 
     await service.delete_owned(device.device_id, actor_user_id=owner)
 
-    ccproxy.delete_machine.assert_not_awaited()
+    assert await service.get_device(device.device_id) is None

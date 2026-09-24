@@ -13,13 +13,13 @@ import uuid
 
 from app.domain.room_task.models import Task
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.turn_log import open_turn
 
 
 def _project(client, handle: str) -> str:
-    return client.post(
-        "/projects", json={"name": "P"}, headers=session_auth_headers(handle)
+    return post_project(
+        client, json={"name": "P"}, headers=session_auth_headers(handle)
     ).json()["data"]["id"]
 
 

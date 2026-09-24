@@ -1,8 +1,10 @@
 import logging
 import re
+import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlsplit
 
 import jwt
 from fastapi import (
@@ -27,10 +29,10 @@ from app.auth.core import AuthUserInfo
 from app.common.auth import (
     SudoPurpose,
     create_access_token,
-    create_refresh_token,
-    decode_token,
+    get_current_session_id,
 )
-from app.core.config import settings
+from app.core.config import GATEWAY_MOUNT, settings
+from app.core.email import is_placeholder_email
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -49,6 +51,7 @@ from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS, ConsentService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
+from app.domain.passkey.prompt import PasskeyPromptService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.questions.repositories import (
@@ -61,7 +64,7 @@ from app.domain.team.repositories import (
     TeamRepository,
 )
 from app.domain.team.services import TeamService
-from app.domain.user.models import UserFollowingRelationship
+from app.domain.user.models import UserFollowingRelationship, UserSession
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserFollowingRepository,
@@ -76,8 +79,10 @@ from app.domain.user.services import (
     UserAuthService,
     UserProfileService,
     is_valid_username,
+    lookup_account,
     normalize_nickname,
 )
+from app.domain.user.sessions import RevokeReason, SessionService
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -92,6 +97,25 @@ class SendEmailCodeRequest(BaseModel):
 
     email: str = Field(..., min_length=1)
     invite_code: str | None = Field(default=None, alias="inviteCode")
+
+
+class AddEmailCodeRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class AddEmailRequest(AddEmailCodeRequest):
+    code: str = Field(..., min_length=1)
+
+
+class OAuthEmailCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    state_token: str = Field(..., alias="stateToken", min_length=1)
+    email: str = Field(..., min_length=1)
+
+
+class OAuthEmailVerifyRequest(OAuthEmailCodeRequest):
+    code: str = Field(..., min_length=1)
 
 
 class SignupConsent(BaseModel):
@@ -178,6 +202,15 @@ class ForgotPasswordRequest(BaseModel):
     email: str = Field(..., min_length=1)
 
 
+class EmailCodeSignInRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class EmailCodeSignInVerifyRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=1)
+
+
 class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -195,34 +228,115 @@ class CreateInviteCodeRequest(BaseModel):
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
-    """The refresh cookie lives as long as the token in it. Without a Max-Age
+@router.get("/lookup", summary="Find one account by exact username or email")
+async def lookup_account_route(
+    q: str = Query(..., min_length=1, max_length=254),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """The one person an external-member invitation is about to go to.
+
+    Exact username or email only, like finding an external contact: no partial
+    match, so the endpoint cannot be used to list who is registered.
+    """
+    _ = auth_user
+    found = await lookup_account(db, q)
+    if found is None:
+        raise NotFoundError("No account with that username or email")
+    return {"code": 200, "message": "OK", "data": found}
+
+
+# The refresh token rides in this cookie and is sent to the auth routes only.
+# Its path is the one the browser sees, through the gateway, not the route's.
+REFRESH_COOKIE = "cheese_refresh"
+_REFRESH_COOKIE_PATH = f"{GATEWAY_MOUNT}/users/auth"
+
+
+def _set_refresh_cookie(
+    response: Response, refresh_token: str, expires_at: datetime
+) -> None:
+    """The cookie lasts as long as the sign-in behind it. Without a Max-Age
     the browser drops it when the session ends while the access token in
     localStorage survives, and the next refresh signs the user out."""
     response.set_cookie(
-        "REFRESH_TOKEN",
+        REFRESH_COOKIE,
         refresh_token,
-        max_age=settings.refresh_token_expires_seconds,
+        max_age=max(0, int((expires_at - datetime.now(UTC)).total_seconds())),
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/",
+        path=_REFRESH_COOKIE_PATH,
     )
 
 
-def _set_session_cookie(response: Response, session_id: str) -> None:
-    """Kept as long as the server-side session it names."""
-    from app.domain.user.login_security import SESSION_TTL
-
-    response.set_cookie(
-        "SESSION_ID",
-        session_id,
-        max_age=SESSION_TTL,
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        REFRESH_COOKIE,
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/",
+        path=_REFRESH_COOKIE_PATH,
     )
+
+
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+def _require_same_origin(request: Request) -> None:
+    """Refuse a refresh or sign-out that another site had the browser send.
+
+    SameSite=Lax keeps the cookie off a cross-site POST, but not off one from
+    a sibling subdomain, and older browsers do not apply it at all. Modern
+    browsers say where a request came from in Sec-Fetch-Site; older ones at
+    least send Origin on a POST. A request with neither did not come from a
+    browser, so it carries no cookie it did not mean to, and passes.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        if site != "same-origin":
+            raise ForbiddenError("Cross-site request refused")
+        return
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    trusted = {
+        _origin_of(settings.frontend_url),
+        *map(_origin_of, settings.cors_origins),
+    }
+    same_host = urlsplit(origin).netloc == request.headers.get("host")
+    if not same_host and _origin_of(origin) not in trusted:
+        raise ForbiddenError("Cross-site request refused")
+
+
+async def issue_session(
+    response: Response,
+    request: Request,
+    db: AsyncSession,
+    *,
+    user_id: int,
+    handle: str,
+    login_method: str,
+) -> str:
+    """Sign the user in: open a session, put its refresh token in the cookie
+    on ``response``, and return the access token for the body.
+
+    Every way of signing in ends here, so every sign-in is a session the
+    account can see and end.
+    """
+    from app.core.client_address import resolved_client_address
+
+    # Behind a proxy that is not trusted to name the client, the peer is the
+    # proxy; the device list shows no address rather than the proxy's.
+    started = await SessionService(db).start(
+        user_id,
+        login_method,
+        ip=resolved_client_address(request) or "",
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    _set_refresh_cookie(response, started.refresh_token, started.expires_at)
+    return create_access_token(user_id, handle=handle, sid=started.session_id)
 
 
 logger = logging.getLogger(__name__)
@@ -467,6 +581,27 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
         logger.exception("sudo: cannot reserve ticket uid=%s", user_id)
         raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
     return minted.token
+
+
+async def _passkey_enrollment(user_id: int, session: AsyncSession) -> dict[str, Any]:
+    """What a finished sign-in hands back for adding a passkey.
+
+    The person has just proved more than the sudo page would ask of them, so
+    sending them there before a passkey can be added would only make them
+    prove it twice. The ticket is an ordinary sudo ticket for ``PASSKEY_ADD``:
+    the same few minutes, the same single use, good for nothing else. It
+    travels in the response body and never in a URL.
+
+    ``offer`` says whether this account is due the screen offering a passkey
+    (it has none, and has not declined recently); the client adds what only
+    it can know, such as where the sign-in is headed.
+    """
+    prompt = await PasskeyPromptService(session).state(user_id)
+    return {
+        "ticket": await _issue_sudo_ticket(user_id, SudoPurpose.PASSKEY_ADD),
+        "offer": prompt.due,
+        "canStopAsking": prompt.can_stop_asking,
+    }
 
 
 async def _spend_sudo_ticket(
@@ -1265,6 +1400,68 @@ async def get_user_answers(
     }
 
 
+_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
+def _own_email(raw: str) -> str:
+    """An address an account may hold: well formed, and one mail can reach."""
+    email = raw.strip()
+    if not _EMAIL_FORMAT.match(email) or is_placeholder_email(email):
+        raise UnprocessableEntityError(
+            "Invalid email address format", {"reason": "invalid_email"}
+        )
+    return email
+
+
+def _email_taken() -> ConflictError:
+    return ConflictError("Email already registered", {"reason": "email_taken"})
+
+
+async def _send_email_code(request: Request, email: str) -> None:
+    """Mail a code proving ownership of ``email``: the sign-up code, with its
+    per-address quota, the site's mail allowance and its limit on wrong
+    guesses."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.verification_service import EmailVerificationService
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(redis).send_verification_code(
+            email.lower(), resolved_client_address(request)
+        )
+    finally:
+        await redis.aclose()
+
+
+async def _check_email_code(request: Request, email: str, code: str) -> None:
+    """Spend ``code`` against ``email``, counted like the sign-up check."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import ClientFailureBudget
+    from app.domain.user.verification_service import EmailVerificationService
+
+    client = resolved_client_address(request)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        budget = ClientFailureBudget(redis, "email_code")
+        wait = await budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        if not await EmailVerificationService(redis).verify_code(
+            email.lower(), code.strip()
+        ):
+            raise UnprocessableEntityError(
+                "Invalid or expired verification code",
+                {"reason": "invalid_email_code"},
+            )
+        await budget.refund(client)
+    finally:
+        await redis.aclose()
+
+
 @router.post(
     "/verify/email",
     summary="Send registration email verification code",
@@ -1415,7 +1612,10 @@ async def register_user(
         service = EmailVerificationService(redis)
         is_valid = await service.verify_code(email, email_code)
         if not is_valid:
-            raise UnprocessableEntityError("Invalid or expired verification code")
+            raise UnprocessableEntityError(
+                "Invalid or expired verification code",
+                {"reason": "invalid_email_code"},
+            )
         await client_budget.refund(client)
     finally:
         await redis.aclose()
@@ -1460,10 +1660,14 @@ async def register_user(
         except ValueError as exc:
             raise _invite_code_error(exc) from exc
 
-    access_token = create_access_token(user.id, handle=user.username)
-    refresh_token = create_refresh_token(user.id)
-
-    _set_refresh_cookie(response, refresh_token)
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user.id,
+        handle=user.username,
+        login_method="signup",
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1506,6 +1710,195 @@ async def get_current_user(
             "user": user_dto,
         },
     }
+
+
+# How recent the sign-in behind a request must be for it to add the account's
+# first email. That address is what the account is recovered through, so a
+# session taken from its owner must not be able to attach one of its own; and
+# an account without an address usually has nothing else to confirm with.
+ADD_EMAIL_SIGN_IN_WINDOW = timedelta(minutes=15)
+
+
+async def _account_without_email(
+    auth_user: AuthUserInfo,
+    auth_service: UserAuthService,
+    session: AsyncSession,
+    session_id: uuid.UUID | None,
+):
+    """The caller's account, refused once it holds an address of its own
+    (replacing one is a different operation, with its own confirmation), or
+    when the caller did not sign in within ``ADD_EMAIL_SIGN_IN_WINDOW``.
+    Refreshing does not count as signing in: it keeps the session's start."""
+    try:
+        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+    except ValueError:
+        raise NotFoundError("User not found") from None
+    if not is_placeholder_email(user.email):
+        raise ConflictError(
+            "This account already has an email address", {"reason": "email_present"}
+        )
+    started = None
+    if session_id is not None:
+        started = await session.scalar(
+            select(UserSession.created_at).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user.id,
+                UserSession.revoked_at.is_(None),
+            )
+        )
+    if started is None or datetime.now(UTC) - started > ADD_EMAIL_SIGN_IN_WINDOW:
+        raise ForbiddenError(
+            "Sign in again to add an email address", {"reason": "reauth_required"}
+        )
+    return user, profile
+
+
+@router.post(
+    "/me/email/code",
+    summary="Send a code to the address an account without one is adding",
+)
+async def send_add_email_code(
+    payload: AddEmailCodeRequest,
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
+) -> dict:
+    await _account_without_email(auth_user, auth_service, session, session_id)
+    email = _own_email(payload.email)
+    if await auth_service.get_user_by_email(email) is not None:
+        raise _email_taken()
+    await _send_email_code(request, email)
+    return {"code": 200, "message": "Verification code sent."}
+
+
+@router.post(
+    "/me/email",
+    summary="Add a verified email to an account that has none",
+)
+async def add_email(
+    payload: AddEmailRequest,
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = Depends(get_current_session_id),
+) -> dict:
+    from sqlalchemy.exc import IntegrityError
+
+    user, profile = await _account_without_email(
+        auth_user, auth_service, session, session_id
+    )
+    email = _own_email(payload.email)
+    # Before the code is spent: an address that cannot be taken should not
+    # cost the person their code.
+    if await auth_service.get_user_by_email(email) is not None:
+        raise _email_taken()
+    await _check_email_code(request, email, payload.code)
+    try:
+        await UserRepository(session=session).update_email(user, email)
+    except IntegrityError:
+        raise _email_taken() from None
+    user_dto = await auth_service.build_user_dto(
+        user=user, profile=profile, viewer_id=user.id
+    )
+    return {
+        "code": 200,
+        "message": "Email added.",
+        "data": {"user": user_dto},
+    }
+
+
+@router.get(
+    "/me/auth-methods",
+    summary="How the signed-in user can confirm their identity",
+)
+async def get_my_auth_methods(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """The ways ``/auth/sudo`` accepts from this account, for the caller only:
+    what an account has is nobody else's business."""
+    from app.domain.passkey.models import PasskeyCredential
+    from app.domain.user.login_security import TOTPService
+    from app.domain.user.models import User
+
+    user = await session.get(User, auth_user.user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    passkeys = await session.scalar(
+        select(func.count())
+        .select_from(PasskeyCredential)
+        .where(PasskeyCredential.user_id == user.id)
+    )
+    two_factor = await TOTPService(session).is_2fa_enabled(user.id)
+    return {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            # An account created through a third-party sign-in may have none.
+            "password": bool(user.hashed_password),
+            "passkey": bool(passkeys),
+            "twoFactor": two_factor,
+            "emailCode": _email_code_confirms(user.email, two_factor=two_factor),
+        },
+    }
+
+
+def _email_code_confirms(email: str | None, *, two_factor: bool) -> bool:
+    """Whether a code mailed to the account confirms its identity.
+
+    Not with two-step verification: the mailbox alone would then be enough to
+    turn it off. Not for a placeholder address, which nobody reads.
+    """
+
+    return not two_factor and not is_placeholder_email(email)
+
+
+def _email_code_unavailable() -> ForbiddenError:
+    return ForbiddenError(
+        "An email code cannot confirm this account's identity",
+        {"reason": "email_code_unavailable"},
+    )
+
+
+@router.post(
+    "/me/sudo/email-code",
+    summary="Mail a code that confirms the signed-in user's identity",
+)
+async def request_sudo_email_code(
+    request: Request,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Sent to the account's own address, under the same quotas as every
+    other mailed code. Refused where ``/auth/sudo`` would refuse the code."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import TOTPService
+    from app.domain.user.models import User
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    user = await session.get(User, auth_user.user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    two_factor = await TOTPService(session).is_2fa_enabled(user.id)
+    if not _email_code_confirms(user.email, two_factor=two_factor):
+        raise _email_code_unavailable()
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(
+            redis, EmailCodePurpose.SUDO
+        ).send_verification_code(user.email, resolved_client_address(request))
+    finally:
+        await redis.aclose()
+    return {"code": 200, "message": "Code sent.", "data": {"email": user.email}}
 
 
 @router.get(
@@ -1581,64 +1974,6 @@ async def put_user_profile(
     return {"code": 200, "message": "Success", "data": {}}
 
 
-@router.get(
-    "/auth/methods/{username}",
-    summary="Get authentication methods for a user",
-    description="Returns which auth methods a user supports. Returns safe defaults for non-existent users.",  # noqa: E501
-    openapi_extra={"x-public": True},
-)
-async def get_auth_methods(
-    username: str,
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """Return supported auth methods without revealing whether the user exists."""
-    from app.domain.user.login_security import TOTPService
-
-    # An unknown name answers like the most common account, one with only a
-    # password, so the answer does not say whether the name exists.
-    default_response = {
-        "code": 200,
-        "message": "Authentication methods retrieved successfully.",
-        "data": {
-            "supports_password": True,
-            "supports_passkey": False,
-            "supports_2fa": False,
-            "requires_2fa": False,
-        },
-    }
-
-    from app.domain.user.models import User
-
-    result = await session.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if user is None:
-        return default_response
-
-    # Check passkeys
-    from app.domain.passkey.models import PasskeyCredential
-
-    passkey_result = await session.execute(
-        select(func.count())
-        .select_from(PasskeyCredential)
-        .where(PasskeyCredential.user_id == user.id)
-    )
-    passkey_count = passkey_result.scalar() or 0
-
-    has_2fa = await TOTPService(session).is_2fa_enabled(user.id)
-
-    return {
-        "code": 200,
-        "message": "Authentication methods retrieved successfully.",
-        "data": {
-            # An account created through a third-party sign-in may have none.
-            "supports_password": bool(user.hashed_password),
-            "supports_passkey": passkey_count > 0,
-            "supports_2fa": has_2fa,
-            "requires_2fa": has_2fa,
-        },
-    }
-
-
 async def _admit_login_attempt(delay: "LoginDelay", username: str) -> int:
     """Admit one password check for ``username``, or refuse it while the wait
     earlier failures started is still running. Returns the wait this attempt
@@ -1693,7 +2028,6 @@ async def user_login(
     from app.domain.user.login_security import (
         ClientFailureBudget,
         LoginDelay,
-        SessionManager,
         TOTPService,
     )
 
@@ -1756,20 +2090,14 @@ async def user_login(
                 client=client,
             )
 
-        session_manager = SessionManager(redis)
-        client_ip = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-        session_id = await session_manager.create_session(
+        access_token = await issue_session(
+            response,
+            request,
+            session,
             user_id=user.id,
-            ip_address=client_ip,
-            user_agent=user_agent,
+            handle=user.username,
+            login_method="totp" if requires_2fa else "password",
         )
-
-        access_token = create_access_token(user.id, handle=user.username)
-        refresh_token = create_refresh_token(user.id)
-
-        _set_refresh_cookie(response, refresh_token)
-        _set_session_cookie(response, session_id)
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1783,7 +2111,7 @@ async def user_login(
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
-                "sessionId": session_id,
+                "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
         }
     finally:
@@ -1812,15 +2140,11 @@ async def verify_2fa_login(
     """
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.common.auth import (
-        create_access_token,
-        create_refresh_token,
-        verify_2fa_pending_token,
-    )
+    from app.common.auth import verify_2fa_pending_token
     from app.core.client_address import resolved_client_address
     from app.core.config import settings
     from app.core.single_use_state import SingleUseUnavailableError, claim
-    from app.domain.user.login_security import SessionManager, TOTPService
+    from app.domain.user.login_security import TOTPService
 
     temp_token = payload.get("temp_token") or ""
     code = (payload.get("code") or "").strip()
@@ -1879,12 +2203,14 @@ async def verify_2fa_login(
         except ValueError as exc:
             raise AuthenticationRequiredError(str(exc)) from exc
 
-        access_token = create_access_token(user.id, handle=user.username)
-        refresh_token = create_refresh_token(user.id)
-        session_id = await SessionManager(redis).create_session(user.id)
-
-        _set_refresh_cookie(response, refresh_token)
-        _set_session_cookie(response, session_id)
+        access_token = await issue_session(
+            response,
+            request,
+            session,
+            user_id=user.id,
+            handle=user.username,
+            login_method="backup_code" if used_backup_code else "totp",
+        )
 
         user_dto = await auth_service.build_user_dto(
             user=user,
@@ -1904,11 +2230,182 @@ async def verify_2fa_login(
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
-                "sessionId": session_id,
+                "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
         }
     finally:
         await redis.aclose()
+
+
+_EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+# The sign-in code request answers with this one body whatever the address:
+# known, unknown or a placeholder. Anything that differed would tell the
+# caller whether an account uses that address.
+_SIGN_IN_CODE_REQUESTED = {
+    "code": 200,
+    "message": "If an account uses this email, a sign-in code has been sent.",
+}
+
+
+def _invalid_email_code() -> AuthenticationRequiredError:
+    return AuthenticationRequiredError(
+        "Invalid or expired code", {"reason": "invalid_email_code"}
+    )
+
+
+async def _mail_sign_in_code(email: str) -> None:
+    """Issue a sign-in code and mail it; runs after the response has gone,
+    so that the response takes as long for an unknown address as for a known
+    one. A failed send is only logged, for the same reason."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+        Issued,
+    )
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
+        issued = await service.issue(email)
+        if issued is not Issued.SENT:
+            logger.warning("Sign-in code mail was not sent: %s", issued.value)
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/auth/email-code",
+    summary="Mail a sign-in code",
+)
+async def request_sign_in_code(
+    payload: EmailCodeSignInRequest,
+    request: Request,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Mail a single-use sign-in code to the account using this address.
+
+    The quota is spent before the account is looked up, so an unknown address
+    is refused exactly when a known one would be, and otherwise gets the same
+    answer while nothing is sent.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.background import spawn
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    email = payload.email.strip()
+    if not _EMAIL_FORMAT.match(email):
+        raise UnprocessableEntityError("Invalid email address format")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await EmailVerificationService(redis, EmailCodePurpose.SIGN_IN).claim(
+            email, resolved_client_address(request)
+        )
+    finally:
+        await redis.aclose()
+
+    user = await auth_service.get_user_by_email(email)
+    if user is not None and not is_placeholder_email(user.email):
+        spawn(_mail_sign_in_code(user.email), name="sign-in code mail")
+    return _SIGN_IN_CODE_REQUESTED
+
+
+@router.post(
+    "/auth/email-code/verify",
+    summary="Sign in with a mailed code",
+)
+async def verify_sign_in_code(
+    payload: EmailCodeSignInVerifyRequest,
+    request: Request,
+    response: Response,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """The mailed code is a first step like a password: an account with 2FA
+    gets the same ``2fa_pending`` ticket the password step hands out, and
+    only an account without it is signed in here."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.client_address import resolved_client_address
+    from app.domain.user.login_security import ClientFailureBudget, TOTPService
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
+
+    email = payload.email.strip()
+    client = resolved_client_address(request)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        # Shared with the sign-up code: one source guessing mailed codes is
+        # the same attack whichever form it types them into.
+        client_budget = ClientFailureBudget(redis, "email_code")
+        wait = await client_budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        wrong = False
+        try:
+            service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
+            wrong = not await service.verify_code(email, payload.code.strip())
+        finally:
+            if not wrong:
+                await client_budget.refund(client)
+    finally:
+        await redis.aclose()
+    if wrong:
+        raise _invalid_email_code()
+
+    user = await auth_service.get_user_by_email(email)
+    if user is None or is_placeholder_email(user.email):
+        raise _invalid_email_code()
+
+    if await TOTPService(session).is_2fa_enabled(user.id):
+        return {
+            "code": 200,
+            "message": "2FA required",
+            "data": {
+                "requires2FA": True,
+                "userId": user.id,
+                "tempToken": await _issue_2fa_pending_token(user.id),
+            },
+        }
+
+    try:
+        user, profile = await auth_service.get_user_with_profile(user.id)
+    except ValueError as exc:
+        raise _invalid_email_code() from exc
+
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user.id,
+        handle=user.username,
+        login_method="email_code",
+    )
+    user_dto = await auth_service.build_user_dto(
+        user=user,
+        profile=profile,
+        viewer_id=user.id,
+    )
+    return {
+        "code": 201,
+        "message": "Login successfully.",
+        "data": {
+            "user": user_dto,
+            "accessToken": access_token,
+            "requires2FA": False,
+            "passkeyEnrollment": await _passkey_enrollment(user.id, session),
+        },
+    }
 
 
 @router.post(
@@ -1919,37 +2416,38 @@ async def refresh_access_token(
     request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    refresh_token = request.cookies.get("REFRESH_TOKEN")
+    """Trade the refresh cookie for a new access token, rotating the cookie.
+
+    A 401 from here is the one answer that means the sign-in is over. A
+    refresh racing another one with the same cookie gets an access token and
+    no new cookie: the winner's response already carries the successor.
+    """
+    _require_same_origin(request)
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise AuthenticationRequiredError("Refresh token is missing")
 
-    payload = decode_token(refresh_token)
-    if payload.get("type") != "refresh":
-        raise AuthenticationRequiredError("Invalid refresh token")
-
-    sub = payload.get("sub")
-    if sub is None:
-        raise AuthenticationRequiredError("Invalid token subject")
-    try:
-        user_id = int(sub)
-    except (TypeError, ValueError) as exc:
-        raise AuthenticationRequiredError("Invalid token subject") from exc
+    refreshed = await SessionService(session).refresh(refresh_token)
+    if refreshed is None:
+        raise AuthenticationRequiredError("This sign-in has ended")
 
     try:
-        user, profile = await auth_service.get_user_with_profile(user_id)
+        user, profile = await auth_service.get_user_with_profile(refreshed.user_id)
     except ValueError as exc:
         raise AuthenticationRequiredError(str(exc)) from exc
 
-    access_token = create_access_token(user_id, handle=user.username)
-    new_refresh_token = create_refresh_token(user_id)
-
-    _set_refresh_cookie(response, new_refresh_token)
+    if refreshed.refresh_token is not None:
+        _set_refresh_cookie(response, refreshed.refresh_token, refreshed.expires_at)
+    access_token = create_access_token(
+        user.id, handle=user.username, sid=refreshed.session_id
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
         profile=profile,
-        viewer_id=user_id,
+        viewer_id=user.id,
     )
     return {
         "code": 201,
@@ -1966,18 +2464,20 @@ async def refresh_access_token(
     summary="Logout",
 )
 async def user_logout(
+    request: Request,
     response: Response,
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    # Logout is idempotent: even if the refresh cookie is missing or expired,
-    # the client should receive cookie-clearing headers and a success response.
-    response.delete_cookie(
-        "REFRESH_TOKEN",
-        path="/",
-    )
-    response.delete_cookie(
-        "REFRESH_TOKEN",
-        path="/users/auth",
-    )
+    """End the session behind the refresh cookie and clear the cookie.
+
+    Idempotent: with the cookie missing or its session already over, the
+    client still gets the clearing header and a success response.
+    """
+    _require_same_origin(request)
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
+    if refresh_token:
+        await SessionService(session).end(refresh_token)
+    _clear_refresh_cookie(response)
     return {
         "code": 201,
         "message": "Logout successfully.",
@@ -2006,6 +2506,10 @@ async def sudo_auth(
 
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
+    from app.domain.user.verification_service import (
+        EmailCodePurpose,
+        EmailVerificationService,
+    )
 
     method = payload.method
     credentials = payload.credentials
@@ -2094,6 +2598,31 @@ async def sudo_auth(
             raise AuthenticationRequiredError("Passkey does not belong to this account")
 
         return await verified("Sudo mode activated via passkey.")
+
+    elif method == "email_code":
+        code = credentials.get("code")
+        if not code:
+            raise BadRequestError("code is required")
+
+        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        # Checked again here rather than trusted from when the code was sent:
+        # 2FA switched on since then must still shut the mailbox out.
+        two_factor = await TOTPService(session).is_2fa_enabled(user.id)
+        if not _email_code_confirms(user.email, two_factor=two_factor):
+            raise _email_code_unavailable()
+
+        # No attempt budget of its own: each code dies after a few wrong
+        # guesses, and a new one costs a mail from the address's quota.
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            service = EmailVerificationService(redis, EmailCodePurpose.SUDO)
+            matched = await service.verify_code(user.email, str(code).strip())
+        finally:
+            await redis.aclose()
+        if not matched:
+            raise _invalid_email_code()
+
+        return await verified("Sudo mode activated via email code.")
 
     else:
         raise BadRequestError(f"Unknown auth method: {method}")
@@ -2263,44 +2792,33 @@ async def get_user_identity_access_logs(
     return {"code": 200, "message": "Success", "data": data}
 
 
+def _session_dto(row: UserSession, current: uuid.UUID | None) -> dict:
+    return {
+        "id": str(row.id),
+        "loginMethod": row.login_method,
+        "ipAddress": row.ip,
+        "userAgent": row.user_agent,
+        "createdAt": row.created_at.isoformat(),
+        "lastActiveAt": row.last_used_at.isoformat(),
+        "current": row.id == current,
+    }
+
+
 @router.get(
     "/me/sessions",
     summary="List active sessions",
 )
 async def list_sessions(
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        sessions = await session_manager.list_user_sessions(auth_user.user_id)
-
-        session_list = [
-            {
-                "id": s.get("session_id"),
-                "deviceInfo": s.get("device_info", ""),
-                "ipAddress": s.get("ip_address", ""),
-                "userAgent": s.get("user_agent", ""),
-                "createdAt": s.get("created_at"),
-                "lastActiveAt": s.get("last_active_at"),
-            }
-            for s in sessions
-        ]
-
-        return {
-            "code": 200,
-            "message": "OK",
-            "data": {
-                "sessions": session_list,
-            },
-        }
-    finally:
-        await redis.aclose()
+    rows = await SessionService(session).live(auth_user.user_id)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"sessions": [_session_dto(row, current) for row in rows]},
+    }
 
 
 @router.delete(
@@ -2308,28 +2826,18 @@ async def list_sessions(
     summary="Revoke a session",
 )
 async def revoke_session(
-    session_id: Annotated[str, Path(alias="sessionId")],
+    session_id: Annotated[uuid.UUID, Path(alias="sessionId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        success = await session_manager.revoke_session(session_id, auth_user.user_id)
-
-        if not success:
-            raise NotFoundError("Session not found")
-
-        return {
-            "code": 200,
-            "message": "Session revoked successfully.",
-        }
-    finally:
-        await redis.aclose()
+    """End one sign-in. Its refresh token stops working at once; an access
+    token it already holds lasts out its few remaining minutes."""
+    if not await SessionService(session).revoke(auth_user.user_id, session_id):
+        raise NotFoundError("Session not found")
+    return {
+        "code": 200,
+        "message": "Session revoked successfully.",
+    }
 
 
 @router.delete(
@@ -2337,33 +2845,21 @@ async def revoke_session(
     summary="Revoke all other sessions",
 )
 async def revoke_all_sessions(
-    request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
-
-    current_session_id = request.cookies.get("SESSION_ID")
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        count = await session_manager.revoke_all_sessions(
-            auth_user.user_id,
-            except_session_id=current_session_id,
-        )
-
-        return {
-            "code": 200,
-            "message": f"Revoked {count} sessions.",
-            "data": {
-                "revokedCount": count,
-            },
-        }
-    finally:
-        await redis.aclose()
+    """Sign out every device but the one asking."""
+    count = await SessionService(session).revoke_all(
+        auth_user.user_id, RevokeReason.REVOKED, keep=current
+    )
+    return {
+        "code": 200,
+        "message": f"Revoked {count} sessions.",
+        "data": {
+            "revokedCount": count,
+        },
+    }
 
 
 # Every exit of the recovery request answers with this one body: unknown
@@ -2379,17 +2875,21 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     """Issue a reset token and mail it; runs after the response has gone.
 
     Off the request path so that the response takes as long for an unknown
-    address as for a known one. A failed send is only logged: the requester was
-    already told the same thing either way, and can ask again after the
-    cooldown.
+    address as for a known one. A failed send, or one the site's hourly
+    allowance refuses, is only logged: the requester was already told the same
+    thing either way, and can ask again after the cooldown.
     """
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
+    from app.domain.user.mail_quota import give_back_site_mail, take_site_mail
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
+        if not await take_site_mail(redis):
+            logger.warning("Password recovery mail to user %d: site limit", user_id)
+            return
         token = await PasswordResetService(redis).create_reset_token(
             user_id, email, username
         )
@@ -2415,6 +2915,11 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     )
     if not sent:
         logger.warning("Password recovery mail to user %d was not sent", user_id)
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            await give_back_site_mail(redis)
+        finally:
+            await redis.aclose()
 
 
 @router.post(
@@ -2445,12 +2950,12 @@ async def recover_password_request(
     # the same success body and simply sends nothing.
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        allowed = await MailQuota(redis, "password_recovery").take(
+        claim = await MailQuota(redis, "password_recovery").claim(
             email, resolved_client_address(request)
         )
     finally:
         await redis.aclose()
-    if not allowed:
+    if not claim.granted:
         return _RECOVERY_REQUESTED
 
     user = await auth_service.get_user_by_email(email)
@@ -2469,6 +2974,7 @@ async def recover_password_request(
 async def recover_password_verify(
     payload: ResetPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2489,6 +2995,9 @@ async def recover_password_verify(
 
         user_id = int(token_data["user_id"])
         await auth_service.update_password(user_id, new_password)
+        # Whoever made the reset necessary may hold a sign-in; end them all.
+        # Connector devices are not sign-ins and stay until removed.
+        await SessionService(session).revoke_all(user_id, RevokeReason.PASSWORD_RESET)
 
         return {
             "code": 200,
@@ -2506,12 +3015,14 @@ async def change_password(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: ChangePasswordRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    current: uuid.UUID | None = Depends(get_current_session_id),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Replace the account's password.
+    """Replace the account's password and sign out every other device.
 
-    Other sessions stay signed in: the session layer cannot yet revoke them
-    (#1481).
+    The device making the change stays signed in: it has just proved who is
+    at it with the sudo ticket.
     """
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can change their password.")
@@ -2525,6 +3036,9 @@ async def change_password(
         purpose=SudoPurpose.PASSWORD_CHANGE,
     )
     await auth_service.update_password(user_id, password)
+    await SessionService(session).revoke_all(
+        user_id, RevokeReason.PASSWORD_CHANGED, keep=current
+    )
 
     return {"code": 200, "message": "Password changed successfully"}
 
@@ -3119,6 +3633,7 @@ async def passkey_register_verify(
     payload: dict = Body(default={}),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -3147,12 +3662,35 @@ async def passkey_register_verify(
         challenge=challenge,
         credential=credential,
     )
+    await PasskeyPromptService(session).end(auth_user.user_id)
 
     return {
         "code": 201,
         "message": "Passkey registered successfully.",
         "data": {"passkey": result},
     }
+
+
+class PasskeyPromptDismissal(BaseModel):
+    forever: bool = False
+
+
+@router.post(
+    "/{userId}/passkeys/prompt/dismiss",
+    summary="Decline the offer to add a passkey",
+)
+async def dismiss_passkey_prompt(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: PasskeyPromptDismissal = Body(default_factory=PasskeyPromptDismissal),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Hold the offer back for a while, or with ``forever`` stop it."""
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can answer this offer.")
+
+    await PasskeyPromptService(session).dismiss(user_id, forever=payload.forever)
+    return {"code": 200, "message": "OK", "data": {}}
 
 
 @router.post(
@@ -3195,15 +3733,16 @@ async def passkey_authenticate_challenge(
     summary="Verify passkey authentication",
 )
 async def passkey_authenticate_verify(
+    request: Request,
     response: Response,
     payload: dict = Body(default={}),
     passkey_service: PasskeyService = Depends(get_passkey_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
-    from app.domain.user.login_security import SessionManager
 
     credential = payload.get("response")
     if not isinstance(credential, dict):
@@ -3227,22 +3766,14 @@ async def passkey_authenticate_verify(
 
     user, profile = await auth_service.get_user_with_profile(user_id)
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        session_manager = SessionManager(redis)
-        session_id = await session_manager.create_session(
-            user_id=user_id,
-            ip_address="",
-            user_agent="passkey",
-        )
-    finally:
-        await redis.aclose()
-
-    access_token = create_access_token(user_id, handle=user.username)
-    refresh_token = create_refresh_token(user_id)
-
-    _set_refresh_cookie(response, refresh_token)
-    _set_session_cookie(response, session_id)
+    access_token = await issue_session(
+        response,
+        request,
+        session,
+        user_id=user_id,
+        handle=user.username,
+        login_method="passkey",
+    )
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -3255,7 +3786,6 @@ async def passkey_authenticate_verify(
         "data": {
             "user": user_dto,
             "accessToken": access_token,
-            "sessionId": session_id,
         },
     }
 
@@ -3390,6 +3920,14 @@ def _decode_oauth_state_token(token: str) -> tuple[str, dict, str]:
     return str(claims["provider"]), dict(claims["info"]), jti
 
 
+def _reissue_oauth_state_token(token: str, **info: str) -> str:
+    """The same stateToken — same ``jti``, same expiry — with ``info`` added
+    to its userInfo. Spending either one spends both."""
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims["info"] = {**claims["info"], **info}
+    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
+
+
 async def _redeem_oauth_state_token(jti: str) -> bool:
     """Spend a decoded stateToken. True exactly once; fails closed."""
     from app.core.single_use_state import SingleUseUnavailableError, claim
@@ -3480,6 +4018,32 @@ async def _pop_oauth_pending(session_id: str) -> dict | None:
         await redis.aclose()
 
 
+async def _start_oauth_ownership(
+    provider_id: str, user_info: dict, owner
+) -> dict[str, str]:
+    """Hand an identity whose email belongs to ``owner`` to the verify page,
+    where the person proves they hold that account before it is linked —
+    never linked on the email alone. Returns the verify page's query."""
+    import secrets
+    import time
+
+    session_id = (
+        f"oauth_password_{provider_id}_{user_info.get('id')}_"
+        f"{int(time.time() * 1000)}_{secrets.token_hex(4)}"
+    )
+    await _store_oauth_pending(
+        session_id,
+        {
+            "type": "password",
+            "providerId": provider_id,
+            "userInfo": user_info,
+            "userId": owner.id,
+            "username": owner.username,
+        },
+    )
+    return {"type": "password", "email": owner.username, "sessionId": session_id}
+
+
 async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
     """(suggestedUsername, suggestedNickname), both passing the rules the
     create form is checked against, the username de-duplicated."""
@@ -3519,13 +4083,14 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
 
 
 async def _oauth_login_redirect(
+    request: Request,
     session: AsyncSession,
     auth_service,
     user_id: int,
     provider_id: str,
     **extra: str | None,
 ) -> RedirectResponse:
-    """Issue tokens for a resolved OAuth login and land on the success page.
+    """Sign in a resolved OAuth login and land on the success page.
 
     An account with 2FA gets a 2FA ticket and the verify page instead, exactly
     as a password login would: the provider stands in for the password only.
@@ -3542,19 +4107,26 @@ async def _oauth_login_redirect(
         )
 
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
-    access_token_jwt = create_access_token(user_id, handle=user_obj.username)
-    refresh_token = create_refresh_token(user_id)
     redirect = RedirectResponse(
         _oauth_frontend_url(
             settings.frontend_oauth_success_path,
-            token=access_token_jwt,
             email=user_obj.email or user_obj.username,
             provider=provider_id,
             **extra,
         ),
         status_code=302,
     )
-    _set_refresh_cookie(redirect, refresh_token)
+    # Only the refresh cookie rides the redirect. A token in the URL would
+    # land in the browser history, the Referer header and access logs; the
+    # landing page trades the cookie for one instead.
+    await issue_session(
+        redirect,
+        request,
+        session,
+        user_id=user_id,
+        handle=user_obj.username,
+        login_method=f"oauth:{provider_id}",
+    )
     return redirect
 
 
@@ -3706,7 +4278,7 @@ async def handle_oauth_callback(
         )
         if existing:
             return await _oauth_login_redirect(
-                session, auth_service, existing["userId"], provider_id
+                request, session, auth_service, existing["userId"], provider_id
             )
 
         info_dict = _oauth_user_info_dict(user_info)
@@ -3716,29 +4288,12 @@ async def handle_oauth_callback(
             conflict_user = await auth_service.get_user_by_email(user_info.email)
 
         if conflict_user is not None:
-            import secrets as _secrets
-            import time as _time
-
-            session_id = (
-                f"oauth_password_{provider_id}_{user_info.id}_"
-                f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"
-            )
-            await _store_oauth_pending(
-                session_id,
-                {
-                    "type": "password",
-                    "providerId": provider_id,
-                    "userInfo": info_dict,
-                    "userId": conflict_user.id,
-                    "username": conflict_user.username,
-                },
-            )
             return RedirectResponse(
                 _oauth_frontend_url(
                     settings.frontend_oauth_verify_path,
-                    type="password",
-                    email=conflict_user.username,
-                    sessionId=session_id,
+                    **await _start_oauth_ownership(
+                        provider_id, info_dict, conflict_user
+                    ),
                 ),
                 status_code=302,
             )
@@ -3777,11 +4332,6 @@ async def get_oauth_state(
     suggested_username, suggested_nickname = await _suggest_oauth_identity(
         auth_service, user_info
     )
-    email_conflict = False
-    if user_info.get("email"):
-        email_conflict = (
-            await auth_service.get_user_by_email(user_info["email"]) is not None
-        )
     return {
         "code": 200,
         "message": "Get OAuth state successfully.",
@@ -3790,13 +4340,64 @@ async def get_oauth_state(
             "userInfo": user_info,
             "suggestedUsername": suggested_username,
             "suggestedNickname": suggested_nickname,
-            "emailConflict": email_conflict,
+        },
+    }
+
+
+@router.post(
+    "/auth/oauth/email/code",
+    summary="Send a code to the email a new OAuth account will hold",
+)
+async def send_oauth_email_code(
+    payload: OAuthEmailCodeRequest, request: Request
+) -> dict:
+    _decode_oauth_state_token(payload.state_token)
+    await _send_email_code(request, _own_email(payload.email))
+    return {"code": 200, "message": "Verification code sent."}
+
+
+@router.post(
+    "/auth/oauth/email/verify",
+    summary="Verify the email a new OAuth account will hold",
+)
+async def verify_oauth_email(
+    payload: OAuthEmailVerifyRequest,
+    request: Request,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Answers with either the stateToken again, now carrying the verified
+    address that account creation requires, or — when the address belongs to
+    an account already — the verify page where that account is proven and
+    linked, exactly as for a provider email that matches one."""
+    provider_id, user_info, jti = _decode_oauth_state_token(payload.state_token)
+    email = _own_email(payload.email)
+    await _check_email_code(request, email, payload.code)
+
+    owner = await auth_service.get_user_by_email(email)
+    if owner is None:
+        return {
+            "code": 200,
+            "message": "Email verified.",
+            "data": {
+                "stateToken": _reissue_oauth_state_token(
+                    payload.state_token, verifiedEmail=email
+                )
+            },
+        }
+    if not await _redeem_oauth_state_token(jti):
+        raise AuthenticationRequiredError("Invalid or expired OAuth state token")
+    return {
+        "code": 200,
+        "message": "Email belongs to an existing account.",
+        "data": {
+            "ownership": await _start_oauth_ownership(provider_id, user_info, owner)
         },
     }
 
 
 async def _complete_oauth_binding(
     *,
+    request: Request,
     session: AsyncSession,
     auth_service: UserAuthService,
     oauth_service: OAuthService,
@@ -3836,7 +4437,7 @@ async def _complete_oauth_binding(
             "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     return await _oauth_login_redirect(
-        session, auth_service, user_id, provider_id, **extra
+        request, session, auth_service, user_id, provider_id, **extra
     )
 
 
@@ -3845,6 +4446,7 @@ async def _complete_oauth_binding(
     summary="Prove ownership of an email-conflicting account (verify page)",
 )
 async def oauth_verify_conflict(
+    request: Request,
     payload: dict = Body(default={}),
     session: AsyncSession = Depends(get_db),
     auth_service: UserAuthService = Depends(get_user_auth_service),
@@ -3868,6 +4470,7 @@ async def oauth_verify_conflict(
 
         await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
@@ -3905,6 +4508,11 @@ async def oauth_create_user(
         provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+    # Set only by /auth/oauth/email/verify: every account starts with an
+    # address it can be recovered through, proven by a code sent to it.
+    email = user_info.get("verifiedEmail")
+    if not email:
+        return _oauth_error_redirect("EMAIL_UNVERIFIED", "Email not verified")
 
     if not is_valid_username(username):
         return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
@@ -3962,12 +4570,18 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
+    # Registered by someone else since it was verified.
+    owner = await auth_service.get_user_by_email(email)
+    if owner is not None:
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_oauth_verify_path,
+                **await _start_oauth_ownership(provider_id, user_info, owner),
+            ),
+            status_code=302,
+        )
 
     try:
-        email = (
-            user_info.get("email")
-            or f"oauth-{provider_id}-{user_info.get('id')}@placeholder.internal"
-        )
         try:
             user, _profile = await auth_service.register_oauth_decision(
                 email=email,
@@ -4000,6 +4614,7 @@ async def oauth_create_user(
                     "INVALID_INVITE_CODE", str(_invite_code_error(exc))
                 )
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
@@ -4020,6 +4635,7 @@ async def oauth_create_user(
     summary="Bind OAuth to an existing account (decision page, form post)",
 )
 async def oauth_bind_user(
+    request: Request,
     stateToken: str = Form(...),
     username: str = Form(...),
     password: str = Form(default=""),
@@ -4045,6 +4661,7 @@ async def oauth_bind_user(
 
     try:
         return await _complete_oauth_binding(
+            request=request,
             session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,

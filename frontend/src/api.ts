@@ -67,6 +67,7 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
+import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
 
@@ -79,72 +80,9 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // `/api` — the only way to keep `topics`, `projects` and `tasks` from meaning
 // two different things at one URL — so a browser had to send the prefix twice
 // and the gateway ate one. Those words are now owned once each (1.0's tag is
-// `/tags`, its team project `/team-projects`, and 赛题 are merged), so the
-// namespace that separated them has nothing left to separate.
+// `/tags` and 赛题 are merged), so the namespace that separated them has
+// nothing left to separate.
 export const BASE = '/api'
-
-// A project's join link. Permanent until a manager resets it; `approval` says
-// whether joining through it waits for a manager or happens on confirmation.
-export interface ProjectJoinLink {
-  token: string
-  approval: boolean
-}
-
-export type ProjectJoinStatus = 'member' | 'pending' | 'none'
-
-export interface ProjectJoinPreview {
-  project_id: string
-  project_name: string
-  approval: boolean
-  join_status: ProjectJoinStatus
-}
-
-export interface ProjectJoinRequest {
-  id: string
-  requester_handle: string
-  name: string
-  avatar_id: number | null
-  message: string
-  created_at: string
-}
-
-function joinLinkPath(projectId: string) {
-  return `/projects/${encodeURIComponent(projectId)}/join-link`
-}
-
-export function getProjectJoinLink(projectId: string) {
-  return request<ProjectJoinLink>(joinLinkPath(projectId))
-}
-
-export function setProjectJoinApproval(projectId: string, approval: boolean) {
-  return request<ProjectJoinLink>(joinLinkPath(projectId), { method: 'PATCH', body: JSON.stringify({ approval }) })
-}
-
-export function resetProjectJoinLink(projectId: string) {
-  return request<ProjectJoinLink>(`${joinLinkPath(projectId)}/reset`, { method: 'POST' })
-}
-
-export function previewProjectJoinLink(token: string) {
-  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}`)
-}
-
-export function joinProjectByLink(token: string, message?: string) {
-  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, {
-    method: 'POST',
-    body: JSON.stringify(message ? { message } : {}),
-  })
-}
-
-export function listProjectJoinRequests(projectId: string) {
-  return request<ProjectJoinRequest[]>(`/projects/${encodeURIComponent(projectId)}/join-requests`)
-}
-
-export function decideProjectJoinRequest(projectId: string, requestId: string, decision: 'approve' | 'reject') {
-  return request<{ ok: boolean }>(
-    `/projects/${encodeURIComponent(projectId)}/join-requests/${encodeURIComponent(requestId)}/${decision}`,
-    { method: 'POST' }
-  )
-}
 
 // Chat requests use the same access token as AccountService.
 export function authToken(): string {
@@ -223,7 +161,6 @@ export class RequestTimeoutError extends Error {
 }
 
 export const READ_BUDGET_MS = 20_000
-export const TOKEN_REFRESH_BUDGET_MS = 10_000
 
 async function withinBudget<T>(
   work: (signal: AbortSignal) => Promise<T>,
@@ -268,11 +205,6 @@ export function isEndpointMissing(e: unknown): boolean {
 // as one that was already dead, so leave room for the round trip.
 const TOKEN_REFRESH_LEEWAY_MS = 60_000
 
-// One refresh in flight at a time. Without this, a page that fires eight
-// requests on mount fires eight refreshes, and the losers race to overwrite
-// `accessToken` with each other's result.
-let refreshInFlight: Promise<void> | null = null
-
 export function tokenExpiresWithin(token: string, ms: number): boolean {
   try {
     const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
@@ -311,41 +243,18 @@ export async function ensureFreshToken(): Promise<void> {
  * `ensureFreshToken` trusts `exp`, and `exp` is not the only way a token dies.
  * Measured on dev: a token minted 443s earlier, with 457s of its 900s life
  * left, was rejected 24 times out of 24 by BOTH api layers, while one minted
- * seconds later worked — and `decode_token` does pure JWT verification with no
- * revocation store, so the signing secret must have changed under us (a backend
+ * seconds later worked — the signing secret had changed under us (a backend
  * restart). Trusting `exp` alone means a signed-in user then 401s on every
  * request for up to 14 minutes, until the token nears the expiry that would
  * finally trigger a refresh. That is the 「通知铃铛必 401」 shape.
  *
- * Shares `refreshInFlight` with `ensureFreshToken`, so a burst of 401s costs one
- * refresh, not one each.
+ * Goes through `refreshSession`, so a burst of 401s costs one refresh, not one
+ * each, and never races a refresh in another tab.
  */
 export async function refreshNow(): Promise<void> {
-  if (!refreshInFlight) {
-    refreshInFlight = (async () => {
-      try {
-        const next = await withinBudget(async (signal) => {
-          const res = await fetch('/api/users/auth/refresh-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            signal,
-          })
-          if (!res.ok) return undefined
-          const body = (await res.json()) as { data?: { accessToken?: string } }
-          signal.throwIfAborted()
-          return body?.data?.accessToken
-        }, TOKEN_REFRESH_BUDGET_MS)
-        if (next) localStorage.setItem('accessToken', next)
-      } catch {
-        // Offline, or the refresh cookie is gone. Sending the stale token is
-        // no worse than sending nothing, and the caller still sees the result.
-      } finally {
-        refreshInFlight = null
-      }
-    })()
-  }
-  await refreshInFlight
+  // A failed refresh leaves the stored token as it was; the caller still sees
+  // its own request's result.
+  await refreshSession()
 }
 
 // Room chrome, chat and the work panel request the same roster/task summary
@@ -2019,23 +1928,8 @@ export function listProjectMembers(projectId: string): Promise<ListPayload<Proje
   return request<ListPayload<ProjectMemberRow>>(`/projects/${encodeURIComponent(projectId)}/members`)
 }
 
-// 项目成员的增 / 改角色 / 移出。后端在服务层就把「只有 owner / lead 能写」这条
-// 授权做掉了（membership/services.py），并且**不认**请求体里自称的 handle —— 身份
-// 从 token 解析。所以这里不传 actor：传了也不会被信，反而读起来像是能伪造。
-export function addProjectMember(projectId: string, handle: string, role: string): Promise<ProjectMemberRow> {
-  return request<ProjectMemberRow>(`/projects/${encodeURIComponent(projectId)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ user_handle: handle, role }),
-  })
-}
-
-export function updateProjectMemberRole(projectId: string, handle: string, role: string): Promise<ProjectMemberRow> {
-  return request<ProjectMemberRow>(`/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ role }),
-  })
-}
-
+// 把一位外部成员移出项目。只有外部成员能这样移出——团队成员的去留在团队里定。后端
+// 在服务层判「谁能移」，并且**不认**请求体里自称的 handle：身份从 token 解析。
 export function removeProjectMember(projectId: string, handle: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`,
@@ -2063,16 +1957,28 @@ export function setProjectOwner(projectId: string, ownerHandle: string): Promise
   })
 }
 
-// ---- 邀请：加人这件事要两个人同意 --------------------------------------------
-// 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
-// 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册
-// 的那一步，也是脚本用的原语——界面上走的是这里。
+// ---- 外部成员：只能点名邀请，本人接受才进来 ----------------------------------
+// 团队里的人自动就在团队的每个项目里；项目自己能加的只有团队以外的人。进来之后他
+// 看得见这个项目的话题，所以要由他本人点头——邀请发出去，他接受了才算数。
 
-export function inviteProjectMember(projectId: string, handle: string, role: string): Promise<ProjectInvitation> {
+export function inviteExternalMember(projectId: string, handle: string): Promise<ProjectInvitation> {
   return request<ProjectInvitation>(`/projects/${encodeURIComponent(projectId)}/invitations`, {
     method: 'POST',
-    body: JSON.stringify({ user_handle: handle, role }),
+    body: JSON.stringify({ user_handle: handle }),
   })
+}
+
+export interface LookedUpUser {
+  handle: string
+  name: string
+  avatar_id: number | null
+}
+
+// 按用户名或邮箱**精确**找一个人（像飞书加外部联系人那样）：只认完整的用户名或邮箱，
+// 不做模糊搜索——邀请是把人放进项目的动作，「搜出来一串相似的名字再挑」正是加错人
+// 的来路。找不到是 404。
+export function lookupUser(q: string): Promise<LookedUpUser> {
+  return request<LookedUpUser>(`/users/lookup?q=${encodeURIComponent(q)}`)
 }
 
 export function listProjectInvitations(projectId: string): Promise<ListPayload<ProjectInvitation>> {

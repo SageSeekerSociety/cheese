@@ -1,15 +1,20 @@
 import { test, expect } from "@playwright/test";
-import { DEMO_USERNAME, DEMO_PASSWORD, login } from "./helpers";
+import { DEMO_USERNAME, DEMO_PASSWORD } from "./helpers";
 
 test.describe("Login", () => {
   test("valid credentials sign the user in and land on the authenticated app shell", async ({
     page,
   }) => {
-    await login(page);
+    await page.goto("/account/signin");
+    await page.getByLabel("用户名").fill(DEMO_USERNAME);
+    await page.getByLabel("密码", { exact: true }).fill(DEMO_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+
     await expect(page.getByText("登录成功")).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
     );
@@ -33,8 +38,8 @@ test.describe("Login", () => {
     const noSuchUser = `no-such-user-e2e-${process.env.GITHUB_RUN_ID ?? "local"}-${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`;
     await page.goto("/account/signin");
     await page.getByLabel("用户名").fill(noSuchUser);
-    // exact: true — see helpers.ts::login for why (other labels on the page
-    // contain 「密码」 and 「登录」 as substrings).
+    // exact: true — the show-password and passkey controls also contain
+    // 「密码」 and 「登录」 in their labels.
     await page.getByLabel("密码", { exact: true }).fill("wrong-password");
     await page.getByRole("button", { name: "登录", exact: true }).click();
 
@@ -46,6 +51,53 @@ test.describe("Login", () => {
       localStorage.getItem("accessToken"),
     );
     expect(accessToken).toBeFalsy();
+  });
+
+  test("a seeded user accepts pending documents through the sign-in dialog", async ({
+    page,
+  }, testInfo) => {
+    // E2E CI recreates its database for every run. A retry uses the next
+    // seeded account because accepting consent persists within that run.
+    const username = ["bobby", "carol", "david"][testInfo.retry];
+    await page.goto("/account/signin");
+    await page.getByLabel("用户名").fill(username);
+    await page.getByLabel("密码", { exact: true }).fill(DEMO_PASSWORD);
+    const pendingResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/users/me/consents") &&
+        response.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    const pending = ((await (await pendingResponse).json()).data as {
+      pending: { document: string; version: string }[];
+    }).pending;
+    expect(pending.length).toBeGreaterThan(0);
+    const consentButton = page.getByRole("button", { name: "同意并继续" });
+    await expect(consentButton).toBeVisible();
+    const acceptedResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/users/me/consents") &&
+        response.request().method() === "POST",
+    );
+    await consentButton.click();
+    const accepted = await acceptedResponse;
+    expect(accepted.ok()).toBe(true);
+    expect(accepted.request().postDataJSON()).toEqual({
+      documents: Object.fromEntries(
+        pending.map(({ document, version }) => [document, version]),
+      ),
+    });
+    await expect(consentButton).toBeHidden();
+    await expect(
+      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
+    ).toBeVisible();
+    const current = await page.request.get("/api/users/me/consents", {
+      headers: {
+        Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("accessToken"))}`,
+      },
+    });
+    expect(current.ok()).toBe(true);
+    expect((await current.json()).data.pending).toEqual([]);
   });
 });
 
@@ -68,9 +120,10 @@ test.describe("English login", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     expect(
       await page.evaluate(() => localStorage.getItem("accessToken")),
     ).toBeTruthy();

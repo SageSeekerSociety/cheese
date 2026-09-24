@@ -64,8 +64,8 @@ class TopicKind(enum.StrEnum):
 class TopicRole(enum.StrEnum):
     """A member's role in a topic's roster (话题成员名册, fusion-design §3).
 
-    Distinct from ProjectRole (lead/member/mentor): a topic is a group room and
-    its membership governs who can manage the roster and who @all/@here reaches.
+    A topic is a group room; its membership governs who can manage the roster
+    and who @all/@here reaches.
     """
 
     owner = "owner"  # 话题创建者, 不可被移除到只剩空 owner

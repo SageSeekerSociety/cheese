@@ -38,6 +38,7 @@ from app.domain.milestone.models import Milestone
 from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import post_project
 
 # One fixed continuation for every test here: it stands for "the interrupted
 # turn and the turn that resumed it", which is the whole point — two separate
@@ -58,7 +59,7 @@ def in_a_turn(monkeypatch):
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str, title: str = "母话题") -> str:

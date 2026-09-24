@@ -52,9 +52,9 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
-from app.domain.membership.repositories import MemberRepository
+from app.domain.membership.services import MemberService
 from app.domain.project import artifacts
-from app.domain.project.models import AiMode, Project, ProjectRole
+from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import identity
 from app.domain.review import (
@@ -1115,12 +1115,17 @@ class AcceptService:
         )
         if not resolve(category=category, task=task).mentor_required_for(topic.title):
             return
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        mentors = {m.user_handle for m in members if m.role == ProjectRole.mentor}
-        if decided_by not in mentors:
-            raise ValidationError("按机构协议，这个话题须由导师验收")
+        # The condition asks for someone from outside the team to sign off: an
+        # external member of this project.
+        from app.domain.membership.roster import roster
+
+        outside = {
+            m.handle
+            for m in await roster(self._session, topic.project_id)
+            if m.source == "external"
+        }
+        if decided_by not in outside:
+            raise ValidationError("按机构协议，这个话题须由外部成员验收")
 
     async def reassign(
         self,
@@ -3591,19 +3596,13 @@ class AcceptService:
         if card.status != AcceptStatus.accepted:
             raise ValidationError("只有已验收的卡才能撤销")
 
-        # Only the person who accepted it, or the project owner/lead, may revoke
-        # — not any arbitrary handle.
+        # Only the person who accepted it, or someone who manages the project,
+        # may revoke — not any arbitrary handle.
         topic = await self._topic_or_404(card.topic_id)
-        project = await self._projects.get(topic.project_id)
-        allowed = {card.decided_by}
-        if project is not None and project.owner_handle:
-            allowed.add(project.owner_handle)
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
-        if decided_by not in allowed:
-            raise ValidationError("只有原采纳人或项目组长能撤销采纳")
+        if decided_by != card.decided_by and not await MemberService(
+            self._session
+        ).manages(topic.project_id, decided_by):
+            raise ValidationError("只有原采纳人、项目所有者或团队管理员能撤销采纳")
 
         card.status = AcceptStatus.revoked
         card.decided_by = decided_by
@@ -3645,8 +3644,9 @@ class AcceptService:
         了不该把人锁在门外）、以及人自己写的理由。
 
         谁能点 (#718)：项目分支保护的人工放行名单（`override_handles`，没配置
-        = owner + lead）。芝士被 `_forbid_ai` 挡在外面（跟 accept/approve/void
-        同一条线），路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`——
+        = 项目所有者 + 团队的所有者和管理员）。芝士被 `_forbid_ai` 挡在外面
+        （跟 accept/approve/void 同一条线），路由也**故意不进** `app/main.py`
+        的 `_CHEESE_WRITE_PATHS`——
         照 `void` 的先例：不进白名单本身拦不住任何东西（没列进去的写路由压根不
         过那个中间件），真正拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
 
@@ -3671,17 +3671,17 @@ class AcceptService:
         if protection.override_handles is not None:
             allowed = set(protection.override_handles)
         else:
-            allowed = set()
-            if project is not None and project.owner_handle:
-                allowed.add(project.owner_handle)
-            members = await MemberRepository(self._session).list_for_project(
-                topic.project_id
+            allowed = (
+                {decided_by}
+                if await MemberService(self._session).manages(
+                    topic.project_id, decided_by
+                )
+                else set()
             )
-            allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
         if decided_by not in allowed:
             raise ForbiddenError(
                 "只有项目分支保护的人工放行名单里的人能放行"
-                "（未配置名单时是项目 owner / 组长）"
+                "（未配置名单时是项目所有者或团队管理员）"
             )
         # 骑着 PR 的卡在这里必然带着一个被展示过的 sha：卡面从没显示过 head 的
         # （刚递、轮询器还没镜像）会被刷新并要求重看，而不是拿现读的 head 去合。
@@ -3816,7 +3816,7 @@ class AcceptService:
         从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
         设计前提，不要"优化"掉。
 
-        授权：卡上的验收人、项目 owner、项目 lead。它是授权类动作，所以芝士在
+        授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
         collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
         —— 路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`。
         """
@@ -3828,15 +3828,10 @@ class AcceptService:
         project = await self._projects.get(topic.project_id)
         self._forbid_ai(project, decided_by, "作废")
 
-        allowed = {card.reviewer_handle}
-        if project is not None and project.owner_handle:
-            allowed.add(project.owner_handle)
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
-        if decided_by not in allowed:
-            raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
+        if decided_by != card.reviewer_handle and not await MemberService(
+            self._session
+        ).manages(topic.project_id, decided_by):
+            raise ForbiddenError("只有这张卡的验收人、项目所有者或团队管理员能作废它")
 
         await self._cancel_queued_accept(card)
         was = card.status

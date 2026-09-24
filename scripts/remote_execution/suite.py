@@ -179,7 +179,6 @@ def main():
                     "pytest",
                     "tests/unit/test_remote_control.py",
                     "tests/unit/test_device_launch.py",
-                    "tests/unit/test_device_launch_route.py",
                     "-q",
                     "--junitxml",
                     str(folder / "backend-regressions.xml"),

@@ -20,8 +20,6 @@ from app.domain.machine import enrollment
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
@@ -30,7 +28,13 @@ from app.domain.topic.models import RoomCleanup, TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from tests.conftest import seed_user
-from tests.integration.conftest import UserCreator, session_auth_headers
+from tests.integration.conftest import (
+    UserCreator,
+    a_team,
+    post_project,
+    registered,
+    session_auth_headers,
+)
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -115,7 +119,9 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
 
     async def seed():
         async with client.test_factory() as session:
-            project = await ProjectRepository(session).add(name="Resume pending input")
+            project = await ProjectRepository(session).add(
+                name="Resume pending input", team_id=await a_team(session)
+            )
             topic = await TopicRepository(session).add(
                 project_id=project.id, title="Waiting"
             )
@@ -155,8 +161,8 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
 
 
 def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
-    return client.post(
-        "/projects", json={"name": "机器项目"}, headers=headers or {}
+    return post_project(
+        client, json={"name": "机器项目"}, headers=headers or {}
     ).json()["data"]["id"]
 
 
@@ -196,64 +202,11 @@ def test_reads_report_an_unconfigured_deployment(api_client, auth_headers):
     assert "not configured" in response.json()["message"]
 
 
-def test_provisioning_requires_a_real_credential(api_client):
+def test_provisioning_requires_a_real_credential(api_client, auth_headers):
     # Provisioning spends money and leaves a machine running, so it must be
     # refused before anything else is considered — including configuration.
-    pid = _project(api_client)
+    pid = _project(api_client, auth_headers)
     assert api_client.post(f"/projects/{pid}/machines", json={}).status_code == 401
-
-
-def test_machine_inventory_requires_project_membership(
-    api_client: TestClient,
-    user_client: UserCreator,
-    db_session: AsyncSession,
-    _portal: BlockingPortal,
-):
-    owner = user_client.create_user()
-    owner.token = user_client.login(api_client, owner.username, owner.password)
-    member = user_client.create_user()
-    member.token = user_client.login(api_client, member.username, member.password)
-    outsider = user_client.create_user()
-    outsider.token = user_client.login(api_client, outsider.username, outsider.password)
-    member_headers = {"Authorization": f"Bearer {member.token}"}
-    outsider_headers = {"Authorization": f"Bearer {outsider.token}"}
-
-    async def _legacy_project_with_member() -> str:
-        # ProjectService intentionally places every current user's new project
-        # in their personal team. Seed a historical team-less row directly so
-        # this test exercises the compatibility authorization branch.
-        project = await ProjectRepository(db_session).add(
-            name="Legacy machine project",
-            owner_handle=owner.username,
-            team_id=None,
-        )
-        await MemberRepository(db_session).add(
-            project_id=project.id,
-            user_handle=member.username,
-            role=ProjectRole.member,
-        )
-        return str(project.id)
-
-    pid = _portal.call(_legacy_project_with_member)
-
-    # An authorized member reaches the deployment capability check. An outsider
-    # sees neither that capability nor the project's private machine inventory.
-    assert (
-        api_client.get(f"/projects/{pid}/machines", headers=member_headers).status_code
-        == 422
-    )
-    assert (
-        api_client.get(
-            f"/projects/{pid}/machines", headers=outsider_headers
-        ).status_code
-        == 404
-    )
-    assert (
-        api_client.post(
-            f"/projects/{pid}/machines", json={}, headers=outsider_headers
-        ).status_code
-        == 404
-    )
 
 
 def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
@@ -290,8 +243,8 @@ def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
         await repo.add_member(team_id, member.user_id, TeamMemberRole.MEMBER)
 
     _portal.call(_add_roles)
-    pid = api_client.post(
-        "/projects",
+    pid = post_project(
+        api_client,
         json={"name": "Team cloud", "team_id": team_id},
         headers=owner_headers,
     ).json()["data"]["id"]
@@ -331,7 +284,9 @@ def test_row_round_trips_through_the_migrated_table(
     db_session: AsyncSession, _portal: BlockingPortal
 ):
     async def _run() -> None:
-        project = await ProjectRepository(db_session).add(name="机器项目")
+        project = await ProjectRepository(db_session).add(
+            name="机器项目", team_id=await a_team(db_session)
+        )
         repo = ProjectMachineRepository(db_session)
 
         machine = await repo.add(
@@ -377,8 +332,9 @@ def test_machines_are_scoped_to_their_project(
 ):
     async def _run() -> None:
         projects = ProjectRepository(db_session)
-        one = await projects.add(name="A")
-        two = await projects.add(name="B")
+        team_id = await a_team(db_session)
+        one = await projects.add(name="A", team_id=team_id)
+        two = await projects.add(name="B", team_id=team_id)
         repo = ProjectMachineRepository(db_session)
 
         await repo.add(
@@ -459,7 +415,9 @@ def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     async def _seed():
         async with client.test_factory() as session:
             projects = ProjectRepository(session)
-            project = await projects.add(name="Archive Cloud")
+            project = await projects.add(
+                name="Archive Cloud", team_id=await a_team(session)
+            )
             topics = TopicRepository(session)
             # 项目总览：归档一个房间是项目的事，落在总览上，所以这条 fixture 得
             # 有一个总览——真实项目从 `ProjectService.create` 出来时总是有的。
@@ -514,6 +472,7 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
 
     async def _seed():
         async with client.test_factory() as session:
+            await registered(session, "owner")
             project = await ProjectService(session).create(
                 name="Reactivate Cloud", owner_handle="owner"
             )

@@ -11,7 +11,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from tests.conftest import stub_compute
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -23,8 +23,8 @@ def models(monkeypatch):
 
 
 def create(client):
-    response = client.post(
-        "/projects",
+    response = post_project(
+        client,
         json={"name": "Research", "agent_name": "Moss"},
         headers=session_auth_headers("alice"),
     )

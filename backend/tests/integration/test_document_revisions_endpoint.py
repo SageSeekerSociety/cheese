@@ -14,6 +14,7 @@ import pytest
 
 from app.domain.library import service as library
 from tests.delivery import delivery_task
+from tests.integration.conftest import post_project
 from tests.integration.test_file_panel_safety import (
     _put,
     _worktree,
@@ -72,7 +73,7 @@ def _document_xml(raw: bytes) -> str:
 
 @pytest.fixture
 def contract(client) -> tuple[uuid.UUID, uuid.UUID]:
-    project = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
     pid = uuid.UUID(project.json()["data"]["id"])
     topic = client.post("/topics", json={"project_id": str(pid), "title": "合同"})
     tid = uuid.UUID(topic.json()["data"]["id"])
@@ -182,7 +183,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
 
 def test_another_room_s_card_is_not_a_source(client, contract):
     _pid, tid = contract
-    other = client.post("/projects", json={"name": "P2", "owner_handle": "alice"})
+    other = post_project(client, json={"name": "P2", "owner_handle": "alice"})
     other_pid = other.json()["data"]["id"]
     room = client.post("/topics", json={"project_id": other_pid, "title": "别人的房间"})
     stranger = delivery_task(client, room.json()["data"]["id"])

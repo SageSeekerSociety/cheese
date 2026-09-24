@@ -18,14 +18,14 @@ bottom.
 **最容易被误判成**：token 过期了 / 签名密钥不对 / fixture 忘了带 header。于是
 去查 `SECRET_KEY`、去打印 token、去数 TTL —— 全是白费，token 本身完全有效。
 
-**真因**：本仓有**两族 token**，它们长得一模一样，但只有一族能过数字身份层
-（`app/auth/caller.py` 的模块 docstring 把这件事讲得最清楚）：
+**真因**：access token 有**两种形状**，验签走的是同一个
+`verify_access_token`，但只有一种能过数字身份层：
 
-- **主干签发的 access token**：`sub` 是 int 用户 id。`get_auth_user` 能把它变成
+- **带 int 用户 id 的**：`sub` 是 int 用户 id。`get_auth_user` 能把它变成
   `AuthUserInfo`，所以 `Depends(require_auth_user)` 的路由认它。
-- **cheesex session token**（`session_token()` / `mint_session_token`）：**只有
-  handle，没有 int id**（`user_id=None`）。数字身份层看不到 id，直接当访客处理，
-  于是 `require_auth_user` 抛 `AuthenticationRequiredError` → 401。
+- **只带 handle 的**（`session_token()`，即 `create_access_token(None, handle=...)`）：
+  **没有 int id**。数字身份层看不到 id，直接当访客处理，于是
+  `require_auth_user` 抛 `AuthenticationRequiredError` → 401。
 
 它在 accept / split / connector / project 这些路由上好使，只是因为那些路由走的是
 `caller_handle()`——按 **handle** 认人，不查 int id。**同一个 header 在两类路由上
@@ -57,7 +57,7 @@ seed 好的平台 agent 用户（id=1，`cheese`）——不走登录，也就�
 **最容易被误判成**：一条洁癖式的风格检查，改个名字（`_auth` → `_login`）或者把
 那行塞进 fixture 里就绕过去了。
 
-**真因**：这条守卫**不认名字，只认 `mint_session_token`**——因为改名正是它要拦的
+**真因**：这条守卫**不认名字，只认 `create_access_token(None, ...)`**——因为改名正是它要拦的
 东西。原来那条规矩是散文写的（「已经有八份复制粘贴的 `_auth()`，别加第九个」），
 结果第九份照样出现了，另外还长出三份叫 `_login` 的、两份直接把 mint 调用写进
 `client.headers` 的——一共十四个文件。按名字 grep `_auth` 只能抓到其中九个；反过来

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 
@@ -13,6 +14,8 @@ import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 // each of those pages had to hand-roll its own 返回 button and its own content
 // width, because there was no frame to come back to.
 defineOptions({ name: 'ProjectShell' })
+
+const PROJECT_FRAME_TITLE = 'project-frame'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -34,6 +37,18 @@ watch(
   (id) => void store.openProject(id),
   { immediate: true }
 )
+
+// 顶栏标题 = 项目名（路由 meta 的 dynamicTitleKey 指到这里）。
+const titles = usePageTitleStore()
+watch(
+  () => store.projectName,
+  (name) => {
+    if (name) titles.setDynamicTitle(name, PROJECT_FRAME_TITLE)
+    else titles.clearDynamicTitle(PROJECT_FRAME_TITLE)
+  },
+  { immediate: true }
+)
+onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
 // 实时性: poll unread badges so messages landing in OTHER topics light up
 // without a manual refresh. The same tick refreshes the topic list, so the

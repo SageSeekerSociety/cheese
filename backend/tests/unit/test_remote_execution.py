@@ -38,6 +38,22 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+def test_unknown_finished_task_does_not_hold_idle_upgrade(tmp_path):
+    executor = runtime.Executor.__new__(runtime.Executor)
+    executor.state = tmp_path
+    executor.config = {"claude": "old"}
+    executor.admission_lock = threading.Lock()
+    executor.active_calls = 0
+    executor.upgrading = False
+    executor.tasks = {"lost-exit-trap": {"status": "unknown"}}
+    executor.task = lambda marker: executor.tasks[marker]
+
+    result = executor.dispatch("begin_upgrade", {"release": "next"})
+
+    assert result["ready"] is True
+    assert executor.upgrading is True
+
+
 def test_acceptance_cleanup_leaves_another_runs_same_named_case_alive(
     tmp_path, monkeypatch
 ):
@@ -221,6 +237,33 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
         receipt.result = {stdout: 'out', stderr: 'err'};
         assert.deepEqual(await handlers['tool.call'](api, call), {
           result: [{type: 'text', text: 'out'}, {type: 'text', text: 'err'}],
+        });
+    """)
+
+
+def test_large_platform_receipt_reaches_the_caller_as_json():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const body = JSON.stringify({data: 'x'.repeat(180000)});
+        const receipt = {result: {stdout: body, stderr: ''}};
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async () => ({content: [{type: 'text', text:
+            JSON.stringify({receipt_path: '/config/tool-results/large.json'})}]})},
+          fs: {read: async (path, {as}) => {
+            assert.equal(path, '/config/tool-results/large.json');
+            assert.equal(as, 'text');
+            return JSON.stringify(receipt);
+          }},
+        };
+        const call = {tool: 'mcp__native__platform_request', tool_use_id: 'req',
+                      method: 'GET', path: '/projects/x/alerts'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [{type: 'text', text: body}],
         });
     """)
 

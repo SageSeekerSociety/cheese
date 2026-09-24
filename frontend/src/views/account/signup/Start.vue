@@ -95,6 +95,8 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
+import { attemptMessage } from '../attemptWait'
+
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
@@ -190,7 +192,7 @@ const submit = async () => {
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.signUp.failed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signUp.failed'))
   } finally {
     submitting.value = false
   }

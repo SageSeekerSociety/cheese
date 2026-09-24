@@ -113,6 +113,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
 import { oauthProviderIcon } from './oauthProvider'
+import { firstStepAccepted, landingAfterSignIn, takeFirstStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 
@@ -188,6 +189,12 @@ const alternatives = computed<Way[]>(() => {
   if (webAuthnSupported) {
     ways.push({ key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain', go: handlePasskeyLogin })
   }
+  ways.push({
+    key: 'email_code',
+    label: t('account.signIn.emailCode'),
+    icon: 'mdi-email-outline',
+    go: () => router.push({ name: 'SignInEmailCode', query: { redirect: route.query.redirect } }),
+  })
   const i = ways.findIndex((w) => w.key === last)
   if (i > 0) ways.unshift(...ways.splice(i, 1))
   return ways
@@ -198,11 +205,18 @@ const parts = computed(() => {
   return last === 'password' ? (['form', 'or', 'alt'] as const) : (['alt', 'or', 'form'] as const)
 })
 
-function signedIn(method: SignInMethod, accessToken: string, user: User) {
+async function signedIn(
+  method: SignInMethod,
+  accessToken: string,
+  user: User,
+  passkeyEnrollment?: UserApi.PasskeyEnrollment
+) {
   rememberSignIn(method)
   AccountService.login(accessToken, user)
+  // After the login above: the upgrade's requests need the new session.
+  const upgrade = method === 'password' ? upgradeAfterPasswordSignIn(user.id, passkeyEnrollment) : null
   toast.success(t('account.signIn.signedIn'))
-  router.replace(postLoginTarget(route.query))
+  router.replace(await landingAfterSignIn(upgrade, postLoginTarget(route.query)))
 }
 
 const login = handleSubmit(async (value) => {
@@ -212,13 +226,18 @@ const login = handleSubmit(async (value) => {
     const { data } = await UserApi.login(value)
     if (data.requires2FA) {
       rememberSignIn('password')
+      firstStepAccepted('password')
       router.push({
         name: 'Verify2FA',
         query: { token: data.tempToken, redirect: route.query.redirect },
       })
       return
     }
-    signedIn('password', data.accessToken!, data.user!)
+    // The waiting autofill ceremony is ended here, not when the page goes:
+    // by then a passkey may be being created, and ending "the ceremony" would
+    // end that one instead.
+    stopAutofill()
+    await signedIn('password', data.accessToken!, data.user!, data.passkeyEnrollment)
   } catch (e) {
     errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
     waitFor(e)
@@ -227,7 +246,7 @@ const login = handleSubmit(async (value) => {
 
 async function finishPasskey(assertion: AuthenticationResponseJSON) {
   const { data } = await UserApi.verifyPasskeyAuthentication(assertion)
-  signedIn('passkey', data.accessToken!, data.user!)
+  await signedIn('passkey', data.accessToken!, data.user!)
 }
 
 function passkeyError(error: any, rpId?: string): string {
@@ -316,13 +335,20 @@ const handleOAuthLogin = (providerId: string) => {
 
 onMounted(() => {
   forgetOAuthRedirect()
+  // Likewise a password accepted on an earlier visit: a second step reached
+  // from here next time follows whichever way this visit signs in.
+  takeFirstStep()
   fetchOAuthProviders()
   startAutofill()
 })
 
-onBeforeUnmount(() => {
-  if (autofillOn) WebAuthnAbortService.cancelCeremony()
-})
+function stopAutofill() {
+  if (!autofillOn) return
+  autofillOn = false
+  WebAuthnAbortService.cancelCeremony()
+}
+
+onBeforeUnmount(stopAutofill)
 </script>
 
 <style scoped>

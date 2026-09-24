@@ -22,16 +22,20 @@ vi.mock('../api', async () => {
   }
 })
 
+import { setLocale } from '../i18n'
+
 import TopicMembers from './TopicMembers.vue'
 
 // 项目名册一张，队友也在上面（后端合的）：请一个队友进房间和请一个人是同一件事，
 // 所以「添加」那张单子读的就是这一份，不再另外拉一份队友清单拼上去。
 const PROJECT_MEMBERS = [
-  { user_handle: 'alice', role: 'lead', name: 'Alice', agent: false, active: true },
-  { user_handle: 'dave', role: 'member', name: 'Dave', agent: false, active: true },
-  { user_handle: 'cheese-t1', role: 'member', name: '芝士', agent: true, active: true },
-  { user_handle: 'cheese-a2', role: 'member', name: '评审', agent: true, active: true },
-  { user_handle: 'cheese-a3', role: 'member', name: '退休', agent: true, active: false },
+  { user_handle: 'alice', source: 'owner' as const, name: 'Alice', agent: false, active: true },
+  { user_handle: 'bob', source: 'team' as const, name: 'Bob', agent: false, active: true },
+  { user_handle: 'carol', source: 'external' as const, name: 'Carol', agent: false, active: true },
+  { user_handle: 'dave', source: 'external' as const, name: 'Dave', agent: false, active: true },
+  { user_handle: 'cheese-t1', source: 'agent' as const, name: '芝士', agent: true, active: true },
+  { user_handle: 'cheese-a2', source: 'agent' as const, name: '评审', agent: true, active: true },
+  { user_handle: 'cheese-a3', source: 'agent' as const, name: '退休', agent: true, active: false },
 ]
 
 const Roster = TopicMembers as unknown as Component
@@ -89,6 +93,7 @@ async function openRoster() {
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   document.body.innerHTML = ''
 })
 
@@ -129,9 +134,11 @@ describe('成员名册', () => {
 
 it('按钮上是一份名册：人数含 AI 队友，头像堆里没有单挂的那一颗', async () => {
   // 名册列表本来就是全量渲染的；这颗按钮曾经只数人、再把 AI 队友作为一张单独的
-  // 头像挂在旁边，读起来像「几个人，另外还有个它」。
+  // 头像挂在旁边，读起来像「几个人，另外还有个它」。头像堆后面不再另写一个总数：
+  // 三张脸加「+1」已经说了是四位。
   await openRoster()
-  expect(document.querySelector('.members-mini__count')!.textContent).toBe('4')
+  expect(document.querySelectorAll('.members-mini__face:not(.members-mini__face--more)')).toHaveLength(3)
+  expect(document.querySelector('.members-mini__face--more')!.textContent).toBe('+1')
   expect(document.querySelector('.members-mini__face--agent')).toBeNull()
   expect(document.querySelector('.members-mini')!.getAttribute('title')).toContain('4 位')
 })
@@ -158,5 +165,27 @@ describe('名册上的头像', () => {
     const face = faceOf('carol')
     expect(face.tagName).toBe('IMG')
     expect(face.getAttribute('src')).toContain('/avatars/77')
+  })
+})
+
+describe('外部成员在房间里', () => {
+  it('名册上团队以外的人挂「外部」，团队里的人不挂', async () => {
+    await openRoster()
+    const rows = Array.from(document.querySelectorAll('.roster__item'))
+    const carol = rows.find((r) => r.textContent?.includes('@carol'))!
+    const bob = rows.find((r) => r.textContent?.includes('@bob'))!
+    expect(carol.textContent).toContain('外部')
+    expect(bob.textContent).not.toContain('外部')
+  })
+
+  it('「添加」只从项目成员里挑，外部成员在单子上也标着「外部」', async () => {
+    await openRoster()
+    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
+    await settle()
+    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
+    const dave = items.find((t) => t.includes('Dave'))!
+    expect(dave).toContain('外部')
+    // 单子上只有项目名册里还没进房间的人和队友，没有别的来源。
+    expect(items.filter((t) => !t.includes('AI 队友'))).toEqual([dave])
   })
 })

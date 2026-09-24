@@ -20,7 +20,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_artifact, delivery_headers, delivery_task
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
@@ -40,7 +40,7 @@ def task_machine(client, monkeypatch, tmp_path):
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

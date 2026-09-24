@@ -15,14 +15,13 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
+from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -30,8 +29,8 @@ def setup_project(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     client.headers["Authorization"] = f"Bearer {seed_user(client, 'config_owner')}"
-    response = client.post(
-        "/projects", json={"name": "Compute", "owner_handle": "config_owner"}
+    response = post_project(
+        client, json={"name": "Compute", "owner_handle": "config_owner"}
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
@@ -152,11 +151,6 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
             member = await UserRepository(session).get_by_username("config_member")
             await TeamRepository(session).add_member(
                 project.team_id, member.id, TeamMemberRole.MEMBER
-            )
-            await MemberRepository(session).add(
-                project_id=project.id,
-                user_handle=member.username,
-                role=ProjectRole.member,
             )
             await session.commit()
             return member.id

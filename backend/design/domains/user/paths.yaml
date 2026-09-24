@@ -637,14 +637,14 @@
       '200':
         description: Active sessions list
   delete:
-    summary: Logout all sessions
+    summary: Sign out every other session
     operationId: logoutAllSessions
     tags: [Users]
     security:
       - BearerAuth: []
     responses:
       '200':
-        description: All sessions terminated
+        description: Every session but the caller's is terminated
 
 /users/me/sessions/{sessionId}:
   delete:

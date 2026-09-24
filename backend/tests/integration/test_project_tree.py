@@ -6,12 +6,12 @@ import uuid
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client, **kw) -> dict:
     body = {"name": "P", **kw}
-    return client.post("/projects", json=body).json()["data"]
+    return post_project(client, json=body).json()["data"]
 
 
 def test_project_create_autocreates_root_topic(client):

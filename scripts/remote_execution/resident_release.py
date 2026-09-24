@@ -72,7 +72,9 @@ def main():
 
         class Control:
             async def current(self, topic_id, agent_handle=None):
-                return {"id": fixture.sid, "status": "active"}
+                # A live worker is relaying this session, so it has just been
+                # heard from, as a real session's heartbeat would record.
+                return {"id": fixture.sid, "status": "active", "last_seen": time.time()}
 
             async def enqueue(self, sid, frame, actor):
                 original_send(fixture, frame)

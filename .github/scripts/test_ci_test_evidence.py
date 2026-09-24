@@ -37,7 +37,7 @@ class PlaywrightEvidenceTests(unittest.TestCase):
             source = root / "report.json"
             output = root / "artifact" / "evidence.json"
             source.write_text(json.dumps(report))
-            subprocess.run(
+            result = subprocess.run(
                 [
                     sys.executable,
                     str(SCRIPT),
@@ -61,7 +61,10 @@ class PlaywrightEvidenceTests(unittest.TestCase):
                     "e2e",
                 ],
                 check=True,
+                capture_output=True,
+                text=True,
             )
+            self.assertEqual(result.stdout, output.read_text())
             self.assertEqual(
                 json.loads(output.read_text()),
                 {
