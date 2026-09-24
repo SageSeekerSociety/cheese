@@ -165,7 +165,7 @@
       "done": "登录成功",
       "doneLede": "正在跳转",
       "failed": "登录失败，请重试",
-      "missingToken": "登录信息不完整，请重新登录",
+      "incomplete": "登录信息不完整，请重新登录",
       "signedIn": "已使用 {provider} 登录",
       "linked": "已关联 {provider} 账号"
     },

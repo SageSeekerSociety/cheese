@@ -3555,7 +3555,7 @@ async def _oauth_login_redirect(
     provider_id: str,
     **extra: str | None,
 ) -> RedirectResponse:
-    """Issue tokens for a resolved OAuth login and land on the success page.
+    """Sign in a resolved OAuth login and land on the success page.
 
     An account with 2FA gets a 2FA ticket and the verify page instead, exactly
     as a password login would: the provider stands in for the password only.
@@ -3572,21 +3572,25 @@ async def _oauth_login_redirect(
         )
 
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
-    redirect = RedirectResponse("", status_code=302)
-    access_token = await issue_session(
+    redirect = RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_success_path,
+            email=user_obj.email or user_obj.username,
+            provider=provider_id,
+            **extra,
+        ),
+        status_code=302,
+    )
+    # Only the refresh cookie rides the redirect. A token in the URL would
+    # land in the browser history, the Referer header and access logs; the
+    # landing page trades the cookie for one instead.
+    await issue_session(
         redirect,
         request,
         session,
         user_id=user_id,
         handle=user_obj.username,
         login_method=f"oauth:{provider_id}",
-    )
-    redirect.headers["location"] = _oauth_frontend_url(
-        settings.frontend_oauth_success_path,
-        token=access_token,
-        email=user_obj.email or user_obj.username,
-        provider=provider_id,
-        **extra,
     )
     return redirect
 

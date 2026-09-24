@@ -158,14 +158,24 @@ class TestOAuthCreate:
         params = _q(loc)
         assert params["created"] == "true"
         assert params["authMode"] == "none"
-        assert params["token"]
-        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
+        # No token in the URL: it would land in history, Referer and logs.
+        assert "token" not in params
 
-        # the minted token is a live session for the new account
-        me = api_client.get(
-            "/users/auth/methods/oauth_created_1",
+        # The cookie alone signs the landing page in, as the new account.
+        refresh_cookie = resp.cookies.get("cheese_refresh")
+        assert refresh_cookie
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={refresh_cookie}"},
         )
-        assert me.status_code == 200
+        assert refreshed.status_code == 200, refreshed.text
+        me = api_client.get(
+            "/users/me",
+            headers={
+                "Authorization": f"Bearer {refreshed.json()['data']['accessToken']}"
+            },
+        )
+        assert me.json()["data"]["user"]["username"] == "oauth_created_1"
 
         # the stateToken is spent: a replay cannot mint a second account
         replay = api_client.post(
@@ -289,7 +299,8 @@ class TestOAuthBindPassword:
         )
         params = _q(_loc(resp))
         assert params["bound"] == "true"
-        assert params["token"]
+        assert "token" not in params
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
     def test_bind_rejects_wrong_password(
         self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
@@ -514,7 +525,8 @@ class TestOAuthVerifyPending:
         )
         params = _q(_loc(resp))
         assert params["linked"] == "true"
-        assert params["token"]
+        assert "token" not in params
+        assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
 
         # one-shot: the pending session is consumed
         replay = api_client.post(

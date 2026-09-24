@@ -165,7 +165,7 @@
       "done": "Signed in",
       "doneLede": "Redirecting",
       "failed": "Couldn't sign in. Please try again.",
-      "missingToken": "Sign-in details are incomplete. Please sign in again.",
+      "incomplete": "Sign-in details are incomplete. Please sign in again.",
       "signedIn": "Signed in with {provider}",
       "linked": "{provider} account linked"
     },

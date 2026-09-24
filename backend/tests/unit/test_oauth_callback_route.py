@@ -98,7 +98,8 @@ class TestOAuthCallback:
         assert loc.startswith(
             f"{settings.frontend_url}{settings.frontend_oauth_success_path}"
         )
-        assert "token=" in loc and "provider=ruc" in loc
+        assert "provider=ruc" in loc
+        assert "token=" not in loc
         assert "cheese_refresh=" in resp.headers.get("set-cookie", "")
         oauth.create_connection.assert_not_awaited()
 
