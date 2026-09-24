@@ -22,6 +22,8 @@ vi.mock('@/api', () => ({
 
 import TopicHeader from './TopicHeader.vue'
 
+import { setLocale } from '@/i18n'
+
 const Header = TopicHeader as unknown as Component
 
 const topic = {
@@ -96,6 +98,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
   getTopicComputeProfile.mockReset()
 })
 
