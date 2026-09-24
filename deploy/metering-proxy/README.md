@@ -134,5 +134,8 @@ to the gateway.
 
 A host with neither boots its sessions on `NO_LOGIN_PLACEHOLDER`
 (`cheese_billing_core.py`), which authenticates nothing: projects on the
-API-key pool still run, and a subscription request carrying it is refused here
-with a 503 that says the host has no Claude login.
+API-key pool still run. The boot calls only a real account can answer
+(`NO_LOGIN_ANSWERS`) are answered here for such a session. A request admission
+places on the subscription is refused with a 400 that says the host has no
+Claude login, which the client does not retry; one admission could not place
+gets a 503 and is retried.

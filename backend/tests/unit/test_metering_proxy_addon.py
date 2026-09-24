@@ -769,15 +769,26 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
     assert leaked == {}, f"the session's credential reached the gateway: {leaked}"
 
 
-def _no_login_turn(monkeypatch, tmp_path, pool: str):
+def _no_login_turn(
+    monkeypatch, tmp_path, pool: str, *, answered=True, path="/v1/messages"
+):
+    """A placeholder session's request; `answered` says whether admission
+    actually answered (False = the gate failed open)."""
     secret = "s3cr3t"
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
-    _with_admission(mod, monkeypatch, pool=pool, key="sk-virtual-project-key")
+    _with_admission(
+        mod,
+        monkeypatch,
+        pool=pool,
+        key="sk-virtual-project-key",
+        fail_open=not answered,
+    )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
     flow = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    flow.request.path = path
     asyncio.run(mod.requestheaders(flow))
     return flow
 
@@ -787,11 +798,61 @@ def test_a_host_without_a_claude_login_cannot_send_a_subscription_turn(
 ):
     """The placeholder a login-less host boots on authenticates nothing; sending
     it to Anthropic would come back as an opaque 401 that reads like a broken
-    account. The caller is told the host has no login instead."""
+    account. The caller is told the host has no login instead — as a refusal
+    the client does not retry: a 5xx here had Claude Code retry silently for
+    about three minutes before the turn said anything."""
     flow = _no_login_turn(monkeypatch, tmp_path, "subscription")
 
-    assert flow.response is not None and flow.response.status_code == 503
+    assert flow.response is not None and flow.response.status_code == 400
     assert b"no Claude login" in flow.response.content
+
+
+def test_a_login_less_turn_the_control_plane_could_not_place_waits_for_it(
+    monkeypatch, tmp_path
+):
+    """Admission unreachable: only the gateway could serve a login-less turn,
+    and its key comes from admission, so the turn is told to retry."""
+    flow = _no_login_turn(monkeypatch, tmp_path, "subscription", answered=False)
+
+    assert flow.response is not None and flow.response.status_code == 503
+    assert b"retry" in flow.response.content
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/claude_cli/bootstrap?entrypoint=sdk-cli&model=claude-sonnet-5",
+        "/api/claude_code_penguin_mode",
+        "/api/oauth/validate",
+    ],
+)
+def test_a_login_less_session_boots_without_refusals(monkeypatch, tmp_path, path):
+    """The boot calls only a real account can answer are answered here for a
+    placeholder session, never sent to Anthropic on a credential that
+    authenticates nothing."""
+    flow = _no_login_turn(monkeypatch, tmp_path, "gateway", path=path)
+
+    assert flow.response is not None and flow.response.status_code == 200
+    assert json.loads(flow.response.content) in ({}, {"enabled": False})
+    assert flow.request.host == "api.anthropic.com"
+
+
+def test_a_logged_in_session_asks_anthropic_for_its_own_boot_data(
+    monkeypatch, tmp_path
+):
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, pool="subscription", fail_open=False)
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+    flow.request.path = "/api/claude_cli/bootstrap"
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None, "a real login's boot data comes from Anthropic"
+    assert flow.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
 
 
 def test_a_host_without_a_claude_login_still_serves_the_gateway(monkeypatch, tmp_path):

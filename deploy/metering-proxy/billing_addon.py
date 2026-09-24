@@ -61,6 +61,7 @@ from cheese_billing_core import (  # noqa: E402
     ModelRewrite,
     StreamingUsageExtractor,
     control_answer,
+    no_login_answer,
     is_haiku_name,
     proxy_basic_password,
     requested_model_of,
@@ -438,7 +439,18 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
         str(claims.get("t") or ""),
     )
     if answer is None:
-        return False
+        body = (
+            no_login_answer(flow.request.host, flow.request.path)
+            if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER
+            else None
+        )
+        if body is None:
+            return False
+        flow.request.stream = False
+        flow.response = http.Response.make(
+            200, body, {"Content-Type": "application/json"}
+        )
+        return True
     flow.request.stream = False
     flow.response = http.Response.make(
         answer.status, answer.body, {"Content-Type": "application/json"}
@@ -720,13 +732,31 @@ def _route(
 
     # Everything from here goes to Anthropic on the session's own credential.
     if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER:
+        if verdict is not None and not verdict.fail_open:
+            # The control plane placed this on the subscription, and the host
+            # has no login: that will not change by retrying, so the refusal
+            # is one the client does not retry. A 503 here had Claude Code
+            # retry silently for about three minutes before saying anything.
+            _refuse(
+                flow,
+                400,
+                "invalid_request_error",
+                "cheese: the session host has no Claude login, so this "
+                "project's subscription model cannot be served; an operator "
+                "has to log the host in (or give it a setup-token)",
+            )
+            return
+        # Nobody answered where this goes (admission unreachable or not
+        # configured). Without a login only the gateway could serve it, and
+        # the gateway needs the key admission hands out, so this waits for
+        # the control plane: retryable.
         _refuse(
             flow,
             503,
             "api_error",
-            "cheese: the session host has no Claude login, so this project's "
-            "subscription model cannot be served; an operator has to log the "
-            "host in (or give it a setup-token)",
+            "cheese: the control plane could not say where this request goes, "
+            "and the session host has no Claude login to fall back on; "
+            "retry shortly",
         )
         return
 
