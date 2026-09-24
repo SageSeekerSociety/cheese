@@ -153,7 +153,15 @@
     "accountAs": "账号：{email}",
     "done": "完成",
     "failed": "授权没完成",
-    "retry": "重试"
+    "retry": "重试",
+    "upstreamModel": "上游模型",
+    "upstreamModelHint": "可选。留空用默认 openai/gpt-5.2-codex；订阅里可用的其他模型（如 openai/gpt-5.6-luna）填在这里。",
+    "upstreamModelInvalid": "上游模型不能为空",
+    "upstreamModelCurrent": "上游模型：{model}",
+    "upstreamModelDefault": "上游模型：默认（{model}）",
+    "upstreamModelEdit": "修改",
+    "upstreamModelSave": "保存",
+    "upstreamModelCancel": "取消"
   },
   "dialog": {
     "cancel": "取消",

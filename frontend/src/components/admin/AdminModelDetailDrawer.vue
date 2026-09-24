@@ -5,7 +5,13 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
-import { getGatewayModel, getSubscriptionQuota, revokeSubscription, type SubscriptionQuotaTier } from '@/api'
+import {
+  getGatewayModel,
+  getSubscriptionQuota,
+  revokeSubscription,
+  type SubscriptionQuotaTier,
+  updateSubscriptionUpstreamModel,
+} from '@/api'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
@@ -46,6 +52,8 @@ interface SubscriptionOverlay {
   id: string
   status: string
   account_email: string | null
+  /** 订阅行上显式选的上游模型；null/缺 = 跟随部署默认（网关现值即解析值）。 */
+  upstream_model?: string | null
   token_expires_at?: string | null
   last_refresh_error?: string | null
   quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
@@ -114,6 +122,12 @@ const revokeOpen = ref(false)
 const revoking = ref(false)
 const revokeError = ref<string | null>(null)
 
+/* 上游模型的就地编辑：行上的显式选择是唯一权威，改完服务端即推网关。 */
+const upstreamEditing = ref(false)
+const upstreamDraft = ref('')
+const upstreamSaving = ref(false)
+const upstreamError = ref<string | null>(null)
+
 /** 定向重新授权的导入对话框（订阅块自己的实例，带着这条订阅的 id）。 */
 const reauthOpen = ref(false)
 
@@ -144,6 +158,8 @@ watch(
     quotaError.value = null
     revokeOpen.value = false
     revokeError.value = null
+    upstreamEditing.value = false
+    upstreamError.value = null
     void load()
   },
   { immediate: true }
@@ -245,6 +261,36 @@ async function confirmRevoke() {
 function onReauthImported() {
   emit('changed')
   void load()
+}
+
+function startUpstreamEdit() {
+  upstreamDraft.value = sub.value?.upstream_model ?? ''
+  upstreamError.value = null
+  upstreamEditing.value = true
+}
+
+function cancelUpstreamEdit() {
+  upstreamEditing.value = false
+  upstreamError.value = null
+}
+
+async function saveUpstream() {
+  const current = sub.value
+  if (!current || upstreamSaving.value) return
+  upstreamSaving.value = true
+  upstreamError.value = null
+  try {
+    await updateSubscriptionUpstreamModel(current.id, upstreamDraft.value.trim() || null)
+    if (sub.value?.id !== current.id) return
+    upstreamEditing.value = false
+    emit('changed')
+    await load()
+  } catch (e) {
+    // 失败照原话就地显示（那句话里带着网关的原话）；编辑框不关。
+    upstreamError.value = e instanceof Error && e.message ? e.message : t('models.page.loadFailed')
+  } finally {
+    upstreamSaving.value = false
+  }
 }
 
 const caps = computed(() => {
@@ -363,6 +409,48 @@ function close() {
                 </span>
               </dd>
             </dl>
+            <!-- 上游模型：订阅行上的显式选择是唯一权威（没有显式选择 = 部署默认，
+                 默认的解析值就是网关现值）。就地改，保存即推网关。 -->
+            <div class="amdd__upstream">
+              <p class="amdd__note t-meta-read t-num">
+                {{
+                  sub.upstream_model
+                    ? t('models.subscription.upstreamModelCurrent', { model: sub.upstream_model })
+                    : t('models.subscription.upstreamModelDefault', { model: model.upstream.model })
+                }}
+                <v-btn v-if="!upstreamEditing" variant="text" size="x-small" @click="startUpstreamEdit">
+                  {{ t('models.subscription.upstreamModelEdit') }}
+                </v-btn>
+              </p>
+              <div v-if="upstreamEditing" class="amdd__upstreamedit">
+                <v-text-field
+                  v-model="upstreamDraft"
+                  :label="t('models.subscription.upstreamModel')"
+                  :hint="t('models.subscription.upstreamModelHint')"
+                  density="compact"
+                  variant="outlined"
+                  maxlength="200"
+                  autocomplete="off"
+                  hide-details="auto"
+                  data-testid="upstream-edit-input"
+                />
+                <div class="amdd__upstreamactions">
+                  <v-btn size="small" variant="text" :disabled="upstreamSaving" @click="cancelUpstreamEdit">
+                    {{ t('models.subscription.upstreamModelCancel') }}
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    :loading="upstreamSaving"
+                    :disabled="upstreamDraft !== '' && !upstreamDraft.trim()"
+                    @click="saveUpstream"
+                  >
+                    {{ t('models.subscription.upstreamModelSave') }}
+                  </v-btn>
+                </div>
+                <p v-if="upstreamError" class="amdd__suberror t-meta-read" role="alert">{{ upstreamError }}</p>
+              </div>
+            </div>
             <p v-if="sub.token_expires_at" class="amdd__note t-meta-read t-num">
               {{ t('models.detail.subscription.tokenExpires', { time: ahead(sub.token_expires_at) }) }}
             </p>
@@ -747,6 +835,20 @@ function close() {
 .amdd__subactions {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.amdd__upstreamedit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.amdd__upstreamactions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 

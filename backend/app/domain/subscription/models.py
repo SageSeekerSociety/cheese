@@ -80,6 +80,11 @@ class LlmSubscription(UuidPk, Timestamps, Base):
     # 这条订阅喂给网关的哪条运行时模型。
     linked_model_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # 这条订阅的上游模型（如 openai/gpt-5.6-luna）。NULL = 跟随全局默认
+    # （settings.subscription_upstream_model），读取时在 _push_to_gateway 回落 ——
+    # 存 NULL 而不是存默认值，默认值的热配才对存量行继续生效。
+    upstream_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     # device flow 进行中状态（完成/终结后清空）。
     flow_device_auth_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     flow_user_code: Mapped[str | None] = mapped_column(String(32), nullable=True)

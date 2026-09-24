@@ -95,6 +95,7 @@ class SubscriptionService:
         provider: str,
         label: str | None,
         target_id: uuid.UUID | None,
+        upstream_model: str | None = None,
     ) -> dict:
         """开一次导入（或定向重授权）。
 
@@ -144,6 +145,7 @@ class SubscriptionService:
                 label=(label or "")[:200],
                 status="pending",
                 linked_model_name=settings.subscription_linked_model_name,
+                upstream_model=_normalize_upstream(upstream_model),
                 flow_device_auth_id=started.device_auth_id,
                 flow_user_code=started.user_code,
                 flow_expires_at=now + timedelta(seconds=started.expires_in),
@@ -168,6 +170,7 @@ class SubscriptionService:
             after={
                 "provider": provider,
                 "label": sub.label,
+                "upstream_model": sub.upstream_model,
                 "reauth_target": str(target_id) if target_id else None,
             },
         )
@@ -349,6 +352,7 @@ class SubscriptionService:
             "last_refresh_at": _iso(sub.last_refresh_at),
             "last_refresh_error": sub.last_refresh_error,
             "linked_model_name": sub.linked_model_name,
+            "upstream_model": sub.upstream_model,
             "quota": _quota_dto(sub),
             "created_by_handle": sub.created_by_handle,
             "created_at": _iso(sub.created_at),
@@ -366,6 +370,7 @@ class SubscriptionService:
                 "id": str(row.id),
                 "status": row.status,
                 "account_email": row.account_email,
+                "upstream_model": row.upstream_model,
                 "quota": _quota_dto(row),
                 # 详情抽屉的订阅块要这两样（凭据过期时间、上次刷新失败的原话）；
                 # token / 密文字段照旧一个字母都不出现。
@@ -690,6 +695,82 @@ class SubscriptionService:
         return {"revoked": True}
 
     # ------------------------------------------------------------------
+    # 改上游模型
+    # ------------------------------------------------------------------
+    async def update_upstream_model(
+        self,
+        *,
+        handle: str,
+        subscription_id: uuid.UUID,
+        upstream_model: str | None,
+    ) -> dict:
+        """改一条订阅的上游模型，并把解析值推进网关。``None`` = 清除显式选择、
+        回落部署默认。
+
+        订阅行是这条链接模型上游的**唯一权威**：每次刷新与每次本调用都以行上的
+        值重断网关（`_push_to_gateway` 两条分支都带上游）——经通用模型编辑页改
+        这条模型的上游，下一次刷新就会被这里的值盖回去。
+
+        失败语义照 `revoke`：网关那一下失败，行上的选择照样落库（审计落
+        failed、原因写进 `last_refresh_error`），把网关原话抛给路由；下一次
+        刷新会拿行上的值补推。
+        """
+        sub = await self._repo.get_locked(subscription_id)
+        if sub is None:
+            raise NotFoundError("这条订阅不存在")
+        if sub.status not in _REAUTHABLE:
+            raise BadRequestError("这条订阅当前不在可改上游模型的状态")
+        before = _audit_snapshot(sub)
+        sub.upstream_model = _normalize_upstream(upstream_model)
+
+        access_token = _decrypt(sub, "access_token_enc")
+        if not access_token:
+            # 凭据读不出来时不推网关：选择已落库，凭据恢复（或重授权）后的
+            # 第一次推进会带上它。这不是失败 —— 按凭据不可用的既有路径回答。
+            sub.last_refresh_error = "凭据无法解密（密钥可能已轮换），需要重新授权"
+            await self._record(
+                handle=handle,
+                action="subscription.update_upstream",
+                target=str(sub.id),
+                result="failed",
+                detail=sub.last_refresh_error,
+                before=before,
+                after=_audit_snapshot(sub),
+            )
+            return self._dto(sub)
+
+        try:
+            await self._push_to_gateway(sub, access_token)
+        except GatewayAdminError as exc:
+            from app.domain.agent import gateway_models
+
+            detail = gateway_models._scrub(
+                f"上游模型已改，但推进网关失败：{exc}", {access_token}
+            )
+            sub.last_refresh_error = detail
+            await self._record(
+                handle=handle,
+                action="subscription.update_upstream",
+                target=str(sub.id),
+                result="failed",
+                detail=detail,
+                before=before,
+                after=_audit_snapshot(sub),
+                secrets={access_token},
+            )
+            raise
+        await self._record(
+            handle=handle,
+            action="subscription.update_upstream",
+            target=str(sub.id),
+            result="ok",
+            before=before,
+            after=_audit_snapshot(sub),
+            secrets={access_token},
+        )
+        return self._dto(sub)
+
+    # ------------------------------------------------------------------
     # 网关那一半
     # ------------------------------------------------------------------
     async def _push_to_gateway(self, sub: LlmSubscription, access_token: str) -> None:
@@ -709,6 +790,7 @@ class SubscriptionService:
             )
         name = sub.linked_model_name or settings.subscription_linked_model_name
         sub.linked_model_name = name
+        upstream = _effective_upstream(sub)
         headers = {
             "chatgpt-account-id": sub.chatgpt_account_id or "",
             "originator": settings.codex_originator,
@@ -717,15 +799,19 @@ class SubscriptionService:
         models = await self._admin.models()
         found = next((m for m in models if m.name == name), None)
         if found is not None:
+            # 上游模型两条分支都要带：订阅行是它的唯一权威来源，只建模型时传，
+            # 之后改上游就永远到不了网关。合并语义下 api_key / api_base /
+            # extra_headers / prices 缺省即不动（gateway_admin.update_model）。
             await self._admin.update_model(
                 model_id=found.model_id,
+                upstream_model=upstream,
                 api_key=access_token,
                 extra_headers=headers,
             )
         else:
             await self._admin.add_model(
                 name=name,
-                upstream_model=settings.subscription_upstream_model,
+                upstream_model=upstream,
                 api_base=f"{settings.chatgpt_backend_base.rstrip('/')}/codex",
                 api_key=access_token,
                 prices={
@@ -805,6 +891,19 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _normalize_upstream(value: str | None) -> str | None:
+    """入库存储形：去空白，空串归一为 None（None = 跟随部署默认）。"""
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _effective_upstream(sub: LlmSubscription) -> str:
+    """推进网关时用的解析值：行上的显式选择优先，缺省跟随部署默认（热配）。"""
+    return sub.upstream_model or settings.subscription_upstream_model
+
+
 def _poll_throttled(last_poll_at: datetime | None, now: datetime) -> bool:
     """距上次轮询不足 `_POLL_THROTTLE_S` 就答 pending，不打扰 OpenAI。
 
@@ -872,6 +971,7 @@ def _audit_snapshot(sub: LlmSubscription) -> dict:
         "label": sub.label,
         "status": sub.status,
         "linked_model_name": sub.linked_model_name,
+        "upstream_model": sub.upstream_model,
         "chatgpt_account_id": sub.chatgpt_account_id,
         "token_expires_at": _iso(sub.token_expires_at),
     }

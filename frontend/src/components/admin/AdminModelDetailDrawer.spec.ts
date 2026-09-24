@@ -26,6 +26,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const getGatewayModel = vi.fn()
 const getSubscriptionQuota = vi.fn()
 const revokeSubscription = vi.fn()
+const updateSubscriptionUpstreamModel = vi.fn()
 const startSubscriptionDeviceFlow = vi.fn()
 const pollSubscriptionDeviceFlow = vi.fn()
 const cancelSubscriptionDeviceFlow = vi.fn()
@@ -34,6 +35,7 @@ vi.mock('@/api', () => ({
   getGatewayModel: (...a: unknown[]) => getGatewayModel(...a),
   getSubscriptionQuota: (...a: unknown[]) => getSubscriptionQuota(...a),
   revokeSubscription: (...a: unknown[]) => revokeSubscription(...a),
+  updateSubscriptionUpstreamModel: (...a: unknown[]) => updateSubscriptionUpstreamModel(...a),
   startSubscriptionDeviceFlow: (...a: unknown[]) => startSubscriptionDeviceFlow(...a),
   pollSubscriptionDeviceFlow: (...a: unknown[]) => pollSubscriptionDeviceFlow(...a),
   cancelSubscriptionDeviceFlow: (...a: unknown[]) => cancelSubscriptionDeviceFlow(...a),
@@ -131,6 +133,7 @@ beforeEach(() => {
     stale: false,
   })
   revokeSubscription.mockReset().mockResolvedValue({ revoked: true })
+  updateSubscriptionUpstreamModel.mockReset().mockResolvedValue({})
   startSubscriptionDeviceFlow.mockReset()
   pollSubscriptionDeviceFlow.mockReset()
   cancelSubscriptionDeviceFlow.mockReset()
@@ -208,6 +211,48 @@ describe('详情抽屉 · 订阅块', () => {
     const active = mountDrawer()
     await active.findByText('models.detail.subscription.title')
     expect(active.queryByRole('button', { name: 'models.detail.subscription.reauth' })).toBeNull()
+  })
+
+  it('上游模型：显示订阅的显式选择；编辑保存发 PATCH 并带上 trim 后的值', async () => {
+    const payload = detailPayload()
+    ;(payload.model.subscription as Record<string, unknown>).upstream_model = 'openai/gpt-5.6-luna'
+    getGatewayModel.mockResolvedValue(payload)
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    // 显式选择：显示行上的值，不是网关现值。
+    expect(page.getByText(/upstreamModelCurrent.*gpt-5.6-luna/)).toBeTruthy()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('openai/gpt-5.6-luna')
+    await fireEvent.update(input, '  openai/gpt-5.6-sol  ')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', 'openai/gpt-5.6-sol'))
+  })
+
+  it('上游模型：没有显式选择时显示「默认（网关现值）」；清空后保存发 null', async () => {
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    expect(page.getByText(/upstreamModelDefault.*gpt-5.2-codex/)).toBeTruthy()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', null))
+  })
+
+  it('上游模型保存失败：服务端原话就地显示，编辑框不关', async () => {
+    updateSubscriptionUpstreamModel.mockRejectedValue(new Error('网关 400：bad upstream'))
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    await fireEvent.update(input, 'openai/bad')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    expect(await page.findByText(/bad upstream/)).toBeTruthy()
+    expect(page.getByTestId('upstream-edit-input')).toBeTruthy()
   })
 
   it('移除订阅先确认，确认后才发请求', async () => {

@@ -42,7 +42,7 @@ from app.domain.subscription.openai_codex import (
     SubscriptionTokenInvalid,
     SubscriptionUnreachable,
 )
-from app.domain.subscription.schemas import DeviceFlowStart
+from app.domain.subscription.schemas import DeviceFlowStart, UpstreamModelUpdate
 from app.domain.subscription.services import SubscriptionService
 
 router = APIRouter(prefix="/admin/subscriptions", tags=["admin"])
@@ -108,6 +108,7 @@ async def start_device_flow(
                 provider=payload.provider,
                 label=payload.label,
                 target_id=payload.target_subscription_id,
+                upstream_model=payload.upstream_model,
             )
         )
     )
@@ -175,6 +176,27 @@ async def subscription_quota(
     return ok(
         await _answered(
             service.fetch_quota(handle=handle, subscription_id=subscription_id)
+        )
+    )
+
+
+@router.patch("/{subscription_id}/upstream-model")
+async def update_upstream_model(
+    subscription_id: uuid.UUID,
+    payload: UpstreamModelUpdate,
+    service: SubscriptionServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """改一条订阅的上游模型并推进网关。``upstream_model`` 为 null = 清除显式
+    选择、回落部署默认。网关那一下失败照 `revoke` 的语义：选择已落库（审计
+    落 failed），这里把网关原话带出来（503/502），下一次刷新会补推。"""
+    return ok(
+        await _answered(
+            service.update_upstream_model(
+                handle=handle,
+                subscription_id=subscription_id,
+                upstream_model=payload.upstream_model,
+            )
         )
     )
 
