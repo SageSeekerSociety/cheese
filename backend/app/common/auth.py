@@ -19,21 +19,24 @@ def _utcnow() -> datetime:
 
 
 def create_access_token(
-    user_id: int, handle: str | None = None, *, sid: uuid.UUID | None = None
+    user_id: int | None, handle: str | None = None, *, sid: uuid.UUID | None = None
 ) -> str:
     """Create a short-lived access token for the given user.
 
     ``handle`` (= the user's username) is embedded as an extra claim so the ONE
-    token also satisfies the cheesex auth layer, which keys on handle (fusion
-    unify P3: one token for both API layers). Main auth reads ``sub`` (int id);
-    cheesex reads ``handle`` (falling back to ``sub``).
+    token also satisfies the 2.0 layer, which keys on handle. The numeric layer
+    reads the user id from ``sub``. With no ``user_id`` the token names the
+    handle alone: the handle-keyed layer accepts it and the numeric one treats
+    its bearer as a guest.
 
     ``sid`` names the sign-in session the token was issued under, so a request
     can tell which session is its own. Nothing looks the session up per
     request (``app.domain.user.sessions``)."""
+    if user_id is None and not handle:
+        raise ValueError("an access token names a user id, a handle, or both")
     now = _utcnow()
     payload = {
-        "sub": str(user_id),
+        "sub": str(user_id) if user_id is not None else handle,
         "type": "access",
         "iat": int(now.timestamp()),
         "exp": int(

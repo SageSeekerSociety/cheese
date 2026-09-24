@@ -4,7 +4,7 @@ still works, and a token-authenticated outsider is denied (越权)."""
 
 import pytest
 
-from app.core.tokens import verify_session_token
+from app.common.auth import verify_access_token
 from tests.integration.conftest import session_token
 
 
@@ -33,9 +33,9 @@ def _project_topic(client, owner: str) -> tuple[str, str]:
 
 def test_login_returns_verifiable_token(client):
     token = _login(client, "alice")
-    claims = verify_session_token(token)
+    claims = verify_access_token(token)
     assert claims is not None
-    assert claims["sub"] == "alice"
+    assert claims.handle == "alice"
 
 
 def test_token_actor_wins_over_body_author(client):

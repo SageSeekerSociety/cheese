@@ -15,8 +15,8 @@ from starlette.requests import Request
 from starlette.websockets import WebSocket
 
 from app.auth.project_access import may_read_project
+from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT
-from app.core.tokens import verify_session_token
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
@@ -56,19 +56,15 @@ def credential(conn: Request | WebSocket, cookie_name: str) -> str | None:
 
 
 async def _resolve_handle(session: AsyncSession, token: str) -> str | None:
-    """Handle behind a session token, or None. main-minted tokens put the int user
-    id in ``sub`` and the username in ``handle``; legacy cheesex ones are
-    handle-only — 2.0 membership is keyed by handle, so both must land on one."""
-    claims = verify_session_token(token)
+    """Handle behind an access token, or None. 2.0 membership is keyed by
+    handle; a token that names none is resolved through its user id."""
+    claims = verify_access_token(token)
     if claims is None:
         return None
-    handle = claims["handle"] or claims["sub"]
-    if not handle:
-        return None
-    if str(handle).isdigit():
-        user = await UserRepository(session).get_by_id(int(handle))
+    if claims.handle.isdigit():
+        user = await UserRepository(session).get_by_id(int(claims.handle))
         return getattr(user, "handle", None)
-    return str(handle)
+    return claims.handle
 
 
 async def may_view_topic(

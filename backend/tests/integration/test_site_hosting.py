@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
+from app.common.auth import verify_access_token
 from app.core.config import settings
-from app.core.tokens import verify_session_token
 from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.machine_work import declare_task, machine_commits
@@ -91,7 +91,7 @@ def test_site_cookie_loads_modules_without_platform_credentials(client, publishe
     assert (
         client.post(origin + "/projects", json={"name": "intrusion"}).status_code == 405
     )
-    assert verify_session_token(grant["grant"]) is None
+    assert verify_access_token(grant["grant"]) is None
     assert (
         client.get(
             f"/projects/{project}/site",

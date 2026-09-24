@@ -5,8 +5,13 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
-from app.common.auth import create_access_token, verify_access_token
+from app.common.auth import (
+    create_access_token,
+    get_current_user_id,
+    verify_access_token,
+)
 from app.core.config import settings
+from app.core.errors import AuthenticationRequiredError
 
 
 class TestAccessToken:
@@ -16,6 +21,19 @@ class TestAccessToken:
 
         assert claims is not None
         assert (claims.user_id, claims.handle, claims.sid) == (123, "alice", sid)
+
+    def test_a_token_can_name_a_handle_alone(self) -> None:
+        claims = verify_access_token(create_access_token(None, handle="alice"))
+
+        assert claims is not None
+        assert (claims.user_id, claims.handle) == (None, "alice")
+
+    @pytest.mark.anyio
+    async def test_a_handle_alone_does_not_pass_as_a_user(self) -> None:
+        token = create_access_token(None, handle="alice")
+
+        with pytest.raises(AuthenticationRequiredError):
+            await get_current_user_id(authorization=f"Bearer {token}")
 
     def test_garbage_is_not_a_token(self) -> None:
         assert verify_access_token("invalid.token.here") is None

@@ -6,8 +6,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
+from app.common.auth import verify_access_token
 from app.core.config import settings
-from app.core.tokens import verify_session_token
 from app.domain.library import service as library
 from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import session_auth_headers, session_token
@@ -124,10 +124,10 @@ def test_grant_is_topic_scoped_expiring_and_separate_from_platform_and_site_toke
         ).status_code
         == 401
     )
-    assert verify_session_token(grant["grant"]) is None
+    assert verify_access_token(grant["grant"]) is None
     _, exchange = _open_preview(client, topic_id)
     preview_session = exchange.cookies.get(cookie_name())
-    assert verify_session_token(preview_session) is None
+    assert verify_access_token(preview_session) is None
     client.headers.clear()
     for token in (grant["grant"], preview_session):
         assert (

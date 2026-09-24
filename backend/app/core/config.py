@@ -828,12 +828,6 @@ class Settings(BaseSettings):
     s3_public_url: str | None = None
 
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
-    # Session tokens (JWT HS256) are signed AND verified with the one
-    # ``jwt_secret`` (same secret as main's access/refresh tokens) — no
-    # per-module signing secret.
-    # Session token lifetime. Login is passwordless (handle IS the identity), so
-    # this only bounds how long a minted token stays valid before re-login.
-    auth_token_ttl_s: int = 7 * 24 * 3600
     # Enforce topic access for TOKEN-authenticated actors (成员/角色/项目 checks).
     # The Phase-0 handle fallback stays permissive regardless, so existing
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
