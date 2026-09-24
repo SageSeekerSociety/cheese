@@ -163,11 +163,14 @@ class ConnectRequest(BaseModel):
 
 @router.post("/auth/device/start")
 async def device_start(
-    body: DeviceStartRequest, service: DeviceServiceDep
+    body: DeviceStartRequest, service: DeviceServiceDep, db: DbSession
 ) -> dict[str, Any]:
     """Begin a device flow. The ``approve_url`` is built from the public base so a
     human can open it and approve this machine (fusion-design §5 device flow)."""
     code = await service.start(body.device_name)
+    # The CLI can present this code to a human as soon as the response arrives.
+    # Commit it now so a separate /connector/connect request can find it.
+    await db.commit()
     # The approve link points a human at the frontend ``/connect`` approval page: there,
     # behind login, they bind this machine to a project and mint its agent (item 3).
     # It MUST be the frontend origin (the SPA serves ``/connect``), not
