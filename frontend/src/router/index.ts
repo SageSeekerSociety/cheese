@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
 import CourseJoinRoutes from './courseJoin'
+import { requireEmail } from './emailRequired'
 import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
@@ -131,6 +132,7 @@ const router = createRouter({
 })
 
 router.beforeEach(carryLoginRedirect)
+requireEmail(router, async () => (await import('@/services/account')).default)
 
 router.beforeEach(async (to, from, next) => {
   const store = usePageTitleStore()

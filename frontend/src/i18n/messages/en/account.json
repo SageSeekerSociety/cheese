@@ -104,6 +104,14 @@
     "invalidEmail": "Enter a valid email address",
     "tooSoon": "Codes were requested too often. Try again later."
   },
+  "addEmail": {
+    "title": "Add an email address",
+    "lede": "Your email is used to recover your account and to sign in",
+    "send": "Send code",
+    "submit": "Verify and continue",
+    "added": "Email address added",
+    "signOut": "Sign out"
+  },
   "recover": {
     "title": "Reset password",
     "lede": "Enter your account email and we will send you a link to reset your password",

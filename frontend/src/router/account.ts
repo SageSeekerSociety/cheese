@@ -72,6 +72,17 @@ export default {
       },
     },
     {
+      // Required of an account without an address of its own before it goes
+      // anywhere else (router/emailRequired.ts).
+      path: 'add-email',
+      name: 'AccountAddEmail',
+      component: () => import('@/views/account/AddEmail.vue'),
+      meta: {
+        title: '添加邮箱',
+        titleKey: 'account.addEmail.title',
+      },
+    },
+    {
       path: 'verify-2fa',
       name: 'Verify2FA',
       component: () => import('@/views/account/Verify2FA.vue'),
