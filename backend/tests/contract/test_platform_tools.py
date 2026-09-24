@@ -238,7 +238,9 @@ def machine_is_here(tmp_path):
 
     def executor(payload):
         command = payload["params"]["args"]["command"]
-        if command.startswith("base64 < "):
+        if command.startswith("wc -c < "):
+            stdout = str(len(DOC.encode()))
+        elif command.startswith("base64 < "):
             stdout = base64.b64encode(DOC.encode()).decode()
         elif command == "cheese sync --task " + shlex.quote(TASK):
             stdout = ""
@@ -348,7 +350,8 @@ def test_the_living_doc_is_read_off_the_machine(machine_is_here):
     # 没读过就写，出示的是 0 —— 只有还没有文档时平台才收。
     assert put["expected_version"] == 0
     # 相对路径锚在机器的工作区上，不是会话这一侧的哪个目录。
-    [read] = executor_calls
+    [size, read] = executor_calls
+    assert size["params"]["args"]["command"].endswith("/notes/doc.md")
     assert read["params"]["args"]["command"].endswith("/notes/doc.md")
 
 
