@@ -20,8 +20,8 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
 from app.domain.agent.harness.codex.bundle import build
 from app.domain.agent.harness.codex.host import configure
-from app.domain.agent.harness.codex.runner import socket_path
 from app.domain.agent.harness.codex.subscription import Subscription
+from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult
 
 

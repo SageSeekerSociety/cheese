@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from app.domain.agent.harness.codex.runner import socket_path
+from app.domain.agent.harness.driven.runner import socket_path
 
 VERSION = "0.154.0"
 

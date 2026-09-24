@@ -45,8 +45,8 @@ class PiBacklog:
                     self.entries.append(
                         HarnessEvent(
                             key=f"{row['sequence']:019d}",
-                            eid=f"pi:{row['entry']['id']}",
-                            record=row["entry"],
+                            eid=f"pi:{row['record']['id']}",
+                            record=row["record"],
                             age_s=(now - at).total_seconds(),
                         )
                     )
