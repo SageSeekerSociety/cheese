@@ -10,6 +10,13 @@
     </v-alert>
 
     <v-form @submit.prevent="handleVerify">
+      <!-- 放在验证码之前：填满最后一位就自动提交，放在后面的话来不及勾选。 -->
+      <v-checkbox v-model="trustDevice" density="compact" hide-details class="verify-trust">
+        <template #label>
+          <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
+        </template>
+      </v-checkbox>
+
       <v-otp-input
         v-if="codeType === 'totp'"
         v-model="totpCode"
@@ -29,12 +36,6 @@
       />
 
       <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
-
-      <v-checkbox v-model="trustDevice" density="compact" hide-details class="verify-trust">
-        <template #label>
-          <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
-        </template>
-      </v-checkbox>
 
       <v-btn
         block

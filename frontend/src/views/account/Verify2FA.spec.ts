@@ -52,7 +52,7 @@ async function open(query: Record<string, string>) {
 
 // 填满六位即提交，和人输入时一样。
 async function submitCode(view: ReturnType<typeof render>, code = '123456') {
-  const inputs = view.container.querySelectorAll('input')
+  const inputs = view.container.querySelectorAll('.v-otp-input input')
   for (const [i, digit] of [...code].entries()) {
     await fireEvent.focus(inputs[i])
     await fireEvent.update(inputs[i], digit)

@@ -115,8 +115,8 @@ async function submitPassword(path = '/account/signin') {
 
 // Filling the sixth digit submits, as it does for a person typing.
 async function enterCode(view: ReturnType<typeof render>) {
-  await waitFor(() => expect(view.container.querySelectorAll('input').length).toBeGreaterThanOrEqual(6))
-  const inputs = view.container.querySelectorAll('input')
+  await waitFor(() => expect(view.container.querySelectorAll('.v-otp-input input').length).toBeGreaterThanOrEqual(6))
+  const inputs = view.container.querySelectorAll('.v-otp-input input')
   for (const [i, digit] of [...'123456'].entries()) {
     await fireEvent.focus(inputs[i])
     await fireEvent.update(inputs[i], digit)
