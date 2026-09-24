@@ -373,6 +373,7 @@ class TestAccountWithoutEmail:
     def test_an_account_with_its_own_email_is_not_asked(
         self, api_client: TestClient, authenticated_user: CreatedUser
     ):
+        assert authenticated_user.token
         assert _me(api_client, authenticated_user.token)["emailMissing"] is False
 
     def test_adding_a_verified_email_clears_the_requirement(
