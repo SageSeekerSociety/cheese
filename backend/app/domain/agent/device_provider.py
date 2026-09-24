@@ -1012,6 +1012,36 @@ class DeviceChannel(Channel):
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
 
+    @staticmethod
+    def _resident_release_due(state: dict) -> bool:
+        """Whether the screen's release marker is behind this backend's release."""
+        return state.get("version") != resident_release.digest(
+            resident_release.sources()
+        )
+
+    async def _resident_control(self, screen: HubScreen) -> dict | None:
+        """The live native control session through which a resident release
+        reaches this screen's running process, or None when it has none.
+
+        None is not a hiccup the next attempt outlives. Measured on dev
+        2026-09-23: a screen whose control session had registered under another
+        room was asked for it on every turn after a release, got the same None
+        every time, and the room could not run a turn at all while it failed."""
+        from app.domain.agent.remote_control import store
+
+        # A screen is launched as one named agent and records it, so this is
+        # the agent whose control session to look for — no second answer.
+        session = await store().current(str(screen.topic_id), screen.agent_handle)
+        if not session or session["status"] != "active":
+            return None
+        if screen.resource_id is not None and (
+            (session.get("execution") or {}).get("resource_id")
+            != str(screen.resource_id)
+        ):
+            # Belongs to another execution generation of this room.
+            return None
+        return session
+
     async def _refresh_resident(
         self, screen: HubScreen, home_dir: str, state: dict
     ) -> bool:
@@ -1019,22 +1049,12 @@ class DeviceChannel(Channel):
         version = resident_release.digest(sources)
         if state.get("version") == version:
             return False
-        from app.domain.agent.remote_control import store
-
-        # A screen is launched as one named agent and records it, so this is
-        # the agent whose control session to look for — no second answer.
-        control = store()
-        session = await control.current(str(screen.topic_id), screen.agent_handle)
-        if not session or session["status"] != "active":
+        session = await self._resident_control(screen)
+        if session is None:
+            # The reuse gate relaunches a screen without one; reaching here
+            # means the session went away since, and the next turn relaunches.
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
-            )
-        if screen.resource_id is not None and (
-            (session.get("execution") or {}).get("resource_id")
-            != str(screen.resource_id)
-        ):
-            raise ScreenSetupError(
-                "Native control belongs to another execution generation"
             )
 
         async def execute(function, *args):
@@ -1525,14 +1545,26 @@ class DeviceChannel(Channel):
                     execution_token=execution_token,
                 ),
             )
-            if not alive or tunnel_down:
-                # Adopt-create cannot restart a dead process or its tunnel while
-                # the connector still knows the sid. A new sid runs the launcher,
-                # which is why it is shipped only now.
+            retire_reason = None
+            if not alive:
+                retire_reason = "claude_not_alive"
+            elif tunnel_down:
+                retire_reason = "tunnel_helper_down"
+            elif (
+                release_state is not None
+                and self._resident_release_due(release_state)
+                and await self._resident_control(existing) is None
+            ):
+                # A release reaches a running process only through its native
+                # control session; without one the process stays on the old
+                # release for good. A fresh launch starts on the current one.
+                retire_reason = "resident_release_unreachable"
+            if retire_reason is not None:
+                # Adopt-create cannot restart a dead process, its tunnel or its
+                # release while the connector still knows the sid. A new sid
+                # runs the launcher, which is why it is shipped only now.
                 await self._retire_screen(
-                    existing,
-                    topic_id=topic_id,
-                    reason="claude_not_alive" if not alive else "tunnel_helper_down",
+                    existing, topic_id=topic_id, reason=retire_reason
                 )
                 existing = None
                 command = await self._ship_launcher(

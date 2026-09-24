@@ -968,6 +968,136 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatc
     assert hub.probed_ports == [str(tunnel_port_for_topic(topic_id))]
 
 
+class BehindReleaseHub(DeadTunnelHub):
+    """A live screen of a room whose work runs on an executor, left on the
+    release before this backend's: its marker names no current version. Answers
+    the release steps the way a machine that applies them does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.envs: list[dict | None] = []
+
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
+        self.envs.append(kw.get("env"))
+        return await super().open_screen(device_id, command, **kw)
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        if argv != ["python3", "-"]:
+            return await super().exec(
+                device_id, argv, cwd=cwd, env=env, timeout=timeout, stdin=stdin
+            )
+        self.execs.append((argv, stdin))
+        assert stdin is not None
+        step = stdin.rsplit("\nprint(json.dumps(", 1)[1].split("(", 1)[0]
+        answer = {"changed": step == "stage", "offsets": {}}
+        return {"stdout": json.dumps(answer), "stderr": "", "exit": 0}
+
+
+class NativeControl:
+    """The room's Remote Control store, holding ``session`` for every agent."""
+
+    def __init__(self, session: dict | None) -> None:
+        self.session = session
+        self.requests: list[str] = []
+
+    async def current(self, topic_id, agent_handle=None):
+        return self.session
+
+    async def enqueue(self, sid, payload, actor):
+        self.requests.append(payload["request"]["subtype"])
+
+    async def result(self, sid, request_id, timeout):
+        response = {}
+        if self.requests[-1] == "mcp_status":
+            response = {"mcpServers": [{"name": "native", "status": "connected"}]}
+        return {"response": {"subtype": "success", "response": response}}
+
+
+def _executor_screen_arguments(topic_id: uuid.UUID) -> dict:
+    return dict(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=topic_id,
+        token="tok",
+        env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})},
+        launch=ClaudeLaunch(system_prompt="", resume_session_id="conversation"),
+    )
+
+
+@pytest.mark.parametrize(
+    "session",
+    [
+        None,
+        {"id": "rc", "status": "ended", "execution": None},
+        {"id": "rc", "status": "active", "execution": {"resource_id": "earlier"}},
+    ],
+    ids=["no_session", "inactive", "another_generation"],
+)
+async def test_a_reused_screen_a_release_cannot_reach_is_relaunched(
+    monkeypatch, caplog, session
+):
+    """A release reaches a running `claude` only through the room's native
+    control session. A screen without one stays on the old release whatever the
+    turn does, so failing the turn failed every retry too: measured on dev
+    2026-09-23, a room whose control session was not its own could not run one
+    turn after a release. A fresh launch starts on the current release, so the
+    turn gets a new screen instead of an error."""
+    from app.domain.agent import remote_control
+
+    control = NativeControl(session)
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    arguments = _executor_screen_arguments(topic_id)
+    first = await provider._ensure_screen(**arguments)
+
+    with caplog.at_level("INFO"):
+        replacement = await provider._ensure_screen(**arguments)
+
+    assert hub.closed == [first.sid]
+    assert replacement is not first and hub.all_online_screens() == [replacement]
+    assert hub.reasserted == []
+    assert control.requests == []
+    retired = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("device_screen_retired")
+    ]
+    assert len(retired) == 1 and "reason=resident_release_unreachable" in retired[0]
+    # The new process is offered the room's conversation, as the first one was.
+    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
+
+
+async def test_a_reused_screen_is_released_in_place_through_its_control_session(
+    monkeypatch,
+):
+    """With the room's own control session live, the running `claude` is
+    brought to the current release in place and keeps serving the room."""
+    from app.domain.agent import remote_control
+
+    session: dict = {"id": "rc", "status": "active", "execution": None}
+    control = NativeControl(session)
+    monkeypatch.setattr(remote_control, "store", lambda: control)
+    hub = BehindReleaseHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    topic_id = uuid.uuid4()
+    arguments = _executor_screen_arguments(topic_id)
+    first = await provider._ensure_screen(**arguments)
+    session["execution"] = {"resource_id": str(first.resource_id)}
+
+    reused = await provider._ensure_screen(**arguments)
+
+    assert reused is first and hub.closed == []
+    assert hub.reasserted == [first.sid]
+    assert ["/reload-plugins"] in hub.prompts
+    assert control.requests[0] == "mcp_reconnect"
+
+
 @pytest.mark.parametrize(
     ("verdict", "exit_code"),
     [("up", 0), ("unknown", 0), ("down", 1), ("", 0)],
