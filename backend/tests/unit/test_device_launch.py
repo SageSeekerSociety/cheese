@@ -344,8 +344,12 @@ def _run_prepare(tmp_path, *, api: str = "", system_prompt: str = "", curl=None)
     }
     if api:
         env["CHEESE_API"] = api
+    # A file, not `sh -c`: the hole carries the runner archive, and Linux caps
+    # one argument far below it.
+    runnable = tmp_path / "prepare.sh"
+    runnable.write_text(script)
     result = subprocess.run(
-        ["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30
+        ["sh", str(runnable)], env=env, capture_output=True, text=True, timeout=30
     )
     return owner, session, result
 

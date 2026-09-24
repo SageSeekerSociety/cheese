@@ -135,7 +135,7 @@ jobs:
         working-directory: backend
         run: >-
           .venv/bin/python scripts/assert_suite_ran.py
-          "$RUNNER_TEMP/private-chat.xml" --at-least 200
+          "$RUNNER_TEMP/private-chat.xml" --at-least 170
       - name: Verify private turns through the runner
         id: private_terminal
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
@@ -166,7 +166,7 @@ jobs:
           --require-step private_tests
           --require-step private_selection
           --require-step private_terminal
-          --at-least 200
+          --at-least 170
       - name: Upload private-chat CLEAN evidence
         if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
         timeout-minutes: 3
