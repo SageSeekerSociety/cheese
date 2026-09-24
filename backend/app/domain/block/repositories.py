@@ -633,6 +633,19 @@ class BlockRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
+    async def count_messages(
+        self, room_id: uuid.UUID, *, excluding: Collection[uuid.UUID] = ()
+    ) -> int:
+        """Chat messages on a room's own line, leaving out ``excluding``."""
+        stmt = (
+            select(func.count())
+            .select_from(Block)
+            .where(*self._in_place(room_id, None), Block.kind == BlockKind.message)
+        )
+        if excluding:
+            stmt = stmt.where(Block.id.not_in(list(excluding)))
+        return int((await self._session.scalar(stmt)) or 0)
+
     async def list_comments_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
     ) -> list[Block]:
