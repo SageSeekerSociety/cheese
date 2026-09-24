@@ -25,6 +25,26 @@ from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
 
 
+async def poll_approved_device(
+    client: httpx.AsyncClient, code: str, interval: float, timeout: float = 30
+) -> dict:
+    # The poll can still report pending after the approval request succeeds.
+    async with asyncio.timeout(timeout):
+        while True:
+            response = await client.post(
+                "/connector/auth/device/poll", json={"device_code": code}
+            )
+            response.raise_for_status()
+            device = response.json()
+            if device["status"] == "approved":
+                return device
+            if device["status"] != "pending":
+                raise RuntimeError(
+                    f"device authorization ended with {device['status']!r}"
+                )
+            await asyncio.sleep(interval)
+
+
 async def main():
     request = json.load(sys.stdin)
     base = request["api"]
@@ -109,18 +129,15 @@ async def main():
             "/connector/auth/device/start", json={"device_name": "E2E task files"}
         )
         response.raise_for_status()
-        code = response.json()["device_code"]
+        start = response.json()
+        code = start["device_code"]
         response = await client.post(
             "/connector/connect",
             headers={"Authorization": "Bearer " + request["token"]},
             json={"device_code": code, "project_id": project},
         )
         response.raise_for_status()
-        response = await client.post(
-            "/connector/auth/device/poll", json={"device_code": code}
-        )
-        response.raise_for_status()
-        device = response.json()
+        device = await poll_approved_device(client, code, start["interval"])
     url = base.replace("http", "ws", 1) + "/connector/agent?token=" + device["token"]
     async with connect(url) as socket:
         assert json.loads(await socket.recv())["t"] == "welcome"
