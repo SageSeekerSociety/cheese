@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue'
 import PageBar from '../components/PageBar.vue'
 import TaskCard from '../components/TaskCard.vue'
 import { CATEGORIES, isOpen } from '../fixtures'
-import { boardTasks, isManager, kpis, me, pendingTasks } from '../store'
+import { boardTasks, isManager, kpis, me, pendingTasks, topAnnouncement } from '../store'
 
 type SortKey = 'hot' | 'new' | 'deadline'
 
@@ -71,6 +71,12 @@ const closingSoon = computed(() =>
 
 /** 待审队列里属于「我出的」那几道。管理员自己出的题自己能审，所以这句话要在首页说出来。 */
 const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.handle === me.value.handle))
+
+/** 公告横幅上那句时间，口径与公告页一致。 */
+function noticeWhen(iso: string): string {
+  const d = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000))
+  return d === 0 ? '今天' : `${d} 天前`
+}
 </script>
 
 <template>
@@ -84,6 +90,21 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" to="/publish">出题目</v-btn>
       </div>
     </div>
+
+    <!-- 公告：所有人都在同一处看到板上最新（置顶优先）的那一条。点一下进公告页。
+         放首页而不是只放公告页，是因为公告的作用就是「不上那页也看得见」。 -->
+    <router-link v-if="topAnnouncement" to="/announcements" class="home__notice">
+      <v-icon icon="mdi-bullhorn-outline" size="18" class="home__notice-icon" />
+      <v-chip size="x-small" :color="topAnnouncement.pinned ? 'primary' : 'default'" variant="tonal" label>
+        {{ topAnnouncement.pinned ? '置顶' : '最新' }}
+      </v-chip>
+      <span class="home__notice-title">{{ topAnnouncement.title }}</span>
+      <span class="home__notice-meta">
+        {{ topAnnouncement.publisher.name }} · {{ noticeWhen(topAnnouncement.createdAt) }}
+      </span>
+      <v-spacer />
+      <span class="home__notice-more">全部公告 <v-icon icon="mdi-chevron-right" size="16" /></span>
+    </router-link>
 
     <!-- 只给管理员看的一条待办：他们才是要动手审的人。普通用户看不到这一块。 -->
     <v-alert
@@ -185,6 +206,54 @@ const myPending = computed(() => pendingTasks.value.filter((t) => t.publisher.ha
   margin: 6px 0 0;
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.86rem;
+}
+
+.home__notice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  margin: 14px 0 0;
+  color: rgba(var(--v-theme-on-surface), 0.85);
+  font-size: 0.84rem;
+  text-decoration: none;
+  background: rgba(var(--v-theme-primary), 0.05);
+  border: 1px solid rgba(var(--v-theme-primary), 0.22);
+  border-radius: var(--radius-md);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.home__notice:hover {
+  background: rgba(var(--v-theme-primary), 0.09);
+  border-color: rgba(var(--v-theme-primary), 0.4);
+}
+
+.home__notice-icon {
+  color: rgb(var(--v-theme-primary));
+}
+
+.home__notice-title {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.home__notice-meta {
+  flex: 0 0 auto;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.76rem;
+}
+
+.home__notice-more {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: rgb(var(--v-theme-primary));
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .home__todo {
