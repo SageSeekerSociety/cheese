@@ -1,8 +1,8 @@
 <template>
-  <div class="security">
-    <header class="security__head">
+  <div class="settings-page">
+    <header>
       <h1 class="t-page-title">{{ t('account.security.title') }}</h1>
-      <p class="security__lede">{{ t('account.security.lede') }}</p>
+      <p class="settings-page__lede">{{ t('account.security.lede') }}</p>
     </header>
 
     <!-- Organised by the ways in, not by mechanism. The page has no single main
@@ -699,68 +699,9 @@ onMounted(async () => {
 })
 </script>
 
+<style scoped src="./settings-card.css"></style>
+
 <style scoped>
-.security {
-  display: grid;
-  gap: 20px;
-  max-width: var(--page-w, 920px);
-  padding: 24px 32px 48px;
-}
-
-.security__lede {
-  margin-top: 4px;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-}
-
-.settings-card {
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-}
-
-.settings-card__head {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-right: 16px;
-}
-
-/* Centred on the title's line, not on the head as a whole. */
-.settings-card__head > .v-btn {
-  flex-shrink: 0;
-  margin-top: 16px;
-}
-
-.settings-card__title {
-  padding: 20px 24px 8px;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-}
-
-.settings-card__desc {
-  padding: 0 24px 12px;
-  margin-top: -4px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.srow {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  min-height: 56px;
-  padding: 10px 24px;
-  border-top: 1px solid var(--line);
-}
-
 /* A passkey sits under the passkey row, as its detail; the columns stay put. */
 .srow--sub {
   min-height: 48px;
@@ -777,36 +718,8 @@ onMounted(async () => {
   color: var(--muted);
 }
 
-.srow__k {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: var(--lh-14);
-  color: var(--ink);
-}
-
 .srow__k--quiet {
   font-weight: 400;
-  color: var(--text);
-}
-
-.srow__k .v-icon {
-  color: var(--muted);
-}
-
-.srow__v {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.srow__strong {
   color: var(--text);
 }
 
@@ -928,30 +841,5 @@ onMounted(async () => {
 
 .setup-step-leave-to {
   opacity: 0;
-}
-
-@media (max-width: 599.98px) {
-  .security {
-    padding: 16px 16px 32px;
-  }
-
-  .srow {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 16px;
-    padding: 12px 16px;
-  }
-
-  .srow__v {
-    grid-row: 2;
-    grid-column: 1 / -1;
-  }
-
-  .settings-card__title {
-    padding: 16px 16px 8px;
-  }
-
-  .settings-card__desc {
-    padding: 0 16px 12px;
-  }
 }
 </style>

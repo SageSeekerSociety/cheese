@@ -339,6 +339,36 @@
     "loadFailed": "部分信息加载失败，请刷新页面",
     "methodEmailCode": "邮箱验证码登录"
   },
+  "profile": {
+    "title": "个人资料",
+    "lede": "别人在你的主页和项目里看到的样子",
+    "viewPage": "查看我的主页",
+    "avatar": "头像",
+    "changeAvatar": "更换头像",
+    "removeAvatar": "移除",
+    "avatarHint": "JPG、PNG、WebP 或 GIF，不超过 2 MB，选好后立即生效",
+    "avatarWrongType": "头像只能是 JPG、PNG、WebP 或 GIF 图片",
+    "avatarTooLarge": "头像不能超过 2 MB",
+    "avatarFailed": "头像更换失败，请重试",
+    "removeAvatarFailed": "头像移除失败，请重试",
+    "nickname": "昵称",
+    "nicknameRequired": "昵称不能为空",
+    "nicknameTooLong": "昵称最多 {max} 个字符",
+    "nicknameUnreadable": "昵称至少包含一个汉字、字母或数字",
+    "username": "用户名",
+    "usernameNote": "别人 {'@'} 你时用的名字，不能修改",
+    "intro": "简介",
+    "introTooLong": "简介最多 {max} 个字符",
+    "unsaved": "有未保存的修改",
+    "revert": "撤销",
+    "save": "保存",
+    "saved": "已保存",
+    "saveFailed": "保存失败，请重试"
+  },
+  "settings": {
+    "realName": "实名信息",
+    "install": "安装到手机"
+  },
   "emailCode": {
     "title": "邮箱验证码登录",
     "send": "发送验证码",

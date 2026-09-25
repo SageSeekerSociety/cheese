@@ -134,10 +134,11 @@ export namespace UserApi {
       method: 'GET',
     })
 
-  export const updateUserInfo = (userid: number, data: { nickname: string; intro: string; avatarId: number }) =>
+  /** Changes only the fields given; the rest stay as they are. */
+  export const updateUserInfo = (userid: number, data: { nickname?: string; intro?: string; avatarId?: number }) =>
     ApiInstance.request({
       url: `/users/${userid}`,
-      method: 'PUT',
+      method: 'PATCH',
       data,
     })
 

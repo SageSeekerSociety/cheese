@@ -339,6 +339,36 @@
     "loadFailed": "Some details could not load. Refresh the page.",
     "methodEmailCode": "Email code sign-in"
   },
+  "profile": {
+    "title": "Profile",
+    "lede": "How others see you on your page and in projects",
+    "viewPage": "View my page",
+    "avatar": "Avatar",
+    "changeAvatar": "Change avatar",
+    "removeAvatar": "Remove",
+    "avatarHint": "JPG, PNG, WebP or GIF, up to 2 MB; applied as soon as you choose it",
+    "avatarWrongType": "An avatar must be a JPG, PNG, WebP or GIF image",
+    "avatarTooLarge": "An avatar must be 2 MB or smaller",
+    "avatarFailed": "Could not change the avatar. Try again.",
+    "removeAvatarFailed": "Could not remove the avatar. Try again.",
+    "nickname": "Display name",
+    "nicknameRequired": "Enter a display name",
+    "nicknameTooLong": "A display name can be at most {max} characters",
+    "nicknameUnreadable": "A display name needs at least one letter, digit or Chinese character",
+    "username": "Username",
+    "usernameNote": "The name people use to {'@'} you; it cannot be changed",
+    "intro": "Bio",
+    "introTooLong": "A bio can be at most {max} characters",
+    "unsaved": "You have unsaved changes",
+    "revert": "Discard",
+    "save": "Save",
+    "saved": "Saved",
+    "saveFailed": "Could not save. Try again."
+  },
+  "settings": {
+    "realName": "Real-name information",
+    "install": "Install on your phone"
+  },
   "emailCode": {
     "title": "Sign in with an email code",
     "send": "Send code",
