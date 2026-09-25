@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// 「退出项目」的确认框。入口有三个：成员页右上角那颗按钮、项目头上一颗看得见的，
-// 和项目名旁边那个菜单里的一行（#6：成员页曾被壳收进那个菜单，按钮跟着藏了两层深，
-// 项目 lead 都找不到——名册回到侧栏、项目头直接给一颗，就是为这件事）。入口可以
-// 有多处，但「点了之后发生什么」只有一份：确认、DELETE /projects/{id}/membership、
-// 刷新名册和项目列表、离开这个项目。所以这一份动作住在这里，三个入口都只是把它打开。
+// 「退出项目」的确认框，从成员页打开。「点了之后发生什么」只有这一份：确认、
+// DELETE /projects/{id}/membership、刷新名册和项目列表、离开这个项目。
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -51,7 +48,7 @@ async function confirmLeave() {
 <template>
   <v-dialog v-model="open" max-width="420">
     <v-card>
-      <v-card-title class="t-title pt-4">退出项目？</v-card-title>
+      <v-card-title class="t-dialog-title pt-4">退出项目？</v-card-title>
       <v-card-text class="t-body c-muted">
         退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来需要再被邀请一次
         <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
