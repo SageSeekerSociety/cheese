@@ -118,6 +118,20 @@ UNLISTED = re.compile(
     r"|__CF_USER_TEXT_ENCODING)=.*(\n|$)",
     re.MULTILINE,
 )
+# Differences this check knows of and does not accept as equivalence: they
+# are reported, not normalized, and each names why the remote path cannot
+# remove it. Matched narrowly, in the remote run only.
+KNOWN_DIFFERENCES = {
+    "the build's refusal names the session host's workspace": (
+        re.compile(r"(Dangerous rmdir operation detected: ')([^']*)"),
+        "When the build itself refuses a Bash command before running it (here, "
+        "rmdir of its working directory), the refusal names the central "
+        "workspace. Claude Code 2.1.277 renders a tool error from the "
+        "tool.call result alone and rejects any change to it, and a plugin "
+        "`deny` would wrap the text in <tool_use_error>. The path still works "
+        "if the model uses it: the shell prefix maps it to the executor.",
+    ),
+}
 HOST_PROCESS_ENV = {
     "CLAUDE_PID",
     "CLAUDE_CODE_MESSAGING_SOCKET",
@@ -906,9 +920,33 @@ def play(run, names):
     return record_by_step
 
 
+def known(run, value):
+    """The remote run's record with KNOWN_DIFFERENCES spelled as the reference."""
+    if not run.central:
+        return value
+    central = str(run.central)
+
+    def walk(item):
+        if isinstance(item, str):
+            for pattern, _ in KNOWN_DIFFERENCES.values():
+                item = pattern.sub(
+                    lambda m: m.group(1)
+                    + m.group(2).replace(central, str(run.workspace)),
+                    item,
+                )
+            return item
+        if isinstance(item, list):
+            return [walk(element) for element in item]
+        if isinstance(item, dict):
+            return {key: walk(element) for key, element in item.items()}
+        return item
+
+    return walk(value)
+
+
 def normalized(run, raw, logs):
     central = [(str(run.central), "<WS>")] if run.central else []
-    out = {name: run.normalize(value) for name, value in raw.items()}
+    out = {name: run.normalize(known(run, value)) for name, value in raw.items()}
     # Platform hooks alone may name the central workspace (NORMALIZATIONS).
     out["hooks"] = {
         name: [
@@ -1007,6 +1045,9 @@ def main():
             "version": version,
             "mounted": not arguments.no_mount,
             "normalizations": NORMALIZATIONS,
+            "known differences": {
+                name: reason for name, (_, reason) in KNOWN_DIFFERENCES.items()
+            },
             "steps": results,
             "equal": all(result["equal"] for result in results),
         }

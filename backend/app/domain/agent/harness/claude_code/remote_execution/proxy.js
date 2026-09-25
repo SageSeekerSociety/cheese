@@ -137,15 +137,23 @@ export function register(on) {
     }
     if (tool === "Bash") {
       const outcome = await next(e);
-      if (!outcome) return outcome;
-      // A command's output, or the build's own refusal to run it (a string).
-      let result = outcome.result;
-      if (typeof result === "string") {
-        result = respell(result);
-      } else if (result && typeof result === "object") {
-        result = { ...result, stdout: respell(result.stdout), stderr: respell(result.stderr) };
+      // The build's own refusal to run a command comes back as a string
+      // result. 2.1.277 renders an error from `result` alone and refuses any
+      // change to it, and a `deny` would wrap it in <tool_use_error>, so a
+      // refusal keeps the build's text, this host's workspace spelling
+      // included (scripts/remote_execution/equivalence.py KNOWN_DIFFERENCES).
+      if (!outcome || typeof outcome.result !== "object" || outcome.result === null) {
+        return outcome;
       }
-      return { ...outcome, result, text: respell(outcome.text) };
+      return {
+        ...outcome,
+        result: {
+          ...outcome.result,
+          stdout: respell(outcome.result.stdout),
+          stderr: respell(outcome.result.stderr),
+        },
+        text: respell(outcome.text),
+      };
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {

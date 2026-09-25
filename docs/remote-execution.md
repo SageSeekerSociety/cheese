@@ -18,7 +18,7 @@ The prefix forwards only what the build sets for its shell children (`FORWARDED_
 
 The project's own PreToolUse and PostToolUse command hooks are registered in the central session (`context_fs` `tree` carries them), so the build fires them for the calls it runs itself, with its own input, and their commands run on the executor through the prefix. The file tools the plugin runs keep their hooks on the executor (`runtime.hooks`).
 
-`scripts/remote_execution/equivalence.py` checks that none of this is visible: it runs one scenario matrix against Claude Code running directly in a workspace of its own and against the room's launch with the executor, and requires the two records to be equal after a fixed list of normalizations, each with its reason. CI runs it with the build contracts (`mcp-contract.yml`): against the pinned build on changes here and against the newest published build daily.
+`scripts/remote_execution/equivalence.py` checks that none of this is visible: it runs one scenario matrix against Claude Code running directly in a workspace of its own and against the room's launch with the executor, and requires the two records to be equal after a fixed list of normalizations, each with its reason. CI runs it with the build contracts (`mcp-contract.yml`): against the pinned build on changes here and against the newest published build daily. One difference remains and is listed there: when the build itself refuses a Bash command before running it, such as `rmdir` of its working directory, the refusal names the central workspace, because 2.1.277 lets a plugin neither change nor respell a tool error.
 
 ## Room placement
 
