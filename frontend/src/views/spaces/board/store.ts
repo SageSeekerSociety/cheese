@@ -10,7 +10,7 @@
  *
  * 已知的映射损失，写在这里免得后面有人当成 bug 查：
  * - 列表接口只给 `participants.total`，**不给整份领取名单**，所以提交数/通过数在
- *   这一层没有 —— 要看它们得进单题看板（那条路另取参与者与提交）。
+ *   这一层没有 —— 要看它们得进单题看板（那条路另取参与者与提交，见 `TaskInsights.vue`）。
  * - 题目**还没有附件这一层**（真表没有该字段），`files` 一律是空数组。
  * - 「我发布的 / 我领取的」不走这里：那两块有**专为它们准备的接口**
  *   （`/spaces/{id}/me/publishing*`、`/me/participating*`），在 `Mine.vue` 里直接取，
@@ -72,8 +72,6 @@ export function toBoardTask(task: Task): BoardTask {
     files: [],
     claims: [],
     claimCount: task.participants?.total ?? 0,
-    submitted: null,
-    passed: null,
   }
 }
 
@@ -138,7 +136,6 @@ export const space = computed<SpaceInfo | null>(() => {
     intro: s.intro,
     owner: toPerson(owner?.user),
     admins: s.admins.map((a) => toPerson(a.user)),
-    memberCount: 0,
   }
 })
 

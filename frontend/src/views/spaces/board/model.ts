@@ -42,20 +42,6 @@ export interface TaskFile {
   downloads: number
 }
 
-export function fileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-export const FILE_ICON: Record<TaskFile['kind'], string> = {
-  pdf: 'mdi-file-pdf-box',
-  image: 'mdi-file-image-outline',
-  code: 'mdi-file-code-outline',
-  archive: 'mdi-folder-zip-outline',
-  doc: 'mdi-file-document-outline',
-}
-
 export interface BoardTask {
   id: string
   title: string
@@ -83,9 +69,6 @@ export interface BoardTask {
   claims: Claimant[]
   /** 领取人数（真接口给的是 `participants.total`，不是整份名单）。 */
   claimCount: number
-  /** 提交数 / 通过数。**列表接口不返回**，只有单题看板能算，所以这里可为 null。 */
-  submitted: number | null
-  passed: number | null
 }
 
 export interface InviteCode {
@@ -105,7 +88,6 @@ export interface SpaceInfo {
   intro: string
   owner: Person
   admins: Person[]
-  memberCount: number
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -126,18 +108,6 @@ export const CLAIM_LABEL: Record<Claimant['status'], string> = {
   SUBMITTED: '已提交',
   PASSED: '已通过',
   REJECTED: '未通过',
-}
-
-/** B 站链接 → 内嵌播放器地址。判据与真平台 `views/tasks/detail/Overview.vue` 的
- *  `videoEmbedUrl` 一致：只认 `bilibili.com/video/BV…`，其它域名一律 null（能存、不能播）。 */
-export function videoEmbedUrl(url: string | null | undefined): string | null {
-  const bv = url?.match(/bilibili\.com\/video\/(BV[\w]+)/)
-  return bv ? `//player.bilibili.com/player.html?bvid=${bv[1]}&autoplay=0` : null
-}
-
-export function bilibiliBvid(url: string | null | undefined): string | null {
-  const bv = url?.match(/bilibili\.com\/video\/(BV[\w]+)/)
-  return bv ? bv[1] : null
 }
 
 /** 板上现在真正可领的题：审过了，且没到截止日。 */
