@@ -188,7 +188,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_describe(task, subject?, body?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 | `cheese_tell(target, message)` | 在任务时间线上留消息；不启动或唤醒执行者。`target` 可用 id、`<#id>` 或标题指定 |
 | `cheese_milestone(title, due?)` | 把关键节点钉成里程碑；`due` 形如 2026-06-20 |
-| `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options`（选项列表）让人一键拍板。`to` 不填=发给**这个房间名册上的人**(不含芝士)——不是项目里所有人，别的房间的人看不到；名册上一个人都没有会报错，这时点名一个人再发 |
+| `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options`（选项列表）让人一键拍板。未读的 change_alert 和决策请求一样进收件人的收件箱，标题写成「变了什么」、正文写清在哪儿，对方从那条提醒直接进这个房间，点「知道了」才算已读。`to` 不填=发给**这个房间名册上的人**(不含芝士)——不是项目里所有人，别的房间的人看不到；名册上一个人都没有会报错，这时点名一个人再发 |
 | `cheese_members()` | 列出当前话题可点名的成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
 | `cheese_status()` | 平台状态快照:本轮运行状态(正常运行中/接近硬顶)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先调它,别去轮询原始 API |
 | `cheese_lock(task, kind?)` / `cheese_unlock(task, kind?)` | 占用、释放房间的重资源锁（`kind` 只有 heavy）；装依赖、跑大型测试或启动服务前按需占用。占不到时返回持有它的任务，不自动等待；锁在 30 分钟后到期 |
