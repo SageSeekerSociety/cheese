@@ -418,6 +418,62 @@ class DashboardService:
             )
         return out
 
+    async def participated_topics(
+        self,
+        handle: str,
+        *,
+        viewer: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """The topics this person wrote in, the latest participation first.
+
+        ``contributions`` and ``last_participated_at`` are counted inside
+        ``[since, until)`` when given. Only topics the viewer may open are
+        listed: in a project they may read (``_projects_shown``), and never a
+        private 1:1 chat — a private chat is not part of any topic listing,
+        this person's own page included."""
+        _, visible = await self._projects_shown(handle, viewer=viewer)
+        names = {project.id: project.name for project in visible}
+        last = func.max(Block.created_at)
+        stmt = (
+            select(Block.topic_id, func.count(), last)
+            .join(Topic, Topic.id == Block.topic_id)
+            .where(
+                Block.author == handle,
+                participant_blocks(),
+                Topic.project_id.in_(list(names)),
+                _listed_topic(),
+            )
+            .group_by(Block.topic_id)
+            .order_by(last.desc(), Block.topic_id)
+            .limit(limit)
+        )
+        if since is not None:
+            stmt = stmt.where(Block.created_at >= since)
+        if until is not None:
+            stmt = stmt.where(Block.created_at < until)
+        rows = (await self._s.execute(stmt)).tuples().all()
+        topics = {
+            topic.id: topic
+            for topic in await self._s.scalars(
+                select(Topic).where(Topic.id.in_([row[0] for row in rows]))
+            )
+        }
+        return [
+            {
+                "id": str(topic_id),
+                "title": topics[topic_id].title,
+                "status": topics[topic_id].status.value,
+                "project_id": str(topics[topic_id].project_id),
+                "project_name": names[topics[topic_id].project_id],
+                "contributions": int(count),
+                "last_participated_at": last_at.isoformat(),
+            }
+            for topic_id, count, last_at in rows
+        ]
+
     async def contributions(self, project_id: uuid.UUID) -> dict:
         """贡献统计 (spec §10.1): human vs AI, and per author. Source for the
         contribution graph + the trust signal that 人 directed the AI."""

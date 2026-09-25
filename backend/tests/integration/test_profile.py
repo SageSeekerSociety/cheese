@@ -50,6 +50,22 @@ def _topic(client, project_id: str, title: str) -> str:
     return resp.json()["data"]["id"]
 
 
+def _private_chat(client, project_id: str) -> str:
+    async def _run() -> str:
+        async with client.test_factory() as s:
+            topic = Topic(
+                project_id=uuid.UUID(project_id),
+                title="私聊",
+                created_by="u1",
+                is_private=True,
+            )
+            s.add(topic)
+            await s.commit()
+            return str(topic.id)
+
+    return asyncio.run(_run())
+
+
 def _wrote(
     client,
     topic_id: str,
@@ -95,6 +111,12 @@ def _profile(client, bearer, handle: str, *, viewer: str) -> dict:
     resp = client.get(f"/users/{handle}/profile", headers=bearer(viewer))
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
+
+
+def _topics(client, bearer, handle: str, *, viewer: str, **params) -> list[dict]:
+    resp = client.get(f"/users/{handle}/topics", params=params, headers=bearer(viewer))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["topics"]
 
 
 def _seed_u1_with_two_projects(client) -> tuple[str, str]:
@@ -231,6 +253,63 @@ def test_activity_counts_only_projects_the_viewer_may_read(client, bearer):
 
     stranger = _profile(client, bearer, "u1", viewer="u3")
     assert stranger["activity"]["total"] == 0
+
+
+def test_topics_are_the_ones_the_viewer_may_open_and_never_a_private_chat(
+    client, bearer
+):
+    p1, p2 = _seed_u1_with_two_projects(client)
+    add_external_member(client, p2, "u2", by="u1")
+    in_p1 = _topic(client, p1, "甲")
+    in_p2 = _topic(client, p2, "乙")
+    private = _private_chat(client, p2)
+    _wrote(client, in_p1, at=_noon(3))
+    _wrote(client, in_p2, at=_noon(2), n=2)
+    _wrote(client, private, at=_noon(1))
+
+    # Their own list: newest participation first, and without the private chat
+    # — it is not part of any topic listing, theirs included.
+    own = _topics(client, bearer, "u1", viewer="u1")
+    assert [(t["title"], t["project_name"], t["contributions"]) for t in own] == [
+        ("乙", "P2", 2),
+        ("甲", "P1", 1),
+    ]
+    assert [t["title"] for t in _topics(client, bearer, "u1", viewer="u2")] == ["乙"]
+    assert _topics(client, bearer, "u1", viewer="u3") == []
+    assert client.get("/users/u1/topics").status_code == 401
+
+
+def test_topics_in_a_date_range_count_only_that_range(client, bearer):
+    p1, _ = _seed_u1_with_two_projects(client)
+    first = _topic(client, p1, "甲")
+    second = _topic(client, p1, "乙")
+    _wrote(client, first, at=_noon(20), n=2)
+    _wrote(client, second, at=_noon(20))
+    _wrote(client, first, at=_noon(19))
+    _wrote(client, second, at=_noon(5))
+
+    def listed(since: int, until: int) -> list[tuple]:
+        range_ = {"from": _day(since), "to": _day(until)}
+        return [
+            (t["title"], t["contributions"], t["last_participated_at"])
+            for t in _topics(client, bearer, "u1", viewer="u1", **range_)
+        ]
+
+    assert sorted(listed(20, 20)) == [
+        ("乙", 1, _noon(20).isoformat()),
+        ("甲", 2, _noon(20).isoformat()),
+    ]
+    assert listed(19, 19) == [("甲", 1, _noon(19).isoformat())]
+    assert listed(20, 19) == [
+        ("甲", 3, _noon(19).isoformat()),
+        ("乙", 1, _noon(20).isoformat()),
+    ]
+    backwards = client.get(
+        "/users/u1/topics",
+        params={"from": _day(19), "to": _day(20)},
+        headers=bearer("u1"),
+    )
+    assert backwards.status_code == 422
 
 
 def test_a_stealth_team_is_named_only_to_its_members(client, bearer):
