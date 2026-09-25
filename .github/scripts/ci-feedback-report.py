@@ -28,11 +28,14 @@ def evidence_suites(record: dict) -> list[str]:
         return ["e2e"]
     if record["workflow"] == "remote-execution.yml":
         return ["remote-acceptance", "private-chat"]
-    if (
-        record["workflow"] == "required-ci.yml"
-        and "e2e / e2e" in record["executed_job_names"]
-    ):
-        return ["e2e"]
+    if record["workflow"] == "required-ci.yml":
+        names = record["executed_job_names"]
+        suites = ["e2e"] if "e2e / e2e" in names else []
+        if any(
+            name in names for name in ("remote / acceptance", "remote / private-chat")
+        ):
+            suites.extend(["remote-acceptance", "private-chat"])
+        return suites
     return []
 
 

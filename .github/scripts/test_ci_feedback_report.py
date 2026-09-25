@@ -178,6 +178,53 @@ class FeedbackReportTest(unittest.TestCase):
             "clean",
         )
 
+    def test_required_remote_jobs_need_both_receipts_even_without_e2e(self):
+        for names in (
+            ("remote / acceptance",),
+            ("remote / private-chat",),
+            ("remote / acceptance", "remote / private-chat"),
+        ):
+            with self.subTest(names=names):
+                item = self.evidence_record()
+                item["executed_job_names"] = list(names)
+                self.assertEqual(
+                    report.evidence_suites(item), ["remote-acceptance", "private-chat"]
+                )
+                self.assertEqual(
+                    self.inspect_receipts(item, [self.receipt("remote-acceptance")])[
+                        "status"
+                    ],
+                    "unknown",
+                )
+                self.assertEqual(
+                    self.inspect_receipts(
+                        item,
+                        [
+                            self.receipt("remote-acceptance"),
+                            self.receipt("private-chat"),
+                        ],
+                    )["status"],
+                    "clean",
+                )
+
+    def test_required_e2e_receipt_cannot_hide_missing_remote_receipts(self):
+        item = self.evidence_record()
+        item["executed_job_names"] += ["remote / acceptance", "remote / private-chat"]
+        self.assertEqual(
+            self.inspect_receipts(item, [self.receipt()])["status"], "unknown"
+        )
+        self.assertEqual(
+            self.inspect_receipts(
+                item,
+                [
+                    self.receipt(),
+                    self.receipt("remote-acceptance"),
+                    self.receipt("private-chat"),
+                ],
+            )["status"],
+            "clean",
+        )
+
     def test_invalid_receipts_cannot_establish_clean_run(self):
         for changes in (
             {"head_sha": "other"},

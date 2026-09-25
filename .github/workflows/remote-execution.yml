@@ -1,16 +1,9 @@
 name: Remote execution acceptance
 
 on:
+  workflow_call:
   push:
-    branches: [main, experiment/remote-execution]
-    paths:
-      - 'backend/**'
-      - 'cli/**'
-      - 'scripts/remote_execution/**'
-      - '.github/scripts/ci-test-evidence.py'
-      - '.github/workflows/remote-execution.yml'
-  pull_request:
-    branches: [main]
+    branches: [experiment/remote-execution]
     paths:
       - 'backend/**'
       - 'cli/**'
@@ -21,13 +14,12 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
-  # Keep every main result: a shared group can replace a pending run even when
-  # cancel-in-progress is false. PRs and the experiment branch still supersede
-  # stale runs.
-  group: remote-execution-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Keep each main and merge-group result, including runs still pending.
+  group: remote-execution-${{ (github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'merge_group' }}
 
 jobs:
   private-chat:

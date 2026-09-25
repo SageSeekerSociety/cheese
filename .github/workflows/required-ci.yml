@@ -28,6 +28,7 @@ jobs:
       deploy: ${{ steps.scope.outputs.deploy }}
       harness: ${{ steps.scope.outputs.harness }}
       mcp: ${{ steps.scope.outputs.mcp }}
+      remote: ${{ steps.scope.outputs.remote }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Test scope and result handling
@@ -87,7 +88,7 @@ jobs:
   required:
     name: CI required
     if: ${{ !cancelled() }}
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp]
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -96,3 +97,11 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/scripts/required-ci.py check
+
+  remote:
+    needs: scope
+    if: needs.scope.outputs.remote == 'true'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/remote-execution.yml

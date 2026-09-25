@@ -2,6 +2,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+
 spec = importlib.util.spec_from_file_location(
     "required_ci", Path(__file__).with_name("required-ci.py")
 )
@@ -13,28 +14,58 @@ class RequiredCITest(unittest.TestCase):
     def test_main_parent_preserves_standalone_push_selections(self):
         # Representative files from every former standalone main-push pattern.
         previous = {
-            "backend": ["backend/app/main.py", "deploy/metering-proxy/proxy.py",
-                        ".pre-commit-config.yaml", ".github/scripts/ensure-apt.sh",
-                        ".github/workflows/test.yml"],
+            "backend": [
+                "backend/app/main.py",
+                "deploy/metering-proxy/proxy.py",
+                ".pre-commit-config.yaml",
+                ".github/scripts/ensure-apt.sh",
+                ".github/workflows/test.yml",
+            ],
             "frontend": ["frontend/src/main.ts", ".github/workflows/frontend.yml"],
-            "e2e": ["backend/app/main.py", "frontend/src/main.ts", "e2e/tests/login.ts",
-                    ".github/scripts/ci-test-evidence.py", ".github/workflows/e2e.yml"],
-            "cli": ["cli/main.go", "backend/tests/fixtures/wire/frame.json",
-                    ".github/workflows/cli.yml"],
-            "guards": ["backend/app/main.py", "frontend/src/main.ts", "deploy/run.sh",
-                       ".claude/scripts/check.sh", ".pre-commit-config.yaml",
-                       ".github/workflows/test.yml", ".github/scripts/check.py"],
-            "deploy": ["deploy/run.sh", ".github/workflows/deploy-scripts-test.yml",
-                       ".github/workflows/deploy-dev.yml", ".github/workflows/deploy-drift.yml",
-                       ".github/workflows/build.yml", ".github/scripts/plan-image-builds.sh",
-                       ".github/scripts/ensure-apt.sh", ".github/scripts/test-plan-image-builds.sh",
-                       "backend/scripts/gateway_supply_probe.py",
-                       "backend/scripts/test_gateway_supply_probe.py"],
-            "harness": ["backend/uv.lock", "backend/app/domain/agent/harness/claude_code/device_launch.py",
-                        "backend/app/domain/agent/harness/codex/host.py",
-                        ".github/workflows/harness-contract.yml"],
-            "mcp": ["scripts/remote_execution/package-lock.json", ".github/workflows/mcp-contract.yml",
-                    "scripts/remote_execution/headless_contract.py"],
+            "e2e": [
+                "backend/app/main.py",
+                "frontend/src/main.ts",
+                "e2e/tests/login.ts",
+                ".github/scripts/ci-test-evidence.py",
+                ".github/workflows/e2e.yml",
+            ],
+            "cli": [
+                "cli/main.go",
+                "backend/tests/fixtures/wire/frame.json",
+                ".github/workflows/cli.yml",
+            ],
+            "guards": [
+                "backend/app/main.py",
+                "frontend/src/main.ts",
+                "deploy/run.sh",
+                ".claude/scripts/check.sh",
+                ".pre-commit-config.yaml",
+                ".github/workflows/test.yml",
+                ".github/scripts/check.py",
+            ],
+            "deploy": [
+                "deploy/run.sh",
+                ".github/workflows/deploy-scripts-test.yml",
+                ".github/workflows/deploy-dev.yml",
+                ".github/workflows/deploy-drift.yml",
+                ".github/workflows/build.yml",
+                ".github/scripts/plan-image-builds.sh",
+                ".github/scripts/ensure-apt.sh",
+                ".github/scripts/test-plan-image-builds.sh",
+                "backend/scripts/gateway_supply_probe.py",
+                "backend/scripts/test_gateway_supply_probe.py",
+            ],
+            "harness": [
+                "backend/uv.lock",
+                "backend/app/domain/agent/harness/claude_code/device_launch.py",
+                "backend/app/domain/agent/harness/codex/host.py",
+                ".github/workflows/harness-contract.yml",
+            ],
+            "mcp": [
+                "scripts/remote_execution/package-lock.json",
+                ".github/workflows/mcp-contract.yml",
+                "scripts/remote_execution/headless_contract.py",
+            ],
         }
         for suite, paths in previous.items():
             for path in paths:
@@ -58,6 +89,27 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["docs/architecture.md"])
         self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
 
+    def test_remote_dependencies_select_both_acceptance_jobs(self):
+        for path in (
+            "backend/uv.lock",
+            "cli/internal/client.go",
+            "scripts/remote_execution/room_fixture.py",
+            ".dockerignore",
+            ".github/scripts/allow-user-namespaces.sh",
+            ".github/scripts/ensure-apt.sh",
+            ".github/scripts/ci-test-evidence.py",
+            ".github/workflows/remote-execution.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["remote"])
+
+    def test_remote_failure_cannot_leave_the_required_check_green(self):
+        for result in ("failure", "cancelled", "skipped", "missing"):
+            with self.subTest(result=result):
+                needs = self.needs()
+                needs["remote"]["result"] = result
+                self.assertTrue(gate.failures(needs))
+
     def test_backend_change_selects_backend_and_e2e(self):
         selected = gate.select(["backend/app/api/rooms.py"])
         self.assertTrue(selected["backend"] and selected["e2e"])
@@ -68,7 +120,9 @@ class RequiredCITest(unittest.TestCase):
         self.assertTrue(all(selected[k] for k in ("frontend", "cli", "e2e")))
 
     def test_gate_edit_exercises_all_suites(self):
-        self.assertTrue(all(gate.select([".github/workflows/required-ci.yml"]).values()))
+        self.assertTrue(
+            all(gate.select([".github/workflows/required-ci.yml"]).values())
+        )
 
     def test_gateway_health_changes_select_their_behavior_suite(self):
         for path in (
@@ -97,10 +151,14 @@ class RequiredCITest(unittest.TestCase):
     def needs(self):
         selected = gate.select(["backend/app/api/rooms.py"])
         return {
-            "scope": {"result": "success", "outputs": {
-                k: str(v).lower() for k, v in selected.items()
-            }},
-            **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
+            "scope": {
+                "result": "success",
+                "outputs": {k: str(v).lower() for k, v in selected.items()},
+            },
+            **{
+                k: {"result": "success" if v else "skipped"}
+                for k, v in selected.items()
+            },
         }
 
     def test_intentionally_skipped_suites_do_not_block(self):
