@@ -109,6 +109,7 @@ SYSTEM_HANDLE = "system"
 
 
 _TEAM_PAGES = frozenset({"explore", "mine", "pending"})
+_USER_PAGES = frozenset({"settings", "privacy-center"})
 
 
 def is_reserved_username(username: str) -> bool:
@@ -146,6 +147,8 @@ def is_reserved_username(username: str) -> bool:
         # handle opens their personal team there — named one of these could
         # never be reached.
         or folded in _TEAM_PAGES
+        # Pages that sit beside a person's own page, `/users/<handle>`.
+        or folded in _USER_PAGES
     )
 
 
