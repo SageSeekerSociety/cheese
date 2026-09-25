@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cheese logo 动效 · 四个方向</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+    transition:background-color .3s,color .3s;-webkit-font-smoothing:antialiased}
+  body[data-theme=light]{--bg:#faf7f0;--card:#fffdf8;--fg:#3b3229;--dim:#8a8175;--line:#e6dccb}
+  body[data-theme=dark]{--bg:#121016;--card:#1a171f;--fg:#ece6dc;--dim:#968f9f;--line:#2f2a36}
+  header{max-width:1120px;margin:0 auto;padding:36px 24px 8px;display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-end;justify-content:space-between}
+  h1{margin:0;font-size:22px;font-weight:650;letter-spacing:.01em}
+  header p{margin:6px 0 0;color:var(--dim);max-width:60ch}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--line);
+    border-radius:999px;padding:6px 14px;cursor:pointer;transition:border-color .2s}
+  button:hover{border-color:var(--dim)}
+  button[aria-pressed=true]{border-color:#f59e0b;color:#d97706}
+  body[data-theme=dark] button[aria-pressed=true]{color:#fbbf24}
+  label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--dim);cursor:pointer}
+  main{max-width:1120px;margin:0 auto;padding:16px 24px 48px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px 18px 20px;display:flex;flex-direction:column;gap:12px}
+  .stage{aspect-ratio:1;display:grid;place-items:center;cursor:pointer;border-radius:12px;overflow:hidden}
+  .stage svg{width:82%;height:auto;display:block;overflow:visible}
+  .card h2{margin:0;font-size:16px;font-weight:650}
+  .card h2 small{margin-left:8px;color:var(--dim);font-weight:400;font-size:12px}
+  .card p{margin:0;color:var(--dim);font-size:13px}
+  .card ul{margin:0;padding-left:18px;color:var(--dim);font-size:12.5px}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  footer{max-width:1120px;margin:0 auto;padding:0 24px 40px;color:var(--dim);font-size:12.5px}
+  body[data-freeze] header,body[data-freeze] footer{display:none}
+</style>
+</head>
+<body data-theme="light">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="gMoon" data-light="1" gradientUnits="userSpaceOnUse" x1="612.8199" y1="68.87" x2="612.8199" y2="1061.4155"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient><linearGradient id="gEye" data-light="1" gradientUnits="userSpaceOnUse" x1="502.7068" y1="684.2808" x2="502.7068" y2="714.1318"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient><linearGradient id="gEar" data-light="1" gradientUnits="userSpaceOnUse" x1="324.6295" y1="624.9175" x2="324.6295" y2="785.3666"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient><linearGradient id="gEarA" data-light="1" gradientUnits="userSpaceOnUse" x1="411.32" y1="713.8926" x2="411.32" y2="714.596"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient><linearGradient id="gEarB" data-light="1" gradientUnits="userSpaceOnUse" x1="410.7231" y1="713.3464" x2="410.7231" y2="714.8986"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient><linearGradient id="gTail" data-light="1" gradientUnits="userSpaceOnUse" x1="449.7304" y1="984.8141" x2="449.7304" y2="1181.3331"><stop offset="0" stop-color="#FF9500"/><stop offset="0.2227" stop-color="#FF9900"/><stop offset="0.445" stop-color="#FFA500"/><stop offset="0.6673" stop-color="#FFB900"/><stop offset="0.8883" stop-color="#FFD500"/><stop offset="1" stop-color="#FFE600"/></linearGradient></defs></svg>
+<header>
+  <div>
+    <h1>Cheese logo 动效 · 四个方向</h1>
+    <p>主角是这轮芝士。每张卡都是先播一段约 2.5 秒的入场，之后一直有轻微的循环（眨眼、胡须、尾巴等）。点图可以重播；最后停下的画面和原 logo 一致。</p>
+  </div>
+  <div class="bar">
+    <button id="all">全部重播</button>
+    <button id="slow" aria-pressed="false">慢放 ×0.5</button>
+    <button id="theme">深色背景</button>
+    <label><input type="checkbox" id="rm">减少动态效果</label>
+  </div>
+</header>
+<main id="cards"></main>
+<footer>挑中一个之后，我再把它做成文档站首页和平台登录页能直接用的版本，节奏、幅度都还可以再调。</footer>
+<script>
+const P = {"outer": "M1133.42,556.97c-15.51,15.71-37.04,25.45-60.86,25.45c-47.24,0-85.53-38.29-85.53-85.53 s38.29-85.53,85.53-85.53c13.48,0,26.22,3.13,37.56,8.68c-36.22-113.59-112.02-210.1-211.61-274.12 c0,37.01-30.01,67.01-67.02,67.01c-37.01,0-67.02-30.01-67.02-67.02c0-21.56,10.19-40.73,26.01-52.99 c-55.44-19.67-115.27-30.41-177.66-30.41c-287.65,0-520.83,228.04-520.83,509.34c0,134.75,53.51,257.27,140.88,348.37 c11.1-21.2,25.61-36.67,39.36-49.83c8.19-7.84,18.2-14.29,27.68-20.6c5.22-3.47,17.1-8.98,22.94-16.83 c5.88-7.92,7.43-15.57,6.9-27.39c-25.39,0-44.12-4.31-66.38-18.57c-20.59-13.19-39.54-34.97-46.72-60.99 c-9.67-35.05-5.32-70.88,20.21-95.72c26.18-25.48,56.3-27.53,92.82-19.81c-6.31-13.67-1.2-25.7,10.25-34.1 c14.65-10.74,53.04-0.26,68.66,9.09c43.6,26.11,38.27,40.94,56.22,62.02c51.9-3.04,48.11-1.5,73.39-1.5 c29.84,0,43.45,0.5,69.78,2.2c8.78,13.71,3.43,42.45,0.85,55.45c-3.88,19.55-10.27,38.19-14.26,45.47 c-11.86,21.62-32.07,46.77-55.36,74.83c-39.74,47.87-37.6,124.69-36.63,139.7c1.34,20.69,4.96,61.23,10.34,80.05 c2.67,9.35,6.83,20.36,9.83,29.9c29.26,4.99,59.35,7.6,90.07,7.6c175.03,0,329.9-84.44,424.33-213.93 c-15.9-10.84-26.32-28.84-26.32-49.23c0-33.14,27.49-60,61.41-60c8.37,0,16.35,1.64,23.63,4.61 c24.36-58.93,37.78-123.33,37.78-190.79C1133.65,566.87,1133.57,561.91,1133.42,556.97z", "whiskers": ["M625.78,623.37c11.04-19.73,31.44-33.95,53.84-36.92c5.57,8.53,7.32,7.24,4.47,18.87 C664.45,601.81,643.9,616.08,625.78,623.37z", "M638.12,643.23c21.76-6.14,46.24-1.77,64.18,11.96c-2.09,9.97,0.06,10.29-10.19,16.5 C680.71,655.32,656.09,650.88,638.12,643.23z", "M632.8,665.99c19.73,11.04,33.95,31.44,36.92,53.84c-8.53,5.57-7.24,7.32-18.87,4.47 C654.37,704.66,640.1,684.11,632.8,665.99z"], "ear": "M411.43,713.59c2.23,1.05,4.93,0.43,6.27-1.68c1.53-2.41,0.43-4.18-0.61-5.83 c-4.07-6.38-8.17-12.78-12.95-18.63c-8.1-9.92-18.15-17.9-27.84-26.18c-7.69-6.57-17.21-14.04-25.64-19.81 c-19.99-13.69-40.03-19.01-65.91-17.25c-2.51,0.17-11.06,2.78-13.46,3.55c-2.63,0.84-9.66,4.72-11.76,6.54 c-13,11.32-18.6,17.46-23.9,31.69c-2.18,5.85-4.4,15.76-4.73,22.01c-1.34,25.78,9.74,51.5,27.89,69.33 c17.86,17.55,40.96,27.9,66.76,30.72c9.93,1.08,23.22,0.38,33.8-1.72c9.61-1.91,16.57-4.11,24.44-8.81 c8.69-5.19,15.57-9.47,19.59-18.93c-8.5,4.38-18.94,5.1-28.31,6.51c-6.41,0.96-12.98,0.02-18.8-2.91 c-6.9-3.47-9.25-6.71-15.01-11.79c-2.36-2.07-6.12-4.4-9.17-5c-3.05-0.6-8.94-1.83-10.97,0.5c-1.12-2.15,2.91-8.83,4.53-10.62 c8.37-9.19,18.89-9.55,31.11-7.33c-2.94-5.75-10.13-9.55-15.69-11.8c-6.49-2.62-13.05-2.38-20.78-1.62 c-4.16,0.41-7.45,2.69-11.19,4.61s-5.65,5.85-7.83,10.38c1.23-10.07,7.18-20.61,16.1-24.99s19.46-2.88,28.1-1.94 c-0.69-3.25-7.04-7.91-7.04-7.91s-3.46-3.57-5.94-5.72c-3.4-2.94-6.89-5.36-11.72-8.21c-5.33-3.14-10.77-6.07-16.86-6.88 c-16.33-2.16-34.3,3.52-43.64,17.04c-6.49-9.99-3.81-24.32,4.16-33.11c7.97-8.79,20.03-12.67,31.72-13.14 c31.5-1.28,59.94,20.94,83.02,42.09c9.72,8.91,20.48,16.69,29.08,25.5c-0.39-0.93,0.75,0.08,1.79,1.04 C410.15,713.16,410.53,713.16,411.43,713.59z", "earA": "M411.1,713.89c0.14,0.28,0.22,0.47,0.27,0.63C411.63,714.72,411.64,714.62,411.1,713.89z", "earB": "M411.36,714.52c-0.26-0.2-0.77-0.68-1.31-1.18C409.79,713.83,411.76,715.76,411.36,714.52z", "tail": "M580.69,1102.29c-45.28-16.9-98.62-18.89-146.08-20.34c-47.46-1.45-95.54-2.6-141.22-17.96 c-11.36-3.82-22.86-8.74-31.51-18.26s-13.85-24.63-9.97-37.85c-0.52-9.8-6.56-24.87-16.17-24.32c-2.05,0.12,0.53,0.32-0.24,0.32 c-13.03,7.46-16.12,33.15-9.87,50.84c6.25,17.69,18.31,33.26,32.49,42.5c43.82,28.55,89.31,28.01,139.35,29.88 c53.12,1.98,108.14-5.37,157.55,8.5c43.6,12.24,90.74,37.55,119.78,69.2c1.15,1.26,2.83-0.47,1.87-1.93 C653.52,1147.56,617.04,1115.86,580.69,1102.29z"};
+const CX = 612.82, CY = 571.85, RX = 520.83, RY = 509.34;
+const HOLES = [[230.8,427.66,29.36],[411.93,259.92,87.44],[487.39,471.77,48.8],[630.77,177.61,48.51],
+  [788.51,378.23,91.91],[801.77,929.08,30.64],[814,699.41,75.95],[981.18,720.45,42.13]];
+// 右边缘三个被咬掉的缺口：上、右、右下
+const NOTCHES = [[831.49,145.92,67.02,67.02],[1072.56,496.89,85.53,85.53],[1072.24,818.03,61.41,60]];
+const EYE = [502.71,699.41,15.32];
+const NOSE = [612,648];
+const WHISKER_ROOT = [[625.78,623.37],[638.12,643.23],[632.8,665.99]];
+const TAIL_ROOT = [235,990];
+
+const clamp = (v,a=0,b=1)=>v<a?a:v>b?b:v;
+const seg = (t,a,b)=>clamp((t-a)/(b-a));
+const eOut = t=>1-Math.pow(1-t,3);
+const eInOut = t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const eBack = (t,s=1.6)=>1+(s+1)*Math.pow(t-1,3)+s*Math.pow(t-1,2);
+const n2 = v=>Math.round(v*100)/100;
+const TAU = Math.PI*2;
+
+function build(id){
+  const h = HOLES.map((c,i)=>`<circle data-h="${i}" cx="${c[0]}" cy="${c[1]}" r="${c[2]}" fill="#000"/>`).join('');
+  const nt = NOTCHES.map((c,i)=>`<ellipse data-n="${i}" cx="${c[0]}" cy="${c[1]}" rx="${c[2]}" ry="${c[3]}" fill="#000"/>`).join('');
+  const wk = P.whiskers.map((d,i)=>`<path data-w="${i}" d="${d}" fill="#000"/>`).join('');
+  return `<svg viewBox="0 0 1200 1200" role="img" aria-label="Cheese logo：一轮带孔的芝士，前面站着一只小老鼠">
+  <defs>
+    <clipPath id="${id}-box"><rect x="212" y="560" width="400" height="540"/></clipPath>
+    <clipPath id="${id}-disk"><ellipse cx="${CX}" cy="${CY}" rx="${RX}" ry="${RY}"/></clipPath>
+    <mask id="${id}-mouse" maskUnits="userSpaceOnUse" x="0" y="0" width="1200" height="1200">
+      <g clip-path="url(#${id}-box)"><ellipse cx="${CX}" cy="${CY}" rx="${RX+4}" ry="${RY+4}" fill="#fff"/></g>
+      <path d="${P.outer}" fill="#000"/>
+    </mask>
+    <mask id="${id}-cheese" maskUnits="userSpaceOnUse" x="-400" y="-400" width="2000" height="2000">
+      <rect x="-400" y="-400" width="2000" height="2000" fill="#fff"/>
+      <g class="holes">${h}</g>
+      <g class="notches">${nt}</g>
+      <g class="mcut"><rect x="0" y="0" width="1200" height="1200" fill="#000" mask="url(#${id}-mouse)"/></g>
+      <g class="whisk">${wk}</g>
+    </mask>
+  </defs>
+  <g class="wheel"><g class="spin">
+    <ellipse cx="${CX}" cy="${CY}" rx="${RX}" ry="${RY}" fill="url(#gMoon)" mask="url(#${id}-cheese)"/>
+  </g></g>
+  <g class="crumbs"></g>
+  <g clip-path="url(#${id}-disk)"><g class="mparts">
+    <circle class="eye" cx="${EYE[0]}" cy="${EYE[1]}" r="${EYE[2]}" fill="url(#gEye)"/>
+    <g class="earg"><path fill="url(#gEarA)" d="${P.earA}"/><path fill="url(#gEarB)" d="${P.earB}"/><path fill="url(#gEar)" d="${P.ear}"/></g>
+  </g></g>
+  <g class="tailg"><path fill="url(#gTail)" d="${P.tail}"/></g>
+</svg>`;
+}
+
+// ---------- 共用的“活着”循环：眨眼、胡须、尾巴 ----------
+function blink(i, period=5200, off=900){
+  const k = ((i+off)%period)/period*period; // ms into cycle
+  if (k>160) return 1;
+  return 1-0.9*Math.sin(Math.PI*k/160);
+}
+function twitch(i, period=3700, off=0){
+  // 胡须：短促地抖两下
+  const k = (i+off)%period;
+  if (k>520) return 0;
+  return Math.sin(k/520*TAU*2)*(1-k/520);
+}
+function tailSway(i){ return Math.sin(i/4200*TAU)*2.2 + Math.sin(i/1900*TAU+1)*0.5; }
+
+// ---------- 四个方向 ----------
+const DIRS = [
+{
+  key:'bubble', title:'冒孔', en:'Bubbling',
+  desc:'芝士在“发酵”：孔从下往上一个个冒出来，像气泡；孔都冒齐了，老鼠从芝士下边探出头来。',
+  loop:['孔轮流轻轻鼓一下，像还在发酵','老鼠眨眼、胡须抖动、尾巴摆'],
+  D:2600,
+  frame(S,t,i){
+    const order=[5,6,7,2,0,4,1,3]; // 大致从下往上
+    const a=eOut(seg(t,0,320));
+    S.wheel(`translate(${CX} ${CY}) scale(${n2(.94+.06*a)}) translate(${-CX} ${-CY})`, a);
+    order.forEach((h,k)=>{
+      const p=seg(t,280+k*130,280+k*130+520);
+      let r=HOLES[h][2]*(p<=0?0:eBack(p,2.2)), dy=26*(1-eOut(p));
+      if(i!=null){ const q=((i/1500)|0)%8, ph=(i%1500)/1500; if(order[q]===h) r*=1+0.07*Math.sin(Math.PI*ph); }
+      S.hole(h,r,dy);
+    });
+    const m=seg(t,1360,1960);
+    S.mouse(0, 560*(1-eBack(m,1.3)));
+    const tl=seg(t,1800,2400);
+    S.tail(-14*(1-eOut(tl))+(i!=null?tailSway(i):0), eOut(tl));
+    S.whisk(i!=null?twitch(i):twitch(Math.max(0,t-2050),99999));
+    S.eye(i!=null?blink(i):1);
+  }
+},
+{
+  key:'bite', title:'咬一口', en:'Nibble',
+  desc:'一开始是完整的一轮。老鼠嗅两下，然后“咔、咔、咔”三口，右边缘的三个缺口被咬出来，掉下碎屑。',
+  loop:['每隔几秒嗅一嗅，偶尔从缺口掉下一粒碎屑','眨眼、尾巴摆'],
+  D:2500,
+  frame(S,t,i){
+    S.wheel('',eOut(seg(t,0,380)));
+    S.mouse(0,0); S.tail(i!=null?tailSway(i):0,eOut(seg(t,0,380)));
+    const bites=[1000,1330,1660];
+    let shake=0;
+    NOTCHES.forEach((_,k)=>{
+      const p=seg(t,bites[k],bites[k]+90);
+      S.notch(k,eOut(p));
+      const s=t-bites[k]; if(s>0&&s<260) shake+=Math.sin(s/260*TAU*2)*(1-s/260)*7;
+    });
+    S.wheel(`translate(${n2(shake)} 0)`, eOut(seg(t,0,380)));
+    // 碎屑
+    const crumbs=[];
+    NOTCHES.forEach((c,k)=>{ const s=t-bites[k]; if(s>0&&s<900) crumbs.push(...burst(c,s,k*7)); });
+    if(i!=null){ const per=5600, q=i%per, k=((i/per)|0)%3; if(q>1300&&q<2500) crumbs.push(...burst(NOTCHES[k],q-1300,k*7+3,1)); }
+    S.crumbs(crumbs);
+    const sn=i!=null?twitch(i,5600,4800)+twitch(i,5600,4450)*.8:(t>420&&t<1000?Math.sin((t-420)/580*TAU*2)*.9:0);
+    S.whisk(sn);
+    S.eye(i!=null?blink(i):1);
+  }
+},
+{
+  key:'roll', title:'滚进场', en:'Roll in',
+  desc:'整轮芝士从右边滚进来，孔跟着转，冲过一点再晃回来停稳；停稳之后老鼠从下边探出头。',
+  loop:['眨眼、胡须抖动、尾巴摆（芝士本身不再动）'],
+  D:2600,
+  frame(S,t,i){
+    const p=seg(t,0,1450);
+    // 阻尼弹簧：从右边 1100 处滚到 0，冲过去一点再回来
+    const x=p>=1?0:1100*Math.exp(-5.2*p)*Math.cos(p*Math.PI*1.18);
+    const deg=x/((RX+RY)/2)*180/Math.PI;
+    S.wheel(`translate(${n2(x)} 0)`, clamp(t/200));
+    S.spin(`rotate(${n2(deg)} ${CX} ${CY})`);
+    const m=seg(t,1450,2050);
+    S.mouse(0, 560*(1-eBack(m,1.3)));
+    const tl=seg(t,1850,2450);
+    S.tail(-14*(1-eOut(tl))+(i!=null?tailSway(i):0), eOut(tl));
+    S.whisk(i!=null?twitch(i,4100,1500):twitch(Math.max(0,t-2100),99999));
+    S.eye(i!=null?blink(i,5200,2600):1);
+  }
+},
+{
+  key:'sniff', title:'嗅到了', en:'Sniff',
+  desc:'鼻尖前那三道线本来就像“闻到了”的记号：它们从鼻尖一下弹出来，鼻子前面那个孔跟着一鼓，像芝士的香味冒了出来。',
+  loop:['每隔三秒多“嗅嗅”两下：三道线往外弹、孔轻轻一鼓','眨眼、尾巴摆'],
+  D:2300,
+  frame(S,t,i){
+    const a=eOut(seg(t,0,420));
+    S.wheel(`translate(${CX} ${CY}) scale(${n2(.96+.04*a)}) translate(${-CX} ${-CY})`, a);
+    S.mouse(0,0); S.tail(i!=null?tailSway(i):0,a);
+    let w=[0,0,0], pulse=0;
+    if(i==null){
+      [0,1,2].forEach(k=>{ const p=seg(t,700+k*70,700+k*70+460); w[k]=p<=0?0:eBack(p,2.4); });
+      pulse=Math.sin(Math.PI*seg(t,760,1260))*1;
+      const p2=seg(t,1500,1850); const b=Math.sin(Math.PI*p2)*.14;
+      w=w.map(v=>v+b);
+      pulse+=Math.sin(Math.PI*seg(t,1500,1900))*.6;
+    } else {
+      const per=3400, q=i%per;
+      const b1=Math.sin(Math.PI*seg(q,0,300))*.16, b2=Math.sin(Math.PI*seg(q,380,680))*.16;
+      w=[0,1,2].map(k=>1+Math.sin(Math.PI*seg(q,k*40,300+k*40))*.16+Math.sin(Math.PI*seg(q,380+k*40,680+k*40))*.16);
+      pulse=Math.sin(Math.PI*seg(q,120,900))*.8;
+    }
+    S.whiskScale(w);
+    S.hole(6, HOLES[6][2]*(1+0.06*pulse), 0);
+    S.eye(i!=null?blink(i,5200,3000):1);
+  }
+}];
+
+function burst(c,s,seed,few){
+  // 碎屑：从缺口往外飞，受重力落下并淡出
+  const out=[], nx=c[0]-CX, ny=c[1]-CY, L=Math.hypot(nx,ny), ux=nx/L, uy=ny/L;
+  const N=few?1:5;
+  for(let j=0;j<N;j++){
+    const rnd=k=>{const v=Math.sin((seed+j)*12.9898+k*78.233)*43758.5453;return v-Math.floor(v);};
+    const sp=few?0.05:0.35+0.3*rnd(1), ang=(rnd(2)-.5)*1.3;
+    const vx=(ux*Math.cos(ang)-uy*Math.sin(ang))*sp, vy=(uy*Math.cos(ang)+ux*Math.sin(ang))*sp-(few?0:.25);
+    const T=s, g=0.0016;
+    const x=c[0]+ux*c[2]*.55+vx*T, y=c[1]+uy*c[3]*.55+vy*T+.5*g*T*T;
+    const life=few?1200:900;
+    out.push([x,y,(few?9:7+9*rnd(3)),clamp(1-T/life)]);
+  }
+  return out;
+}
+
+// ---------- 把 frame 的调用落到某一张 SVG 上 ----------
+function stageFor(svg){
+  const q=s=>svg.querySelector(s), qa=s=>[...svg.querySelectorAll(s)];
+  const wheel=q('.wheel'), spin=q('.spin'), holes=qa('[data-h]'), notches=qa('[data-n]'),
+    mcut=q('.mcut'), whisk=q('.whisk'), ws=qa('[data-w]'), mparts=q('.mparts'), eye=q('.eye'),
+    tailg=q('.tailg'), crumbsG=q('.crumbs');
+  const set=(el,k,v)=>{ v=String(v); if(el.getAttribute(k)!==v) el.setAttribute(k,v); };
+  return {
+    reset(){
+      set(wheel,'transform',''); set(wheel,'opacity',1); set(spin,'transform','');
+      holes.forEach((h,k)=>{ set(h,'r',HOLES[k][2]); set(h,'cy',HOLES[k][1]); });
+      notches.forEach(n=>set(n,'transform',''));
+      ws.forEach(w=>set(w,'transform',''));
+      set(eye,'transform',''); crumbsG.innerHTML='';
+      [mcut,whisk,mparts].forEach(g=>set(g,'transform',''));
+      set(mcut,'opacity',1); set(tailg,'transform',''); set(tailg,'opacity',1);
+    },
+    wheel(tr,op){ set(wheel,'transform',tr); set(wheel,'opacity',n2(op)); },
+    spin(tr){ set(spin,'transform',tr); },
+    hole(k,r,dy){ set(holes[k],'r',n2(Math.max(0,r))); set(holes[k],'cy',n2(HOLES[k][1]+dy)); },
+    notch(k,s){
+      // 咬：缺口那个圆从芝士外面一口扣进来，而不是在里面长大
+      const c=NOTCHES[k], nx=c[0]-CX, ny=c[1]-CY, L=Math.hypot(nx,ny), d=(1-s)*c[2]*1.15;
+      set(notches[k],'transform',s>=1?'':`translate(${n2(nx/L*d)} ${n2(ny/L*d)})`);
+    },
+    mouse(dx,dy){
+      const tr=(dx||dy)?`translate(${n2(dx)} ${n2(dy)})`:'';
+      [mcut,whisk,mparts].forEach(g=>set(g,'transform',tr));
+    },
+    tail(deg,op){ set(tailg,'transform',Math.abs(deg)<.005?'':`rotate(${n2(deg)} ${TAIL_ROOT[0]} ${TAIL_ROOT[1]})`); set(tailg,'opacity',n2(op)); },
+    whisk(a){ ws.forEach((w,k)=>{ const v=a*[7,-5,6][k]; const r=WHISKER_ROOT[k]; set(w,'transform',Math.abs(v)<.01?'':`rotate(${n2(v)} ${r[0]} ${r[1]})`); }); },
+    whiskScale(sc){ ws.forEach((w,k)=>set(w,'transform',Math.abs(sc[k]-1)<.001?'':`translate(${NOSE[0]} ${NOSE[1]}) scale(${n2(Math.max(0,sc[k]))}) translate(${-NOSE[0]} ${-NOSE[1]})`)); },
+    eye(s){ set(eye,'transform',s>=.999?'':`translate(${EYE[0]} ${EYE[1]}) scale(1 ${n2(s)}) translate(${-EYE[0]} ${-EYE[1]})`); },
+    crumbs(list){
+      crumbsG.innerHTML=list.map(([x,y,r,o])=>`<circle cx="${n2(x)}" cy="${n2(y)}" r="${n2(r)}" fill="#FFAE00" opacity="${n2(o)}"/>`).join('');
+    }
+  };
+}
+
+// 调试用：?sheet=100,400,... 把每个方向在这些时刻的画面排成一行
+if(new URLSearchParams(location.search).has('sheet')){
+  const ts=new URLSearchParams(location.search).get('sheet').split(',').map(Number); const SZ=+(new URLSearchParams(location.search).get('sz')||118); const ONLY=new URLSearchParams(location.search).get('only');
+  document.querySelectorAll('header,main,footer').forEach(e=>e.remove()); document.body.insertAdjacentHTML('beforeend','<div id="sh" style="padding:8px"></div>');
+  if(new URLSearchParams(location.search).get('theme')==='dark') document.body.dataset.theme='dark';
+  const g=document.getElementById('sh');
+  DIRS.forEach((d,di)=>{
+    if(ONLY&&d.key!==ONLY) return;
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:4px;align-items:center;margin-bottom:4px';
+    row.innerHTML='<b style="width:56px;font-size:12px">'+d.title+'</b>'+ts.map((t,k)=>'<div style="width:'+SZ+'px;text-align:center;font-size:10px;color:#999">'+build('s'+di+'_'+k).replace('<svg ','<svg style="width:'+SZ+'px;height:'+SZ+'px" ')+t+'</div>').join('');
+    g.appendChild(row);
+    [...row.querySelectorAll('svg')].forEach((svg,k)=>{ const S=stageFor(svg); S.reset(); const t=ts[k]; d.frame(S,Math.min(t,d.D),t>=d.D?t-d.D:null); });
+  });
+  throw 'sheet';
+}
+// ---------- 播放 ----------
+const $=s=>document.querySelector(s);
+const params=new URLSearchParams(location.search);
+const FREEZE=params.has('t')?+params.get('t'):null;
+if(params.get('theme')==='dark') document.body.dataset.theme='dark';
+if(FREEZE!=null) document.body.dataset.freeze='1';
+const reduced=()=>$('#rm').checked||matchMedia('(prefers-reduced-motion: reduce)').matches;
+let speed=1;
+const players=DIRS.map((d,idx)=>{
+  const card=document.createElement('section'); card.className='card';
+  card.innerHTML=`<div class="stage" title="点一下重播">${build('c'+idx)}</div>
+    <div class="row"><h2>${String.fromCharCode(65+idx)} · ${d.title}<small>${d.en}</small></h2><button>重播</button></div>
+    <p>${d.desc}</p><ul>${d.loop.map(x=>`<li>之后循环：${x}</li>`).join('')}</ul>`;
+  $('#cards').appendChild(card);
+  const S=stageFor(card.querySelector('svg'));
+  const pl={clock:0,last:0,draw(){
+      S.reset();
+      if(reduced()) return;
+      const t=pl.clock; d.frame(S,Math.min(t,d.D), t>=d.D?t-d.D:null);
+    },
+    replay(){ pl.clock=0; pl.last=0; }};
+  card.querySelector('.stage').addEventListener('click',pl.replay);
+  card.querySelector('button').addEventListener('click',pl.replay);
+  return pl;
+});
+if(FREEZE!=null){ players.forEach(p=>{p.clock=FREEZE;p.draw();}); }
+else{
+  const tick=now=>{
+    for(const p of players){
+      const dt=p.last?Math.min(now-p.last,64):0; p.last=now; p.clock+=dt*speed; p.draw();
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) players.forEach(p=>p.last=0); });
+}
+$('#all').onclick=()=>players.forEach(p=>p.replay());
+$('#slow').onclick=e=>{ speed=speed===1?.5:1; e.target.setAttribute('aria-pressed',speed!==1); };
+$('#theme').onclick=e=>{ const dk=document.body.dataset.theme==='dark'; document.body.dataset.theme=dk?'light':'dark'; e.target.textContent=dk?'深色背景':'浅色背景'; };
+$('#rm').onchange=()=>players.forEach(p=>p.replay());
+</script>
+</body>
+</html>
