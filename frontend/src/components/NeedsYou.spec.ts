@@ -1,5 +1,5 @@
 /**
- * 项目首页项目收件箱那一块（「等你决定」/「变更提醒」）。
+ * 项目首页项目收件箱那一块（「等你回答」/「变更提醒」）。
  *
  * 它从退役的「总览」搬过来，而那一页上它只能摆着看：选项存在 payload 里从来没
  * 画出来过，答复它的接口一个调用方都没有。所以这一组钉的不是「搬过来了」，是
@@ -121,7 +121,7 @@ function button(container: Element, label: string): HTMLElement | undefined {
   return buttons(container, label)[0]
 }
 
-describe('等你决定', () => {
+describe('等你回答', () => {
   it('问的是什么、给了哪几个选项，都摆在卡上', async () => {
     const { container } = mount()
 
@@ -199,7 +199,7 @@ describe('等你决定', () => {
   })
 })
 
-describe('等你决定：一叠而不是一列', () => {
+describe('等你回答：一叠而不是一列', () => {
   it('屏幕上只有一个问题，答得了的也只有它', async () => {
     vi.mocked(getInbox).mockResolvedValue({ data: three(), total: 3 })
     const { container } = mount()
@@ -294,14 +294,14 @@ describe('变更提醒', () => {
     })
   }
 
-  it('摆的是「变更提醒」，不是「等你决定」', async () => {
+  it('摆的是「变更提醒」，不是「等你回答」', async () => {
     vi.mocked(getInbox).mockResolvedValue({ data: [notice()], total: 1 })
     const { container } = mount()
 
     await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
     const text = container.textContent ?? ''
     expect(text).toContain('变更提醒')
-    // 它没有要人答的东西，标题写「等你决定」就是假话。
+    // 它没有要人答的东西，标题写「等你回答」就是假话。
     expect(text).not.toContain('等你回答')
     expect(text).toContain('改了一个竞态，顺手补了回归测试')
   })
