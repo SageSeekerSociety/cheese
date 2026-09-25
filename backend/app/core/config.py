@@ -261,6 +261,23 @@ class Settings(BaseSettings):
     # unset = budgets are not set (L1 metering still works, token-based).
     llm_gateway_credit_usd: float | None = None
 
+    # --- Docs site (app/domain/docs_site) ---
+    # Where 问芝士 reads the docs from: the frontend image serves the built
+    # site, so the backend asks its own deployment for the same version readers
+    # see. Unset, 问芝士 answers that it is unavailable.
+    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
+    # The gateway model 问芝士 answers with. Its virtual key is minted through
+    # `llm_gateway_admin_base` and capped at this budget per 30 days.
+    docs_assistant_model: str = "deepseek-flash"
+    docs_assistant_budget_usd: float = 20.0
+    # Per signed-in user, and across one backend process.
+    docs_assistant_hourly_limit: int = 20
+    docs_assistant_daily_limit: int = 100
+    docs_assistant_concurrency: int = 8
+    docs_question_retention_days: int = 90
+    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
+    docs_dev_session_seconds: int = 3600
+
     # --- ChatGPT subscription import (app/domain/subscription) ---
     # A platform-level ChatGPT subscription rides the gateway as a runtime model
     # whose api_key is the subscription's OAuth access_token; this backend owns
