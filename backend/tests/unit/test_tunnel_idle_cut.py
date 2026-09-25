@@ -115,7 +115,7 @@ def silent_meter(monkeypatch):
 
 
 def test_backend_closes_a_tunnel_whose_meter_went_silent(silent_meter, monkeypatch):
-    from app.main import app
+    from app.llm_tunnel_app import app
 
     monkeypatch.setattr(llm_tunnel, "IDLE_TIMEOUT_S", 0.3)
     monkeypatch.setattr(llm_tunnel, "_IDLE_CHECK_S", 0.02)
