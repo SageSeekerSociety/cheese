@@ -122,7 +122,7 @@ function heroDemo() {
      ${m(2, 'bot', `<span class="av"><img src="${LOGO}" alt=""></span><div><p>明白：一页、按项目分节、结尾是待办。我先读三份材料，十分钟后给你初稿。</p></div>`)}
      ${m(3, 'tool', `${ic('check')}读取 周一例会.docx`)}
      ${m(4, 'tool', `${ic('check')}读取 周三评审.docx、周四复盘.docx`)}
-     ${m(5, 'tool', `<span class="spin"></span>生成 周报.docx`)}
+     ${m(5, 'tool', `<span class="d-spin"></span>生成 周报.docx`)}
      ${m(6, 'me', `<span class="av">你</span><div><p>标题用本周日期。</p></div>`)}
      ${m(7, 'bot', `<span class="av"><img src="${LOGO}" alt=""></span><div><p>好，标题改成「9 月 22 日–26 日周报」。初稿好了，请验收。</p></div>`)}
     </div>
@@ -153,11 +153,16 @@ function homePage() {
   return `<div class="home x">
   <section class="x-hero">
    <div class="scene" aria-hidden="true"></div>
-   <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div>
+   <div class="x-copy">
    <a class="badge-row" href="#/changelog"><b>${RELEASES[0].ver}</b>${RELEASES[0].list.length} 项改动已在测试环境 ${ic('arrow')}</a>
    <h1 class="x-title"><span class="line"><span>交给芝士一件事，</span></span><span class="line"><span>不只是问一句。</span></span></h1>
    <p class="x-sub">知是 · Cheese 是你和 AI 队友一起做项目的地方：交代目标，它去做，你随时插话，最后验收。这里是它的全部说明。</p>
    <div class="x-cta"><a class="pill lg magnetic" href="#/start/quickstart">快速开始 ${ic('arrow')}</a><button class="x-search" data-open-search>${ic('search', 'width:17px;height:17px')}<span>搜索文档，或直接问</span><kbd>⌘K</kbd></button></div>
+   </div>
+   <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div>
+  </section>
+
+  <section class="x-sec x-demo">
    <div class="x-stage" data-reveal><div class="x-blob b1"></div><div class="x-blob b2"></div>${heroDemo()}</div>
   </section>
 
