@@ -195,6 +195,13 @@ async def lifespan(_: FastAPI):
         except Exception:  # noqa: BLE001 — never block startup
             get_logger("cheesex.runtime").exception("orphan sweep failed")
 
+        try:
+            n = await get_work_runner().resume_lost_messages(get_chat_service())
+            if n:
+                get_logger("cheesex.runtime").info("lost_messages_resumed", rooms=n)
+        except Exception:  # noqa: BLE001 — never block startup
+            get_logger("cheesex.runtime").exception("lost message sweep failed")
+
         # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
         # so a redeploy kills every check in flight and nobody ever calls
         # finish_gate — the card sits in `pending_gate` forever AND blocks its topic

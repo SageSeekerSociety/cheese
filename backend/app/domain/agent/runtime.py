@@ -18,8 +18,10 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+
+from sqlalchemy import select
 
 from app.core.background import hold
 from app.core.errors import AppError
@@ -32,6 +34,7 @@ from app.domain.agent.platform_failures import (
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
+    EVENT_DELIVERY_FALLBACK,
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_DISPATCH_UNKNOWN,
     EVENT_TOOLS_RECOVERED,
@@ -66,6 +69,13 @@ def _a_turn_was_addressed(addressed: Addressed) -> bool:
     的物理形态。平台因此发不起一轮：它可以点谁的名，点到人就是一条站内信。
     """
     return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
+
+
+def _seat(recipient: dict | None) -> str | None:
+    """The seat a message's `agent_recipient` names, as `how_it_arrives` reads it."""
+    if recipient and recipient.get("instance_id"):
+        return agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
+    return (recipient or {}).get("handle")
 
 
 def addressed_to_agent(handle: str | None) -> Addressed:
@@ -128,6 +138,11 @@ async def _close_turns(session_factory, turn_ids) -> None:
     async with session_factory() as session:
         await AgentTurnRepository(session).close(turn_ids, _utcnow())
         await session.commit()
+
+
+# What the room is told while a message waits for its turn. Neither is the
+# turn's outcome, so neither means the turn happened.
+_WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
 
 
 def _utcnow() -> datetime:
@@ -238,12 +253,7 @@ class InProcessBroker:
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
         # / `wait_for_recipient` 问的是「哪个实例在跑」，那边认的就是实例名。
-        seat = (
-            agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
-            if recipient and recipient.get("instance_id")
-            else recipient_handle
-        )
-        addressed = addressed_to_agent(seat if mentioned else None)
+        addressed = addressed_to_agent(_seat(recipient) if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})
@@ -444,8 +454,8 @@ class AgentWorkRunner:
         self._recent: deque[dict] = deque(maxlen=100)
         # Project-level concurrency gate (spec §9.1): at most N turns run at
         # once per project; excess turns queue on the semaphore (FIFO). The
-        # queue is asyncio-only — a restart drops it, which is accepted; the
-        # queued state is visible as a system event in the topic.
+        # queue is asyncio-only — a restart drops it, and the process that takes
+        # the work over starts what it dropped (`resume_lost_messages`).
         self._project_sems: dict[str, asyncio.Semaphore] = {}
         self._project_waiting: dict[str, int] = {}
         # Turn ids THIS process is actually executing right now → the task
@@ -1131,6 +1141,98 @@ class AgentWorkRunner:
         makes this exactly `sweep_orphans` with the young-entry guard switched
         off: nothing can be racing it."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
+
+    async def resume_lost_messages(self, chat_service) -> int:
+        """Start the turns a previous owner accepted a message for and never
+        began. Returns how many rooms it started one in.
+
+        Between a message being stored and its turn opening, the turn exists
+        only in the memory of the process that accepted it: waiting for this
+        process to take over, or queued behind the project's other turns — the
+        room was even told 「前面的轮次结束就自动开跑，不用重发」. A process that
+        goes away drops that wait, and nothing else would ever start the turn.
+
+        What counts: a message that named an agent, has not been read into any
+        prompt, is recent, and has nothing about its turn in the room — no
+        interval, no reply, no refusal. Its room must have no turn running, or
+        the message is that turn's to pick up. One turn per room: it carries
+        every message the room has waiting, the way any turn does.
+        """
+        from app.domain.agent.models import AgentTurn
+        from app.domain.block.models import (
+            CONSUMED_TURN_META_KEY,
+            Block,
+            BlockKind,
+            consumed_turn,
+            prompt_attempts,
+        )
+
+        since = _utcnow() - timedelta(seconds=self.ORPHAN_STALE_S)
+        async with chat_service.session_factory() as session:
+            mentioned = [
+                block
+                for block in await session.scalars(
+                    select(Block)
+                    .where(
+                        Block.created_at >= since,
+                        Block.kind == BlockKind.message,
+                        Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+                    )
+                    .order_by(Block.created_at)
+                )
+                if CONSUMED_TURN_META_KEY in (block.meta or {})
+                and consumed_turn(block) is None
+                and prompt_attempts(block) == 0
+            ]
+            if not mentioned:
+                return 0
+            ids = [block.id for block in mentioned]
+            begun = set(
+                await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
+            )
+            busy = set(
+                await session.scalars(
+                    select(AgentTurn.topic_id).where(AgentTurn.stopped_at.is_(None))
+                )
+            )
+            answered = {
+                block.turn_id
+                for block in await session.scalars(
+                    select(Block).where(Block.turn_id.in_(ids), Block.id.not_in(ids))
+                )
+                if (block.meta or {}).get("event_type") not in _WAITING
+            }
+        rooms: dict[uuid.UUID, object] = {}
+        for block in mentioned:
+            if block.id in begun or block.id in answered:
+                continue
+            if block.topic_id in busy or chat_service.has_running_turn(block.topic_id):
+                continue
+            rooms.setdefault(block.topic_id, block)
+        for topic_id, block in rooms.items():
+            recipient = (block.meta or {}).get("agent_recipient") or {}
+            logger.info(
+                "starting the turn a previous backend never began topic=%s block=%s",
+                topic_id,
+                block.id,
+            )
+            self._receive_message(
+                chat_service,
+                topic_id,
+                block.id,
+                addressed=addressed_to_agent(_seat(recipient)),
+                continuation_id=block.id,
+                author=block.author,
+                content=block.content,
+                reply_to=str(block.reply_to) if block.reply_to else None,
+                attachments=None,
+                provision_actor=None,
+                landed_user_block_id=block.id,
+                landed_user_block_ids=[block.id],
+                live_delivery_expected=False,
+                recipient_handle=recipient.get("handle"),
+            )
+        return len(rooms)
 
     async def sweep_orphans(
         self,
