@@ -158,9 +158,14 @@
   --page-w-read: 660px; /* long-form reading column */
 
   /* ---- Type ---- */
+  /* System fonts only, nothing downloaded: a CJK web font is megabytes per
+     weight. Apple devices get PingFang, Huawei and Xiaomi phones get HarmonyOS
+     Sans and MiSans through `system-ui`, desktops that installed either get it
+     by name, and Windows falls back to Microsoft YaHei. */
   --font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC',
+    'HarmonyOS Sans SC', 'MiSans', 'Hiragino Sans GB', 'Microsoft YaHei',
+    sans-serif;
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
