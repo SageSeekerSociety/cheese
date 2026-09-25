@@ -6,6 +6,7 @@ the burst is in flight before any of them has been answered.
 """
 
 import asyncio
+import time
 import uuid
 
 import httpx
@@ -136,11 +137,17 @@ async def test_attempts_refused_during_a_wait_do_not_lengthen_it(
     for _ in range(LOGIN_FREE_FAILURES):
         await _attempt(client, username)
 
-    for _ in range(20):
-        assert (await _attempt(client, username)).status_code == 403
-    await asyncio.sleep(1.1)
+    # Keep knocking until one is let in. Refusals that restarted the wait would
+    # keep it from ending at all; refusals counted as failures would show in
+    # the next wait.
+    refused = 0
+    give_up = time.monotonic() + 10
+    while (resp := await _attempt(client, username)).status_code == 403:
+        refused += 1
+        assert time.monotonic() < give_up, "the wait never ended"
+        await asyncio.sleep(0.05)
 
-    resp = await _attempt(client, username)
+    assert refused > 0, "nothing was refused during the wait"
     assert resp.status_code == 401, resp.text
     assert _wait_of(resp) == 2
     assert accounts.checks == LOGIN_FREE_FAILURES + 1
