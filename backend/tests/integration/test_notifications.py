@@ -8,7 +8,7 @@ import asyncio
 import uuid
 
 from app.domain.project.models import ProjectMember
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 #: 库里不会有的收件箱行号。主键是 bigint 序列，不再是 uuid。
@@ -16,7 +16,7 @@ MISSING_ID = 9_999_999
 
 
 def _create_project(client, name: str = "Demo") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -140,7 +140,8 @@ def test_a_broadcast_lands_in_every_members_own_mailbox(client):
     rows = _post_notif(
         client, pid, level="strong", kind="change_alert", title="全体注意"
     )
-    assert {row["target_handle"] for row in rows} == {"alice", "bob"}
+    # The project's owner is on its roster too (every project has one now).
+    assert {row["target_handle"] for row in rows} == {"alice", "bob", "owner"}
     _one(
         client,
         pid,

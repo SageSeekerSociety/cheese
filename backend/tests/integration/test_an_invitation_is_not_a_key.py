@@ -1,18 +1,17 @@
-"""导师进项目要两份东西：一份邀请，一次接受——邀请本身不是钥匙。
+"""外部成员（比如导师）进项目要两份东西：一份邀请，一次接受——邀请本身不是钥匙。
 
-#945 的教师看板要读一个项目的对话与 AI 摘要，而「导师」只是项目成员里的一种
-角色（``ProjectRole.mentor``）。角色不改变门槛：进了名册就看得见这个项目的**全部
-话题**，所以「谁能进名册」这件事决定的是谁能读到别人的工作内容。平台为此把加人拆
-成两步——``InvitationService`` 记下邀请，``respond(accept=True)`` 才是那一步真
-正把人放上名册的写。这一份钉的就是这两步之间的那条缝：
+#945 的教师看板要读一个项目的对话与 AI 摘要，而导师是团队以外、以外部成员身份
+进这个项目的人。进了名册就看得见这个项目的公开话题，所以「谁能进名册」决定的是
+谁能读到别人的工作内容。平台为此把加人拆成两步——``InvitationService`` 记下邀
+请，``respond(accept=True)`` 才是那一步真正把人放上名册的写。这一份钉的就是这两
+步之间的那条缝：
 
 1. 被邀请、还没答复的人什么也读不到。邀请是一条待办，不是凭据；如果读得到，
    「要对方点头」就只是界面上的礼貌，而不是一道门。
-2. 答复之后，mentor 和 member 一样读得到——教师看板要的正是这条，收窄不能把
-   它一起收掉。
+2. 答复之后，外部成员读得到——教师看板要的正是这条，收窄不能把它一起收掉。
 3. 邀请被撤回之后，答复不了，也读不到。撤回是邀请方反悔，而反悔必须发生在
    **开门之前**。
-4. 已经在名册上的导师被移出，门同样立刻关——撤权不因为角色是导师而慢一拍。
+4. 已经在名册上的外部成员被移出，门同样立刻关——撤权不慢一拍。
 
 每条断言都是浏览器会收到的状态码，不看实现。
 """
@@ -32,11 +31,10 @@ def _headers(client, handle: str) -> dict[str, str]:
 def _invite_mentor(client, project_id: str) -> str:
     r = client.post(
         f"/projects/{project_id}/invitations",
-        json={"user_handle": MENTOR, "role": "mentor"},
+        json={"user_handle": MENTOR},
         headers=_headers(client, OWNER),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["role"] == "mentor"
     return r.json()["data"]["id"]
 
 
@@ -66,7 +64,7 @@ def test_an_unanswered_invitation_is_not_a_key(client):
 
 
 def test_a_mentor_who_answered_reads_every_door(client):
-    """答复之后，mentor 和 member 走同一扇门 —— 教师看板要的就是这条。"""
+    """答复之后，外部成员走同一扇门 —— 教师看板要的就是这条。"""
     pid, _ = _project(client)
     invitation = _invite_mentor(client, pid)
 
@@ -90,7 +88,7 @@ def test_a_revoked_invitation_is_not_a_key_either(client):
 
 
 def test_a_removed_mentor_loses_every_door_at_once(client):
-    """撤权不因为角色是导师而慢一拍：移出名册，下一次请求就得被拒。"""
+    """撤权不慢一拍：移出名册，下一次请求就得被拒。"""
     pid, _ = _project(client)
     invitation = _invite_mentor(client, pid)
     assert _answer(client, invitation, accept=True).status_code == 200

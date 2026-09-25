@@ -7,7 +7,7 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, login, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject } from './helpers';
 
 function projectIdOf(page: Page): string {
   const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
@@ -29,7 +29,7 @@ const WIDE_TABLE_DOC = [
 ].join('\n');
 
 test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出面板', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   await openFirstProject(page);
   const projectId = projectIdOf(page);
 

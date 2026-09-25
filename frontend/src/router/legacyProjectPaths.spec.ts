@@ -1,13 +1,6 @@
-// #370 renamed both project URLs in the address bar: 知是 团队项目 moved from
-// `/projects` to `/team-projects`, and the workspace took the plural it had been
-// avoiding (`/project` → `/projects`). Old links keep working through redirects.
-//
-// The compiler cannot check a redirect — it is data, and a wrong one still
-// typechecks. What earns this a test is the collision the rename creates on
-// purpose: an OLD 团队项目 link and a NEW workspace link are now spelled
-// identically, and only the id's shape tells them apart. Get that wrong and the
-// app opens the workspace on an id it can never resolve — the wrong-generation
-// load this rename exists to end.
+// #370 moved the workspace from `/project` to the plural `/projects`. Old links
+// keep working through a redirect. The compiler cannot check a redirect — it is
+// data, and a wrong one still typechecks.
 //
 // The records under test are IMPORTED, not restated: a routing rule checked
 // through a copy of itself is a rule nothing checks. Only the destinations are
@@ -22,14 +15,11 @@ import { legacyProjectRedirects } from './legacyProjectPaths'
 const Stub = { template: '<div />' }
 
 const destinations: RouteRecordRaw[] = [
-  { path: '/team-projects/:projectId', name: 'team-project', component: Stub },
-  { path: '/team-projects/:projectId/members', name: 'team-members', component: Stub },
   { path: '/projects/:projectId', name: 'workspace-project', component: Stub },
   { path: '/projects/:projectId/settings', name: 'project-settings', component: Stub },
 ]
 
-// Same order as router/index.ts: the redirects come first, because one of them
-// matches the very path shape the workspace route claims.
+// Same order as router/index.ts: the redirects come first.
 function router() {
   return createRouter({
     history: createMemoryHistory(),
@@ -55,21 +45,7 @@ describe('retired project URLs', () => {
     expect(r.currentRoute.value.hash).toBe('#connect')
   })
 
-  it('sends an old 团队项目 link (int id) to /team-projects, not the workspace', async () => {
-    const r = router()
-    await r.push('/projects/42')
-    expect(r.currentRoute.value.path).toBe('/team-projects/42')
-    expect(r.currentRoute.value.name).toBe('team-project')
-  })
-
-  it('does the same for a sub-page of an old 团队项目 link', async () => {
-    const r = router()
-    await r.push('/projects/42/members')
-    expect(r.currentRoute.value.path).toBe('/team-projects/42/members')
-    expect(r.currentRoute.value.name).toBe('team-members')
-  })
-
-  it('leaves a real workspace id alone — a uuid is never mistaken for an int', async () => {
+  it('leaves a current workspace link alone', async () => {
     const r = router()
     await r.push(`/projects/${UUID}`)
     expect(r.currentRoute.value.path).toBe(`/projects/${UUID}`)

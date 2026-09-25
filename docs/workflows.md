@@ -21,8 +21,8 @@ cd backend && uv run alembic upgrade head
 # 3. 后端 8081 + 前端 3000，一条命令
 task dev
 
-# 4. 灌入 demo 场景（书院 + 记忆充足的项目 + 话题/里程碑/验收卡…）
-cd backend && PYTHONPATH=. uv run python scripts/seed_demo.py
+# 4. 灌入 demo 项目（侧栏里点得进去的几个演示项目）
+cd backend && PYTHONPATH=. uv run python scripts/seed_fusion_demo.py
 ```
 
 模型走**智谱 GLM**（Anthropic 兼容网关），配置在 `backend/.env`（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `AGENT_MODEL`）。芝士 = 平台拉起的 `claude` CLI（Claude Code 骨架），模型请求经计量代理或网关路由（spec §9，不绑模型）。

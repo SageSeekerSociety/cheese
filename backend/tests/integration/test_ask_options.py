@@ -1,11 +1,11 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, room_agent_seat
+from tests.integration.conftest import chat_ws_url, post_project, room_agent_seat
 
 
 def _topic(client) -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": "user-1"},

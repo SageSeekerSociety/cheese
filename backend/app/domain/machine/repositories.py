@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.device.models import DeviceRow, DeviceTopicRow
+from app.domain.device.models import DeviceTopicRow
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -296,16 +296,10 @@ class ProjectMachineRepository:
         *,
         device_id: str,
         when: datetime,
-        ccproxy_upstream: str | None = None,
     ) -> ProjectMachine:
         machine.device_id = device_id
         machine.enrolled_at = when
         machine.enroll_error = None
-        # Only ever set, never cleared: the bootstrap key is erased below, so a
-        # re-run that came back empty could not recover it, and blanking a known
-        # identity would silently drop the machine back to the shared one.
-        if ccproxy_upstream:
-            machine.ccproxy_upstream = ccproxy_upstream
         # The bootstrap key existed for this one setup; keeping it would leave a
         # standing way into the machine that nobody asked for.
         machine.bootstrap_key = None
@@ -320,49 +314,18 @@ class ProjectMachineRepository:
         await self._session.flush()
         return machine
 
-    async def list_awaiting_enrollment(
-        self,
-        limit: int,
-        *,
-        desired_ai_mode: str = "",
-        settle_cutoff: datetime | None = None,
-    ) -> list[ProjectMachine]:
-        """Machines that are up, have their agent access wired, and are not yet
-        enrolled — and that we have not already given up on.
-
-        Also waits for the machine's AI channel to reach the mode this
-        deployment asked for, because enrollment is the ONE moment the platform
-        is on the machine over ssh (`mark_enrolled` erases the bootstrap key)
-        and what it reads there — the machine's ccproxy identity — only exists
-        once MicroCloud has written the settings for that mode. Enrolling a
-        machine still on the provisioning default records no identity, and there
-        is no second chance: observed live 2026-08-14, machine 472 enrolled at
-        `newapi/ready`, was switched to ccproxy a sweep later, and can never have
-        its identity read again.
-
-        `settle_cutoff` bounds that wait. A machine whose channel never reaches
-        the desired mode must still become usable compute — it just falls back to
-        the deployment-wide identity, which is a supported state. Waiting forever
-        would turn a degraded machine into a dead one.
-        """
-        conditions = [
-            ProjectMachine.device_id.is_(None),
-            ProjectMachine.status == MachineStatus.running,
-            ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
-            ProjectMachine.bootstrap_key.is_not(None),
-            ProjectMachine.ip.is_not(None),
-            ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
-        ]
-        if desired_ai_mode:
-            settled = ProjectMachine.ai_mode == desired_ai_mode
-            conditions.append(
-                settled
-                if settle_cutoff is None
-                else or_(settled, ProjectMachine.created_at < settle_cutoff)
-            )
+    async def list_awaiting_enrollment(self, limit: int) -> list[ProjectMachine]:
+        """Machines that are up and not yet enrolled — and that we have not
+        already given up on."""
         result = await self._session.execute(
             select(ProjectMachine)
-            .where(*conditions)
+            .where(
+                ProjectMachine.device_id.is_(None),
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.bootstrap_key.is_not(None),
+                ProjectMachine.ip.is_not(None),
+                ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
+            )
             .order_by(ProjectMachine.created_at)
             .limit(limit)
         )
@@ -374,10 +337,11 @@ class ProjectMachineRepository:
         The sweep needs this because the ONLY place that refreshes a machine
         from MicroCloud is `list_for_project` — a read path, so a machine that
         finishes provisioning while nobody has the project open keeps whatever
-        state it had at the last read. Enrolment waits on `ai_status`, so a row
-        frozen at `provisioning` is a machine that never becomes compute:
-        observed live 2026-08-14, machine 473 sat unenrolled for 13 minutes
-        while MicroCloud had reported it `ready` the whole time.
+        state it had at the last read. A room's lease waits on both `status`
+        and `ai_status`, so a row frozen at a transitional value is a machine
+        that never becomes compute: observed live 2026-08-14, machine 473 sat
+        unused for 13 minutes while MicroCloud had reported it settled the
+        whole time.
         """
         result = await self._session.execute(
             select(ProjectMachine)
@@ -403,94 +367,6 @@ class ProjectMachineRepository:
         )
         # Dormant machines need no provider poll and must not consume the poll budget.
         return moving + list(suspended)
-
-    async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
-        """Use the model session host's credential, independently of execution.
-
-        A placed room never borrows its executor's model identity. An empty
-        central identity selects the platform credential. Unmigrated sessions
-        still finish on their original pinned device.
-
-        A room can seat several sessions and they can sit on different session
-        machines, so this asks for the room and gets back rows, not a row. The
-        one taken is the room's most recently placed session — the same session
-        `harness_in_room` calls the room's, so the identity and the pane agree
-        about which conversation the room is showing. It is the right answer
-        only while a room's sessions share a ccproxy identity: the credential
-        that arrives here names a place and a seat, and the seat is not the
-        session key, so nothing in it can pick out one of two conversations.
-        Making it exact means the credential naming its session, which is the
-        same thing `api/routes/execution.py` says it will need.
-        """
-        from app.domain.agent_session.models import AgentSession
-
-        located = await self._session.scalar(
-            select(AgentSession.runtime_location)
-            .where(
-                AgentSession.topic_id == place_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
-        )
-        if located:
-            # Enrolled project machines keep their ccproxy identity on the
-            # machine row; their DeviceRow is only the connector registration.
-            machine = await self._session.scalar(
-                select(ProjectMachine).where(
-                    ProjectMachine.device_id == located["device_id"]
-                )
-            )
-            if machine is not None:
-                return machine.ccproxy_upstream
-            return await self._session.scalar(
-                select(DeviceRow.ccproxy_upstream).where(
-                    DeviceRow.device_id == located["device_id"]
-                )
-            )
-        return await self._upstream_of_pinned_device(place_id)
-
-    async def _upstream_of_pinned_device(self, topic_id: uuid.UUID) -> str | None:
-        """The ccproxy identity behind one `device_topic` pin, from whichever of
-        the two device kinds carries it."""
-        from_machine = await self._session.scalar(
-            select(ProjectMachine.ccproxy_upstream)
-            .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)
-            .where(
-                DeviceTopicRow.topic_id == topic_id,
-                ProjectMachine.ccproxy_upstream.is_not(None),
-            )
-        )
-        if from_machine:
-            return from_machine
-        return await self._session.scalar(
-            select(DeviceRow.ccproxy_upstream)
-            .join(DeviceTopicRow, DeviceTopicRow.device_id == DeviceRow.device_id)
-            .where(
-                DeviceTopicRow.topic_id == topic_id,
-                DeviceRow.ccproxy_upstream.is_not(None),
-            )
-        )
-
-    async def list_ai_mode_mismatch(
-        self, desired: str, limit: int
-    ) -> list[ProjectMachine]:
-        """Machines whose built-in AI channel settled on the wrong mode.
-
-        Only settled machines (running + ai ready) are candidates — a machine
-        still provisioning will be judged when it lands, and fighting a
-        transitional state would race MicroCloud's own wiring."""
-        result = await self._session.execute(
-            select(ProjectMachine)
-            .where(
-                ProjectMachine.machine_id.is_not(None),
-                ProjectMachine.status == MachineStatus.running,
-                ProjectMachine.ai_status == AiStatus.ready,
-                ProjectMachine.ai_mode != desired,
-            )
-            .order_by(ProjectMachine.created_at)
-            .limit(limit)
-        )
-        return list(result.scalars())
 
     # `is_provisioned_device` lived here until #282 决定 2. It answered "was this
     # device provisioned by the platform" by asking whether any row in THIS table

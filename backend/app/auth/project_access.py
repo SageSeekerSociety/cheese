@@ -88,12 +88,6 @@ async def may_read_project(
         session, external_task_id=project.external_task_id, user_id=user.id
     ):
         return True
-    # The project's OWN team, not ``team_for_project`` - that helper also folds
-    # in the owner's personal team, which would let a personal team's members
-    # into a project their owner never put there. Widening the claim set is a
-    # different decision than consolidating three copies of it.
-    if project.team_id is None:
-        return False
     return await TeamRepository(session).is_team_member(project.team_id, user.id)
 
 

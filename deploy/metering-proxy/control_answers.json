@@ -16,8 +16,7 @@
     "upstream on the platform's credential.",
     "",
     "Placeholders: {project} and {topic} come from the caller's VERIFIED scoped",
-    "token, {rc_flags} expands to rc_flags below for a session whose token grants",
-    "the Cheese RC transport and to {} for one that does not.",
+    "token.",
     "",
     "Rows are matched in order, and `hosts` is checked FIRST on every one of",
     "them: a row answers only the hosts it names, and a row that names none",
@@ -28,11 +27,6 @@
     "matches its start, and a row with neither answers every path on its hosts.",
     "A body of null is sent as an empty body."
   ],
-  "rc_flags": {
-    "tengu_ccr_bridge": {"defaultValue": true},
-    "tengu_ccr_v2_bridge_create_cli": {"defaultValue": true},
-    "tengu_ccr_v2_session_crud_cli": {"defaultValue": true}
-  },
   "model_rewrite_limit_bytes": 65536,
   "rows": [
     {
@@ -60,13 +54,13 @@
       "hosts": ["api.anthropic.com"],
       "exact": "/api/claude_code/policy_limits",
       "status": 200,
-      "body": {"restrictions": {"allow_remote_control": {"allowed": true}}}
+      "body": {"restrictions": {}}
     },
     {
       "hosts": ["api.anthropic.com"],
       "prefix": "/api/eval/",
       "status": 200,
-      "body": {"features": "{rc_flags}"}
+      "body": {"features": {}}
     },
     {
       "hosts": ["api.anthropic.com"],

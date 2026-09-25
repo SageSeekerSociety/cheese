@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    post_project,
     unique_int,
 )
 
@@ -102,7 +103,7 @@ def _create_project(
     }
     if team_id is not None:
         body["team_id"] = team_id
-    resp = api_client.post("/projects", json=body, headers=_auth(token))
+    resp = post_project(api_client, json=body, headers=_auth(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["id"]
 

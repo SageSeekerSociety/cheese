@@ -18,6 +18,7 @@ from app.domain.team.services import team_service
 from app.domain.usage.repositories import ComputeGrantRepository
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
+from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -131,29 +132,6 @@ async def test_concurrent_project_settlements_do_not_lose_team_spend(db_factory)
 
 
 @pytest.mark.anyio
-async def test_legacy_personal_projects_use_the_same_team_without_being_reassigned(
-    db_factory,
-):
-    teams, (a, _, _) = await seed_projects(db_factory)
-    async with db_factory() as session:
-        legacy = Project(name="Legacy", owner_handle="quota_owner", team_id=None)
-        session.add(legacy)
-        await session.flush()
-        await ComputeGrantRepository(session).grant_team(teams[0], 10)
-        await set_machine_limit(session, 1, teams[0])
-        service = MachineService(session, FakeMicroCloud())
-        await service.provision(project_id=legacy.id, requested_by="quota_owner")
-        with pytest.raises(ValidationError, match="1 / 1"):
-            await service.provision(project_id=a, requested_by="quota_owner")
-        await ComputeGrantRepository(session).consume(legacy.id, 3)
-        assert (await ComputeGrantRepository(session).summary(a))[
-            "credits_remaining"
-        ] == 7
-        await session.refresh(legacy)
-        assert legacy.team_id is None
-
-
-@pytest.mark.anyio
 async def test_migration_preserves_existing_balances_and_project_restrictions(
     db_factory,
 ):
@@ -219,9 +197,7 @@ def test_team_quota_view_is_private_and_preserves_project_usage(client):
     owner = seed_user(client, "quota_viewer")
     outsider = seed_user(client, "quota_outsider")
     headers = {"Authorization": f"Bearer {owner}"}
-    project = client.post("/projects", json={"name": "A"}, headers=headers).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "A"}, headers=headers).json()["data"]
     project_id = uuid.UUID(project["id"])
 
     async def fund():

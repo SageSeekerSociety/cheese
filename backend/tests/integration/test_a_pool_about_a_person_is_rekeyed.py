@@ -22,6 +22,7 @@ from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -61,6 +62,7 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
     async def run() -> None:
         store = memory_store(db_session)
 
+        await registered(db_session, "andyl")
         mine = await ProjectService(db_session).create(
             name="有私聊的那个项目", owner_handle="andyl", forge_kind="github_app"
         )
@@ -69,6 +71,7 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
         )
         # 同一个人在另一个项目里也是成员，但没有私聊——归属的依据是私聊，所以这个
         # 项目不该分到那条记忆。
+        await registered(db_session, "andyl")
         bystander = await ProjectService(db_session).create(
             name="只是成员的那个项目", owner_handle="andyl", forge_kind="github_app"
         )
@@ -107,6 +110,7 @@ def test_a_dm_with_a_second_teammate_lands_on_that_teammate(
         store = memory_store(db_session)
         agents = AgentInstanceService(db_session)
 
+        await registered(db_session, "andyl")
         project = await ProjectService(db_session).create(
             name="两位队友", owner_handle="andyl", forge_kind="github_app"
         )
@@ -154,6 +158,7 @@ def test_a_person_with_no_private_chat_lands_under_each_projects_cheese(
 
     async def run() -> None:
         store = memory_store(db_session)
+        await registered(db_session, "bob")
         project = await ProjectService(db_session).create(
             name="没有私聊", owner_handle="bob", forge_kind="github_app"
         )

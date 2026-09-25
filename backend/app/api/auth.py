@@ -15,6 +15,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
+from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -31,7 +32,6 @@ from app.core.sandbox_auth import (
     token_agent_handle,
     verify_scoped_token,
 )
-from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
@@ -62,17 +62,12 @@ def _bearer(header: str | None) -> str | None:
 
 
 def _token_verifier(token: str) -> TokenIdentity | None:
-    claims = verify_session_token(token)
+    claims = verify_access_token(token)
     if claims is None:
         return None
-    # fusion unify P3: main-minted tokens carry the username in ``handle`` and the
-    # int User PK in ``sub``; legacy cheesex-minted ones put the handle in ``sub``
-    # (non-numeric) and have no int id. Resolve user_id from ``sub`` when it's the
-    # int id — device binding (device.owner_user_id, an int column) needs it.
-    sub = claims["sub"]
-    user_id: int | None = int(sub) if sub and sub.isdigit() else None
-    # Prefer the explicit handle claim so ONE token authenticates both API layers.
-    return TokenIdentity(handle=claims["handle"] or sub, user_id=user_id)
+    # The user id is kept alongside the handle: device binding
+    # (device.owner_user_id, an int column) needs it.
+    return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
 class ActorResolver:

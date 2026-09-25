@@ -148,5 +148,23 @@ def test_version_and_platform_patterns_reject_traversal():
         assert not claude_dist.PLATFORM_RE.match(bad), bad
     # The vendor's vocabulary, musl included — our own <os>-<arch> target names
     # cannot express musl, which is why this proxies rather than translates.
-    for good in ["linux-x64", "linux-arm64", "linux-x64-musl", "darwin-arm64"]:
+    for good in [
+        "linux-x64",
+        "linux-arm64",
+        "linux-x64-musl",
+        "darwin-arm64",
+        "win32-x64",
+    ]:
         assert claude_dist.PLATFORM_RE.match(good), good
+
+
+@pytest.mark.anyio
+async def test_a_windows_build_is_the_vendors_claude_exe(tmp_path, upstream):
+    """Windows builds are published as claude.exe, and a machine can only run
+    the file under that name."""
+    t = upstream(_transport(manifest=_manifest(platform="win32-x64")))
+
+    path = await claude_dist.ensure_cached(tmp_path, VERSION, "win32-x64")
+    assert path.name == "claude.exe"
+    assert path.read_bytes() == BINARY
+    assert any(call.endswith(f"/{VERSION}/win32-x64/claude.exe") for call in t.calls)

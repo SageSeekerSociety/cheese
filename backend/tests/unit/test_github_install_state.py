@@ -3,8 +3,8 @@
 import base64
 import uuid
 
+from app.common.auth import verify_access_token
 from app.core import github_install_state as gis
-from app.core import tokens
 from app.core.sandbox_auth import mint_scoped_token
 
 
@@ -61,7 +61,7 @@ def test_install_state_does_not_validate_as_session_token_or_scoped_token():
     all three are HMAC-signed with material derived the same way."""
     pid = uuid.uuid4()
     install_state = gis.mint_install_state(pid, user_id=1, handle="alice")
-    assert tokens.verify_session_token(install_state) is None
+    assert verify_access_token(install_state) is None
 
     scoped = mint_scoped_token(project_id=str(pid))
     assert gis.verify_install_state(scoped) is None

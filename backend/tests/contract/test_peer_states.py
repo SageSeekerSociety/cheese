@@ -447,6 +447,9 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
         async def recover_sessions(self, device_id):
             return sessions
 
+        def work_in_flight(self, topic_id):
+            return None
+
         async def replay(self, session, known_texts):
             if session is sessions[0]:
                 raise DeviceCallError(SOCKET_GONE)

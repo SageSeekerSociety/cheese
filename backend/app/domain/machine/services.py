@@ -27,7 +27,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.compute_configs import ComputeChoice, room_choice
-from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -47,7 +46,6 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
@@ -73,12 +71,6 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
     return f"{slug}-{str(project_id)[:6]}-{index}"
 
 
-# How long a machine may sit at the wrong AI mode before it is enrolled anyway.
-# Long enough that a normal switch (seconds) always wins the race, short enough
-# that a machine whose channel is genuinely stuck still becomes usable compute
-# within one coffee. It trades the per-machine ccproxy identity — a fallback the
-# meter already handles — for never leaving a healthy machine unenrolled.
-ENROLL_SETTLE_GRACE = timedelta(minutes=10)
 # One provider create per room per process: a second admission of the room
 # waits here, holding no database lock, until the first has recorded the
 # machine. One lock per room ever provisioned, so this stays small.
@@ -136,31 +128,17 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        team_id = await self._projects.team_for_project(project_id)
-        if team_id is not None:
-            await self.require_team_create_authority(
-                team_id, actor, conceal_nonmember=True
-            )
-            return
-        # Legacy team-less project. An outsider must not learn that it exists, let
-        # alone that it has a machine inventory — so a non-member is concealed as
-        # 404 here, the same as the team branch above. `require_manager` alone
-        # answers 403, which is right for roster writes (you can see the project,
-        # you just may not manage it) and wrong here.
-        members = MemberService(self._session)
-        if project.owner_handle != actor.handle:
-            roster, _ = await members.list_for_project(project_id)
-            if not any(m.user_handle == actor.handle for m in roster):
-                raise NotFoundError("Project not found")
-        await members.require_manager(project_id, actor)
+        await self.require_team_create_authority(
+            project.team_id, actor, conceal_nonmember=True
+        )
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Team membership authorizes room execution within the team's quota.
+        """Being on the project authorizes room execution within the team's quota.
 
-        Membership is the whole question. `TeamUserRelation` is (team, user) with
-        no human/agent distinction, so an agent seated on a team is as entitled
-        to the team's machines as anyone else on it. What is still required is an
-        id to check that membership against.
+        The project's roster is the whole question: its owner, its team's members
+        (agents seated on the team included) and its external members. Who spent
+        how much is not decided per person here. What is still required is a
+        signed-in identity to look up on that roster.
         """
         user_id = actor.user_id
         if actor.via == "cheese":
@@ -175,12 +153,12 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        team_id = await self._projects.team_for_project(project_id)
-        if team_id is not None:
-            if not await team_service(self._session).is_team_member(team_id, user_id):
-                raise ForbiddenError("只有团队成员可以使用团队云额度")
-        else:
-            await MemberService(self._session).require_manager(project_id, actor)
+        from app.domain.membership.roster import roster
+
+        if not any(
+            m.handle == actor.handle for m in await roster(self._session, project_id)
+        ):
+            raise ForbiddenError("只有项目成员可以使用项目的云额度")
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
@@ -283,24 +261,15 @@ class MachineService:
         body = {
             "customerId": customer_id,
             "accountId": account_id,
-            # MicroCloud defaults both to accountId. Naming them is what makes
-            # it possible to split compute spend from AI spend later without
-            # re-provisioning every machine.
-            "newapiAccountId": account_id,
-            "ccproxyAccountId": account_id,
             "hostname": hostname,
             "offeringId": int(offering["id"]),
             "user": user,
+            # No built-in AI channel: the machine only executes tools, and its
+            # sessions' models come from the session host. Without the field
+            # MicroCloud would wire its default channel onto the machine.
+            "aiMode": "none",
             **spec,
         }
-        # Ask for the AI channel at create (micro-cloud#78): a machine born on
-        # ccproxy starts its subscription login the moment it runs, instead of
-        # being set up on newapi first and switched by our sweep — one
-        # provisioning of the channel rather than two. A MicroCloud that
-        # predates the field ignores it and the sweep switches as before.
-        desired_ai_mode = settings.cloud_executor_ai_mode
-        if desired_ai_mode:
-            body["aiMode"] = desired_ai_mode
         if topic_id is not None and owner_user_id is not None and not ssh_pubkey:
             warm = await self._warm_pool.reserve(
                 body=body,
@@ -347,7 +316,7 @@ class MachineService:
             status=MachineStatus.provisioning,
             ip=None,
             requested_by=requested_by,
-            ai_mode=desired_ai_mode or "none",
+            ai_mode="none",
             ai_status=AiStatus.unknown,
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
@@ -360,11 +329,6 @@ class MachineService:
         async with creating:
             await self._session.commit()
             await startup_progress(topic_id, "正在请求创建机器")
-            # No separate switch call here. MicroCloud answers 400 to a switch on
-            # a machine that is still provisioning, so asking right after create
-            # only cost the turn path a 22s refusal (measured 2026-09-02, machine
-            # 478). The mode rides in the create body above; `reconcile_ai_mode`
-            # still switches a machine that came up on the wrong channel.
             try:
                 created = await self._client.create_machine(body)
             except BaseException:
@@ -684,39 +648,6 @@ class MachineService:
             )
         return out
 
-    async def reconcile_ai_mode(self, limit: int = 5) -> int:
-        """Level-triggered half of the →ccproxy story: any settled machine on
-        the wrong built-in AI channel gets switched. Catches machines whose
-        provision-time switch failed or raced MicroCloud's own wiring, and
-        machines that predate the setting."""
-        if settings.agent_session_device_id:
-            return 0
-        desired = settings.cloud_executor_ai_mode
-        if not desired:
-            return 0
-        machines = await self._repo.list_ai_mode_mismatch(desired, limit)
-        switched = 0
-        for machine in machines:
-            assert machine.machine_id is not None  # the query excludes reservations
-            try:
-                result = await self._client.switch_ai(machine.machine_id, desired)
-            except MicroCloudError:
-                logger.warning(
-                    "switching machine %s to %s failed", machine.hostname, desired
-                )
-                continue
-            await self._repo.set_state(
-                machine,
-                status=machine.status,
-                ip=machine.ip,
-                ai_mode=str(result.get("aiMode") or desired).lower(),
-                ai_status=_as_ai_status(str(result.get("aiStatus") or "").lower()),
-            )
-            switched += 1
-        if switched:
-            logger.info("AI channel reconcile: %s machine(s) → %s", switched, desired)
-        return switched
-
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider
         problem: a machine we can't reach is reported `unknown`, not lost."""
@@ -754,7 +685,6 @@ class MachineService:
             )
         if machine.topic_id is not None and machine.device_id is None:
             status = _as_status(remote.get("status"))
-            ai_status = _as_ai_status(remote.get("aiStatus"))
             if status != machine.status:
                 text = {
                     MachineStatus.starting: "机器正在启动",
@@ -765,8 +695,6 @@ class MachineService:
                     await startup_progress(
                         machine.topic_id, text, failed=status == MachineStatus.error
                     )
-            if ai_status != machine.ai_status and ai_status == AiStatus.provisioning:
-                await startup_progress(machine.topic_id, "正在为机器配置模型访问")
         return await self._repo.set_state(
             machine,
             status=_as_status(remote.get("status")),
@@ -780,12 +708,7 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("project not found")
-        team_id = project.team_id
-        if team_id is None:
-            team_id = await self._projects.team_for_project(project_id)
-        if team_id is None:
-            raise ValidationError("请先将项目关联到团队，再分配云资源")
-        return team_id
+        return project.team_id
 
     async def quota_machines(self, team_id: int) -> list[ProjectMachine]:
         """Inventory counted by both admission and the allocation notice."""
@@ -972,25 +895,15 @@ class MachineService:
             )
             return await self._repo.mark_enroll_failed(machine, error=reason)
 
-        # Read here or never: `mark_enrolled` erases the bootstrap key, so this
-        # is the last moment the platform can look at the machine over ssh.
-        upstream = enrollment.parse_ccproxy_upstream(output)
         await progress("连接器安装完成，等待平台确认连接")
         logger.info(
-            "enrolled machine %s as device %s (ccproxy identity %s): %s",
+            "enrolled machine %s as device %s: %s",
             machine.hostname,
             device.device_id,
-            upstream.split(":", 1)[0] if upstream else "not recorded",
-            # The identity's password rides in the same output as the device
-            # token, so it is redacted on the same line rather than one call
-            # later — a log is exactly where a credential must not appear.
-            enrollment.redact(output, device.token, upstream or "")[-200:],
+            enrollment.redact(output, device.token)[-200:],
         )
         return await self._repo.mark_enrolled(
-            machine,
-            device_id=device.device_id,
-            when=datetime.now(UTC),
-            ccproxy_upstream=upstream,
+            machine, device_id=device.device_id, when=datetime.now(UTC)
         )
 
     async def refresh_unsettled(self, limit: int = 10) -> int:
@@ -998,11 +911,10 @@ class MachineService:
 
         Nothing else does this outside a read: `list_for_project` refreshes what
         it returns, so a machine that settles while nobody has the project open
-        keeps its last-read state forever. That was harmless while enrolment
-        only needed `running`; it stopped being harmless once enrolment also
-        waits for the AI channel, because the value it waits on is exactly the
-        one that goes stale. Machine 473 sat unenrolled for 13 minutes on
-        2026-08-14 while MicroCloud had it `ready` throughout.
+        keeps its last-read state forever, and enrolment and a room's lease
+        both wait on exactly the values that go stale. Machine 473 sat unused
+        for 13 minutes on 2026-08-14 while MicroCloud had it settled
+        throughout.
         """
         machines = await self._repo.list_unsettled(limit)
         for machine in machines:
@@ -1024,17 +936,13 @@ class MachineService:
         return len(machines)
 
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
-        """Enroll every machine that is up and wired but not yet a device.
+        """Enroll every machine that is up but not yet a device.
 
         Runs on a clock rather than in a request: it SSHes into a machine,
         which is far too slow to hang a read on, and it must keep happening for a
         machine that became ready while nobody was looking.
         """
-        machines = await self._repo.list_awaiting_enrollment(
-            limit,
-            desired_ai_mode=settings.cloud_executor_ai_mode,
-            settle_cutoff=datetime.now(UTC) - ENROLL_SETTLE_GRACE,
-        )
+        machines = await self._repo.list_awaiting_enrollment(limit)
         enrolled = failed = 0
         for machine in machines:
             try:
@@ -1072,25 +980,9 @@ class MachineService:
             elif device is not None and device.owner_user_id == machine.owner_user_id:
                 # Device deletion also removes project/team/topic bindings. Do
                 # this before the machine row so a failure remains retryable.
-                try:
-                    await self._devices.delete_platform_provisioned(
-                        machine.device_id, actor_user_id=machine.owner_user_id
-                    )
-                except CcproxyTenantError as exc:
-                    # #420: the device carries a ccproxy ticket and revocation
-                    # was not confirmed. `forget` runs from `list_for_project`
-                    # (a GET), so raising here would wedge machine listing for
-                    # the whole project over a ccproxy outage. Keep BOTH rows —
-                    # the machine row is what brings us back here to retry once
-                    # ccproxy answers again — and say so loudly.
-                    logger.error(
-                        "not reaping machine %s yet: ccproxy revocation for "
-                        "device %s unconfirmed (%s)",
-                        machine.hostname,
-                        machine.device_id,
-                        exc,
-                    )
-                    return
+                await self._devices.delete_platform_provisioned(
+                    machine.device_id, actor_user_id=machine.owner_user_id
+                )
             elif device is not None:
                 # Never delete a device now owned by somebody else. This should
                 # be impossible for platform-enrolled machines, so retain an
@@ -1128,10 +1020,9 @@ def _stale(machine: ProjectMachine) -> bool:
 def _still_moving(machine: ProjectMachine) -> bool:
     """Whether either lifecycle can still change on its own.
 
-    Both must be considered. A machine reaches `running` while MicroCloud is
-    still wiring its Claude Code, so polling on the machine status alone would
-    stop the moment it settles and freeze `ai_status` at `provisioning` forever
-    — reporting a machine that can't run a turn as if it were finished.
+    Both must be considered: a room's lease waits on both, and MicroCloud can
+    report them settling at different moments, so polling on the machine
+    status alone would freeze whichever `ai_status` was read first.
     """
     return (
         machine.status in TRANSITIONAL

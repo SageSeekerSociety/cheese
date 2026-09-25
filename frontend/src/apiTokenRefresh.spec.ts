@@ -111,7 +111,7 @@ describe('ensureFreshToken', () => {
 })
 
 // `exp` 不是 token 唯一的死法。dev 上实测：一个签发 443 秒、还剩 457 秒的 token，
-// 被两层 API 连续拒了 24 次，而几秒前刚签的那个一切正常；`decode_token` 只做纯
+// 被两层 API 连续拒了 24 次，而几秒前刚签的那个一切正常；`verify_access_token` 只做纯
 // JWT 校验、没有吊销表，所以只可能是签名密钥在中途变了（后端重启）。只信 `exp`
 // 的后果是：用户接下来每一个请求都 401，一直到 token 快到期才会去刷新——最长 14
 // 分钟。「通知铃铛必 401」就是这个形状。
@@ -170,13 +170,14 @@ describe('refreshNow：不问 exp，直接换一个', () => {
   })
 
   it('刷不出新 token 时，存的那个原样留着', async () => {
-    // 换不动就别动。把 accessToken 清空会让调用方从「带着一个没人认的凭据」
-    // 变成「压根没有凭据」，而后者在 2.0 那边是静默降级成匿名，更难查。
+    // 服务端没答上来（不是 401）就别动。把 accessToken 清空会让调用方从「带着
+    // 一个没人认的凭据」变成「压根没有凭据」，而后者在 2.0 那边是静默降级成匿名，
+    // 更难查。
     const stale = jwt(600_000)
     localStorage.setItem('accessToken', stale)
     vi.stubGlobal('fetch', async () => {
       calls += 1
-      return { ok: false, status: 401, json: async () => ({}) } as unknown as Response
+      return { ok: false, status: 503, json: async () => ({}) } as unknown as Response
     })
     await refreshNow()
     expect(localStorage.getItem('accessToken')).toBe(stale)

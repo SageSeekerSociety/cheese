@@ -1,0 +1,15 @@
+/* 原型是一整页长文档，而 `src/styles/common.scss` 那套外壳是按真应用写的：
+   html / body / #app 一律 height:100% + overflow:hidden，真应用靠每个视图内部的
+   滚动容器翻页。原型没有那层内部容器，于是超过一屏的内容既看不全也滚不动
+   ——在话题预览里就是「滑不下去」。
+
+   选择器多带一层是故意的：`:root` / html body / html #app 的特异性分别压过
+   common.scss 里的 html / body / #app，这样胜负只由特异性决定，不依赖打包后
+   两份样式的先后顺序。真应用的样式一个字都没动。 */
+:root,
+html body,
+html #app {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}

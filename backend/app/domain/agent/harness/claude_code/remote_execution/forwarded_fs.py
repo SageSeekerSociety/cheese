@@ -1,4 +1,10 @@
-"""Read-only project context view backed by the executor transport."""
+"""Read-only project view backed by the executor transport.
+
+It holds the project context the session reads (instructions, rules, skills,
+workflows) from a cached tree, and the project's directories, looked up on the
+executor as they are asked for: the session keeps its shell's working
+directory only while that directory exists here.
+"""
 
 import base64
 import errno
@@ -57,9 +63,7 @@ class ForwardedProject:
                 "st_ctime": 0,
                 "st_atime": 0,
             }
-        entry = self.entries.get(name)
-        if entry is None:
-            raise OSError(errno.ENOENT, name)
+        entry = self.entries.get(name) or self._directory(name)
         kind = {
             "directory": stat.S_IFDIR,
             "file": stat.S_IFREG,
@@ -80,6 +84,19 @@ class ForwardedProject:
             "st_atime": entry["mtime_ns"] / 1_000_000_000,
         }
 
+    def _directory(self, name):
+        """A project directory outside the context tree, as the executor has it
+        now; ENOENT when it has none. `.git` stays the placeholder above."""
+        if name == ".git" or name.startswith(".git/"):
+            raise OSError(errno.ENOENT, name)
+        try:
+            found = self.call("context_fs", {"operation": "directory", "path": name})
+        except Exception as exc:
+            raise OSError(errno.EIO, name) from exc
+        if found.get("missing"):
+            raise OSError(errno.ENOENT, name)
+        return {"kind": "directory", "size": 0, **found}
+
     def readdir(self, path, handle=None):
         self.refresh()
         parent = self._name(path)
@@ -89,6 +106,12 @@ class ForwardedProject:
             for name in self.entries
             if name.startswith(prefix) and name != parent
         }
+        if parent != ".git" and not parent.startswith(".git/"):
+            try:
+                listed = self.call("context_fs", {"operation": "list", "path": parent})
+            except Exception as exc:
+                raise OSError(errno.EIO, parent) from exc
+            children.update(listed.get("directories", []))
         if not parent:
             children.add(".git")
         return [".", "..", *sorted(children)]

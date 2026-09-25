@@ -93,25 +93,25 @@ def test_the_transport_under_native_is_not_a_platform_action():
 
 
 def test_a_platform_command_called_as_a_tool_is_platform():
-    """The same action, under the name the harness publishes it as.
+    """The same action, under the name a harness without MCP publishes it as.
 
-    A pi room reaches the platform through a tool per CLI command rather than
-    through MCP, so every step that changed something outside the machine was
-    wearing the neutral dot — the one distinction the dot exists to draw, drawn
+    A pi room registers the platform's tools as extension tools, bare-named, so
+    missing them would put the neutral dot on every step that changed something
+    outside the machine — the one distinction the dot exists to draw, drawn
     backwards, in the rooms where it mattered.
     """
-    assert _is_platform_tool("cheese_doc_set", {"file": "notes.md"})
-    assert _is_platform_tool("cheese_accept_request", {"reviewer": "alice"})
+    assert _is_platform_tool("cheese_doc_set", {"path": "notes.md"})
+    assert _is_platform_tool("cheese_accept_request", {"subject": "fix: x"})
     # The alias the room's own system prompt names on every turn.
     assert _is_platform_tool("chat_send", {"content": "第一版好了"})
 
 
 def test_bash_with_cheese_cli_is_platform():
-    assert _is_platform_tool("Bash", {"command": 'cheese title "新标题"'})
-    assert _is_platform_tool("Bash", {"command": "/usr/local/bin/cheese doc set"})
+    assert _is_platform_tool("Bash", {"command": "cheese worktree 1234"})
+    assert _is_platform_tool("Bash", {"command": "/usr/local/bin/cheese sync"})
     # A cheese segment past the 120-char preview cut still counts — and 现场
     # shows that segment, so the dot and the line say the same thing.
-    assert _is_platform_tool("Bash", {"command": "x" * 200 + " && cheese notify hi"})
+    assert _is_platform_tool("Bash", {"command": "x" * 200 + " && cheese push-fix"})
 
 
 def test_plain_work_is_not_platform():
@@ -173,8 +173,7 @@ def test_format_tool_event_translates_pis_tools_too():
 
 
 def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
-    # pi 没有平台工具，它的平台动作全部是 shell 里的 cheese CLI —— 认不出这个
-    # 房间的 shell 工具，整轮现场就没有一个琥珀点。
+    # pi 房间的 shell 工具叫 bash —— 认不出它，机器上的 cheese 命令就没有琥珀点。
     assert _is_platform_tool("bash", {"command": "cheese show output/x.docx"})
     assert not _is_platform_tool("bash", {"command": "echo cheese"})
 
@@ -200,6 +199,6 @@ def test_the_amber_dot_is_judged_on_the_line_it_sits_next_to():
 
 
 def test_the_platform_step_is_the_one_the_line_shows():
-    command = "make && cheese doc set"
-    assert _text("Bash", {"command": command}) == "执行命令\ncheese doc set"
+    command = "make && cheese sync"
+    assert _text("Bash", {"command": command}) == "执行命令\ncheese sync"
     assert _is_platform_tool("Bash", {"command": command})

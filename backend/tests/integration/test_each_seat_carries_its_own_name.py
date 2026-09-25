@@ -7,11 +7,11 @@ the second one.
 """
 
 from app.domain.identity.handles import agent_instance_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def test_two_seated_agents_show_their_own_names(client):
-    project = client.post("/projects", json={"name": "Two names"}).json()["data"]
+    project = post_project(client, json={"name": "Two names"}).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Room", "created_by": "alice"},

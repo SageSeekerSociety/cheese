@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
         ActivityConsumer,
-        Backlog,
         EventConsumer,
         ReceiptConsumer,
+        SessionControls,
         SessionRef,
         UnreadProbe,
     )
@@ -234,6 +234,25 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_unread_probe(probe)
 
+    def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
+        """The runtime whose live session in this room takes controls, if any."""
+        from app.domain.agent.harness import SessionControls
+
+        owner = self._owners.get(topic_id)
+        candidates = [owner] if owner else self._runtimes()
+        for runtime in candidates:
+            if isinstance(runtime, SessionControls) and runtime.holds(topic_id):
+                return runtime
+        return None
+
+    def work_in_flight(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The work a live session in this room is running, if one is."""
+        for runtime in self._runtimes():
+            work = getattr(runtime, "work", {}).get(topic_id)
+            if work is not None:
+                return work
+        return None
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
         return any(runtime.holds(topic_id) for runtime in self._runtimes())
@@ -249,14 +268,6 @@ class ComputePool:
                 self._owners[session.topic_id] = runtime
             recovered.extend(sessions)
         return recovered
-
-    def backlog(self, session: "SessionRef") -> "Backlog":
-        """Retained events from all harnesses, each with its own landing cursor."""
-        from app.domain.agent.harness.backlog import CombinedBacklog
-
-        return CombinedBacklog(
-            [runtime.backlog(session) for runtime in self._runtimes()]
-        )
 
     async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
         """Land what a recovered session produced while nobody listened."""
@@ -325,28 +336,23 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     from app.domain.agent import place
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness.channel import Channel
-    from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, executor_launch
+    from app.domain.agent.harness.claude_code import (
+        ClaudeCodeChannel,
+        ClaudeCodeRuntime,
+        executor_launch,
+    )
     from app.domain.agent.harness.codex import CodexChannel, CodexRuntime
     from app.domain.agent.harness.pi.channel import PiChannel
     from app.domain.agent.harness.pi.runtime import PiRuntime
     from app.domain.agent.market import compute_default_name
 
-    def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
-        # One timeout policy, applied where the watching happens. The two-layer
-        # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
-        # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
-        # says dead, with `hard_ceiling_s` recorded when crossed and ending
-        # nothing. It used to be a constructor argument on every transport, which
-        # is how a single 900s deadline could kill a long-but-silent turn on one
-        # of them and not the others.
-        return ClaudeCodeRuntime(
-            channel,
-            idle_suspect_s=settings.agent_idle_suspect_s,
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-            unread_grace_s=settings.agent_unread_grace_s,
-            no_progress_s=settings.agent_no_progress_s,
-        )
+    # One liveness policy for every harness (``docs/agent-liveness.md``): the
+    # driven runtime ends a turn on its evidence, whichever runner produced it.
+    policy = {
+        "hard_ceiling_s": settings.agent_turn_hard_ceiling_s,
+        "no_progress_s": settings.agent_no_progress_s,
+        "unread_grace_s": settings.agent_unread_grace_s,
+    }
 
     # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次、可能再被
     # `PiChannel` 包一次，而这两个包装读的是设备传输自己的 `_hub` 与
@@ -367,7 +373,8 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     names = {channel.name for channel in channels}
     default_name = preferred if preferred in names else DeviceChannel.name
     backends: list[ComputeProvider] = [
-        runs_claude_code(CentralChannel(c)) for c in channels
+        ClaudeCodeRuntime(ClaudeCodeChannel(CentralChannel(c)), **policy)
+        for c in channels
     ]
     # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
     # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
@@ -377,10 +384,7 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     if CODEX in HARNESSES:
         backends.extend(
-            CodexRuntime(
-                CodexChannel(CentralChannel(c), executor_launch),
-                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-            )
+            CodexRuntime(CodexChannel(CentralChannel(c), executor_launch), **policy)
             for c in channels
         )
     # pi is the one backend NOT wrapped in CentralChannel: it runs on the
@@ -396,10 +400,7 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 用跟着改——`tests/unit/test_compute_pool.py` 的 `Elsewhere` 钉的就是这一句。
     if PI in HARNESSES:
         backends.extend(
-            PiRuntime(
-                PiChannel(c),
-                hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-            )
+            PiRuntime(PiChannel(c), **policy)
             for c in channels
             if place.HANDS_HERE in c.capabilities()
         )

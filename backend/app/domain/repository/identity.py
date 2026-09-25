@@ -3,7 +3,6 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
@@ -90,16 +89,8 @@ __all__ = [
     "platform_identity",
     "requester_handle",
     "resolve_for_handle",
-    "session_dir",
     "work_items",
 ]
-
-
-def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Directory for this room's session logs and command spools."""
-    return (
-        Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
-    ).resolve()
 
 
 def platform_identity(handle: str) -> GitIdentity:
@@ -218,7 +209,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
 
     It used to be derived: the batch was taken to be the membership of the tree
     the card delivered. That is wrong whenever a room works across two batches,
-    which is the ordinary case. A task's tree is fixed when `cheese split` runs
+    which is the ordinary case. A task's tree is fixed when `cheese_task` runs
     and records which batch was open THEN; which branch its code goes out on is
     decided when the room files a card. Run that inference over this project's
     own room/task/tree data as of 2026-09-08 and one delivery comes out wrong in

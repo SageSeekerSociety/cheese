@@ -39,7 +39,7 @@
                   taskStatusText
                 }}</v-chip>
                 <v-chip color="primary" variant="flat" label size="small">
-                  {{ taskData.submitterType === 'USER' ? '个人任务' : '小队任务' }}
+                  {{ taskData.submitterType === 'USER' ? '个人任务' : '团队任务' }}
                 </v-chip>
                 <v-chip v-if="taskData.resubmittable" variant="outlined" label size="small">可重复提交</v-chip>
               </div>

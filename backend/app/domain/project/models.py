@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -40,10 +41,11 @@ class Project(UuidPk, Timestamps, Base):
 
     name: Mapped[str] = mapped_column(String(200))
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # fusion P4: the 知是 Team this project is the AI workspace for (nullable — a
-    # personal project has none). Lets a team page open its Project natively.
-    team_id: Mapped[int | None] = mapped_column(
-        ForeignKey("team.id", ondelete="SET NULL"), nullable=True, index=True
+    # The team this project belongs to. Its members are the project's people and
+    # its machines and quota are the project's; personal work belongs to the
+    # owner's personal team. A team with projects cannot be deleted from under them.
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("team.id", ondelete="RESTRICT"), index=True
     )
     ai_mode: Mapped[AiMode] = mapped_column(
         Enum(AiMode, native_enum=False, length=16),
@@ -95,25 +97,17 @@ class Project(UuidPk, Timestamps, Base):
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # The project's join link (``/project-invites/<token>``), the same shape a
-    # team's has: permanent until a manager resets it, NULL until first asked for.
-    join_token: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, unique=True
-    )
-    # Whether someone arriving by that link waits for a manager. Off, they are in
-    # the moment they confirm; either way it is their own click, never the link's.
-    join_approval: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=text("true")
-    )
-
-
-class ProjectRole(enum.StrEnum):
-    lead = "lead"  # 组长
-    member = "member"
-    mentor = "mentor"  # 导师
 
 
 class ProjectMember(UuidPk, Timestamps, Base):
+    """Someone in this project who is not there through its team.
+
+    A person here is an external member: they came by an invitation they accepted,
+    and they see this project and nothing else of the team. An AI teammate's seat
+    is also a row here. The project's team members are never rows — they are read
+    from the team, so leaving the team is leaving its projects.
+    """
+
     __tablename__ = "project_members"
     __table_args__ = (
         UniqueConstraint("project_id", "user_handle", name="uq_project_member"),
@@ -123,10 +117,6 @@ class ProjectMember(UuidPk, Timestamps, Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
-    role: Mapped[ProjectRole] = mapped_column(
-        Enum(ProjectRole, native_enum=False, length=16),
-        default=ProjectRole.member,
-    )
 
 
 class InvitationStatus(enum.StrEnum):
@@ -149,12 +139,15 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
 
     __tablename__ = "project_invitations"
     __table_args__ = (
-        # 同一个人在同一个项目里只能有一张**待答复**的邀请。约束落在
-        # (project, invitee, status) 上而不是 (project, invitee)：拒绝过之后必须
-        # 还能再邀一次，而部分索引在 SQLite 上不通用，所以用这个三元组——
-        # 一张 pending 加任意多张已答复的，正好是要允许的形状。
-        UniqueConstraint(
-            "project_id", "invitee_handle", "status", name="uq_project_invitation"
+        # One invitation per person per project may be waiting for an answer;
+        # answered ones stay as the record, as many as there were — someone can
+        # be invited, leave, and be invited again.
+        Index(
+            "uq_project_invitation_pending",
+            "project_id",
+            "invitee_handle",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
         ),
     )
 
@@ -163,53 +156,11 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     )
     invitee_handle: Mapped[str] = mapped_column(String(64), index=True)
     inviter_handle: Mapped[str] = mapped_column(String(64))
-    role: Mapped[ProjectRole] = mapped_column(
-        Enum(ProjectRole, native_enum=False, length=16),
-        default=ProjectRole.member,
-    )
     status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, native_enum=False, length=16),
         default=InvitationStatus.pending,
     )
     responded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
-class JoinRequestStatus(enum.StrEnum):
-    pending = "pending"
-    approved = "approved"
-    rejected = "rejected"
-
-
-class ProjectJoinRequest(UuidPk, Timestamps, Base):
-    """Someone asking to join a project through its link, waiting for a manager.
-
-    The mirror of :class:`ProjectInvitation`: there a manager asks and the person
-    answers, here the person asks and a manager answers. Answered rows stay, for
-    the same reason — they are the record of how someone came to be on the roster.
-    """
-
-    __tablename__ = "project_join_requests"
-    __table_args__ = (
-        # One pending request per person per project; answered ones pile up, so
-        # someone turned down can ask again. Same shape as uq_project_invitation.
-        UniqueConstraint(
-            "project_id", "requester_handle", "status", name="uq_project_join_request"
-        ),
-    )
-
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
-    )
-    requester_handle: Mapped[str] = mapped_column(String(64), index=True)
-    message: Mapped[str] = mapped_column(Text, default="", server_default="")
-    status: Mapped[JoinRequestStatus] = mapped_column(
-        Enum(JoinRequestStatus, native_enum=False, length=16),
-        default=JoinRequestStatus.pending,
-    )
-    decided_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

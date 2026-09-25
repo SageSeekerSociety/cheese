@@ -20,12 +20,13 @@ else:
   names a difference code from the closed list in ``vocabulary.json`` — a hole
   named rather than a hole hidden.
 
-The records are fed through the real stream translators — ``MessageAssembler``
-for Claude Code, the two ``Assembler``s for pi and Codex — never through a
-stand-in, and never through a lower entry point than the one the platform
-itself calls. A fixture checked against a double would agree with the double
-and say nothing about what reaches a room; one checked against a fallback
-branch would stay green while the path production takes broke.
+The records are fed through the real translators — each harness's own
+``Assembler`` — never through a stand-in, and never through a lower entry point
+than the one the platform itself calls. Claude Code's cells are its stream-json
+records, recorded from the pinned build against the model fixture. A fixture
+checked against a double would agree with the double and say nothing about
+what reaches a room; one checked against a fallback branch would stay green
+while the path production takes broke.
 """
 
 import dataclasses
@@ -36,7 +37,7 @@ import pytest
 
 from app.domain.agent import service
 from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRef
-from app.domain.agent.harness.claude_code.hook_events import MessageAssembler
+from app.domain.agent.harness.claude_code.events import Assembler as ClaudeAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
 from app.domain.agent.harness.pi.events import Assembler as PiAssembler
 from tests.support.contract_harness import ContractHarness, fixtures, vocabulary
@@ -99,17 +100,11 @@ def _kind(event: object) -> str:
 def _translate(harness: str, records: list[dict]) -> list:
     """The records of one harness, through that harness's own real translator."""
     if harness == "claude-code":
-        # ``MessageAssembler.translate``, not ``translate_hook``: the platform
-        # reads this harness's records as a STREAM (hooks_substrate.py's
-        # backlog pass feeds every record through one assembler), and that is
-        # where a streamed message is reassembled from its flushes and a Stop
-        # drains what is still buffered. ``translate_hook`` alone has a
-        # MessageDisplay branch that says in its own comment it is the
-        # fallback for payloads without the flush fields — checking the
-        # contract against it would leave 「一条消息是一个协议边界」 free to
-        # break with every fixture still green.
-        assembler = MessageAssembler()
-        return [event for r in records for event in assembler.translate(r)]
+        # One assembler for the whole cell, fed in order, with no facts to
+        # start from: which card a sub-thread is on is learned from the records
+        # themselves, the way the mirror learns it.
+        assembler = ClaudeAssembler({}, "session-1")
+        return [event for r in records for event in assembler.accept(r)]
     if harness == "pi":
         assembler = PiAssembler("session-1")
         return [event for r in records for event in assembler.accept(r)]

@@ -43,9 +43,7 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
     names_a_person,
 )
-from app.domain.membership.services import MemberService
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.services import AcceptService
@@ -68,7 +66,7 @@ from app.domain.topic.repositories import (
 )
 from app.domain.topic_membership.services import TopicMemberService
 
-# Titles are AI-generated (the agent names a topic via `cheese title`), never
+# Titles are AI-generated (the agent names a topic via `cheese_title`), never
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts
 # untitled and 芝士 names it on its first turn (same as a + new topic).
 PLACEHOLDER_TITLE = "新话题"
@@ -333,7 +331,7 @@ class TopicService:
         project_owner: str | None,
     ) -> str | None:
         """Who owns a newborn topic: the real human who created it, else the
-        parent room's owner, else the project's owner, else the project's 组长.
+        parent room's owner, else the project's owner, else its team's owner.
 
         That last rung is not decoration. Measured on the dogfooding project
         2026-08-12, answering 「新话题的拥有者为什么有的有，有的是空的」: the
@@ -341,10 +339,10 @@ class TopicService:
         so every topic 芝士 opened under the root fell through all three rungs
         and came out blank — five active rooms with no one able to manage the
         roster. The ladder was right; its bottom had nothing to stand on. The
-        roster did: that project has a ``lead``, which is exactly "who is in
-        charge here" already recorded, not a new policy invented to fill a hole.
+        project's team does: its owner is "who is in charge here" already
+        recorded, not a new policy invented to fill a hole.
 
-        Returns None only when even the roster has no lead — the caller still
+        Returns None only when the team has no owner either — the caller still
         seeds 芝士, and the room stays manageable by any project member.
 
         "Is the creator 芝士" spans the whole agent handle namespace, not the bare
@@ -361,21 +359,29 @@ class TopicService:
             )
             if parent_owner:
                 return parent_owner
-        return project_owner or await self._project_lead(project_id)
+        return project_owner or await self._team_owner(project_id)
 
-    async def _project_lead(self, project_id: uuid.UUID) -> str | None:
-        """The project's 组长, as the last rung of the ownership ladder.
+    async def _team_owner(self, project_id: uuid.UUID) -> str | None:
+        """The owner of the project's team, as the last rung of the ladder.
 
         Read lazily — only when the rungs above came up empty — so an ordinary
-        topic-create still costs no extra query. Through the roster's *service*,
-        not its repository: `test_domain_import_guard` forbids the shortcut, and
-        the service is also where "who counts as a member" is decided.
+        topic-create still costs no extra query.
         """
-        members, _ = await MemberService(self._session).list_for_project(project_id)
-        return next(
-            (m.user_handle for m in members if m.role == ProjectRole.lead),
-            None,
-        )
+        from app.domain.project.services import ProjectService
+        from app.domain.team.models import TeamMemberRole
+        from app.domain.team.services import team_service
+        from app.domain.user.services import usernames_by_ids
+
+        team_id = await ProjectService(self._session).team_for_project(project_id)
+        if team_id is None:
+            return None
+        owners = [
+            r.user_id
+            for r in await team_service(self._session).get_team_members(team_id)
+            if r.role == TeamMemberRole.OWNER
+        ]
+        names = await usernames_by_ids(self._session, owners)
+        return next((names[uid] for uid in owners if uid in names), None)
 
     async def get_or_create_private(
         self,
@@ -1218,7 +1224,7 @@ class TopicService:
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese doc get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         landed = landing(

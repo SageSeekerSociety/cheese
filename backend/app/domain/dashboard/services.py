@@ -14,11 +14,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
@@ -35,7 +35,6 @@ class DashboardService:
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
         self._notifs = NotificationRepository(session)
-        self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
 
     async def _project_card(self, project_id: uuid.UUID) -> dict | None:
@@ -100,15 +99,20 @@ class DashboardService:
         self, project_id: uuid.UUID, user_handle: str, *, viewer: str
     ) -> dict:
         """成员页 (spec §7.2): one member's slice — topics they started, what's
-        waiting on them, their role. Doubles as the portfolio source.
+        waiting on them, how they are in the project (``source``: owner, team or
+        external). Doubles as the portfolio source.
 
-        The public half (topics, contributions, role) is the same for everyone;
+        The public half (topics, contributions, source) is the same for everyone;
         ``waiting_on_you`` is one person's mailbox, so only that person gets it
         — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        members = await self._members.list_for_project(project_id)
-        member = next((m for m in members if m.user_handle == user_handle), None)
+        from app.domain.membership.roster import roster
+
+        member = next(
+            (m for m in await roster(self._s, project_id) if m.handle == user_handle),
+            None,
+        )
         topics = await self._topics.list_for_project(project_id)
         started = [
             {"id": str(t.id), "title": t.title, "status": t.status.value}
@@ -160,7 +164,7 @@ class DashboardService:
         )
         return {
             "handle": user_handle,
-            "role": member.role.value if member else None,
+            "source": member.source if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
@@ -174,17 +178,21 @@ class DashboardService:
             ],
         }
 
-    async def user_profile(self, handle: str) -> dict:
+    async def user_profile(self, handle: str, *, viewer: str) -> dict:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
-        them (个人记忆, §8.4). This is the "项目过程即简历" view."""
+        them (个人记忆, §8.4). This is the "项目过程即简历" view.
+
+        Cut to what ``viewer`` may see. Their own page has everything; on
+        anyone else's, a project is listed only when the viewer may read it
+        too, and the understanding is empty — what the agents remember about a
+        person is not for other people to read."""
         from app.domain.memory.models import (
             MemoryEntry,
             MemoryScope,
             user_scope_about,
         )
         from app.domain.memory.store import live_entries
-        from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
         from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -195,16 +203,36 @@ class DashboardService:
             else None
         )
 
-        # Cross-project memberships + role + how much they started/contributed.
-        rows = (
-            await self._s.execute(
-                select(ProjectMember, Project)
-                .join(Project, Project.id == ProjectMember.project_id)
-                .where(ProjectMember.user_handle == handle)
+        # Every project they are in — owned, through a team, or as an external
+        # member — with how they are in it and how much they started/contributed.
+        theirs = await self._projects.list_visible_to(
+            handle=handle, user_id=user.id if user else None
+        )
+        is_self = viewer == handle
+        visible = [
+            project
+            for project in theirs
+            if is_self
+            or await may_read_project(self._s, project_id=project.id, handle=viewer)
+        ]
+        from app.domain.team.models import TeamUserRelation
+
+        teams = (
+            set(
+                (
+                    await self._s.scalars(
+                        select(TeamUserRelation.team_id).where(
+                            TeamUserRelation.user_id == user.id,
+                            TeamUserRelation.deleted_at.is_(None),
+                        )
+                    )
+                ).all()
             )
-        ).all()
+            if user
+            else set()
+        )
         projects = []
-        for member, project in rows:
+        for project in visible:
             started = (
                 await self._s.scalar(
                     select(func.count())
@@ -234,7 +262,15 @@ class DashboardService:
                 {
                     "project_id": str(project.id),
                     "name": project.name,
-                    "role": member.role.value,
+                    # Same precedence as the roster: owner, then team, then
+                    # external.
+                    "source": (
+                        "owner"
+                        if project.owner_handle == handle
+                        else "team"
+                        if project.team_id in teams
+                        else "external"
+                    ),
                     "topics_started": int(started),
                     "contributions": int(blocks),
                 }
@@ -244,23 +280,27 @@ class DashboardService:
         # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
         # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
         # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
-        understanding = [
-            row.content
-            for row in (
-                await self._s.scalars(
-                    select(MemoryEntry)
-                    .where(
-                        MemoryEntry.scope == MemoryScope.user,
-                        MemoryEntry.scope_id.endswith(
-                            user_scope_about(handle), autoescape=True
-                        ),
-                        live_entries(),
+        understanding = (
+            [
+                row.content
+                for row in (
+                    await self._s.scalars(
+                        select(MemoryEntry)
+                        .where(
+                            MemoryEntry.scope == MemoryScope.user,
+                            MemoryEntry.scope_id.endswith(
+                                user_scope_about(handle), autoescape=True
+                            ),
+                            live_entries(),
+                        )
+                        .order_by(MemoryEntry.created_at.desc())
+                        .limit(50)
                     )
-                    .order_by(MemoryEntry.created_at.desc())
-                    .limit(50)
-                )
-            ).all()
-        ][::-1]
+                ).all()
+            ][::-1]
+            if is_self
+            else []
+        )
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is

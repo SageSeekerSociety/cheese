@@ -18,7 +18,6 @@ import {
   getForgeAttribution,
   getForgeConnection,
   getGithubAccountAuthorizeUrl,
-  getProject,
   getUpstream,
   listOAuthConnections,
   listProjectMembers,
@@ -40,16 +39,18 @@ import {
 } from '../lib/githubAccount'
 import { relTime } from '../lib/relTime'
 import { myId } from '../me'
-import { useSudoStore } from '../stores/sudo'
-import { withSudo } from '../utils/sudo'
+import { SudoCancelledError, withSudo } from '../utils/sudo'
+
+import { t } from '@/i18n'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // Project defaults and favorites never change an already running room.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
 
-const projectName = ref('')
-const loading = ref(false)
+// 从 true 起步：挂载那一帧设置还没读回来，先画一帧空的表单再换成转圈就是一闪。
+const loading = ref(true)
 const error = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
 const upstreamUrl = ref('')
@@ -121,40 +122,23 @@ async function loadGithubAccountConnection() {
   }
 }
 
-// Unbinding needs a fresh re-authentication: withSudo sends the user through
-// the verification page, which returns here, and onMounted retries with the
-// ticket it minted.
-async function disconnectGithubAccount(connectionId = githubAccountConn.value?.id) {
+// Unbinding needs the person to confirm who they are first.
+async function disconnectGithubAccount() {
   const userId = myId()
+  const connectionId = githubAccountConn.value?.id
   if (!userId || connectionId === undefined) return
   disconnectingGithubAccount.value = true
   try {
-    await withSudo(
-      async (sudoTicket) => {
-        await deleteOAuthConnection(userId, connectionId, sudoTicket)
-        githubAccountConn.value = null
-      },
-      'unbindOAuthConnection',
-      { connectionId },
-      router
-    )
+    await withSudo('oauth:unbind', async (sudoTicket) => {
+      await deleteOAuthConnection(userId, connectionId, sudoTicket)
+      githubAccountConn.value = null
+    })
   } catch (e) {
+    if (e instanceof SudoCancelledError) return
     error.value = e instanceof Error ? e.message : '断开 GitHub 账号失败'
   } finally {
     disconnectingGithubAccount.value = false
   }
-}
-
-// Back from the verification page: finish the unbind the user already asked
-// for, then load the connection so the section shows what the server holds.
-// The retry state is cleared only after the retry has read its ticket.
-async function resumeGithubAccountDisconnect() {
-  const sudoStore = useSudoStore()
-  const retry = sudoStore.retryOperation
-  if (!sudoStore.isVerified || retry?.opKey !== 'unbindOAuthConnection') return
-  const connectionId = retry.opData?.connectionId
-  if (typeof connectionId === 'number') await disconnectGithubAccount(connectionId)
-  sudoStore.clearRetryState()
 }
 
 // 分支保护 (#718): its own three-state load (like 连接 GitHub 账号 above) —
@@ -270,13 +254,11 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, upP, forge, credit] = await Promise.all([
-      getProject(props.projectId),
+    const [upP, forge, credit] = await Promise.all([
       getUpstream(props.projectId),
       getForgeConnection(props.projectId),
       getForgeAttribution(props.projectId),
     ])
-    projectName.value = proj.name
     upstreamUrl.value = upP.url ?? ''
     forgeConnection.value = forge
     attribution.value = credit
@@ -370,11 +352,10 @@ function consumeGithubCallbackNotice() {
   router.replace({ query: rest })
 }
 
-onMounted(async () => {
+onMounted(() => {
   consumeGithubCallbackNotice()
   load()
   loadBranchProtection()
-  await resumeGithubAccountDisconnect()
   loadGithubAccountConnection()
 })
 watch(
@@ -387,500 +368,476 @@ watch(
 </script>
 
 <template>
-  <div class="settings-page fill-height overflow-y-auto">
-    <v-container class="py-6 page-container">
-      <div class="d-flex align-center mb-4">
-        <v-spacer />
-        <v-btn
-          variant="text"
-          size="small"
-          append-icon="mdi-storefront-outline"
-          @click="router.push({ name: 'market' })"
-        >
-          市场
-        </v-btn>
-      </div>
+  <ProjectPage class="settings-page" :title="t('navigation.project.settings')">
+    <template #actions>
+      <v-btn append-icon="mdi-storefront-outline" @click="router.push({ name: 'market' })">市场</v-btn>
+    </template>
+    <div v-if="loading" class="d-flex justify-center py-10">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
+    <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4">
+      {{ error }}
+    </v-alert>
 
-      <div class="mb-6">
-        <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
-        <h1 class="t-page-title">项目设置</h1>
-        <p class="t-body c-muted mt-1" style="max-width: 640px">这个项目的队友、运行环境、交付规则和仓库连接</p>
-      </div>
-
-      <div v-if="loading" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-      <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4">
-        {{ error }}
-      </v-alert>
-
-      <template v-else>
-        <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
+    <template v-else>
+      <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
              规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
              没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
-        <h2 class="t-title settings-group">队友</h2>
-        <AgentTeamSettings :project-id="projectId" />
+      <h2 class="t-title settings-group">队友</h2>
+      <AgentTeamSettings :project-id="projectId" />
 
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
-            <span class="page-section-title">默认模型</span>
-          </div>
-          <div class="page-section-body">
-            <ProjectDefaultModelSettings :project-id="projectId" />
-          </div>
-        </section>
+      <section class="page-section">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+          <span class="page-section-title">默认模型</span>
+        </div>
+        <div class="page-section-body">
+          <ProjectDefaultModelSettings :project-id="projectId" />
+        </div>
+      </section>
 
-        <h2 class="t-title settings-group">运行环境</h2>
-        <section class="page-section">
-          <ProjectComputeSettings :project-id="projectId" />
-        </section>
-        <ProjectEnvironmentSettings :project-id="projectId" />
-        <CreditsPanel :project-id="projectId" />
+      <h2 class="t-title settings-group">运行环境</h2>
+      <section class="page-section">
+        <ProjectComputeSettings :project-id="projectId" />
+      </section>
+      <ProjectEnvironmentSettings :project-id="projectId" />
+      <CreditsPanel :project-id="projectId" />
 
-        <h2 class="t-title settings-group">交付</h2>
+      <h2 class="t-title settings-group">交付</h2>
 
-        <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。
+      <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。
              GitHub 自己开了保护时同名规则灰掉（拍板②），说明见 ghEnforced 的注释。 -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-shield-outline</v-icon>
-            <span class="page-section-title">分支保护</span>
+      <section class="page-section">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-shield-outline</v-icon>
+          <span class="page-section-title">分支保护</span>
+        </div>
+        <div class="page-section-body">
+          <!-- 加载中 -->
+          <div v-if="bpLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
+            <v-progress-circular indeterminate size="16" width="2" color="primary" />
+            <span class="t-body c-muted">正在加载分支保护规则…</span>
           </div>
-          <div class="page-section-body">
-            <!-- 加载中 -->
-            <div v-if="bpLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
-              <v-progress-circular indeterminate size="16" width="2" color="primary" />
-              <span class="t-body c-muted">正在加载分支保护规则…</span>
+
+          <!-- 加载失败 -->
+          <div v-else-if="bpLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
+            <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
+            <span class="t-body text-error">{{ bpLoadError ?? '加载分支保护规则失败' }}</span>
+            <v-spacer />
+            <v-btn size="small" variant="text" @click="loadBranchProtection">重试</v-btn>
+          </div>
+
+          <template v-else-if="bp">
+            <!-- GitHub 已开保护: 顶行提示 + 同名规则灰掉；查不到状态只说明，不灰 -->
+            <div v-if="bp.github_protection.enforced" class="bp-github-note">
+              <v-icon size="16" class="c-muted">mdi-github</v-icon>
+              <span>GitHub 已在执行以下规则</span>
             </div>
+            <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint" style="font-size: 0.8rem">
+              暂时查不到 GitHub 侧的保护状态，以下规则按平台配置执行
+            </p>
 
-            <!-- 加载失败 -->
-            <div v-else-if="bpLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
-              <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-              <span class="t-body text-error">{{ bpLoadError ?? '加载分支保护规则失败' }}</span>
-              <v-spacer />
-              <v-btn size="small" variant="text" @click="loadBranchProtection">重试</v-btn>
-            </div>
+            <v-alert v-if="bpError" type="error" density="compact" closable @click:close="bpError = null">
+              {{ bpError }}
+            </v-alert>
 
-            <template v-else-if="bp">
-              <!-- GitHub 已开保护: 顶行提示 + 同名规则灰掉；查不到状态只说明，不灰 -->
-              <div v-if="bp.github_protection.enforced" class="bp-github-note">
-                <v-icon size="16" class="c-muted">mdi-github</v-icon>
-                <span>GitHub 已在执行以下规则</span>
+            <!-- 1. 合并前必须通过的检查 -->
+            <div class="bp-row bp-row--stack">
+              <div class="bp-main">
+                <div class="bp-label">合并前必须通过的检查</div>
+                <div class="bp-hint c-faint">点名的检查全部通过才能合并；填了路径范围的检查只在改到对应文件时要求</div>
               </div>
-              <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint" style="font-size: 0.8rem">
-                暂时查不到 GitHub 侧的保护状态，以下规则按平台配置执行
-              </p>
-
-              <v-alert v-if="bpError" type="error" density="compact" closable @click:close="bpError = null">
-                {{ bpError }}
-              </v-alert>
-
-              <!-- 1. 合并前必须通过的检查 -->
-              <div class="bp-row bp-row--stack">
-                <div class="bp-main">
-                  <div class="bp-label">合并前必须通过的检查</div>
-                  <div class="bp-hint c-faint">
-                    点名的检查全部通过才能合并；填了路径范围的检查只在改到对应文件时要求
-                  </div>
-                </div>
-                <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">暂无必须通过的检查</div>
-                <div v-for="(c, i) in bp.required_checks" :key="`${c.name}-${i}`" class="bp-check">
-                  <span class="bp-check-name">{{ c.name }}</span>
-                  <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{ c.paths.join('、') }}</span>
-                  <span v-else class="bp-check-paths c-faint">所有文件</span>
-                  <v-spacer />
-                  <v-btn
-                    icon
-                    size="x-small"
-                    variant="text"
-                    title="移除这条检查"
-                    :disabled="ghEnforced || bpBusy"
-                    @click="removeRequiredCheck(i)"
-                  >
-                    <v-icon size="16">mdi-close</v-icon>
-                  </v-btn>
-                </div>
-                <div class="d-flex align-center" style="gap: 8px">
-                  <v-text-field
-                    v-model="newCheckName"
-                    autocomplete="off"
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    placeholder="检查名"
-                    style="flex: 1"
-                    :disabled="ghEnforced || bpBusy"
-                    @keydown.enter="addRequiredCheck"
-                  />
-                  <v-text-field
-                    v-model="newCheckPaths"
-                    autocomplete="off"
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    placeholder="路径范围，如 backend/**，可留空"
-                    style="flex: 1"
-                    :disabled="ghEnforced || bpBusy"
-                    @keydown.enter="addRequiredCheck"
-                  />
-                  <v-btn
-                    size="small"
-                    variant="tonal"
-                    :disabled="ghEnforced || !newCheckName.trim()"
-                    :loading="bpSaving === 'required_checks'"
-                    @click="addRequiredCheck"
-                  >
-                    添加
-                  </v-btn>
-                </div>
-              </div>
-
-              <!-- 2. strict -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">合并前分支必须跟上 main</div>
-                  <div class="bp-hint c-faint">开启后落后的分支由平台先更新再合并</div>
-                </div>
-                <v-switch
-                  density="compact"
-                  color="primary"
-                  hide-details
-                  :model-value="bp.strict"
+              <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">暂无必须通过的检查</div>
+              <div v-for="(c, i) in bp.required_checks" :key="`${c.name}-${i}`" class="bp-check">
+                <span class="bp-check-name">{{ c.name }}</span>
+                <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{ c.paths.join('、') }}</span>
+                <span v-else class="bp-check-paths c-faint">所有文件</span>
+                <v-spacer />
+                <v-btn
+                  icon
+                  size="x-small"
+                  variant="text"
+                  title="移除这条检查"
                   :disabled="ghEnforced || bpBusy"
-                  :loading="bpSaving === 'strict' ? 'primary' : false"
-                  @update:model-value="saveBranchProtection({ strict: !!$event }, 'strict')"
-                />
+                  @click="removeRequiredCheck(i)"
+                >
+                  <v-icon size="16">mdi-close</v-icon>
+                </v-btn>
               </div>
-
-              <!-- 3. dismiss_stale -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">新提交作废已有的采纳</div>
-                  <div class="bp-hint c-faint">这里推送代码的通常是芝士，新的提交需要重新采纳，所以默认开启</div>
-                </div>
-                <v-switch
-                  density="compact"
-                  color="primary"
-                  hide-details
-                  :model-value="bp.dismiss_stale"
-                  :disabled="ghEnforced || bpBusy"
-                  :loading="bpSaving === 'dismiss_stale' ? 'primary' : false"
-                  @update:model-value="saveBranchProtection({ dismiss_stale: !!$event }, 'dismiss_stale')"
-                />
-              </div>
-
-              <!-- 4. auto_merge_allowed（平台自己的概念，不随 GitHub 灰掉） -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">允许自动合并</div>
-                  <div class="bp-hint c-faint">开启后，被规则拦住的采纳可以选择在检查全部通过时自动合并</div>
-                </div>
-                <v-switch
-                  density="compact"
-                  color="primary"
-                  hide-details
-                  :model-value="bp.auto_merge_allowed"
-                  :disabled="bpBusy"
-                  :loading="bpSaving === 'auto_merge_allowed' ? 'primary' : false"
-                  @update:model-value="saveBranchProtection({ auto_merge_allowed: !!$event }, 'auto_merge_allowed')"
-                />
-              </div>
-
-              <!-- 5. override_handles -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">人工放行的人</div>
-                  <div class="bp-hint c-faint">检查未过时可以放行合并的人；留空时是项目 owner 和 lead</div>
-                </div>
-                <v-select
-                  autocomplete="off"
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  multiple
-                  chips
-                  closable-chips
-                  placeholder="owner 和 lead"
-                  style="max-width: 320px"
-                  :items="bpMemberItems"
-                  :model-value="bp.override_handles ?? []"
-                  :disabled="ghEnforced || bpBusy"
-                  :loading="bpSaving === 'override_handles'"
-                  @update:model-value="saveOverrideHandles"
-                />
-              </div>
-
-              <!-- 6. approvals_required -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">需要几个人批准</div>
-                  <div class="bp-hint c-faint">采纳数达到这个数量才会合并</div>
-                </div>
+              <div class="d-flex align-center" style="gap: 8px">
                 <v-text-field
-                  v-model="approvalsDraft"
-                  type="number"
-                  min="1"
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  style="max-width: 96px"
-                  :disabled="ghEnforced || bpBusy"
-                  :loading="bpSaving === 'approvals_required'"
-                  @change="saveApprovals"
-                  @keydown.enter="saveApprovals"
-                />
-              </div>
-
-              <!-- 7. merge_method（只读附注） -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">合并方式</div>
-                  <div class="bp-hint c-faint">绑定 GitHub 的项目从仓库设置读取，这里不可修改</div>
-                </div>
-                <span class="bp-check-name">{{ bp.merge_method }}</span>
-              </div>
-
-              <!-- 8. default_reviewer（平台自己的概念，不随 GitHub 灰掉） -->
-              <div class="bp-row">
-                <div class="bp-main">
-                  <div class="bp-label">任务默认 reviewer</div>
-                  <div class="bp-hint c-faint">派任务没有指定 reviewer 时用这个人</div>
-                </div>
-                <v-select
+                  v-model="newCheckName"
                   autocomplete="off"
                   density="compact"
                   variant="outlined"
                   hide-details
-                  style="max-width: 320px"
-                  :items="bpReviewerItems"
-                  :model-value="bp.default_reviewer"
-                  :disabled="bpBusy"
-                  :loading="bpSaving === 'default_reviewer'"
-                  @update:model-value="saveBranchProtection({ default_reviewer: $event ?? '' }, 'default_reviewer')"
+                  placeholder="检查名"
+                  style="flex: 1"
+                  :disabled="ghEnforced || bpBusy"
+                  @keydown.enter="addRequiredCheck"
                 />
+                <v-text-field
+                  v-model="newCheckPaths"
+                  autocomplete="off"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  placeholder="路径范围，如 backend/**，可留空"
+                  style="flex: 1"
+                  :disabled="ghEnforced || bpBusy"
+                  @keydown.enter="addRequiredCheck"
+                />
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  :disabled="ghEnforced || !newCheckName.trim()"
+                  :loading="bpSaving === 'required_checks'"
+                  @click="addRequiredCheck"
+                >
+                  添加
+                </v-btn>
               </div>
-            </template>
-          </div>
-        </section>
+            </div>
 
-        <h2 class="t-title settings-group">仓库</h2>
+            <!-- 2. strict -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">合并前分支必须跟上 main</div>
+                <div class="bp-hint c-faint">开启后落后的分支由平台先更新再合并</div>
+              </div>
+              <v-switch
+                density="compact"
+                color="primary"
+                hide-details
+                :model-value="bp.strict"
+                :disabled="ghEnforced || bpBusy"
+                :loading="bpSaving === 'strict' ? 'primary' : false"
+                @update:model-value="saveBranchProtection({ strict: !!$event }, 'strict')"
+              />
+            </div>
 
-        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section v-if="forgeConnection?.kind === 'github_app' && !forgeConnection.connected" class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
-            <span class="page-section-title">GitHub 仓库地址</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center" style="gap: 8px">
-              <v-text-field
-                v-model="upstreamUrl"
+            <!-- 3. dismiss_stale -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">新提交作废已有的采纳</div>
+                <div class="bp-hint c-faint">这里推送代码的通常是芝士，新的提交需要重新采纳，所以默认开启</div>
+              </div>
+              <v-switch
+                density="compact"
+                color="primary"
+                hide-details
+                :model-value="bp.dismiss_stale"
+                :disabled="ghEnforced || bpBusy"
+                :loading="bpSaving === 'dismiss_stale' ? 'primary' : false"
+                @update:model-value="saveBranchProtection({ dismiss_stale: !!$event }, 'dismiss_stale')"
+              />
+            </div>
+
+            <!-- 4. auto_merge_allowed（平台自己的概念，不随 GitHub 灰掉） -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">允许自动合并</div>
+                <div class="bp-hint c-faint">开启后，被规则拦住的采纳可以选择在检查全部通过时自动合并</div>
+              </div>
+              <v-switch
+                density="compact"
+                color="primary"
+                hide-details
+                :model-value="bp.auto_merge_allowed"
+                :disabled="bpBusy"
+                :loading="bpSaving === 'auto_merge_allowed' ? 'primary' : false"
+                @update:model-value="saveBranchProtection({ auto_merge_allowed: !!$event }, 'auto_merge_allowed')"
+              />
+            </div>
+
+            <!-- 5. override_handles -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">人工放行的人</div>
+                <div class="bp-hint c-faint">检查未过时可以放行合并的人；留空时是项目 owner 和 lead</div>
+              </div>
+              <v-select
                 autocomplete="off"
                 density="compact"
                 variant="outlined"
                 hide-details
-                placeholder="https://github.com/组织或用户名/仓库名"
-                style="flex: 1"
-                @keydown.enter="saveUpstream"
+                multiple
+                chips
+                closable-chips
+                placeholder="owner 和 lead"
+                style="max-width: 320px"
+                :items="bpMemberItems"
+                :model-value="bp.override_handles ?? []"
+                :disabled="ghEnforced || bpBusy"
+                :loading="bpSaving === 'override_handles'"
+                @update:model-value="saveOverrideHandles"
               />
-              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
             </div>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
-            </p>
-          </div>
-        </section>
 
-        <section v-if="forgeConnection?.kind === 'forgejo'" class="page-section" data-testid="forge-repository">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
-            <span class="page-section-title">代码仓库</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center flex-wrap" style="gap: 8px">
-              <v-icon v-if="forgeConnection.connected" size="18" color="success">mdi-check-circle</v-icon>
-              <span class="t-body">{{ forgeConnection.connected ? '由芝士托管' : '仓库正在准备中' }}</span>
-              <v-spacer />
-              <v-btn
-                v-if="forgeConnection.url"
-                :href="forgeConnection.url"
-                target="_blank"
-                rel="noopener noreferrer"
-                size="small"
-                variant="tonal"
-              >
-                打开仓库
-              </v-btn>
+            <!-- 6. approvals_required -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">需要几个人批准</div>
+                <div class="bp-hint c-faint">采纳数达到这个数量才会合并</div>
+              </div>
+              <v-text-field
+                v-model="approvalsDraft"
+                type="number"
+                min="1"
+                density="compact"
+                variant="outlined"
+                hide-details
+                style="max-width: 96px"
+                :disabled="ghEnforced || bpBusy"
+                :loading="bpSaving === 'approvals_required'"
+                @change="saveApprovals"
+                @keydown.enter="saveApprovals"
+              />
             </div>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">项目创建后，暂不支持切换托管服务。</p>
-          </div>
-        </section>
 
-        <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
-             git 操作走这个 installation 的短时 token -->
-        <section v-if="forgeConnection?.kind === 'github_app'" class="page-section" data-testid="github-repository">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-github</v-icon>
-            <span class="page-section-title">连接 GitHub 仓库</span>
-          </div>
-          <div class="page-section-body">
-            <v-alert
-              v-if="githubRepoNotice"
-              :type="githubRepoNotice.type"
-              density="comfortable"
-              closable
-              class="mb-3"
-              @click:close="githubRepoNotice = null"
-            >
-              {{ githubRepoNotice.text }}
-            </v-alert>
-            <div v-if="forgeConnection.connected" class="d-flex align-center" style="gap: 8px">
-              <v-icon size="18" color="success">mdi-check-circle</v-icon>
-              <span class="t-body">
-                已连接 <strong>{{ forgeConnection.repo }}</strong>
-              </span>
-              <v-spacer />
-              <v-btn size="small" variant="tonal" :loading="connectingGithubRepo" @click="connectGithubRepo">
-                重新连接
-              </v-btn>
+            <!-- 7. merge_method（只读附注） -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">合并方式</div>
+                <div class="bp-hint c-faint">绑定 GitHub 的项目从仓库设置读取，这里不可修改</div>
+              </div>
+              <span class="bp-check-name">{{ bp.merge_method }}</span>
             </div>
-            <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">暂无关联仓库</span>
-              <v-spacer />
-              <v-btn
-                size="small"
-                color="primary"
-                variant="flat"
-                :loading="connectingGithubRepo"
-                @click="connectGithubRepo"
-              >
-                连接 GitHub 仓库
-              </v-btn>
-            </div>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
-              会按这个连接自动签发，不用再手工配置。
-            </p>
-          </div>
-        </section>
 
-        <section class="page-section" data-testid="forge-attribution">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-account-edit-outline</v-icon>
-            <span class="page-section-title">提交署名</span>
-          </div>
-          <div class="page-section-body">
-            <v-alert v-if="attributionError" type="error" density="compact" class="mb-3">{{
-              attributionError
-            }}</v-alert>
-            <v-select
+            <!-- 8. default_reviewer（平台自己的概念，不随 GitHub 灰掉） -->
+            <div class="bp-row">
+              <div class="bp-main">
+                <div class="bp-label">任务默认 reviewer</div>
+                <div class="bp-hint c-faint">派任务没有指定 reviewer 时用这个人</div>
+              </div>
+              <v-select
+                autocomplete="off"
+                density="compact"
+                variant="outlined"
+                hide-details
+                style="max-width: 320px"
+                :items="bpReviewerItems"
+                :model-value="bp.default_reviewer"
+                :disabled="bpBusy"
+                :loading="bpSaving === 'default_reviewer'"
+                @update:model-value="saveBranchProtection({ default_reviewer: $event ?? '' }, 'default_reviewer')"
+              />
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <h2 class="t-title settings-group">仓库</h2>
+
+      <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
+      <section v-if="forgeConnection?.kind === 'github_app' && !forgeConnection.connected" class="page-section">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+          <span class="page-section-title">GitHub 仓库地址</span>
+        </div>
+        <div class="page-section-body">
+          <div class="d-flex align-center" style="gap: 8px">
+            <v-text-field
+              v-model="upstreamUrl"
               autocomplete="off"
-              :model-value="attributionChoice"
-              :items="attributionItems"
-              label="将任务请求者列为共同作者"
-              :loading="attributionSaving"
-              :disabled="attributionSaving"
+              density="compact"
+              variant="outlined"
               hide-details
-              @update:model-value="saveAttribution"
+              placeholder="https://github.com/组织或用户名/仓库名"
+              style="flex: 1"
+              @keydown.enter="saveUpstream"
             />
-            <p class="t-body c-muted mt-2">{{ attribution?.effective ? '当前已开启' : '当前已关闭' }}</p>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。
-            </p>
+            <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
           </div>
-        </section>
+          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+            填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
+          </p>
+        </div>
+      </section>
 
-        <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
+      <section v-if="forgeConnection?.kind === 'forgejo'" class="page-section" data-testid="forge-repository">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+          <span class="page-section-title">代码仓库</span>
+        </div>
+        <div class="page-section-body">
+          <div class="d-flex align-center flex-wrap" style="gap: 8px">
+            <v-icon v-if="forgeConnection.connected" size="18" color="success">mdi-check-circle</v-icon>
+            <span class="t-body">{{ forgeConnection.connected ? '由芝士托管' : '仓库正在准备中' }}</span>
+            <v-spacer />
+            <v-btn
+              v-if="forgeConnection.url"
+              :href="forgeConnection.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              size="small"
+              variant="tonal"
+            >
+              打开仓库
+            </v-btn>
+          </div>
+          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">项目创建后，暂不支持切换托管服务。</p>
+        </div>
+      </section>
+
+      <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
+             git 操作走这个 installation 的短时 token -->
+      <section v-if="forgeConnection?.kind === 'github_app'" class="page-section" data-testid="github-repository">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-github</v-icon>
+          <span class="page-section-title">连接 GitHub 仓库</span>
+        </div>
+        <div class="page-section-body">
+          <v-alert
+            v-if="githubRepoNotice"
+            :type="githubRepoNotice.type"
+            density="comfortable"
+            closable
+            class="mb-3"
+            @click:close="githubRepoNotice = null"
+          >
+            {{ githubRepoNotice.text }}
+          </v-alert>
+          <div v-if="forgeConnection.connected" class="d-flex align-center" style="gap: 8px">
+            <v-icon size="18" color="success">mdi-check-circle</v-icon>
+            <span class="t-body">
+              已连接 <strong>{{ forgeConnection.repo }}</strong>
+            </span>
+            <v-spacer />
+            <v-btn size="small" variant="tonal" :loading="connectingGithubRepo" @click="connectGithubRepo">
+              重新连接
+            </v-btn>
+          </div>
+          <div v-else class="d-flex align-center" style="gap: 8px">
+            <span class="t-body c-muted">暂无关联仓库</span>
+            <v-spacer />
+            <v-btn
+              size="small"
+              color="primary"
+              variant="flat"
+              :loading="connectingGithubRepo"
+              @click="connectGithubRepo"
+            >
+              连接 GitHub 仓库
+            </v-btn>
+          </div>
+          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+            通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
+            会按这个连接自动签发，不用再手工配置。
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" data-testid="forge-attribution">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-account-edit-outline</v-icon>
+          <span class="page-section-title">提交署名</span>
+        </div>
+        <div class="page-section-body">
+          <v-alert v-if="attributionError" type="error" density="compact" class="mb-3">{{ attributionError }}</v-alert>
+          <v-select
+            autocomplete="off"
+            :model-value="attributionChoice"
+            :items="attributionItems"
+            label="将任务请求者列为共同作者"
+            :loading="attributionSaving"
+            :disabled="attributionSaving"
+            hide-details
+            @update:model-value="saveAttribution"
+          />
+          <p class="t-body c-muted mt-2">{{ attribution?.effective ? '当前已开启' : '当前已关闭' }}</p>
+          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+            开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。
+          </p>
+        </div>
+      </section>
+
+      <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
              OAuth 登录 —— 记录"这个人是哪个 GitHub 账号", 供 credit 归属 +
              两阶段采纳代表身份开 PR 用 -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
-            <span class="page-section-title">连接 GitHub 账号</span>
+      <section class="page-section">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
+          <span class="page-section-title">连接 GitHub 账号</span>
+        </div>
+        <div class="page-section-body">
+          <!-- The 账号 flow's own outcome, in the 账号 section. -->
+          <v-alert
+            v-if="githubAccountNotice"
+            :type="githubAccountNotice.type"
+            density="comfortable"
+            closable
+            class="mb-3"
+            @click:close="githubAccountNotice = null"
+          >
+            {{ githubAccountNotice.text }}
+          </v-alert>
+
+          <!-- 加载中 -->
+          <div v-if="githubAccountLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
+            <v-progress-circular indeterminate size="16" width="2" color="primary" />
+            <span class="t-body c-muted">正在加载连接状态…</span>
           </div>
-          <div class="page-section-body">
-            <!-- The 账号 flow's own outcome, in the 账号 section. -->
-            <v-alert
-              v-if="githubAccountNotice"
-              :type="githubAccountNotice.type"
-              density="comfortable"
-              closable
-              class="mb-3"
-              @click:close="githubAccountNotice = null"
-            >
-              {{ githubAccountNotice.text }}
-            </v-alert>
 
-            <!-- 加载中 -->
-            <div v-if="githubAccountLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
-              <v-progress-circular indeterminate size="16" width="2" color="primary" />
-              <span class="t-body c-muted">正在加载连接状态…</span>
-            </div>
+          <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
+          <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
+            <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
+            <span class="t-body text-error">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
+            <v-spacer />
+            <v-btn size="small" variant="text" @click="loadGithubAccountConnection">重试</v-btn>
+          </div>
 
-            <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
-            <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
-              <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-              <span class="t-body text-error">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
-              <v-spacer />
-              <v-btn size="small" variant="text" @click="loadGithubAccountConnection">重试</v-btn>
-            </div>
-
-            <!-- 已连接 -->
-            <template v-else-if="githubAccountConn">
-              <div class="d-flex align-center" style="gap: 8px">
-                <v-icon size="18" color="success">mdi-check-circle</v-icon>
-                <span class="t-body">
-                  已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
-                  <span v-if="githubAccountConn.connectedAt" class="c-faint" style="font-size: 0.8rem">
-                    （{{ relTime(githubAccountConn.connectedAt) }}连接）
-                  </span>
+          <!-- 已连接 -->
+          <template v-else-if="githubAccountConn">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-icon size="18" color="success">mdi-check-circle</v-icon>
+              <span class="t-body">
+                已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
+                <span v-if="githubAccountConn.connectedAt" class="c-faint" style="font-size: 0.8rem">
+                  （{{ relTime(githubAccountConn.connectedAt) }}连接）
                 </span>
-                <v-spacer />
-                <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
-                  重新连接
-                </v-btn>
-                <v-btn
-                  size="small"
-                  variant="text"
-                  color="error"
-                  :loading="disconnectingGithubAccount"
-                  @click="disconnectGithubAccount()"
-                >
-                  断开
-                </v-btn>
-              </div>
-              <v-alert
-                v-if="isGithubAccountTokenExpired(githubAccountConn)"
-                type="warning"
-                density="comfortable"
-                variant="tonal"
-                class="mt-2"
-              >
-                GitHub 授权已过期，暂时无法以你的身份创建 PR。请点击“重新连接”刷新授权。
-              </v-alert>
-            </template>
-
-            <!-- 未连接 -->
-            <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">暂无关联账号</span>
+              </span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
-                连接 GitHub 账号
+                重新连接
+              </v-btn>
+              <v-btn
+                size="small"
+                variant="text"
+                color="error"
+                :loading="disconnectingGithubAccount"
+                @click="disconnectGithubAccount()"
+              >
+                断开
               </v-btn>
             </div>
+            <v-alert
+              v-if="isGithubAccountTokenExpired(githubAccountConn)"
+              type="warning"
+              density="comfortable"
+              variant="tonal"
+              class="mt-2"
+            >
+              GitHub 授权已过期，暂时无法以你的身份创建 PR。请点击“重新连接”刷新授权。
+            </v-alert>
+          </template>
 
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。
-            </p>
+          <!-- 未连接 -->
+          <div v-else class="d-flex align-center" style="gap: 8px">
+            <span class="t-body c-muted">暂无关联账号</span>
+            <v-spacer />
+            <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
+              连接 GitHub 账号
+            </v-btn>
           </div>
-        </section>
-      </template>
-    </v-container>
 
-    <!-- 新建角色: the Claude Code agents-file fields — name/title/description
-         (frontmatter) + persona body. -->
-  </div>
+          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+            用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。
+          </p>
+        </div>
+      </section>
+    </template>
+  </ProjectPage>
 </template>
 
 <style scoped>

@@ -1,12 +1,17 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
-    return client.post(
-        "/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]["id"]
+    return post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]["id"]
 
 
 def test_private_chat_get_or_create_and_hidden_from_tree(client):
@@ -58,11 +63,7 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
 ):
     pid = _project(client)
     owner_headers = bearer("user-1")
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "bob"},
-        headers=owner_headers,
-    )
+    join_project_team(client, pid, "bob")
     private = client.get(
         f"/projects/{pid}/private-chat",
         params={"user_handle": "user-1", "peer_handle": "alice"},
@@ -88,11 +89,6 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
 def test_member_summary(client, bearer):
     pid = _project(client)
     client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "user-1"},
-        headers=bearer("user-1"),  # the project owner
-    )
-    client.post(
         "/topics",
         json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},
     )
@@ -112,7 +108,8 @@ def test_member_summary(client, bearer):
         f"/projects/{pid}/members/user-1/summary", headers=bearer("user-1")
     ).json()["data"]
     assert s["handle"] == "user-1"
-    assert s["role"] == "member"
+    # user-1 is in the project as its owner.
+    assert s["source"] == "owner"
     assert any(t["title"] == "我开的话题" for t in s["topics_started"])
     assert any(w["title"] == "等你定" for w in s["waiting_on_you"])
 
@@ -127,9 +124,7 @@ def test_a_dm_between_two_people_summons_nobody(client, bearer):
     """
     pid = _project(client)
     owner_headers = bearer("user-1")
-    client.post(
-        f"/projects/{pid}/members", json={"user_handle": "alice"}, headers=owner_headers
-    )
+    join_project_team(client, pid, "alice")
     private = client.get(
         f"/projects/{pid}/private-chat",
         params={"user_handle": "user-1", "peer_handle": "alice"},

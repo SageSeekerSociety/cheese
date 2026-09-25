@@ -1,0 +1,97 @@
+name: Desktop app
+
+# Builds desktop/ — the web app in a native window, plus connecting the computer
+# it runs on as a device — for macOS (both chips) and Windows. On main the build
+# replaces the assets of the `desktop-latest` release, which is where the
+# download links on 「我的设备」 point (frontend/src/lib/desktop.ts). It is a
+# pre-release on purpose: the repository's "latest" release is the unrelated
+# 0.x line, and a normal release here would take that name from it.
+on:
+  pull_request:
+    paths: [desktop/**, .github/workflows/desktop.yml]
+  push:
+    branches: [main]
+    paths: [desktop/**, .github/workflows/desktop.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: desktop
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg }
+          - { os: macos-14, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # pnpm comes from desktop/package.json's `packageManager` field.
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: rustup target add ${{ matrix.target }}
+
+      # Before anything compiles: tauri-build checks the bundled resources exist.
+      - name: Build tmux for the bundle
+        if: runner.os == 'macOS'
+        run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
+
+      - name: Test
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: desktop/src-tauri
+        run: cargo test --target ${{ matrix.target }}
+
+      - run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Name the installer
+        run: |
+          bundle=src-tauri/target/${{ matrix.target }}/release/bundle
+          mkdir -p out
+          if [ "$RUNNER_OS" = macOS ]; then cp "$bundle"/dmg/*.dmg out/${{ matrix.asset }}
+          else cp "$bundle"/nsis/*-setup.exe out/${{ matrix.asset }}; fi
+          ls -la out
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: desktop/out/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: out
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view desktop-latest >/dev/null 2>&1 ||
+            gh release create desktop-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Cheese desktop" --notes "Built from main by .github/workflows/desktop.yml."
+          gh release upload desktop-latest out/* --clobber

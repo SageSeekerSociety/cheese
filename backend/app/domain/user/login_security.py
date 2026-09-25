@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import logging
 import secrets
-import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -13,13 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt, keyed_digest, keyed_digests
-from app.core.errors import ForbiddenError
 from app.domain.user.models import UserBackupCode, UserTwoFactor
 
 logger = logging.getLogger(__name__)
 
-LOGIN_ATTEMPTS_PREFIX = "cheese:login_attempts:"
-LOGIN_LOCKOUT_PREFIX = "cheese:login_lockout:"
+# The password step is slowed per username rather than locked: see LoginDelay.
+LOGIN_FAILURES_PREFIX = "cheese:login_failures:"
+LOGIN_WAIT_PREFIX = "cheese:login_wait:"
 # The SECOND login step gets its own budget, keyed by user id rather than
 # username (#357): by the time a 2fa_pending token is presented there is no
 # username in the request, and — more importantly — a *successful* password
@@ -50,11 +50,21 @@ STEP_UP_PASSWORD_LOCKOUT_PREFIX = "cheese:sudo_password_lockout:"
 # confirming code. Only an offered secret can be confirmed, so the
 # re-authentication the first step asks for covers the whole setup.
 TOTP_PENDING_TTL_S = 600
-SESSION_PREFIX = "cheese:session:"
-USER_SESSIONS_PREFIX = "cheese:user_sessions:"
 PASSWORD_RESET_PREFIX = "cheese:password_reset:"
 
-MAX_LOGIN_ATTEMPTS = 5
+# Wrong passwords a username takes before each further one makes the next
+# attempt wait: FIRST_WAIT after the last free one, doubling per failure up to
+# MAX_WAIT. The cap is what bounds a stranger's hold over somebody else's
+# account: however many wrong passwords they send, the owner is never kept
+# waiting longer than it. It also bounds guessing: once at the cap, one
+# password per MAX_WAIT, about 290 a day.
+LOGIN_FREE_FAILURES = 5
+LOGIN_FIRST_WAIT_SECONDS = 30
+LOGIN_MAX_WAIT_SECONDS = 5 * 60
+# Failures are forgotten this long after the last one: long enough that
+# pausing between bursts does not buy a guesser the free attempts again
+# sooner than waiting at the cap would. A right password forgets them at once.
+LOGIN_FAILURE_WINDOW_SECONDS = 60 * 60
 MAX_TWO_FACTOR_ATTEMPTS = 5
 # Tighter than the shared 2FA budget: a backup code is read off a saved list,
 # not typed from a phone under time pressure, so three misses is already
@@ -70,21 +80,156 @@ MAX_STEP_UP_2FA_ATTEMPTS = 5
 MAX_STEP_UP_PASSWORD_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60
 PASSWORD_RESET_TTL = 30 * 60
-SESSION_TTL = 30 * 24 * 60 * 60
 
 
-class LoginRateLimiter:
-    """Failed-attempt budget for one credential step, keyed by ``subject``.
+# Failures one client address may make at each credential step, per window.
+# Generous on purpose: a campus puts many of its users behind a few NAT
+# addresses, so this only stops one source spraying guesses across accounts,
+# and the per-account limits above do the fine work.
+CLIENT_FAILURE_PREFIX = "cheese:client_failures:"
+CLIENT_MAX_FAILURES = 100
+CLIENT_FAILURE_WINDOW_SECONDS = 15 * 60
 
-    ``subject`` is a username here and a user id in the 2FA subclasses below —
-    which key a step uses is part of what makes it a *separate* budget, so it
-    is deliberately the caller's choice rather than something inferred.
+# Counted in one script for the reason consume_attempt gives. A refused attempt
+# is handed straight back, so it neither counts nor extends the window.
+_CLIENT_SPEND_SCRIPT = """
+local failures = redis.call('INCR', KEYS[1])
+if failures == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+if failures > tonumber(ARGV[1]) then
+  redis.call('DECR', KEYS[1])
+  return math.max(redis.call('TTL', KEYS[1]), 1)
+end
+return 0
+"""
+
+_CLIENT_REFUND_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('DECR', KEYS[1])
+end
+return 1
+"""
+
+# Checked and counted in one script, for the reason consume_attempt gives.
+# Returns {1, wait this attempt starts if it fails} or {0, seconds still to wait}.
+_LOGIN_ADMIT_SCRIPT = """
+local waiting = redis.call('TTL', KEYS[2])
+if waiting > 0 then
+  return {0, waiting}
+end
+local failures = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+local free = tonumber(ARGV[2])
+if failures < free then
+  return {1, 0}
+end
+local wait = math.min(
+  tonumber(ARGV[3]) * 2 ^ (failures - free), tonumber(ARGV[4]))
+wait = math.floor(wait)
+redis.call('SET', KEYS[2], '1', 'EX', wait)
+return {1, wait}
+"""
+
+
+@dataclass(frozen=True)
+class LoginAdmission:
+    admitted: bool
+    #: Admitted: how long the next attempt must wait if this one fails.
+    #: Refused: how long until an attempt is admitted.
+    wait_seconds: int
+
+
+class LoginDelay:
+    """Slows the password step for one username as its failures mount.
+
+    Not a lock, because anybody can send wrong passwords for a username they
+    do not own. A lock would let them keep its owner out; a wait capped at
+    ``LOGIN_MAX_WAIT_SECONDS`` only delays the owner, and never by more.
+
+    An attempt is counted as a failure when admitted, before the password is
+    checked, for the reason ``AttemptLimiter.consume_attempt`` gives; the
+    caller clears the count once the password holds. Attempts refused while a
+    wait runs are not counted, so sending more of them does not lengthen it.
     """
 
-    _attempts_prefix = LOGIN_ATTEMPTS_PREFIX
-    _lockout_prefix = LOGIN_LOCKOUT_PREFIX
-    _max_attempts = MAX_LOGIN_ATTEMPTS
-    _what = "login"
+    def __init__(self, redis: Redis) -> None:
+        self._redis = redis
+
+    def _keys(self, username: str) -> tuple[str, str]:
+        return f"{LOGIN_FAILURES_PREFIX}{username}", f"{LOGIN_WAIT_PREFIX}{username}"
+
+    async def admit(self, username: str) -> LoginAdmission:
+        admitted, wait = await self._redis.eval(  # type: ignore[misc]
+            _LOGIN_ADMIT_SCRIPT,
+            2,
+            *self._keys(username),
+            LOGIN_FAILURE_WINDOW_SECONDS,
+            LOGIN_FREE_FAILURES,
+            LOGIN_FIRST_WAIT_SECONDS,
+            LOGIN_MAX_WAIT_SECONDS,
+        )
+        return LoginAdmission(admitted=admitted == 1, wait_seconds=int(wait))
+
+    async def clear(self, username: str) -> None:
+        await self._redis.delete(*self._keys(username))
+
+
+class ClientFailureBudget:
+    """Failures one client address may make at one credential step.
+
+    ``client`` is the address ``resolved_client_address`` gives, and None
+    where the server cannot tell clients apart; with None nothing is counted
+    or refused, since every client would share one budget.
+
+    Counts failures, not attempts: the slot is taken before the credential
+    is checked, as everywhere here, and handed back when it holds. Handed
+    back, never cleared: clearing on success would let anyone reset their
+    address's count by signing in to an account of their own.
+    """
+
+    def __init__(self, redis: Redis, step: str) -> None:
+        self._redis = redis
+        self._step = step
+
+    def _key(self, client: str) -> str:
+        return f"{CLIENT_FAILURE_PREFIX}{self._step}:{client}"
+
+    async def spend(self, client: str | None) -> int:
+        """Take a slot. 0 when taken; otherwise the seconds until the window
+        ends, and the attempt must be refused."""
+        if client is None:
+            return 0
+        wait = await self._redis.eval(  # type: ignore[misc]
+            _CLIENT_SPEND_SCRIPT,
+            1,
+            self._key(client),
+            CLIENT_MAX_FAILURES,
+            CLIENT_FAILURE_WINDOW_SECONDS,
+        )
+        return int(wait)
+
+    async def refund(self, client: str | None) -> None:
+        """Hand back a slot whose attempt did not fail."""
+        if client is None:
+            return
+        await self._redis.eval(_CLIENT_REFUND_SCRIPT, 1, self._key(client))  # type: ignore[misc]
+
+
+class AttemptLimiter:
+    """Failed-attempt budget for one credential step, keyed by ``subject``,
+    that locks the step once spent.
+
+    Only for steps a stranger cannot reach: each subclass is keyed by a user
+    id and sits behind a correct password or a live session, so whoever can
+    lock it already holds one of those. Which key a step uses is part of what
+    makes it a *separate* budget, so it is the subclass's choice.
+    """
+
+    _attempts_prefix: str
+    _lockout_prefix: str
+    _max_attempts: int
+    _what: str
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
@@ -141,7 +286,7 @@ class LoginRateLimiter:
         return int(val) if val else 0
 
 
-class TwoFactorRateLimiter(LoginRateLimiter):
+class TwoFactorRateLimiter(AttemptLimiter):
     """Budget for the second login step, keyed by ``str(user_id)`` (#357).
 
     Before this existed the step had no counter at all: password-correct +
@@ -156,7 +301,7 @@ class TwoFactorRateLimiter(LoginRateLimiter):
     _what = "2fa"
 
 
-class BackupCodeRateLimiter(LoginRateLimiter):
+class BackupCodeRateLimiter(AttemptLimiter):
     """Budget for backup-code guesses only, keyed by ``str(user_id)``.
 
     Stacked *under* TwoFactorRateLimiter, not instead of it: a backup-code
@@ -169,7 +314,7 @@ class BackupCodeRateLimiter(LoginRateLimiter):
     _what = "2fa backup code"
 
 
-class StepUpTwoFactorRateLimiter(LoginRateLimiter):
+class StepUpTwoFactorRateLimiter(AttemptLimiter):
     """Budget for re-proving 2FA inside an existing session (#389).
 
     Covers ``/auth/sudo`` (method=totp), which checks the same TOTP secret as
@@ -187,7 +332,7 @@ class StepUpTwoFactorRateLimiter(LoginRateLimiter):
     _what = "2fa step-up"
 
 
-class StepUpPasswordRateLimiter(LoginRateLimiter):
+class StepUpPasswordRateLimiter(AttemptLimiter):
     """Budget for re-proving the password inside an existing session (#389)."""
 
     _attempts_prefix = STEP_UP_PASSWORD_ATTEMPTS_PREFIX
@@ -355,124 +500,6 @@ class TOTPService:
             return False
         await self._session.commit()
         return True
-
-    # --- always_required flag (surfaced in /2fa/status and /2fa/settings).
-    # With no trusted-device feature, login asks for 2FA whenever it is
-    # enabled, so the flag currently only affects what the UI reports. ---
-
-    async def is_always_required(self, user_id: int) -> bool:
-        factor = await self._factor(user_id)
-        return factor is not None and factor.always_required
-
-    async def set_always_required(self, user_id: int, value: bool) -> None:
-        factor = await self._factor_for_update(user_id)
-        factor.always_required = value
-        await self._session.flush()
-
-
-class SessionManager:
-    def __init__(self, redis: Redis) -> None:
-        self._redis = redis
-
-    async def create_session(
-        self,
-        user_id: int,
-        device_info: str = "",
-        ip_address: str = "",
-        user_agent: str = "",
-    ) -> str:
-        session_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
-
-        session_data = {
-            "session_id": session_id,
-            "user_id": str(user_id),
-            "device_info": device_info,
-            "ip_address": ip_address,
-            "user_agent": user_agent,
-            "created_at": now,
-            "last_active_at": now,
-        }
-
-        session_key = f"{SESSION_PREFIX}{session_id}"
-        await self._redis.hset(session_key, mapping=session_data)  # type: ignore[misc]
-        await self._redis.expire(session_key, SESSION_TTL)
-
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.sadd(user_sessions_key, session_id)  # type: ignore[misc]
-        await self._redis.expire(user_sessions_key, SESSION_TTL)
-
-        logger.info("Created session %s for user %d", session_id, user_id)
-        return session_id
-
-    async def get_session(self, session_id: str) -> dict | None:
-        key = f"{SESSION_PREFIX}{session_id}"
-        data = await self._redis.hgetall(key)  # type: ignore[misc]
-        if not data:
-            return None
-
-        # redis client is decode_responses=False → values are bytes at runtime,
-        # but the redis-py stubs don't model that and type them as str.
-        return {k.decode(): v.decode() for k, v in data.items()}  # type: ignore[attr-defined]
-
-    async def update_last_active(self, session_id: str) -> None:
-        key = f"{SESSION_PREFIX}{session_id}"
-        now = datetime.now(UTC).isoformat()
-        await self._redis.hset(key, "last_active_at", now)  # type: ignore[misc]
-        await self._redis.expire(key, SESSION_TTL)
-
-    async def list_user_sessions(self, user_id: int) -> list[dict]:
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
-
-        sessions = []
-        for sid in session_ids:
-            sid_str = sid.decode() if isinstance(sid, bytes) else sid
-            session = await self.get_session(sid_str)
-            if session:
-                sessions.append(session)
-            else:
-                await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
-
-        sessions.sort(key=lambda s: s.get("last_active_at", ""), reverse=True)
-        return sessions
-
-    async def revoke_session(self, session_id: str, user_id: int) -> bool:
-        session = await self.get_session(session_id)
-        if not session:
-            return False
-
-        if int(session.get("user_id", 0)) != user_id:
-            raise ForbiddenError("Cannot revoke session of another user")
-
-        session_key = f"{SESSION_PREFIX}{session_id}"
-        await self._redis.delete(session_key)
-
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.srem(user_sessions_key, session_id)  # type: ignore[misc]
-
-        logger.info("Revoked session %s for user %d", session_id, user_id)
-        return True
-
-    async def revoke_all_sessions(
-        self, user_id: int, except_session_id: str | None = None
-    ) -> int:
-        user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
-
-        count = 0
-        for sid in session_ids:
-            sid_str = sid.decode() if isinstance(sid, bytes) else sid
-            if except_session_id and sid_str == except_session_id:
-                continue
-
-            session_key = f"{SESSION_PREFIX}{sid_str}"
-            await self._redis.delete(session_key)
-            await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
-            count += 1
-
-        logger.info("Revoked %d sessions for user %d", count, user_id)
-        return count
 
 
 class PasswordResetService:

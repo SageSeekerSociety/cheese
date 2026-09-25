@@ -57,7 +57,7 @@ async def list_memory(
 ) -> dict:
     """Memory entries for a project and/or a person, newest first.
 
-    Every memory here belongs to one agent instance (结论 8): `cheese remember`
+    Every memory here belongs to one agent instance (结论 8): `cheese_remember`
     lands in an ``agent_project`` pool keyed ``{project_id}:{handle}``, and
     ``project_id`` lists every such pool in the project; ``scope``/``scope_id``
     on each entry say which one it came from, and ``agent_handle`` narrows to

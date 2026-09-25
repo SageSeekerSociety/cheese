@@ -27,7 +27,7 @@ import { EventSource } from 'eventsource'
 
 import { NewApiInstance } from '../index'
 
-import { refreshTokenForEventSource } from '@/network/Interceptors/hooks/refreshToken'
+import { refreshSession } from '@/lib/session'
 import { NEW_API_BASE_URL } from '@/network/utils'
 import AccountService from '@/services/account'
 
@@ -528,10 +528,11 @@ export namespace TasksApi {
           es.close()
 
           // 刷新 token 并重新连接
-          refreshTokenForEventSource((newToken) => {
+          void refreshSession().then((outcome) => {
+            if (outcome.kind !== 'ok') return
             console.debug('[AI Stream] Token 已刷新，重新建立连接')
             // 重新创建 EventSource 连接
-            const newEs = createEventSource(newToken)
+            const newEs = createEventSource(outcome.token)
             // 返回新连接的关闭函数
             currentClose = newEs.close
           })

@@ -1,15 +1,20 @@
 import { test, expect } from "@playwright/test";
-import { DEMO_USERNAME, DEMO_PASSWORD, login } from "./helpers";
+import { DEMO_USERNAME, DEMO_PASSWORD } from "./helpers";
 
 test.describe("Login", () => {
   test("valid credentials sign the user in and land on the authenticated app shell", async ({
     page,
   }) => {
-    await login(page);
+    await page.goto("/account/signin");
+    await page.getByLabel("用户名").fill(DEMO_USERNAME);
+    await page.getByLabel("密码", { exact: true }).fill(DEMO_PASSWORD);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+
     await expect(page.getByText("登录成功")).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
     );
@@ -19,30 +24,80 @@ test.describe("Login", () => {
   test("wrong credentials are rejected and the user stays on the sign-in page", async ({
     page,
   }) => {
-    // A made-up username, not the shared demo account: the backend's login
-    // rate limiter locks out by username after 5 failed attempts (see
-    // backend/app/api/routes/users.py user_login), and that Redis state
-    // outlives a single test run — on CI too: e2e.yml recreates the Postgres
-    // database per run but never flushes the slot's Redis, and the attempts
-    // key lives 15 minutes. Two runs on one slot inside that window (each up
-    // to 3 attempts with retries) reached 5 and turned this test red with the
-    // lockout message instead of the wrong-password one. So the name is unique
-    // per run attempt, and failing against a throwaway name also keeps this
-    // test from ever locking out `alice`, who the other specs depend on.
+    // A made-up username, not the shared demo account: after 5 failed
+    // attempts the backend makes the next sign-in for that username wait (see
+    // backend/app/domain/user/login_security.py LoginDelay), and that Redis
+    // state outlives a single test run — on CI too: e2e.yml recreates the
+    // Postgres database per run but never flushes the slot's Redis, and the
+    // failures are remembered for an hour. Runs on one slot inside that window
+    // (each up to 3 attempts with retries) would reach 5 and turn this test red
+    // with the too-many-attempts message instead of the wrong-password one. So
+    // the name is unique per run attempt, and failing against a throwaway name
+    // also keeps this test from ever holding up `alice`, who the other specs
+    // depend on.
     const noSuchUser = `no-such-user-e2e-${process.env.GITHUB_RUN_ID ?? "local"}-${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`;
     await page.goto("/account/signin");
     await page.getByLabel("用户名").fill(noSuchUser);
-    // exact: true — see helpers.ts::login for why (other labels on the page
-    // contain 「密码」 and 「登录」 as substrings).
+    // exact: true — the show-password and passkey controls also contain
+    // 「密码」 and 「登录」 in their labels.
     await page.getByLabel("密码", { exact: true }).fill("wrong-password");
     await page.getByRole("button", { name: "登录", exact: true }).click();
 
-    await expect(page.getByText(/invalid username or password/i)).toBeVisible();
+    // The page words the refusal itself, in the interface language (zh-CN
+    // here): account.attempts.wrongPassword in the catalog.
+    await expect(page.getByText("用户名或密码错误")).toBeVisible();
     await expect(page).toHaveURL(/\/account\/signin/);
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
     );
     expect(accessToken).toBeFalsy();
+  });
+
+  test("a seeded user accepts pending documents through the sign-in dialog", async ({
+    page,
+  }, testInfo) => {
+    // E2E CI recreates its database for every run. A retry uses the next
+    // seeded account because accepting consent persists within that run.
+    const username = ["bobby", "carol", "david"][testInfo.retry];
+    await page.goto("/account/signin");
+    await page.getByLabel("用户名").fill(username);
+    await page.getByLabel("密码", { exact: true }).fill(DEMO_PASSWORD);
+    const pendingResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/users/me/consents") &&
+        response.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    const pending = ((await (await pendingResponse).json()).data as {
+      pending: { document: string; version: string }[];
+    }).pending;
+    expect(pending.length).toBeGreaterThan(0);
+    const consentButton = page.getByRole("button", { name: "同意并继续" });
+    await expect(consentButton).toBeVisible();
+    const acceptedResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/users/me/consents") &&
+        response.request().method() === "POST",
+    );
+    await consentButton.click();
+    const accepted = await acceptedResponse;
+    expect(accepted.ok()).toBe(true);
+    expect(accepted.request().postDataJSON()).toEqual({
+      documents: Object.fromEntries(
+        pending.map(({ document, version }) => [document, version]),
+      ),
+    });
+    await expect(consentButton).toBeHidden();
+    await expect(
+      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
+    ).toBeVisible();
+    const current = await page.request.get("/api/users/me/consents", {
+      headers: {
+        Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("accessToken"))}`,
+      },
+    });
+    expect(current.ok()).toBe(true);
+    expect((await current.json()).data.pending).toEqual([]);
   });
 });
 
@@ -65,9 +120,10 @@ test.describe("English login", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
-    await expect(
-      page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible();
+    await page
+      .locator(".app-rail-item:not(.app-rail-item--add)")
+      .first()
+      .waitFor();
     expect(
       await page.evaluate(() => localStorage.getItem("accessToken")),
     ).toBeTruthy();

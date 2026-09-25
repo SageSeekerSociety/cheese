@@ -1,6 +1,6 @@
 """项目那唯一一个 git 源，以及跟着它走的那些平台侧目录。
 
-这个包里只有仓库这一侧：git 子进程、检出目录、会话 home 与 spool、退役检出的清
+这个包里只有仓库这一侧：git 子进程、检出目录、会话 home、退役检出的清
 理。用户给项目的资料、贴进房间的文件、发布出来的预览产物都不在这里——它们不在任
 何 git 树上，住在 :mod:`app.domain.library.service`。
 
@@ -20,7 +20,6 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
-from app.domain.repository import identity as identity_mod
 
 logger = logging.getLogger("cheesex.repository")
 
@@ -304,11 +303,6 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
     ).resolve()
     d.mkdir(parents=True, exist_ok=True)
-    # Create the hook WAL before the sandbox starts. Both the hook forwarder
-    # and the backend need directory write access to park and remove events.
-    spool = d / "cheese-spool"
-    spool.mkdir(parents=True, exist_ok=True)
-    _loosen(str(spool), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -354,11 +348,3 @@ def _loosen(path: str, mode: int) -> None:
         os.chmod(path, mode)
     except OSError:
         pass
-
-
-def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host path of the topic's hook-event spool (WAL). The screen writes
-    here via CHEESE_HOOK_SPOOL=/home/node/.claude/cheese-spool (the session dir
-    mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
-    session_dir's base so both sides agree on ONE location."""
-    return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"

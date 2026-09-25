@@ -34,14 +34,17 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    SESSION_TOKEN_TTL_S,
+    Placement,
+    ScreenSetupError,
+)
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
 from app.domain.topic.models import Topic
 
-SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 logger = logging.getLogger(__name__)
 
 # How long a room's first call waits for the runner to bind its socket, and how

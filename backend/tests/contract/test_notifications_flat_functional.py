@@ -17,6 +17,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.domain.notification.models import Notification, NotificationType
+from tests.integration.conftest import a_team
 
 _AGENT_USER_ID = 1
 #: `authed_client` 就是这个人（平台 agent 用户，见 contract/conftest.py）。
@@ -229,7 +230,9 @@ async def _seed_project(factory) -> str:
     from app.domain.project.models import Project
 
     async with factory() as session:
-        project = Project(name="并表", owner_handle=_AGENT_HANDLE)
+        project = Project(
+            team_id=await a_team(session), name="并表", owner_handle=_AGENT_HANDLE
+        )
         session.add(project)
         await session.flush()
         project_id = str(project.id)

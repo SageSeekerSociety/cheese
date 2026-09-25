@@ -65,16 +65,16 @@
       type="warning"
       class="mb-4"
       rounded="lg"
-      title="小队不满足参与条件"
+      title="团队不满足参与条件"
     >
       <template #text>
         <div class="mt-2">
           <!-- 没有小队的情况 -->
           <div v-if="noTeams" class="font-weight-medium">
-            您需要创建或加入一个小队才能参与此题目
+            您需要创建或加入一个团队才能参与此题目
             <div class="mt-2 d-flex align-center">
               <v-btn color="primary" variant="tonal" size="small" :to="{ name: 'HomeTeamsMine' }">
-                前往管理我的小队
+                前往管理我的团队
                 <v-icon end>mdi-arrow-right</v-icon>
               </v-btn>
             </div>
@@ -82,7 +82,7 @@
 
           <!-- 有小队但都不符合条件的情况 -->
           <div v-else-if="hasTeamsButNoneEligible" class="font-weight-medium">
-            您有 {{ teamCount }} 个小队，但没有符合条件的小队可以参与此题目
+            您有 {{ teamCount }} 个团队，但没有符合条件的团队可以参与此题目
 
             <v-expansion-panels variant="accordion" class="mt-3">
               <v-expansion-panel v-for="teamEligibility in teamEligibilityList" :key="teamEligibility.team.id">
@@ -92,7 +92,7 @@
                       <v-img
                         v-if="teamEligibility.team.avatarId"
                         :src="getAvatarUrl(teamEligibility.team.avatarId)"
-                        alt="小队头像"
+                        alt="团队头像"
                       ></v-img>
                       <v-icon v-else>mdi-account-group</v-icon>
                     </v-avatar>
@@ -108,16 +108,16 @@
 
                     <!-- 团队人数不满足要求 -->
                     <div v-if="reason.code === 'TEAM_SIZE_MIN_NOT_MET'" class="mt-1 text-medium-emphasis">
-                      此题目要求小队最少 {{ taskData.minTeamSize }} 人，请邀请更多成员加入您的小队。
+                      此题目要求团队最少 {{ taskData.minTeamSize }} 人，请邀请更多成员加入您的团队。
                     </div>
                     <div v-if="reason.code === 'TEAM_SIZE_MAX_EXCEEDED'" class="mt-1 text-medium-emphasis">
-                      此题目要求小队最多 {{ taskData.maxTeamSize }} 人，您的小队人数超出限制。
+                      此题目要求团队最多 {{ taskData.maxTeamSize }} 人，您的团队人数超出限制。
                     </div>
 
                     <!-- 团队成员缺少实名信息 -->
                     <div v-if="reason.code === 'TEAM_MEMBER_MISSING_REAL_NAME'" class="mt-1">
                       <p class="text-medium-emphasis mb-2">
-                        小队中有成员尚未提供实名信息，请通知相关成员完成实名验证。
+                        团队中有成员尚未提供实名信息，请通知相关成员完成实名验证。
                       </p>
 
                       <v-list
@@ -144,7 +144,7 @@
 
                     <!-- 团队成员等级不足 -->
                     <div v-if="reason.code === 'TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH'" class="mt-1 text-medium-emphasis">
-                      小队中有成员等级不足，无法参与此难度的题目。
+                      团队中有成员等级不足，无法参与此难度的题目。
                     </div>
                   </div>
 
@@ -155,7 +155,7 @@
                     class="mt-2"
                     :to="{ name: 'TeamsDetailMembers', params: { handle: teamEligibility.team.handle } }"
                   >
-                    管理此小队
+                    管理此团队
                     <v-icon end>mdi-arrow-right</v-icon>
                   </v-btn>
                 </v-expansion-panel-text>
@@ -258,7 +258,7 @@
               <div class="d-flex justify-space-between align-center">
                 <div class="text-subtitle-1">提交类型</div>
                 <v-chip color="primary" variant="flat">
-                  {{ taskData?.submitterType === 'USER' ? '个人任务' : '小队任务' }}
+                  {{ taskData?.submitterType === 'USER' ? '个人任务' : '团队任务' }}
                 </v-chip>
               </div>
 

@@ -26,7 +26,7 @@ import {
   setProjectDefaultAgent,
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
@@ -218,7 +218,7 @@ async function confirmDeactivate() {
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="d-flex align-center">
-          <UserAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
+          <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
           <div class="min-w-0">
             <div class="d-flex align-center ga-2">
               <span class="t-title">{{ a.display_name || a.handle }}</span>

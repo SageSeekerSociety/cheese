@@ -52,9 +52,9 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
-from app.domain.membership.repositories import MemberRepository
+from app.domain.membership.services import MemberService
 from app.domain.project import artifacts
-from app.domain.project.models import AiMode, Project, ProjectRole
+from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import identity
 from app.domain.review import (
@@ -284,17 +284,16 @@ _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 #: that only says "缺少 change_subject" costs a whole turn to act on. The
 #: example is a real, valid subject — copy-pasteable, not a placeholder.
 _MISSING_SUBJECT = (
-    "递卡必须带提交标题（--subject）。它不是给人看的说明，是这次改动留在 "
+    "递卡必须带提交标题（subject）。它不是给人看的说明，是这次改动留在 "
     "git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
     "提交，标题还是它。\n"
     "写法：`type(scope): description`，type 取值 "
     f"{', '.join(commit_message.TYPES)}；英文祈使句，"
     f"≤{commit_message.MAX_SUBJECT} 字符，结尾不加句号。\n"
     "例：\n"
-    '  cheese accept-request lisi "最懂这块" \\\n'
-    "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
-    "    --body 'PRs opened with the App token belong to the bot on GitHub, "
-    "so the person whose work it is gets no attribution.'"
+    "  subject: fix(accept): open the PR as the requester, not the bot\n"
+    "  body: PRs opened with the App token belong to the bot on GitHub, "
+    "so the person whose work it is gets no attribution."
 )
 
 #: Where an alembic revision lives. Two live cards each ADDING a file under
@@ -304,8 +303,8 @@ _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
 #: 声明了一条本房间没有的活。Almost always a copy-pasted id from another room's
 #: 简报; naming the room is what makes that visible instead of "not found".
 _NOT_THIS_ROOMS_WORK = (
-    "这个房间里没有活 {task_id}。--task 只认本房间派出的活的 id"
-    "（`cheese split` 当时打印的那个）。"
+    "这个房间里没有活 {task_id}。task 只认本房间派出的活的 id"
+    "（`cheese_task` 当时返回的那个）。"
 )
 
 
@@ -352,14 +351,14 @@ def approvals_required_of(project: Project | None) -> int:
 #: 合并型的交付走不到这里，见 `_ARTIFACT_ACTION_UNWANTED`。
 _ARTIFACT_ACTION_MISSING = (
     "没说这次交付动的是哪一项产物。交出去一份文件或一个地址时，两种说法选一种：\n"
-    "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
-    "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
+    "  artifact=<清单上那一项的 id>    这次交付是那一项的新一版\n"
+    "  new_artifact=<新的真名>          这次交付做出了一样清单上还没有的东西\n"
     "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
     "新建的那一次会把新的 id 返回来。"
 )
 
 _ARTIFACT_ACTION_BOTH = (
-    "--artifact 和 --new-artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
+    "artifact 和 new_artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
     "要么做出了一样清单上还没有的东西。"
 )
 
@@ -370,8 +369,8 @@ _ARTIFACT_ACTION_BOTH = (
 #: 传它的那一方正以为自己说清了一件要紧的事。
 _ARTIFACT_ACTION_UNWANTED = (
     "合并交出去的是这个项目的仓库本身，不用声明产物 —— 平台认得出是清单上哪一项，"
-    "这次交付会成为它的新一版。--artifact / --new-artifact / --about 是交一份文件"
-    "（--deliver）或一个地址（--deliver-url）时才要说的。"
+    "这次交付会成为它的新一版。artifact / new_artifact / about 是交一份文件"
+    "（deliver）或一个地址（deliver_url）时才要说的。"
 )
 
 
@@ -404,8 +403,7 @@ def _no_artifact_action(
 #: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
 #: 那就是交出去这次合并本身（代码仓库这类项目交的就是主干往前走一步）。
 _DELIVERABLE_BOTH = (
-    "--deliver 和 --deliver-url 只能给一个：这次交出去的要么是一份文件，"
-    "要么是一个地址。"
+    "deliver 和 deliver_url 只能给一个：这次交出去的要么是一份文件，要么是一个地址。"
 )
 
 #: 单份交付物的上限。成品不进库，所以这个数管的是平台那块盘，而不是用户的仓库。
@@ -417,9 +415,7 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
     if path and url:
         raise ValidationError(_DELIVERABLE_BOTH)
     if url and not url.startswith(("http://", "https://")):
-        raise ValidationError(
-            "--deliver-url 要是一个能打开的网址（http:// 或 https://）"
-        )
+        raise ValidationError("deliver_url 要是一个能打开的网址（http:// 或 https://）")
 
 
 async def _read_deliverable(
@@ -436,7 +432,7 @@ async def _read_deliverable(
         raise ValidationError(
             f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
             f"{_DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
-            "交出去的是一个地址时用 --deliver-url 记地址。"
+            "交出去的是一个地址时用 deliver_url 记地址。"
         )
     return PurePosixPath(path).name, data
 
@@ -540,7 +536,7 @@ class AcceptService:
             return default
         raise ValidationError(
             "没说验收卡递给谁，项目也没有设默认验收人。"
-            "点名一个人（`cheese members` 查准确 handle），"
+            "点名一个人（`cheese_members` 查准确 handle），"
             "或者在项目设置的「分支保护 → 任务默认 reviewer」里填一个。"
         )
 
@@ -1119,12 +1115,17 @@ class AcceptService:
         )
         if not resolve(category=category, task=task).mentor_required_for(topic.title):
             return
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        mentors = {m.user_handle for m in members if m.role == ProjectRole.mentor}
-        if decided_by not in mentors:
-            raise ValidationError("按机构协议，这个话题须由导师验收")
+        # The condition asks for someone from outside the team to sign off: an
+        # external member of this project.
+        from app.domain.membership.roster import roster
+
+        outside = {
+            m.handle
+            for m in await roster(self._session, topic.project_id)
+            if m.source == "external"
+        }
+        if decided_by not in outside:
+            raise ValidationError("按机构协议，这个话题须由外部成员验收")
 
     async def reassign(
         self,
@@ -3595,19 +3596,13 @@ class AcceptService:
         if card.status != AcceptStatus.accepted:
             raise ValidationError("只有已验收的卡才能撤销")
 
-        # Only the person who accepted it, or the project owner/lead, may revoke
-        # — not any arbitrary handle.
+        # Only the person who accepted it, or someone who manages the project,
+        # may revoke — not any arbitrary handle.
         topic = await self._topic_or_404(card.topic_id)
-        project = await self._projects.get(topic.project_id)
-        allowed = {card.decided_by}
-        if project is not None and project.owner_handle:
-            allowed.add(project.owner_handle)
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
-        if decided_by not in allowed:
-            raise ValidationError("只有原采纳人或项目组长能撤销采纳")
+        if decided_by != card.decided_by and not await MemberService(
+            self._session
+        ).manages(topic.project_id, decided_by):
+            raise ValidationError("只有原采纳人、项目所有者或团队管理员能撤销采纳")
 
         card.status = AcceptStatus.revoked
         card.decided_by = decided_by
@@ -3649,8 +3644,9 @@ class AcceptService:
         了不该把人锁在门外）、以及人自己写的理由。
 
         谁能点 (#718)：项目分支保护的人工放行名单（`override_handles`，没配置
-        = owner + lead）。芝士被 `_forbid_ai` 挡在外面（跟 accept/approve/void
-        同一条线），路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`——
+        = 项目所有者 + 团队的所有者和管理员）。芝士被 `_forbid_ai` 挡在外面
+        （跟 accept/approve/void 同一条线），路由也**故意不进** `app/main.py`
+        的 `_CHEESE_WRITE_PATHS`——
         照 `void` 的先例：不进白名单本身拦不住任何东西（没列进去的写路由压根不
         过那个中间件），真正拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
 
@@ -3675,17 +3671,17 @@ class AcceptService:
         if protection.override_handles is not None:
             allowed = set(protection.override_handles)
         else:
-            allowed = set()
-            if project is not None and project.owner_handle:
-                allowed.add(project.owner_handle)
-            members = await MemberRepository(self._session).list_for_project(
-                topic.project_id
+            allowed = (
+                {decided_by}
+                if await MemberService(self._session).manages(
+                    topic.project_id, decided_by
+                )
+                else set()
             )
-            allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
         if decided_by not in allowed:
             raise ForbiddenError(
                 "只有项目分支保护的人工放行名单里的人能放行"
-                "（未配置名单时是项目 owner / 组长）"
+                "（未配置名单时是项目所有者或团队管理员）"
             )
         # 骑着 PR 的卡在这里必然带着一个被展示过的 sha：卡面从没显示过 head 的
         # （刚递、轮询器还没镜像）会被刷新并要求重看，而不是拿现读的 head 去合。
@@ -3820,7 +3816,7 @@ class AcceptService:
         从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
         设计前提，不要"优化"掉。
 
-        授权：卡上的验收人、项目 owner、项目 lead。它是授权类动作，所以芝士在
+        授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
         collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
         —— 路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`。
         """
@@ -3832,15 +3828,10 @@ class AcceptService:
         project = await self._projects.get(topic.project_id)
         self._forbid_ai(project, decided_by, "作废")
 
-        allowed = {card.reviewer_handle}
-        if project is not None and project.owner_handle:
-            allowed.add(project.owner_handle)
-        members = await MemberRepository(self._session).list_for_project(
-            topic.project_id
-        )
-        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
-        if decided_by not in allowed:
-            raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
+        if decided_by != card.reviewer_handle and not await MemberService(
+            self._session
+        ).manages(topic.project_id, decided_by):
+            raise ForbiddenError("只有这张卡的验收人、项目所有者或团队管理员能作废它")
 
         await self._cancel_queued_accept(card)
         was = card.status

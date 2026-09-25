@@ -4,14 +4,12 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import { answerAgentControl, getAgentControl, getAgentControlResult, sendAgentControl } from '../api'
+import { getAgentControl, sendAgentControl } from '../api'
 
 import AgentControls from './AgentControls.vue'
 
 vi.mock('../api', () => ({
-  answerAgentControl: vi.fn(),
   getAgentControl: vi.fn(),
-  getAgentControlResult: vi.fn(),
   sendAgentControl: vi.fn(),
 }))
 
@@ -54,47 +52,52 @@ it('shows native control errors', async () => {
   await view.findByText('Tool cannot be interrupted')
 })
 
-it('retains a permission question until the worker acknowledges the answer', async () => {
+it("lists the session's commands beside its agents and stops one", async () => {
   vi.mocked(getAgentControl).mockResolvedValue({
     id: 's1',
     connected: true,
-    pending: {
-      q1: { request_id: 'q1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'pwd' } } },
+    tasks: {
+      b7k2m9x4q: {
+        task_id: 'b7k2m9x4q',
+        status: 'running',
+        task_type: 'local_bash',
+      },
+      a1: { task_id: 'a1', description: '派分身去查', status: 'completed', task_type: 'local_agent' },
     },
   })
-  vi.mocked(answerAgentControl).mockResolvedValue({ status: 'queued' })
-  const view = mount()
-  await fireEvent.click(await view.findByText('允许本次'))
-  await view.findByText('回答已提交，正在等待会话确认')
-  expect(answerAgentControl).toHaveBeenCalledWith('topic1', 's1', 'q1', {
-    behavior: 'allow',
-    updatedInput: { command: 'pwd' },
-  })
-  expect(view.getByText('允许本次')).toBeTruthy()
-})
-
-it('collects a delayed result without sending the command twice', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  vi.mocked(sendAgentControl).mockResolvedValue({ request_id: 'r1', status: 'queued', result: null })
-  vi.mocked(getAgentControlResult).mockResolvedValue({
+  vi.mocked(sendAgentControl).mockResolvedValue({
+    request_id: 'r1',
     status: 'completed',
-    result: { response: { subtype: 'success', response: { backgrounded: true } } },
+    result: { response: { subtype: 'success', response: { status: 'stopped' } } },
   })
   const view = mount()
   await view.findByText('控制已连接')
-  await fireEvent.click(view.getByText('转入后台'))
-  await view.findByText('已发送，尚未收到执行结果')
-  await vi.advanceTimersByTimeAsync(2100)
+  await fireEvent.click(view.getByText('更多控制'))
+  await view.findByText('b7k2m9x4q · 运行中')
+  expect(view.getByText('派分身去查 · 已完成')).toBeTruthy()
+  const stops = view.getAllByText('停止')
+  await fireEvent.click(stops[0])
   await view.findByText('指令已确认')
-  expect(sendAgentControl).toHaveBeenCalledTimes(1)
+  expect(sendAgentControl).toHaveBeenCalledWith('topic1', 's1', {
+    subtype: 'stop_task',
+    task_id: 'b7k2m9x4q',
+  })
+})
+
+it('has no colour control and no question panel', async () => {
+  const view = mount()
+  await view.findByText('控制已连接')
+  await fireEvent.click(view.getByText('更多控制'))
+  expect(view.queryByText('会话颜色')).toBeNull()
+  expect(view.queryByText('允许本次')).toBeNull()
 })
 
 it('takes the room session state off the socket instead of asking again', async () => {
-  // The room already holds a socket, so a question from the agent arrives as a
-  // frame. What this pins is the half that saves the requests: having been given
-  // one, the panel does not go back to asking every two seconds.
+  // The room already holds a socket, so a task starting arrives as a frame.
+  // What this pins is the half that saves the requests: having been given one,
+  // the panel does not go back to asking every two seconds.
   vi.useFakeTimers({ shouldAdvanceTime: true })
-  const props = { topicId: 'topic1', active: true, questionsOnly: true }
+  const props = { topicId: 'topic1', active: true }
   const view = render(AgentControls, {
     props: { ...props, pushed: null },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -102,14 +105,13 @@ it('takes the room session state off the socket instead of asking again', async 
   await view.rerender({
     ...props,
     pushed: {
-      id: 's1',
+      id: 's2',
       connected: true,
-      pending: {
-        q1: { request_id: 'q1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'pwd' } } },
-      },
+      tasks: { t1: { task_id: 't1', description: '长命令', status: 'running', task_type: 'local_bash' } },
     },
   })
-  await view.findByText('允许本次')
+  await fireEvent.click(view.getByText('更多控制'))
+  await view.findByText('长命令 · 运行中')
   await vi.advanceTimersByTimeAsync(6000)
   expect(getAgentControl).toHaveBeenCalledTimes(1)
 })

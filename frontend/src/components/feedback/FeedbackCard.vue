@@ -24,7 +24,7 @@ import { useFeedbackStore } from '@/stores/feedback'
 //
 // 「已支持」用**中性色**（tonal + secondary），不用琥珀：一屏里琥珀只给唯一的主操作
 // （这一页是「提交反馈」），支持是一个可反复切换的状态，它变琥珀会让主操作不再是唯一
-// 那个显眼的东西（docs/design-system.md §0）。状态本身有三个不依赖颜色的信号：实心的
+// 那个显眼的东西（docs/design-system.md §1.6）。状态本身有三个不依赖颜色的信号：实心的
 // 拇指图标、数字的颜色、以及可访问名字里的「已支持」。
 //
 // ## 开详情那条链接**只包标题和摘要**
@@ -71,7 +71,7 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
 
 <template>
   <!-- `rounded="lg"` 必须显式写：VCard 自带 `rounded="xl"`（24px）且是 `!important`，
-       scoped 里写的 12px 压不过它，不写圆角就静默失效（docs/design-system.md §7.6）。 -->
+       scoped 里写的 12px 压不过它，不写圆角就静默失效（docs/design-system.md §3.1）。 -->
   <v-card class="fb-card" rounded="lg">
     <router-link class="fb-card__body" :to="to">
       <span class="fb-card__title">{{ item.title }}</span>

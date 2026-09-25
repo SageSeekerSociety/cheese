@@ -69,9 +69,9 @@ jobs:
           cache-local-path: ${{ env.UV_SHARED_CACHE }}
           enable-cache: false
       - run: uv sync --project backend --locked
-      - name: Install native terminal test dependencies
+      - name: Install session test dependencies
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux openssl
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
@@ -119,8 +119,7 @@ jobs:
           REDIS_URL: redis://localhost:${{ job.services.redis.ports[6379] }}/0
         run: >-
           .venv/bin/pytest tests/integration/test_private_chat_execution.py
-          tests/unit/test_private_chat.py tests/unit/test_remote_control.py
-          tests/integration/test_remote_control_auth.py -q
+          tests/unit/test_private_chat.py -q
           tests/integration/test_central_room_sessions.py
           tests/integration/test_llm_proxy.py
           tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
@@ -136,8 +135,8 @@ jobs:
         working-directory: backend
         run: >-
           .venv/bin/python scripts/assert_suite_ran.py
-          "$RUNNER_TEMP/private-chat.xml" --at-least 220
-      - name: Verify two private turns through native RC
+          "$RUNNER_TEMP/private-chat.xml" --at-least 170
+      - name: Verify private turns through the runner
         id: private_terminal
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-
@@ -167,10 +166,9 @@ jobs:
           --require-step private_tests
           --require-step private_selection
           --require-step private_terminal
-          --at-least 220
+          --at-least 170
       - name: Upload private-chat CLEAN evidence
         if: ${{ !cancelled() && steps.private_evidence.outcome == 'success' }}
-        continue-on-error: true
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -223,9 +221,9 @@ jobs:
           version: '0.12.1'
           cache-local-path: ${{ env.UV_SHARED_CACHE }}
           enable-cache: false
-      - name: Install terminal test dependencies
+      - name: Install session test dependencies
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh redis-tools ripgrep fuse libfuse2
           redis_key="$(apt-cache show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
           redis_cache="$HOME/.cache/cheese-ci/redis-debs/$redis_key"
           mkdir -p "$redis_cache" tmp/remote-execution/deps
@@ -235,17 +233,17 @@ jobs:
           done
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
           uv sync --project backend --locked
-      - name: Prepare the released owner image
+      - name: Configure released owner access
         env:
-          GH_TOKEN: ${{ github.token }}
           DOCKER_CONFIG: ${{ runner.temp }}/owner-image-registry
         run: |
           mkdir -p "$DOCKER_CONFIG"
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
           echo "ACCEPTANCE_OWNER_PORT=$((18783 + ${CHEESE_CI_SLOT:-0}))" >> "$GITHUB_ENV"
       - name: Run acceptance
         id: run_acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           backend/.venv/bin/python scripts/remote_execution/suite.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -256,6 +254,7 @@ jobs:
         timeout-minutes: 10
         env:
           ACCEPTANCE_COMMIT: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: test-openai-key
           ANTHROPIC_AUTH_TOKEN: test-anthropic-token
         # Published by release-device-connection run 35770200245. Extract its
@@ -298,10 +297,10 @@ jobs:
             tail -n 200 "$log"
             echo "::endgroup::"
           done
-          for terminal in tmp/remote-execution/ci-*/*/terminal.txt; do
-            [ -f "$terminal" ] || continue
-            echo "::group::$terminal"
-            tail -n 120 "$terminal"
+          for journal in tmp/remote-execution/ci-*/*/journal.jsonl; do
+            [ -f "$journal" ] || continue
+            echo "::group::$journal"
+            tail -n 60 "$journal"
             echo "::endgroup::"
           done
       - name: Produce remote-acceptance CLEAN evidence
@@ -326,7 +325,6 @@ jobs:
           --require-step ordinary_terminal
       - name: Upload remote-acceptance CLEAN evidence
         if: ${{ !cancelled() && steps.acceptance_evidence.outcome == 'success' }}
-        continue-on-error: true
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -357,11 +355,11 @@ jobs:
             tmp/remote-execution/ci-*/progress.jsonl
             tmp/remote-execution/ci-*/*.log
             tmp/remote-execution/ci-*/*/summary.json
-            tmp/remote-execution/ci-*/*/terminal.txt
+            tmp/remote-execution/ci-*/*/journal.jsonl
+            tmp/remote-execution/ci-*/*/runner.log
             tmp/remote-execution/ci-*/*/request-*.json
             tmp/remote-execution/ci-*/*/action-*.json
-            tmp/remote-execution/ci-*/*/hooks.jsonl
-            tmp/remote-execution/ci-*/*/rc*.json*
+            tmp/remote-execution/ci-*/*/file-controls.json
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
             logs/device-connection-acceptance-*.jsonl

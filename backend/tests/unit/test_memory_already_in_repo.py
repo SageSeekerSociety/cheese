@@ -66,7 +66,7 @@ async def test_the_file_that_says_it_best_is_the_one_named():
 
 
 async def test_merely_sharing_a_word_is_not_the_same_fact():
-    """只共用一个词不算。这个阈值比 `cheese recall` 严是有代价的一边倒：拒错了，
+    """只共用一个词不算。这个阈值比 `cheese_recall` 严是有代价的一边倒：拒错了，
     那条事实就没被记下来，而记忆不可再生（结论 61）。"""
     hit = await already_in_repo(
         "王老师周三下午不看消息，有事提前一天问",

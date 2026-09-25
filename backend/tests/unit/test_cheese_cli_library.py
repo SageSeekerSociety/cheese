@@ -1,4 +1,4 @@
-"""`cheese library`: 芝士 自己去取一份用户给过这个项目的资料。
+"""`cheese library get`: 芝士 自己去取一份用户给过这个项目的资料。
 
 随消息发来的资料由平台放在这个会话自己 home 的 `attachments/` 下。没跟着这条消息
 来的那些——「上周那份预算表」——它得自己取,而且取下来要落在**同一个位置**:不管一
@@ -25,44 +25,6 @@ def _load():
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
-
-
-def test_ls_lists_what_the_project_was_given(monkeypatch, capsys):
-    cli = _load()
-    monkeypatch.setattr(cli, "PROJECT", _PROJECT)
-    monkeypatch.setattr(cli, "TOPIC", _TOPIC)
-    monkeypatch.setattr(
-        cli,
-        "_call",
-        lambda *a, **k: {
-            "data": {
-                "data": [
-                    {"path": "预算表.xlsx", "bytes": 2048, "modified": 1758000000},
-                    {"path": "预算表(2).xlsx", "bytes": 120, "modified": 1757000000},
-                ],
-                "total": 2,
-            }
-        },
-    )
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "library", "ls"])
-    cli.main()
-
-    out = capsys.readouterr().out
-    assert "预算表.xlsx" in out
-    assert "预算表(2).xlsx" in out
-
-
-def test_ls_says_so_when_nothing_was_given(monkeypatch, capsys):
-    cli = _load()
-    monkeypatch.setattr(cli, "PROJECT", _PROJECT)
-    monkeypatch.setattr(cli, "TOPIC", _TOPIC)
-    monkeypatch.setattr(
-        cli, "_call", lambda *a, **k: {"data": {"data": [], "total": 0}}
-    )
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "library", "ls"])
-    cli.main()
-
-    assert "还没有文件" in capsys.readouterr().out
 
 
 def test_get_lands_where_an_attached_file_lands(monkeypatch, tmp_path, capsys):

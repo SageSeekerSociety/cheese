@@ -271,21 +271,19 @@
 import type { RealNameInfo } from '@/network/api/users/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
-import { withSudo } from '@/utils/sudo'
+import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import { UserApi } from '@/network/api/users'
 import { ServerError } from '@/network/types/error'
 import { currentUserId } from '@/services/account'
 
-const router = useRouter()
 const loading = ref(false)
 const loadingPrecise = ref(false)
 const showingPrecise = ref(false)
@@ -393,7 +391,7 @@ const fetchRealNameInfo = async () => {
 
   loading.value = true
   try {
-    const { data } = await UserApi.getRealNameInfo(currentUserId.value, false)
+    const { data } = await UserApi.getRealNameInfo(currentUserId.value)
     hasRealNameInfo.value = data.hasIdentity
     if (data.hasIdentity && data.identity) {
       realNameInfo.value = data.identity
@@ -429,14 +427,8 @@ const fetchPreciseInfo = async () => {
   showingPrecise.value = true
 
   try {
-    const result = await withSudo(
-      async () => {
-        return await UserApi.getRealNameInfo(currentUserId.value!, true)
-      },
-      'viewRealNameInfo',
-      null,
-      router
-    )
+    const userId = currentUserId.value
+    const result = await withSudo('realname:view', (ticket) => UserApi.getPreciseRealNameInfo(userId, ticket))
 
     if (result.data.hasIdentity && result.data.identity) {
       setFieldValue('realName', result.data.identity.realName)
@@ -453,9 +445,10 @@ const fetchPreciseInfo = async () => {
       toast.error('未填写过实名信息')
     }
   } catch (error: any) {
+    showingPrecise.value = false
+    if (error instanceof SudoCancelledError) return
     console.error('获取精确实名信息失败', error)
     toast.error(error?.message || '获取完整实名信息失败，请重试')
-    showingPrecise.value = false
   } finally {
     loadingPrecise.value = false
   }
@@ -467,47 +460,42 @@ const onSubmit = handleSubmit(async (values) => {
 
   submitting.value = true
   try {
-    await withSudo(
-      async () => {
-        const changedFields: Partial<RealNameInfo> = {}
+    const changedFields: Partial<RealNameInfo> = {}
 
-        if (isRealNameEdited.value && values.realName !== originalRealName.value) {
-          changedFields.realName = values.realName
-        }
+    if (isRealNameEdited.value && values.realName !== originalRealName.value) {
+      changedFields.realName = values.realName
+    }
 
-        if (isStudentIdEdited.value && values.studentId !== originalStudentId.value) {
-          changedFields.studentId = values.studentId
-        }
+    if (isStudentIdEdited.value && values.studentId !== originalStudentId.value) {
+      changedFields.studentId = values.studentId
+    }
 
-        if (values.grade !== realNameInfo.value.grade) changedFields.grade = values.grade
-        if (values.major !== realNameInfo.value.major) changedFields.major = values.major
-        if (values.className !== realNameInfo.value.className) changedFields.className = values.className
+    if (values.grade !== realNameInfo.value.grade) changedFields.grade = values.grade
+    if (values.major !== realNameInfo.value.major) changedFields.major = values.major
+    if (values.className !== realNameInfo.value.className) changedFields.className = values.className
 
-        if (Object.keys(changedFields).length === 0) {
-          toast.info('未检测到任何修改')
-          submitting.value = false
-          return
-        }
+    if (Object.keys(changedFields).length === 0) {
+      toast.info('未检测到任何修改')
+      submitting.value = false
+      return
+    }
 
-        console.log('提交的修改字段:', changedFields)
+    console.log('提交的修改字段:', changedFields)
 
-        const { data } = await UserApi.patchRealNameInfo(currentUserId.value!, changedFields)
+    const userId = currentUserId.value
+    await withSudo('realname:update', (ticket) => UserApi.patchRealNameInfo(userId, changedFields, ticket))
 
-        const wasPrecise = showingPrecise.value
+    const wasPrecise = showingPrecise.value
 
-        toast.success('实名信息保存成功')
+    toast.success('实名信息保存成功')
 
-        if (wasPrecise) {
-          await fetchPreciseInfo()
-        } else {
-          await fetchRealNameInfo()
-        }
-      },
-      'updateRealNameInfo',
-      null,
-      router
-    )
+    if (wasPrecise) {
+      await fetchPreciseInfo()
+    } else {
+      await fetchRealNameInfo()
+    }
   } catch (error: any) {
+    if (error instanceof SudoCancelledError) return
     console.error('保存实名信息失败', error)
     toast.error(error.message || '保存实名信息失败')
   } finally {

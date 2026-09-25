@@ -20,12 +20,13 @@ import type { Component } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getGatewayModel = vi.fn()
 const getSubscriptionQuota = vi.fn()
 const revokeSubscription = vi.fn()
+const updateSubscriptionUpstreamModel = vi.fn()
 const startSubscriptionDeviceFlow = vi.fn()
 const pollSubscriptionDeviceFlow = vi.fn()
 const cancelSubscriptionDeviceFlow = vi.fn()
@@ -34,6 +35,7 @@ vi.mock('@/api', () => ({
   getGatewayModel: (...a: unknown[]) => getGatewayModel(...a),
   getSubscriptionQuota: (...a: unknown[]) => getSubscriptionQuota(...a),
   revokeSubscription: (...a: unknown[]) => revokeSubscription(...a),
+  updateSubscriptionUpstreamModel: (...a: unknown[]) => updateSubscriptionUpstreamModel(...a),
   startSubscriptionDeviceFlow: (...a: unknown[]) => startSubscriptionDeviceFlow(...a),
   pollSubscriptionDeviceFlow: (...a: unknown[]) => pollSubscriptionDeviceFlow(...a),
   cancelSubscriptionDeviceFlow: (...a: unknown[]) => cancelSubscriptionDeviceFlow(...a),
@@ -131,6 +133,7 @@ beforeEach(() => {
     stale: false,
   })
   revokeSubscription.mockReset().mockResolvedValue({ revoked: true })
+  updateSubscriptionUpstreamModel.mockReset().mockResolvedValue({})
   startSubscriptionDeviceFlow.mockReset()
   pollSubscriptionDeviceFlow.mockReset()
   cancelSubscriptionDeviceFlow.mockReset()
@@ -210,6 +213,97 @@ describe('详情抽屉 · 订阅块', () => {
     expect(active.queryByRole('button', { name: 'models.detail.subscription.reauth' })).toBeNull()
   })
 
+  it('上游模型：显示订阅的显式选择；编辑保存发 PATCH 并带上 trim 后的值', async () => {
+    const payload = detailPayload()
+    ;(payload.model.subscription as Record<string, unknown>).upstream_model = 'openai/gpt-5.6-luna'
+    getGatewayModel.mockResolvedValue(payload)
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    // 显式选择：显示行上的值，不是网关现值。
+    expect(page.getByText(/upstreamModelCurrent.*gpt-5.6-luna/)).toBeTruthy()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('openai/gpt-5.6-luna')
+    await fireEvent.update(input, '  openai/gpt-5.6-sol  ')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', 'openai/gpt-5.6-sol'))
+  })
+
+  it('上游模型：没有显式选择时显示「跟随部署默认」；清空后保存发 null', async () => {
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    // 默认值是多少前端不知道，不猜：只显示「跟随部署默认」，不带具体值。
+    expect(page.getByText('models.subscription.upstreamModelDefault')).toBeTruthy()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    await waitFor(() => expect(updateSubscriptionUpstreamModel).toHaveBeenCalledWith('sub-1', null))
+  })
+
+  it('pending 状态的订阅不给上游编辑入口（后端接不住，不给人必败的按钮）', async () => {
+    const payload = detailPayload()
+    ;(payload.model.subscription as Record<string, unknown>).status = 'pending'
+    getGatewayModel.mockResolvedValue(payload)
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+    expect(page.queryByRole('button', { name: 'models.subscription.upstreamModelEdit' })).toBeNull()
+  })
+
+  it('上游模型保存失败：服务端原话就地显示，编辑框不关', async () => {
+    updateSubscriptionUpstreamModel.mockRejectedValue(new Error('网关 400：bad upstream'))
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    await fireEvent.update(input, 'openai/bad')
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    expect(await page.findByText(/bad upstream/)).toBeTruthy()
+    expect(page.getByTestId('upstream-edit-input')).toBeTruthy()
+  })
+
+  it('重新授权对话框：上游输入框带着订阅的现值起填（换号不换配置的连线）', async () => {
+    const payload = detailPayload()
+    const sub = payload.model.subscription as Record<string, unknown>
+    sub.status = 'reauth_required'
+    sub.upstream_model = 'openai/gpt-5.6-luna'
+    getGatewayModel.mockResolvedValue(payload)
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.detail.subscription.reauth' }))
+    const input = (await page.findByTestId('upstream-model-input')).querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('openai/gpt-5.6-luna')
+    // 对话框不关会污染下一个用例（vuetify overlay 挂 body，cleanup 擦不干净）：
+    // 显式关掉 —— 这也是人用完它的真实动作。
+    await fireEvent.click(page.getByRole('button', { name: 'models.dialog.cancel' }))
+  })
+
+  it('上游保存失败但行已落库：后台静默重读，显示行与库里一致，编辑框不关', async () => {
+    updateSubscriptionUpstreamModel.mockRejectedValue(new Error('网关 503：连接被拒'))
+    const page = mountDrawer()
+    await page.findByText('models.detail.subscription.title')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelEdit' }))
+    const input = page.getByTestId('upstream-edit-input').querySelector('input') as HTMLInputElement
+    await fireEvent.update(input, 'openai/gpt-5.6-sol')
+
+    // 失败发生后库里已是新值：下一次读详情（后台静默那次）带回它。
+    const persisted = detailPayload()
+    ;(persisted.model.subscription as Record<string, unknown>).upstream_model = 'openai/gpt-5.6-sol'
+    getGatewayModel.mockResolvedValue(persisted)
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.subscription.upstreamModelSave' }))
+    // 错误原话就地显示，编辑框不关；显示行被静默重读成库里的新值。
+    expect(await page.findByText(/网关 503/)).toBeTruthy()
+    await waitFor(() => expect(page.getByText(/upstreamModelCurrent.*gpt-5.6-sol/)).toBeTruthy())
+    expect(page.getByTestId('upstream-edit-input')).toBeTruthy()
+    expect(getGatewayModel.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
   it('移除订阅先确认，确认后才发请求', async () => {
     const page = mountDrawer()
     await page.findByText('models.detail.subscription.title')
@@ -218,9 +312,10 @@ describe('详情抽屉 · 订阅块', () => {
     expect(revokeSubscription).not.toHaveBeenCalled()
     await page.findByText(/revokeBody/)
 
-    // 确认框里那颗也叫 revoke：按文本精确命中两颗，取对话框里的确认（最后一颗）。
-    const buttons = page.getAllByRole('button', { name: 'models.detail.subscription.revoke' })
-    await fireEvent.click(buttons[buttons.length - 1])
+    // 确认框里那颗也叫 revoke：在对话框范围内点确认那颗 —— vuetify overlay
+    // 挂 body、容器次序受前序用例影响，按「最后一颗」点会把抽屉里那颗再点一遍。
+    const confirmDialog = await page.findByRole('dialog')
+    await fireEvent.click(within(confirmDialog).getByRole('button', { name: 'models.detail.subscription.revoke' }))
     await waitFor(() => expect(revokeSubscription).toHaveBeenCalledWith('sub-1'))
   })
 })

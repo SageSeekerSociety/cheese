@@ -3,23 +3,19 @@
 These lock in facts that were MEASURED, each of which silently produces "works
 but bills nothing" if it regresses:
 
-  - BASE_URL stays unset (api.anthropic.com), whatever the transport: containers
-    are captured by name (--add-host; the node-built CLI of 2026-08 ignored
-    HTTPS_PROXY for /v1/messages), bare device processes by HTTPS_PROXY at the
-    meter's CONNECT listener (the current native CLI honors it — re-measured
+  - BASE_URL stays unset (api.anthropic.com): sessions reach the meter by
+    HTTPS_PROXY at its CONNECT listener (the native CLI honors it — measured
     2026-08-13 on 2.1.229);
   - a turn with no attribution header is tokens nobody can be charged for;
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
-
-import json
 
 from app.domain.agent import provider_env
 
 
 def test_subscription_sets_no_base_url_so_it_stays_oauth():
     """A BASE_URL flips interactive Claude Code into API-key mode and it ignores
-    the OAuth credential ("Not logged in"). --add-host on 443 does the routing."""
+    the OAuth login ("Not logged in"). HTTPS_PROXY does the routing."""
     choice = provider_env.subscription_provider(ca_path="/ca.pem")
     assert "ANTHROPIC_BASE_URL" not in choice.env
     assert choice.env["NODE_EXTRA_CA_CERTS"] == "/ca.pem"
@@ -33,41 +29,16 @@ def test_subscription_never_carries_an_api_key():
     assert choice.env["ANTHROPIC_AUTH_TOKEN"] == ""
 
 
-def test_login_is_a_placeholder_oauth_token_not_a_real_one():
-    """Login is via CLAUDE_CODE_OAUTH_TOKEN — the env var the CLI accepts without
-    the local validation a .credentials.json gets. It must be an obvious
-    placeholder that authenticates nothing; the proxy swaps in the real token."""
-    env = provider_env.subscription_provider(ca_path="/ca.pem").env
-    tok = env["CLAUDE_CODE_OAUTH_TOKEN"]
-    assert "placeholder" in tok
-    assert tok == provider_env.SUBSCRIPTION_PLACEHOLDER_TOKEN
-
-
-def test_session_token_is_carried_as_the_bearer_when_given():
-    """Once the proxy is reachable beyond the box's own bridge, the placeholder
-    (public in this repo) becomes a way in — so a per-session scoped token rides
-    as the Bearer instead. The proxy verifies it before spending the sub."""
+def test_the_environment_carries_no_claude_login_of_its_own():
+    """The session logs in with its host's own credential, chosen by the launch
+    script. A login in this env would win over that store and never refresh."""
     env = provider_env.subscription_provider(
-        ca_path="/ca.pem", session_token="scoped.abc123"
+        ca_path="/ca.pem",
+        project_id="proj-1",
+        topic_id="topic-2",
+        connect_proxy_url="http://cheese:scoped.tok@172.17.0.1:8444",
     ).env
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "scoped.abc123"
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] != provider_env.SUBSCRIPTION_PLACEHOLDER_TOKEN
-
-
-def test_the_carried_token_is_one_the_proxy_can_verify():
-    """The scoped token the container carries must be verifiable with the shared
-    signing secret AND expose the project/topic to bill — this is what lets the
-    proxy take attribution from the token instead of the spoofable header."""
-    from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-
-    token = mint_scoped_token(project_id="proj-1", topic_id="topic-2")
-    env = provider_env.subscription_provider(
-        ca_path="/ca.pem", project_id="proj-1", topic_id="topic-2", session_token=token
-    ).env
-    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
-    assert claims is not None  # good signature, unexpired
-    assert claims["p"] == "proj-1"
-    assert claims["t"] == "topic-2"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
 
 def test_attribution_header_is_emitted_for_the_meter():
@@ -88,8 +59,8 @@ def test_no_attribution_means_no_header_rather_than_a_broken_one():
 
 
 def test_no_base_url_is_ever_set():
-    """The routing is DNS (--add-host) or a CONNECT proxy, never a base_url —
-    setting one drops the CLI out of subscription mode."""
+    """The routing is a CONNECT proxy, never a base_url — setting one drops the
+    CLI out of subscription mode."""
     env = provider_env.subscription_provider(ca_path="/ca.pem").env
     assert "ANTHROPIC_BASE_URL" not in env
     env = provider_env.subscription_provider(
@@ -112,14 +83,6 @@ def test_connect_transport_rides_https_proxy_with_its_exclusions():
     assert env["no_proxy"] == env["NO_PROXY"]
 
 
-def test_container_transport_carries_no_proxy_env():
-    """The container path stays --add-host: proxy env vars there would detour
-    every shell tool in the sandbox through the meter for nothing."""
-    env = provider_env.subscription_provider(ca_path="/ca.pem").env
-    assert "HTTPS_PROXY" not in env
-    assert "NO_PROXY" not in env
-
-
 def test_model_names_are_never_pinned_on_the_subscription():
     """Overriding the model aliases makes the official API answer for a model it
     does not serve — the API-key path pins them, this one must not."""
@@ -129,23 +92,24 @@ def test_model_names_are_never_pinned_on_the_subscription():
     assert not [k for k in choice.env if "MODEL" in k]
 
 
-def test_no_credential_file_is_ever_planted_in_the_box():
-    """Hard requirement: a sandbox must not hold a valid credential. Login is via
-    the CLAUDE_CODE_OAUTH_TOKEN env placeholder, so NO .credentials.json is
-    written — not even a fake one (the file gets a local validation that rejected
-    the placeholder, and a real token there would be the very leak we forbid)."""
-    from app.domain.agent.harness.claude_code import build_session_launch
+def test_no_credential_file_is_ever_planted_in_the_box(tmp_path):
+    """The session's login is its host's own store; nothing credential-shaped is
+    planted into its config dir, where a private copy would be stranded by the
+    first sibling's refresh."""
+    import subprocess
 
-    launch = build_session_launch(
-        config_dir="/sessions/ab12cd34",
-        workdir="/topics/topic_ab12cd34",
-        system_prompt="",
+    from app.domain.agent.harness.claude_code.device_launch import launch_holes
+
+    holes = launch_holes(state="$HOME/.cheese/harness/p/r/claude-code/x")
+    subprocess.run(
+        ["sh", "-c", "set -e\n" + holes.configure],
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        check=True,
+        capture_output=True,
     )
-    planted = {f.name: f.content for f in launch.files}
+    planted = {path.name for path in (tmp_path / ".claude").rglob("*")}
+    assert "settings.json" in planted
     assert ".credentials.json" not in planted
-    # The gates it DOES plant are not credential-shaped, and they trust this
-    # topic's own cwd rather than a path baked into the image.
-    gates = json.loads(planted[".claude.json"])
-    assert gates["hasCompletedOnboarding"] is True
-    assert "/topics/topic_ab12cd34" in gates["projects"]
-    assert "token" not in json.dumps(gates).lower()
+    # What it DOES plant is not credential-shaped.
+    settings = (tmp_path / ".claude/settings.json").read_text()
+    assert "token" not in settings.lower()

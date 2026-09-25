@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import room_agent_seat
+from tests.integration.conftest import post_project, room_agent_seat
 
 
 class _FakeTokens:
@@ -186,15 +186,13 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
 def _split(client, parent_id: str, *, by: str) -> str:
     """Split as `by` would: no human token, the handle only in the body — the
-    exact shape `cheese split` sends from a 分身's sandbox."""
+    exact shape `cheese_task` sends from a 分身's sandbox."""
     r = client.post(
         f"/topics/{parent_id}/split",
         json=dict(
@@ -269,7 +267,7 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     what fills the gap."""
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
     _split(client, root, by=agent)

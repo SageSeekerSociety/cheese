@@ -19,6 +19,7 @@ from app.domain.team.models import Team, TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.models import User
+from tests.integration.conftest import post_project
 
 
 def _now() -> datetime:
@@ -26,9 +27,9 @@ def _now() -> datetime:
 
 
 def _project(client, name: str = "P") -> str:
-    return client.post(
-        "/projects", json={"name": name, "owner_handle": "andyl"}
-    ).json()["data"]["id"]
+    return post_project(client, json={"name": name, "owner_handle": "andyl"}).json()[
+        "data"
+    ]["id"]
 
 
 def test_project_can_use_a_device_registered_for_its_team(client):
@@ -142,28 +143,26 @@ def test_device_team_binding_is_idempotent_and_removable(client):
 
 
 def test_personal_project_uses_owners_personal_team_devices(client):
-    """个人 = 单人真团队 (v4): a project with NO team resolves compute through its
-    owner's personal team — a machine registered there reaches every personal
+    """个人 = 单人真团队 (v4): a personal project belongs to its owner's personal
+    team — a machine registered there reaches every personal
     project of that user with zero per-project setup."""
     personal_pid = _project(client, "andyl-personal")
 
     async def seed() -> str:
         async with client.test_factory() as s:
-            # `_project` creates projects with owner_handle="andyl"; handle ==
-            # User.username, so this user is the owner of `personal_pid`.
-            user = User(
-                username="andyl",
-                email="andyl@example.io",
-                created_at=_now(),
-                updated_at=_now(),
-            )
+            # `_project` created the project as owner "andyl" — that registered
+            # andyl, whose personal team the project was put in.
+            from app.domain.user.repositories import UserRepository
+
+            user = await UserRepository(s).get_by_username("andyl")
+            assert user is not None
             stranger = User(
                 username="mallory",
                 email="mallory@example.io",
                 created_at=_now(),
                 updated_at=_now(),
             )
-            s.add_all([user, stranger])
+            s.add(stranger)
             await s.flush()
             svc = TeamService(TeamRepository(session=s))
             mine = await svc.ensure_personal_team(user.id)

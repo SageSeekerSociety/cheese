@@ -16,8 +16,13 @@ async def test_python_get_user_identity_shape(authed_client: AsyncClient) -> Non
 
 
 @pytest.mark.anyio
-async def test_python_put_user_identity_shape(authed_client: AsyncClient) -> None:
-    """PUT /users/{userId}/identity 响应结构检查。"""
+async def test_python_put_user_identity_without_ticket_shape(
+    authed_client: AsyncClient,
+) -> None:
+    """PUT /users/{userId}/identity 不带 sudo 票时的拒绝结构。
+
+    带票成功的那条要 Redis 预约票据，由 integration 的 test_realname_sudo 覆盖。
+    """
     payload = {
         "realName": "Alice",
         "studentId": "20250001",
@@ -26,12 +31,10 @@ async def test_python_put_user_identity_shape(authed_client: AsyncClient) -> Non
         "className": "1",
     }
     resp = await authed_client.put("/users/1/identity", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 403
 
     body = resp.json()
-    assert set(body.keys()) == {"code", "message", "data"}
-    data = body["data"]
-    assert "identity" in data
+    assert body["error"]["name"] == "SudoRequiredError"
 
 
 @pytest.mark.anyio

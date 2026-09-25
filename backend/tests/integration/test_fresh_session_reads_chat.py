@@ -11,13 +11,13 @@ import re
 import uuid
 
 from app.domain.agent_session.services import AgentSessionService
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 _LINE = re.compile(r"这个房间里已经有 (\d+) 条聊天消息")
 
 
 def _room(client) -> str:
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
     return client.post(

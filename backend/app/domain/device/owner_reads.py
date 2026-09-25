@@ -17,10 +17,11 @@ So the owner names the columns it needs, and gets nothing else. Each function
 here is one question the owner asks, answered by the fewest columns that answer
 it; a column dropped from anywhere else in those tables cannot reach it.
 
-`app/api/routes/execution.py` asks its one question through this module too.
-Device authentication and viewer membership also read only the fields
-needed for those decisions. Changes to these fields still
-require a coordinated owner release; unrelated columns do not.
+`app/api/routes/execution.py` asks its hosted-device question through this
+module; its Cloud question lives in `machine.owner_reads`. Device authentication
+and viewer membership also read only the fields needed for those decisions.
+Changes to these fields still require a coordinated owner release; unrelated
+columns do not.
 
 Outliving the app cuts the other way as well: a release that moves a read onto
 a shape only the new backend writes leaves THIS process reading the old one

@@ -1,20 +1,16 @@
-"""Drive central chat turns through native Claude Code and RC."""
+"""Drive central chat turns through Claude Code, held by the runner as a room holds it."""
 
 import argparse
-import asyncio
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from pathlib import Path
 
-from model_fixture import Handler, Server, dump, log
-from rc_fixture import RemoteControlFixture
+from model_fixture import Handler, Server, dump
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
@@ -25,49 +21,24 @@ sys.path.insert(0, str(ROOT / "backend"))
 from tests.support.harness_prompts import event_prompts, system_prompt  # noqa: E402
 
 sys.path.insert(0, str(SOURCE))
-from client import RemoteClient, prepare  # noqa: E402
+from client import RemoteClient  # noqa: E402
 from private import release, target  # noqa: E402
+
+import runner_fixture  # noqa: E402
 
 
 def checkout_after_the_round(room):
-    """Stage one attachment, then read the checkout's own working-tree status.
+    """Read the checkout's own working-tree status once the round is over.
 
     This is the acceptance behind 结论 49 / 不变量 I21b, and it is the half the
-    unit guards cannot reach. They count the call sites that ship file bytes and
-    make that one entry point assert its prefix; they see nothing of the files
-    the platform lays down by shipping shell to `hub.exec`, nothing of what the
-    agent's own harness writes, and nothing of a path assembled at runtime. The
-    checkout can answer all of that itself, because git already tracks exactly
-    the distinction the rule is about: what is in the tree, and what is sitting
+    unit guards cannot reach. They see nothing of the files the platform lays
+    down by shipping shell to `hub.exec`, nothing of what the agent's own
+    harness writes, and nothing of a path assembled at runtime. The checkout
+    can answer all of that itself, because git already tracks exactly the
+    distinction the rule is about: what is in the tree, and what is sitting
     untracked beside it in somebody's repository waiting for them to wonder who
     put it there.
-
-    The attachment is staged first so the round ends having actually exercised
-    the write this rule permits — a clean checkout proves nothing if nothing was
-    written. It goes through the real `place.write` and the real executor, and
-    lands in the session's home; the checkout is that home's `room/`.
     """
-    from app.domain.agent import device_provider, place
-
-    home = device_provider.device_home_dir(
-        uuid.UUID(room.project), uuid.UUID(room.target["resource_id"])
-    )
-    landed = asyncio.run(
-        place.write(
-            b"attachment bytes",
-            home=home,
-            name="uploads/acceptance/图.png",
-            hub=room.wire,
-            device_id=room.target["device_id"],
-            screen="screen",
-            execution_target=room.target,
-        )
-    )
-    # Resolved on both sides: the executor answers with the path it resolved
-    # against its own `HOME`, symlinks already followed.
-    expected = (room.home / "attachments/uploads/acceptance/图.png").resolve()
-    assert Path(landed) == expected, (landed, str(expected))
-    assert Path(landed).read_bytes() == b"attachment bytes"
 
     def git(*arguments):
         return subprocess.run(
@@ -120,19 +91,12 @@ def main():
         config = room.target
         work = str(room.work)
         os.environ["CHEESE_TOKEN"] = "room-fixture-token"
-    tmux = ["tmux", "-L", "private-" + uuid.uuid4().hex[:12]]
-    rc = RemoteControlFixture(
-        folder,
-        lambda event, **fields: log(folder / "rc.jsonl", {"event": event, **fields}),
-    )
-    handler = rc.handler(handler)
-    if room:
         handler = room.handler(handler)
     server = Server(("127.0.0.1", 0), handler)
-    rc.base = f"http://127.0.0.1:{server.server_port}"
+    base = f"http://127.0.0.1:{server.server_port}"
     if room:
-        config["url"] = rc.base + "/execution"
-        room.set_api(rc.base)
+        config["url"] = base + "/execution"
+        room.set_api(base)
     actions = [
         {
             "name": "Write",
@@ -150,33 +114,12 @@ def main():
     ]
     server.state = {"dir": folder, "actions": actions, "requests": []}
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    sessions = []
 
-    def run(arguments):
-        result = subprocess.run(
-            tmux + arguments, text=True, capture_output=True, check=True
-        )
-        return result.stdout
-
-    def terminal():
-        text = run(["capture-pane", "-p", "-t", "agent", "-S", "-300"])
-        (folder / "terminal.txt").write_text(text)
-        return text
-
-    def send(text):
-        rc.send(
-            {
-                "type": "user",
-                "client_platform": "web_claude_ai",
-                "message": {"role": "user", "content": text},
-            }
-        )
-
-    def wait_requests(count):
-        deadline = time.monotonic() + 90
-        while len(server.state["requests"]) < count and time.monotonic() < deadline:
-            time.sleep(0.2)
-        assert len(server.state["requests"]) == count, terminal()
-        time.sleep(0.5)
+    def turn(text, count):
+        ended = sessions[-1].turn(text)
+        assert len(server.state["requests"]) == count, ended
+        assert ended.get("is_error") is False, ended
         results = [
             block
             for message in server.state["requests"][-1]["messages"]
@@ -186,79 +129,34 @@ def main():
         ]
         assert results and not any(block.get("is_error") for block in results), results
 
-    try:
-        launch = prepare(
-            folder / "central",
-            config,
-            claude=args.claude,
-            extra_args=[
-                "--dangerously-skip-permissions",
-                "--remote-control",
-                "Private acceptance",
-                "--append-system-prompt-file",
-                str(prompt_file),
-            ],
-        )
-        gate = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / ".claude.json"
-        gates = json.loads(gate.read_text())
-        gates.update(
-            cachedGrowthBookFeatures=rc.flags,
-            cachedGrowthBookFeaturesAt=int(time.time() * 1000),
-            oauthAccount={
-                "accountUuid": "00000000-0000-4000-8000-000000000001",
-                "emailAddress": "fixture@example.invalid",
-                "organizationUuid": "00000000-0000-4000-8000-000000000002",
-            },
-        )
-        dump(gate, gates)
+    def start(home, name, resume=None):
         env = {
             key: value
             for key, value in os.environ.items()
-            if key in ("PATH", "TERM", "LANG", "SHELL", "DOCKER_HOST", "DOCKER_CONTEXT")
+            if key in ("PATH", "LANG", "SHELL", "DOCKER_HOST", "DOCKER_CONTEXT")
         }
         env.update(
-            launch["env"],
-            TERM="xterm-256color",
-            HTTPS_PROXY=rc.base,
-            NODE_EXTRA_CA_CERTS=str(rc.cert),
-            CLAUDE_CODE_OAUTH_TOKEN="fake-rc-oauth-token",
-            CLAUDE_CODE_OAUTH_SCOPES="user:inference user:profile user:sessions:claude_code",
-            CLAUDE_CODE_SUBSCRIPTION_TYPE="max",
-            NO_PROXY="127.0.0.1,localhost",
-            no_proxy="127.0.0.1,localhost",
+            runner_fixture.room_home(home, config),
+            ANTHROPIC_BASE_URL=base,
+            ANTHROPIC_AUTH_TOKEN="fixture-no-real-credential",
+            DISABLE_TELEMETRY="1",
+            DISABLE_ERROR_REPORTING="1",
         )
         if room:
             env["CHEESE_TOKEN"] = "room-fixture-token"
-        launch["env"] = env
-        dump(folder / "launch.json", launch)
-        run(["new-session", "-d", "-s", "agent", "-x", "120", "-y", "40", "sleep 300"])
-        run(["set-option", "-w", "-t", "agent", "remain-on-exit", "on"])
-        run(
-            [
-                "respawn-pane",
-                "-k",
-                "-t",
-                "agent",
-                shlex.join(
-                    [
-                        sys.executable,
-                        str(SOURCE / "client.py"),
-                        "launch",
-                        str(folder / "launch.json"),
-                    ]
-                ),
-            ]
+        if resume:
+            env["CHEESE_RESUME_SESSION"] = resume
+        command = runner_fixture.room_command(
+            home, args.claude, ["--append-system-prompt-file", str(prompt_file)]
         )
-        assert rc.connected.wait(30), terminal()
-        rc.send(
-            {
-                "type": "control_request",
-                "request_id": "initialize",
-                "request": {"subtype": "initialize"},
-            }
-        )
-        send("Prepare and revise a private document draft.\n" + platform_events[0])
-        wait_requests(4)
+        dump(folder / f"{name}-launch.json", {"command": command, "env": env})
+        sessions.append(runner_fixture.Session.start(folder, command, env, home, name))
+        return home / ".cheese/remote-session"
+
+    homes = [folder / "home"]
+    try:
+        prepared = start(homes[0], "runner")
+        turn("Prepare and revise a private document draft.\n" + platform_events[0], 4)
         actions.extend(
             [
                 None,
@@ -277,13 +175,14 @@ def main():
             actions.append(
                 {"name": "Bash", "input": {"command": f"cheese worktree {room.task}"}}
             )
-        send(
+        turn(
             "Continue processing the draft from the last message.\n"
-            + platform_events[1]
+            + platform_events[1],
+            8 if room else 6,
         )
-        wait_requests(8 if room else 6)
         assert "CROSS_TURN_SHELL_OK" in json.dumps(server.state["requests"][-1])
-        assert not (Path(launch["cwd"]) / "draft.md").exists()
+        central = Path(json.loads((prepared / "launch.json").read_text())["cwd"])
+        assert not (central / "draft.md").exists()
         assert (
             RemoteClient(config).control(
                 {"subtype": "read_file", "path": work + "/draft.md"}
@@ -296,92 +195,39 @@ def main():
             assert not (room.work / "backend").exists()
             task_work = room.home / ".cheese/tasks" / room.task
             assert (task_work / "backend/startup-result").read_text() == "executor-env"
-            assert not (Path(launch["cwd"]) / "custom.txt").exists()
+            assert not (central / "custom.txt").exists()
             # Resume the original bytes under a different HOME and cwd, as a
             # session migration does. The chunked transfer has its own test.
-            run(["send-keys", "-t", "agent", "-l", "/exit"])
-            run(["send-keys", "-t", "agent", "Enter"])
-            deadline = time.monotonic() + 20
-            while (
-                run(["display-message", "-p", "-t", "agent", "#{pane_dead}"]).strip()
-                != "1"
-            ):
-                assert time.monotonic() < deadline, terminal()
-                time.sleep(0.1)
-            source = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / "projects"
+            sessions[-1].stop(folder / "runner-journal.jsonl")
+            source = homes[0] / ".claude/projects"
             originals = {
                 p.relative_to(source): p.read_bytes() for p in source.rglob("*.jsonl")
             }
             assert len(originals) == 1, list(originals)
             resume = next(iter(originals)).stem
-            resumed = prepare(
-                folder / "resumed-center",
-                config,
-                claude=args.claude,
-                extra_args=[
-                    "--dangerously-skip-permissions",
-                    "--remote-control",
-                    "Resumed acceptance",
-                    "--resume",
-                    resume,
-                    "--append-system-prompt-file",
-                    str(prompt_file),
-                ],
-            )
-            resumed_config = Path(resumed["env"]["CLAUDE_CONFIG_DIR"])
-            shutil.copytree(source, resumed_config / "projects")
-            resumed_gate = json.loads((resumed_config / ".claude.json").read_text())
-            resumed_gate.update(
-                {
-                    k: gates[k]
-                    for k in (
-                        "cachedGrowthBookFeatures",
-                        "cachedGrowthBookFeaturesAt",
-                        "oauthAccount",
-                    )
-                }
-            )
-            dump(resumed_config / ".claude.json", resumed_gate)
-            resumed["env"] = {**env, **resumed["env"]}
-            dump(folder / "resumed-launch.json", resumed)
-            rc.connected.clear()
-            run(
-                [
-                    "respawn-pane",
-                    "-k",
-                    "-t",
-                    "agent",
-                    shlex.join(
-                        [
-                            sys.executable,
-                            str(SOURCE / "client.py"),
-                            "launch",
-                            str(folder / "resumed-launch.json"),
-                        ]
-                    ),
-                ]
-            )
-            assert rc.connected.wait(30), terminal()
+            homes.append(folder / "resumed-home")
+            shutil.copytree(source, homes[1] / ".claude/projects")
+            resumed = start(homes[1], "resumed-runner", resume)
             actions.extend(
                 [None, {"name": "Read", "input": {"file_path": work + "/draft.md"}}]
             )
-            send(
+            turn(
                 "Resume the same conversation and read the revised draft.\n"
-                + platform_events[2]
+                + platform_events[2],
+                10,
             )
-            wait_requests(10)
+            assert sessions[-1].call("ping")["session_id"] == resume
             history = json.dumps(server.state["requests"][-1]["messages"])
             assert "Prepare and revise a private document draft." in history
             assert "ROOM_CUSTOM_MCP" in history
             assert "Revised draft" in history
-            assert not (Path(resumed["cwd"]) / "draft.md").exists()
+            resumed_cwd = json.loads((resumed / "launch.json").read_text())["cwd"]
+            assert not (Path(resumed_cwd) / "draft.md").exists()
             assert {
                 p.relative_to(source): p.read_bytes() for p in source.rglob("*.jsonl")
             } == originals
         for event in platform_events[3 if room else 2 :]:
-            count = len(server.state["requests"]) + 1
-            send(event)
-            wait_requests(count)
+            turn(event, len(server.state["requests"]) + 1)
         requests = server.state["requests"]
         for request in requests:
             blocks = request["system"]
@@ -433,7 +279,6 @@ def main():
             dump(folder / "snapshot-receipts.json", list(room.snapshots.values()))
         server.assert_healthy()
         dump(folder / "provider-requests.json", requests)
-        terminal()
         summary = {
             "passed": True,
             "turns": len(platform_events),
@@ -444,11 +289,11 @@ def main():
             **({"checkout_after_the_round": checkout} if checkout else {}),
         }
     finally:
-        subprocess.run(tmux + ["kill-server"], capture_output=True)
+        for index, session in enumerate(sessions):
+            session.stop(folder / f"journal-{index}.jsonl")
         if room:
             for mountpoint in (
-                folder / "central/forwarded-project",
-                folder / "resumed-center/forwarded-project",
+                *(home / ".cheese/remote-session/forwarded-project" for home in homes),
                 room.home / ".cheese/remote-session/forwarded-project",
             ):
                 # See acceptance.py: a dead mount is the one that has to go, and

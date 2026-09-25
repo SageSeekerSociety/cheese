@@ -6,13 +6,8 @@ case "${1:-}" in
     exit 0
     ;;
   rev-parse)
-    if [ "${APP_TIER_REQUIRE_SHORT7:-false}" = true ]; then
-      case " $* " in
-        *" --short=7 "*) ;;
-        *) exit 42 ;;
-      esac
-    fi
-    printf '%s\n' "${APP_TIER_MAIN_SHA:-testsha}"
+    # Real git prints a full sha here; the fixtures name the live tag instead.
+    printf '%s\n' "${APP_TIER_GIT_SHA:-${APP_TIER_MAIN_SHA:-testsha}}"
     exit 0
     ;;
 esac

@@ -9,8 +9,11 @@ BearerAuth:
 
 RefreshTokenCookie:
   type: apiKey
-  description: Refresh token passed via HTTP-only cookie
-  name: REFRESH_TOKEN
+  description: >-
+    Opaque refresh token in an HTTP-only cookie scoped to /api/users/auth.
+    Rotated on every refresh; a replaced token presented again after a short
+    grace window ends the sign-in.
+  name: cheese_refresh
   in: cookie
 
 ApiKeyAuth:

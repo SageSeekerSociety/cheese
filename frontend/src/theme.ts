@@ -132,11 +132,9 @@ function listenToSystem(): void {
   else query.addListener(onChange)
 }
 
-export const THEME_OPTIONS: ReadonlyArray<{ value: ThemePreference; label: string; icon: string }> = [
-  { value: 'system', label: '跟随系统', icon: 'mdi-monitor' },
-  { value: 'light', label: '浅色', icon: 'mdi-white-balance-sunny' },
-  { value: 'dark', label: '深色', icon: 'mdi-weather-night' },
-]
+/** The three preferences, in the order a picker shows them. Their names live in the
+ *  i18n catalog (`navigation.userMenu.theme.*`), not here. */
+export const THEME_PREFERENCES: ReadonlyArray<ThemePreference> = ['system', 'light', 'dark']
 
 /**
  * Read the current theme and change it. Safe to call from any component.
@@ -169,7 +167,7 @@ export function useAppTheme() {
 
   /** Cycle system → light → dark → system. */
   function cyclePreference(): void {
-    const order: ThemePreference[] = ['system', 'light', 'dark']
+    const order = THEME_PREFERENCES
     setPreference(order[(order.indexOf(preference.value) + 1) % order.length])
   }
 
@@ -177,7 +175,7 @@ export function useAppTheme() {
     preference: readonly(preference),
     resolved: readonly(resolved),
     isDark: computed(() => resolved.value === 'dark'),
-    options: THEME_OPTIONS,
+    options: THEME_PREFERENCES,
     setPreference,
     cyclePreference,
   }

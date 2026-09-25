@@ -14,14 +14,13 @@ import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTranscript = vi.fn()
-const getTerminal = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getTranscript: (...a: unknown[]) => getTranscript(...a),
-    getTerminal: (...a: unknown[]) => getTerminal(...a),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
   }
 })
 
@@ -66,8 +65,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   getTranscript.mockReset()
-  getTerminal.mockReset()
-  getTerminal.mockResolvedValue({ available: false })
 })
 
 /** 开一次现场，等这条事件画出来，把那一行的动词交回去。 */

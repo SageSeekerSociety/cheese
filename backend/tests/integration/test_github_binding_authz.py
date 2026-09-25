@@ -5,14 +5,18 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 
 def _project(client):
-    return client.post(
-        "/projects",
+    return post_project(
+        client,
         json={"name": "Binding", "owner_handle": "alice", "forge_kind": "github_app"},
     ).json()["data"]["id"]
 
@@ -164,16 +168,34 @@ def test_callback_rejects_foreign_installation_and_spent_state(client, monkeypat
 
 
 def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatch):
-    from app.api.routes import github_install
+    # A shared team carol owns, alice an ordinary member: alice manages the
+    # project only while she owns it.
+    import asyncio
 
-    pid = _project(client)
+    from app.api.routes import github_install
+    from tests.integration.conftest import a_team, registered
+
+    async def _team() -> int:
+        async with client.test_factory() as session:
+            team_id = await a_team(session, "carol")
+            await registered(session, "alice")
+            await session.commit()
+            return team_id
+
+    team_id = asyncio.run(_team())
+    pid = post_project(
+        client,
+        json={
+            "name": "Binding",
+            "owner_handle": "alice",
+            "forge_kind": "github_app",
+            "team_id": team_id,
+        },
+    ).json()["data"]["id"]
+    join_project_team(client, pid, "alice")
+    join_project_team(client, pid, "bob")
     state = _state(client, pid)
-    # Transfer through the real management route after the first manager left.
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "bob", "role": "member"},
-        headers=session_auth_headers("alice"),
-    )
+    # Transfer through the real management route: alice stops managing it.
     response = client.put(
         f"/projects/{pid}/owner",
         json={"owner_handle": "bob"},
@@ -222,19 +244,19 @@ def test_failed_reconnect_preserves_existing_binding(client, monkeypatch):
 def test_github_management_follows_participant_role_and_own_account(
     client, monkeypatch, is_agent
 ):
-    from app.common.auth import decode_token
+    from app.common.auth import verify_access_token
     from app.core.sandbox_auth import mint_scoped_token
     from app.domain.oauth.services import OAuthService
     from tests.conftest import seed_user
     from tests.integration.conftest import room_agent_seat
 
-    project = client.post(
-        "/projects", json={"name": "Participant access", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Participant access", "owner_handle": "alice"}
     ).json()["data"]
     pid = project["id"]
     origin = project["root_topic_id"]
     handle = room_agent_seat(client, origin) if is_agent else "bob"
-    user_id = int(decode_token(seed_user(client, handle))["sub"])
+    user_id = verify_access_token(seed_user(client, handle)).user_id
     auth = (
         {
             "X-Cheese-Token": mint_scoped_token(
@@ -247,25 +269,13 @@ def test_github_management_follows_participant_role_and_own_account(
         if is_agent
         else session_auth_headers(handle)
     )
-    owner = session_auth_headers("alice")
-    roster = f"/projects/{pid}/members"
     connection = f"/projects/{pid}/github/connection"
     install = f"/projects/{pid}/github/install-url"
     assert client.get(connection, headers=auth).status_code == 403
-    assert (
-        client.post(
-            roster, json={"user_handle": handle, "role": "member"}, headers=owner
-        ).status_code
-        == 200
-    )
+    join_project_team(client, pid, handle)
     assert client.get(connection, headers=auth).status_code == 200
     assert client.get(install, headers=auth).status_code == 403
-    assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "lead"}, headers=owner
-        ).status_code
-        == 200
-    )
+    _set_team_admin(client, pid, handle, admin=True)
     assert client.get(install, headers=auth).status_code == 200
 
     async def no_own_account(self, requested_user_id):
@@ -276,12 +286,36 @@ def test_github_management_follows_participant_role_and_own_account(
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403
     assert "GitHub 账号" in denied.json()["message"]
-    assert (
-        client.put(
-            f"{roster}/{handle}", json={"role": "member"}, headers=owner
-        ).status_code
-        == 200
-    )
+    _set_team_admin(client, pid, handle, admin=False)
     denied = client.get(install, headers=auth)
     assert denied.status_code == 403
-    assert "owner / lead" in denied.json()["message"]
+    assert "团队管理员" in denied.json()["message"]
+
+
+def _set_team_admin(client, pid: str, handle: str, *, admin: bool) -> None:
+    """Make ``handle`` an admin of the project's team, or back to a member."""
+    import asyncio
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            project = await session.get(Project, uuid.UUID(pid))
+            user = await UserRepository(session).get_by_username(handle)
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.user_id == user.id,
+                    TeamUserRelation.deleted_at.is_(None),
+                )
+                .values(role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER)
+            )
+            await session.commit()
+
+    asyncio.run(_go())

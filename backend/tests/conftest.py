@@ -16,12 +16,18 @@ A stub agent keeps tests off the live model.
 
 import asyncio
 import inspect
+import json
+import logging
 import os
 import re
 import sys
+import tempfile
+import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,13 +94,14 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
-from app.domain.agent.harness import SessionRef  # noqa: E402
-from app.domain.agent.harness.channel import Channel  # noqa: E402
-from app.domain.agent.harness.claude_code import (  # noqa: E402
-    ClaudeCodeRuntime,
-    HookRouter,
+from app.domain.agent.device_hub import DeviceCallError  # noqa: E402
+from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef  # noqa: E402
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime  # noqa: E402
+from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
+    Journal as ClaudeJournal,
 )
-from app.domain.agent.harness.launch import LaunchPlan  # noqa: E402
+from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
+from app.domain.agent.harness.claude_code.runtime import Handle  # noqa: E402
 from app.main import app  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
@@ -122,30 +129,23 @@ def _production_test_engine(url: str):
     )
 
 
-def _topics_with_pending_hooks() -> set[str]:
-    """Topics whose hook consumers still have a write to finish.
+#: Every stub channel alive in this process, so teardown can ask each whether a
+#: session of its still has records nobody has landed.
+_CHANNELS: "weakref.WeakSet[StubChannel]" = weakref.WeakSet()
+
+
+def _topics_with_pending_records() -> set[str]:
+    """Topics whose session said something the room has not landed yet.
 
     The broker's active mark describes a turn lifecycle, not work currently
-    running in this process. In particular, an unsolicited hook opens a turn
-    which remains active until a later Stop; once its hook queue drains there is
-    nothing teardown can wait for. Conversely, ``Queue.empty()`` alone misses a
-    hook already taken by the consumer, so include the consumer's per-hook lock.
-    A missing, finished, or closed-loop consumer cannot make further progress.
+    running in this process: a turn the session started for itself stays active
+    until a later ``result``, and once everything it said has landed there is
+    nothing teardown can wait for.
     """
-    from app.domain.agent.harness.claude_code.hooks_substrate import (
-        _RUNTIMES,
-        ClaudeCodeRuntime,
-    )
-
     pending = set()
-    for runtime in list(_RUNTIMES):
-        if not isinstance(runtime, ClaudeCodeRuntime):
-            continue
-        for topic_id, subscription in list(runtime._subscriptions.items()):
-            task = subscription.consumer_task
-            if task is None or task.done() or task.get_loop().is_closed():
-                continue
-            if not subscription.sink.queue.empty() or subscription.consuming.locked():
+    for channel in list(_CHANNELS):
+        for topic_id, session in list(channel.sessions.items()):
+            if channel.unlanded(topic_id, session):
                 pending.add(str(topic_id))
     return pending
 
@@ -157,17 +157,14 @@ def wait_work_idle() -> None:
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual.
 
-    A broker lifecycle with no runner task and no hook currently queued or being
-    consumed is not work teardown can drain. Previously, waiting on idle
-    lifecycles and giving up silently combined to hide the suite's largest single
-    cost: a test that stranded a turn paid the whole ceiling here and left no
-    trace but a slower run. The first
-    ``--durations`` report ever taken of this suite had seventeen of its twenty
-    slowest entries in teardown, every one of them at ~30.5s.
+    A broker lifecycle with no runner task and no record waiting to land is not
+    work teardown can drain. Waiting on idle lifecycles and giving up silently
+    combined once to hide the suite's largest single cost: a test that stranded
+    a turn paid the whole ceiling here and left no trace but a slower run.
     """
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        moving = len(runner._tasks) or len(_topics_with_pending_hooks())
+        moving = len(runner._tasks) or len(_topics_with_pending_records())
         if not moving:
             return
         time.sleep(0.01)
@@ -182,108 +179,352 @@ def wait_work_idle() -> None:
 def retire_topic(client: TestClient, topic_id) -> None:
     """Put down a turn the test left running on purpose.
 
-    A few tests drive a session that never reports Stop — that IS the scenario
-    (a host that vanished mid-turn). The turn then stays in flight, correctly,
-    and every one of them pays ``wait_work_idle``'s full ceiling on the way out
-    for a turn nobody is waiting on any more.
+    A few tests drive a session that never reports its ``result`` — that IS the
+    scenario (a host that vanished mid-turn). The turn then stays in flight,
+    correctly, and every one of them pays ``wait_work_idle``'s full ceiling on
+    the way out for a turn nobody is waiting on any more.
 
-    The subscription lives on the TestClient's portal loop, so the drop has to
-    be made there rather than on whatever loop the test itself ran on.
+    The reader lives on the TestClient's portal loop, so it has to be stopped
+    there rather than on whatever loop the test itself ran on.
     """
-    from app.domain.agent.harness.claude_code import drop_topic_subscriptions
+    topic = uuid.UUID(str(topic_id))
 
-    client.portal.call(drop_topic_subscriptions, uuid.UUID(str(topic_id)))
+    async def retire() -> None:
+        for channel in list(_CHANNELS):
+            channel.sessions.pop(topic, None)
+            await channel.runtime._detach(topic)
+
+    client.portal.call(retire)
 
 
-class StubChannel(Channel):
+class ScriptedSession(Runner):
+    """A Claude Code runner whose Claude Code is a script.
+
+    Everything the runner does with what it reads is the real thing — the work
+    stamps, the turn boundaries, the receipts, the journal the backend mirrors.
+    Only the process is missing: what would have been written to its stdin is
+    handed to the channel, which answers with the records a session would have
+    printed (``StubChannel.emit_turn``).
+    """
+
+    def __init__(
+        self, state: Path, channel: "StubChannel", topic_id, session_id, agent
+    ):
+        super().__init__(state, idle_exit_s=0)
+        # The loop that owns this runner, and the thread it runs on: a test
+        # scripting a record from its own thread has it played there.
+        self.loop = asyncio.get_running_loop()
+        self.thread = threading.get_ident()
+        self.channel, self.topic_id = channel, topic_id
+        self.session_id = session_id
+        self.journal.remember("session_id", session_id)
+        self.journal.remember(
+            "owner", json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent})
+        )
+        self.written: list[dict] = []
+
+    async def _write(self, message: dict) -> None:
+        self.written.append(message)
+        if message.get("type") == "control_request":
+            request = message["request"]
+            future = self.controls[message["request_id"]]
+            future.set_result(
+                {
+                    "subtype": "success",
+                    "request_id": message["request_id"],
+                    "response": self.channel.controlled(self.topic_id, request),
+                }
+            )
+            if request.get("subtype") == "interrupt" and self.working:
+                self.observe(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "session_id": self.session_id,
+                        "uuid": str(uuid.uuid4()),
+                    }
+                )
+            return
+        if message.get("type") == "user":
+            asyncio.get_running_loop().call_soon(self._arrive, message)
+
+    def _arrive(self, message: dict) -> None:
+        # A script that raises would otherwise leave its turn open until the
+        # test times out, with the traceback lost in the loop's log. The turn
+        # fails instead, naming what broke.
+        try:
+            self.channel.arrive(self.topic_id, message)
+        except Exception as exc:  # noqa: BLE001 — surfaced as the turn's failure
+            logging.getLogger(__name__).exception("the scripted session raised")
+            if not self.working:
+                self.observe(
+                    {
+                        "type": "command_lifecycle",
+                        "command_uuid": message["uuid"],
+                        "state": "started",
+                        "session_id": self.session_id,
+                        "uuid": str(uuid.uuid4()),
+                    }
+                )
+            self.observe(
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": f"the scripted session raised: {exc!r}",
+                    "session_id": self.session_id,
+                    "uuid": str(uuid.uuid4()),
+                }
+            )
+
+    async def dispatch(self, method: str, params: dict) -> dict:
+        if method == "ping":
+            return {
+                "session_id": self.session_id,
+                "working": self.working,
+                "work_id": self.work if self.working else None,
+                "tasks": dict(self.tasks),
+                "alive": self.channel.alive,
+            }
+        return await super().dispatch(method, params)
+
+
+class StubChannel:
     """A channel with no machine behind it.
 
     The turn flow tests exercise is the one production runs: the prompt is
-    handed to a session and the reply comes back later through the hook
-    subscription, not through the caller's iterator. So this stub supplies the
-    only thing a real screen supplies — the hooks — and every layer above
-    (assembly, attribution, receipts, turn close) is the real one.
+    handed to a session, and what the session says comes back later through the
+    runtime's reader, not through the caller's iterator. So this stub supplies
+    the only thing a real session supplies — its stream-json records — and every
+    layer above (stamping, translation, attribution, receipts, turn close) is
+    the real one.
 
-    The four hooks are the vocabulary of a one-message turn. ``UserPromptSubmit``
-    is not decoration: it is the receipt that stamps an injected message
-    consumed, and without it mid-turn deliveries stay pending forever and replay.
+    The default turn is the vocabulary of a one-message turn: the session takes
+    the input (its echo is the receipt that stamps the message consumed), says
+    something, and ends.
     """
 
-    name = "stub-hooks"
+    name = "stub-session"
+    provisions_machine = False
+    deferred_work = False
+    builds_model_env = False
+    #: The id a new session's runner is started with (``--session-id``): known
+    #: before the process has written anything, which is why the runtime can
+    #: announce it the moment the session is opened.
+    new_session_id = "sess-test-1"
 
-    def __init__(self, **timeouts: float) -> None:
-        # Its own router: the module-global one is shared process-wide, and a
-        # test that inherited another test's sink would read its hooks.
-        self._router = HookRouter()
-        # The runtime this channel is driven by. A channel and its runtime are
-        # two objects in production and one fixture here, so the ~40 tests that
-        # hand a screen around keep handing one thing around.
-        # ``timeouts`` are the watchdog's (idle_suspect_s / hard_ceiling_s /
-        # delivery_timeout_s), so a test about a session that goes quiet does
-        # not have to wait the production fifteen minutes for it.
-        self.runtime = ClaudeCodeRuntime(self, router=self._router, **timeouts)
+    def __init__(self, **policy: float) -> None:
+        # ``policy`` is the runtime's liveness settings (no_progress_s,
+        # unread_grace_s, hard_ceiling_s), so a test about a session that stops
+        # does not have to wait the production half hour for it.
+        self.runtime = ClaudeCodeRuntime(self, **policy)
+        self.root = Path(tempfile.mkdtemp(prefix="stub-sessions-"))
+        self.sessions: dict[uuid.UUID, ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
+        self.alive = True
         # Fired the moment the transport actually writes, so a test can assert
         # what did (and did not) happen before the session was reached.
         self.on_start: Callable[[], None] | None = None
+        self.calls: dict[str, str] = {}
+        _CHANNELS.add(self)
 
-    async def ensure_ready(  # type: ignore[override]
-        self,
-        *,
-        session: SessionRef,
-        launch: LaunchPlan,
-        **_: object,
-    ) -> uuid.UUID:
-        self.last_system_prompt = launch.system_prompt
-        self.last_resume_session_id = launch.resume_session_id
-        return session.topic_id
+    # --- the channel -------------------------------------------------------
 
-    async def send_prompt(  # type: ignore[override]
-        self, screen: uuid.UUID, prompt: str
-    ) -> bool:
-        self.last_prompt = prompt
-        if self.on_start is not None:
-            self.on_start()
-        # AFTER this returns, never inside it. `send_prompt` is the transport
-        # write; a screen that answered during it would collapse the whole
-        # reason this contract separates feeding from reading, and would put
-        # the reply ahead of frames the caller has not yielded yet.
-        asyncio.get_running_loop().call_soon(self.emit_turn, screen, prompt, self.reply)
+    def available(self) -> bool:
         return True
 
+    async def prepare_topic(self, **_: object) -> tuple[bool, str]:
+        return True, ""
+
+    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+        self.last_system_prompt = opening.system_prompt
+        self.last_resume_session_id = opening.resume_token
+        agent = opening.agent_handle or session.agent_handle or "cheese"
+        runner = self.sessions.get(session.topic_id)
+        if runner is None:
+            runner = ScriptedSession(
+                self.root / str(session.topic_id) / "runner",
+                self,
+                session.topic_id,
+                opening.resume_token or self.new_session_id,
+                agent,
+            )
+            runner.project_id = session.project_id
+            runner.session_agent = session.agent_handle
+            runner.actor = agent
+            self.sessions[session.topic_id] = runner
+        return Handle(
+            session,
+            "stub-device",
+            str(session.topic_id),
+            runner.session_id,
+            agent,
+            self.root / str(session.topic_id) / "mirror.sqlite",
+        )
+
+    async def call(self, handle: Handle, method: str, params: dict) -> dict:
+        runner = self.sessions.get(handle.session.topic_id)
+        if runner is None:
+            raise DeviceCallError(f"no session for {handle.session.topic_id}")
+        return await runner.dispatch(method, params)
+
+    async def discover(self, device_id: str | None) -> list[Handle]:
+        """Every session still running here — what a restarted backend finds."""
+        return [
+            Handle(
+                SessionRef(
+                    session.project_id,
+                    topic_id,
+                    session.session_agent,
+                    harness=CLAUDE_CODE,
+                ),
+                "stub-device",
+                str(topic_id),
+                session.session_id,
+                session.actor,
+                self.root / str(topic_id) / "mirror.sqlite",
+            )
+            for topic_id, session in self.sessions.items()
+            if self.alive
+        ]
+
+    async def images(self, handle: Handle, images: list[dict]) -> list[dict]:
+        return [
+            {"type": "image", "source": {"type": "path", "path": image["path"]}}
+            for image in images
+        ]
+
+    def controlled(self, topic_id: uuid.UUID, request: dict) -> dict:
+        """What the scripted session answers a control with."""
+        return {}
+
+    def unlanded(self, topic_id: uuid.UUID, session: ScriptedSession) -> bool:
+        # Its own connection: this is asked from the test's thread, and the
+        # runner's belongs to the portal loop's.
+        journal = ClaudeJournal(session.state / "records.sqlite")
+        try:
+            written = journal.connection.execute(
+                "SELECT MAX(sequence) FROM records"
+            ).fetchone()[0]
+        finally:
+            journal.close()
+        if not written:
+            return False
+        mirror = self.root / str(topic_id) / "mirror.sqlite"
+        if not mirror.exists():
+            return True
+        journal = ClaudeJournal(mirror)
+        try:
+            return int(journal.recall("landed") or 0) < written
+        finally:
+            journal.close()
+
+    # --- what the session prints ------------------------------------------
+
+    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+        """The session read an input: it is queued, then the turn runs."""
+        content = message["message"]["content"]
+        text = content if isinstance(content, str) else content[0]["text"]
+        self.last_prompt = text
+        if self.on_start is not None:
+            self.on_start()
+        self.record(
+            topic_id,
+            type="command_lifecycle",
+            command_uuid=message["uuid"],
+            state="queued",
+        )
+        self.emit_turn(topic_id, text, self.reply)
+
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-        """The hooks a screen emits for one prompt it answered.
+        """The records a session prints for one input it answered.
 
         Override this to script a different turn — a tool call between two
-        messages, a subagent, silence. What must not change is the frame: a
-        session announces itself, acknowledges the prompt, and stops. ``Stop``
-        in particular is not optional: it is what closes the turn and publishes
-        ``done``.
+        messages, a subagent, silence. What must not change is the frame: the
+        session takes the input, and ends. ``stops`` in particular is not
+        optional: it is what closes the turn and publishes ``done``.
         """
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.says(topic_id, reply)
         self.stops(topic_id, reply)
 
-    # --- the hooks, one method each ----------------------------------------
+    # --- the records, one method each --------------------------------------
 
-    def hook(self, topic_id: uuid.UUID, **payload: object) -> None:
-        self._router.push(str(topic_id), dict(payload))
+    def record(self, topic_id: uuid.UUID, **record: object) -> None:
+        """One stream-json record, as the session printed it.
 
-    def starts(self, topic_id: uuid.UUID, session_id: str = "sess-test-1") -> None:
-        self.hook(topic_id, hook_event_name="SessionStart", session_id=session_id)
+        Played on the runner's own loop, whichever thread the test scripts it
+        from — the runner's journal belongs to that loop's thread, and the
+        reader waiting there is woken so it lands without being asked.
+        """
+        session = self.sessions[topic_id]
+        record.setdefault("uuid", str(uuid.uuid4()))
+        record.setdefault("session_id", session.session_id)
+
+        def play() -> None:
+            session.observe(dict(record))
+            self.runtime._wake(topic_id)
+
+        if threading.get_ident() == session.thread:
+            play()
+            return
+
+        async def played() -> None:
+            play()
+
+        asyncio.run_coroutine_threadsafe(played(), session.loop).result(timeout=10)
+
+    def starts(self, topic_id: uuid.UUID, session_id: str | None = None) -> None:
+        extra = {"session_id": session_id} if session_id else {}
+        self.record(topic_id, type="system", subtype="init", **extra)
 
     def acknowledges(self, topic_id: uuid.UUID, prompt: str) -> None:
-        """UserPromptSubmit — the receipt that stamps an injected message
-        consumed. A session that never emits it leaves every mid-turn delivery
-        pending, and pending messages are replayed (宁可重复不可丢失)."""
-        self.hook(topic_id, hook_event_name="UserPromptSubmit", prompt=prompt)
+        """The session takes the input: its turn starts and it echoes it back.
 
-    def says(self, topic_id: uuid.UUID, text: str) -> None:
-        self.hook(topic_id, hook_event_name="MessageDisplay", delta=text)
+        The echo is the receipt that stamps an injected message consumed. A
+        session that never echoes leaves every mid-turn delivery pending, and
+        pending messages are replayed (宁可重复不可丢失)."""
+        session = self.sessions[topic_id]
+        identifier = next(
+            (
+                message["uuid"]
+                for message in reversed(session.written)
+                if message.get("type") == "user"
+                and _said(message) == prompt
+                and message["uuid"] in session.sent
+            ),
+            None,
+        )
+        if identifier is None:
+            return
+        self.record(
+            topic_id,
+            type="command_lifecycle",
+            command_uuid=identifier,
+            state="started",
+        )
+        self.record(
+            topic_id,
+            type="user",
+            uuid=identifier,
+            isReplay=True,
+            parent_tool_use_id=None,
+            message={"role": "user", "content": prompt},
+        )
+
+    def says(self, topic_id: uuid.UUID, text: str, **extra: object) -> None:
+        self.record(
+            topic_id,
+            type="assistant",
+            parent_tool_use_id=None,
+            message={"role": "assistant", "content": [{"type": "text", "text": text}]},
+            **extra,
+        )
 
     def uses(
         self,
@@ -291,14 +532,58 @@ class StubChannel(Channel):
         name: str,
         *,
         eid: str | None = None,
+        parent: str | None = None,
         **tool_input: object,
-    ) -> None:
-        self.hook(
+    ) -> str:
+        """A tool call; returns its id, which is what a result names."""
+        call = eid or f"toolu_{uuid.uuid4().hex[:12]}"
+        self.calls[name] = call
+        self.record(
             topic_id,
-            hook_event_name="PreToolUse",
-            tool_name=name,
-            tool_input=dict(tool_input),
-            _eid=eid,
+            type="assistant",
+            parent_tool_use_id=parent,
+            message={
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": call,
+                        "name": name,
+                        "input": dict(tool_input),
+                    }
+                ],
+            },
+        )
+        return call
+
+    def returns(
+        self,
+        topic_id: uuid.UUID,
+        name: str,
+        response: object,
+        *,
+        error: bool = False,
+        call: str | None = None,
+        parent: str | None = None,
+    ) -> None:
+        """The result of the last call to ``name`` (or of ``call``)."""
+        text = response if isinstance(response, str) else json.dumps(response)
+        self.record(
+            topic_id,
+            type="user",
+            parent_tool_use_id=parent,
+            message={
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call or self.calls[name],
+                        "content": text,
+                        "is_error": error,
+                    }
+                ],
+            },
+            tool_use_result={"content": [{"type": "text", "text": text}]},
         )
 
     def spawns(
@@ -309,134 +594,87 @@ class StubChannel(Channel):
         agent_id: str = "worker-1",
         call: str = "call-1",
     ) -> None:
-        """房间起一个分身去做某张卡，就是真实那串的头两条钩子。
+        """房间起一个分身去做某张卡：派它的那次 Agent 调用，和它开始的那条记录。
 
-        标识写在交给分身的 prompt 里——Claude Code 的 payload 上没有第二个地方
-        装得下它（`hook_events.SubThreads` 记了实测到的每一条）——随后
-        `SubagentStart` 第一次说出这个分身的 id。从这里起，这个 id 的每一条钩子
-        都是这张卡的。
+        标识写在交给分身的 prompt 里——Claude Code 的记录上没有第二个地方装得下它
+        （`claude_code/events.py` 的 `bind`）。从这里起，这个分身在 stdout 上的每
+        条记录（`parent_tool_use_id` 是这次调用）都是这张卡的。
         """
-        self.hook(
+        self.uses(
             topic_id,
-            hook_event_name="PreToolUse",
-            tool_name="Agent",
+            "Agent",
+            eid=call,
+            description="去做这条活",
+            prompt=f"简报见下。线程标识：{thread_label}",
+            subagent_type="general-purpose",
+        )
+        self.record(
+            topic_id,
+            type="system",
+            subtype="task_started",
+            task_id=agent_id,
             tool_use_id=call,
-            tool_input={
-                "description": "去做这条活",
-                "prompt": f"简报见下。线程标识：{thread_label}",
-                "subagent_type": "general-purpose",
-            },
-        )
-        self.hook(
-            topic_id,
-            hook_event_name="SubagentStart",
-            session_id="sess-test-1",
-            agent_id=agent_id,
-            agent_type="general-purpose",
-        )
-
-    def returns(
-        self,
-        topic_id: uuid.UUID,
-        name: str,
-        response: object,
-        *,
-        eid: str | None = None,
-        **tool_input: object,
-    ) -> None:
-        self.hook(
-            topic_id,
-            hook_event_name="PostToolUse",
-            tool_name=name,
-            tool_response=response,
-            tool_input=dict(tool_input),
-            _eid=eid,
+            task_type="local_agent",
+            description="去做这条活",
         )
 
     def stops(
         self,
         topic_id: uuid.UUID,
         text: str,
-        session_id: str = "sess-test-1",
+        session_id: str | None = None,
         **extra: object,
     ) -> None:
-        self.hook(
+        self.record(
             topic_id,
-            hook_event_name="Stop",
-            session_id=session_id,
-            last_assistant_message=text,
-            usage={
-                "model": "stub",
-                "input_tokens": 10,
-                "output_tokens": 5,
-                "cost_usd": 0.001,
-            },
+            type="result",
+            subtype="success",
+            is_error=False,
+            result=text,
+            **({"session_id": session_id} if session_id else {}),
             **extra,
         )
 
 
+def _said(message: dict) -> str:
+    content = message["message"]["content"]
+    return content if isinstance(content, str) else content[0]["text"]
+
+
 # Captured at import: a test that squeezes a production wait patches
 # `asyncio.sleep` on the shared module, and a poller using the patched one
-# never yields — it spins its whole budget without letting the consumer run.
+# never yields — it spins its whole budget without letting the reader run.
 _REAL_SLEEP = asyncio.sleep
 
 
 async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
-    """Wait until every hook this screen pushed has been consumed.
+    """Land everything this screen's session has printed so far.
 
     Narrower than `settle_turn`, and the right one when the turn is not going
     to end: it asks whether what the session already said has landed, not
     whether the session is done saying things.
     """
-    subscription = screen.runtime._subscriptions.get(topic_id)
+    subscription = screen.runtime.subscriptions.get(topic_id)
     if subscription is not None:
-        await subscription.sink.queue.join()
+        await subscription.drain()
 
 
 async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
-    """Wait until the session's hooks have been consumed and the turn closed.
+    """Wait until what the session said has landed and the turn closed.
 
     `converse()` returns as soon as the prompt is in the session — the reply
-    arrives later, on the subscription. A test that drives the service directly
-    (rather than through the runner and a socket) has to wait for that, the
-    same way a room does.
+    arrives later, through the runtime's reader. A test that drives the service
+    directly (rather than through the runner and a socket) has to wait for
+    that, the same way a room does.
     """
-    consumer_tasks: dict[asyncio.Task, object] = {}
-    runtimes = service._compute._runtimes()
     for _ in range(tries):
-        for runtime in runtimes:
-            subscription = getattr(runtime, "_subscriptions", {}).get(topic_id)
-            if subscription is not None and subscription.consumer_task is not None:
-                consumer_tasks[subscription.consumer_task] = runtime
-        if not any(t == topic_id for t, _ in service._hook_work):
-            subscriptions = []
-            for runtime in runtimes:
-                subscription = getattr(runtime, "_subscriptions", {}).get(topic_id)
-                if subscription is not None:
-                    subscriptions.append(subscription)
-            await asyncio.gather(*(s.sink.queue.join() for s in subscriptions))
-            settle_tasks = []
-            for task in tuple(service._settle_tasks):
-                # ChatService keeps one task set without a topic index; the
-                # real _later coroutine's closure is the available ownership key.
-                frame = getattr(task.get_coro(), "cr_frame", None)
-                if frame is not None and frame.f_locals.get("topic_id") == topic_id:
-                    settle_tasks.append(task)
-            if settle_tasks:
-                await asyncio.gather(*settle_tasks)
-            # A Stop removes hook work just before the runtime finishes closing
-            # its subscription. Await consumers already removed from the live
-            # registry so their final DB/session cleanup cannot escape the test.
-            retired = [
-                task
-                for task, runtime in consumer_tasks.items()
-                if topic_id not in getattr(runtime, "_subscriptions", {})
-            ]
-            for task in retired:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        for runtime in service._compute._runtimes():
+            subscription = getattr(runtime, "subscriptions", {}).get(topic_id)
+            if subscription is not None:
+                await subscription.drain()
+        if not any(t == topic_id for t, _ in service._hook_work) and not any(
+            str(topic_id) == pending for pending in _topics_with_pending_records()
+        ):
             return
         await _REAL_SLEEP(0.01)
     raise AssertionError(
@@ -445,14 +683,14 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
 
 
 async def close_topic_subscriptions(service, topic_id) -> None:
-    """Explicitly release persistent runtime subscriptions at a test boundary."""
+    """Explicitly stop the runtimes' readers at a test boundary."""
     for runtime in service._compute._runtimes():
-        if topic_id in getattr(runtime, "_subscriptions", {}):
-            await runtime._close_topic(topic_id)
+        if topic_id in getattr(runtime, "subscriptions", {}):
+            await runtime._detach(topic_id)
 
 
 async def finish_turn(service, topic_id) -> None:
-    """Settle a turn, then release its subscriptions at a test boundary."""
+    """Settle a turn, then release its readers at a test boundary."""
     await settle_turn(service, topic_id)
     await close_topic_subscriptions(service, topic_id)
 
@@ -466,8 +704,8 @@ def stub_compute(channel: StubChannel | None = None) -> ComputePool:
 
 @pytest.fixture
 def stub_hooks() -> StubChannel:
-    # Per test: its subscriptions and consumer tasks live on the TestClient's
-    # portal loop, which goes away with the client.
+    # Per test: its readers live on the TestClient's portal loop, which goes
+    # away with the client.
     return StubChannel()
 
 

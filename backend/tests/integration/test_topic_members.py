@@ -1,6 +1,10 @@
 """Topic membership (话题成员名册) CRUD + permissions over HTTP."""
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 MISSING_TOPIC = "00000000-0000-0000-0000-000000000000"
 
@@ -18,7 +22,11 @@ def _agent(client, tid: str) -> str:
 
 
 def _topic(client, created_by: str = "alice") -> str:
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    """A room in a project whose team has bob and carol on it — a room seats
+    only people who are in the project."""
+    p = post_project(client, json={"name": "P"}).json()["data"]
+    for handle in ("bob", "carol"):
+        join_project_team(client, p["id"], handle)
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": created_by},
@@ -55,6 +63,19 @@ def test_owner_can_add_member(client):
     assert r.json()["data"]["member_handle"] == "bob"
     handles = {m["member_handle"] for m in _roster(client, tid)}
     assert handles == {"alice", _agent(client, tid), "bob"}
+
+
+def test_a_person_outside_the_project_is_not_seated(client):
+    """Seating someone the project does not have would let them in without an
+    invitation they accepted: people come into the project first."""
+    tid = _topic(client, created_by="alice")
+    r = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": "stranger", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 422
+    assert "stranger" not in {m["member_handle"] for m in _roster(client, tid)}
 
 
 def test_non_manager_cannot_add_member(client):
@@ -210,7 +231,7 @@ def test_each_agent_row_is_named_after_the_agent_seated_there(client):
     它那一行、头像上那个字，读的都是这里。座位账号自己的昵称是建号那一刻写死的
     常量，照原样报出去，两个队友就成了同一个名字。
     """
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     tid = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": "alice"},
@@ -288,7 +309,9 @@ def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
     asyncio.run(_seed())
 
     tid = _topic(client, created_by="dan")
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     for handle in ("pat", "uma"):
+        join_project_team(client, pid, handle)
         assert (
             client.post(
                 f"/topics/{tid}/members",

@@ -16,10 +16,11 @@ CLI_SRC="${CLI_SRC:-$REPO_ROOT/cli}"
 [ -f "$CLI_SRC/go.mod" ] || { echo "no go.mod under CLI_SRC=$CLI_SRC" >&2; exit 1; }
 rm -rf "$DIST"; mkdir -p "$DIST"
 cd "$CLI_SRC"
-for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64 windows-arm64 windows-amd64; do
   os=${target%-*}; arch=${target#*-}
+  name=cheesehost; [ "$os" = windows ] && name=cheesehost.exe
   GOFLAGS=-mod=mod GOOS=$os GOARCH=$arch \
     go build -buildvcs=false -ldflags "-s -w -X main.version=cheesex-connector" \
-    -o "$DIST/$target/cheesehost" .
-  echo "built $target/cheesehost"
+    -o "$DIST/$target/$name" .
+  echo "built $target/$name"
 done

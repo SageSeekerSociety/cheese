@@ -64,6 +64,9 @@ class PasskeyService:
             exclude_credentials=exclude_credentials,
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.PREFERRED,
+                # Registering binds a key to a session that has just been
+                # re-authenticated, so it proves nothing on its own and need
+                # not verify the user. Every sign-in with the key does.
                 user_verification=UserVerificationRequirement.PREFERRED,
             ),
         )
@@ -161,7 +164,11 @@ class PasskeyService:
         options = generate_authentication_options(
             rp_id=self._rp_id,
             allow_credentials=allow_credentials if allow_credentials else None,
-            user_verification=UserVerificationRequirement.PREFERRED,
+            # Required, unlike registration: a passkey sign-in stands in for
+            # the password *and* the second factor, so the assertion must
+            # carry both possession and a PIN or biometric. A bare touch on a
+            # security key would otherwise be one factor passing for two.
+            user_verification=UserVerificationRequirement.REQUIRED,
         )
 
         return {
@@ -201,6 +208,7 @@ class PasskeyService:
                 expected_origin=self._origin,
                 credential_public_key=stored_cred.public_key,
                 credential_current_sign_count=stored_cred.counter,
+                require_user_verification=True,
             )
         except Exception as e:
             raise BadRequestError(f"Passkey authentication failed: {e}") from e

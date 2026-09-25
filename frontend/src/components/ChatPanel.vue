@@ -49,14 +49,9 @@ import { useRoomSocket } from './room/composables/useRoomSocket'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
-import AgentControls from './AgentControls.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
-
-// The room's session state as the socket last reported it. Null until the first
-// frame lands, and passing it at all is what puts AgentControls on the frames.
-const agentControl = ref<AgentControlState | null>(null)
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage and happens in the row components; here we only fill the
@@ -126,6 +121,8 @@ const emit = defineEmits<{
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
+  // 会话控制状态（任务、模型）动了：socket 上的这一帧转给现场那格的控制条。
+  (e: 'agent-control', state: AgentControlState): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -154,6 +151,7 @@ const {
   seatByHandle,
   agentDisplayName,
   displayName,
+  isExternal,
   avatarSrc,
   onAvatarError,
   myName,
@@ -219,6 +217,8 @@ const todoItems = ref<TodoItem[]>([])
 // progress — labelled differently so nobody reads a stale half-circle as
 // "running now".
 const todoRestored = ref(false)
+// 对话里只画正在跑的这一轮的清单；上一轮留下的在总览里（PanelProgress）。
+const liveTodo = computed(() => todoItems.value.length > 0 && !todoRestored.value)
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
 // 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
 // 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
@@ -228,7 +228,7 @@ function todoIcon(status: string): string {
   return 'mdi-circle-outline'
 }
 
-// ---- 选项问题 (cheese ask): buttons under the message; one click answers
+// ---- 选项问题 (cheese_ask): buttons under the message; one click answers
 // and summons 芝士 to continue. Answered state renders for everyone. ----
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {
@@ -503,7 +503,7 @@ function handleFrame(frame: WsServerFrame) {
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'agent_control':
-      agentControl.value = frame.state
+      emit('agent-control', frame.state)
       break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
@@ -1266,6 +1266,7 @@ onBeforeUnmount(() => {
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
@@ -1311,6 +1312,7 @@ onBeforeUnmount(() => {
             :mine="true"
             :topic-id="topic?.id ?? null"
             :author-name="myName"
+            :external="isExternal(AUTHOR)"
             :avatar="avatarSrc(AUTHOR)"
             :is-agent="false"
             :time="outgoingState(item)"
@@ -1329,7 +1331,7 @@ onBeforeUnmount(() => {
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
-          <div v-if="awaitingReply || todoItems.length" class="im-row">
+          <div v-if="awaitingReply || liveTodo" class="im-row">
             <div class="im-gutter">
               <CheeseAvatar :size="28" :name="agentName" />
             </div>
@@ -1338,12 +1340,11 @@ onBeforeUnmount(() => {
                 <span class="im-name">{{ agentName }}</span>
               </div>
 
-              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
-                 turn; between turns this is the topic's stored 进度层 (#187),
-                 labelled so a leftover 进行中 row is not read as "running right
-                 now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
-              <ul v-if="todoItems.length" class="todo-list">
+              <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                 live. Between turns the stored 进度层 (#187) lives in the panel's
+                 总览: parked at the end of the conversation it sat under every new
+                 message, pushing the talk up. -->
+              <ul v-if="liveTodo" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
                   <span class="todo-text">{{ t.subject }}</span>
@@ -1378,6 +1379,10 @@ onBeforeUnmount(() => {
         {{ errorMsg }}
       </v-alert>
 
+      <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
+           又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
+      <slot name="above-composer" />
+
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
@@ -1386,7 +1391,6 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" :pushed="agentControl" questions-only />
       <RoomComposer
         v-if="showComposer"
         ref="composerRef"
@@ -1437,11 +1441,6 @@ onBeforeUnmount(() => {
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
-.todo-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 2px 0 0;
-}
 /* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
@@ -1467,7 +1466,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
 }
 .todo-in_progress {
-  color: var(--accent-ink);
+  color: var(--ink);
   font-weight: 600;
 }
 .todo-completed {

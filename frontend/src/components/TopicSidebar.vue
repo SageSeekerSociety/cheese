@@ -5,10 +5,10 @@ import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
+import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -146,12 +146,18 @@ function pageOf(key: string): { label: string; icon: string } {
 // 只是不再占着每天都要扫一遍的那条竖线。谁在菜单里由壳说——**侧栏上没摆出来的
 // 全部**都在这里，包括壳写错了 key、或这一版前端还不认识的页，所以它们不会凭空
 // 消失。文案和侧栏同一条来源，理由也一样：壳能换词。
-const menuPages = computed(() => plan.value.more.map((key) => ({ key, ...pageOf(key) })))
+// 首页不进菜单：项目名那一行就是它的入口，同一个地方两个入口只会让人猜哪个才算数。
+const homePage = computed(() => shell.value.home ?? 'workspace-running')
+const onHome = computed(() => route.name === homePage.value)
+const menuPages = computed(() =>
+  plan.value.more.filter((key) => key !== homePage.value).map((key) => ({ key, ...pageOf(key) }))
+)
 
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
-  if (plan.value.more.includes(name)) {
+  // 首页不算：它的入口是项目名那一行，记成「打开过」会把它摆回侧栏，成了第二个入口。
+  if (name !== homePage.value && plan.value.more.includes(name)) {
     revealed.value = withRevealedPage(revealed.value, name, myHandle())
   }
   router.push({ name, params: { projectId: props.selectedProjectId } })
@@ -548,13 +554,18 @@ const canTransferProject = computed(() => {
       <Teleport to="#app-bar-slot" :disabled="!page">
         <div class="sidebar-header rail-header" :class="{ 'rail-header--bar': page }">
           <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
+          <!-- 名字前那个图标说的是「点下去是看板」：这一行长得像标题（它要和右边页头
+               对齐成一条线，不能画成列表里的一行），光看名字猜不出它能点。 -->
           <button
             type="button"
             class="rail-header__home"
+            :class="{ 'rail-header__home--active': onHome }"
             :title="currentProjectName"
+            :aria-current="onHome ? 'page' : undefined"
             :disabled="!selectedProjectId"
-            @click="openProjectPage('workspace-running')"
+            @click="openProjectPage(homePage)"
           >
+            <v-icon class="rail-header__glyph" size="16" :icon="pageOf(homePage).icon" />
             <span class="rail-header__name">{{ currentProjectName }}</span>
           </button>
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
@@ -669,7 +680,9 @@ const canTransferProject = computed(() => {
                   />
                 </span>
               </template>
-              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">全局</v-list-item-title>
+              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">{{
+                topicTitle(rootTopic)
+              }}</v-list-item-title>
               <template #append>
                 <span v-if="unreadOf(rootTopic.id) > 0" class="unread-badge">{{ unreadLabel(rootTopic.id) }}</span>
               </template>
@@ -700,6 +713,25 @@ const canTransferProject = computed(() => {
                 <span class="unread-badge">{{ countLabel(privateUnreadTotal) }}</span>
               </template>
             </v-list-item>
+
+            <!-- 项目文档 (C4): 一行。四种文档的切换在页面里。它和资料库、成员一样是这
+                 个项目的一页，所以和它们排在一起，不压在话题列表底下——话题一多，
+                 那个位置就被挤出了视野。 -->
+            <v-list-item
+              :active="onDocs"
+              rounded="lg"
+              class="nav-row pinned-row docs-row"
+              :class="{ 'is-active': onDocs }"
+              :style="ROW_INDENT"
+              @click="emit('select-docs', 'charter')"
+            >
+              <template #prepend>
+                <span class="row-slot">
+                  <v-icon size="16" class="row-glyph" icon="mdi-file-document-outline" />
+                </span>
+              </template>
+              <v-list-item-title>{{ t('navigation.project.docs') }}</v-list-item-title>
+            </v-list-item>
           </v-list>
 
           <v-divider class="mx-3 my-1" />
@@ -709,8 +741,8 @@ const canTransferProject = computed(() => {
             <v-btn
               icon="mdi-plus"
               size="x-small"
-              variant="tonal"
-              color="primary"
+              variant="text"
+              color="on-surface-variant"
               :title="creatingTopic ? '正在创建话题' : '新建话题'"
               :loading="creatingTopic"
               :disabled="creatingTopic"
@@ -793,8 +825,10 @@ const canTransferProject = computed(() => {
                         {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                       </v-icon>
                     </button>
-                    <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
-                         前面——芝士在忙是它的事，等你做事才是你的事。 -->
+                    <!-- 等你处理：有点名给你的验收卡、@你 的未读，或芝士停在一道只有
+                         你能回答的问题上。排在"在跑"前面——芝士在忙是它的事，等你做
+                         事才是你的事。行首只有这一颗点：看板每一列的状态点不再画进
+                         标题里，那一颗对每一行都有，于是哪一行都不显眼。 -->
                     <span v-else-if="row.topic.awaits_me" class="row-slot">
                       <span class="await-dot" title="有待处理的事项" />
                     </span>
@@ -822,16 +856,6 @@ const canTransferProject = computed(() => {
                       @blur="saveRename(row.topic)"
                     />
                     <template v-else>
-                      <!-- 「该谁动」的色点，和看板上那一列同一个颜色、同一个形状
-                           （`lib/board.ts` 是唯一的来源）。侧栏和看板对不上的话，
-                           人就得在两块屏幕之间自己做一次翻译。
-                           后端没给 `presentation` 就不画——不在前端另算一个顶上。 -->
-                      <span
-                        v-if="row.topic.presentation"
-                        class="board-dot"
-                        :style="columnDotStyle(row.topic.presentation.column)"
-                        :title="row.topic.presentation.display_status"
-                      />
                       <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                         row.topic.title
                       }}</span>
@@ -872,6 +896,7 @@ const canTransferProject = computed(() => {
                             icon="mdi-dots-horizontal"
                             size="small"
                             variant="text"
+                            color="on-surface-variant"
                             density="comfortable"
                             title="更多操作"
                             class="row-actions__btn"
@@ -946,6 +971,7 @@ const canTransferProject = computed(() => {
                     icon="mdi-archive-arrow-up-outline"
                     size="small"
                     variant="text"
+                    color="on-surface-variant"
                     density="comfortable"
                     title="取消归档"
                     class="split-btn"
@@ -955,22 +981,6 @@ const canTransferProject = computed(() => {
               </v-list-item>
             </v-list>
           </template>
-
-          <v-divider class="mx-3 my-1" />
-
-          <!-- 项目文档 (C4): 一行。四种文档的切换在页面里，不在这条黄金位上。 -->
-          <v-list density="compact" nav class="py-0">
-            <v-list-item
-              :active="onDocs"
-              rounded="lg"
-              class="nav-row docs-row"
-              :class="{ 'is-active': onDocs }"
-              :style="ROW_INDENT"
-              prepend-icon="mdi-file-document-outline"
-              title="项目文档"
-              @click="emit('select-docs', 'charter')"
-            />
-          </v-list>
         </template>
       </div>
 
@@ -1071,12 +1081,30 @@ const canTransferProject = computed(() => {
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
+/* 图标落在下面各行的图标列上（离侧栏左缘 16px），底色的左缘落在各行底色的左缘
+   上（8px）：这一块选中时和下面的行是同一种块，只是它在标题那条线上。 */
 .rail-header__home {
   flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   text-align: start;
-  padding: 4px 6px;
-  margin-inline-start: -6px;
+  padding: 4px 8px;
+  margin-inline-start: -4px;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.rail-header__glyph {
+  flex: none;
+  color: var(--muted);
+}
+/* 站在看板上：底色和悬停同一档（--fill），不用列表行的选中色——这一块长在标题
+   那条线上，画成一条选中的行，它就不再像标题了。图标跟着变深。 */
+.rail-header__home--active {
+  background: var(--fill);
+}
+.rail-header__home--active .rail-header__glyph {
+  color: var(--ink);
 }
 .rail-header__more {
   flex: none;
@@ -1118,7 +1146,7 @@ const canTransferProject = computed(() => {
 /* Topic / nav rows: title ink, quiet by default. */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text);
 }
 .topic-title {
@@ -1131,7 +1159,7 @@ const canTransferProject = computed(() => {
   padding-top: 2px;
   padding-bottom: 2px;
   min-height: 28px;
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 /* 三态：静默（透明，露出 rail 的 --canvas）/ hover --fill-2 / 选中 --line-2。
@@ -1169,19 +1197,8 @@ const canTransferProject = computed(() => {
   color: var(--muted) !important;
 }
 
-/* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
-   尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
-   各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
-.board-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  margin-inline-end: 6px;
-  border-radius: 50%;
-  border: 2px solid var(--faint);
-}
 .topic-status {
-  font-size: 11.5px;
+  font-size: 13px;
 }
 
 /* 未读角标 (Feishu-style): a compact red pill with the count. */
@@ -1233,7 +1250,7 @@ const canTransferProject = computed(() => {
   padding: 0;
 }
 .group-count {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   background: var(--fill);
   border-radius: 8px;
@@ -1356,33 +1373,34 @@ const canTransferProject = computed(() => {
   color: var(--text);
 }
 /* 收起来的父话题会把子话题的状态整个藏掉（未读会聚合，"在跑"和"等你"原先不会）
-   ——开关自己带聚合色补上：琥珀 = 里面有事等你，绿 = 里面芝士在跑。展开着的行
+   ——开关自己带聚合色补上：橙 = 里面有事等你，绿 = 里面芝士在跑。展开着的行
    则表示本行自己的状态，因为槽被开关占了。hover 不改这两个颜色，状态优先于反馈。 */
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
    压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
    的状态色刷成 --muted——正好是"这一行收起来了、里面有事等你"最该看见的时候。 */
 .subtree-toggle--awaits :deep(.v-icon),
 .subtree-toggle--awaits:hover :deep(.v-icon) {
-  color: var(--accent) !important;
+  color: var(--warn) !important;
 }
 .subtree-toggle--running :deep(.v-icon),
 .subtree-toggle--running:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 等你处理：琥珀实心点 + 一圈 accent-wash 光晕。跟绿色呼吸点靠三个通道区分
-   （颜色 / 有没有光晕 / 动不动），不是只靠颜色——红绿色觉障碍下也分得开。 */
+/* 等你处理：看板「待处理」那一列的同一颗点（`lib/board.ts` 的 needs_you：--warn
+   实心）——侧栏和看板说的是同一件事，就得是同一个样子。琥珀留给主操作和导航位置。
+   跟绿色呼吸点靠三个通道区分（颜色 / 大小 / 动不动），不是只靠颜色——红绿色觉障碍
+   下也分得开。 */
 .await-dot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-wash);
+  background: var(--warn);
 }
 /* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
 .subtree-count {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   background: var(--fill);
   border-radius: 8px;

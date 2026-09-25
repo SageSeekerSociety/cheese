@@ -8,7 +8,7 @@
 |---|---|
 | [`agent-principles.md`](agent-principles.md) | 已经拍板、不再重新讨论的判断 |
 | [`api-conventions.md`](api-conventions.md) | 调 API 该发什么 URL：`/api` 挂载点、路由裸路径与浏览器路径的差别 |
-| [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪 |
+| [`design-system.md`](design-system.md) | 前端视觉与文案的唯一规范：风格、设计原则，以及由原则推出的颜色、排版、尺度、文案、动效规则 |
 | [`i18n.md`](i18n.md) | 界面字符串怎么存、怎么命名、缺翻译怎么办；**加界面文案或改 `frontend/src/i18n/` 前必读** |
 | [`i18n-glossary.md`](i18n-glossary.md) | 核心术语的中英对照；**写英文译文前先查它**，防止同一个中文词译出两个英文词 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |
@@ -23,7 +23,7 @@
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
 | [`agent-liveness.md`](agent-liveness.md) | 一轮什么时候算卡住、什么会结束它、结束后房间看到什么；时限只记不闸，失败不自动重跑 |
 | [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：两条执行路，一台机器都没有时会怎样，以及归档后机器上的东西什么时候退、怎么退 |
-| [`microcloud.md`](microcloud.md) | Cloud 机器从哪来、`aiStatus` 各值对芝士意味着什么、ccproxy 在其中的位置，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
+| [`microcloud.md`](microcloud.md) | Cloud 机器从哪来、芝士向 MicroCloud 要什么、两个机器状态各自意味着什么，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
 | [`what-the-agent-perceives.md`](what-the-agent-perceives.md) | 芝士收得到什么、收不到什么：平台的三十种事件里有多少回流给它（答案是零） |
 | [`accept-is-merge.md`](accept-is-merge.md) | 采纳=当场合并那个 PR；「只在绿的时候合」靠项目配置的分支保护规则 |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |

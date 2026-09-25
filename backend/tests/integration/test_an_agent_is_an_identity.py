@@ -6,9 +6,11 @@ from a room — that would give two agents in one room the same name, and one
 agent two names in two rooms. It is derived from the agent.
 """
 
+from tests.integration.conftest import post_project
+
 
 def _project(client, name: str = "Identity") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

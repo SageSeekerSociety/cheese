@@ -9,6 +9,7 @@ from app.domain.project.models import Project
 from app.domain.room_task import snapshots
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
+from tests.integration.conftest import a_team
 
 pytestmark = pytest.mark.anyio
 
@@ -20,7 +21,7 @@ async def test_snapshot_survives_new_session_and_detects_corruption(
     content = b"# v2 git bundle\n" + b"example bundle bytes"
     digest = hashlib.sha256(content).hexdigest()
     async with db_factory() as session:
-        project = Project(name="Snapshot test")
+        project = Project(team_id=await a_team(session), name="Snapshot test")
         session.add(project)
         await session.flush()
         room = Topic(project_id=project.id, title="Room")

@@ -34,7 +34,7 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.usage.models import ResourceUsage
 from app.domain.user.models import User
 from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import a_team, post_project, session_auth_headers
 
 #: 放进管理员名单的那个 handle。和其它反馈用例一样：平台管理员是平台级的事实，
 #: 和任何项目角色无关，所以它刻意不是任何东西的成员。
@@ -206,8 +206,8 @@ def _seed_machine_stock(client, owner_handle: str) -> None:
 
 
 def _project(client, handle: str) -> str:
-    return client.post(
-        "/projects", json={"name": "看板项目"}, headers=session_auth_headers(handle)
+    return post_project(
+        client, json={"name": "看板项目"}, headers=session_auth_headers(handle)
     ).json()["data"]["id"]
 
 
@@ -622,7 +622,9 @@ def _room_with_card(client, *, decided_at: datetime) -> None:
     async def _seed() -> None:
         async with client.test_factory() as s:
             project = Project(
-                name=f"prev-{uuid.uuid4().hex[:8]}", owner_handle=REPORTER
+                team_id=await a_team(s),
+                name=f"prev-{uuid.uuid4().hex[:8]}",
+                owner_handle=REPORTER,
             )
             s.add(project)
             await s.flush()

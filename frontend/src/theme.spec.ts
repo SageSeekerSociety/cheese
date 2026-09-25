@@ -15,7 +15,7 @@ import {
   resolveInitialTheme,
   resolvePreference,
   systemPrefersDark,
-  THEME_OPTIONS,
+  THEME_PREFERENCES,
   THEME_STORAGE_KEY,
 } from './theme'
 
@@ -150,9 +150,9 @@ describe('theme', () => {
     })
   })
 
-  describe('THEME_OPTIONS', () => {
+  describe('THEME_PREFERENCES', () => {
     it('offers system as a re-selectable option, not just light and dark', () => {
-      expect(THEME_OPTIONS.map((option) => option.value)).toEqual(['system', 'light', 'dark'])
+      expect(THEME_PREFERENCES).toEqual(['system', 'light', 'dark'])
     })
   })
 })

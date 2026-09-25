@@ -35,6 +35,7 @@ import {
 } from '../../lib/docEditState'
 import { compareRoundTrip, docExtensions, docReplaceRange, serializeDoc } from '../../lib/docMarkdown'
 import { createSlashCommands } from '../../lib/docSlashMenu'
+import { topicTitle } from '../../lib/topicState'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -1522,7 +1523,7 @@ onBeforeUnmount(() => {
         >
           <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
             <!-- Large document title (Feishu Docs), = the topic title -->
-            <h1 class="doc-page__title">{{ topic.title }}</h1>
+            <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
             <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
             <div v-if="lossy" class="doc-lossy-banner">
@@ -1732,13 +1733,15 @@ onBeforeUnmount(() => {
   background: transparent;
   padding: 32px 48px 72px;
 }
+/* 和项目页的大标题同一档（.t-page-title 23/33）：这一栏只有对话那么宽，30px 的
+   标题和 16px 的正文放在 14px 的对话旁边，像另一个产品。 */
 .doc-page__title {
   max-width: 720px;
   margin: 0 auto 0.4em;
   font-family: var(--font-display);
-  font-size: 1.85rem;
+  font-size: 23px;
   font-weight: 650;
-  line-height: 1.3;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -1885,8 +1888,9 @@ onBeforeUnmount(() => {
   min-height: 240px;
   max-width: 720px;
   margin: 0 auto;
-  line-height: 1.8;
-  font-size: 16px;
+  /* 连续正文那一档（.t-reading 15/24）。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   color: var(--text);
 }
 .doc-editor :deep(.doc-prose:focus) {
@@ -1971,14 +1975,14 @@ onBeforeUnmount(() => {
   opacity: 0.4;
   cursor: default;
 }
-/* Feishu-style comment anchor: quiet dashed amber underline; hover lifts. */
+/* Feishu-style comment anchor: a quiet dashed underline; hover fills. */
 .doc-editor :deep(.comment-anchor) {
-  border-bottom: 1.5px dashed rgba(var(--v-theme-primary), 0.55);
+  border-bottom: 1.5px dashed var(--faint);
   padding-bottom: 1px;
   cursor: pointer;
 }
 .doc-editor :deep(.comment-anchor:hover) {
-  background: rgba(var(--v-theme-primary), 0.08);
+  background: var(--fill);
 }
 .doc-handle__grip {
   cursor: grab;
@@ -1995,29 +1999,28 @@ onBeforeUnmount(() => {
    evenly; vertical space leans UP (more before than after) so headings bind
    to their section. ---- */
 .doc-editor :deep(h1) {
-  font-size: 1.6em;
+  font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.015em;
-  line-height: 1.35;
+  line-height: var(--lh-18);
   margin: 1.1em 0 0.4em;
 }
 .doc-editor :deep(h2) {
-  font-size: 1.32em;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.4;
+  line-height: var(--lh-15-reading);
   margin: 1.15em 0 0.35em;
 }
 .doc-editor :deep(h3) {
-  font-size: 1.13em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: var(--lh-14);
   margin: 1em 0 0.3em;
 }
 .doc-editor :deep(h4) {
-  font-size: 1em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-14);
   margin: 0.9em 0 0.25em;
   color: var(--ink);
 }
@@ -2067,7 +2070,7 @@ onBeforeUnmount(() => {
 .doc-editor :deep(ul[data-type='taskList'] input[type='checkbox']) {
   width: 15px;
   height: 15px;
-  accent-color: rgb(var(--v-theme-primary));
+  accent-color: var(--ink);
   cursor: pointer;
   vertical-align: middle;
   margin: 0;
@@ -2086,11 +2089,11 @@ onBeforeUnmount(() => {
 .doc-editor :deep(blockquote) {
   margin: 0.7em 0;
   padding: 6px 14px;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-left: 3px solid var(--line-2);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
-  color: rgba(var(--v-theme-on-surface), 0.72);
+  background: var(--fill);
+  color: var(--muted);
 }
 .doc-editor :deep(blockquote blockquote) {
   margin: 0.4em 0;
@@ -2133,7 +2136,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   /* 装饰性角标，不按可读下限走：它蹲在第一行代码的右上角，放大到 12px 就压住
      长行的字（量过：标签到 19px，第一行从 16px 起）。 */
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--faint);
   text-transform: lowercase;
@@ -2226,11 +2229,11 @@ onBeforeUnmount(() => {
 }
 /* Table rows breathe on hover (body only, not the header). */
 .doc-editor :deep(.doc-prose tbody tr:hover td) {
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  background: var(--fill);
 }
 
 /* ---- 军规 1 UI ---- */
-/* Lossy-load banner: amber, quiet, right above the doc. */
+/* Lossy-load banner: a warning, so the warn triple — mark, wash, ink. */
 .doc-lossy-banner {
   display: flex;
   align-items: flex-start;
@@ -2239,14 +2242,14 @@ onBeforeUnmount(() => {
   margin: 0 auto 16px;
   padding: 9px 12px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border: 1px solid var(--warn);
+  background: var(--warn-wash);
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-lossy-banner__icon {
-  color: var(--accent);
+  color: var(--warn);
   margin-top: 2px;
 }
 .doc-lossy-banner__text {
@@ -2255,17 +2258,17 @@ onBeforeUnmount(() => {
 }
 .doc-lossy-banner__btn {
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border: 1px solid var(--warn);
   background: var(--surface);
-  color: var(--accent-ink);
-  border-radius: 6px;
+  color: var(--warn-ink);
+  border-radius: var(--radius-sm);
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
 .doc-lossy-banner__btn:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--warn-wash);
 }
 /* Header status for the paused state — an honest, quiet warning, not the
    「编辑中…」 that used to impersonate a save in progress. */

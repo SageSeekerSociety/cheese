@@ -246,7 +246,7 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
-        run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"
+        run: bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Release the verified metering image
         if: steps.release.outputs.skip != 'true'

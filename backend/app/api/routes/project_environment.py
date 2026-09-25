@@ -30,14 +30,15 @@ from app.domain.agent.runtime import addressed_to_agent
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.membership.repositories import MemberRepository
+from app.domain.membership.roster import roster
+from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
 from app.domain.project.environment_recovery import (
     close_recovery,
     latest_recovery,
     reconcile_recovery,
 )
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
@@ -59,19 +60,13 @@ async def access(
     if project is None:
         raise NotFoundError("Project not found")
     user = await UserRepository(db).get_by_id(auth_user.user_id)
-    member = await MemberRepository(db).get(
-        project_id=project_id, user_handle=user.username if user else ""
+    handle = user.username if user else ""
+    steward = bool(user) and await MemberService(db).manages(project_id, handle)
+    member = bool(user) and any(
+        m.handle == handle for m in await roster(db, project_id)
     )
-    steward = bool(
-        user
-        and (
-            project.owner_handle == user.username
-            or member
-            and member.role == ProjectRole.lead
-        )
-    )
-    if not steward and (write or member is None):
-        raise ForbiddenError("只有项目成员能查看环境，owner / lead 能修改环境")
+    if not steward and (write or not member):
+        raise ForbiddenError("只有项目成员能查看环境，项目所有者或团队管理员能修改环境")
     return project, steward
 
 

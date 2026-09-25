@@ -32,12 +32,14 @@ const hasUnread = computed(() => store.counts.unread > 0)
  *  `/feedback/meta` 的回答，不是前端按 handle 猜的。 */
 const items = computed(() => {
   const all = [
-    { key: 'center', to: '/feedback', icon: 'mdi-comment-quote-outline', label: t('navigation.feedback.center') },
-    { key: 'mine', to: '/feedback/mine', icon: 'mdi-inbox-arrow-down-outline', label: t('navigation.feedback.mine') },
+    { key: 'center', to: '/feedback', label: t('navigation.feedback.center') },
+    { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
   ]
   if (store.isAdmin) {
-    all.push({ key: 'admin', to: '/admin/feedback', icon: 'mdi-tray-full', label: t('navigation.feedback.admin') })
+    all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })
   }
+  // 「了解知是」讲的是这个产品，不是「我」，所以住在这里而不在用户菜单里。
+  all.push({ key: 'about', to: '/about', label: t('publicSite.aboutCheese') })
   return all
 })
 
@@ -68,7 +70,7 @@ watch(loggedIn, refresh, { immediate: true })
         v-bind="activator"
         class="help-entry"
         :class="{ 'help-entry--compact': props.compact }"
-        variant="outlined"
+        variant="text"
         color="on-surface-variant"
         :aria-label="hasUnread ? t('navigation.feedback.unread') : t('navigation.feedback.label')"
       >
@@ -80,8 +82,8 @@ watch(loggedIn, refresh, { immediate: true })
       </v-btn>
     </template>
 
-    <v-list density="compact" min-width="180">
-      <v-list-item v-for="item in items" :key="item.key" :to="item.to" :prepend-icon="item.icon">
+    <v-list class="menu-list" nav density="compact" min-width="160">
+      <v-list-item v-for="item in items" :key="item.key" :to="item.to">
         <v-list-item-title>{{ item.label }}</v-list-item-title>
       </v-list-item>
     </v-list>
@@ -91,19 +93,22 @@ watch(loggedIn, refresh, { immediate: true })
 <style scoped>
 /* 高度写在这里、**不用 `:size`**：数字形式的 `size` 给的是「一个方格」（Vuetify 的
    `useSize` 同时下发 width 和 height），带文字的按钮会被压成正方形、字溢出去 ——
-   顶栏那颗「反馈」就这么坏过一次（#1434）。这一条要的是「高 24、宽随内容」。 */
+   顶栏那颗「反馈」就这么坏过一次（#1434）。这一条要的是「宽随内容」，高度和顶栏
+   这一簇里的其他控件（铃铛、未登录时的语言开关）一样是 28。
+   不画描边：这一簇的控件同一种形状（无边、悬停出底色），靠「帮助与反馈」这几个字
+   而不是一圈框让它被看见。 */
 .help-entry {
-  height: 24px;
-  padding: 0 10px;
-  font-size: 12px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
 }
 
 /* 手机上顶栏更窄，只留图标。 */
 .help-entry--compact {
-  padding: 0 6px;
+  padding: 0 8px;
 }
 
 .help-entry__label {
-  margin-left: 6px;
+  margin-left: 4px;
 }
 </style>

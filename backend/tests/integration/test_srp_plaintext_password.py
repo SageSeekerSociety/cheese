@@ -19,9 +19,10 @@ from app.api.routes.users import _issue_oauth_state_token, _store_oauth_pending
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.domain.user.login_security import (
-    LOGIN_ATTEMPTS_PREFIX,
-    LOGIN_LOCKOUT_PREFIX,
-    MAX_LOGIN_ATTEMPTS,
+    LOGIN_FAILURES_PREFIX,
+    LOGIN_FREE_FAILURES,
+    LOGIN_WAIT_PREFIX,
+    MAX_STEP_UP_PASSWORD_ATTEMPTS,
     STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
     STEP_UP_PASSWORD_LOCKOUT_PREFIX,
 )
@@ -125,13 +126,13 @@ def srp_account(
 
     r = redis.Redis.from_url(settings.redis_url)
     r.delete(
-        f"{LOGIN_ATTEMPTS_PREFIX}{UNKNOWN_USERNAME}",
-        f"{LOGIN_LOCKOUT_PREFIX}{UNKNOWN_USERNAME}",
+        f"{LOGIN_FAILURES_PREFIX}{UNKNOWN_USERNAME}",
+        f"{LOGIN_WAIT_PREFIX}{UNKNOWN_USERNAME}",
     )
     for user in created:
         r.delete(
-            f"{LOGIN_ATTEMPTS_PREFIX}{user.username}",
-            f"{LOGIN_LOCKOUT_PREFIX}{user.username}",
+            f"{LOGIN_FAILURES_PREFIX}{user.username}",
+            f"{LOGIN_WAIT_PREFIX}{user.username}",
             f"{STEP_UP_PASSWORD_ATTEMPTS_PREFIX}{user.user_id}",
             f"{STEP_UP_PASSWORD_LOCKOUT_PREFIX}{user.user_id}",
         )
@@ -207,11 +208,11 @@ class TestPasswordLogin:
         )
         assert _login(api_client, user.username, MIXED_CASE.password).status_code == 200
 
-    def test_wrong_passwords_spend_the_login_budget(
+    def test_wrong_passwords_start_the_login_wait(
         self, api_client: TestClient, srp_account
     ):
         srp_account(UNICODE)
-        for _ in range(MAX_LOGIN_ATTEMPTS):
+        for _ in range(LOGIN_FREE_FAILURES):
             assert _login(api_client, UNICODE.username, "wrong").status_code in (
                 401,
                 403,
@@ -252,7 +253,7 @@ class TestSudoPassword:
         self, api_client: TestClient, srp_account, db_session, _portal
     ):
         user = srp_account(UNICODE)
-        for _ in range(MAX_LOGIN_ATTEMPTS):
+        for _ in range(MAX_STEP_UP_PASSWORD_ATTEMPTS):
             assert self._sudo(api_client, user, "wrong").status_code in (401, 403)
 
         assert self._sudo(api_client, user, UNICODE.password).status_code == 403

@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import type { AgentControlRequest, AgentControlResult, AgentControlState } from '../api'
+import type { AgentControlResult, AgentControlState } from '../api'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { answerAgentControl, getAgentControl, getAgentControlResult, sendAgentControl } from '../api'
+import { getAgentControl, sendAgentControl } from '../api'
 
 const props = defineProps<{
   topicId: string
   active: boolean
-  questionsOnly?: boolean
   /** The room's socket already carries this state. A parent that passes it puts
    * the panel on the frames and drops it to the idle cadence below; a parent
-   * that does not (the expanded panel, which also shows the machine's task list
-   * and so has to ask for it) keeps asking every two seconds. */
+   * that does not keeps asking every two seconds. */
   pushed?: AgentControlState | null
 }>()
 const LIVE_POLL_MS = 2000
@@ -25,33 +23,21 @@ const notice = ref('')
 const busy = ref(false)
 const expanded = ref(false)
 const output = ref<unknown>(null)
-const answers = ref<Record<string, Record<string, string>>>({})
-const waiting = ref<{ sessionId: string; requestId: string } | null>(null)
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
 
+function adopt(next: AgentControlState) {
+  if (next.id !== state.value?.id) {
+    output.value = null
+    notice.value = ''
+  }
+  state.value = next
+}
+
 async function refresh(epoch = generation) {
-  const topic = props.topicId
   try {
-    const next = await getAgentControl(topic)
-    if (epoch !== generation) return
-    if (next.id !== state.value?.id) {
-      answers.value = {}
-      output.value = null
-      notice.value = ''
-      waiting.value = null
-    }
-    state.value = next
-    const pendingResult = waiting.value
-    if (pendingResult) {
-      const result = await getAgentControlResult(topic, pendingResult.sessionId, pendingResult.requestId)
-      if (epoch === generation && pendingResult === waiting.value && result.result) {
-        waiting.value = null
-        receiveResult(result.result)
-      } else if (epoch === generation && result.status === 'uncertain') {
-        notice.value = '尚未确认送达；为避免重复执行，系统不会自动重发'
-      }
-    }
+    const next = await getAgentControl(props.topicId)
+    if (epoch === generation) adopt(next)
   } catch (e) {
     if (epoch === generation) error.value = e instanceof Error ? e.message : '加载会话控制失败'
   }
@@ -63,20 +49,11 @@ async function poll(epoch: number) {
   if (epoch === generation && props.active) timer = setTimeout(() => void poll(epoch), every)
 }
 
-// A frame lands: take it as the whole platform-side state, the same shape the
-// request returns. Answers in flight are keyed by request id, so a question that
-// is still open keeps the text already typed into it.
+// A frame lands: take it as the whole state, the same shape the request returns.
 watch(
   () => props.pushed,
   (next) => {
-    if (!next) return
-    if (next.id !== state.value?.id) {
-      answers.value = {}
-      output.value = null
-      notice.value = ''
-      waiting.value = null
-    }
-    state.value = next
+    if (next) adopt(next)
   }
 )
 
@@ -86,7 +63,6 @@ watch(
     generation += 1
     clearTimeout(timer)
     state.value = null
-    waiting.value = null
     error.value = ''
     if (props.active) void poll(generation)
   },
@@ -97,7 +73,6 @@ onBeforeUnmount(() => {
   clearTimeout(timer)
 })
 
-const pending = computed(() => Object.values(state.value?.pending ?? {}))
 const tasks = computed(() => Object.values(state.value?.tasks ?? {}))
 const taskLabels: Record<string, string> = {
   running: '运行中',
@@ -105,6 +80,7 @@ const taskLabels: Record<string, string> = {
   pending: '等待中',
   completed: '已完成',
   failed: '失败',
+  killed: '已停止',
   stopped: '已停止',
   task_started: '运行中',
   task_progress: '运行中',
@@ -127,59 +103,10 @@ async function run(request: Record<string, unknown>) {
   try {
     const result = await sendAgentControl(props.topicId, state.value.id, request)
     if (epoch !== generation) return
-    if (!result.result) {
-      notice.value = '已发送，尚未收到执行结果'
-      waiting.value = { sessionId: state.value.id, requestId: result.request_id }
-      return
-    }
-    receiveResult(result.result)
+    if (result.result) receiveResult(result.result)
     await refresh(epoch)
   } catch (e) {
     if (epoch === generation) error.value = e instanceof Error ? e.message : '操作失败'
-  } finally {
-    busy.value = false
-  }
-}
-
-interface Question {
-  question: string
-  options?: { label: string; description?: string }[]
-  multiSelect?: boolean
-}
-function questions(item: AgentControlRequest): Question[] {
-  const value = item.request.input?.questions
-  return Array.isArray(value) ? (value as Question[]) : []
-}
-function setAnswer(id: string, question: string, value: string) {
-  answers.value[id] = { ...answers.value[id], [question]: value }
-}
-async function answer(item: AgentControlRequest, allow: boolean) {
-  if (!state.value?.id || busy.value) return
-  const epoch = generation
-  busy.value = true
-  error.value = ''
-  output.value = null
-  notice.value = ''
-  try {
-    await answerAgentControl(
-      props.topicId,
-      state.value.id,
-      item.request_id,
-      allow
-        ? {
-            behavior: 'allow',
-            updatedInput: {
-              ...item.request.input,
-              ...(questions(item).length ? { answers: answers.value[item.request_id] } : {}),
-            },
-          }
-        : { behavior: 'deny', message: '用户拒绝了此操作' }
-    )
-    if (epoch !== generation) return
-    notice.value = '回答已提交，正在等待会话确认'
-    await refresh(epoch)
-  } catch (e) {
-    if (epoch === generation) error.value = e instanceof Error ? e.message : '提交回答失败'
   } finally {
     busy.value = false
   }
@@ -192,7 +119,6 @@ const operations = [
   { value: 'apply_flag_settings', title: '思考强度', fields: ['effort'] },
   { value: 'set_max_thinking_tokens', title: '思考预算', fields: ['budget'] },
   { value: 'rename_session', title: '会话名称', fields: ['title'] },
-  { value: 'set_color', title: '会话颜色', fields: ['color'] },
   { value: 'file_suggestions', title: '查找文件', fields: ['query'] },
   { value: 'read_file', title: '查看文件', fields: ['path'] },
   { value: 'get_workspace_diff', title: '工作区变更', fields: [] },
@@ -204,12 +130,11 @@ const operations = [
   { value: 'mcp_oauth_callback_url', title: '完成外部工具授权', fields: ['serverName', 'callbackUrl'] },
 ]
 const operation = ref('initialize')
-const values = ref<Record<string, string>>({ mode: 'default', effort: 'medium', budget: '2048' })
+const values = ref<Record<string, string>>({ mode: 'bypassPermissions', effort: 'medium', budget: '2048' })
 const selected = computed(() => operations.find((op) => op.value === operation.value)!)
 const labels: Record<string, string> = {
   model: '模型名称',
   title: '会话名称',
-  color: '颜色',
   query: '文件名',
   path: '文件路径',
   serverName: '工具服务名称',
@@ -227,7 +152,6 @@ function execute() {
     delete request.budget
     request.max_thinking_tokens = Number(values.value.budget)
   }
-  if (operation.value === 'initialize') request.supportedDialogKinds = ['ask_user_question']
   if (operation.value === 'read_file') request.encoding = 'utf8'
   void run(request)
 }
@@ -249,8 +173,8 @@ const authUrl = computed(() => {
 </script>
 
 <template>
-  <section v-if="!questionsOnly || pending.length" class="agent-controls" aria-label="会话控制">
-    <div v-if="!questionsOnly" class="control-bar">
+  <section class="agent-controls" aria-label="会话控制">
+    <div class="control-bar">
       <span>{{ state?.connected ? '控制已连接' : '暂无可用控制连接' }}</span>
       <v-btn
         size="small"
@@ -268,127 +192,81 @@ const authUrl = computed(() => {
     </div>
     <v-alert v-if="error" type="error" density="compact" class="ma-2">{{ error }}</v-alert>
     <p v-if="notice" role="status" class="control-notice">{{ notice }}</p>
-    <div v-if="pending.length || expanded" class="control-body">
-      <article v-for="item in pending" :key="item.request_id" class="control-question">
-        <template v-if="questions(item).length">
-          <div v-for="question in questions(item)" :key="question.question">
-            <p>{{ question.question }}</p>
-            <v-combobox
-              autocomplete="off"
-              :model-value="
-                question.multiSelect
-                  ? answers[item.request_id]?.[question.question]?.split(', ') ?? []
-                  : answers[item.request_id]?.[question.question] ?? ''
-              "
-              :items="question.options?.map((option) => option.label)"
-              :multiple="question.multiSelect"
-              label="你的回答"
-              density="compact"
-              hide-details
-              @update:model-value="
-                setAnswer(
-                  item.request_id,
-                  question.question,
-                  Array.isArray($event) ? $event.join(', ') : String($event ?? '')
-                )
-              "
-            />
-            <p v-for="option in question.options" :key="option.label" class="control-description">
-              {{ option.label }}：{{ option.description }}
-            </p>
-          </div>
-        </template>
-        <template v-else>
-          <p>{{ item.request.tool_name ?? '操作' }} 请求执行许可</p>
-          <pre>{{ JSON.stringify(item.request.input, null, 2) }}</pre>
-        </template>
-        <div class="control-bar">
-          <v-btn
-            size="small"
-            variant="tonal"
-            :disabled="busy || questions(item).some((q) => !answers[item.request_id]?.[q.question])"
-            @click="answer(item, true)"
-            >{{ questions(item).length ? '提交回答' : '允许本次' }}</v-btn
-          >
-          <v-btn size="small" variant="text" :disabled="busy" @click="answer(item, false)">拒绝</v-btn>
-        </div>
-      </article>
-      <template v-if="expanded">
-        <div v-for="task in tasks" :key="task.task_id" class="control-bar">
-          <span
-            >{{ task.description ?? task.task_id }} ·
-            {{ taskLabels[task.status ?? task.subtype ?? ''] ?? '状态待更新' }}</span
-          >
-          <v-btn
-            v-if="task.tool_use_id"
-            size="small"
-            variant="text"
-            :disabled="busy || !state?.connected"
-            @click="run({ subtype: 'background_tasks', tool_use_id: task.tool_use_id })"
-            >转入后台</v-btn
-          >
-          <v-btn
-            size="small"
-            variant="text"
-            :disabled="busy || !state?.connected || ['completed', 'failed', 'stopped'].includes(task.status ?? '')"
-            @click="run({ subtype: 'stop_task', task_id: task.task_id })"
-            >停止</v-btn
-          >
-        </div>
-        <form class="control-form" @submit.prevent="execute">
+    <div v-if="expanded" class="control-body">
+      <div v-for="task in tasks" :key="task.task_id" class="control-bar">
+        <span
+          >{{ task.description ?? task.task_id }} ·
+          {{ taskLabels[task.status ?? task.subtype ?? ''] ?? '状态待更新' }}</span
+        >
+        <v-btn
+          v-if="task.tool_use_id"
+          size="small"
+          variant="text"
+          :disabled="busy || !state?.connected"
+          @click="run({ subtype: 'background_tasks', tool_use_id: task.tool_use_id })"
+          >转入后台</v-btn
+        >
+        <v-btn
+          size="small"
+          variant="text"
+          :disabled="
+            busy || !state?.connected || ['completed', 'failed', 'killed', 'stopped'].includes(task.status ?? '')
+          "
+          @click="run({ subtype: 'stop_task', task_id: task.task_id })"
+          >停止</v-btn
+        >
+      </div>
+      <form class="control-form" @submit.prevent="execute">
+        <v-select
+          v-model="operation"
+          autocomplete="off"
+          :items="operations"
+          label="操作"
+          density="compact"
+          hide-details
+        />
+        <template v-for="field in selected.fields" :key="field">
           <v-select
-            v-model="operation"
+            v-if="field === 'mode'"
+            v-model="values.mode"
             autocomplete="off"
-            :items="operations"
-            label="操作"
+            label="工具权限"
+            :items="[
+              { title: '自动执行', value: 'bypassPermissions' },
+              { title: '仅规划', value: 'plan' },
+            ]"
             density="compact"
             hide-details
           />
-          <template v-for="field in selected.fields" :key="field">
-            <v-select
-              v-if="field === 'mode'"
-              v-model="values.mode"
-              autocomplete="off"
-              label="工具权限"
-              :items="[
-                { title: '逐次确认', value: 'default' },
-                { title: '自动接受编辑', value: 'acceptEdits' },
-                { title: '仅规划', value: 'plan' },
-                { title: '自动执行', value: 'bypassPermissions' },
-              ]"
-              density="compact"
-              hide-details
-            />
-            <v-select
-              v-else-if="field === 'effort'"
-              v-model="values.effort"
-              autocomplete="off"
-              label="思考强度"
-              :items="['low', 'medium', 'high', 'max']"
-              density="compact"
-              hide-details
-            />
-            <v-text-field
-              v-else
-              v-model="values[field]"
-              autocomplete="off"
-              :label="labels[field]"
-              :type="field === 'budget' ? 'number' : 'text'"
-              density="compact"
-              hide-details
-              required
-            />
-          </template>
-          <p v-if="operation === 'set_max_thinking_tokens'" class="control-description">
-            采用自适应思考的模型会自行决定预算
-          </p>
-          <v-btn type="submit" size="small" variant="tonal" :disabled="busy || !state?.connected">执行</v-btn>
-        </form>
-        <v-btn v-if="authUrl" :href="authUrl" target="_blank" rel="noopener noreferrer" variant="tonal"
-          >打开授权页面</v-btn
-        >
-        <pre v-if="formattedOutput" class="control-output">{{ formattedOutput }}</pre>
-      </template>
+          <v-select
+            v-else-if="field === 'effort'"
+            v-model="values.effort"
+            autocomplete="off"
+            label="思考强度"
+            :items="['low', 'medium', 'high', 'max']"
+            density="compact"
+            hide-details
+          />
+          <v-text-field
+            v-else
+            v-model="values[field]"
+            autocomplete="off"
+            :label="labels[field]"
+            :type="field === 'budget' ? 'number' : 'text'"
+            density="compact"
+            hide-details
+            required
+          />
+        </template>
+        <p v-if="operation === 'set_max_thinking_tokens'" class="control-description">
+          采用自适应思考的模型会自行决定预算
+        </p>
+        <v-btn type="submit" size="small" variant="tonal" :disabled="busy || !state?.connected">执行</v-btn>
+      </form>
+      <v-btn v-if="authUrl" :href="authUrl" target="_blank" rel="noopener noreferrer" variant="tonal"
+        >打开授权页面</v-btn
+      >
+      <pre v-if="formattedOutput" class="control-output">{{ formattedOutput }}</pre>
     </div>
   </section>
 </template>
@@ -418,17 +296,6 @@ const authUrl = computed(() => {
   max-height: 50vh;
   padding: 8px;
   overflow: auto;
-}
-
-.control-question {
-  padding: 12px;
-  margin-bottom: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-
-.control-question p {
-  margin-bottom: 8px;
 }
 
 .control-form {

@@ -73,6 +73,6 @@ while True:
     finally:
         os.kill(running["pid"], signal.SIGTERM)
         os.waitpid(running["pid"], 0)
-        from app.domain.agent.harness.codex.runner import socket_path
+        from app.domain.agent.harness.driven.runner import socket_path
 
         os.unlink(socket_path(state))

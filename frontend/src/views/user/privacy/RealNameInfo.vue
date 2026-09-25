@@ -353,7 +353,7 @@ const fetchRealNameInfo = async () => {
 
   loading.value = true
   try {
-    const { data } = await UserApi.getRealNameInfo(currentUserId.value, false)
+    const { data } = await UserApi.getRealNameInfo(currentUserId.value)
     hasRealNameInfo.value = data.hasIdentity
     realNameInfo.value = data.identity
   } catch (error: any) {

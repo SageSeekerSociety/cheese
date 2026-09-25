@@ -14,13 +14,13 @@
   "legalEffectiveDate": "生效日期 {date}",
   "legalLoadFailed": "暂时无法加载，请刷新页面重试",
   "legalVersion": "版本 {version}",
+  "passkeyWrongHost": "这个地址不能使用通行密钥，请前往 {host}",
   "privacyPolicy": "《隐私政策》",
   "registrationSettingsCouldNotBeLoadedRefresh": "暂时无法获取注册配置，请刷新页面重试",
   "rulesUpdated": "协议已更新",
   "rulesUpdatedBody": "我们更新了以下条款。请阅读后选择是否同意；同意后可继续使用，不同意将退出登录。",
   "signInMeansYouAgreeTo": "登录即表示你同意",
   "termsOfService": "《用户协议》",
-  "yourPasswordMustContainALetterA": "密码必须包含字母、数字、特殊字符",
   "layout": {
     "home": "知是首页"
   },
@@ -32,7 +32,9 @@
     "newPassword": "新密码",
     "password": "密码",
     "showPassword": "显示密码",
-    "username": "用户名"
+    "username": "用户名",
+    "capsLock": "大写锁定已开启",
+    "capsLockShort": "大写锁定"
   },
   "rule": {
     "displayName": "显示名称只能使用字母、数字、下划线和中文",
@@ -40,7 +42,12 @@
     "passwordHint": "至少 8 个字符，包含字母、数字和特殊字符",
     "passwordInvalid": "密码须至少 8 个字符，并包含字母、数字和特殊字符",
     "passwordsDoNotMatch": "两次输入的密码不一致",
-    "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符"
+    "username": "用户名须为 4–32 个字符，只能使用字母、数字、下划线和连字符",
+    "usernameRequired": "请输入用户名",
+    "displayNameRequired": "请输入显示名称",
+    "passwordRequired": "请输入密码",
+    "confirmPasswordRequired": "请再次输入密码",
+    "emailInvalid": "请输入有效的邮箱地址"
   },
   "signIn": {
     "title": "登录",
@@ -50,7 +57,6 @@
     "createAccount": "创建账号",
     "or": "或",
     "passkey": "使用通行密钥登录",
-    "passkeyUnsupported": "当前环境不支持通行密钥",
     "withProvider": "使用 {provider} 登录",
     "signedIn": "登录成功",
     "failed": "登录失败，请重试",
@@ -60,7 +66,19 @@
     "providerFailed": "第三方登录失败，请重试",
     "notice": {
       "passwordReset": "密码已重置，请使用新密码登录"
-    }
+    },
+    "lastUsed": "上次使用",
+    "emailCode": "使用邮箱验证码登录"
+  },
+  "attempts": {
+    "wrongPassword": "用户名或密码错误",
+    "wrongPasswordWait": "用户名或密码错误，请在 {wait}后重试",
+    "tooManyWait": "尝试次数过多，请在 {wait}后重试",
+    "seconds": "{count} 秒",
+    "minutes": "{count} 分钟",
+    "wrongEmailCode": "验证码不正确或已过期",
+    "codeTooSoon": "请在 {wait}后重新获取验证码",
+    "mailLimit": "暂时无法发送邮件，请稍后重试"
   },
   "signUp": {
     "title": "创建账号",
@@ -81,7 +99,18 @@
     "resent": "验证码已重新发送",
     "resendFailed": "发送失败，请稍后重试",
     "accountCreated": "注册成功",
-    "failed": "验证失败，请重试"
+    "failed": "验证失败，请重试",
+    "changeEmail": "更换邮箱"
+  },
+  "addEmail": {
+    "title": "添加邮箱",
+    "lede": "邮箱用于找回账号和登录",
+    "send": "发送验证码",
+    "submit": "验证并继续",
+    "added": "邮箱已添加",
+    "signOut": "退出登录",
+    "signInAgain": "请重新登录后再添加邮箱",
+    "emailTaken": "该邮箱已被其他账号使用"
   },
   "recover": {
     "title": "找回密码",
@@ -90,7 +119,8 @@
     "submit": "发送重置邮件",
     "sent": "重置密码邮件已发送，请查收",
     "failed": "发送失败，请重试",
-    "rememberPassword": "想起密码了？"
+    "rememberPassword": "想起密码了？",
+    "sentTitle": "查收邮件"
   },
   "resetPassword": {
     "title": "设置新密码",
@@ -103,6 +133,7 @@
     "totpLede": "输入身份验证器应用中的 6 位验证码",
     "backupLede": "输入一个 8 位备用码",
     "lockout": "连续输错 5 次将锁定 15 分钟",
+    "trustDevice": "在这台设备上 30 天内不再询问",
     "totpSubmit": "验证",
     "backupSubmit": "验证备用码",
     "totpRequired": "请输入 6 位数字验证码",
@@ -111,17 +142,24 @@
     "useTotp": "改用验证器验证码",
     "wrongCode": "验证码不正确，请重试",
     "wrongCodeRemaining": "验证码不正确，还可以尝试 {count} 次",
-    "tooManyAttempts": "尝试次数过多，请 {minutes} 分钟后再试",
     "sessionExpired": "验证已失效，请重新登录",
     "backupUsedTitle": "已使用备用码",
     "backupUsedBody": "每个备用码只能使用一次。建议现在生成一组新的备用码。",
     "later": "稍后",
     "regenerate": "生成新备用码"
   },
+  "passkeyOffer": {
+    "title": "下次登录无需密码",
+    "lede": "在这台设备上登录时，使用指纹、面容或屏幕锁定即可",
+    "add": "添加通行密钥",
+    "later": "暂不添加",
+    "stopAsking": "不再提醒"
+  },
   "oauth": {
     "provider": {
       "wechat": "微信",
-      "weibo": "微博"
+      "weibo": "微博",
+      "ruc": "微人大"
     },
     "error": {
       "title": "登录失败",
@@ -143,7 +181,8 @@
       "usernameReserved": "该用户名为平台保留，请换一个",
       "usernameTaken": "该用户名已被使用",
       "verificationFailed": "身份验证失败，请重试",
-      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号"
+      "consentRequired": "请阅读并同意用户协议和隐私政策后再创建账号",
+      "emailUnverified": "请先验证邮箱"
     },
     "success": {
       "processing": "正在登录",
@@ -151,7 +190,7 @@
       "done": "登录成功",
       "doneLede": "正在跳转",
       "failed": "登录失败，请重试",
-      "missingToken": "登录信息不完整，请重新登录",
+      "incomplete": "登录信息不完整，请重新登录",
       "signedIn": "已使用 {provider} 登录",
       "linked": "已关联 {provider} 账号"
     },
@@ -163,6 +202,146 @@
       "wrongPassword": "密码错误，请重新输入",
       "failed": "验证失败，请重试",
       "incomplete": "验证信息不完整，请重新登录"
+    },
+    "complete": {
+      "title": "欢迎，{name}",
+      "lede": "你已通过 {provider} 验证身份。可以创建一个新账号，或关联到已有的账号",
+      "create": "创建新账号",
+      "bind": "关联已有账号",
+      "setPassword": "同时设置密码",
+      "setPasswordHint": "设置后也可以用用户名和密码登录",
+      "bindSubmit": "关联并登录",
+      "unavailable": "无法继续登录",
+      "emailBelongsToAccount": "该邮箱已被现有账号使用"
     }
+  },
+  "sudo": {
+    "title": "确认是你本人",
+    "ledeFor": "{action}前，需要确认你的身份",
+    "passkey": "使用通行密钥验证",
+    "otherMethods": "其他方式",
+    "noMethod": "暂无可用于确认身份的方式",
+    "method": {
+      "password": "输入密码",
+      "totp": "输入验证器中的验证码",
+      "emailCode": "接收邮箱验证码"
+    },
+    "submit": "验证",
+    "passwordRequired": "请输入密码",
+    "passkeyCanceled": "已取消通行密钥验证",
+    "failed": "验证失败，请重试",
+    "action": {
+      "initTOTP": "开启两步验证",
+      "disableTOTP": "关闭两步验证",
+      "generateBackupCodes": "生成新的备用码",
+      "addPasskey": "添加通行密钥",
+      "deletePasskey": "删除通行密钥",
+      "changePassword": "修改密码",
+      "unbindOAuthConnection": "解除第三方账号关联",
+      "viewRealName": "查看完整实名信息",
+      "updateRealName": "修改实名信息"
+    },
+    "sendEmailCode": "发送邮箱验证码",
+    "sendFailed": "发送失败，请重试",
+    "emailCodeUnavailable": "此账号已开启两步验证，请使用其他方式"
+  },
+  "security": {
+    "title": "密码与安全",
+    "lede": "管理登录方式、两步验证和已登录的设备",
+    "signIn": "登录方式",
+    "password": "密码",
+    "passwordNote": "用于用户名和密码登录",
+    "change": "修改",
+    "passkeys": "通行密钥",
+    "passkeysUnsupported": "当前浏览器不支持通行密钥",
+    "passkeyCount": "已添加 {count} 个",
+    "noPasskeys": "暂无通行密钥",
+    "add": "添加",
+    "passkeySynced": "已同步到多台设备",
+    "passkeyOneDevice": "仅保存在一台设备上",
+    "addedOn": "添加于 {date}",
+    "remove": "删除",
+    "twoFactor": "两步验证",
+    "twoFactorOn": "已开启，使用验证器应用",
+    "twoFactorOff": "未开启",
+    "turnOn": "开启",
+    "turnOff": "关闭",
+    "backupCodes": "备用码",
+    "backupCodesNote": "验证器不在身边时用来登录，每个只能使用一次",
+    "regenerate": "重新生成",
+    "connections": "已关联账号",
+    "connectionsNote": "可以用这些账号直接登录",
+    "linkedOn": "关联于 {date}",
+    "unlink": "解除关联",
+    "noConnections": "暂无关联账号",
+    "sessions": "已登录的设备",
+    "thisDevice": "本设备",
+    "lastActive": "最近活动于 {date}",
+    "unknownDevice": "未知设备",
+    "deviceName": "{os} 上的 {browser}",
+    "methodPassword": "密码登录",
+    "methodPasskey": "通行密钥登录",
+    "methodTotp": "两步验证登录",
+    "methodBackupCode": "备用码登录",
+    "methodSignup": "注册后登录",
+    "methodOAuth": "{provider} 登录",
+    "trusted": "已信任",
+    "signOutDevice": "退出",
+    "signOutOthers": "退出其他设备",
+    "signOutOthersTitle": "退出其他设备",
+    "signOutOthersBody": "除本设备外，所有设备都需要重新登录。确定退出吗？",
+    "signedOutDevice": "已退出该设备",
+    "signedOutOthers": "已退出 {count} 台设备",
+    "signOutFailed": "退出失败，请重试",
+    "noSessions": "暂无登录设备",
+    "changePasswordTitle": "修改密码",
+    "changePasswordSubmit": "修改密码",
+    "changePasswordFailed": "密码修改失败，请重试",
+    "passwordChanged": "密码已修改，其他设备已退出登录",
+    "setupTitle": "开启两步验证",
+    "newCodesTitle": "新的备用码",
+    "step": "第 {step} 步，共 {total} 步",
+    "scanLede": "用验证器应用扫描二维码",
+    "qrAlt": "两步验证二维码",
+    "manualKey": "无法扫描时，手动输入这个密钥",
+    "copy": "复制",
+    "copyAll": "复制全部",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请手动选择文本",
+    "verifyLede": "输入应用中显示的 6 位验证码",
+    "codesLede": "把这些备用码保存在安全的地方。它们只显示这一次，每个只能使用一次",
+    "back": "上一步",
+    "next": "下一步",
+    "verify": "验证",
+    "done": "完成",
+    "wrongCode": "验证码不正确，请重试",
+    "setupFailed": "无法开始设置，请重试",
+    "turnOffTitle": "关闭两步验证",
+    "turnOffBody": "关闭后，登录时只需要密码。确定关闭吗？",
+    "turnedOff": "两步验证已关闭，已向你的邮箱发送通知",
+    "turnOffFailed": "关闭失败，请重试",
+    "regenerateTitle": "重新生成备用码",
+    "regenerateBody": "生成后，原来的备用码全部失效。确定生成吗？",
+    "regenerateFailed": "生成失败，请重试",
+    "removePasskeyTitle": "删除通行密钥",
+    "removePasskeyBody": "删除后，这个通行密钥不能再用来登录。确定删除吗？",
+    "passkeyRemoved": "通行密钥已删除",
+    "passkeyRemoveFailed": "删除失败，请重试",
+    "passkeyAddedToast": "通行密钥已添加",
+    "passkeyExists": "这个通行密钥已经添加过了",
+    "passkeyCanceled": "已取消添加通行密钥",
+    "passkeyAddFailed": "添加失败，请重试",
+    "unlinkTitle": "解除关联 {provider}",
+    "unlinkBody": "解除后，不能再用 {provider} 登录这个账号。确定解除吗？",
+    "unlinked": "已解除关联",
+    "unlinkFailed": "解除关联失败，请重试",
+    "lastWayIn": "这是你唯一的登录方式。请先设置密码或添加通行密钥",
+    "loadFailed": "部分信息加载失败，请刷新页面",
+    "methodEmailCode": "邮箱验证码登录"
+  },
+  "emailCode": {
+    "title": "邮箱验证码登录",
+    "send": "发送验证码",
+    "codeTitle": "输入验证码"
   }
 }

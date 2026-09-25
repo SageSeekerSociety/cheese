@@ -1,18 +1,23 @@
 """Archival uses the authenticated room manager, never the submitted author."""
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def test_archive_requires_manager_and_records_actual_actor(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "owner"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "owner"}).json()[
+        "data"
+    ]
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "R", "created_by": "owner"},
     ).json()["data"]
     topic = room["id"]
     for handle, role in (("admin", "admin"), ("member", "member")):
+        join_project_team(client, project["id"], handle)
         result = client.post(
             f"/topics/{topic}/members",
             json={"handle": handle, "role": role},

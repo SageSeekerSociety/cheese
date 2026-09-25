@@ -216,16 +216,16 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
     p, _ = project(client)
     t = uuid.UUID(room(client, p))
     chat = client.app.dependency_overrides[get_chat_service]()
-    original = stub_hooks.ensure_ready
+    original = stub_hooks.ensure
 
-    async def fail_room(**kwargs):
-        if kwargs["session"].topic_id == t:
+    async def fail_room(session, opening):
+        if session.topic_id == t:
             raise EnvironmentPreparationError(
                 {"state": "failed", "attempt": "actual", "stage": "setup"}
             )
-        return await original(**kwargs)
+        return await original(session, opening)
 
-    monkeypatch.setattr(stub_hooks, "ensure_ready", fail_room)
+    monkeypatch.setattr(stub_hooks, "ensure", fail_room)
 
     async def exercise():
         async with chat.session_factory() as db:
@@ -249,7 +249,7 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
         assert "overview backlog marker" in stub_hooks.last_prompt
         assert f"/environment/recovery/rooms/{t}" in stub_hooks.last_prompt
         await settle_turn(chat, root)
-        monkeypatch.setattr(stub_hooks, "ensure_ready", original)
+        monkeypatch.setattr(stub_hooks, "ensure", original)
         async for _ in chat.converse(
             topic_id=t, author="system", content="continue after repair", summon=True
         ):

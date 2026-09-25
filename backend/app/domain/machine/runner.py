@@ -43,20 +43,11 @@ class MachineEnrollmentSweeper:
                 # No MicroCloud credentials — nothing can have been provisioned,
                 # so there is nothing to enroll. Not an error.
                 return {"enrolled": 0, "failed": 0}
-            # Converge the built-in AI channel (→ccproxy) BEFORE enrolling, not
-            # after. Enrollment is the one moment the platform is on the machine
-            # over ssh, and what it reads there only exists once the channel has
-            # settled — so the old order enrolled a machine at the provisioning
-            # default and switched it a step too late, losing its ccproxy
-            # identity permanently (observed live 2026-08-14, machine 472).
-            # Both halves are needed: this starts the switch, and enrolment waits
-            # for it to land (`list_awaiting_enrollment`, bounded).
             # Refresh first: both steps below read state that only a read path
             # ever updated, so without this the sweep decides on whatever was
             # true the last time a human opened the project.
             await service.settle_reservations()
             await service.refresh_unsettled()
-            await service.reconcile_ai_mode()
             result = await service.enroll_pending()
             ready = await service.ready_topic_devices()
             # A lease MicroCloud has given up on will never appear in `ready`,

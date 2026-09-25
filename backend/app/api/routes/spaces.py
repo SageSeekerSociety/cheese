@@ -13,6 +13,7 @@ from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
+from app.core.client_address import resolved_client_address
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -1085,7 +1086,7 @@ async def enroll_in_course(
             # Answer before redeeming: a link for another board must not join
             # this person to a board the link never named.
             raise BadRequestError(
-                "This invite code is for a different 题目板",
+                "This invite code is for a different space",
                 data={"type": "inviteCode", "id": invite.id},
             )
         await service.join_space(code=code, user_id=auth_user.user_id)
@@ -1650,7 +1651,7 @@ async def export_space_analytics_participants(
         f"participationApproved={participationApproved}, "
         f"completionStatus={completionStatus}, realName={realName}"
     )
-    ip_address = request.client.host if request.client else ""
+    ip_address = resolved_client_address(request) or ""
     seen_target_ids: set[int] = set()
     for m in memberships:
         if m.is_team:

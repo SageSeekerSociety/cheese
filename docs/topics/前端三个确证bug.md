@@ -77,7 +77,7 @@
 
 `frontend/src/services/account.ts`：新增 `isTokenExpired()`（解 JWT 的 `exp`，
 带 30 秒余量，解不开一律当过期），`init()` 改成——令牌已过期就先用 httpOnly 的
-`REFRESH_TOKEN` cookie 续签，**成功了才** `loggedIn = true`；续签也失败就登出，
+刷新 cookie 续签，**成功了才** `loggedIn = true`；续签也失败就登出，
 不再顶着一个假登录态把 401 一路撒进 console。
 
 消费方不用改：`AppBar.vue` 和 `useNotifications.ts` 本来就 `watch(loggedIn)`，

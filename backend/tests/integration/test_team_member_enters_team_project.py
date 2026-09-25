@@ -26,6 +26,7 @@ import uuid
 from datetime import UTC, datetime
 
 from tests.conftest import seed_user
+from tests.integration.conftest import post_project
 
 
 def _bearer(token: str) -> dict[str, str]:
@@ -88,7 +89,7 @@ def _team_project(client, *, owner: str, team_id: int | None) -> tuple[str, str]
     body: dict[str, object] = {"name": "P", "owner_handle": owner}
     if team_id is not None:
         body["team_id"] = team_id
-    r = client.post("/projects", json=body, headers=_bearer(seed_user(client, owner)))
+    r = post_project(client, json=body, headers=_bearer(seed_user(client, owner)))
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     return data["id"], data["root_topic_id"]

@@ -1053,7 +1053,7 @@ defineExpose({ openFile })
         </div>
         <div class="file-body">
           <div v-if="fileListOpen" ref="fileListEl" class="file-list">
-            <div v-if="fileRows.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">
+            <div v-if="fileRows.length === 0" class="text-center c-faint py-6 t-body">
               {{ showAll ? '暂无文件' : '暂无改动' }}
             </div>
             <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
@@ -1365,7 +1365,7 @@ defineExpose({ openFile })
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--muted);
   flex: 0 0 auto;
 }
 .changes-bar__ro {
@@ -1425,7 +1425,7 @@ defineExpose({ openFile })
   margin-left: 4px;
   padding: 0 4px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -1448,7 +1448,7 @@ defineExpose({ openFile })
   padding: 6px 0;
   background: var(--surface);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 12px;
   line-height: 1.55;
 }
 .diff-line {
@@ -1487,7 +1487,7 @@ defineExpose({ openFile })
   gap: 4px;
   flex-wrap: wrap;
   padding: 6px 8px;
-  font-size: 0.76rem;
+  font-size: 13px;
   color: rgb(var(--v-theme-error));
   background: rgba(var(--v-theme-error), 0.07);
   border-bottom: 1px solid rgba(var(--v-theme-error), 0.25);
@@ -1507,11 +1507,11 @@ defineExpose({ openFile })
   text-align: center;
 }
 .file-blob__title {
-  font-size: 0.85rem;
+  font-size: 13px;
   color: var(--text);
 }
 .file-blob__note {
-  font-size: 0.75rem;
+  font-size: 13px;
   color: var(--muted);
   margin-top: 4px;
   word-break: break-all;
@@ -1551,7 +1551,7 @@ defineExpose({ openFile })
 }
 .file-item__name {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

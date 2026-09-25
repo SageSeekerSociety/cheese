@@ -1,0 +1,5 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+# built by scripts/build-tmux.sh, in CI and on the machine that packages
+resources/

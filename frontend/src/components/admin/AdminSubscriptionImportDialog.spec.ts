@@ -114,6 +114,7 @@ describe('导入订阅 · 状态机', () => {
       provider: 'openai_codex',
       label: null,
       target_subscription_id: null,
+      upstream_model: null,
     })
     expect(page.getByText('models.subscription.codeHint')).toBeTruthy()
     const link = page.getByRole('link', { name: 'models.subscription.openPage' }) as HTMLAnchorElement
@@ -164,6 +165,29 @@ describe('导入订阅 · 状态机', () => {
     expect(await page.findByText('models.subscription.expired')).toBeTruthy()
   })
 
+  it('填了上游模型就带进 start 的体；全是空白时开始按钮不可点', async () => {
+    const page = mountDialog()
+    await page.findByText('models.subscription.intro')
+
+    // 全是空白：不是「留空跟随默认」，是非法输入，按钮按住。
+    const input = page.getByTestId('upstream-model-input').querySelector('input') as HTMLInputElement
+    await fireEvent.update(input, '   ')
+    const startBtn = page.getByRole('button', { name: 'models.subscription.start' }) as HTMLButtonElement
+    expect(startBtn.disabled).toBe(true)
+
+    // 真值：照填的进请求体（trim 后）。
+    await fireEvent.update(input, '  openai/gpt-5.6-luna  ')
+    expect(startBtn.disabled).toBe(false)
+    await fireEvent.click(startBtn)
+    await page.findByText('ABCD-EFGH')
+    expect(startSubscriptionDeviceFlow).toHaveBeenCalledWith({
+      provider: 'openai_codex',
+      label: null,
+      target_subscription_id: null,
+      upstream_model: 'openai/gpt-5.6-luna',
+    })
+  })
+
   it('定向重授权：start 的体里带上 target，文案换成「重新授权」那句', async () => {
     const page = mountDialog({ targetSubscriptionId: 'sub-old' })
     await page.findByText('models.subscription.reauthIntro')
@@ -173,6 +197,25 @@ describe('导入订阅 · 状态机', () => {
       provider: 'openai_codex',
       label: null,
       target_subscription_id: 'sub-old',
+      upstream_model: null,
+    })
+  })
+
+  it('定向重授权带上游现值：输入框从现值起填，start 原样发回 —— 换号不换配置', async () => {
+    const page = mountDialog({
+      targetSubscriptionId: 'sub-old',
+      initialUpstreamModel: 'openai/gpt-5.6-luna',
+    })
+    await page.findByText('models.subscription.reauthIntro')
+
+    const input = page.getByTestId('upstream-model-input').querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('openai/gpt-5.6-luna')
+    await toWaiting(page)
+    expect(startSubscriptionDeviceFlow).toHaveBeenCalledWith({
+      provider: 'openai_codex',
+      label: null,
+      target_subscription_id: 'sub-old',
+      upstream_model: 'openai/gpt-5.6-luna',
     })
   })
 })

@@ -19,7 +19,7 @@ import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import { relTime } from '@/lib/relTime'
-import { fmtCost, fmtDelta, fmtDuration, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
+import { fmtCost, fmtDelta, fmtMs, fmtNum, fmtSI } from '@/lib/usageFormat'
 import { useFeedbackStore, WINDOWED_KINDS } from '@/stores/feedback'
 
 // 管理后台的看板（§4.2）。**它读的是整个平台，不只是反馈。**
@@ -1830,17 +1830,6 @@ onBeforeUnmount(() => {
               }}</span>
               <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_dead_letters) }}</span>
             </div>
-            <div class="ad__split-cell">
-              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.reliability.title') }}</span>
-              <span class="ad__split-value t-console-title t-num">{{ num(reliability.spool?.unread) }}</span>
-              <span class="ad__cell-note t-meta-read t-num">
-                {{
-                  t('feedback.dashboard.reliability.oldest', {
-                    age: fmtDuration(reliability.spool?.oldest_age_seconds),
-                  })
-                }}
-              </span>
-            </div>
           </div>
         </section>
       </template>
@@ -2277,7 +2266,7 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（§0）。 */
+/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（design-system §1.6）。 */
 .ad__retry {
   align-self: flex-start;
   margin-top: 8px;
@@ -2285,7 +2274,7 @@ onBeforeUnmount(() => {
 
 /* 急件警示行。只有真的压着没人管的急件时才画，所以它一出现就该被看见 —— 用
    `--warn-ink` 的文字而不是整块琥珀底：琥珀在这套设计系统里只留给「当前唯一的主操作」
-   （§0），一个警示行不是操作。 */
+   （design-system §1.6），一个警示行不是操作。 */
 .ad__urgent {
   margin: 12px 0 0;
   color: var(--warn-ink);

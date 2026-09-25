@@ -55,6 +55,8 @@ function optionButton(container: Element, label: string): HTMLElement {
 describe('ThemeToggle', () => {
   beforeEach(() => {
     localStorage.clear()
+    // 选项的名字按界面语言取；每次 mount 都重新 import 一份 i18n，它从这个键读初始语言。
+    localStorage.setItem('cheese:locale', 'zh-CN')
     document.documentElement.removeAttribute('data-theme')
   })
 

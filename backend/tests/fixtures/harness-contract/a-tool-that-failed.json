@@ -1,17 +1,28 @@
 {
   "verb": "backlog",
   "why": "#1096. A step that failed and a step that worked must not arrive as the same thing: the effect of a failed step is that nothing happened, which on a timeline looks exactly like a step still running. Every harness says it in its own words and the room has to hear one word.",
-  "readers": ["python", "extension"],
+  "readers": [
+    "python",
+    "extension"
+  ],
   "harnesses": {
     "claude-code": {
       "records": [
         {
-          "hook_event_name": "PostToolUseFailure",
-          "tool_name": "Bash",
-          "tool_input": { "command": "pandoc a.md -o a.docx" },
-          "tool_use_id": "toolu_1",
-          "error": "bash: pandoc: command not found",
-          "duration_ms": 12
+          "type": "user",
+          "uuid": "rec_1",
+          "session_id": "session-1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "Exit code 127\nbash: pandoc: command not found",
+                "is_error": true
+              }
+            ]
+          }
         }
       ]
     },
@@ -24,14 +35,21 @@
             "role": "toolResult",
             "toolCallId": "toolu_1",
             "toolName": "bash",
-            "content": [{ "type": "text", "text": "bash: pandoc: command not found" }],
+            "content": [
+              {
+                "type": "text",
+                "text": "bash: pandoc: command not found"
+              }
+            ],
             "isError": true,
             "timestamp": 1789326099229
           }
         }
       ]
     },
-    "codex": { "difference": "no-tool-failure-signal" }
+    "codex": {
+      "difference": "no-tool-failure-signal"
+    }
   },
   "events": [
     {

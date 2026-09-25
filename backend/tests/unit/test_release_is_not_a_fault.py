@@ -47,6 +47,7 @@ async def test_a_machine_still_updating_its_connector_is_not_a_server_fault() ->
 async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     monkeypatch, caplog
 ) -> None:
+    from app.domain.agent.harness.driven import runtime as driven_runtime
     from app.domain.agent.harness.pi import runtime as pi_runtime
 
     poller = pi_runtime.PiRuntime.__new__(pi_runtime.PiRuntime)
@@ -69,6 +70,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     poller.live = {}
     poller.woken = {}
     poller.tasks = {}
+    poller.unreachable = {}
 
     class _NoSleep:
         """Real asyncio, minus the two-second wait between retries."""
@@ -79,7 +81,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
         async def sleep(self, _seconds):
             return None
 
-    monkeypatch.setattr(pi_runtime, "asyncio", _NoSleep())
+    monkeypatch.setattr(driven_runtime, "asyncio", _NoSleep())
 
     with caplog.at_level(logging.WARNING, logger=pi_runtime.logger.name):
         await poller._poll(topic)

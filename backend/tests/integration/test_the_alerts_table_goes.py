@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_alerts_move_into_the_one_notification_table import (
     _inbox,
     _recipients_of,
@@ -259,7 +259,7 @@ def _empty_room(client) -> tuple[str, str]:
     房间里没有人」这个状态本身。
     """
     create_alerts_table(client)
-    pid = client.post("/projects", json={"name": "没人在"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "没人在"}).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "空房间", "created_by": "alice"}
     ).json()["data"]["id"]

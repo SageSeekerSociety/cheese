@@ -742,7 +742,7 @@ test_rollout_keeps_a_backend_serving() {
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
-  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 127.0.0.1:18082:8081 backend')"
   flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
   flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
@@ -971,7 +971,7 @@ test_operator_uses_registry_sha_width() {
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=abc1234 \
-    APP_TIER_REQUIRE_SHORT7=true \
+    APP_TIER_GIT_SHA=abc1234def5678901234567890123456789abcde \
     CHEESE_DEV_HOST=fake-host \
     "$ROOT/scripts/whats-live.sh" >/dev/null
   echo "PASS: operator drift check uses the registry's 7-character SHA tag"

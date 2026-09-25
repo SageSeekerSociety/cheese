@@ -63,8 +63,15 @@ beforeEach(() => {
   listRoomTasks.mockResolvedValue({ data: [task()], total: 1 })
 })
 
-function mount() {
+function mountClosed() {
   return render(Panel, { props: { topic: ROOM, active: true }, global: { plugins: [vuetify] } })
+}
+
+// 这一段默认折着，下面这些用例看的是展开之后的清单，所以先点开——和人一样。
+function mount() {
+  const view = mountClosed()
+  void fireEvent.click(view.container.querySelector('.task-progress__head') as HTMLElement)
+  return view
 }
 
 function titlesInColumn(container: Element, column: string): string[] {
@@ -75,6 +82,12 @@ function titlesInColumn(container: Element, column: string): string[] {
 
 describe('列和短语跟项目那块板是同一套', () => {
   it('列的顺序和名字一字不差', async () => {
+    listRoomTasks.mockResolvedValue({
+      data: BOARD_COLUMNS.map((c, i) =>
+        task({ id: `t${i}`, title: c.label, presentation: { column: c.key, display_status: c.label } })
+      ),
+      total: BOARD_COLUMNS.length,
+    })
     const { container } = mount()
     await waitFor(() => expect(container.querySelectorAll('[data-column]').length).toBe(BOARD_COLUMNS.length))
     const names = Array.from(container.querySelectorAll('[data-column]')).map((n) => ({
@@ -106,11 +119,10 @@ describe('列和短语跟项目那块板是同一套', () => {
     expect(titlesInColumn(container, 'building')).toEqual(['第 1 件：甲'])
   })
 
-  it('空的那一列也留着列头和 0', async () => {
+  it('空的那一列不列：一排「0」只会把有东西的那几行往下推', async () => {
     const { container } = mount()
-    await waitFor(() => expect(container.querySelector('[data-column="needs_you"]')).not.toBeNull())
-    const head = container.querySelector('[data-column="needs_you"]')
-    expect(head?.querySelector('.task-progress__group-count')?.textContent?.trim()).toBe('0')
+    await waitFor(() => expect(container.querySelector('[data-column="building"]')).not.toBeNull())
+    expect(container.querySelector('[data-column="needs_you"]')).toBeNull()
   })
 })
 
@@ -174,5 +186,17 @@ describe('第 N 件的编号不跟着列走', () => {
     const { findByText } = mount()
     await findByText(/第 1 件：老的/)
     await findByText(/第 2 件：新的/)
+  })
+})
+
+describe('默认折着', () => {
+  it('只剩一行摘要，清单要点开才有 —— 下面的文档不该被挤到只剩半截', async () => {
+    const { container, findByText } = mountClosed()
+    await waitFor(() =>
+      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('1件')
+    )
+    expect(container.querySelector('.task-row')).toBeNull()
+    await fireEvent.click(container.querySelector('.task-progress__head') as HTMLElement)
+    await findByText(/第 1 件：查一下分页接口/)
   })
 })

@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from tests.integration.conftest import post_project
+
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 
@@ -10,7 +12,7 @@ def _iso(dt: datetime) -> str:
 
 
 def _create_project(client, name: str = "Demo") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

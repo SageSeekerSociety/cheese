@@ -15,6 +15,7 @@ from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
+    PROMPTED_TURN_META_KEY,
     AuthorType,
     Block,
     BlockKind,
@@ -90,9 +91,9 @@ class BlockRepository:
         # 才算那一轮自己的产出；人说的话不论有没有轮次号都是输入。
         #
         # `own_output` 是调用方直接给出的答案，给那种「署名是 agent、平台这边却
-        # 填不出轮次号」的写入端用：远程控制里芝士问出口的那句话由平台代写进房间
-        # （`api/routes/remote_control.py` 的 `voice_pending`），而问话的那一轮跑
-        # 在机器上，平台没有它的轮次号。它在等**人**回答，不是在等自己读一遍。
+        # 填不出轮次号」的写入端用：`cheese ask` 问出口的那句话由平台代写进房间
+        # （`api/routes/topics.py`），而问话的那一轮跑在机器上，平台没有它的轮次号。
+        # 它在等**人**回答，不是在等自己读一遍。
         if (
             not own_output
             and is_participant(author_type)
@@ -260,7 +261,8 @@ class BlockRepository:
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
-        """Stamp human blocks as read into turn `turn_id`'s prompt.
+        """Stamp human blocks as read, by the turn `turn_id` whose clean Stop
+        showed the session got through them.
 
         This is what makes the next turn's pending window a fact instead of a
         guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
@@ -274,9 +276,11 @@ class BlockRepository:
             block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
         await self._session.flush()
 
-    async def bump_prompt_attempts(self, block_ids: list[uuid.UUID]) -> int:
-        """Record that these blocks went into a prompt AGAIN, and return the
-        highest attempt count in the batch.
+    async def bump_prompt_attempts(
+        self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+    ) -> int:
+        """Record that these blocks went into turn `turn_id`'s prompt AGAIN,
+        and return the highest attempt count in the batch.
 
         Called when the prompt is built, not when the turn ends — that is the
         whole point. `mark_consumed` runs only on a turn that finished, so a
@@ -292,10 +296,27 @@ class BlockRepository:
         stmt = select(Block).where(Block.id.in_(block_ids))
         for block in (await self._session.scalars(stmt)).all():
             n = prompt_attempts(block) + 1
-            block.meta = {**(block.meta or {}), PROMPT_ATTEMPTS_META_KEY: n}
+            block.meta = {
+                **(block.meta or {}),
+                PROMPT_ATTEMPTS_META_KEY: n,
+                PROMPTED_TURN_META_KEY: str(turn_id),
+            }
             highest = max(highest, n)
         await self._session.flush()
         return highest
+
+    async def forget_prompted_turn(self, block_ids: list[uuid.UUID]) -> None:
+        """Withdraw these blocks' claim to a delivered prompt: the turn that
+        carried them failed, so a later clean Stop must not read them as heard.
+        The next prompt that carries them records its own turn again."""
+        if not block_ids:
+            return
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            meta = dict(block.meta or {})
+            if meta.pop(PROMPTED_TURN_META_KEY, None) is not None:
+                block.meta = meta
+        await self._session.flush()
 
     async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
         """Record on a 现场 step that its tool came back an error.
@@ -380,12 +401,15 @@ class BlockRepository:
 
     async def tasks_awaiting_an_answer(
         self, task_ids: list[uuid.UUID]
-    ) -> set[uuid.UUID]:
-        """这些活里，哪几条停在一个未回答的提问上 —— 一次查完，看板用。
+    ) -> dict[uuid.UUID, str | None]:
+        """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
         判据是 #1084 定的那一条：**最近一条提问消息没有 `answered`**。不需要新增
         存储，因为回答本来就记在提问那一块上（`meta.answered`）。取「最近一条」而
         不是「有没有任何一条」：已回答的旧提问不该让这条活长期停留在待处理。
+
+        等谁也记在那一块上（`meta.asked`，提问那一刻写下的，见 `ask_options`）。
+        None 是「这道题指不到具体的人」。只关心停没停的调用方照样拿它做 `in`。
 
         每条活只取一行（`DISTINCT ON`），走 `ix_blocks_task_id_created_at`。
         """
@@ -393,7 +417,7 @@ class BlockRepository:
 
     async def rooms_awaiting_an_answer(
         self, topic_ids: list[uuid.UUID]
-    ) -> set[uuid.UUID]:
+    ) -> dict[uuid.UUID, str | None]:
         """同一个判据，问的是房间自己那条线（`task_id IS NULL`）。
 
         分成两个方法而不是一个带开关的：房间和活是两种东西，而「房间自己那条线」
@@ -405,9 +429,9 @@ class BlockRepository:
 
     async def _awaiting_an_answer(
         self, place_column, place_ids: list[uuid.UUID], *extra
-    ) -> set[uuid.UUID]:
+    ) -> dict[uuid.UUID, str | None]:
         if not place_ids:
-            return set()
+            return {}
         stmt = (
             select(place_column, Block.meta)
             .where(
@@ -423,7 +447,7 @@ class BlockRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {
-            place_id
+            place_id: (meta or {}).get("asked")
             for place_id, meta in rows
             if place_id is not None and not (meta or {}).get("answered")
         }

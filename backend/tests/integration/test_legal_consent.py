@@ -104,7 +104,12 @@ class TestOAuthSignup:
         token = portal.call(
             _issue_oauth_state_token,
             "ruc",
-            {"id": uid, "name": "Prov", "preferredUsername": uid},
+            {
+                "id": uid,
+                "name": "Prov",
+                "preferredUsername": uid,
+                "verifiedEmail": f"{uid}@example.com",
+            },
         )
         return api_client.post(
             "/users/oauth/create",
@@ -134,7 +139,13 @@ class TestOAuthSignup:
 
         params = parse_qs(urlparse(resp.headers["location"]).query)
         assert params["created"] == ["true"]
-        assert _pending(api_client, params["token"][0]) == []
+        # The landing page signs in with the cookie the redirect set.
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={resp.cookies['cheese_refresh']}"},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert _pending(api_client, refreshed.json()["data"]["accessToken"]) == []
 
 
 class TestReacceptance:
@@ -157,6 +168,39 @@ class TestReacceptance:
 
         assert r.status_code == 200, r.text
         assert _pending(api_client, token_of(authenticated_user)) == []
+
+    def test_the_recorded_address_is_not_one_the_client_wrote(
+        self,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        db_session,
+        _portal,
+    ):
+        """A consent row is evidence of who agreed from where; a forwarded
+        address from a peer that is not one of our proxies proves nothing."""
+        from sqlalchemy import select
+
+        from app.domain.legal.models import UserConsent
+
+        headers = {
+            "Authorization": f"Bearer {token_of(authenticated_user)}",
+            "X-Forwarded-For": "6.6.6.6",
+        }
+        r = api_client.post(
+            "/users/me/consents", json={"documents": CURRENT_VERSIONS}, headers=headers
+        )
+        assert r.status_code == 200, r.text
+
+        async def recorded() -> set[str]:
+            rows = await db_session.execute(
+                select(UserConsent.ip).where(
+                    UserConsent.user_id == authenticated_user.user_id
+                )
+            )
+            return set(rows.scalars())
+
+        # TestClient's peer, which is not a trusted proxy.
+        assert _portal.call(recorded) == {"testclient"}
 
     def test_accepting_only_part_of_what_is_pending_is_refused(
         self, api_client: TestClient, authenticated_user: CreatedUser

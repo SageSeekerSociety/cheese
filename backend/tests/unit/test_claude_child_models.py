@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness.claude_code import device_launch
+from tests.pinned_claude import claude_binary
 
 
 @pytest.mark.parametrize(
@@ -133,7 +134,7 @@ def test_native_child_default_and_explicit_model_reach_admission(
     try:
         result = subprocess.run(
             [
-                "claude",
+                claude_binary(),
                 "--print",
                 "--model",
                 "opus",

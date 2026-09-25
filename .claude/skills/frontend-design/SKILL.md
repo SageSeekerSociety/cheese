@@ -97,7 +97,7 @@ comm -23 <(grep -rl "infinite" src/ --include=*.vue --include=*.css --include=*.
 
 再问一句：**关掉动画之后，它表达的信息还在吗？** 不在的话，一开始就不该只用动来表达。
 
-### 2.4 时长有没有跑出三档
+### 2.4 时长和曲线有没有用 token
 
 ```bash
 cd frontend
@@ -105,8 +105,9 @@ grep -rhoE "(transition|animation)[^;]*?[0-9.]+m?s" src/ --include=*.vue --inclu
   | grep -oE "[0-9.]+m?s" | sort | uniq -c | sort -rn
 ```
 
-**判据**：0.12（回应指针）/ 0.2（出现消失）/ 0.3（整块进出）。缓动默认 `ease`，循环用
-`ease-in-out`，`linear` 只给真匀速的。
+**判据**：新写的动效用 `style.css` 里的 token（§9.3）：时长 `--dur-press` 100 / `--dur-quick` 150 /
+`--dur-base` 220 / `--dur-slow` 320，曲线进场 `--ease-out`、离场 `--ease-in`、原地变化 `--ease-standard`。
+命中字面量时长或裸 `ease` 的，改动涉及到就折成 token；`linear` 只给真匀速的。
 
 ### 2.5 没人碰也在动的
 

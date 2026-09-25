@@ -7,9 +7,12 @@
     "board": "Board",
     "calendar": "Calendar",
     "library": "Library",
-    "members": "Members"
+    "members": "Members",
+    "docs": "Project docs",
+    "settings": "Project settings",
+    "general": "General"
   },
-  "spaces": "Problem boards",
+  "spaces": "Spaces",
   "teams": "Teams",
   "term": {
     "project": "project",
@@ -29,5 +32,19 @@
     "models": "Models",
     "spaces": "Space applications",
     "members": "Members"
+  },
+  "userMenu": {
+    "profile": "Profile",
+    "settings": "Settings",
+    "devices": "My devices",
+    "appearance": "Appearance",
+    "language": "Language",
+    "logout": "Log out",
+    "noIntro": "No bio yet",
+    "theme": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    }
   }
 }

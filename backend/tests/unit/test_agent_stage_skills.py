@@ -122,9 +122,9 @@ def test_every_stage_skill_is_registered_by_name():
 def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
     """这几条读完就得知道该怎么做，不能散落在别处。"""
     guide = load_scenario(stage_scenario(TopicStage.delegating))
-    assert "accept-request" in guide  # 怎么递
+    assert "cheese_accept_request" in guide  # 怎么递
     assert "独立" in guide
-    assert "cheese ready" in guide
+    assert "cheese_ready" in guide
     assert "永远不能" not in guide
 
 

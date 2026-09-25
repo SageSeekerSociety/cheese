@@ -9,7 +9,11 @@ import pytest
 
 from app.core.config import settings
 from app.domain.site.services import get_current_release, read_release_file
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.machine_work import declare_task, machine_commits
 from tests.support import git_store
 
@@ -24,7 +28,7 @@ def _project(client, *, owner="alice", team_id=None):
     body = {"name": "Published website", "owner_handle": owner}
     if team_id is not None:
         body["team_id"] = team_id
-    response = client.post("/projects", json=body, headers=session_auth_headers(owner))
+    response = post_project(client, json=body, headers=session_auth_headers(owner))
     assert response.status_code == 200, response.text
     return uuid.UUID(response.json()["data"]["id"])
 
@@ -196,13 +200,9 @@ def test_members_can_read_but_only_stewards_publish_even_when_legacy_authz_is_of
 ):
     pid = _project(client)
     revision = _accepted(pid, {"web/index.html": "safe"})
-    for handle, role in (("bob", "member"), ("carol", "lead")):
-        response = client.post(
-            f"/projects/{pid}/members",
-            json={"user_handle": handle, "role": role},
-            headers=session_auth_headers("alice"),
-        )
-        assert response.status_code == 200, response.text
+    # bob belongs to the project's team; carol is a team admin, who manages it.
+    join_project_team(client, pid, "bob")
+    join_project_team(client, pid, "carol", admin=True)
     monkeypatch.setattr(settings, "authz_enforce_topic_access", False)
     assert _get(client, pid, "bob").status_code == 200
     assert _get(client, pid, "bob").json()["data"]["can_publish"] is False

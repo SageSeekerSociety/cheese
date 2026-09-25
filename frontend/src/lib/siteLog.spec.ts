@@ -3,10 +3,20 @@
 //
 // 改之前实机量到的：打开 现场，`scrollTop = 0`，而 `scrollHeight = 1818`、
 // 视口 `clientHeight = 500` —— 读者落在离他要看的那一条 1300px 以上的地方。
+import type { Block } from '../cx_types'
+
 import { render } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import { countLines, isLongSiteEntry, shouldKeepPinning, SITE_CLAMP_LINES, SITE_TAIL_PIN_FRAMES } from './siteLog'
+import {
+  countLines,
+  eventArg,
+  eventVerb,
+  isLongSiteEntry,
+  shouldKeepPinning,
+  SITE_CLAMP_LINES,
+  SITE_TAIL_PIN_FRAMES,
+} from './siteLog'
 
 describe('isLongSiteEntry', () => {
   it('catches wide prose and tall output alike', () => {
@@ -88,5 +98,31 @@ describe('打开现场要真的落到底，不是「试过一次」', () => {
     // 一轮正在跑的时候现场会持续追加，没有这个上限它会钉到页面关掉为止。
     expect(shouldKeepPinning(3000, 2900, SITE_TAIL_PIN_FRAMES)).toBe(false)
     expect(shouldKeepPinning(3000, 2900, SITE_TAIL_PIN_FRAMES - 1)).toBe(true)
+  })
+})
+
+describe('前端报错那一行', () => {
+  const block = {
+    id: 'e1',
+    topic_id: 't1',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'frontend',
+    content: '前端报错（/projects/p1/topics/t1）',
+    meta: {
+      event_type: 'frontend_error',
+      page: '/projects/p1/topics/t1',
+      stack: 'TypeError: Failed to fetch dynamically imported module\n    at load (x.js:1:1)',
+    },
+  } as unknown as Block
+
+  it('动词是一个短词，报错本身落在参数那一列', () => {
+    expect(eventVerb(block)).toBe('前端报错')
+    expect(eventArg(block)).toBe('TypeError: Failed to fetch dynamically imported module')
+  })
+
+  it('没有堆栈时参数是出错的页面', () => {
+    const bare = { ...block, meta: { event_type: 'frontend_error', page: '/projects/p1' } } as unknown as Block
+    expect(eventArg(bare)).toBe('/projects/p1')
   })
 })

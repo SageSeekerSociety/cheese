@@ -10,14 +10,14 @@ nothing errors.
 import uuid
 
 from tests.conftest import seed_task_with_protocol
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "shell-owner"
 
 
 def _project_from(client, task_id: int) -> dict:
-    return client.post(
-        "/projects",
+    return post_project(
+        client,
         json={"name": "壳测试", "owner_handle": OWNER, "external_task_id": task_id},
     ).json()["data"]
 
@@ -48,8 +48,8 @@ def test_a_project_reports_the_shell_its_category_declared(client):
 
 def test_a_project_with_no_shell_anywhere_gets_the_default(client):
     """Every project that exists today, and every project created by hand."""
-    project = client.post(
-        "/projects", json={"name": "无边无际", "owner_handle": OWNER}
+    project = post_project(
+        client, json={"name": "无边无际", "owner_handle": OWNER}
     ).json()["data"]
 
     shell = _get(client, project["id"])["shell"]
@@ -111,9 +111,9 @@ def test_the_list_route_carries_each_projects_own_shell(client):
     """The rail is built from the list, so a list without 壳 would make the app
     navigation snap back to the default the moment the page reloaded."""
     declared = _project_from(client, seed_task_with_protocol(client, shell="workbench"))
-    plain = client.post(
-        "/projects", json={"name": "普通的", "owner_handle": OWNER}
-    ).json()["data"]
+    plain = post_project(client, json={"name": "普通的", "owner_handle": OWNER}).json()[
+        "data"
+    ]
 
     # `/projects` without `team_id` means 「the CALLER's own projects」, and a
     # caller with no credential gets none — so this list is read as the owner.

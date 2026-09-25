@@ -427,17 +427,6 @@ async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
     )
 
 
-def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
-    """The identity file sits beside the hook spool; two definitions of "this
-    topic's session dir" is how they drift apart."""
-    from app.domain.repository import service as ws
-
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
-    pid, tid = _ids()
-    base = identity.session_dir(pid, tid)
-    assert ws.spool_dir(pid, tid).parent == base
-
-
 @pytest.mark.anyio
 async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers(
     monkeypatch,

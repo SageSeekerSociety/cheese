@@ -368,7 +368,6 @@ def test_direct_backend_scripts_do_not_add_the_gateway_mount() -> None:
         "backend/scripts/device_selfhost_smoke.py",
         "backend/scripts/e2e_scroll_memory.py",
         "backend/scripts/machine_chain_check.py",
-        "backend/scripts/sim_real.py",
     )
 
     for relative_path in direct_scripts:

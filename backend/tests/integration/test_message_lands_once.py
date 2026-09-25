@@ -20,10 +20,12 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import stub_compute
+from tests.integration.conftest import registered
 
 
 async def _topic(factory) -> uuid.UUID:
     async with factory() as session:
+        await registered(session, "user-1")
         project = await ProjectService(session).create(name="P", owner_handle="user-1")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="user-1"

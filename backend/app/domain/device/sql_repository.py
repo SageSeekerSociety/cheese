@@ -20,8 +20,6 @@ from app.domain.device.models import (
 from app.domain.device.repository import AuthCode, Device, HostHealth, TopicDevice
 from app.domain.device.supply import Supply, Visibility
 from app.domain.project.models import Project
-from app.domain.team.models import Team
-from app.domain.user.models import User
 
 
 def _aware(dt: datetime) -> datetime:
@@ -108,8 +106,6 @@ class SqlDeviceRepository:
             team_ids=team_ids,
             supply=row.supply,
             visibility=row.visibility,
-            ccproxy_upstream=row.ccproxy_upstream,
-            ccproxy_machine_id=row.ccproxy_machine_id,
         )
 
     async def get_device(self, device_id: str) -> Device | None:
@@ -159,9 +155,8 @@ class SqlDeviceRepository:
         """Machines a project may run on = explicit per-project assignments UNION the
         devices bound to the project's TEAM (execution-architecture v4: compute
         belongs to the team — 为团队注册设备). Bind a machine to a team once and every
-        project of that team can run on it. A project with NO team is a personal
-        project: it resolves through its owner's PERSONAL team (个人 = 单人真团队),
-        so 为自己注册的设备 reach personal projects with zero per-project setup."""
+        project of that team can run on it; a personal project's team is its
+        owner's personal team, so 为自己注册的设备 reach it with no setup."""
         explicit = (
             await self._session.scalars(
                 select(DeviceProjectRow.device_id).where(
@@ -176,23 +171,7 @@ class SqlDeviceRepository:
                 .where(Project.id == project_id)
             )
         ).all()
-        # Personal-project route: owner_handle == User.username → that user's
-        # personal team. Resolved at read time so it needs no backfill and keeps
-        # working for projects created before personal teams existed.
-        personal_bound = (
-            await self._session.scalars(
-                select(DeviceTeamRow.device_id)
-                .join(Team, Team.id == DeviceTeamRow.team_id)
-                .join(User, User.id == Team.personal_owner_user_id)
-                .join(Project, Project.owner_handle == User.username)
-                .where(
-                    Project.id == project_id,
-                    Project.team_id.is_(None),
-                    Team.deleted_at.is_(None),
-                )
-            )
-        ).all()
-        return list(dict.fromkeys([*explicit, *team_bound, *personal_bound]))
+        return list(dict.fromkeys([*explicit, *team_bound]))
 
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
         """Human-hosted machines assigned directly or through the project's team."""

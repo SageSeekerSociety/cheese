@@ -56,7 +56,7 @@ class MemoryLayer(enum.StrEnum):
     - ``fact`` — everything else it learned. Retrieved against the turn's own
       context, so a pool can keep growing without any one turn paying for all
       of it. What a turn does not retrieve is still reachable through
-      ``cheese recall``.
+      ``cheese_recall``.
     """
 
     core = "core"
@@ -152,7 +152,7 @@ class MemoryEntry(UuidPk, Timestamps, Base):
     # this can hold is `user_scope_id`: a uuid (36) plus an agent handle and a
     # person handle (64 each, `agent_instance.handle` / `topic_memberships.
     # member_handle`) plus two separators — 166. A key that does not fit is not
-    # a truncated pool, it is a 500 out of `cheese remember` and a failed
+    # a truncated pool, it is a 500 out of `cheese_remember` and a failed
     # migration, so the column has to outrun the widest key by construction.
     scope_id: Mapped[str] = mapped_column(String(200), index=True)
     content: Mapped[str] = mapped_column(Text)

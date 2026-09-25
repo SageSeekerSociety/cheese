@@ -31,12 +31,12 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
 PROMPT_UNDELIVERED_CODE = "prompt_undelivered"
 TURN_TIMEOUT_CODE = "turn_timeout"
 
-# The platform's OWN wording for the two failures the hooks substrate raises by
+# The platform's OWN wording for the two failures a driven runtime raises by
 # itself: "the prompt never reached the claude session" and "this turn hit its
 # ceiling". They live HERE, next to the classifier that recognises them, for the
 # same reason DEVICE_OFFLINE_MESSAGE does — recognition matches the platform's own
-# marker, never free-form provider text. `hooks_substrate` imports these instead
-# of spelling its own copy, so the sentence and its classification cannot drift.
+# marker, never free-form provider text. `harness/driven/runtime.py` imports these
+# instead of spelling its own copy, so the sentence and its classification cannot drift.
 #
 # Both used to fall through to the `else` in chat.py and render as
 # 「AI 服务返回错误」, blaming the model provider for a turn the provider never

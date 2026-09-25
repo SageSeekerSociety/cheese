@@ -20,6 +20,8 @@ import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../
 import { relTime } from '../../lib/relTime'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     /** 当前打开的房间。 */
@@ -42,8 +44,9 @@ type ThreadRow = RoomTask & { blocks?: Block[] }
 const rows = ref<ThreadRow[]>([])
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
-// 默认展开：你打开一个房间的第一个问题就是「现在有什么在动」，折起来等于不答。
-const open = ref(true)
+// 默认折起来，只剩一行摘要（几件、几件等你）：那一行已经答了「现在有什么在动」，
+// 而展开的清单会把下面的文档挤到只剩半截——总览这一格的主体是文档。
+const open = ref(false)
 // 已完成默认折起来。件数写在按钮上，所以折起来不等于藏起来。
 const showDone = ref(false)
 
@@ -120,6 +123,9 @@ function inColumn(column: BoardColumn): ThreadRow[] {
   return sortRows(byColumn.value.get(column) ?? [])
 }
 
+/** 有东西的那几列。「已完成」不在 BOARD_COLUMNS 里，它在最底下另有一行。 */
+const shownColumns = computed(() => BOARD_COLUMNS.filter((col) => inColumn(col.key).length > 0))
+
 /** 已完成收在最底下、折起来 —— 和项目那块板同一个处理。「已采纳」和「已收工」的
  *  区别没有丢：它们在同一列里是两个不同的短语，展开就看得见。 */
 const doneRows = computed(() => inColumn('done'))
@@ -132,10 +138,11 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
     <button type="button" class="task-progress__head" :aria-expanded="open" @click="open = !open">
       <v-icon size="16">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
       <span class="task-progress__title t-body">看板</span>
-      <span class="task-progress__tally t-meta">
+      <span class="task-progress__tally">
         <template v-if="rows.length">
           {{ rows.length }} 件<template v-if="needsYouCount">，{{ needsYouCount }} 件待处理</template>
         </template>
+        <template v-else-if="!loading && !errorMsg">{{ t('work.room.noTasks') }}</template>
       </span>
     </button>
 
@@ -153,9 +160,9 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
           </div>
 
           <template v-else>
-            <!-- 三列竖着堆。空的那一列也留着列头和 0：整段消失会让这一段在两次刷新之
-               间跳，而「等你」在哪个位置本身就是信息，不该取决于它此刻有没有东西。 -->
-            <template v-for="col in BOARD_COLUMNS" :key="col.key">
+            <!-- 三列竖着堆，空的那一列不列：这里是一条窄栏里折起来的一段，不是项目那块
+               按位置认列的板；一排「0」只是把真有东西的那几行往下推。 -->
+            <template v-for="col in shownColumns" :key="col.key">
               <div class="task-progress__group t-meta" :data-column="col.key">
                 <span class="board-dot" :style="columnDotStyle(col.key)" aria-hidden="true" />
                 <span>{{ col.label }}</span>
@@ -239,9 +246,12 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
   color: var(--ink);
   font-weight: 600;
 }
+/* 不用 .t-meta：那是等宽字体，而这一行是中文（「3 件，1 件待处理」）。 */
 .task-progress__tally {
   margin-left: auto;
   color: var(--faint);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .board-fold {
   display: grid;
