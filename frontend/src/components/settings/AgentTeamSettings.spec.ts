@@ -193,7 +193,7 @@ describe('还没有队友的时候', () => {
     mountPage()
 
     expect(await screen.findByText('暂无 AI 队友')).toBeTruthy()
-    expect(screen.getByText(/在这个项目里学到的东西会一直跟着它/)).toBeTruthy()
+    expect(screen.getByText(/在这个项目里学到的内容会一直保留/)).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /新建队友/ }).length).toBeGreaterThan(0)
   })
 })

@@ -37,8 +37,10 @@ const props = withDefaults(
     working?: boolean
     // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
+    /** 名册里查不到名字的 AI 发言按这个名字称呼（项目 AI 队友的名字）。 */
+    agentName?: string
   }>(),
-  { active: false, memberNames: () => ({}), working: false, agentControl: null }
+  { active: false, memberNames: () => ({}), working: false, agentControl: null, agentName: '芝士' }
 )
 
 const loading = ref(false)
@@ -68,7 +70,7 @@ async function loadOlder() {
     const sc = scrollRef.value
     if (sc && before) sc.scrollTop = sc.scrollHeight - before.height + before.top
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载更早的现场失败'
+    errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loadingOlder.value = false
   }
@@ -161,7 +163,7 @@ watch(
 
 function authorLabel(b: Block): string {
   // 同对话栏：名册上没有的 AI 作者显示成「芝士」，不把 handle 摆出来。
-  return props.memberNames[b.author] || (isAgentBlock(b) ? '芝士' : b.author)
+  return props.memberNames[b.author] || (isAgentBlock(b) ? props.agentName : b.author)
 }
 
 function fmtTime(iso: string): string {

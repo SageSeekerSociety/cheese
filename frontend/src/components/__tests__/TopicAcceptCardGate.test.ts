@@ -109,7 +109,7 @@ describe('历史闸门卡还要能看', () => {
     expect(container.textContent).toContain('平台检查未通过')
     expect(container.textContent).not.toContain('ruff: E501 line too long')
 
-    await fireEvent.click(getByText('查看输出'))
+    await fireEvent.click(getByText('查看检查输出'))
     await flush()
     expect(container.textContent).toContain('ruff: E501 line too long')
   })
@@ -119,7 +119,7 @@ describe('历史闸门卡还要能看', () => {
 
     expect(container.textContent).toContain('平台检查未能执行')
     expect(container.textContent).not.toContain('平台检查未通过')
-    expect(container.textContent).toContain('没有结论')
+    expect(container.textContent).toContain('检查未能运行')
   })
 })
 
@@ -134,7 +134,7 @@ describe('闸门退役之后不该再出现的东西', () => {
   it('今天递的卡上没有任何闸门读数', async () => {
     const { container } = await mountWith([card({ status: 'pending' })])
 
-    expect(container.textContent).toContain('成果待采纳')
+    expect(container.textContent).toContain('改动')
     expect(container.textContent).not.toContain('平台检查')
   })
 

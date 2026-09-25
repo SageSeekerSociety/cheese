@@ -20,7 +20,7 @@ const loading = ref(true)
 const failed = ref(false)
 
 const REASON_TEXT: Record<WaitingItem['reason'], string> = {
-  reviewer: '待你验收',
+  reviewer: '待你审阅',
   reporter: '你提的需求已有交付',
   asked: '待你回答',
 }

@@ -21,8 +21,8 @@ describe('toolLabel', () => {
   })
 
   it('translates the platform tools every harness calls by the same name', () => {
-    expect(toolLabel('mcp__native__cheese_accept_request')).toBe('提交验收卡')
-    expect(toolLabel('cheese_doc_set')).toBe('更新实况文档')
+    expect(toolLabel('mcp__native__cheese_accept_request')).toBe('提交审阅')
+    expect(toolLabel('cheese_doc_set')).toBe('更新文档')
     expect(toolLabel('chat_send')).toBe('发布消息')
     expect(toolLabel('cheese_worktree')).toBe('准备工作目录')
   })

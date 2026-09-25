@@ -225,7 +225,7 @@ async function loadFile(path: string, opts: { silent?: boolean } = {}) {
   } catch (e) {
     if (current !== generation || props.topicId !== tid) return
     previewFile.value = null
-    previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+    previewReadError.value = e instanceof Error ? e.message : '无法读取这个文件'
   } finally {
     if (current === generation) {
       loading.value = false
@@ -327,7 +327,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
         if (!stillCurrent()) return
         previewUrl.value = null
         previewFile.value = null
-        previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+        previewReadError.value = e instanceof Error ? e.message : '无法读取这个文件'
         return
       }
       if (!stillCurrent()) return
@@ -529,14 +529,14 @@ watch(
     <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
       <div>预览加载失败</div>
-      <div class="text-caption mt-1">平台没能返回这个话题的预览：{{ previewError }}</div>
+      <div class="text-caption mt-1">{{ previewError }}</div>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>指定的文件读不到</div>
-      <div v-if="path" class="text-caption mt-1">{{ path }} 现在读不出来：{{ previewReadError }}</div>
+      <div>无法读取文件</div>
+      <div v-if="path" class="text-caption mt-1">{{ path }}：{{ previewReadError }}</div>
       <div v-else class="text-caption mt-1">
-        芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
+        {{ previewNamedPath ? `${previewNamedPath}：` : '' }}{{ previewReadError }}
       </div>
     </div>
     <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
@@ -575,7 +575,7 @@ watch(
       </v-alert>
       <!-- 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。 -->
       <v-alert v-else-if="docError && docBytes" type="warning" density="compact" class="mx-3 mb-2">
-        这是上一次生成的内容，刷新未能完成：{{ docError }}
+        刷新失败，当前显示的是上一次的内容：{{ docError }}
       </v-alert>
 
       <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
@@ -676,7 +676,6 @@ watch(
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
       <div>暂无预览</div>
-      <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
     </div>
 
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结

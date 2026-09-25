@@ -156,7 +156,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
           <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
           <div v-else-if="!rows.length" class="px-3 py-2">
-            <div class="t-meta c-muted">暂无派出去的任务</div>
+            <div class="t-meta c-muted">暂无任务</div>
           </div>
 
           <template v-else>

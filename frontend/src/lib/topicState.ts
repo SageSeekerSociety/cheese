@@ -59,7 +59,7 @@ export function topicPhaseBadge(phase: TopicPhase): TopicStateBadge {
   if (phase === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
   if (phase === 'working') return { label: '施工中', cls: 'pr-state--working' }
   if (phase === 'delivering') return { label: '交付中', cls: 'pr-state--delivering' }
-  if (phase === 'reviewing') return { label: '待验收', cls: 'pr-state--reviewing' }
+  if (phase === 'reviewing') return { label: '待审阅', cls: 'pr-state--reviewing' }
   return { label: '进行中', cls: 'pr-state--open' }
 }
 

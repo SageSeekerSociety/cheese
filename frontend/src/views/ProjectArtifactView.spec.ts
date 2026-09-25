@@ -148,7 +148,7 @@ describe('一项产物', () => {
     expect(text).toContain('版本历史')
     expect(text).toContain('第 1 版')
     expect(text).toContain('docs(report): first draft')
-    expect(text).toContain('林知行 验收')
+    expect(text).toContain('林知行 采纳')
   })
 
   it('下载取的是这一版当时那一份，不是重新构建的结果', async () => {

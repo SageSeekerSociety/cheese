@@ -115,7 +115,7 @@ watch(
  *  多条活共用一棵树、一棵树开一个 PR。照抄那一行只会写出一个假的事实。 */
 const roomTitle = computed(() => {
   const byId = new Map((store.topics as Topic[]).map((t) => [t.id, t.title]))
-  return (roomId: string) => byId.get(roomId) ?? '（房间已不在列表里）'
+  return (roomId: string) => byId.get(roomId) ?? '未知房间'
 })
 
 // 「谁在做」是一个人，不是一个 handle。名册里有昵称和他自己挑的头像，卡上就该是
@@ -201,7 +201,7 @@ function countLabel(column: BoardColumn): string {
  *  条，三列全空、底下一条「已完成 292」才是常态。所以「施工中」那一列还要多说一
  *  句下一步——一块空板本身说不出该做什么。 */
 function emptyLine(column: BoardColumn): string {
-  if (mine.value) return '暂无归你的任务'
+  if (mine.value) return '暂无分配给你的任务'
   return `暂无${columnLabel(column)}的任务`
 }
 
@@ -282,7 +282,8 @@ function openTask(task: RoomTask) {
             <span>{{ item.label }} {{ item.n }}</span>
           </template>
         </template>
-        <template v-else-if="!loading">暂无派出去的任务</template>
+        <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍。 -->
+        <template v-else-if="!loading && !nothingYet">暂无任务</template>
       </span>
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
@@ -307,8 +308,7 @@ function openTask(task: RoomTask) {
            「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。产物那一列在
            这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
         <div class="board__start">
-          <p class="t-body">这个项目还没有开始的工作</p>
-          <p class="t-meta c-muted">在对话里说明你要完成什么，芝士会把它拆成具体任务</p>
+          <p class="t-body">暂无任务</p>
           <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入对话</v-btn>
         </div>
       </template>
@@ -336,13 +336,9 @@ function openTask(task: RoomTask) {
                跨列不连着动：两列各是一个能独立滚动的容器，一张卡跨过去在前一列是
                「离开」、在后一列是「进入」，中间那段轨迹没有共同的坐标系可言。 -->
             <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
-              <!-- 空列自己说它空。「施工中」那一列还多一句下一步：三列同时空着是这
-                 个项目的常态，那几行字就是第一屏的主要内容。 -->
+              <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
               <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
                 {{ emptyLine(col.key) }}
-                <span v-if="col.key === 'building' && !mine" class="board-col__next t-meta"
-                  >在房间里说明要做什么，芝士会把它拆成任务</span
-                >
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
@@ -368,8 +364,17 @@ function openTask(task: RoomTask) {
                       <span class="board-card__name">{{ ownerName(row.owner_handle) }}</span>
                     </span>
                     <span v-else class="c-faint">暂无负责人</span>
-                    <!-- 这个房间四个槽位占满了：它后面那些是真的在等，不是没人理。 -->
-                    <span v-if="(runningPerRoom.get(row.room_id) ?? 0) >= 4" class="board-card__full">房间满员</span>
+                    <!-- 这个房间四个槽位占满了：还没开始的任务是真的在排队，不是没人理。
+                       只标在它们身上，已经在跑的那几张不用说。 -->
+                    <span
+                      v-if="
+                        row.presentation.column === 'building' &&
+                        !isRunning(row) &&
+                        (runningPerRoom.get(row.room_id) ?? 0) >= 4
+                      "
+                      class="board-card__full"
+                      >排队中</span
+                    >
                   </span>
                   <span class="board-card__rule" aria-hidden="true" />
                   <span class="board-card__status t-meta">
@@ -414,7 +419,7 @@ function openTask(task: RoomTask) {
             <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
           </button>
           <ul v-if="showDone" class="board__done-list">
-            <li v-if="!doneRows.length" class="board-col__empty t-body">暂无归你的任务</li>
+            <li v-if="!doneRows.length" class="board-col__empty t-body">暂无分配给你的任务</li>
             <li v-for="row in doneRows" :key="row.id">
               <button type="button" class="done-row" @click="openTask(row)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
@@ -596,10 +601,6 @@ function openTask(task: RoomTask) {
   padding: 8px 4px;
   color: var(--muted);
   line-height: 1.7;
-}
-.board-col__next {
-  display: block;
-  color: var(--faint);
 }
 
 .board-card {

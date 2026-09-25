@@ -1,6 +1,6 @@
 // 话题头这一行常驻的只有标题、状态、成员；算力和专注模式收在 ⋯ 里。
 //
-// 收进去的东西里有一样不能跟着藏：房间能看到整台机器。那是权限，不是设置——
+// 收进去的东西里有一样不能跟着藏：房间能看到可访问整台设备。那是权限，不是设置——
 // 菜单合着的时候它也得在这一行上。
 import type { Component } from 'vue'
 import type { Topic, TopicComputeProfile } from '@/cx_types'
@@ -105,21 +105,21 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('话题头', () => {
-  it('房间能看到整台机器时，菜单合着这一行上也写着', async () => {
+  it('房间能看到可访问整台设备时，菜单合着这一行上也写着', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(true))
     mountHeader()
 
-    await waitFor(() => expect(bar().textContent).toContain('整台机器'))
+    await waitFor(() => expect(bar().textContent).toContain('可访问整台设备'))
     expect(bar().querySelector('[title="它能读写这台机器上的所有文件"]')).toBeTruthy()
   })
 
-  it('看不到整台机器时这一行不提它', async () => {
+  it('看不到可访问整台设备时这一行不提它', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(false))
     mountHeader()
 
     await waitFor(() => expect(getTopicComputeProfile).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 0))
-    expect(bar().textContent).not.toContain('整台机器')
+    expect(bar().textContent).not.toContain('可访问整台设备')
   })
 
   it('运行环境不在这一行上，在 ⋯ 里', async () => {

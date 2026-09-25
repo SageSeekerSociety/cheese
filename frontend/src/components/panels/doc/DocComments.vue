@@ -37,7 +37,7 @@ const folded = ref(false)
 // text; we only ever truncate it for display (never to derive semantics).
 function nodeLabel(content: string): string {
   const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '(空段落)'
+  return t.length > 22 ? t.slice(0, 22) + '…' : t || '（空段落）'
 }
 /** The paragraph a comment points at (or null for a whole-doc comment). */
 function commentAnchor(c: Block): Block | null {

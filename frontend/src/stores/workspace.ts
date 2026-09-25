@@ -65,6 +65,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   function isExternal(handle: string | null | undefined): boolean {
     return !!handle && externals.value.has(handle)
   }
+  // 界面上称呼项目 AI 队友用的名字。项目可以给它改名，所以任何一处都不能写死「芝士」；
+  // 名册还没到时才退回「芝士」。房间里有自己的 AI 席位时，对话里读的是房间名册
+  // （`useRoomRoster`），这里给的是项目默认那一位，供拿不到房间名册的地方用。
+  const agentName = computed(() => members.value.find((m) => m.agent && m.project_default)?.name || '芝士')
   const loadingTopics = ref(false)
   let projectEpoch = 0
   let topicRevision = 0
@@ -423,7 +427,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const kind = 'room_id' in made ? 'card' : 'room'
       return { kind, id: made.id }
     } catch (e) {
-      reportError(e, '升级失败')
+      reportError(e, '转为话题失败')
       return null
     }
   }
@@ -435,6 +439,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     accessDenied,
     topics,
     members,
+    agentName,
     isExternal,
     loadingTopics,
     unreadMap,

@@ -86,7 +86,7 @@ function mount() {
 it('a project with nothing in it is told where to start', async () => {
   mount()
 
-  expect(await screen.findByText('这个项目还没有开始的工作')).toBeTruthy()
+  expect(await screen.findByText('暂无任务')).toBeTruthy()
   expect(await screen.findByText('进入对话')).toBeTruthy()
 })
 
@@ -107,7 +107,7 @@ it('a project that has rooms keeps the board, even with every column empty', asy
   mount()
 
   await waitFor(() => expect(screen.getByText('施工中')).toBeTruthy())
-  expect(screen.queryByText('这个项目还没有开始的工作')).toBeNull()
+  expect(screen.queryByText('暂无任务')).toBeNull()
 })
 
 it('a project with work keeps the board', async () => {
@@ -116,7 +116,7 @@ it('a project with work keeps the board', async () => {
   mount()
 
   await waitFor(() => expect(screen.getByText('查一下分页接口')).toBeTruthy())
-  expect(screen.queryByText('这个项目还没有开始的工作')).toBeNull()
+  expect(screen.queryByText('暂无任务')).toBeNull()
 })
 
 it('nothing is claimed while the topics are still loading', async () => {
@@ -125,5 +125,5 @@ it('nothing is claimed while the topics are still loading', async () => {
   mount()
 
   await waitFor(() => expect(listProjectTasks).toHaveBeenCalled())
-  expect(screen.queryByText('这个项目还没有开始的工作')).toBeNull()
+  expect(screen.queryByText('暂无任务')).toBeNull()
 })

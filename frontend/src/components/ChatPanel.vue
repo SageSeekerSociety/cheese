@@ -168,7 +168,7 @@ const {
 // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
 // 是一次「我试了但做不了」，而人只会记得是它没做成。
 const composerHint = computed(() =>
-  props.alwaysSummon ? `和${agentName.value}聊聊，或交给它一件事…` : `输入消息，@${agentName.value} 交给它做`
+  props.alwaysSummon ? `给${agentName.value}发消息` : `输入消息，@${agentName.value} 交给它处理`
 )
 
 // Keep the module-level handle→name map in sync with the roster, so
@@ -267,7 +267,7 @@ async function onReact(m: Block, emoji: string) {
     const out = await apiToggleReaction(m.id, emoji, AUTHOR)
     applyReactions(m.id, out.reactions)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '表情未能更新'
+    errorMsg.value = e instanceof Error ? e.message : '表情更新失败'
   }
 }
 
@@ -357,7 +357,7 @@ async function loadOlder() {
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     failed = true
-    errorMsg.value = e instanceof Error ? e.message : '加载更早的消息失败'
+    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
   } finally {
     // Unconditional: a topic switch mid-flight must not leave the flag stuck,
     // or the new topic could never page back.
@@ -639,7 +639,7 @@ async function loadTopic(topic: Topic, entering = false) {
   } catch (e) {
     if (!stillHere()) return
     if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-    errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
+    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       retryLater(topic.id)
@@ -850,7 +850,7 @@ function pendingBlock(item: Outgoing): Block {
 }
 
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return item.error ? '待处理' : '未送达'
+  if (item.state === 'failed') return item.error ? '发送失败' : '未送达'
   return connected.value ? '发送中…' : '等待连接'
 }
 
@@ -998,7 +998,7 @@ async function summonNow() {
     summonedFor.value = rows.value.at(-1)?.block.id ?? null
     if (res.started) awaitingReply.value = true
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '没能叫醒它，请重试'
+    errorMsg.value = e instanceof Error ? e.message : `未能交给${agentName.value}，稍后重试`
   } finally {
     summonBusy.value = false
   }
@@ -1207,7 +1207,7 @@ onBeforeUnmount(() => {
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
-            <p class="t-body c-muted mb-4">说说你想解决什么问题，@芝士 可以查资料、写文档，也能和你一起拆任务</p>
+            <p class="t-body c-muted mb-4">{{ agentName }}可以查找资料、起草文档，或和你一起拆分任务</p>
             <div class="d-flex flex-wrap ga-2">
               <v-btn
                 v-for="prompt in starterPrompts"
@@ -1219,7 +1219,6 @@ onBeforeUnmount(() => {
                 >{{ prompt.label }}</v-btn
               >
             </div>
-            <p class="t-meta mt-3">点选后补充你的需求，再发送</p>
           </section>
 
           <!-- Paging back through history. The row is always rendered while
@@ -1364,7 +1363,7 @@ onBeforeUnmount(() => {
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
                 <span class="text-medium-emphasis">{{
-                  reachedAgent ? `${agentName}正在处理…` : `正在送给${agentName}…`
+                  reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
                 }}</span>
                 <span class="caret" />
               </div>

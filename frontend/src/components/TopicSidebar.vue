@@ -27,6 +27,7 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 
 import { t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
   projects: Project[]
@@ -69,6 +70,9 @@ const emit = defineEmits<{
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
 }>()
+
+// 项目 AI 队友的名字：侧栏提示里说的是它，不写死「芝士」。
+const store = useWorkspaceStore()
 
 // Drag the rail's right edge — emit the cursor's x (= rail width from the left).
 function startResize(e: MouseEvent) {
@@ -437,7 +441,7 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
   if (row.hiddenAwaits) return '展开：里面有待处理的事项'
-  if (row.hiddenRunning) return '展开：芝士正在里面工作'
+  if (row.hiddenRunning) return `展开：${store.agentName}正在里面工作`
   return '展开'
 }
 
@@ -794,7 +798,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
                          任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
                       <span v-else-if="row.topic.running" class="row-slot">
-                        <span class="running-dot" title="芝士正在这个话题里工作" />
+                        <span class="running-dot" :title="`${store.agentName}正在这个话题里工作`" />
                       </span>
                       <span v-else class="row-slot" />
                     </template>
