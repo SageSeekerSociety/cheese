@@ -81,6 +81,27 @@ class ClaudeLoginTest(unittest.TestCase):
         self.assertFalse(self.credential.exists())
         self.assertIn("logged out", self.run_script("status").stdout)
 
+    def test_an_egress_is_set_shown_without_its_password_and_cleared(self):
+        result = self.run_script("egress", "set", "http://me:secret@10.0.0.5:3128")
+        egress = self.home / "claude-credential/egress"
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(egress.read_text().strip(), "http://me:secret@10.0.0.5:3128")
+        self.assertEqual(egress.stat().st_mode & 0o777, 0o600)
+        status = self.run_script("status").stdout
+        self.assertIn("egress: http://***@10.0.0.5:3128", status)
+        self.assertNotIn("secret", status)
+
+        self.run_script("egress", "clear")
+        self.assertFalse(egress.exists())
+        self.assertIn("egress: direct", self.run_script("status").stdout)
+
+    def test_something_that_is_not_an_http_proxy_is_refused(self):
+        result = self.run_script("egress", "set", "socks5://10.0.0.5:1080")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.home / "claude-credential/egress").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

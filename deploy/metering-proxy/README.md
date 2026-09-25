@@ -144,6 +144,18 @@ logging out take effect at the next request of every running session. Use
   last three days).
 - `claude-login.sh logout` removes it.
 
+The credential can have an egress: an HTTP proxy that every request carrying
+it, token refreshes included, leaves through. Nothing else changes route — the
+gateway, the answers given here and everything tunnelled raw keep their own.
+An egress that is down or refuses the proxy fails the request; it is never sent
+direct instead.
+
+- `claude-login.sh egress set http://[user:pass@]host:port` sets it, from the
+  next request.
+- `claude-login.sh egress test [n]` times n TLS handshakes with Anthropic
+  through it and n direct, and prints both.
+- `claude-login.sh egress clear` sends the requests direct again.
+
 With no credential, projects on the API-key pool still run. The boot calls only
 a real account can answer (`NO_LOGIN_ANSWERS`) are answered here. A request
 admission places on the subscription is refused with a 400 naming the missing

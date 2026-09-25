@@ -846,10 +846,40 @@ def _decoded(raw: bytes, encoding: str) -> bytes:
     return raw
 
 
+@dataclass(frozen=True)
+class Egress:
+    """The HTTP proxy a credential's requests to Anthropic leave through."""
+
+    host: str
+    port: int
+    # The value of the Proxy-Authorization header, "" when the proxy asks none.
+    authorization: str = ""
+
+    @classmethod
+    def parse(cls, url: str) -> "Egress | None":
+        parts = urllib.parse.urlsplit(url.strip())
+        if parts.scheme != "http" or not parts.hostname or not parts.port:
+            return None
+        authorization = ""
+        if parts.username is not None:
+            pair = (
+                f"{urllib.parse.unquote(parts.username)}:"
+                f"{urllib.parse.unquote(parts.password or '')}"
+            )
+            authorization = "Basic " + base64.b64encode(pair.encode()).decode()
+        return cls(parts.hostname, parts.port, authorization)
+
+
 def _post_refresh(
-    url: str, body: dict, timeout_s: float, *, connect=http.client.HTTPSConnection
+    url: str,
+    body: dict,
+    timeout_s: float,
+    *,
+    egress: Egress | None = None,
+    connect=http.client.HTTPSConnection,
 ) -> tuple[int, dict]:
-    """POST the refresh grant exactly as `refresh_request` lays it out.
+    """POST the refresh grant exactly as `refresh_request` lays it out, through
+    the credential's egress when it has one.
 
     http.client rather than urllib: urllib re-cases header names and adds its
     own, so the request would stop matching Claude Code's. Returns (status,
@@ -857,7 +887,16 @@ def _post_refresh(
     """
     parts = urllib.parse.urlsplit(url)
     headers, raw = refresh_request(body)
-    conn = connect(parts.hostname, parts.port, timeout=timeout_s)
+    if egress is None:
+        conn = connect(parts.hostname, parts.port, timeout=timeout_s)
+    else:
+        conn = connect(egress.host, egress.port, timeout=timeout_s)
+        tunnel_headers = (
+            {"Proxy-Authorization": egress.authorization}
+            if egress.authorization
+            else {}
+        )
+        conn.set_tunnel(parts.hostname, parts.port or 443, headers=tunnel_headers)
     try:
         conn.putrequest("POST", parts.path, skip_host=True, skip_accept_encoding=True)
         for name, value in headers:
@@ -883,6 +922,10 @@ class PlatformCredential:
 
     def __init__(self, path: Path, *, post=_post_refresh, now=time.time) -> None:
         self.path = path
+        # The credential's egress, next to it: an `http://[user:pass@]host:port`
+        # proxy that every request made with this credential leaves through.
+        # Absent or empty, they go direct.
+        self.egress_path = path.with_name("egress")
         self._post = post
         self._now = now
         self._lock = threading.Lock()
@@ -905,6 +948,13 @@ class PlatformCredential:
         if not isinstance(oauth, dict) or not oauth.get("accessToken"):
             return ""
         return doc, oauth
+
+    def egress(self) -> Egress | None:
+        """Where this credential's requests leave from; None is direct."""
+        try:
+            return Egress.parse(self.egress_path.read_text())
+        except OSError:
+            return None
 
     def token(self) -> tuple[str, str]:
         """(token to put on the request, "") or ("", why there is none)."""
@@ -955,7 +1005,13 @@ class PlatformCredential:
                 "scope": " ".join(self._scopes(oauth)),
             }
             try:
-                status, answer = self._post(OAUTH_TOKEN_URL, body, 30.0)
+                egress = self.egress()
+                status, answer = self._post(
+                    OAUTH_TOKEN_URL,
+                    body,
+                    30.0,
+                    **({"egress": egress} if egress else {}),
+                )
             except OSError as err:
                 self._last_failure = self._now()
                 _credential_log.warning("claude credential refresh failed: %s", err)
