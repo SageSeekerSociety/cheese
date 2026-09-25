@@ -118,6 +118,17 @@ def test_a_command_that_cannot_run_is_recorded_rather_than_lost(tmp_path):
     assert "not" in output(job).lower(), "the shell's own complaint is kept"
 
 
+def test_a_command_whose_directory_is_gone_fails_as_the_command(tmp_path):
+    """A directory removed after the room named it is the command's failure,
+    reported where its output goes — not the supervisor's, which is fine."""
+    gone = tmp_path / "removed"
+    job = start(tmp_path / "nowhere", "echo 一", cwd=str(gone))
+    until(lambda: (job / "exit").exists())
+    assert json.loads((job / "exit").read_text())["status"] != 0
+    assert str(gone) in output(job), "the reason, where the command's output goes"
+    assert not (job / "error").exists(), "the supervisor itself did not fail"
+
+
 def room_shaped(tmp_path: Path, name: str) -> Path:
     """A job directory the shape a room actually hands over.
 
