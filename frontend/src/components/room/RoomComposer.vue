@@ -391,6 +391,15 @@ function sendDraft(opts?: { summon?: boolean }) {
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
 }
 
+// 拿掉的那一枚离开时脱出排版（absolute），后面的才能滑过来补位；脱出之前先把它钉
+// 在原来的位置上，不然它会跳到这一行的最左边再淡出。
+function pinLeaving(el: Element) {
+  const chip = el as HTMLElement
+  chip.style.left = `${chip.offsetLeft}px`
+  chip.style.top = `${chip.offsetTop}px`
+  chip.style.width = `${chip.offsetWidth}px`
+}
+
 defineExpose({
   /** @ 完人、点完按钮、起手草稿写完之后要把光标还回来——这是最烦人的一处。 */
   focus() {
@@ -409,73 +418,88 @@ defineExpose({
     @drop.prevent="onDropFiles"
   >
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
-    <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
-      <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
-        <v-icon size="13">mdi-folder-outline</v-icon>
-        <span class="mention-menu-name">资料库</span>
+    <Transition name="menu-rise">
+      <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
+        <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
+        <Transition :name="mentionLevel === 'library' ? 'level-in' : 'level-out'" mode="out-in">
+          <div :key="mentionLevel" class="mention-menu-level">
+            <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
+              <v-icon size="13">mdi-folder-outline</v-icon>
+              <span class="mention-menu-name">资料库</span>
+            </div>
+            <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
+              <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
+                {{ mm.group }}
+              </div>
+              <button type="button" class="mention-menu-item" @click="pickMention(mm)">
+                <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
+                  <v-icon size="13">mdi-bullhorn-outline</v-icon>
+                </span>
+                <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
+                  avatarInitial(mm.label)
+                }}</span>
+                <span
+                  v-else-if="mm.kind === 'member'"
+                  class="mention-avatar"
+                  :style="{ backgroundColor: avatarColor(mm.handle) }"
+                  >{{ avatarInitial(mm.label) }}</span
+                >
+                <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-folder-outline</v-icon>
+                </span>
+                <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-file-outline</v-icon>
+                </span>
+                <span v-else class="mention-avatar mention-avatar--topic">
+                  <v-icon size="13">mdi-pound</v-icon>
+                </span>
+                <span class="mention-menu-name">{{ mm.label }}</span>
+                <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+                <ExternalTag v-else-if="mm.external" />
+                <span class="mention-menu-sub">{{ mm.sub }}</span>
+                <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
+                <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
+              </button>
+            </template>
+            <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">
+              暂无匹配的文件
+            </div>
+          </div>
+        </Transition>
       </div>
-      <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
-        <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
-          {{ mm.group }}
-        </div>
-        <button type="button" class="mention-menu-item" @click="pickMention(mm)">
-          <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
-            <v-icon size="13">mdi-bullhorn-outline</v-icon>
-          </span>
-          <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
-            avatarInitial(mm.label)
-          }}</span>
-          <span
-            v-else-if="mm.kind === 'member'"
-            class="mention-avatar"
-            :style="{ backgroundColor: avatarColor(mm.handle) }"
-            >{{ avatarInitial(mm.label) }}</span
-          >
-          <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
-            <v-icon size="13">mdi-folder-outline</v-icon>
-          </span>
-          <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
-            <v-icon size="13">mdi-file-outline</v-icon>
-          </span>
-          <span v-else class="mention-avatar mention-avatar--topic">
-            <v-icon size="13">mdi-pound</v-icon>
-          </span>
-          <span class="mention-menu-name">{{ mm.label }}</span>
-          <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
-          <ExternalTag v-else-if="mm.external" />
-          <span class="mention-menu-sub">{{ mm.sub }}</span>
-          <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
-          <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
-        </button>
-      </template>
-      <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">暂无匹配的文件</div>
-    </div>
+    </Transition>
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div class="composer-box">
       <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。一行排开，
            不换行——多了就在这一行里横着滚，每一个都还拿得掉。 -->
-      <div v-if="replyLabel || atts.length" class="chip-list">
-        <ComposerChip
-          v-if="replyLabel"
-          key="reply"
-          class="reply-chip"
-          quiet
-          :label="replyLabel"
-          :remove-label="t('work.room.composer.cancelReply')"
-          @remove="emit('clear-reply')"
-        >
-          <template #face><v-icon size="13">mdi-reply</v-icon></template>
-        </ComposerChip>
-        <AttachmentChip
-          v-for="(a, i) in atts"
-          :key="a.path"
-          :topic-id="topic!.id"
-          :attachment="a"
-          @remove="emit('remove-att', i)"
-        />
-      </div>
+      <!-- 这一行长出来、收回去都是高度过渡；里面的标签一个个弹进来，拿掉一个时
+           后面的滑过来补位。 -->
+      <Transition name="chip-row">
+        <div v-if="replyLabel || atts.length" class="chip-row">
+          <TransitionGroup tag="div" name="chip" class="chip-list" @before-leave="pinLeaving">
+            <ComposerChip
+              v-if="replyLabel"
+              key="reply"
+              class="reply-chip"
+              quiet
+              :label="replyLabel"
+              :remove-label="t('work.room.composer.cancelReply')"
+              @remove="emit('clear-reply')"
+            >
+              <template #face><v-icon size="13">mdi-reply</v-icon></template>
+            </ComposerChip>
+            <AttachmentChip
+              v-for="(a, i) in atts"
+              :key="a.path"
+              :topic-id="topic!.id"
+              :attachment="a"
+              @remove="emit('remove-att', i)"
+            />
+          </TransitionGroup>
+        </div>
+      </Transition>
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
              半屏——而按钮的数量只会往上加。 -->
       <v-textarea
@@ -587,9 +611,9 @@ defineExpose({
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   transition:
-    border-color 0.12s ease,
-    box-shadow 0.12s ease,
-    background-color 0.12s ease;
+    border-color var(--dur-quick) var(--ease-standard),
+    box-shadow var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 /* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
 .composer-box:focus-within {
@@ -609,6 +633,12 @@ defineExpose({
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: var(--lh-14);
+  /* 多一行长高一行、发出去收回一行。auto-grow 的高度落在 min-height 上（Vuetify
+     经 --v-input-control-height 算出来），让它过渡过去，不跳。透明度那一条是
+     Vuetify 自己的，写在一起才不被盖掉。 */
+  transition:
+    min-height var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-quick) var(--ease-standard);
 }
 /* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
    下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
@@ -635,6 +665,17 @@ defineExpose({
 .composer-send {
   width: 28px;
   height: 28px;
+}
+/* 能发了，灰色的键过渡成琥珀；按下去沉一下，不等松手。 */
+.composer-send {
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-quick) var(--ease-standard),
+    transform var(--dur-press) var(--ease-standard);
+}
+.composer-send:active:not(:disabled) {
+  transform: scale(0.92);
 }
 /* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
    那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
@@ -760,6 +801,47 @@ defineExpose({
   background: var(--fill);
   color: var(--muted);
 }
+.menu-rise-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.menu-rise-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.menu-rise-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.menu-rise-leave-to {
+  opacity: 0;
+}
+.mention-menu-level {
+  display: flex;
+  flex-direction: column;
+}
+.level-in-enter-active,
+.level-out-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.level-in-leave-active,
+.level-out-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.level-in-enter-from,
+.level-out-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+.level-in-leave-to,
+.level-out-enter-from {
+  opacity: 0;
+  transform: translateX(-16px);
+}
 /* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
 .mention-menu-head {
   display: flex;
@@ -795,9 +877,60 @@ defineExpose({
   color: var(--faint);
 }
 
+.chip-row {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.chip-row-enter-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.chip-row-leave-active {
+  transition:
+    grid-template-rows var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.chip-row-enter-from,
+.chip-row-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* 行高收到 0 时，里面那一行自己的上下内边距也得跟着收，不然最后剩 6px 再一跳。 */
+.chip-row-enter-active .chip-list {
+  transition: padding var(--dur-base) var(--ease-out);
+}
+.chip-row-leave-active .chip-list {
+  transition: padding var(--dur-quick) var(--ease-in);
+}
+.chip-row-enter-from .chip-list,
+.chip-row-leave-to .chip-list {
+  padding-block: 0;
+}
+.chip-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.chip-leave-active {
+  position: absolute;
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.chip-enter-from,
+.chip-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+.chip-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
 /* 回复和附件那一行。不换行：换了行输入框就被一截一截往上顶。多出来的横着滚——
    裁掉的话，第四个附件既看不见也拿不掉。 */
 .chip-list {
+  position: relative;
+  min-height: 0;
   display: flex;
   gap: 6px;
   padding: 2px 0 4px;

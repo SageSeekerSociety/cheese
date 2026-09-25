@@ -37,18 +37,39 @@ const isDocument = computed(() => hasPagePreview(name.value))
   >
     <template #face>
       <!-- 图片和文档那两个组件的根元素自己就是记号格（它们要在加载中、成功、
-           失败三种状态下都占住它）；剩下两种状态没有组件，记号格由这里画。 -->
-      <AttachmentImage v-if="!attachment.uploading && isImage" thumb :topic-id="topicId" :path="attachment.path" />
-      <AttachmentDocThumb
-        v-else-if="!attachment.uploading && isDocument"
-        :topic-id="topicId"
-        :path="attachment.path"
-        :icon-size="14"
-      />
-      <span v-else class="att-face">
-        <v-progress-circular v-if="attachment.uploading" indeterminate size="12" width="1.5" />
-        <v-icon v-else size="14">{{ fileIcon(name) }}</v-icon>
-      </span>
+           失败三种状态下都占住它）；剩下两种状态没有组件，记号格由这里画。
+           传完的那一刻转圈原地换成缩略图或图标：先淡出，新的再淡入。 -->
+      <Transition name="face" mode="out-in">
+        <AttachmentImage v-if="!attachment.uploading && isImage" thumb :topic-id="topicId" :path="attachment.path" />
+        <AttachmentDocThumb
+          v-else-if="!attachment.uploading && isDocument"
+          :topic-id="topicId"
+          :path="attachment.path"
+          :icon-size="14"
+        />
+        <span v-else :key="attachment.uploading ? 'uploading' : 'done'" class="att-face">
+          <v-progress-circular v-if="attachment.uploading" indeterminate size="12" width="1.5" />
+          <v-icon v-else size="14">{{ fileIcon(name) }}</v-icon>
+        </span>
+      </Transition>
     </template>
   </ComposerChip>
 </template>
+
+<style scoped>
+.face-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.face-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.face-enter-from {
+  opacity: 0;
+  transform: scale(0.8);
+}
+.face-leave-to {
+  opacity: 0;
+}
+</style>

@@ -465,6 +465,27 @@ let historyGeneration = 0
 // 再淡入一次就是一闪。
 const arrived = reactive(new Set<string>())
 
+// 出错提示停多久。一次没成的事（表情没加上、下载失败）说一句，够读完就淡出：一直
+// 挂着的话它盖住输入框上方那块，而说的多半已经过去了。连不上服务器的时候不走——
+// 那时候这一行说的是房间此刻的状态（连接被拒、正在重连、历史没读出来），它一走，
+// 房间为什么不动就没人说了。
+const ERROR_TOAST_MS = 6000
+let errorTimer: ReturnType<typeof setTimeout> | undefined
+watch([errorMsg, connected, connectRefused], ([message, online, refused]) => {
+  clearTimeout(errorTimer)
+  if (message && online && !refused) errorTimer = setTimeout(() => (errorMsg.value = null), ERROR_TOAST_MS)
+})
+onBeforeUnmount(() => clearTimeout(errorTimer))
+
+// 自己刚发的那几条（发件箱里的 client id）：从输入框的方向升上来。打开房间时从草稿
+// 里恢复出来的发件箱不算——那几条一直在，不是此刻发的。
+const sentNow = reactive(new Set<string>())
+// 发件箱那一行换成落库的那一条时，淡的那一档慢慢恢复，而不是一下跳亮。
+const delivered = reactive(new Set<string>())
+// 点了「编辑」的那几条：它们离开时先收拢自己的高度，原文回到输入框。别的离开（送达
+// 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
+const editing = new Set<string>()
+
 // 往上翻时拼到顶部的那一页：只淡入，不位移——这一刻滚动位置正被补偿到原处，再
 // 往上浮 4px，读的人会看见整页抖一下。
 const older = reactive(new Set<string>())
@@ -501,6 +522,15 @@ function jumpToUnseen() {
 function settleArrival(e: AnimationEvent, id: string) {
   if (e.animationName.startsWith('tl-arrive')) arrived.delete(id)
   if (e.animationName.startsWith('tl-older')) older.delete(id)
+  if (e.animationName.startsWith('tl-delivered')) delivered.delete(id)
+}
+function settleSent(e: AnimationEvent, clientId: string) {
+  if (e.animationName.startsWith('tl-sent')) sentNow.delete(clientId)
+}
+function outboxLeave(el: Element, done: () => void) {
+  const clientId = (el as HTMLElement).dataset.cid
+  if (clientId && editing.delete(clientId)) collapseLeave(el, done)
+  else done()
 }
 
 // 一行离开时先收拢自己的高度再走，下面的东西平滑地补上来，而不是等它淡完一下子
@@ -541,7 +571,7 @@ function flash(id: string) {
 function handleFrame(frame: WsServerFrame) {
   switch (frame.type) {
     case 'user_block':
-      settleOutbox(frame.block)
+      if (settleOutbox(frame.block)) delivered.add(frame.block.id)
       pushBlock(frame.block)
       autoScroll()
       break
@@ -687,6 +717,9 @@ async function loadTopic(topic: Topic, entering = false) {
   unreadAnchorId.value = null
   arrived.clear()
   older.clear()
+  sentNow.clear()
+  delivered.clear()
+  editing.clear()
   unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
@@ -835,7 +868,7 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // An image-only send (no text) is a valid message (图片输入).
   if (!trimmed && !atts) return false
   errorMsg.value = null
-  enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts })
+  sentNow.add(enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts }))
   replyTarget.value = null
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack, before anything has been delivered anywhere yet.
@@ -1002,6 +1035,7 @@ function outgoingState(item: Outgoing): string {
 // 发送失败之后的「编辑」：这一条从发件箱里拿掉，原文、回复对象和附件放回输入框，
 // 改完再发就是一条新的。输入框里已经有字的话，原文放在前面，一个字都不覆盖。
 function editSend(item: Outgoing) {
+  editing.add(item.clientId)
   dropSend(item.clientId)
   draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
   const parent = item.replyTo ? messages.value.find((m) => m.id === item.replyTo) : undefined
@@ -1425,7 +1459,6 @@ onBeforeUnmount(() => {
             <RoomNotice
               v-if="notice"
               :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id) }"
-              @animationend="settleArrival($event, m.id)"
               :block="m"
               :notice="notice"
               :run="run"
@@ -1435,14 +1468,19 @@ onBeforeUnmount(() => {
               :refs="refMaps"
               :can-retry="canRetryAt(i)"
               :retrying="retryBusy"
+              @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
               @retry="retryNow"
             />
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
-              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id), 'tl-flash': flashId === m.id }"
-              @animationend="settleArrival($event, m.id)"
+              :class="{
+                'tl-arrive': arrived.has(m.id),
+                'tl-older': older.has(m.id),
+                'tl-flash': flashId === m.id,
+                'tl-delivered': delivered.has(m.id),
+              }"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
@@ -1453,6 +1491,7 @@ onBeforeUnmount(() => {
               :author-name="displayName(m)"
               :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
+              @animationend="settleArrival($event, m.id)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refMaps"
@@ -1481,29 +1520,34 @@ onBeforeUnmount(() => {
           <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
              只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
              第二位的。 -->
-          <RoomMessage
-            v-for="(item, oi) in outbox"
-            :key="item.clientId"
-            :block="pendingBlock(item)"
-            :parent="null"
-            :parent-name="null"
-            :run-start="outboxEdge(oi) !== 'cont'"
-            :regroup="outboxEdge(oi) === 'regroup'"
-            :mine="true"
-            :topic-id="topic?.id ?? null"
-            :author-name="myName"
-            :external="isExternal(AUTHOR)"
-            :avatar="avatarSrc(AUTHOR)"
-            :is-agent="false"
-            :time="outgoingState(item)"
-            :refs="refMaps"
-            :viewer="AUTHOR"
-            :ask-busy="false"
-            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
-            @retry="retrySend(item.clientId)"
-            @edit="editSend(item)"
-            @avatar-error="onAvatarError"
-          />
+          <TransitionGroup :css="false" @leave="outboxLeave">
+            <RoomMessage
+              v-for="(item, oi) in outbox"
+              :key="item.clientId"
+              :class="{ 'tl-sent': sentNow.has(item.clientId) }"
+              :data-cid="item.clientId"
+              :block="pendingBlock(item)"
+              :parent="null"
+              :parent-name="null"
+              :run-start="outboxEdge(oi) !== 'cont'"
+              :regroup="outboxEdge(oi) === 'regroup'"
+              :mine="true"
+              :topic-id="topic?.id ?? null"
+              :author-name="myName"
+              :external="isExternal(AUTHOR)"
+              @animationend="settleSent($event, item.clientId)"
+              :avatar="avatarSrc(AUTHOR)"
+              :is-agent="false"
+              :time="outgoingState(item)"
+              :refs="refMaps"
+              :viewer="AUTHOR"
+              :ask-busy="false"
+              :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+              @retry="retrySend(item.clientId)"
+              @edit="editSend(item)"
+              @avatar-error="onAvatarError"
+            />
+          </TransitionGroup>
 
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
@@ -1572,16 +1616,21 @@ onBeforeUnmount(() => {
         </Transition>
       </div>
 
-      <v-alert
-        v-if="errorMsg"
-        type="error"
-        density="compact"
-        class="chat-error-toast"
-        closable
-        @click:close="errorMsg = null"
-      >
-        {{ errorMsg }}
-      </v-alert>
+      <!-- 从底部升起，过一会儿自己淡出。新的一条直接顶替旧的，不排队：排着的旧提示
+           说的多半是已经过去的事。 -->
+      <Transition name="toast">
+        <v-alert
+          v-if="errorMsg"
+          :key="errorMsg"
+          type="error"
+          density="compact"
+          class="chat-error-toast"
+          closable
+          @click:close="errorMsg = null"
+        >
+          {{ errorMsg }}
+        </v-alert>
+      </Transition>
 
       <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
@@ -1637,6 +1686,21 @@ onBeforeUnmount(() => {
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
   box-shadow: var(--shadow-2);
+}
+.toast-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.toast-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.toast-enter-from {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+.toast-leave-to {
+  opacity: 0;
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
@@ -1869,6 +1933,27 @@ onBeforeUnmount(() => {
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+/* 自己刚发的一条：从输入框的方向升上来 12px（见 `sentNow`），比别人的新消息那
+   4px 远——它确实是从下面那个框里上来的。 */
+.tl-sent {
+  animation: tl-sent var(--dur-base) var(--ease-out);
+}
+@keyframes tl-sent {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+/* 送达：发件箱那一行淡的那一档（RoomMessage 的 .im-row--pending）慢慢恢复。 */
+.tl-delivered :deep(.im-text),
+.tl-delivered :deep(.im-name) {
+  animation: tl-delivered var(--dur-base) var(--ease-standard);
+}
+@keyframes tl-delivered {
+  from {
+    opacity: 0.62;
   }
 }
 /* 翻上去时拼进来的更早的一页：只淡入（见 `older`）。 */
