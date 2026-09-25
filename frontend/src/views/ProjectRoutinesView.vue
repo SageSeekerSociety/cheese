@@ -61,8 +61,14 @@ const roomTitle = (id: string) => rooms.value.find((r) => r.id === id)?.title ??
 const drafts = computed(() => routines.value.filter((r) => r.state === 'draft'))
 const others = computed(() => routines.value.filter((r) => r.state !== 'draft'))
 
-function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : '—'
+// 按规则自己的时区写：「每周一 09:00（Asia/Shanghai）」旁边的下次时间要对得上。
+function fmt(iso: string | null, timeZone?: string): string {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { timeZone, hour12: false })
+  } catch {
+    return new Date(iso).toLocaleString()
+  }
 }
 
 async function load() {
@@ -307,7 +313,7 @@ watch(
                 <div class="t-meta c-faint">
                   {{ r.trigger_text }} · {{ roomTitle(r.topic_id) }}
                   <template v-if="r.state === 'active' && r.trigger === 'schedule'">
-                    · 下次 {{ fmt(r.next_run_at) }}
+                    · 下次 {{ fmt(r.next_run_at, r.timezone) }}
                   </template>
                 </div>
               </div>
@@ -349,8 +355,8 @@ watch(
                     >
                       {{ RUN_LABEL[run.status] }}
                     </v-chip>
-                    <span>{{ fmt(run.scheduled_for || run.created_at) }}</span>
-                    <span v-if="run.finished_at" class="c-faint">结束于 {{ fmt(run.finished_at) }}</span>
+                    <span>{{ fmt(run.scheduled_for || run.created_at, r.timezone) }}</span>
+                    <span v-if="run.finished_at" class="c-faint">结束于 {{ fmt(run.finished_at, r.timezone) }}</span>
                   </div>
                   <div class="t-meta c-muted">{{ run.trigger_detail }}</div>
                   <div v-if="run.status === 'failed' || run.status === 'skipped'" class="t-body c-danger">
