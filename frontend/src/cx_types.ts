@@ -546,16 +546,27 @@ export interface ProfileProject {
   contributions: number
 }
 
+// One thing an agent noted about this person, and where it was noted. The
+// project is null once the person can no longer read it.
+export interface ProfileUnderstanding {
+  id: string
+  content: string
+  created_at: string
+  project_id: string | null
+  project_name: string | null
+  agent_handle: string | null
+  agent_name: string | null
+}
+
 // GET /api/users/{handle}/profile — the cross-project résumé view.
-// `understanding` = what 芝士 has learned about this person (个人记忆, §8.4).
+// `understanding` = what 芝士 has learned about this person (个人记忆, §8.4);
+// only the person themselves receives it.
 export interface UserProfile {
   handle: string
   name: string
   bio: string
-  interests: string[]
-  skills: string[]
   projects: ProfileProject[]
-  understanding: string[]
+  understanding: ProfileUnderstanding[]
   [key: string]: unknown
 }
 

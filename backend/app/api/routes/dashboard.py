@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.api.routes.machines import _require_project_access
 from app.core.config import settings
@@ -117,6 +117,16 @@ async def contributions(
     return ok(await DashboardService(db).contributions(project_id))
 
 
+async def _signed_in(resolver: ActorResolver, what: str) -> str:
+    """The caller's handle; a personal page shows nothing to a caller nobody
+    can identify."""
+    viewer = await resolver.resolve(fallback_handle=None)
+    resolver.reject_failed_credential(viewer)
+    if not viewer.authenticated:
+        raise AuthenticationRequiredError(f"{what}需要先登录")
+    return viewer.handle
+
+
 @router.get("/users/{handle}/profile")
 async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     """个人主页 (spec §7.2): cross-project profile / portfolio.
@@ -125,8 +135,5 @@ async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -
     and the page is cut to what that viewer may see. A person's projects are
     project content, and what the agents remember about them is theirs alone,
     so there is nothing on it for a caller nobody can identify."""
-    viewer = await resolver.resolve(fallback_handle=None)
-    resolver.reject_failed_credential(viewer)
-    if not viewer.authenticated:
-        raise AuthenticationRequiredError("查看个人主页需要先登录")
-    return ok(await DashboardService(db).user_profile(handle, viewer=viewer.handle))
+    viewer = await _signed_in(resolver, "查看个人主页")
+    return ok(await DashboardService(db).user_profile(handle, viewer=viewer))

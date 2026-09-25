@@ -24,7 +24,7 @@ const router = useRouter()
 const { data, loading, error } = useCachedResource(
   () => `member:${props.projectId}:${props.handle}`,
   async (): Promise<{ profile: UserProfile | null; member: MemberSummary | null }> => {
-    // Profile drives the header/skills/understanding; the member summary gives
+    // Profile drives the header/understanding; the member summary gives
     // the per-project lists. Fetch both; tolerate either being unavailable.
     const [prof, mem] = await Promise.all([
       getUserProfile(props.handle).catch(() => null),
@@ -117,28 +117,6 @@ function openProject(p: ProfileProject) {
           </div>
         </v-card>
 
-        <!-- 技能 / 兴趣 -->
-        <v-card v-if="profile && (profile.skills.length || profile.interests.length)" class="mb-6">
-          <v-card-text>
-            <div v-if="profile.skills.length" class="mb-4">
-              <div class="t-title mb-2">技能</div>
-              <div class="d-flex flex-wrap ga-2">
-                <span v-for="s in profile.skills" :key="s" class="chip-neutral">
-                  {{ s }}
-                </span>
-              </div>
-            </div>
-            <div v-if="profile.interests.length">
-              <div class="t-title mb-2">兴趣方向</div>
-              <div class="d-flex flex-wrap ga-2">
-                <span v-for="i in profile.interests" :key="i" class="chip-outline">
-                  {{ i }}
-                </span>
-              </div>
-            </div>
-          </v-card-text>
-        </v-card>
-
         <!-- 芝士眼中的 TA (spec §8.4: 个人记忆 / 芝士对 TA 的理解) -->
         <v-card class="mb-6">
           <v-card-title class="d-flex align-center ga-2 t-title pt-4">
@@ -147,9 +125,9 @@ function openProject(p: ProfileProject) {
           </v-card-title>
           <v-card-text>
             <div v-if="profile?.understanding?.length" class="d-flex flex-column ga-2">
-              <div v-for="(u, idx) in profile.understanding" :key="idx" class="d-flex align-start ga-2">
+              <div v-for="u in profile.understanding" :key="u.id" class="d-flex align-start ga-2">
                 <span class="status-dot status-dot--muted" style="margin-top: 8px" />
-                <span class="t-body">{{ u }}</span>
+                <span class="t-body">{{ u.content }}</span>
               </div>
             </div>
             <div v-else class="empty-state">
@@ -315,16 +293,6 @@ function openProject(p: ProfileProject) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-/* Neutral outline chip (interests). */
-.chip-outline {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--line-2);
-  padding: 1px 8px;
-  border-radius: 6px;
 }
 .empty-state {
   display: flex;

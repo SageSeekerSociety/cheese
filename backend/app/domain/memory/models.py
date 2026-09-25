@@ -108,6 +108,19 @@ def user_scope_about(person_handle: str) -> str:
     return f":{person_handle}"
 
 
+def parse_user_scope_id(scope_id: str) -> tuple[uuid.UUID, str, str] | None:
+    """``(project id, agent handle, person handle)`` back out of a
+    :func:`user_scope_id`, or None when the key is not in that shape."""
+    parts = scope_id.split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        project_id = uuid.UUID(parts[0])
+    except ValueError:
+        return None
+    return project_id, parts[1], parts[2]
+
+
 class MemoryDream(UuidPk, Timestamps, Base):
     """A 记忆整理 pass that ran while the clock-driven organizer existed.
 

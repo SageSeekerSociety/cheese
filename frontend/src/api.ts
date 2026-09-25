@@ -639,7 +639,7 @@ export function getMemberSummary(projectId: string, handle: string): Promise<Mem
 }
 
 // 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2). Cross-project résumé:
-// header + skills/interests + 芝士 understanding + per-project contributions.
+// header + 芝士 understanding + per-project contributions.
 export function getUserProfile(handle: string): Promise<UserProfile> {
   return request<UserProfile>(`/users/${encodeURIComponent(handle)}/profile`)
 }

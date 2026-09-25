@@ -73,7 +73,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Office 文档比的是正文（`domain/documents/text.py`），其余按字节 |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
-| 个人主页 | `views/MemberView.vue` | 封面+头像+技能+芝士眼中的TA+参与项目；本项目中：发起/在忙/本周贡献 |
+| 个人主页 | `views/MemberView.vue` | 封面+头像+芝士眼中的TA+参与项目；本项目中：发起/在忙/本周贡献 |
 | 项目文档 | `views/ProjectDocsView.vue` | 章程/决策记录/周报集；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
 
 ---
