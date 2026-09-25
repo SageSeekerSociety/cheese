@@ -80,6 +80,14 @@ class Building(enum.StrEnum):
     """还没递出交付。"""
 
     running = "运行中"
+    #: 活才有：没有人在做它。还没派出去、排着队等空位，或者上一次递的卡被驳回、
+    #: 撤回、没过检查，都是这一格：下一步是有人再动手。
+    not_started = "待开工"
+    #: 活才有：做它的分身已经交回了结论，在等房间把卡递出去。和「待开工」分开，
+    #: 是因为东西已经做出来了，看的人不该以为还没人碰过它。
+    returned = "已交回"
+    #: 房间才有：这一轮说完了，在等下一句话。活不用这个词：它放在「施工中」这一列
+    #: 里读起来像自相矛盾。
     idle = "空闲"
     #: 房间才有：还没开工。活没有草稿态。
     draft = "草稿"
@@ -438,7 +446,12 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     # 放在最后：一条已交付的活即使关掉了，它首先是已交付的（规矩 1 已经拦了它）。
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)
-    return _show(Building.idle)
+    # 被驳回的卡说明交回来的那一版不算数，所以它压过「已交回」。
+    if facts.card is not None and facts.card.status in _SETTLED_CARD:
+        return _show(Building.not_started)
+    if facts.has_conclusion:
+        return _show(Building.returned)
+    return _show(Building.not_started)
 
 
 def _worker_alive(facts: TaskFacts, *, now: datetime) -> bool:
