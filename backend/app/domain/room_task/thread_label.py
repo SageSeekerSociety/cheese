@@ -41,8 +41,8 @@ def task_of_thread_label(label: str | None) -> uuid.UUID | None:
 
 
 #: 标识长什么样。认它是骨架适配层的活：agent 起子 agent 时把标识写进交给它的那段
-#: prompt（骨架没有一个自由字段能带它，见 `harness/claude_code/hook_events.py` 的
-#: `SubThreads`），所以得从一段话里按形状把它挑出来。
+#: prompt（骨架没有一个自由字段能带它，见 `harness/claude_code/events.py` 的
+#: `bind`），所以得从一段话里按形状把它挑出来。
 _IN_TEXT = re.compile(rf"{PREFIX}[0-9a-f]{{32}}")
 
 

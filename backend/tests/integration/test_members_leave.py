@@ -1,11 +1,11 @@
 """退出项目：成员自己走的那条路 (``DELETE /projects/{id}/membership``).
 
-在那之前只有 owner / lead 能把人移出去，成员自己想走只能去求人。这条路的授权和写名
+在那之前只有管理者能把人移出去，成员自己想走只能去求人。这条路的授权和写名
 册那三条不同——动作的对象恒是动作人自己（身份只从 token 来，没有代退），挡在前面的
 不是「你是不是管理员」，而是几种**走不了**的处境，每一种都得给出下一步：
 
 * 所有者：他在名册上没有成员行，一走这个项目就没人管得了；
-* 小队带进来的人：他的访问来自小队，退得出的是小队；
+* 团队成员：他的访问来自团队，退得出的是团队；
 * 某个话题最后一个 owner：撤掉他，那间房就没有人管得了（无主房间是死路）。
 
 还有它必须做完的那半步：只删名册那一行的话，人还是每个房间都进得来（项目成员身份是
@@ -28,7 +28,12 @@ from app.domain.team.services import team_service
 from app.domain.topic.models import TopicMembership, TopicRole
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.user.models import User
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    add_external_member,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 OWNER = "owner-1"
 MISSING_PROJECT = "00000000-0000-0000-0000-000000000000"
@@ -36,15 +41,12 @@ MISSING_PROJECT = "00000000-0000-0000-0000-000000000000"
 
 def _project(client, name: str = "P", owner: str = OWNER) -> str:
     body = {"name": name, "owner_handle": owner}
-    return client.post("/projects", json=body).json()["data"]["id"]
+    return post_project(client, json=body).json()["data"]["id"]
 
 
-def _add(client, pid: str, handle: str, *, by: str = OWNER, role: str = "member"):
-    return client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": handle, "role": role},
-        headers=session_auth_headers(by),
-    )
+def _add(client, pid: str, handle: str, *, by: str = OWNER) -> None:
+    """``handle`` comes into the project from outside its team: invited, accepted."""
+    add_external_member(client, pid, handle, by=by)
 
 
 def _leave(client, pid: str, handle: str, **kw):
@@ -86,7 +88,7 @@ def test_a_member_leaves_and_their_topic_seats_go_with_them(client, bearer):
     两件事必须同时成立。席位留着的话，项目身份没了也照样每个房间都进得来 —— 退出
     就成了一件没做完的事。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     assert "alice" in _topic_handles(client, tid)
@@ -109,7 +111,7 @@ def test_removing_a_member_revokes_their_seats_too(client, bearer):
     从前 ``remove`` 只删成员行，于是被移出的人从名册上消失了却还是每个房间都进得
     来。这条用例钉的是那个顺带修掉的缺口。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     roster_before = set(_project_handles(client, pid))
@@ -132,7 +134,7 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
     员行是两次写，次序错了就会出现「席位没了，人还留在名册上」这种半成品 —— 比什么
     都不做更难收拾，因为名册上那个人已经进不去任何房间了。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     tid = _topic(client, pid, "alice", title="设计讨论")
 
     r = client.delete(
@@ -144,50 +146,9 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
     assert "alice" in _topic_handles(client, tid)
 
 
-def test_removing_a_teammate_is_refused_and_points_at_the_team(client):
-    """小队带进来的人，管理者也移不掉 —— 删名册那一行不会让他离开项目。
-
-    ``list_members`` 里有一句 ``if handle in explicit: continue``：小队那一行只在名册
-    上没有同名成员行时才补出来。所以删掉表里那一行不是把人移出去，只是把盖在小队行
-    上的那块布掀开 —— 下一次读名册他又在。接口回成功而什么都没变，比拒绝更糟：管理
-    者以为清理干净了。拒绝要指向真正的出口（小队），并且**一个字节都不写**。"""
-
-    async def seed() -> str:
-        factory = client.test_request_factory
-        captain = await _user(factory, "captain")
-        mate = await _user(factory, "mate")
-        async with factory() as session:
-            team = await team_service(session).create_team(
-                name="小队", intro="", description="", avatar_id=1, owner_id=captain
-            )
-            await TeamRepository(session).add_member(
-                team.id, mate, TeamMemberRole.MEMBER
-            )
-            project = await ProjectService(session).create(
-                name="P", owner_handle="captain", team_id=team.id
-            )
-            await session.commit()
-            return str(project.id)
-
-    pid = client.portal.call(seed)
-
-    # 建项目时 ``_seed_roster`` 已经替队友落了一行 —— 正是「删得掉但删了没用」那种。
-    assert "mate" in _project_handles(client, pid)
-
-    r = client.delete(
-        f"/projects/{pid}/members/mate", headers=session_auth_headers("captain")
-    )
-    assert r.status_code == 409, r.text
-    assert "小队" in r.json()["error"]["message"]
-    assert "mate" in _project_handles(client, pid)
-
-
-def test_a_team_row_without_a_member_row_is_still_a_404(client):
-    """后进小队的人在小队里读出来（没有成员行），移他仍是 404 —— 次序不变。
-
-    「他不在名册上」和「他的访问来自小队」是两件事，答复也不同：名册上根本没有这一
-    行时，404 才是那句话该有的答复，不该被小队那条挡成 409。这里用「建完项目之后才
-    入队」造出这个形状 —— 那一行是 ``list_members`` 读时补的。"""
+def test_a_teammate_cannot_be_removed_from_the_project(client):
+    """团队成员在名册上是从团队读出来的，没有一条可删的成员行 —— 移他是 404，人
+    还在。他离开项目的路是离开团队。"""
 
     async def seed() -> str:
         factory = client.test_request_factory
@@ -200,7 +161,6 @@ def test_a_team_row_without_a_member_row_is_still_a_404(client):
             project = await ProjectService(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
-            # 入队发生在建项目**之后**：没有人替他落成员行。
             await TeamRepository(session).add_member(
                 team.id, latecomer, TeamMemberRole.MEMBER
             )
@@ -232,7 +192,7 @@ def test_the_owner_query_locks_the_rows_it_reads(client):
     ``FOR UPDATE NOWAIT`` 去要同一批行，立刻被拒 —— NOWAIT 不等待，所以时序是确定的。
     """
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     tid = _topic(client, pid, "alice")
     topic_id = uuid.UUID(tid)
 
@@ -261,8 +221,6 @@ def test_the_owner_cannot_leave(client, bearer):
     """所有者退不了：他在名册上没有成员行（读时补出来的那一行），一走项目就没人
     管得了。得先转让所有权 —— 这句话要说给人听。"""
     pid = _project(client, owner="alice")
-    # 显式把她加进名册：有成员行也还是所有者，挡在前面的是所有权，不是「没有行」。
-    assert _add(client, pid, "alice", by="alice").status_code == 200
 
     r = _leave(client, pid, "alice")
     assert r.status_code == 403, r.text
@@ -287,7 +245,7 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     （``TopicMemberService._require_manager`` 那个逃逸口就是为修这种房间存在的）。
     所以报错要点名是哪间房，并且**什么也不改**。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     tid = _topic(client, pid, "alice", title="设计讨论")
 
     r = _leave(client, pid, "alice")
@@ -299,7 +257,8 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     assert "alice" in _project_handles(client, pid)
     assert "alice" in _topic_handles(client, tid)
 
-    # 而且这不是死结：把房间交给别人之后，她就走得掉了。
+    # 而且这不是死结：把房间交给别人（一位队友）之后，她就走得掉了。
+    join_project_team(client, pid, "bob")
     _seat(client, tid, "bob", by="alice")
     handed_over = client.put(
         f"/topics/{tid}/members/bob",
@@ -310,21 +269,11 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     assert _leave(client, pid, "alice").status_code == 200
 
 
-def test_a_previous_owner_can_still_leave_and_takes_their_seats(client, bearer):
-    """转让所有权之后，原所有者退得掉，而且带走自己那份残留。
-
-    所有者从来不落成员行（``ProjectService._seed_roster`` 说清了为什么），所以把项
-    目交出去之后他在名册上什么都不剩 —— 只剩话题席位（建项目时总览把他记成那间房
-    的 owner）。此时把他读成「不是成员」既不是事实（他确实还进得来那些房间），又把
-    他这份残留留在库里。他应当走得掉，席位跟名册一起清。
-
-    总览那间房得先交出去：那是他最后一间，撤掉他它就没人管得了 —— 这条规矩对所有
-    人一视同仁，拒绝要点名那间房。"""
+def test_a_previous_owner_is_still_in_the_project_through_its_team(client, bearer):
+    """把项目交给队友之后，原所有者仍在这个项目的团队里，所以仍在项目里 —— 他要
+    离开得退团队，退项目这条路会指向团队。"""
     pid = _project(client, owner="alice")
-    assert _add(client, pid, "bob", by="alice").status_code == 200
-    root = client.get(f"/projects/{pid}").json()["data"]["root_topic_id"]
-    roster_before = set(_project_handles(client, pid))
-    assert {"alice", "bob"} <= roster_before
+    join_project_team(client, pid, "bob")
     handed = client.put(
         f"/projects/{pid}/owner",
         json={"owner_handle": "bob"},
@@ -332,19 +281,14 @@ def test_a_previous_owner_can_still_leave_and_takes_their_seats(client, bearer):
     )
     assert handed.status_code == 200, handed.text
 
-    # 他不再出现在名册上（总览那一行也不再是他的），但总览里还有他的席位。
-    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
-    assert "alice" in _topic_handles(client, root)
+    rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
+    sources = {m["user_handle"]: m.get("source") for m in rows if not m.get("agent")}
+    assert sources["bob"] == "owner"
+    assert sources["alice"] == "team"
 
     refused = _leave(client, pid, "alice")
-    assert refused.status_code == 422, refused.text
-    assert "总览" in refused.json()["message"]
-
-    _seat(client, root, "bob", by="alice", role="owner")
-    r = _leave(client, pid, "alice")
-    assert r.status_code == 200, r.text
-    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
-    assert "alice" not in _topic_handles(client, root)
+    assert refused.status_code == 409, refused.text
+    assert "团队" in refused.json()["error"]["message"]
 
 
 def test_an_unverified_caller_cannot_leave(client, bearer):
@@ -353,7 +297,7 @@ def test_an_unverified_caller_cannot_leave(client, bearer):
     身份只从 resolver 来，而匿名请求连「你是谁」都没说清；顺带钉住「不接受自称」：
     带着一个自称是 alice 的 body 也退不掉她。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
 
     r = client.request(
         "DELETE",
@@ -370,7 +314,7 @@ def test_an_agent_token_cannot_leave_on_someone_elses_behalf(client, bearer):
     它自己的身份（token 里那个 agent handle）不在这条名册上，于是拿到的是「不是成
     员」；alice 那一行原封不动。"""
     pid = _project(client)
-    assert _add(client, pid, "alice").status_code == 200
+    _add(client, pid, "alice")
     scoped = {
         "X-Cheese-Token": mint_scoped_token(
             project_id=pid, agent_handle="unprivileged-agent"
@@ -434,12 +378,9 @@ def test_a_teammate_is_told_to_leave_the_team(client):
 
     pid = client.portal.call(seed)
 
-    # 队友在名册上 —— 而且是 ``_seed_roster`` 落下的**真**成员行，删得掉但那不是他要
-    # 的「离开」（小队下一次读名册又把他带回来）。挡在前面的因此必须是「访问来自小
-    # 队」这条判断，不是「表里有没有他这一行」。
     assert "mate" in _project_handles(client, pid)
 
     r = _leave(client, pid, "mate")
     assert r.status_code == 409, r.text
-    assert "小队" in r.json()["error"]["message"]
+    assert "团队" in r.json()["error"]["message"]
     assert "mate" in _project_handles(client, pid)

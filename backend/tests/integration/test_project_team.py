@@ -1,9 +1,9 @@
 """项目归团队 (execution-architecture v4).
 
-Every project belongs to a team: an explicit team_id sticks, and a personal
+Every project belongs to a team: an explicit team_id sticks, a personal
 project (no team given) is linked to its owner's personal team at CREATE time
-(个人 = 单人真团队). The personal team's 项目 page folds in legacy NULL-team
-rows so pre-existing projects stay visible.
+(个人 = 单人真团队), and an owner who is no registered person, with no team
+given, has nowhere for the project to belong — it is refused.
 """
 
 import asyncio
@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.models import User
+from tests.integration.conftest import post_project
 
 
 def _now() -> datetime:
@@ -23,7 +24,7 @@ def _create(client, name: str, owner: str, team_id: int | None = None) -> dict:
     body: dict = {"name": name, "owner_handle": owner}
     if team_id is not None:
         body["team_id"] = team_id
-    resp = client.post("/projects", json=body)
+    resp = post_project(client, json=body)
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
 
@@ -60,21 +61,8 @@ def test_personal_project_links_to_personal_team_at_create(client):
     names = [p["name"] for p in listing]
     assert "gina-personal" in names
 
-    # …and also folds in a legacy NULL-team row of the same owner.
-    async def add_legacy() -> None:
-        async with client.test_factory() as s:
-            from app.domain.project.repositories import ProjectRepository
 
-            await ProjectRepository(s).add(name="gina-legacy", owner_handle="gina")
-            await s.commit()
-
-    asyncio.run(add_legacy())
-    listing = client.get(f"/projects?team_id={tid}").json()["data"]["data"]
-    names = [p["name"] for p in listing]
-    assert "gina-legacy" in names and "gina-personal" in names
-
-
-def test_explicit_team_id_sticks_and_unknown_owner_stays_null(client):
+def test_explicit_team_id_sticks_and_an_unknown_owner_is_refused(client):
     async def seed_team() -> int:
         async with client.test_factory() as s:
             team = Team(
@@ -99,9 +87,13 @@ def test_explicit_team_id_sticks_and_unknown_owner_stays_null(client):
     # Links to the owning team go by its handle, so the project carries it.
     assert shared["team_handle"].startswith("t-")
 
-    # owner_handle that is no real user → legacy NULL (agent handles, fixtures).
-    orphan = _create(client, "orphan-proj", "ghost-agent-42")
-    assert orphan["team_id"] is None
+    # An owner who is no registered person and no team named: nowhere to belong.
+    # Posted raw — the post_project helper would register the owner first.
+    refused = client.post(
+        "/projects", json={"name": "orphan-proj", "owner_handle": "ghost-agent-42"}
+    )
+    assert refused.status_code == 422, refused.text
+    assert "项目需要归属一个团队" in refused.text
 
     listing = client.get(f"/projects?team_id={tid}").json()["data"]["data"]
     assert [p["name"] for p in listing] == ["shared-proj"]

@@ -13,7 +13,7 @@
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept_pr import (
     _give_card_a_pr,
     _rendered_head,
@@ -27,7 +27,7 @@ def remote_delivery(client, request):
 
 
 def _project(client, name: str = "知是平台") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

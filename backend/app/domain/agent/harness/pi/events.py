@@ -136,7 +136,6 @@ class Assembler:
                         eid=eid,
                         eids=(eid,),
                         at=_stamp(entry),
-                        complete_identity=True,
                     )
                 )
             elif part.get("type") == "toolCall":

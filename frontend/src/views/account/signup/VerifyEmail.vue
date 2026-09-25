@@ -10,26 +10,24 @@
     </v-alert>
 
     <v-form @submit.prevent="submit">
-      <PasswordField
-        v-if="needsPassword"
-        id="verify-password"
-        v-model="password"
-        name="password"
-        autocomplete="new-password"
-        :label="t('account.field.password')"
-        :hint="t('account.verifyEmail.passwordAgain')"
-        persistent-hint
-        v-bind="passwordProps"
-        class="mb-2"
-      />
+      <AccountField v-if="needsPassword" :label="t('account.field.password')" input-id="verify-password">
+        <PasswordField
+          id="verify-password"
+          v-model="password"
+          name="password"
+          autocomplete="new-password"
+          :hint="t('account.verifyEmail.passwordAgain')"
+          persistent-hint
+          v-bind="passwordProps"
+        />
+      </AccountField>
 
       <v-otp-input
         v-model="otp"
         length="6"
         type="number"
-        variant="outlined"
         v-bind="otpProps"
-        class="mb-6"
+        class="account-otp"
         @update:model-value="handleOtpInput"
       />
 
@@ -40,40 +38,26 @@
         color="primary"
         size="large"
         type="submit"
+        class="account-submit"
         :loading="submitting"
-        :disabled="otp?.length !== 6"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
+        :disabled="otp?.length !== 6 || waiting"
       >
         {{ t('account.verifyEmail.submit') }}
       </v-btn>
 
-      <div class="d-flex align-center justify-space-between flex-wrap" style="gap: 8px">
-        <p class="text-body-2" style="color: var(--muted)">
+      <div class="account-foot account-foot--split">
+        <span>
           {{ t('account.verifyEmail.noCode') }}
-          <span v-if="resendWait > 0" style="color: var(--faint)">
+          <span v-if="resendWait > 0" class="account-foot__wait">
             {{ t('account.verifyEmail.resendIn', { seconds: resendWait }) }}
           </span>
-          <v-btn
-            v-else
-            variant="text"
-            color="primary"
-            :loading="resending"
-            style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
-            class="text-decoration-none"
-            @click="handleResend"
-          >
+          <button v-else type="button" class="account-link" :disabled="resending" @click="handleResend">
             {{ t('account.verifyEmail.resend') }}
-          </v-btn>
-        </p>
-        <v-btn
-          variant="text"
-          color="primary"
-          to="/account/signin"
-          style="text-transform: none; padding: 0; min-width: auto"
-        >
+          </button>
+        </span>
+        <router-link to="/account/signin" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </v-btn>
+        </router-link>
       </div>
     </v-form>
   </div>
@@ -89,6 +73,9 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { attemptMessage, useAttemptWait } from '../attemptWait'
+
+import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
@@ -128,6 +115,7 @@ const { handleSubmit, defineField } = useForm({
 const [otp, otpProps] = defineField('otp', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 const error = ref('')
+const { waiting, waitFor } = useAttemptWait()
 
 // Validation only; the request is sent by `submit` below. The form is not
 // "submitting" while the consent prompt waits for an answer, so the button
@@ -136,7 +124,7 @@ const validated = handleSubmit((value) => value)
 const submitting = ref(false)
 
 const submit = async () => {
-  if (submitting.value) return
+  if (submitting.value || waiting.value) return
   const value = await validated()
   if (!value) return
   error.value = ''
@@ -155,7 +143,8 @@ const submit = async () => {
     toast.success(t('account.verifyEmail.accountCreated'))
     router.replace('/')
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.verifyEmail.failed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.failed'))
+    waitFor(e)
   } finally {
     submitting.value = false
   }
@@ -182,7 +171,7 @@ const handleResend = async () => {
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
   } finally {
     resending.value = false
   }

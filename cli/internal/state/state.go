@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 type snapshot struct {
@@ -47,7 +46,7 @@ func PID(cfgPath string) int {
 	if json.Unmarshal(data, &s) != nil || s.PID <= 0 {
 		return 0
 	}
-	if p, err := os.FindProcess(s.PID); err != nil || p.Signal(syscall.Signal(0)) != nil {
+	if !Alive(s.PID) {
 		return 0
 	}
 	return s.PID
@@ -80,7 +79,7 @@ func Screens(cfgPath string) int {
 		return 0
 	}
 	if s.PID > 0 {
-		if p, err := os.FindProcess(s.PID); err != nil || p.Signal(syscall.Signal(0)) != nil {
+		if !Alive(s.PID) {
 			return 0
 		}
 	}

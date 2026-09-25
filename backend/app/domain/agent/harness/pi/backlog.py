@@ -1,13 +1,12 @@
 """The unread tail of one pi session, as the platform consumes it.
 
-Two of this protocol's six calls are nearly empty here, and that is a fact about
-pi rather than an omission. ``unfinished`` and ``give_up`` exist because a
-harness that reports partial output can be caught mid-sentence — Claude Code
-flushes a message in pieces, so the platform must not move its cursor past a
-piece whose message is still arriving. pi's entry log has no such state: an
-entry appears when its message is complete, and the streaming half lives in the
-live event stream, which is not what this reads. So nothing is ever unfinished
-and there is never a fragment to hand over.
+One of this protocol's calls is empty here, and that is a fact about pi rather
+than an omission. ``unfinished`` exists because a harness that reports partial
+output can be caught mid-message, and the platform must not move its cursor
+past a piece whose message is still arriving. pi's entry log has no such state:
+an entry appears when its message is complete, and the streaming half lives in
+the live event stream, which is not what this reads. So nothing is ever
+unfinished.
 
 A pass starts from what the platform has LANDED, not from what was last read.
 Anything reported but not landed is reported again, and the entry id makes that
@@ -21,7 +20,7 @@ from pathlib import Path
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.journal import Journal
-from app.domain.agent.service import AgentEvent, AgentMessage
+from app.domain.agent.service import AgentEvent
 
 
 class PiBacklog:
@@ -45,8 +44,8 @@ class PiBacklog:
                     self.entries.append(
                         HarnessEvent(
                             key=f"{row['sequence']:019d}",
-                            eid=f"pi:{row['entry']['id']}",
-                            record=row["entry"],
+                            eid=f"pi:{row['record']['id']}",
+                            record=row["record"],
                             age_s=(now - at).total_seconds(),
                         )
                     )
@@ -64,9 +63,6 @@ class PiBacklog:
 
     def unfinished(self) -> set[str]:
         return set()
-
-    def give_up(self) -> list[AgentMessage]:
-        return []
 
     def landed(self, *, through: str) -> None:
         assert self.path is not None

@@ -128,7 +128,7 @@ async function mount(width = 1280) {
 describe('我的工作页', () => {
   it('一个项目都没有时给出下一步，而不是一屏空白', async () => {
     const view = await mount()
-    expect(await findText(view, '从这里开始')).toBeTruthy()
+    expect(await findText(view, '暂无项目')).toBeTruthy()
     expect(view.getByRole('button', { name: /新建项目/ })).toBeTruthy()
     // 空间那一排也没有内容可画时，整页仍然只有这一块，不是白的。
     expect(view.container.querySelector('.my-work')).toBeTruthy()
@@ -172,8 +172,8 @@ describe('我的工作页', () => {
     await waitFor(() =>
       expect(view.container.querySelector('.my-work__card .my-work__space')?.textContent).toContain('春季课程')
     )
-    expect(await findText(view, '2 个在跑')).toBeTruthy()
-    expect(await findText(view, '1 件等你')).toBeTruthy()
+    expect(await findText(view, '2 个运行中')).toBeTruthy()
+    expect(await findText(view, '1 项待处理')).toBeTruthy()
     expect(await findText(view, '一页纸：先把数据管线跑通。')).toBeTruthy()
   })
 
@@ -273,7 +273,7 @@ describe('我的工作页', () => {
 
     const view = await mount(390)
     expect(await findText(view, '论文复现')).toBeTruthy()
-    await waitFor(() => expect(view.getByText('1 个在跑')).toBeTruthy())
+    await waitFor(() => expect(view.getByText('1 个运行中')).toBeTruthy())
     expect(view.queryByText('一页纸：先把数据管线跑通。')).toBeNull()
     expect(view.container.querySelectorAll('.my-work__summary')).toHaveLength(0)
     expect(view.container.querySelectorAll('.my-work__activity')).toHaveLength(1)

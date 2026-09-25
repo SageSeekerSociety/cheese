@@ -17,11 +17,16 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "Demo"}).json()["data"]["id"]
+    return post_project(client, json={"name": "Demo"}).json()["data"]["id"]
 
 
 def _add_agent(client, project_id: str, handle: str, name: str) -> dict:
@@ -197,15 +202,10 @@ def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
 
 def _project_with_a_roster(client, owner: str, member: str) -> str:
     """一个真有名册的项目：所有者，加一位成员。@ 要解析得到人，名册里就得有人。"""
-    project_id = client.post(
-        "/projects", json={"name": "Demo", "owner_handle": owner}
+    project_id = post_project(
+        client, json={"name": "Demo", "owner_handle": owner}
     ).json()["data"]["id"]
-    r = client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": member, "role": "member"},
-        headers=session_auth_headers(owner),
-    )
-    assert r.status_code == 200, r.text
+    join_project_team(client, project_id, member)
     return project_id
 
 

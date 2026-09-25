@@ -14,6 +14,7 @@ import uuid
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.delivery import delivery_task, delivery_task_id
+from tests.integration.conftest import post_project
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -21,7 +22,7 @@ _MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
+    resp = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()
     return uuid.UUID(resp["data"]["id"])
 
 

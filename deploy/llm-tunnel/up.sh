@@ -16,8 +16,8 @@
 #        curl -fsS http://127.0.0.1:8081/healthz               # via nginx → backend
 #        curl -si  http://127.0.0.1:8081/llm/tunnel | head -1  # 403 via nginx → tunnel
 #      then watch a real machine turn's hooks land.
-#   Rollback = remove BACKEND_PORT from deploy.env, redeploy,
-#   `docker compose -p cheese-dataplane down`.
+#   There is no rollback to the backend owning :8081: it publishes on
+#   loopback only, so the edge reaches it through api-front alone.
 set -euo pipefail
 cd "$(dirname "$0")"
 # Seed the backend switch on a box that has never had one: point it at the

@@ -14,6 +14,7 @@ from alembic.operations import Operations
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 from tests.integration.test_what_everyone_sees_is_a_document import (
     _legacy_memory,
     _run_migration,
@@ -58,6 +59,7 @@ def test_window_rows_land_retired_rows_stay_out_and_paragraph_anchors_survive(
     db_session, _portal, retirement, tmp_path
 ):
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
             name="Migration test", owner_handle="owner", forge_kind="github_app"
         )
@@ -136,6 +138,7 @@ def test_a_copy_with_different_content_cannot_authorize_deletion(
     db_session, _portal, retirement, monkeypatch
 ):
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
             name="Copy test", owner_handle="owner", forge_kind="github_app"
         )
@@ -191,6 +194,7 @@ def test_a_later_migration_failure_rolls_back_rows_and_document_nodes(
     db_session, _portal, retirement
 ):
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
             name="Rollback test", owner_handle="owner", forge_kind="github_app"
         )

@@ -9,6 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
+from tests.pinned_claude import claude_binary
 
 
 def _events(model, content):
@@ -85,7 +86,9 @@ def _alive(pid):
 
 
 def test_native_send_message_retasks_and_task_stop_only_stops_target(tmp_path):
-    version = subprocess.check_output(["claude", "--version"], text=True, timeout=10)
+    version = subprocess.check_output(
+        [claude_binary(), "--version"], text=True, timeout=10
+    )
     assert version.startswith(CLAUDE_PINNED_VERSION + " "), version
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -247,7 +250,7 @@ def test_native_send_message_retasks_and_task_stop_only_stops_target(tmp_path):
     try:
         result = subprocess.run(
             [
-                "claude",
+                claude_binary(),
                 "--print",
                 "--model",
                 "opus",

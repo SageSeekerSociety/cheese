@@ -10,8 +10,8 @@ agent 在项目里列不出另一个 agent——结论 12 那句「不同 handle
 里有谁」，问它；谁要自己把两边拼一次，那就是第二份声明（I4a），而两份声明的差别只
 会在某一个读者身上显出来：以前显在 agent 身上，人看不见。
 
-角色这一列对人来说是 ``ProjectRole``（授权行上存的那个），对队友来说恒为
-``member``：席位本身就是授权（概念 1.2），项目里没有「升一个队友当组长」这回事。
+项目里没有角色：人按 ``source`` 分所有者、团队成员、外部成员，队友的席位本身就是
+授权（概念 1.2）。
 """
 
 import uuid
@@ -22,13 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
-from app.domain.project.models import ProjectRole
 from app.domain.project.services import ProjectService
 
 
 @dataclass(frozen=True)
 class Member:
-    """名册上的一行：一个 handle，加上它在这个项目里的角色。
+    """名册上的一行：一个 handle，加上它是怎么在这个项目里的（``source``）。
 
     ``handle`` 对队友来说是它**坐在名册上**的那个 handle（``agent_instance_handle``），
     不是它记忆池的 key：@ 到的、通知到的、席位上写的都是前者，名册给出第二个名字就等
@@ -37,7 +36,6 @@ class Member:
 
     handle: str
     name: str
-    role: str
     # 这一行是不是一个 agent：判据是它背后的 user 带不带 ``AgentBinding``，从来不是
     # handle 长什么样（I9），也不是「它是不是本项目的实例」——后者会把一个有授权行
     # 但不是本项目实例的 agent-user 判成人，而房间名册对同一个 handle 答 agent，于是
@@ -54,8 +52,9 @@ class Member:
     # 默认会改判给另一位，于是两者必然不同——界面照前者写名字，答话的是后者。人恒
     # 为 False。
     project_default: bool = False
-    # 这一行背后没有授权行时，说明它是怎么进名册的：小队带进来的、项目的所有者、
-    # 或者它是这个项目的队友。有 source 的行改不了角色也移不走。
+    # 人怎么在这里的：``owner`` 项目所有者、``team`` 所属团队的成员（退出团队就离
+    # 开）、``external`` 接受邀请进来的外部成员（界面上带「外部」标记，只有这一种
+    # 能从项目里移出）。队友是 ``agent``，或者有座位行时为空。
     source: str | None = None
     team_id: int | None = None
     # The handle of that team, which the row's 「来自团队」 link goes to.
@@ -65,13 +64,12 @@ class Member:
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
 
-        键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/``created_at``）不出现，
-        因为「没有这个字段」正是界面判断「这一行背后有没有授权行」的依据。
+        键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/
+        ``created_at``）为空时不出现。
         """
         row: dict = {
             "handle": self.handle,
             "name": self.name,
-            "role": self.role,
             "agent": self.agent,
             "avatar_id": self.avatar_id,
             "active": self.active,
@@ -112,7 +110,6 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         Member(
             handle=person["handle"],
             name=person["name"],
-            role=person["role"],
             avatar_id=person["avatar_id"],
             source=person.get("source"),
             team_id=person.get("team_id"),
@@ -124,7 +121,12 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     # 授权行那一半里也坐着 agent：``MemberService.add`` 是平台给队友放座位的原语，
     # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，一次问完整张表。
     agents = await IdentityService(session).agents_among([row.handle for row in rows])
-    rows = [replace(row, agent=True) if row.handle in agents else row for row in rows]
+    # An AI teammate's seat row came back marked ``external`` with the people's
+    # rows; it is a teammate, not an outside person.
+    rows = [
+        replace(row, agent=True, source=None) if row.handle in agents else row
+        for row in rows
+    ]
     at = {row.handle: index for index, row in enumerate(rows)}
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         seat = agent_instance_handle(instance.id)
@@ -135,7 +137,6 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                 Member(
                     handle=seat,
                     name=name,
-                    role=ProjectRole.member.value,
                     agent=True,
                     active=instance.is_active,
                     project_default=instance.id == default_instance_id,
@@ -150,7 +151,6 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         rows[index] = Member(
             handle=held.handle,
             name=name,
-            role=held.role,
             agent=True,
             avatar_id=held.avatar_id,
             active=instance.is_active,

@@ -8,6 +8,7 @@ routes return is the source itself, not a rendering of it.
 import pytest
 
 from tests.delivery import delivery_task_id
+from tests.integration.conftest import post_project
 from tests.integration.test_file_panel_safety import (
     _mkproject,
     _mktopic,
@@ -19,8 +20,8 @@ from tests.integration.test_file_panel_safety import (
 
 
 def test_listing_a_projects_files_needs_a_credential(client):
-    project = client.post(
-        "/projects", json={"name": "Secret", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Secret", "owner_handle": "alice"}
     ).json()["data"]
 
     resp = client.get(f"/projects/{project['id']}/files")
@@ -31,8 +32,8 @@ def test_listing_a_projects_files_needs_a_credential(client):
 
 
 def test_reading_a_file_needs_a_credential(client):
-    project = client.post(
-        "/projects", json={"name": "Secret2", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Secret2", "owner_handle": "alice"}
     ).json()["data"]
 
     resp = client.get(f"/projects/{project['id']}/file", params={"path": "README.md"})

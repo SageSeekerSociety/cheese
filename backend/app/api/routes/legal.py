@@ -23,12 +23,10 @@ router = APIRouter(tags=["Legal"])
 
 
 def client_context(request: Request) -> tuple[str, str]:
-    """(ip, user agent) as a consent row records them. XFF is kept verbatim
-    when present, as the request log does: behind the edge proxy the peer
-    address is the proxy's, the same for everyone."""
-    ip = request.headers.get("x-forwarded-for") or (
-        request.client.host if request.client else ""
-    )
+    """(ip, user agent) as a consent row records them. The address is the one
+    the server resolved through the proxies it trusts (FORWARDED_ALLOW_IPS),
+    never X-Forwarded-For as sent: its left part is whatever the client wrote."""
+    ip = request.client.host if request.client else ""
     return ip, request.headers.get("user-agent", "")
 
 

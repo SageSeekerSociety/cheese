@@ -29,6 +29,7 @@ from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.main import app
 from tests.conftest import stub_compute
+from tests.integration.conftest import post_project
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -53,9 +54,7 @@ async def _waiting_notices(client, topic_id: str) -> list[Block]:
 
 
 def _project_topic(client) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "推荐系统", "created_by": "alice"},

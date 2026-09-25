@@ -90,6 +90,7 @@ def _oauth_create(client, *, provider_uid: str, username: str, nickname="Prov"):
         {
             "id": provider_uid,
             "email": None,
+            "verifiedEmail": f"{provider_uid}@example.com",
             "name": "Prov User",
             "username": None,
             "preferredUsername": "provuser",

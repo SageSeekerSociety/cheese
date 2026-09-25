@@ -59,7 +59,7 @@ watch(teamId, load)
       <div>
         <h2 class="text-h6 font-weight-medium mb-1">项目</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          这个小队的 AI 工作台。每个项目里和芝士开话题协作，产出与算力都归小队。
+          这个团队的 AI 工作台。每个项目里和芝士开话题协作，产出与算力都归团队。
         </p>
       </div>
       <v-spacer />

@@ -20,7 +20,7 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 # A valid 1x1 transparent PNG — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -31,9 +31,9 @@ PNG_1PX = bytes.fromhex(
 
 def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
     """一个房间，外加这个房间里芝士的凭据。"""
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": owner}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]
     topic = client.post(
         "/topics", json={"project_id": project["id"], "title": "T", "created_by": owner}
     ).json()["data"]

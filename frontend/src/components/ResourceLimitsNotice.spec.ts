@@ -1,12 +1,15 @@
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ResourceLimitsNotice from './ResourceLimitsNotice.vue'
 
 import { getResourceLimits } from '@/api'
+import { setLocale } from '@/i18n'
 
 vi.mock('@/api', () => ({ getResourceLimits: vi.fn() }))
 afterEach(cleanup)
+// 文案按界面语言取，初始语言跟着浏览器（happy-dom 报 en-US）；断言写的是中文。
+beforeEach(() => setLocale('zh-CN'))
 
 function mount() {
   return render(ResourceLimitsNotice, {

@@ -82,12 +82,6 @@ export function buildEntityLink(entityType: string, entityId: string, query?: Re
         params: { id: entityId },
         query,
       }
-    case 'project':
-      return {
-        name: 'ProjectDetail',
-        params: { id: entityId },
-        query,
-      }
     case 'discussion':
       return {
         name: 'DiscussionDetail',

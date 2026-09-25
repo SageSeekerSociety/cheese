@@ -22,7 +22,6 @@ from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.project.repositories import ProjectRepository
@@ -90,15 +89,10 @@ async def list_awaiting_me(
     task_cards = await AcceptCardRepository(db).latest_by_task(task_ids)
     room_cards = await _room_cards(db, topic_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
+    # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
     asked_tasks = await blocks.tasks_awaiting_an_answer(task_ids)
     asked_rooms = await blocks.rooms_awaiting_an_answer(topic_ids)
-    # 一个待确认问题只有**发起那一轮的人**能回答，所以「它在等谁」由轮次的作者决定。
-    # 只问那些真的停在提问上的房间 —— 其余的房间问了也用不上。
-    waiting_for = await AgentTurnRepository(db).open_turn_authors_for_topics(
-        list(
-            asked_rooms | {t.room_id for t in tasks if t.id in asked_tasks},
-        )
-    )
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
 
@@ -120,9 +114,7 @@ async def list_awaiting_me(
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
                 reporter=task.reporter_handle,
-                asked=(
-                    waiting_for.get(task.room_id) if task.id in asked_tasks else None
-                ),
+                asked=asked_tasks.get(task.id),
             ),
             hand_of(shown.column),
         )
@@ -160,7 +152,7 @@ async def list_awaiting_me(
             # 房间没有「提需求的人」这一栏 —— 那是一条活上的字段。
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
-                asked=waiting_for.get(topic.id) if topic.id in asked_rooms else None,
+                asked=asked_rooms.get(topic.id),
             ),
             hand_of(shown.column),
         )

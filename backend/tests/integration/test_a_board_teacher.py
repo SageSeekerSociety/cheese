@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    post_project,
     unique_int,
 )
 
@@ -120,8 +121,8 @@ def test_a_board_admin_reads_the_conversations_of_its_students_projects(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
-    project = api_client.post(
-        "/projects",
+    project = post_project(
+        api_client,
         json={
             "name": "学生的项目",
             "owner_handle": student.username,
@@ -160,8 +161,8 @@ def test_a_plain_member_of_the_board_is_not_a_teacher(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
-    project = api_client.post(
-        "/projects",
+    project = post_project(
+        api_client,
         json={
             "name": "学生的项目",
             "owner_handle": student.username,
@@ -195,8 +196,8 @@ def test_removing_a_board_admin_shuts_the_door_immediately(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
-    project = api_client.post(
-        "/projects",
+    project = post_project(
+        api_client,
         json={
             "name": "学生的项目",
             "owner_handle": student.username,

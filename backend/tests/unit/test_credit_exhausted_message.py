@@ -7,13 +7,12 @@ succeed, and hides the one thing that has to happen.
 
 The other way a turn's money runs out (#715): the PROJECT's compute credits are
 spent, the metering proxy 429s every `/v1/messages` call, and Claude Code reads
-ten retries of that as a bad API key — `StopFailure` with `error:
-authentication_failed` and a last message like "Invalid API key". Admission
+ten retries of that as a bad API key — an assistant record with `error:
+authentication_failed` saying "Invalid API key", then a failed `result`. Admission
 stamps the turn it refused (`credits_refused_at`) the moment it happens, and the
 turn's own end reads that stamp back to decide whose wording the room gets.
 """
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -24,7 +23,12 @@ from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
-from tests.conftest import StubChannel, settle_turn, stub_compute
+from tests.conftest import (
+    StubChannel,
+    close_topic_subscriptions,
+    settle_turn,
+    stub_compute,
+)
 from tests.turn_log import a_topic
 
 
@@ -64,23 +68,28 @@ def test_a_transient_failure_is_not_mistaken_for_it(detail):
 
 class _CreditsRefusedScreen(StubChannel):
     """The turn Claude Code's ten retries into a spent metering-proxy budget
-    produce: `StopFailure`, never `Stop`, worded like a bad API key — exactly
-    what a real refused-429-then-retry sequence looks like from here."""
+    produce: the build's own line worded like a bad API key, then a result that
+    failed — the records the pinned build prints for a refused key
+    (`tests/fixtures/harness-contract/the-turn-failed.json`)."""
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-        del prompt, reply
+        del reply
         self.starts(topic_id)
-        self.hook(
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, "Invalid API key", error="authentication_failed")
+        self.record(
             topic_id,
-            hook_event_name="StopFailure",
-            error="authentication_failed",
-            last_assistant_message="Invalid API key",
+            type="result",
+            subtype="success",
+            is_error=True,
+            result="Invalid API key",
+            terminal_reason="api_error",
+            api_error_status=401,
         )
 
 
-async def _run_stop_failure(
+async def _run_refused_turn(
     chat: ChatService,
-    screen: _CreditsRefusedScreen,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
 ) -> None:
@@ -89,11 +98,8 @@ async def _run_stop_failure(
     ):
         pass
     await settle_turn(chat, topic_id)
-    # This test owns the runtime, so close its activity and subscription too.
-    # settle_turn() only waits for the chat work to finish.
-    await screen.runtime._close_topic(topic_id)
-    # Live completion also schedules reconciliation owned by the chat service.
-    await asyncio.gather(*chat._settle_tasks)
+    # This test owns the runtime, so it stops the reader too.
+    await close_topic_subscriptions(chat, topic_id)
 
 
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
@@ -132,7 +138,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
-    await _run_stop_failure(chat, screen, topic_id, turn_id)
+    await _run_refused_turn(chat, topic_id, turn_id)
 
     lines = await _system_event_lines(db_factory, topic_id)
     assert CREDITS_EXHAUSTED_EVENT in lines
@@ -141,7 +147,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
 
 @pytest.mark.anyio
 async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_path):
-    """No admission ever stamped this turn — a `StopFailure` for some OTHER
+    """No admission ever stamped this turn — a failed turn for some OTHER
     reason must still fall through to today's generic wording, Claude Code's
     text included. The stamp must not swallow every failed turn, only the
     ones admission actually refused for spent credits."""
@@ -155,7 +161,7 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
-    await _run_stop_failure(chat, screen, topic_id, turn_id)
+    await _run_refused_turn(chat, topic_id, turn_id)
 
     lines = await _system_event_lines(db_factory, topic_id)
     assert any("Invalid API key" in line for line in lines)

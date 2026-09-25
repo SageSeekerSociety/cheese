@@ -40,13 +40,21 @@ import {
   revokeCard,
   setAutoMerge,
 } from '@/api'
+import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { noteTone } from '@/lib/noteTone'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-const props = defineProps<{ topicId: string; topicStatus: string; taskId?: string | null }>()
+const props = defineProps<{
+  topicId: string
+  topicStatus: string
+  taskId?: string | null
+  /** 贴在对话栏输入框上方：平时只剩一行横条，点开才是整张卡。不贴底的时候（任务卡
+   *  详情里）整张卡照旧摊开。 */
+  docked?: boolean
+}>()
 const emit = defineEmits<{
   (e: 'phase', phase: CardPhase): void
   /** 去验收: show me what I am being asked to accept. */
@@ -159,6 +167,43 @@ const gateCard = computed<AcceptCard | null>(() => {
 })
 const showGateOutput = ref(false)
 
+// 横条展开没有。默认收着：一行已经说清「有一个决定在等谁」，整张卡要的时候再看。
+const expanded = ref(false)
+const showDetail = computed(() => !props.docked || expanded.value)
+// 展开的那张卡里，没写颜色的按钮是中性的：这一条上唯一的琥珀是横条上的「去验收」。
+const DETAIL_DEFAULTS = { VBtn: { color: 'on-surface-variant' } } as const
+
+// 横条上那一行说什么。顺序和下面卡片的 v-if 链一致：同一时刻只有一张卡在台面上。
+const bar = computed<{ icon: string; color: string; title: string; sub: string }>(() => {
+  const gate = gateCard.value
+  if (gate?.status === 'gate_failed')
+    return { icon: 'mdi-close-octagon-outline', color: 'error', title: t('work.room.accept.gateFailed'), sub: '' }
+  if (gate?.status === 'gate_blocked')
+    return { icon: 'mdi-help-circle-outline', color: 'warning', title: t('work.room.accept.gateBlocked'), sub: '' }
+  const pending = pendingCard.value
+  if (pending?.status === 'conflict')
+    return { icon: 'mdi-source-merge', color: 'warning', title: t('work.room.accept.conflict'), sub: '' }
+  if (pending)
+    return {
+      icon: 'mdi-source-merge',
+      color: 'success',
+      title: t('work.room.accept.pending'),
+      sub:
+        pending.reviewer_handle === AUTHOR
+          ? t('work.room.accept.waitingOnYou')
+          : t('work.room.accept.waitingOn', { handle: pending.reviewer_handle }),
+    }
+  if (deliveringCard.value)
+    return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering'), sub: '' }
+  const accepted = acceptedCard.value
+  return {
+    icon: 'mdi-check-circle-outline',
+    color: 'success',
+    title: t('work.room.accept.accepted'),
+    sub: accepted ? t('work.room.accept.decidedBy', { handle: accepted.decided_by }) : '',
+  }
+})
+
 // Nothing to show at all — the host still renders the slot wrapper, so this
 // component simply contributes no box.
 const hasBox = computed(
@@ -181,6 +226,7 @@ async function loadAcceptCard(silent = false) {
     showRejectInput.value = false
     rejectNote.value = ''
     showGateOutput.value = false
+    expanded.value = false
   }
   const tid = props.topicId
   const task = props.taskId
@@ -418,140 +464,142 @@ defineExpose({ reload: loadAcceptCard })
   <Transition name="accept-fold" :css="animate">
     <div v-if="hasBox" class="accept-fold">
       <div class="accept-fold__inner">
-        <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
-        <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box mt-2">
-          <div class="pa-3">
-            <div class="d-flex align-center ga-2 mb-1">
-              <v-icon color="error" size="19">mdi-close-octagon-outline</v-icon>
-              <span class="t-title">平台检查未通过</span>
-            </div>
-            <div class="text-caption text-medium-emphasis mb-2">
-              这张验收卡没有送出。芝士已收到检查结果，会修复后重新提交。
-            </div>
-            <v-btn
-              size="small"
-              variant="text"
-              :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-              @click="showGateOutput = !showGateOutput"
-            >
-              {{ showGateOutput ? '收起输出' : '查看输出' }}
-            </v-btn>
-            <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
-          </div>
-        </v-card>
+        <!-- 贴在输入框上方的一条：平时只有一行（这是什么、等谁、去验收），点开才
+             在它上面展开整张卡。它原来是对话末尾一张 280px 高的卡，一递上来对话就
+             只剩几行；而它说的是「有一个决定在等人」，这件事一行就说得完。 -->
+        <div class="accept-dock" :class="{ 'accept-dock--docked': docked }">
+          <v-defaults-provider :defaults="DETAIL_DEFAULTS">
+            <div v-if="showDetail" id="accept-detail" class="accept-dock__detail">
+              <!-- 不贴底的时候没有横条，卡自己的标题行就在这里。 -->
+              <div v-if="!docked" class="accept-head">
+                <v-icon :color="bar.color" size="19">{{ bar.icon }}</v-icon>
+                <span class="t-title">{{ bar.title }}</span>
+              </div>
+              <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
+              <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box">
+                <div class="pa-3">
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    这张验收卡没有送出。芝士已收到检查结果，会修复后重新提交。
+                  </div>
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                    @click="showGateOutput = !showGateOutput"
+                  >
+                    {{ showGateOutput ? '收起输出' : '查看输出' }}
+                  </v-btn>
+                  <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
+                </div>
+              </v-card>
 
-        <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。刻意跟
+              <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。刻意跟
              「未通过」分开显示——它是需要人看一眼的状态，不是代码红了。 -->
-        <v-card v-else-if="gateCard && gateCard.status === 'gate_blocked'" variant="outlined" class="merge-box mt-2">
-          <div class="pa-3">
-            <div class="d-flex align-center ga-2 mb-1">
-              <v-icon color="warning" size="19">mdi-help-circle-outline</v-icon>
-              <span class="t-title">平台检查未能执行</span>
-            </div>
-            <div class="text-caption text-medium-emphasis mb-2">
-              检查程序未能启动，因此它对这次改动<strong>没有结论</strong>——既不是通过，也不是未通过。
-              这张验收卡没有送出。芝士已收到通知，会先恢复检查环境再重新提交；如果反复启动失败，需要人工介入。
-            </div>
-            <v-btn
-              size="small"
-              variant="text"
-              :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-              @click="showGateOutput = !showGateOutput"
-            >
-              {{ showGateOutput ? '收起输出' : '查看输出' }}
-            </v-btn>
-            <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
-          </div>
-        </v-card>
+              <v-card v-else-if="gateCard && gateCard.status === 'gate_blocked'" variant="outlined" class="merge-box">
+                <div class="pa-3">
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    检查程序未能启动，因此它对这次改动<strong>没有结论</strong>——既不是通过，也不是未通过。
+                    这张验收卡没有送出。芝士已收到通知，会先恢复检查环境再重新提交；如果反复启动失败，需要人工介入。
+                  </div>
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                    @click="showGateOutput = !showGateOutput"
+                  >
+                    {{ showGateOutput ? '收起输出' : '查看输出' }}
+                  </v-btn>
+                  <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
+                </div>
+              </v-card>
 
-        <v-card v-else-if="pendingCard" variant="outlined" class="merge-box mt-2">
-          <div class="pa-3">
-            <div class="d-flex align-center ga-2 mb-1">
-              <v-icon :color="pendingCard.status === 'conflict' ? 'warning' : 'success'" size="19">
-                mdi-source-merge
-              </v-icon>
-              <span class="t-title">
-                {{ pendingCard.status === 'conflict' ? '合并冲突 · 芝士处理中' : '成果待采纳' }}
-              </span>
-            </div>
-            <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
-              {{ pendingCard.note || '采纳时出现合并冲突，芝士正在解决。' }}
-              它完成后可重试采纳。
-            </div>
-            <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
+              <v-card v-else-if="pendingCard" variant="outlined" class="merge-box">
+                <div class="pa-3">
+                  <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
+                    {{ pendingCard.note || '采纳时出现合并冲突，芝士正在解决。' }}
+                    它完成后可重试采纳。
+                  </div>
+                  <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
                  圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
                  clean 画绿勾不画圈 —— 绿勾本身就是记号。 -->
-            <div v-if="mergeBadge" class="d-flex align-center ga-2 text-body-2 mb-1">
-              <v-icon v-if="pendingCard.merge_state.state === 'clean'" color="success" size="16"
-                >mdi-check-circle</v-icon
-              >
-              <span v-else class="board-dot" :style="columnDotStyle(mergeBadge.column)" aria-hidden="true" />
-              <span>{{ mergeBadge.label }}</span>
-            </div>
-            <!-- 结论的依据：红了哪个检查要能看见。 -->
-            <div
-              v-for="(r, i) in mergeReasons"
-              :key="i"
-              class="d-flex align-center flex-wrap ga-1 text-caption text-medium-emphasis mb-1"
-            >
-              <span>{{ r.detail }}</span>
-              <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
-            </div>
-            <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
+                  <div v-if="mergeBadge" class="d-flex align-center ga-2 text-body-2 mb-1">
+                    <v-icon v-if="pendingCard.merge_state.state === 'clean'" color="success" size="16"
+                      >mdi-check-circle</v-icon
+                    >
+                    <span v-else class="board-dot" :style="columnDotStyle(mergeBadge.column)" aria-hidden="true" />
+                    <span>{{ mergeBadge.label }}</span>
+                  </div>
+                  <!-- 结论的依据：红了哪个检查要能看见。 -->
+                  <div
+                    v-for="(r, i) in mergeReasons"
+                    :key="i"
+                    class="d-flex align-center flex-wrap ga-1 text-caption text-medium-emphasis mb-1"
+                  >
+                    <span>{{ r.detail }}</span>
+                    <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
+                  </div>
+                  <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
                  哪里、有没有外部检查。不是采纳之后补写的一条 note。 -->
-            <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
-              {{ forgeDeclaration }}
-            </div>
-            <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
-            <div
-              v-if="pendingNote"
-              class="d-flex align-start ga-1 text-caption mb-2"
-              :class="pendingNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
-            >
-              <v-icon v-if="pendingNote.tone === 'error'" icon="mdi-alert-circle-outline" size="14" class="mt-1" />
-              <span>{{ pendingNote.text }}</span>
-            </div>
-            <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
-              <span>等</span>
-              <strong>@{{ pendingCard.reviewer_handle }}</strong>
-              <span>验收</span>
-              <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
-              <v-menu>
-                <template #activator="{ props: menuProps }">
-                  <v-btn
-                    v-bind="menuProps"
-                    size="x-small"
-                    variant="text"
-                    density="comfortable"
-                    class="text-medium-emphasis"
-                    :disabled="acceptBusy"
+                  <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
+                    {{ forgeDeclaration }}
+                  </div>
+                  <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
+                  <div
+                    v-if="pendingNote"
+                    class="d-flex align-start ga-1 text-caption mb-2"
+                    :class="pendingNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
                   >
-                    改派
-                  </v-btn>
-                </template>
-                <v-list density="compact">
-                  <v-list-subheader>改派验收人</v-list-subheader>
-                  <v-list-item
-                    v-for="mbr in reviewerChoices"
-                    :key="mbr.user_handle"
-                    :active="mbr.user_handle === pendingCard.reviewer_handle"
-                    @click="onReassignCard(mbr.user_handle)"
-                  >
-                    <v-list-item-title class="text-body-2"> @{{ mbr.user_handle }} </v-list-item-title>
-                    <v-list-item-subtitle class="text-caption">
-                      {{ mbr.role }}
-                    </v-list-item-subtitle>
-                  </v-list-item>
-                  <v-list-item v-if="reviewerChoices.length === 0">
-                    <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-            </div>
-            <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
-              推荐理由：{{ pendingCard.routing_reason }}
-            </div>
-            <!--
+                    <v-icon
+                      v-if="pendingNote.tone === 'error'"
+                      icon="mdi-alert-circle-outline"
+                      size="14"
+                      class="mt-1"
+                    />
+                    <span>{{ pendingNote.text }}</span>
+                  </div>
+                  <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
+                    <span>等</span>
+                    <strong>@{{ pendingCard.reviewer_handle }}</strong>
+                    <span>验收</span>
+                    <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
+                    <v-menu>
+                      <template #activator="{ props: menuProps }">
+                        <v-btn
+                          v-bind="menuProps"
+                          size="small"
+                          variant="text"
+                          density="comfortable"
+                          class="text-medium-emphasis"
+                          :disabled="acceptBusy"
+                        >
+                          改派
+                        </v-btn>
+                      </template>
+                      <v-list density="compact">
+                        <v-list-subheader>改派验收人</v-list-subheader>
+                        <v-list-item
+                          v-for="mbr in reviewerChoices"
+                          :key="mbr.user_handle"
+                          :active="mbr.user_handle === pendingCard.reviewer_handle"
+                          @click="onReassignCard(mbr.user_handle)"
+                        >
+                          <v-list-item-title class="text-body-2"> @{{ mbr.user_handle }} </v-list-item-title>
+                          <v-list-item-subtitle class="text-caption">
+                            {{ mbr.role }}
+                          </v-list-item-subtitle>
+                        </v-list-item>
+                        <v-list-item v-if="reviewerChoices.length === 0">
+                          <v-list-item-title class="text-caption text-medium-emphasis">
+                            暂无可选成员
+                          </v-list-item-title>
+                        </v-list-item>
+                      </v-list>
+                    </v-menu>
+                  </div>
+                  <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
+                    推荐理由：{{ pendingCard.routing_reason }}
+                  </div>
+                  <!--
               这次交付定的是哪一项产物的哪一版，以及交出去的那一份东西 (#1085 结论
               三/五)。它在提交标题上面，因为点采纳定的首先是这件事：这一版要不要成为
               《报告》的当前版本、交出去的是不是这一份文件。提交标题是它被记进历史时
@@ -562,48 +610,48 @@ defineExpose({ reload: loadAcceptCard })
               版本号是后端按卡的状态算的，这里一个都不推。落地之前递的那些卡两样都没
               有，整块就不出现。
             -->
-            <div v-if="pendingCard.artifact || pendingCard.deliverable" class="mb-3">
-              <div class="text-caption text-medium-emphasis">这次交付</div>
-              <div class="d-flex align-center flex-wrap ga-2">
-                <span v-if="pendingCard.artifact" class="text-body-2">
-                  《{{ pendingCard.artifact.name }}》第 {{ pendingCard.artifact.version }} 版
-                </span>
-                <template v-if="pendingCard.deliverable?.kind === 'file' && pendingCard.deliverable.filename">
-                  <span class="text-medium-emphasis">·</span>
-                  <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
-                  <v-btn
-                    size="x-small"
-                    variant="text"
-                    density="comfortable"
-                    class="text-medium-emphasis"
-                    prepend-icon="mdi-tray-arrow-down"
-                    :loading="deliverableBusy"
-                    @click="onDownloadDeliverable"
-                  >
-                    下载
-                  </v-btn>
-                </template>
-                <template v-else-if="pendingCard.deliverable?.kind === 'link' && pendingCard.deliverable.url">
-                  <span class="text-medium-emphasis">·</span>
-                  <a class="text-caption" :href="pendingCard.deliverable.url" target="_blank" rel="noopener">
-                    {{ pendingCard.deliverable.url }}
-                  </a>
-                </template>
-              </div>
-              <div v-if="deliverableError" role="alert" class="text-caption text-error mt-1">
-                {{ deliverableError }}
-              </div>
-            </div>
-            <!--
+                  <div v-if="pendingCard.artifact || pendingCard.deliverable" class="mb-3">
+                    <div class="text-caption text-medium-emphasis">这次交付</div>
+                    <div class="d-flex align-center flex-wrap ga-2">
+                      <span v-if="pendingCard.artifact" class="text-body-2">
+                        《{{ pendingCard.artifact.name }}》第 {{ pendingCard.artifact.version }} 版
+                      </span>
+                      <template v-if="pendingCard.deliverable?.kind === 'file' && pendingCard.deliverable.filename">
+                        <span class="text-medium-emphasis">·</span>
+                        <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
+                        <v-btn
+                          size="small"
+                          variant="text"
+                          density="comfortable"
+                          class="text-medium-emphasis"
+                          prepend-icon="mdi-tray-arrow-down"
+                          :loading="deliverableBusy"
+                          @click="onDownloadDeliverable"
+                        >
+                          下载
+                        </v-btn>
+                      </template>
+                      <template v-else-if="pendingCard.deliverable?.kind === 'link' && pendingCard.deliverable.url">
+                        <span class="text-medium-emphasis">·</span>
+                        <a class="text-caption" :href="pendingCard.deliverable.url" target="_blank" rel="noopener">
+                          {{ pendingCard.deliverable.url }}
+                        </a>
+                      </template>
+                    </div>
+                    <div v-if="deliverableError" role="alert" class="text-caption text-error mt-1">
+                      {{ deliverableError }}
+                    </div>
+                  </div>
+                  <!--
               提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。
               采纳前是最后一次能反对它的机会，所以它必须在按钮上方可见，而不是
               等它进了 git 历史才有人发现写的是话题标题。
             -->
-            <div v-if="pendingCard.change_subject" class="mb-3">
-              <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
-              <code class="text-caption">{{ pendingCard.change_subject }}</code>
-            </div>
-            <!--
+                  <div v-if="pendingCard.change_subject" class="mb-3">
+                    <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
+                    <code class="text-caption">{{ pendingCard.change_subject }}</code>
+                  </div>
+                  <!--
               机器闸门 (eval C2, 已退役) 的历史读数。`gate_passed_at` 只由
               `AcceptService.finish_gate` 写，而 采纳即合并 (#296, stage 1) 之后再没有
               任何东西调用它——所以今天递的卡这一格永远是空的，它出现就意味着这张卡是
@@ -613,286 +661,314 @@ defineExpose({ reload: loadAcceptCard })
               绿勾替它背书正是这一格要避免的事。今天的检查是 PR 上的 GitHub Actions，
               平台不会先替你跑一遍。
             -->
-            <div
-              v-if="pendingCard.gate_passed_at"
-              class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
-            >
-              <v-icon size="15">mdi-timer-sand</v-icon>
-              平台检查已通过：只检查了代码规范和类型，未运行测试
-            </div>
-            <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
-            <div v-if="pendingCard.pr_url" class="mb-2">
-              <div class="d-flex align-center flex-wrap ga-2">
-                <v-chip
-                  size="small"
-                  variant="tonal"
-                  prepend-icon="mdi-source-pull"
-                  :href="pendingCard.pr_url"
-                  target="_blank"
-                >
-                  PR #{{ pendingCard.pr_number }}
-                </v-chip>
-                <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
-                  与主分支冲突
-                </span>
-              </div>
-              <div
-                v-for="chk in prChecks?.checks ?? []"
-                :key="chk.name"
-                class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
-              >
-                <v-icon
-                  size="14"
-                  :color="chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined"
-                >
-                  {{
-                    chk.conclusion === 'success'
-                      ? 'mdi-check-circle'
-                      : chk.conclusion === 'failure'
-                        ? 'mdi-close-circle'
-                        : 'mdi-progress-clock'
-                  }}
-                </v-icon>
-                {{ chk.name }}
-                <span v-if="chk.status !== 'completed'">进行中</span>
-              </div>
-            </div>
-            <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
-            <div v-if="pendingCard.approvals_required > 1" class="d-flex align-center flex-wrap ga-2 mb-3">
-              <v-chip
-                size="small"
-                variant="tonal"
-                :color="pendingCard.approvals.length >= pendingCard.approvals_required ? 'success' : undefined"
-                prepend-icon="mdi-account-check-outline"
-              >
-                {{ pendingCard.approvals.length }}/{{ pendingCard.approvals_required }}
-                已批准
-              </v-chip>
-              <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
-                {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
-              </span>
-              <v-btn
-                v-if="!pendingCard.approvals.includes(AUTHOR)"
-                size="small"
-                variant="outlined"
-                class="btn-secondary"
-                :disabled="acceptBusy"
-                prepend-icon="mdi-thumb-up-outline"
-                @click="onApproveCard"
-              >
-                批准
-              </v-btn>
-              <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
-                <v-icon size="14">mdi-check</v-icon>你已批准
-              </span>
-            </div>
-            <div class="d-flex align-center ga-2">
-              <!-- 决策在聊天，审查在面板: the box asks for a decision, and the thing
-                   the decision is about is a diff in the panel next to it. Without
-                   this the reviewer had to guess which tab held it. -->
-              <v-btn
-                variant="outlined"
-                class="btn-secondary"
-                prepend-icon="mdi-file-search-outline"
-                @click="emit('review')"
-              >
-                去验收
-              </v-btn>
-              <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
+                  <div
+                    v-if="pendingCard.gate_passed_at"
+                    class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
+                  >
+                    <v-icon size="15">mdi-timer-sand</v-icon>
+                    平台检查已通过：只检查了代码规范和类型，未运行测试
+                  </div>
+                  <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
+                  <div v-if="pendingCard.pr_url" class="mb-2">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                      <v-chip
+                        size="small"
+                        variant="tonal"
+                        prepend-icon="mdi-source-pull"
+                        :href="pendingCard.pr_url"
+                        target="_blank"
+                      >
+                        PR #{{ pendingCard.pr_number }}
+                      </v-chip>
+                      <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
+                        与主分支冲突
+                      </span>
+                    </div>
+                    <div
+                      v-for="chk in prChecks?.checks ?? []"
+                      :key="chk.name"
+                      class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
+                    >
+                      <v-icon
+                        size="14"
+                        :color="
+                          chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined
+                        "
+                      >
+                        {{
+                          chk.conclusion === 'success'
+                            ? 'mdi-check-circle'
+                            : chk.conclusion === 'failure'
+                              ? 'mdi-close-circle'
+                              : 'mdi-progress-clock'
+                        }}
+                      </v-icon>
+                      {{ chk.name }}
+                      <span v-if="chk.status !== 'completed'">进行中</span>
+                    </div>
+                  </div>
+                  <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
+                  <div v-if="pendingCard.approvals_required > 1" class="d-flex align-center flex-wrap ga-2 mb-3">
+                    <v-chip
+                      size="small"
+                      variant="tonal"
+                      :color="pendingCard.approvals.length >= pendingCard.approvals_required ? 'success' : undefined"
+                      prepend-icon="mdi-account-check-outline"
+                    >
+                      {{ pendingCard.approvals.length }}/{{ pendingCard.approvals_required }}
+                      已批准
+                    </v-chip>
+                    <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
+                      {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
+                    </span>
+                    <v-btn
+                      v-if="!pendingCard.approvals.includes(AUTHOR)"
+                      size="small"
+                      variant="outlined"
+                      class="btn-secondary"
+                      :disabled="acceptBusy"
+                      prepend-icon="mdi-thumb-up-outline"
+                      @click="onApproveCard"
+                    >
+                      批准
+                    </v-btn>
+                    <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
+                      <v-icon size="14">mdi-check</v-icon>你已批准
+                    </span>
+                  </div>
+                  <div class="d-flex align-center ga-2">
+                    <!-- 决策在聊天，审查在面板。贴底的时候这一颗在横条上，这里不再放一颗。 -->
+                    <v-btn
+                      v-if="!docked"
+                      variant="outlined"
+                      class="btn-secondary"
+                      prepend-icon="mdi-file-search-outline"
+                      @click="emit('review')"
+                    >
+                      {{ t('work.room.accept.review') }}
+                    </v-btn>
+                    <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
                    unstable），为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，
                    从不按状态灰。 -->
-              <span :title="acceptBlockedTitle ?? undefined">
-                <v-btn
-                  color="success"
-                  variant="flat"
-                  :loading="acceptBusy"
-                  :disabled="acceptBusy || !!acceptBlockedTitle"
-                  prepend-icon="mdi-check"
-                  @click="onAcceptCard"
-                >
-                  {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
-                </v-btn>
-              </span>
-              <v-btn
-                variant="text"
-                :disabled="acceptBusy"
-                prepend-icon="mdi-undo"
-                @click="showRejectInput = !showRejectInput"
-              >
-                退回
-              </v-btn>
-            </div>
-            <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
-            <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
-              <v-switch
-                :model-value="!!autoMergeArmedBy"
-                color="success"
-                density="compact"
-                hide-details
-                :disabled="acceptBusy"
-                label="通过后自动合并"
-                @update:model-value="onToggleAutoMerge"
-              />
-              <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-                由 @{{ autoMergeArmedBy }} 开启
-              </span>
-            </div>
-            <!--
+                    <span :title="acceptBlockedTitle ?? undefined">
+                      <v-btn
+                        color="success"
+                        variant="flat"
+                        :loading="acceptBusy"
+                        :disabled="acceptBusy || !!acceptBlockedTitle"
+                        prepend-icon="mdi-check"
+                        @click="onAcceptCard"
+                      >
+                        {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重试采纳' : '采纳' }}
+                      </v-btn>
+                    </span>
+                    <v-btn
+                      variant="text"
+                      :disabled="acceptBusy"
+                      prepend-icon="mdi-undo"
+                      @click="showRejectInput = !showRejectInput"
+                    >
+                      退回
+                    </v-btn>
+                  </div>
+                  <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
+                  <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
+                    <v-switch
+                      :model-value="!!autoMergeArmedBy"
+                      color="success"
+                      density="compact"
+                      hide-details
+                      :disabled="acceptBusy"
+                      label="通过后自动合并"
+                      @update:model-value="onToggleAutoMerge"
+                    />
+                    <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
+                      由 @{{ autoMergeArmedBy }} 开启
+                    </span>
+                  </div>
+                  <!--
               人工放行 (#718)：明知合并态不是 clean 仍合并。平台自己永远不走这条路——
               红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
               没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
             -->
-            <div
-              v-if="pendingCard.pr_number && acceptBlockedTitle && !mergeReasons.some((r) => r.kind === 'dependency')"
-              class="mt-2"
-            >
-              <v-btn
-                v-if="!showForceMergeInput"
-                size="small"
-                variant="text"
-                class="text-medium-emphasis"
-                prepend-icon="mdi-alert-decagram-outline"
-                @click="showForceMergeInput = true"
-              >
-                人工放行并合并
-              </v-btn>
-              <template v-else>
-                <div class="text-caption text-medium-emphasis mb-1">
-                  在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
-                </div>
-                <v-textarea
-                  v-model="forceMergeReason"
-                  autocomplete="off"
-                  label="理由"
-                  rows="2"
-                  auto-grow
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  class="mb-2"
-                />
-                <div class="d-flex ga-2">
-                  <v-btn
-                    size="small"
-                    color="warning"
-                    variant="flat"
-                    :loading="acceptBusy"
-                    :disabled="acceptBusy"
-                    @click="onForceMerge"
+                  <div
+                    v-if="
+                      pendingCard.pr_number && acceptBlockedTitle && !mergeReasons.some((r) => r.kind === 'dependency')
+                    "
+                    class="mt-2"
                   >
-                    确认放行并合并
-                  </v-btn>
-                  <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
-                    取消
-                  </v-btn>
+                    <v-btn
+                      v-if="!showForceMergeInput"
+                      size="small"
+                      variant="text"
+                      class="text-medium-emphasis"
+                      prepend-icon="mdi-alert-decagram-outline"
+                      @click="showForceMergeInput = true"
+                    >
+                      人工放行并合并
+                    </v-btn>
+                    <template v-else>
+                      <div class="text-caption text-medium-emphasis mb-1">
+                        在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
+                      </div>
+                      <v-textarea
+                        v-model="forceMergeReason"
+                        autocomplete="off"
+                        label="理由"
+                        rows="2"
+                        auto-grow
+                        density="compact"
+                        variant="outlined"
+                        hide-details
+                        class="mb-2"
+                      />
+                      <div class="d-flex ga-2">
+                        <v-btn
+                          size="small"
+                          color="warning"
+                          variant="flat"
+                          :loading="acceptBusy"
+                          :disabled="acceptBusy"
+                          @click="onForceMerge"
+                        >
+                          确认放行并合并
+                        </v-btn>
+                        <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
+                          取消
+                        </v-btn>
+                      </div>
+                    </template>
+                  </div>
+                  <div v-if="showRejectInput" class="d-flex align-end ga-2 mt-3">
+                    <v-text-field
+                      v-model="rejectNote"
+                      autocomplete="off"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      placeholder="退回说明（可选）"
+                      class="flex-grow-1"
+                    />
+                    <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
+                      确认退回
+                    </v-btn>
+                  </div>
                 </div>
-              </template>
-            </div>
-            <div v-if="showRejectInput" class="d-flex align-end ga-2 mt-3">
-              <v-text-field
-                v-model="rejectNote"
-                autocomplete="off"
-                variant="outlined"
-                density="compact"
-                hide-details
-                placeholder="退回说明（可选）"
-                class="flex-grow-1"
-              />
-              <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
-                确认退回
-              </v-btn>
-            </div>
-          </div>
-        </v-card>
+              </v-card>
 
-        <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，参考闸门那两张的
+              <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，参考闸门那两张的
              处理——只读、不转圈（转圈是在说平台此刻正跑着什么，而平台什么也没跑）。
              采纳现在当场合并，这个状态不会再有新卡进来。 -->
-        <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box mt-2">
-          <div class="pa-3">
-            <div class="d-flex align-center ga-2 mb-1">
-              <v-icon color="warning" size="19">mdi-history</v-icon>
-              <span class="t-title">已采纳，未完成合并</span>
-            </div>
-            <div class="text-caption text-medium-emphasis mb-2">
-              已由 <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，但合并没有完成。这是一张旧卡，需要人工处理
-            </div>
-            <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
+              <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box">
+                <div class="pa-3">
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    已由
+                    <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，但合并没有完成。这是一张旧卡，需要人工处理
+                  </div>
+                  <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
                  note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
                  标：颜色是唯一信号的话，色觉障碍和灰度截图上就什么都没有了。 -->
-            <div
-              v-if="deliveryNote"
-              class="d-flex align-start ga-1 text-caption mb-2"
-              :class="deliveryNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
-            >
-              <v-icon v-if="deliveryNote.tone === 'error'" icon="mdi-alert-circle-outline" size="14" class="mt-1" />
-              <span>{{ deliveryNote.text }}</span>
-            </div>
-            <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
-            <div v-if="deliveringCard.pr_url">
-              <div class="d-flex align-center flex-wrap ga-2">
-                <v-chip
-                  size="small"
-                  variant="tonal"
-                  prepend-icon="mdi-source-pull"
-                  :href="deliveringCard.pr_url"
-                  target="_blank"
-                >
-                  PR #{{ deliveringCard.pr_number }}
-                </v-chip>
-                <span v-if="deliveringCard.pr_head_sha" class="text-caption text-medium-emphasis">
-                  {{ deliveringCard.pr_head_sha.slice(0, 7) }}
-                </span>
-                <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
-                  与主分支冲突
-                </span>
-              </div>
-              <div
-                v-for="chk in prChecks?.checks ?? []"
-                :key="chk.name"
-                class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
-              >
-                <v-icon
-                  size="14"
-                  :color="chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined"
-                >
-                  {{
-                    chk.conclusion === 'success'
-                      ? 'mdi-check-circle'
-                      : chk.conclusion === 'failure'
-                        ? 'mdi-close-circle'
-                        : 'mdi-progress-clock'
-                  }}
-                </v-icon>
-                {{ chk.name }}
-                <span v-if="chk.status !== 'completed'">进行中</span>
-              </div>
-            </div>
-          </div>
-        </v-card>
+                  <div
+                    v-if="deliveryNote"
+                    class="d-flex align-start ga-1 text-caption mb-2"
+                    :class="deliveryNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
+                  >
+                    <v-icon
+                      v-if="deliveryNote.tone === 'error'"
+                      icon="mdi-alert-circle-outline"
+                      size="14"
+                      class="mt-1"
+                    />
+                    <span>{{ deliveryNote.text }}</span>
+                  </div>
+                  <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
+                  <div v-if="deliveringCard.pr_url">
+                    <div class="d-flex align-center flex-wrap ga-2">
+                      <v-chip
+                        size="small"
+                        variant="tonal"
+                        prepend-icon="mdi-source-pull"
+                        :href="deliveringCard.pr_url"
+                        target="_blank"
+                      >
+                        PR #{{ deliveringCard.pr_number }}
+                      </v-chip>
+                      <span v-if="deliveringCard.pr_head_sha" class="text-caption text-medium-emphasis">
+                        {{ deliveringCard.pr_head_sha.slice(0, 7) }}
+                      </span>
+                      <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
+                        与主分支冲突
+                      </span>
+                    </div>
+                    <div
+                      v-for="chk in prChecks?.checks ?? []"
+                      :key="chk.name"
+                      class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
+                    >
+                      <v-icon
+                        size="14"
+                        :color="
+                          chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined
+                        "
+                      >
+                        {{
+                          chk.conclusion === 'success'
+                            ? 'mdi-check-circle'
+                            : chk.conclusion === 'failure'
+                              ? 'mdi-close-circle'
+                              : 'mdi-progress-clock'
+                        }}
+                      </v-icon>
+                      {{ chk.name }}
+                      <span v-if="chk.status !== 'completed'">进行中</span>
+                    </div>
+                  </div>
+                </div>
+              </v-card>
 
-        <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
-        <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box mt-2">
-          <div class="pa-3">
-            <div class="d-flex align-center ga-2 mb-1">
-              <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-              <span class="t-title">已采纳</span>
+              <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
+              <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box">
+                <div class="pa-3">
+                  <div class="text-body-2 c-muted mb-3">
+                    由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
+                  </div>
+                  <v-btn
+                    variant="outlined"
+                    class="btn-secondary"
+                    :loading="acceptBusy"
+                    :disabled="acceptBusy"
+                    prepend-icon="mdi-undo"
+                    @click="onRevokeCard"
+                  >
+                    撤回采纳
+                  </v-btn>
+                </div>
+              </v-card>
             </div>
-            <div class="text-body-2 c-muted mb-3">
-              由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
-            </div>
-            <v-btn
-              variant="outlined"
-              class="btn-secondary"
-              :loading="acceptBusy"
-              :disabled="acceptBusy"
-              prepend-icon="mdi-undo"
-              @click="onRevokeCard"
+          </v-defaults-provider>
+          <div v-if="docked" class="accept-bar">
+            <button
+              type="button"
+              class="accept-bar__toggle"
+              :aria-expanded="expanded"
+              aria-controls="accept-detail"
+              :title="expanded ? t('work.room.accept.collapse') : t('work.room.accept.expand')"
+              @click="expanded = !expanded"
             >
-              撤回采纳
+              <v-icon :color="bar.color" size="18">{{ bar.icon }}</v-icon>
+              <span class="accept-bar__title">{{ bar.title }}</span>
+              <span v-if="bar.sub" class="accept-bar__sub">{{ bar.sub }}</span>
+              <v-icon size="16" class="accept-bar__caret">{{
+                expanded ? 'mdi-chevron-down' : 'mdi-chevron-up'
+              }}</v-icon>
+            </button>
+            <!-- 决策在聊天，审查在面板: the bar asks for a decision, and the thing the
+                 decision is about is a diff in the panel next to it. -->
+            <v-btn v-if="pendingCard" size="small" color="primary" variant="flat" @click="emit('review')">
+              {{ t('work.room.accept.review') }}
             </v-btn>
           </div>
-        </v-card>
+        </div>
       </div>
     </div>
   </Transition>
@@ -925,11 +1001,76 @@ defineExpose({ reload: loadAcceptCard })
 /* 这一列里唯一的卡片，因为它是唯一的决策入口。绿色（合并的惯例色）保留，但
    强调改成边框而不是左竖条 —— ChatPanel 自己的规矩是「强调靠 wash 底色，不靠
    左竖条（左条纹只留给引用块和结构线）」，而这里原本就是一条 3px 左竖条。 */
+/* 展开的那张卡不再自己描一圈绿边：它长在横条上面，横条和它是一块。 */
 .merge-box {
   position: relative;
-  overflow: hidden;
-  border-color: var(--ok) !important;
+  background: transparent;
+}
+/* 贴着输入框的那一块：一条顶线把它和对话分开，底色和对话栏一样。展开的详情有上
+   限，再长就在里面滚——它不能把对话整个盖住。 */
+.accept-dock {
+  margin-top: 8px;
+  border: 1px solid var(--ok);
   border-radius: var(--radius-lg);
+}
+.accept-dock--docked {
+  margin: 0 12px 8px;
+  border-color: var(--line);
+  background: var(--surface);
+}
+.accept-dock--docked .accept-dock__detail {
+  max-height: 50vh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+.accept-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 0;
+}
+.accept-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 8px 4px 4px;
+}
+.accept-bar__toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.accept-bar__toggle:hover {
+  background: var(--fill);
+}
+.accept-bar__title {
+  flex: none;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+}
+.accept-bar__sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accept-bar__caret {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
 }
 /* 机器闸门: tail of the failed check's output (查看输出). */
 .gate-output {

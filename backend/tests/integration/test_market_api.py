@@ -1,8 +1,10 @@
 """市场 catalog + per-project compute pool selection."""
 
+from tests.integration.conftest import post_project
+
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def test_market_lists_ai_and_compute_pools(client):

@@ -11,6 +11,8 @@
 // 所以判据是身份变了，不是又登了一次。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { dropCachesIfSomeoneElseLogsIn } from './account'
+
 const clearPageCache = vi.fn()
 
 vi.mock('@/lib/pageCache', () => ({
@@ -19,14 +21,10 @@ vi.mock('@/lib/pageCache', () => ({
 
 const del = vi.fn(() => Promise.resolve(true))
 
-let dropCachesIfSomeoneElseLogsIn: (a?: number, b?: number) => boolean
-
-beforeEach(async () => {
+beforeEach(() => {
   del.mockClear()
   clearPageCache.mockClear()
   vi.stubGlobal('caches', { delete: del })
-  vi.resetModules()
-  ;({ dropCachesIfSomeoneElseLogsIn } = await import('./account'))
 })
 
 describe('换人登录与上一个人的缓存', () => {

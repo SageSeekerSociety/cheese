@@ -44,10 +44,31 @@ export type GetPasskeysResponse = {
   passkeys: PasskeyInfo[]
 }
 
-export type AuthMethodsResponse = {
-  supports_passkey: boolean
-  supports_2fa: boolean
-  requires_2fa: boolean
+/** One sign-in: a device that holds a refresh token for the account. */
+export type SessionInfo = {
+  id: string
+  loginMethod: string
+  ipAddress: string
+  userAgent: string
+  createdAt: string
+  lastActiveAt: string
+  /** The sign-in this request was made from. */
+  current: boolean
+  /** Its browser is trusted to skip two-step verification. */
+  trusted: boolean
+}
+
+export type GetSessionsResponse = {
+  sessions: SessionInfo[]
+}
+
+/** The ways the signed-in account can confirm its identity. */
+export type MyAuthMethods = {
+  password: boolean
+  passkey: boolean
+  twoFactor: boolean
+  /** A code mailed to the account; never alongside two-step verification. */
+  emailCode: boolean
 }
 
 export interface TokenPayload {
@@ -132,24 +153,24 @@ export interface OAuthState {
     email: string | null
     name: string
     preferredUsername: string
+    // Set once the person has proven an address with a code; the account is
+    // created with it.
+    verifiedEmail?: string
   }
   suggestedUsername: string
   suggestedNickname: string
-  emailConflict: boolean
 }
 
-export type GetOAuthStateResponse = {
-  providerId: string
-  userInfo: {
-    id: string
-    email: string | null
-    name: string
-    preferredUsername: string
-  }
-  suggestedUsername: string
-  suggestedNickname: string
-  emailConflict: boolean
+export type GetOAuthStateResponse = OAuthState
+
+// The verify page's query, when the address belongs to an existing account.
+export interface OAuthOwnership {
+  type: string
+  email: string
+  sessionId: string
 }
+
+export type VerifyOAuthEmailResponse = { stateToken: string; ownership?: undefined } | { ownership: OAuthOwnership }
 
 // OAuth 创建用户请求类型
 export interface OAuthCreateUserRequest {
@@ -192,14 +213,3 @@ export type OAuthBindUserResponse = {
 }
 
 // OAuth 绑定连接响应类型
-export interface OAuthConnection {
-  id: number
-  providerId: string
-  providerName: string
-  providerUserId: string
-  connectedAt: string
-}
-
-export type GetOAuthConnectionsResponse = {
-  connections: OAuthConnection[]
-}

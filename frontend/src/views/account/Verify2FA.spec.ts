@@ -3,12 +3,14 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
+import { toast } from 'vuetify-sonner'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Verify2FA from './Verify2FA.vue'
 
+import { setLocale } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { forgetOAuthRedirect, stashOAuthRedirect } from '@/router/loginRedirect'
 
@@ -50,7 +52,7 @@ async function open(query: Record<string, string>) {
 
 // 填满六位即提交，和人输入时一样。
 async function submitCode(view: ReturnType<typeof render>, code = '123456') {
-  const inputs = view.container.querySelectorAll('input')
+  const inputs = view.container.querySelectorAll('.v-otp-input input')
   for (const [i, digit] of [...code].entries()) {
     await fireEvent.focus(inputs[i])
     await fireEvent.update(inputs[i], digit)
@@ -117,5 +119,51 @@ describe('过完 2FA 落在哪', () => {
     await submitCode(view)
 
     await settle(router, '/projects/7')
+  })
+})
+
+describe('尝试次数过多', () => {
+  it('按后端给的等待时间说明要等多久，并回到登录页', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockRejectedValue({
+      error: { data: { reason: 'too_many_attempts', retryAfterSeconds: 42 } },
+    })
+    const { view, router } = await open({ token: 'ticket' })
+
+    await submitCode(view)
+
+    await settle(router, '/account/signin')
+    expect(toast.error).toHaveBeenCalledWith('尝试次数过多，请在 42 秒后重试')
+  })
+})
+
+describe('在这台设备上不再询问', () => {
+  const trustBox = (view: ReturnType<typeof render>) =>
+    view.getByRole('checkbox', { name: '在这台设备上 30 天内不再询问' }) as HTMLInputElement
+
+  it('默认不勾，提交时不信任这台设备', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
+
+    expect(trustBox(view).checked).toBe(false)
+    await submitCode(view)
+
+    await vi.waitFor(() =>
+      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: false })
+    )
+  })
+
+  it('勾上后，提交时请后端信任这台设备', async () => {
+    setLocale('zh-CN')
+    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
+
+    await fireEvent.input(trustBox(view), { target: { checked: true } })
+    await submitCode(view)
+
+    await vi.waitFor(() =>
+      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: true })
+    )
   })
 })

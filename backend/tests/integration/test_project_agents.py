@@ -10,11 +10,11 @@ belongs to is decided by who was acting when it was written.
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import agent_instance_handle
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
 def _project(client, name: str = "Agents") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -29,7 +29,7 @@ def _topic(client, project_id: str, title: str = "room", by: str = "u") -> str:
 
 
 def _token(client, project_id: str, topic_id: str, agent: dict | None) -> str:
-    """The token the sandbox calls `cheese remember` with. It names who is
+    """The token the sandbox calls `cheese_remember` with. It names who is
     acting when the caller picked a teammate; without one it is the room's
     own turn token, which writes as the room's default."""
     return mint_scoped_token(

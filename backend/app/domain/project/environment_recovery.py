@@ -106,9 +106,10 @@ async def report_failure(
             turn_id=dispatch_turn,
             content=(
                 f"房间 {topic_id} 的环境准备失败，任务消息尚未送达。"
-                f"修复记录：{event.id}。使用 cheese api GET {path} 读取失败步骤、"
-                "日志和房间配置。诊断原因后，如能修复，使用 cheese api POST "
-                f"{path}，提交 JSON：incident_id、expected_revision、config"
+                f"修复记录：{event.id}。"
+                f"用 platform_request 以 GET {path} 读取失败步骤、"
+                "日志和房间配置。诊断原因后，如能修复，用 platform_request 以 POST "
+                f"{path} 提交 JSON：incident_id、expected_revision、config"
                 "（setup_script、startup_script、variables）。接口只修改这个房间，"
                 "并实际启动芝士继续待处理消息。每条记录仅允许一次自动重启。"
                 "不要通过忽略失败或删除必要安装步骤绕过问题；不要在回复中复述密钥。"

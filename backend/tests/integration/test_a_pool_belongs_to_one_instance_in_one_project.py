@@ -21,6 +21,7 @@ from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -39,7 +40,7 @@ async def _turn_in(factory, tmp_path, *, private: bool, facts: dict[str, str]) -
     """开一个项目、往指定的池里写几条核心记忆、跑一轮，交回这一轮的 system prompt。
 
     ``facts``：``{"about_person" | "own": 内容}``。写的是 core 层，因为注入只带
-    core（`recall_pools`）——普通记忆要 `cheese recall` 才拿得到，注入里本来就不该有。
+    core（`recall_pools`）——普通记忆要 `cheese_recall` 才拿得到，注入里本来就不该有。
     """
     screen = Screen()
     svc = ChatService(
@@ -49,6 +50,7 @@ async def _turn_in(factory, tmp_path, *, private: bool, facts: dict[str, str]) -
         workspace_root=str(tmp_path / "ws"),
     )
     async with factory() as session:
+        await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         if private:
             topic = await TopicService(session).get_or_create_private(

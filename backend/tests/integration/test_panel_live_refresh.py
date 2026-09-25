@@ -3,9 +3,9 @@ panel is stale WHILE the turn runs, not only in the record it leaves behind.
 
 The frame is sent by the API handler that made the change. That handler is the
 one place that knows the change happened: an agent may reach it through a
-`cheese` subcommand, `cheese api`, or any other client, and a subcommand can
-fail. What the agent's shell command says is not evidence of either, so a Bash
-line that merely mentions `cheese doc set` refreshes nothing.
+platform tool, `platform_request`, or any other client, and a call can fail.
+That a tool call was made is not evidence of either, so a call the backend
+never received refreshes nothing.
 """
 
 import uuid
@@ -20,7 +20,7 @@ from app.domain.agent.runtime import get_broker
 from app.main import app
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task_id
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 from tests.integration.test_accept_pr import app_world as app_world
 
 
@@ -40,7 +40,7 @@ def frames(monkeypatch) -> list[tuple[str, dict]]:
 
 
 def _room(client) -> tuple[str, str]:
-    pid = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+    pid = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
         "data"
     ]["id"]
     rid = client.post(
@@ -113,11 +113,13 @@ def test_a_notification_about_a_room_refreshes_that_room(client, frames):
 
 
 def test_a_milestone_from_a_room_refreshes_that_room(client, frames):
-    # A person's call: a room-scoped agent token is refused on this
-    # project-level route before anything is written.
+    # The room's own agent, the way `cheese_milestone` sends it: the room it
+    # came from is named, and that is where the call is authorized.
     pid, rid = _room(client)
     r = client.post(
-        f"/projects/{pid}/milestones", json={"title": "交初稿", "source_topic_id": rid}
+        f"/projects/{pid}/milestones",
+        json={"title": "交初稿", "source_topic_id": rid},
+        headers=_agent(pid, rid),
     )
     assert r.status_code == 200, r.text
     assert _stale(frames, rid) == ["milestone"]
@@ -148,16 +150,17 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
     assert _stale(frames, rid) == ["accept"]
 
 
-class _RunsCheese(StubChannel):
-    """A turn that runs one Bash command and stops. The command never reaches
-    the platform: this stub runs nothing, which is the point."""
+class _CallsATool(StubChannel):
+    """A turn that makes one platform tool call and stops. The call never
+    reaches the platform: this stub runs nothing, which is the point."""
 
-    command = "cheese doc set docs/topics/x.md"
+    tool = "mcp__native__cheese_doc_set"
+    arguments: dict = {"path": "/tmp/x.md"}
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del prompt
         self.starts(topic_id)
-        self.uses(topic_id, "Bash", eid="e-bash", command=self.command)
+        self.uses(topic_id, self.tool, eid="e-tool", **self.arguments)
         self.stops(topic_id, reply)
 
 
@@ -183,35 +186,33 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("tool", "arguments"),
     [
-        "cheese doc set docs/topics/x.md",
-        'cheese accept-request lisi "最懂这块"',
-        'cheese decision "用 A 方案"',
+        ("mcp__native__cheese_doc_set", {"path": "/tmp/x.md"}),
+        ("mcp__native__cheese_accept_request", {"task": "t", "subject": "fix: x"}),
+        ("mcp__native__cheese_decision", {"text": "用 A 方案"}),
     ],
 )
-def test_a_command_that_only_names_a_change_refreshes_nothing(
-    client, tmp_path, command
+def test_a_call_the_backend_never_received_refreshes_nothing(
+    client, tmp_path, tool, arguments
 ):
-    class _Runs(_RunsCheese):
+    class _Calls(_CallsATool):
         pass
 
-    _Runs.command = command
-    seen = _turn_frames(client, tmp_path, _Runs())
-    # The turn ran and its Bash step reached the room — otherwise this asserts
+    _Calls.tool, _Calls.arguments = tool, arguments
+    seen = _turn_frames(client, tmp_path, _Calls())
+    # The turn ran and its step reached the room — otherwise this asserts
     # nothing at all.
-    assert any(
-        f["type"] == "event_block" and "cheese" in (f["block"].get("content") or "")
-        for f in seen
-    )
+    assert any(f["type"] == "event_block" for f in seen)
     assert [f for f in seen if f.get("type") == "state"] == []
 
 
 def test_the_turn_still_files_its_action_card(client, tmp_path):
     """The action card at the end of a turn is a separate record and stays."""
 
-    class _Decides(_RunsCheese):
-        command = 'cheese decision "用 A 方案"'
+    class _Decides(_CallsATool):
+        tool = "mcp__native__cheese_decision"
+        arguments = {"text": "用 A 方案"}
 
     seen = _turn_frames(client, tmp_path, _Decides())
     assert any(

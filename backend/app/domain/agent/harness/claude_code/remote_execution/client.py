@@ -14,12 +14,15 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 import re
 import shlex
 import signal
+import stat
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -29,7 +32,10 @@ if __package__:
     from app.domain.agent.executor_transport import (
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        PlatformHost,
         RemoteClient,
+        read_file_on_the_machine,
+        stat_file_on_the_machine,
     )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
@@ -38,36 +44,75 @@ else:
     from executor_transport import (
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        PlatformHost,
         RemoteClient,
+        read_file_on_the_machine,
+        stat_file_on_the_machine,
     )
 
 PINNED_VERSION = "2.1.277"
+# The file tools the plugin runs on the executor. Bash is not one: the build
+# runs it itself, through the shell prefix (`shell`), so its tasks, their
+# controls and their notifications are the build's own.
 NATIVE_TOOLS = (
     "Read",
     "Edit",
     "Write",
-    "Bash",
     "NotebookEdit",
-    "TaskStop",
 )
 REMOTE_CONTROLS = {
     "read_file",
     "file_suggestions",
     "get_workspace_diff",
-    "background_tasks",
-    "stop_task",
 }
+# What the build adds to its shell children's environment, forwarded to a
+# command on the executor because a native session there would set the same.
+# Nothing else of this host's environment leaves it — its credentials are in
+# there — and the build's messaging socket and its token name a process on
+# this host, so they stay too.
+FORWARDED_ENV = (
+    "AI_AGENT",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "COREPACK_ENABLE_AUTO_PIN",
+    "GIT_EDITOR",
+    "NoDefaultCurrentDirectoryInExePath",
+)
+# The build wraps each Bash command as
+# `source <snapshot> 2>/dev/null || true && <options> && eval '<command>'
+# < /dev/null && pwd -P >| <tmp>/claude-<hex>-cwd`. The snapshot is of this
+# host's shell and the cwd file is where the build learns the new directory,
+# so the executor swaps in its own snapshot and file, and the prefix copies
+# the directory back.
+_SNAPSHOT = re.compile(r"source ('(?:[^']|'\\'')*'|\S+) 2>/dev/null \|\| true && ")
+_CWD_FILE = re.compile(r" && pwd -P >\| ('(?:[^']|'\\'')*'|\S+)\Z")
+# The stdin a hook command may carry to the executor, and the output a command
+# may write onto this host (the build persists what it is handed).
+SHELL_INPUT_BYTES = 16 * 1024 * 1024
+SHELL_OUTPUT_BYTES = 256 * 1024 * 1024
+# How long a command that never started keeps being retried across a dropped
+# link before the machine is reported out of reach.
+SHELL_START_RETRY_S = 60.0
+# How long a reader keeps retrying an executor that answers, but with an error,
+# before giving the command up.
+SHELL_ERROR_RETRY_S = 60.0
+# After a stop reaches the executor, how long the command gets to end before
+# it is killed outright.
+SHELL_STOP_GRACE_S = 5.0
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese doc set and publish artifacts "
+    "Save finished documents through cheese_doc_set and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
 
 
 def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.hooks_settings 的同款）：模型分身定义随会话启动
+    """发现层（session_launch.session_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
     这里确定性地补一份（幂等），不指望 seed 够新。
     """
@@ -132,6 +177,10 @@ def prepare(
     home.mkdir(exist_ok=True)
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
+    # The build's own temporary files — a Bash command's output, the file its
+    # shell reports its directory in — kept to this session.
+    temporary = directory / "tmp"
+    temporary.mkdir(exist_ok=True, mode=0o700)
     client = RemoteClient(target)
     info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
     if target.get("kind") == "private":
@@ -141,6 +190,7 @@ def prepare(
         workspace=info["workspace"],
         central_workspace=str(workspace),
         central_config=str(config),
+        central_tmp=str(temporary),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -220,6 +270,10 @@ def prepare(
     module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
     (plugin / "hooks/proxy.js").write_text(module)
     settings = json.loads(json.dumps(base_settings or {}))
+    # The project's own tool hooks, which the build fires and the shell prefix
+    # runs on the executor (never here: they are not in `central_hooks`).
+    for event, groups in ((context_tree or {}).get("hooks") or {}).items():
+        settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
     for tool in (
@@ -232,30 +286,14 @@ def prepare(
         if f"mcp__native__{tool}" not in allowed:
             allowed.append(f"mcp__native__{tool}")
     hooks = settings.setdefault("hooks", {})
-    # The transport publishes hooks for the original tool. Running them again
-    # for its internal MCP call duplicates events and delays both directions.
-    for event in ("PreToolUse", "PostToolUse"):
-        for group in hooks.get(event, []):
-            matcher = group.get("matcher", "*")
-            matcher = ".*" if matcher in ("*", "") else matcher
-            group["matcher"] = (
-                f"^(?!mcp__native__(?:invoke|chat_send|platform_request|project_tools|cheese_.*)$).*(?:{matcher})"
-            )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
-    # `TaskStop` 不在这道闸门后面。闸门拒的是「插件没接住的原生调用」，而
-    # `proxy.js` 对一个执行器不认得的 `TaskStop` id 是**故意**放手的：那条 id 属于
-    # 这条会话里的一条子线程，父线程停它靠的就是 harness 自己这一手（结论 43）。
-    # 放在名单里，那次放手会被当成「没处理」一律拒掉，这条硬性要求在房间里就不成
-    # 立。漏出去的只有一次停在中心机上的 `TaskStop`——它不动文件、不跑命令，正是这
-    # 道闸门要挡的两样都不沾。
-    # The pinned serve build has no Glob/Grep. Keep their local guard even
-    # though they are not invocable remotely: another interactive build must
-    # not search the session host when it offers them.
-    guarded = tuple(tool for tool in NATIVE_TOOLS if tool != "TaskStop") + (
-        "Glob",
-        "Grep",
-    )
+    # The file tools the plugin runs remotely. Bash is not guarded: the build
+    # runs it, and the shell prefix sends it to the executor. The pinned serve
+    # build has no Glob/Grep. Keep their local guard even though they are not
+    # invocable remotely: another interactive build must not search the
+    # session host when it offers them.
+    guarded = NATIVE_TOOLS + ("Glob", "Grep")
     hooks.setdefault("PreToolUse", []).insert(
         0,
         {
@@ -342,8 +380,14 @@ def prepare(
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        # Off, and not `auto`: model traffic may be routed by the metering proxy
+        # to Anthropic-compatible gateways (MiMo, Kimi, GLM, DeepSeek via
+        # LiteLLM) that do not support tool search's `tool_reference` /
+        # `defer_loading`. `auto` would switch deferral on only once a room's
+        # MCP definitions pass 10% of the window, and then fail there.
         "ENABLE_TOOL_SEARCH": "false",
         "CHEESE_EXECUTION_CONFIG": str(target_path),
+        "CLAUDE_CODE_TMPDIR": str(temporary),
     }
     prefix = directory / "shell-prefix"
     local_commands = {
@@ -512,7 +556,35 @@ def sync_context(target_path, supplied_tree=None):
     return snapshot
 
 
+def _same_file(first, second):
+    try:
+        a, b = os.fstat(first), os.fstat(second)
+    except OSError:
+        return False
+    return stat.S_ISREG(a.st_mode) and (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def _under(path, root):
+    return bool(root) and (path == root or path.startswith(root + "/"))
+
+
 def shell(target_path, command):
+    """One command the build hands its shell prefix: run where it belongs.
+
+    A platform command this host trusts, matched whole, runs here. Anything
+    else runs on the executor, and this process stands in for it towards the
+    build: it prints what the command prints as it prints it, ends when it
+    ends and the way it ended, passes on a signal the build sends it, and for
+    a Bash command tells the build which directory the shell ended in. The
+    command itself is the executor's, not this process's: a dropped link only
+    pauses the reading, and the reader picks up at the byte it had reached.
+    """
     target = json.loads(Path(target_path).read_text())
     words = shlex.split(command)
     helper = str(Path(__file__).resolve())
@@ -533,197 +605,218 @@ def shell(target_path, command):
     }
     if command in commands:
         os.execvp("sh", ["sh", "-c", command])
-    local_chat = _local_chat_send_argv(command)
-    if local_chat is not None:
-        result = _publish_chat_locally(local_chat)
-        if result is not None:
-            return result
-    client = RemoteClient(target)
-    command = command.replace(
-        target["central_config"] + "/skills/", target["workspace"] + "/.claude/skills/"
-    )
-    command = command.replace(target["central_workspace"], target["workspace"])
-    request_id = "shell-" + uuid.uuid4().hex
-
-    def cancel(signum, _frame):
-        client.control({"subtype": "stop_request", "request_id": request_id})
-        raise SystemExit(128 + signum)
-
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
-    result = client.call(
-        "invoke",
-        {
-            "id": request_id,
-            "tool": "Bash",
-            "args": {"command": command, "run_in_background": True},
-        },
-    )
-    if "error" in result:
-        raise RuntimeError(result["error"])
-    task_id = result["value"]["backgroundTaskId"]
-    while True:
-        task = client.control({"subtype": "task_output", "task_id": task_id})
-        if task["status"] != "running":
-            sys.stdout.write(task["stdout"])
-            sys.stderr.write(task["stderr"])
-            return task["exit_code"] if task["exit_code"] is not None else 1
-        time.sleep(0.1)
+    return run_on_the_machine(target, command)
 
 
-def _local_chat_send_argv(command):
-    """Return argv for the safe, direct platform publication fast path.
+def run_on_the_machine(target, command):
+    central = target["central_workspace"]
+    remote = target["workspace"]
+    skills = target["central_config"] + "/skills/"
 
-    ``cheese chat send`` is a platform action whose credentials are already in
-    the central session environment. Only a standalone invocation is eligible;
-    shell operators and expansions stay on the remote executor so this cannot
-    turn an appended command into a central-host escape.
-    """
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    try:
-        words = list(lexer)
-    except ValueError:
-        return None
-    if len(words) < 3 or words[:3] != ["cheese", "chat", "send"]:
-        return None
-    if any(token in {";", "&&", "||", "|", ">", ">>", "<", "<<"} for token in words):
-        return None
-    # These expansions are meaningful only to a shell. Running the CLI
-    # directly must preserve quoted message text and never reinterpret them.
-    quote = None
-    escaped = False
-    for _, char in enumerate(command):
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if quote is None and char in "'\"":
-            quote = char
-            continue
-        if quote is not None and char == quote:
-            quote = None
-            continue
-        if quote is None and (char in ";&|<>`\n$" or char == "\r"):
-            return None
-    if quote is not None or escaped:
-        return None
-    return words
+    def outward(text):
+        return text.replace(skills, remote + "/.claude/skills/").replace(
+            central, remote
+        )
 
-
-def _publish_chat_locally(argv):
-    """Publish an inline chat message using the session's scoped credentials.
-
-    File-backed messages remain remote because their path belongs to the
-    executor workspace. Returning ``None`` asks ``shell`` to use its normal
-    remote path for unsupported or incomplete local inputs.
-    """
-    if "--help" in argv or "--file" in argv:
-        return None
-    content = None
-    reply_to = None
-    request_id = None
-    index = 3
-    while index < len(argv):
-        value = argv[index]
-        if value in ("--reply-to", "--request-id"):
-            if index + 1 >= len(argv):
-                return None
-            if value == "--reply-to":
-                reply_to = argv[index + 1]
-            else:
-                request_id = argv[index + 1]
-            index += 2
-            continue
-        if value.startswith("-") or content is not None:
-            return None
-        content = value
-        index += 1
-    api = os.environ.get("CHEESE_API", "").rstrip("/")
-    token = os.environ.get("CHEESE_TOKEN", "")
-    topic = os.environ.get("CHEESE_TOPIC", "")
-    if not content or not content.strip() or not api or not token or not topic:
-        return None
-    try:
-        publication_id = str(uuid.UUID(request_id)) if request_id else str(uuid.uuid4())
-    except (ValueError, AttributeError):
-        return None
-    body = {"content": content, "request_id": publication_id}
-    if reply_to:
-        body["reply_to"] = reply_to
-    import urllib.error
-    import urllib.request
-
-    request = urllib.request.Request(
-        f"{api}/topics/{topic}/messages",
-        data=json.dumps(body).encode(),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Cheese-Token": token,
-            **(
-                {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
-                if os.environ.get("CHEESE_TURN")
-                else {}
-            ),
-        },
-    )
-    print(
-        f"[cheese] request_id={publication_id}；重试请带 --request-id {publication_id}",
-        file=sys.stderr,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            result = json.load(response)
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        print(f"[cheese] POST /topics/{topic}/messages 出错: {exc}", file=sys.stderr)
-        return 1
-    print(json.dumps(result["data"], ensure_ascii=False))
-    return 0
-
-
-def _publish_spooled_hook(command, payload):
-    if (
-        command != "cheese-hook"
-        or payload["hook_event_name"] not in ("PreToolUse", "PostToolUse")
-        or not os.environ.get("CHEESE_HOOK_SPOOL_ONLY")
-        or not os.environ.get("CHEESE_HOOK_SPOOL")
-    ):
-        return False
-    import shutil
-
-    executable = shutil.which(command)
-    if executable is None:
-        return False
-    if __package__:
-        from app.domain.agent.event_spool import append
-        from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-
-        expected = CHEESE_HOOK_SCRIPT.encode()
+    here = os.getcwd()
+    cwd = remote + here[len(central) :] if _under(here, central) else remote
+    head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
+    bash = tail is not None
+    if bash:
+        # A Bash tool command: the executor wraps its body with its own
+        # snapshot and cwd file. Its stdin is `/dev/null` by construction.
+        body = command[head.end() if head else 0 : tail.start()]
+        stdin = None
     else:
-        from event_spool import append
+        # A hook: its input arrives on stdin, spelled for this host.
+        body = command
+        data = b""
+        with os.fdopen(os.dup(0), "rb") as source:
+            data = source.read(SHELL_INPUT_BYTES + 1)
+        if len(data) > SHELL_INPUT_BYTES:
+            raise SystemExit("Hook input is over the executor's limit")
+        stdin = base64.b64encode(
+            outward(data.decode("utf-8", "surrogateescape")).encode(
+                "utf-8", "surrogateescape"
+            )
+        ).decode()
+    env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
+    if "CLAUDE_PROJECT_DIR" in os.environ:
+        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+    merge = _same_file(1, 2)
+    command_id = "shell-" + uuid.uuid4().hex
+    client = RemoteClient(target)
 
-        expected = Path(__file__).with_name("platform-hook-source").read_bytes()
-    try:
-        actual = Path(executable).read_bytes()
-    except OSError:
-        return False
-    if actual != expected:
-        return False
-    try:
-        spool = Path(os.environ["CHEESE_HOOK_SPOOL"])
-        spool.mkdir(parents=True, exist_ok=True)
+    def call(operation, through=None, **params):
+        return (through or client).call(
+            "control",
+            {
+                "subtype": "shell",
+                "operation": operation,
+                "command_id": command_id,
+                **params,
+            },
+        )
+
+    # A stop from the build is passed on by a thread of its own: TERM now,
+    # KILL once the grace has passed and the command still runs. The read in
+    # flight is left to finish — it answers as soon as the command has ended —
+    # so no request to the executor is ever abandoned halfway.
+    stop = {"number": None, "started": False}
+    ended = threading.Event()
+
+    def stopper(number):
+        stopping_client = RemoteClient(target)
+        for attempt in (number, signal.SIGKILL):
+            deadline = time.monotonic() + SHELL_STOP_GRACE_S
+            while not ended.is_set():
+                try:
+                    call("signal", through=stopping_client, signal=int(attempt))
+                    break
+                except Exception:  # noqa: BLE001 — the link may be down; retry
+                    if time.monotonic() > deadline:
+                        break
+                    stopping_client = RemoteClient(target)
+                    ended.wait(0.5)
+            if ended.wait(SHELL_STOP_GRACE_S):
+                return
+
+    def on_signal(number, _frame):
+        if stop["number"] is not None:
+            return
+        stop["number"] = number
+        if stop["started"]:
+            threading.Thread(target=stopper, args=(number,), daemon=True).start()
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, on_signal)
+
+    # Started once, whatever it takes: the id makes a retried start the same
+    # start.
+    deadline = time.monotonic() + SHELL_START_RETRY_S
+    while True:
         try:
-            spool.chmod(0o777)
-        except OSError:
-            pass
-        append(spool, str(uuid.uuid4()), payload)
-    except OSError:
-        # The managed shell hook is best effort and never denies a tool on IO failure.
-        pass
-    return True
+            call(
+                "start",
+                kind="bash" if bash else "sh",
+                body=outward(body),
+                cwd=outward(cwd),
+                env=env,
+                merge=merge,
+                stdin=stdin,
+            )
+            break
+        except MachineOutOfReach:
+            if target.get("kind") == "unavailable" or time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except (OSError, TimeoutError):
+            if time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except RuntimeError as exc:
+            if "upgrading" not in str(exc) or time.monotonic() > deadline:
+                sys.stderr.write(f"{exc}\n")
+                return 1
+        if stop["number"] is not None:
+            # Stopped before it was known to run: nothing more to wait for.
+            return 128 + stop["number"]
+        time.sleep(1)
+    stop["started"] = True
+    if stop["number"] is not None:
+        threading.Thread(target=stopper, args=(stop["number"],), daemon=True).start()
+    offsets = {"out": 0, "err": 0}
+    written = 0
+    failing_since = None
+    delay = 0.5
+    answer = {}
+    while True:
+        try:
+            answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
+            failing_since, delay = None, 0.5
+        except Exception as exc:  # noqa: BLE001 — the command outlives the link
+            link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
+            failing_since = failing_since or time.monotonic()
+            if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
+                sys.stderr.write(f"{exc}\n")
+                return 1
+            client = RemoteClient(target)
+            time.sleep(delay)
+            delay = min(delay * 2, 5.0)
+            continue
+        if answer.get("lost"):
+            sys.stderr.write(
+                "The command's executor restarted; its outcome is unknown\n"
+            )
+            return 1
+        for stream, fd in (("out", 1), ("err", 2)):
+            data = base64.b64decode(answer.get(stream) or "")
+            offsets[stream] += len(data)
+            written += len(data)
+            if written > SHELL_OUTPUT_BYTES:
+                with contextlib.suppress(Exception):
+                    call("signal", signal=int(signal.SIGKILL))
+                sys.stderr.write(
+                    f"\nOutput passed {SHELL_OUTPUT_BYTES // (1024 * 1024)} MiB; "
+                    "the command was stopped.\n"
+                )
+                return 1
+            _write_all(fd, data)
+        if "exit" in answer:
+            break
+    ended.set()
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, signal.SIG_IGN)
+    if bash and "cwd" in answer:
+        _report_directory(target, client, answer["cwd"], tail.group(1))
+    with contextlib.suppress(Exception):
+        call("forget")
+    code = answer["exit"]
+    if code < 0:
+        # Killed by a signal there: end the same way here, as the shell the
+        # build started would have.
+        # SIGKILL's disposition cannot be set, and needs no resetting.
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(-code, signal.SIG_DFL)
+        os.kill(os.getpid(), -code)
+    return code
+
+
+def _report_directory(target, client, final, spelled):
+    """Tell the build which directory the command's shell ended in.
+
+    The build reads it from the cwd file it named and keeps it only if the
+    directory exists here, so a directory on the executor is reported by its
+    place in the forwarded project view. One outside the workspace is reported
+    as `/`, which the build answers exactly as a native session does: it
+    resets to the workspace root and says so.
+    """
+    path = Path(shlex.split(spelled)[0])
+    temporary = os.environ.get("CLAUDE_CODE_TMPDIR")
+    # Only the cwd file the build itself chose: a hook shaped like a Bash
+    # command must not steer this write anywhere else on this host.
+    if (
+        not temporary
+        or path.parent != Path(temporary)
+        or not re.fullmatch(r"claude-[0-9a-f]+-cwd", path.name)
+    ):
+        return
+    remote = client.config.get("workspace", target["workspace"])
+    central = target["central_workspace"]
+    final = final[:4096]
+    if _under(final, remote):
+        relative = final[len(remote) :]
+        spelled_here = central + relative
+        if target.get("kind") == "private":
+            # The private scratch view is a plain directory here.
+            Path(spelled_here).mkdir(parents=True, exist_ok=True)
+    else:
+        spelled_here = "/"
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+    )
+    with os.fdopen(descriptor, "w") as output:
+        output.write(spelled_here + "\n")
 
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
@@ -807,44 +900,6 @@ def send_user_file_body(raw):
     reads it off `path`, so this and the room's table cannot drift.
     """
     return {"content_b64": base64.b64encode(raw).decode("ascii")}
-
-
-def _from_the_machine(invoke, command, request_id):
-    """One command's stdout, from the machine that holds the file.
-
-    The transport's own host only sees a forwarded workspace, so a private
-    container's file (or one over the plugin's read cap) is reached the same way
-    every other project file is: a command on the executor, through
-    `invoke_on_the_machine` — the one exit that trips the unreachable breaker
-    instead of each call waiting out the executor's read timeout on its own.
-    """
-    receipt = invoke(
-        {"id": request_id, "tool": "Bash"},
-        {"command": command, "timeout": 60000},
-    )
-    if "error" in receipt:
-        raise RuntimeError(receipt["error"])
-    value = receipt.get("value") or {}
-    stdout = value.get("stdout") or ""
-    if value.get("backgroundTaskId"):
-        raise RuntimeError("reading the file did not finish")
-    if stdout.startswith("Exit code"):
-        # A command that exits non-zero is not an executor failure; the build
-        # hands back its own error text as stdout, with the exit code on top.
-        raise RuntimeError(stdout.strip())
-    return stdout
-
-
-def stat_file_on_the_machine(invoke, path, request_id):
-    """The file's size on the machine, without walking its bytes across."""
-    stdout = _from_the_machine(invoke, f"wc -c < {shlex.quote(path)}", request_id)
-    return int("".join(stdout.split()))
-
-
-def read_file_on_the_machine(invoke, path, request_id):
-    """One file's bytes, from the machine that holds them."""
-    stdout = _from_the_machine(invoke, f"base64 < {shlex.quote(path)}", request_id)
-    return base64.b64decode("".join(stdout.split()), validate=True)
 
 
 def deliver_send_user_file(client, config, payload, args, invoke):
@@ -957,39 +1012,6 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     return {"value": result}
 
 
-def publish_event(config, payload):
-    output = {}
-    for group in config.get("central_hooks", {}).get(payload["hook_event_name"], []):
-        matcher = group.get("matcher", "*")
-        if matcher not in ("*", "") and not re.fullmatch(matcher, payload["tool_name"]):
-            continue
-        for hook in group.get("hooks", []):
-            if hook["type"] != "command":
-                raise ValueError("Execution event forwarding requires command hooks")
-            if _publish_spooled_hook(hook["command"], payload):
-                continue
-            result = subprocess.run(
-                ["sh", "-c", hook["command"]],
-                input=json.dumps(payload),
-                text=True,
-                capture_output=True,
-                timeout=hook.get("timeout", 60),
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr)
-            if result.stdout.strip():
-                output = json.loads(result.stdout)
-                decision = output.get("hookSpecificOutput", {})
-                if decision.get("permissionDecision") == "deny":
-                    return {
-                        "deny": decision.get(
-                            "permissionDecisionReason",
-                            "Central policy denied operation",
-                        )
-                    }
-    return output
-
-
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -1014,7 +1036,9 @@ def transport(config, target_path):
     # 命令调用会一个接一个各撞一次。第一次撞上之后，余下的当场答同一句话：机器够不
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
-    # 平台工具不看这个闸：它们从会话直接打后端，本来就不经过这台机器。
+    # 平台工具从会话直接打后端，不经过这台机器；只有要机器上一份东西的那两样
+    # （`cheese_doc_set` 读文件、`cheese_accept_request` 推提交）走这个出口，于是
+    # 也吃这个闸：当场说够不着，而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
     # 一次 502 之后机器回来了，而闸没有第二个开关。
@@ -1023,12 +1047,8 @@ def transport(config, target_path):
 
     def cancel(request_id):
         with active_lock:
-            payload = active.get(request_id)
-            if payload is None:
-                return
-            cancelled.add(request_id)
-        if payload.get("tool") == "Bash":
-            client.control({"subtype": "stop_request", "request_id": payload["id"]})
+            if request_id in active:
+                cancelled.add(request_id)
 
     def stop(signum, _frame):
         with active_lock:
@@ -1059,6 +1079,20 @@ def transport(config, target_path):
             raise
         unreachable_since[0] = None
         return receipt
+
+    # 读到的是哪一版实况文档，写回时要出示（`sandbox/cheese` 的 `_doc_get`）。
+    # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
+    doc_versions: dict[str, int] = {}
+
+    def platform_tool(tool, args, call_id):
+        host = PlatformHost(client, invoke_on_the_machine, call_id, doc_versions)
+        try:
+            text = cheese.run_platform_tool(tool, args, host)
+        except MachineOutOfReach:
+            return {"error": MACHINE_OUT_OF_REACH}
+        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+            return {"error": str(exc)}
+        return {"value": {"stdout": text, "stderr": ""}}
 
     def handle(request):
         try:
@@ -1251,58 +1285,31 @@ def transport(config, target_path):
                         raise RuntimeError("Tool call was cancelled")
                 if tool == "invoke" and payload["tool"] not in NATIVE_TOOLS:
                     raise ValueError("Unknown native tool")
-                event = {
-                    "hook_event_name": "PreToolUse",
-                    "session_id": payload["session_id"],
-                    "tool_name": payload["tool"],
-                    "tool_use_id": payload["id"],
-                    "tool_input": payload["args"],
-                    "cwd": config["workspace"],
-                }
-                decision = publish_event(config, event)
-                if decision.get("deny"):
-                    outcome = decision
-                else:
-                    args = decision.get("hookSpecificOutput", {}).get(
-                        "updatedInput", payload["args"]
+                args = payload["args"]
+                if tool == "project_tools":
+                    receipt = {
+                        "value": client.call(
+                            "project_tools", {**args, "id": payload["id"]}
+                        )
+                    }
+                elif tool == "send_user_file":
+                    receipt = deliver_send_user_file(
+                        client, config, payload, args, invoke_on_the_machine
                     )
-                    if tool == "project_tools":
-                        receipt = {
-                            "value": client.call(
-                                "project_tools", {**args, "id": payload["id"]}
-                            )
-                        }
-                    elif tool == "send_user_file":
-                        receipt = deliver_send_user_file(
-                            client, config, payload, args, invoke_on_the_machine
-                        )
-                    else:
-                        receipt = (
-                            client.platform_request(args)
-                            if tool == "platform_request"
-                            else client.platform_request(
-                                cheese.request_plan(tool, args, dict(os.environ))
-                            )
-                            if tool.startswith("cheese_")
-                            else client.publish_message(payload, args)
-                            if tool == "chat_send"
-                            else client.publish_chat(payload, args)
-                        )
-                        if receipt is None:
-                            receipt = invoke_on_the_machine(payload, args)
-                    if "error" in receipt:
-                        outcome = {"deny": receipt["error"]}
-                    else:
-                        publish_event(
-                            config,
-                            dict(
-                                event,
-                                hook_event_name="PostToolUse",
-                                tool_input=args,
-                                tool_response=receipt["value"],
-                            ),
-                        )
-                        outcome = {"result": receipt["value"]}
+                elif tool.startswith("cheese_"):
+                    receipt = platform_tool(tool, args, payload["id"])
+                else:
+                    receipt = (
+                        client.platform_request(args)
+                        if tool == "platform_request"
+                        else client.publish_message(payload, args)
+                        if tool == "chat_send"
+                        else invoke_on_the_machine(payload, args)
+                    )
+                if "error" in receipt:
+                    outcome = {"deny": receipt["error"]}
+                else:
+                    outcome = {"result": receipt["value"]}
                 image = outcome.get("result", {})
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.
@@ -1322,9 +1329,9 @@ def transport(config, target_path):
                     }
                 else:
                     encoded = json.dumps(outcome)
-                    if tool == "invoke" and len(encoded) > 32_000:
+                    if len(encoded) > 32_000:
                         # MCP replaces large text with prose; the plugin needs
-                        # the original receipt, including an Edit's file state.
+                        # the original receipt, including API JSON and Edit state.
                         receipts = Path(target_path).parent / "tool-results"
                         receipts.mkdir(exist_ok=True, mode=0o700)
                         receipt_path = receipts / f"{uuid.uuid4().hex}.json"
@@ -1362,6 +1369,25 @@ def transport(config, target_path):
                     with active_lock:
                         active[request["id"]] = request["params"].get("arguments", {})
                 workers.submit(handle, request)
+
+
+def own_output(config, call):
+    """A Read of what the build wrote about a command on this host: a
+    background task's output file, or a large result it persisted. That read
+    is local in a native session too; any other native call is refused."""
+    if call.get("tool_name") != "Read":
+        return False
+    path = os.path.realpath(str((call.get("tool_input") or {}).get("file_path", "")))
+    temporary = os.path.realpath(config.get("central_tmp", "")) + os.sep
+    projects = os.path.realpath(config["central_config"]) + os.sep + "projects" + os.sep
+    return (
+        bool(config.get("central_tmp"))
+        and path.startswith(temporary)
+        or (
+            path.startswith(projects)
+            and os.sep + "tool-results" + os.sep in path[len(projects) :]
+        )
+    )
 
 
 def main():
@@ -1425,7 +1451,9 @@ def main():
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "guard":
-        json.load(sys.stdin)
+        call = json.load(sys.stdin)
+        if own_output(config, call):
+            return
         print(
             json.dumps(
                 {

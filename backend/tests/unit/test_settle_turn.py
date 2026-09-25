@@ -1,84 +1,100 @@
 import asyncio
 import uuid
+import weakref
 from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.chat import ChatService
-from tests.conftest import settle_turn
+from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
+from tests import conftest
+from tests.conftest import close_topic_subscriptions, drain_hooks, settle_turn
 
 
-class _Runtime:
-    def __init__(self, topic_id, consumer):
-        runtime = self
-
-        class _RetiringQueue:
-            async def join(self):
-                runtime._subscriptions.pop(topic_id)
-
-        self._subscriptions = {
-            topic_id: SimpleNamespace(
-                consumer_task=consumer,
-                sink=SimpleNamespace(queue=_RetiringQueue()),
-            )
-        }
-
-    async def _close_topic(self, topic_id):
-        self._subscriptions.pop(topic_id)
+@pytest.fixture(autouse=True)
+def _only_this_tests_channels(monkeypatch):
+    monkeypatch.setattr(conftest, "_CHANNELS", weakref.WeakSet())
 
 
-def _service(*runtimes, settle_tasks=()):
-    return SimpleNamespace(
-        _compute=SimpleNamespace(_runtimes=lambda: runtimes),
-        _hook_work=set(),
-        _settle_tasks=set(settle_tasks),
-    )
+class Room:
+    """A service holding one stub session, the way a ChatService holds its pool."""
+
+    def __init__(self) -> None:
+        self.channel = conftest.StubChannel()
+        self.runtime = self.channel.runtime
+        self.service = SimpleNamespace(
+            _compute=SimpleNamespace(_runtimes=lambda: [self.runtime]),
+            _hook_work={},
+        )
+
+    async def open(self) -> uuid.UUID:
+        session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
+        handle = await self.channel.ensure(session, Opening(system_prompt=""))
+        await self.runtime._attach(handle)
+        self.channel.starts(session.topic_id)
+        return session.topic_id
 
 
-@pytest.mark.anyio
-async def test_settle_turn_propagates_a_retired_consumer_failure():
-    topic_id = uuid.uuid4()
+async def test_settle_turn_lands_what_the_session_said():
+    room = Room()
+    topic = await room.open()
+    assert conftest._topics_with_pending_records() == {str(topic)}
 
-    async def fail():
-        await asyncio.sleep(0)
-        raise RuntimeError("consumer failed")
+    await settle_turn(room.service, topic)
 
-    consumer = asyncio.create_task(fail())
-    service = _service(_Runtime(topic_id, consumer))
-
-    with pytest.raises(RuntimeError, match="consumer failed"):
-        await settle_turn(service, topic_id)
+    assert conftest._topics_with_pending_records() == set()
+    await close_topic_subscriptions(room.service, topic)
 
 
-@pytest.mark.anyio
-async def test_settle_turn_waits_only_for_its_topics_reconciliation():
-    topic_id = uuid.uuid4()
-    other_topic_id = uuid.uuid4()
-    other_release = asyncio.Event()
+async def test_settle_turn_waits_for_the_rooms_open_work():
+    room = Room()
+    topic = await room.open()
+    room.service._hook_work[(topic, uuid.uuid4())] = object()
+    settled = asyncio.create_task(settle_turn(room.service, topic))
+    await asyncio.sleep(0.1)
+    assert not settled.done()
 
-    async def reconcile(for_topic):
-        if for_topic == other_topic_id:
-            await other_release.wait()
-        return 0
+    room.service._hook_work.clear()
+    await asyncio.wait_for(settled, 5)
+    await close_topic_subscriptions(room.service, topic)
 
-    service = ChatService.__new__(ChatService)
-    service._compute = SimpleNamespace(_runtimes=lambda: ())
-    service._hook_work = set()
-    service._settle_pending = set()
-    service._settle_tasks = set()
-    service.settle_spool = reconcile
-    service.schedule_spool_settle(topic_id, delay_s=0)
-    service.schedule_spool_settle(other_topic_id, delay_s=0)
-    other = next(
-        task
-        for task in service._settle_tasks
-        if task.get_coro().cr_frame.f_locals["topic_id"] == other_topic_id
-    )
 
-    try:
-        await settle_turn(service, topic_id)
-        assert not other.done()
-    finally:
-        other.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await other
+async def test_settle_turn_does_not_wait_on_another_room():
+    room = Room()
+    topic = await room.open()
+    other = await room.open()
+    room.service._hook_work[(other, uuid.uuid4())] = object()
+
+    await asyncio.wait_for(settle_turn(room.service, topic), 5)
+    await close_topic_subscriptions(room.service, topic)
+    await close_topic_subscriptions(room.service, other)
+
+
+async def test_a_turn_that_never_closes_names_the_open_work():
+    room = Room()
+    topic = await room.open()
+    room.service._hook_work[(topic, uuid.uuid4())] = object()
+
+    with pytest.raises(AssertionError, match=f"turn on {topic} never closed"):
+        await settle_turn(room.service, topic, tries=3)
+    await close_topic_subscriptions(room.service, topic)
+
+
+async def test_drain_hooks_lands_what_was_said_without_waiting_for_an_ending():
+    room = Room()
+    topic = await room.open()
+    room.service._hook_work[(topic, uuid.uuid4())] = object()
+
+    await drain_hooks(room.channel, topic)
+
+    assert conftest._topics_with_pending_records() == set()
+    await close_topic_subscriptions(room.service, topic)
+
+
+async def test_close_topic_subscriptions_stops_the_reader():
+    room = Room()
+    topic = await room.open()
+
+    await close_topic_subscriptions(room.service, topic)
+
+    assert topic not in room.runtime.subscriptions
+    assert not room.runtime.holds(topic)

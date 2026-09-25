@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, login, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject } from './helpers';
 
 // 「交给芝士」这颗按钮的立场是：**正文是唯一的真相，按钮只是它的镜子。** 组件测试
 // 已经钉住了镜子本身（点一下写进去、手打 @ 它自己亮）。这里钉的是组件测试够不到的
@@ -46,7 +46,7 @@ async function agentNameFrom(button: Locator) {
 
 test.describe('把消息交给芝士', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
   });
 
   test('按钮把 @ 写进正文，再点一下拿回来；手打 @ 它自己亮', async ({ page }) => {

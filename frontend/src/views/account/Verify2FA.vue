@@ -10,13 +10,19 @@
     </v-alert>
 
     <v-form @submit.prevent="handleVerify">
+      <!-- 放在验证码之前：填满最后一位就自动提交，放在后面的话来不及勾选。 -->
+      <v-checkbox v-model="trustDevice" density="compact" hide-details class="verify-trust">
+        <template #label>
+          <span class="verify-trust__label">{{ t('account.twoFactor.trustDevice') }}</span>
+        </template>
+      </v-checkbox>
+
       <v-otp-input
         v-if="codeType === 'totp'"
         v-model="totpCode"
         length="6"
         type="number"
-        variant="outlined"
-        class="mb-2"
+        class="account-otp"
         @update:model-value="handleTOTPInput"
       />
 
@@ -25,44 +31,31 @@
         v-model="backupCode"
         length="8"
         type="text"
-        variant="outlined"
-        class="mb-2"
+        class="account-otp"
         @update:model-value="handleBackupInput"
       />
 
-      <p class="text-body-2 mb-6" style="color: var(--faint)">{{ t('account.twoFactor.lockout') }}</p>
+      <p class="account-hint">{{ t('account.twoFactor.lockout') }}</p>
 
       <v-btn
         block
         color="primary"
         size="large"
         type="submit"
+        class="account-submit"
         :loading="loading"
         :disabled="!validateCode(codeType === 'totp' ? totpCode : backupCode)"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
       >
         {{ codeType === 'totp' ? t('account.twoFactor.totpSubmit') : t('account.twoFactor.backupSubmit') }}
       </v-btn>
 
-      <div class="d-flex align-center justify-space-between flex-wrap" style="gap: 8px">
-        <v-btn
-          variant="text"
-          color="primary"
-          style="text-transform: none; padding: 0; min-width: auto"
-          class="text-decoration-none"
-          @click="toggleCodeType"
-        >
+      <div class="account-foot account-foot--split">
+        <button type="button" class="account-link" @click="toggleCodeType">
           {{ codeType === 'totp' ? t('account.twoFactor.useBackup') : t('account.twoFactor.useTotp') }}
-        </v-btn>
-        <v-btn
-          variant="text"
-          color="primary"
-          :to="backToSignIn()"
-          style="text-transform: none; padding: 0; min-width: auto"
-        >
+        </button>
+        <router-link :to="backToSignIn()" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </v-btn>
+        </router-link>
       </div>
     </v-form>
 
@@ -70,10 +63,10 @@
       <v-card :title="t('account.twoFactor.backupUsedTitle')">
         <v-card-text>{{ t('account.twoFactor.backupUsedBody') }}</v-card-text>
         <v-card-actions class="justify-end">
-          <v-btn variant="text" style="text-transform: none" @click="handleLater">
+          <v-btn variant="text" @click="handleLater">
             {{ t('account.twoFactor.later') }}
           </v-btn>
-          <v-btn color="primary" style="text-transform: none" @click="handleGoToSecurity">
+          <v-btn color="primary" variant="flat" @click="handleGoToSecurity">
             {{ t('account.twoFactor.regenerate') }}
           </v-btn>
         </v-card-actions>
@@ -86,6 +79,9 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+
+import { attemptMessage } from './attemptWait'
+import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import { t } from '@/i18n'
@@ -107,6 +103,8 @@ function afterSignIn(): string {
 const backToSignIn = () => ({ name: 'SignIn', query: { redirect: route.query.redirect } })
 
 const codeType = ref<'totp' | 'backup'>('totp')
+// 默认不勾：在公用电脑上勾选，之后任何人只凭密码就能登录这个账号。
+const trustDevice = ref(false)
 const totpCode = ref('')
 const backupCode = ref('')
 const loading = ref(false)
@@ -137,21 +135,24 @@ const handleVerify = async () => {
     const { data } = await UserApi.verify2FA({
       temp_token: token,
       code: code,
+      trust_device: trustDevice.value,
     })
 
     // 登录成功
     AccountService.login(data.accessToken!, data.user!)
     toast.success(t('account.signIn.signedIn'))
+    const upgrade = upgradeAfterSecondStep(takeFirstStep(), data.user!.id, data.passkeyEnrollment)
 
-    // 如果使用了备用码，显示提醒对话框
+    // 如果使用了备用码，显示提醒对话框。它已经是登录后的下一件事，不再接着
+    // 提议添加通行密钥。
     if (data.usedBackupCode) {
       showBackupCodeDialog.value = true
     } else {
-      router.replace(afterSignIn())
+      router.replace(await landingAfterSignIn(upgrade, afterSignIn()))
     }
   } catch (error: any) {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
-    // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等一刻钟——压成同一句
+    // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等到期限过去——压成同一句
     // 提示的话，用户会一直重试一个根本不可能成功的操作。
     const detail = error?.error?.data ?? {}
     totpCode.value = ''
@@ -168,12 +169,7 @@ const handleVerify = async () => {
       return
     }
 
-    if (detail.reason === 'too_many_attempts') {
-      const minutes = Math.max(1, Math.ceil((detail.retryAfterSeconds ?? 900) / 60))
-      toast.error(t('account.twoFactor.tooManyAttempts', { minutes }))
-    } else {
-      toast.error(t('account.twoFactor.sessionExpired'))
-    }
+    toast.error(attemptMessage(error) ?? t('account.twoFactor.sessionExpired'))
     router.replace(backToSignIn())
   } finally {
     loading.value = false
@@ -224,3 +220,15 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.verify-trust {
+  margin-bottom: 8px;
+}
+
+.verify-trust__label {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+</style>

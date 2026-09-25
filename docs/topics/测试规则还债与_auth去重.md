@@ -18,7 +18,7 @@
 
 **所以守卫不能按名字做。** 简报里设想的「禁止在 `tests/integration` 下新增本地 `_auth` 定义」这个形态，按上表只能抓到 14 个文件里的 9 个——躲过散文规则的那 5 份，恰恰是**已经改了名或者根本没起名**的。改名是这条规则要拦的东西本身，拿名字当特征等于拿被规避的那一面当锚点。
 
-守卫因此盯的是**稀缺资源**而不是名字：`app.core.tokens.mint_session_token`。用 `ast` 走一遍 `backend/tests/` 的每个文件，`from ... import mint_session_token`（含 `as` 别名）和 `tokens.mint_session_token` 属性访问都算命中。三个文件在白名单里，每个都写了理由（conftest 自己、`test_tokens.py` 测的就是它、`test_actor_numeric_handle.py` 需要带数字 id 的 token）；另有一个测试专门检查白名单里没有已被删除/改名的死条目——每条烂掉的白名单都是守卫上的一个洞。
+守卫因此盯的是**稀缺资源**而不是名字：铸只带 handle 的 token 的那一个调用，`create_access_token(None, ...)`。用 `ast` 走一遍 `backend/tests/` 的每个文件，这个调用（含 `as` 别名和属性访问）都算命中。白名单里每一项都写了理由；另有一个测试专门检查白名单里没有已被删除/改名的死条目——每条烂掉的白名单都是守卫上的一个洞。
 
 ## 任务二：`backend-tests.md` 改成症状式
 
@@ -26,7 +26,7 @@
 
 1. 401 但同一个 header 在别的路由上好使（两族 token：数字 id vs 只有 handle）
 2. contract 测试一片 401 / 一 login 就报 Redis 连不上（contract harness 不跑 Redis）
-3. `test_no_adhoc_auth_helpers.py` 红了（不认名字只认 `mint_session_token`，改名绕不过）
+3. `test_no_adhoc_auth_helpers.py` 红了（不认名字只认 `create_access_token(None, ...)`，改名绕不过）
 4. 一批没碰过的测试 `AttributeError`（test double 没跟生产代码一起改）
 5. 一批测试红了但单独跑都绿（两个 pytest 进程打同一个测试库）
 6. 改了某条路由鉴权，只有一两个文件红（要按路由路径 grep，不是按测试名）

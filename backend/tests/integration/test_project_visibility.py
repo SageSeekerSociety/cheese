@@ -13,6 +13,7 @@ from anyio.from_thread import BlockingPortal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.repositories import ProjectRepository
+from tests.integration.conftest import a_team, post_project
 
 
 def test_scoping_covers_owner_roster_and_team(
@@ -20,14 +21,17 @@ def test_scoping_covers_owner_roster_and_team(
 ):
     async def _run() -> None:
         from app.domain.membership.repositories import MemberRepository
-        from app.domain.project.models import ProjectRole
 
         repo = ProjectRepository(db_session)
-        mine = await repo.add(name="我拥有的", owner_handle="alice")
-        rostered = await repo.add(name="我在名册上的", owner_handle="bob")
-        theirs = await repo.add(name="别人的", owner_handle="bob")
+        team_id = await a_team(db_session)
+        mine = await repo.add(name="我拥有的", owner_handle="alice", team_id=team_id)
+        rostered = await repo.add(
+            name="我在名册上的", owner_handle="bob", team_id=team_id
+        )
+        theirs = await repo.add(name="别人的", owner_handle="bob", team_id=team_id)
+        # alice is an external member of one of bob's projects.
         await MemberRepository(db_session).add(
-            project_id=rostered.id, user_handle="alice", role=ProjectRole.member
+            project_id=rostered.id, user_handle="alice"
         )
 
         seen = {
@@ -53,7 +57,9 @@ def test_nobody_identifiable_claims_nothing(
 
     async def _run() -> None:
         repo = ProjectRepository(db_session)
-        await repo.add(name="某人的项目", owner_handle="someone")
+        await repo.add(
+            name="某人的项目", owner_handle="someone", team_id=await a_team(db_session)
+        )
         assert await repo.list_visible_to(handle=None, user_id=None) == []
 
     _portal.call(_run)
@@ -80,7 +86,7 @@ def test_an_unidentifiable_caller_gets_none_not_all(client):
     Whatever else is open, this route's meaning without `team_id` is "the
     caller's OWN projects". With no caller, the honest answer is none.
     """
-    client.post("/projects", json={"name": "任何人的项目"})
+    post_project(client, json={"name": "任何人的项目"})
     body = client.get("/projects").json()["data"]
     assert body["total"] == 0
     assert body["data"] == []
@@ -106,8 +112,8 @@ def test_a_real_login_token_sees_the_project_it_owns(
     over-full, which is a worse bug than the one being fixed.
     """
     handle = authenticated_user.username
-    created = api_client.post(
-        "/projects", json={"name": "登录用户的项目"}, headers=auth_headers
+    created = post_project(
+        api_client, json={"name": "登录用户的项目"}, headers=auth_headers
     )
     assert created.status_code == 200
     assert created.json()["data"]["owner_handle"] == handle, (

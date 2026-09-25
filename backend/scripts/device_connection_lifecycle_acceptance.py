@@ -219,6 +219,59 @@ def record(log, event: str, **values) -> None:
     log.flush()
 
 
+def prepare_owner_image(image: str, docker, log) -> None:
+    """Use the pinned local image, or authenticate and pull it for this runner."""
+    platform = "linux/amd64"
+
+    def local_platform() -> str:
+        return docker(
+            "image",
+            "inspect",
+            "--format",
+            "{{.Os}}/{{.Architecture}}",
+            image,
+            check=False,
+        ).strip()
+
+    inspected = local_platform()
+    if inspected == platform:
+        record(log, "image_reused", owner_image=image, platform=platform)
+        return
+
+    started = time.monotonic()
+    record(
+        log,
+        "image_pull_started",
+        owner_image=image,
+        platform=platform,
+        cached=False,
+        inspected_platform=inspected or None,
+    )
+    token = os.environ.get("GH_TOKEN")
+    if token:
+        docker(
+            "login",
+            "ghcr.io",
+            "-u",
+            os.environ["GITHUB_REPOSITORY_OWNER"],
+            "--password-stdin",
+            input=token,
+        )
+    docker("pull", "--platform", platform, image, timeout=300)
+    inspected = local_platform()
+    if inspected != platform:
+        raise RuntimeError(
+            f"owner image {image} has platform {inspected!r}, expected {platform}"
+        )
+    record(
+        log,
+        "image_pull_finished",
+        owner_image=image,
+        platform=platform,
+        elapsed_s=time.monotonic() - started,
+    )
+
+
 @contextmanager
 def image_owner(options, root: Path, *, start_runtime=True):
     """Run the released owner and its packaged Go connector without code mounts."""
@@ -299,25 +352,7 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 port=options.port,
                 resource_label=resource_label,
             )
-            started = time.monotonic()
-            record(
-                log,
-                "image_pull_started",
-                cached=bool(
-                    docker(
-                        "image",
-                        "inspect",
-                        "--format",
-                        "{{.Id}}",
-                        options.owner_image,
-                        check=False,
-                    )
-                ),
-            )
-            docker(
-                "pull", "--platform", "linux/amd64", options.owner_image, timeout=300
-            )
-            record(log, "image_pull_finished", elapsed_s=time.monotonic() - started)
+            prepare_owner_image(options.owner_image, docker, log)
             docker("network", "create", "--label", resource_label, network)
             docker(
                 "run",
@@ -453,10 +488,17 @@ INSERT INTO "user" (id,username,email,created_at,updated_at)
 VALUES (42,'acceptance','acceptance@example.test',now(),now());
 INSERT INTO device (device_id,name,token,owner_user_id,created_at)
 VALUES ('acceptance-machine','acceptance','acceptance',42,now());
+INSERT INTO team (id,name,intro,description,avatar_id,personal_owner_user_id,
+                  created_at,updated_at)
+VALUES (nextval('team_seq'),'个人','','',1,42,now(),now());
+INSERT INTO team_user_relation (id,team_id,user_id,role,created_at,updated_at)
+SELECT nextval('team_user_relation_seq'),id,42,0,now(),now()
+FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO projects
- (id,name,owner_handle,ai_mode,summary,settings,created_at,updated_at)
-VALUES ('11111111-1111-1111-1111-111111111111','Acceptance','acceptance',
-        'off','','{}',now(),now());
+ (id,name,owner_handle,team_id,ai_mode,summary,settings,created_at,updated_at)
+SELECT '11111111-1111-1111-1111-111111111111','Acceptance','acceptance',id,
+       'off','','{}',now(),now()
+FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
         'Acceptance','room','active',false,now(),now());

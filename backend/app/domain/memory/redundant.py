@@ -20,7 +20,7 @@ logger = logging.getLogger("cheesex.memory")
 
 #: 一行要覆盖这条事实多少关键词才算「repo 里已经写着了」。
 #:
-#: 比 `cheese recall` 的 `is_relevant` 严，而且只认覆盖度、不认「命中了一个整词」：
+#: 比 `cheese_recall` 的 `is_relevant` 严，而且只认覆盖度、不认「命中了一个整词」：
 #: recall 宁可多给几条让 agent 自己挑，这里命中一次就是拒掉一次写入，而记忆是显式
 #: 写进去、不可再生的（结论 61）——拒错了那条事实就没有第二次机会。只共用一个词
 #: （`pytest`、`alembic`）远不足以说明同一件事已经写在代码里了。
@@ -38,7 +38,7 @@ ENOUGH_OF_THE_FACT = 0.6
 #: 而漏了就是多记一条重复的，那一侧是便宜的（见 `agent_checkout_search`）。
 _TERMS_OF_THE_FACT = 3
 
-#: 等那台机器多久。`cheese remember` 是一次交互调用，不是一条活。
+#: 等那台机器多久。`cheese_remember` 是一次交互调用，不是一条活。
 _SEARCH_TIMEOUT_S = 15
 
 
@@ -58,7 +58,7 @@ CheckoutSearch = Callable[[list[str]], Awaitable[list[dict]]]
 async def already_in_repo(text: str, search: CheckoutSearch) -> RepoHit | None:
     """这条事实是不是 repo 里已经写着的；是就还回命中的那一行。
 
-    关键词的切法与 `cheese recall` 共用 `memory.keywords`：同一套切分同时决定「以
+    关键词的切法与 `cheese_recall` 共用 `memory.keywords`：同一套切分同时决定「以
     后怎么查得到这条记忆」和「它跟 repo 里的一行算不算同一件事」，两边各写一套的
     那一天，就会出现存得进去、却查不出来的事实。
     """
@@ -96,7 +96,7 @@ def agent_checkout_search(
 
     手是 agent 的，不是房间的（结论 60）：一间房可以坐着不止一条会话，队友各有各
     的工作树，所以问的是 ``(房间, 这位 agent, 骨架)`` 那一条会话的地点，不是房间
-    里第一条带租约的。拿房间第一条，`cheese remember` 就可能去另一位队友的检出目
+    里第一条带租约的。拿房间第一条，`cheese_remember` 就可能去另一位队友的检出目
     录里查，命中就是一次凭空拒绝——而按这个模块自己的口径，挡住一条本该记下的事
     实比多记一条重复的糟得多。
 

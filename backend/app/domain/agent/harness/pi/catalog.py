@@ -1,11 +1,12 @@
-"""平台 CLI 在 pi 这边的样子：一份工具目录，和一次把参数还原成 argv 的调用。
+"""平台工具在 pi 这边的样子：一份工具目录，和一次调用。
 
 pi has no MCP, so a room's platform tools cannot arrive the way they do for the
-other harness. What CAN arrive is the same thing the other harness's MCP server
-is itself built out of: the CLI's own argparse tree. `cli_worker` already turns
-that tree into tool schemas and turns a tool call back into argv, and it is the
-CLI that decides what is valid — so this module reads the CLI **installed on
-this machine** and asks that one, rather than restating either half.
+other harnesses. What CAN arrive is the file they are built out of: the platform
+file installed on this machine carries both the platform's tool table
+(`PLATFORM_TOOLS`, run in-process against the backend) and the CLI's argparse
+tree for what must run here as a process (`cli_worker` turns that tree into
+tool schemas and a call back into argv). This module reads that file and asks
+it, rather than restating either half.
 
 Two consequences worth stating, because they are the point:
 
@@ -40,7 +41,7 @@ def cli_path() -> Path | None:
     return Path(found) if found else None
 
 
-def _parser(source: Path) -> Any:
+def _module(source: Path) -> Any:
     # A module name of our own, so the CLI's `if __name__ == "__main__"` does
     # not fire while we are only asking it to describe itself. Not registered
     # in `sys.modules` either: this is a file being read, not an import anyone
@@ -56,15 +57,38 @@ def _parser(source: Path) -> Any:
         raise RuntimeError(f"{source} cannot be read as Python")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    build = getattr(module, "build_parser", None)
+    return module
+
+
+def _parser(source: Path) -> Any:
+    build = getattr(_module(source), "build_parser", None)
     if build is None:
         raise RuntimeError(f"{source} does not publish an argparse parser")
     return build()
 
 
 def tools(source: Path) -> list[dict]:
-    """Every leaf command of the installed CLI, as a tool definition."""
-    return cli_worker._tools(_parser(source))
+    """The platform's tool table, then every leaf command of the installed CLI.
+
+    The table is the same constant the other harnesses serve (结论 63); the
+    leaves are what is left for the machine to run as a process."""
+    return [
+        *_module(source).PLATFORM_TOOLS.schemas(),
+        *cli_worker._tools(_parser(source)),
+    ]
+
+
+def is_platform_tool(source: Path, tool: str) -> bool:
+    return tool in _module(source).PLATFORM_TOOLS
+
+
+def run_platform_tool(
+    source: Path, tool: str, arguments: dict, *, cwd: str | None, doc_versions: dict
+) -> str:
+    """One table tool, run here: this is the machine, so the host is local."""
+    module = _module(source)
+    host = module.LocalHost(doc_versions=doc_versions, cwd=cwd)
+    return module.run_platform_tool(tool, arguments, host)
 
 
 def argv(source: Path, tool: str, arguments: dict) -> list[str]:

@@ -3,9 +3,10 @@
 Nothing here is about any one harness. What it knows is the platform CLI —
 how its argparse tree becomes tool schemas, how a tool call becomes the argv
 that CLI would have been typed with, and how to run one without paying the
-interpreter's startup on every call. Both harnesses need the first two: Claude
-Code serves them through its MCP transport, pi registers them as extension
-tools. Neither of them is what makes any of it true.
+interpreter's startup on every call. pi registers the tree's leaves as extension
+tools; the Claude Code executor preloads the CLI so a Bash `cheese …` starts
+fast. The platform's own tools are not in this tree: they are the session-side
+table in the same file (`PLATFORM_TOOLS`, 结论 63).
 
 It lived inside the Claude Code adapter until 2026-09-17, which is the only
 reason this docstring says so — it was the first caller, not the owner, and a
@@ -75,20 +76,16 @@ def _tool_name(command):
     return "cheese_" + "_".join(part.replace("-", "_") for part in command)
 
 
-def _default_join(*parts: str) -> str:
-    return "\n\n".join(p for p in parts if p)
-
-
-def _description(ancestors, leaf, join=_default_join):
+def _description(ancestors, leaf):
     body = leaf.description or leaf.format_usage().strip()
     # ancestors[0] is the program root. Its description is how to read the CLI
     # as a whole, not any one tool's 什么时候该用 — threading it in buries every
     # tool schema under the same boilerplate.
     context = [parser.description for parser in ancestors[1:] if parser.description]
-    return join(*context, body) if context else body
+    return "\n\n".join((*context, body))
 
 
-def _tools(parser, join=_default_join):
+def _tools(parser):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
     tools = []
@@ -108,7 +105,7 @@ def _tools(parser, join=_default_join):
         tools.append(
             {
                 "name": _tool_name(command),
-                "description": _description(ancestors, leaf, join),
+                "description": _description(ancestors, leaf),
                 "inputSchema": schema,
             }
         )
@@ -189,7 +186,7 @@ class Handler(socketserver.BaseRequestHandler):
                 os.close(descriptor)
             result = {
                 "status": 0,
-                "result": {"tools": _tools(server.parser, server.join_descriptions)},
+                "result": {"tools": _tools(server.parser)},
             }
             self.request.sendall(json.dumps(result).encode() + b"\n")
             return
@@ -260,12 +257,6 @@ class Server(socketserver.ForkingMixIn, socketserver.UnixStreamServer):
         exec(self.code, namespace)
         build_parser = namespace.get("build_parser")
         self.parser = build_parser() if build_parser else None
-        join = namespace.get("join_descriptions")
-        self.join_descriptions = (
-            join
-            if callable(join)
-            else lambda *parts: "\n\n".join(p for p in parts if p)
-        )
         if threading.active_count() != 1:
             raise RuntimeError("CLI preload must remain single-threaded before fork")
         self.signature = signature

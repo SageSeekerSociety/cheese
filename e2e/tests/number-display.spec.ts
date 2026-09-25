@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { login } from './helpers';
+import { apiLogin } from './helpers';
 
 // 数字显示不全的检测器。
 //
@@ -119,7 +119,7 @@ async function inflateFixture(page: import('@playwright/test').Page): Promise<vo
 test.describe('数字不会被裁掉', () => {
   for (const kind of ['pipeline', 'usage', 'platform', 'performance'] as const) {
     test(`看板 · ${kind}：没有数字叶子被裁，简写都带完整值`, async ({ page }) => {
-      await login(page);
+      await apiLogin(page);
       await page.goto('/admin/dashboard');
       await page.waitForLoadState('networkidle');
       // 切到这一类（导轨上的按钮：accessible name 是裸标签）。

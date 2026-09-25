@@ -190,6 +190,18 @@
      和圆角同一个道理，这两行只在 :root 写一次，不在深色块里重复。 */
   --lh-14-loose: 22px; /* 1.57 — .t-body-readable */
   --lh-15-reading: 24px; /* 1.60 — .t-reading */
+
+  /* ---- Motion ----
+     Four durations and three curves, shared by the whole product (design-system
+     §9.3). Things arrive decelerating and leave accelerating, and leaving is one
+     step faster than arriving. Theme-independent, so written once here. */
+  --dur-press: 100ms; /* the moment something is pressed */
+  --dur-quick: 150ms; /* hover colour; leaving, collapsing */
+  --dur-base: 220ms; /* arriving, expanding; indicators and reorders moving */
+  --dur-slow: 320ms; /* drawers, side panels, a card opening into its detail */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* arriving */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* leaving */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* changing in place */
 }
 
 /* ---------------------------------------------------------------------------
@@ -349,6 +361,18 @@
   color: var(--ink);
 }
 
+/* Dialog title: 18 / 26 / 600 / --ink. 弹窗标题那一档（§3.2 的 18px），此前没有
+   类可用，弹窗各自拿 Vuetify 的 text-h6（20px，不在字号阶梯上）。
+   选择器写两遍是为了压过 .v-card-title：两者特异度相同，而 VCard 的样式表在这份
+   文件之后注入，单写一个类会被它的 20px / 500 盖掉。 */
+.t-dialog-title.t-dialog-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: var(--lh-18);
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
 /* Eyebrow label: 12 / 18 / 600 / --faint / .04em (not all-caps for Chinese) */
 .t-eyebrow {
   font-size: 12px;
@@ -459,6 +483,47 @@
 .t-num {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
+}
+
+/* 浮层菜单里的列表（「我」的菜单、帮助与反馈）：每一项只有一行字，不带图标。
+   Vuetify 的 compact 密度是 40px，这里再收到 36px；悬停与选中都是中性色（同
+   TopicSidebar 的 .nav-row），琥珀在导航里只留给左栏那一格「当前在哪」。
+   两个菜单共用这一份，各写一份的时候它们的行高和间距已经不一样过一次。 */
+/* 用 Vuetify 自己的 nav 形态（`<v-list nav>`）：列表左右 8px、每项左右 8px，字落在
+   离菜单边 16px 的地方，和偏好行、菜单头对齐；悬停底色是一块缩进的圆角。这里只收
+   上下的留白。 */
+.menu-list.menu-list {
+  padding-block: 4px;
+}
+
+/* 类名写两遍：Vuetify 的 .v-list-item--density-compact.v-list-item--one-line（40px）
+   和这里同特异度，而它的样式表在这份文件之后注入。 */
+.menu-list .v-list-item.v-list-item {
+  min-height: 36px;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.menu-list .v-list-item-title {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+.menu-list .v-list-item:hover {
+  background: var(--fill);
+}
+
+.menu-list .v-list-item--active {
+  background: var(--line-2);
+}
+
+.menu-list .v-list-item--active > .v-list-item__overlay {
+  opacity: 0;
+}
+
+.menu-list .v-list-item--active .v-list-item-title {
+  font-weight: 600;
+  color: var(--ink);
 }
 
 /* 密集读数：13 / 19 / 600。**此前它被 5 个模板引用、却在 style.css 里没有任何

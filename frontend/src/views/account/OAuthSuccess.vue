@@ -5,13 +5,7 @@
       <v-alert type="error" variant="tonal" density="comfortable" class="mb-6">
         {{ error }}
       </v-alert>
-      <v-btn
-        block
-        color="primary"
-        size="large"
-        to="/account/signin"
-        style="text-transform: none; font-weight: 500; height: 48px"
-      >
+      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
         {{ t('account.backToSignIn') }}
       </v-btn>
     </template>
@@ -35,6 +29,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { rememberSignIn } from './lastSignIn'
 import { oauthProviderName } from './oauthProvider'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
@@ -50,42 +45,30 @@ const error = ref('')
 const providerName = ref('OAuth')
 
 onMounted(async () => {
-  const token = route.query.token as string
   const linked = route.query.linked as string
   const provider = route.query.provider as string
 
   if (provider) providerName.value = oauthProviderName(provider)
 
-  if (!token) {
-    processing.value = false
-    error.value = t('account.oauth.success.missingToken')
+  // 登录用的 state 由后端签发和核对，出站时存下的这一份用不上，清掉。
+  localStorage.removeItem('oauth_state')
+
+  // 回跳地址里不带令牌：后端只设了刷新 cookie，拿它换访问令牌。
+  const outcome = await AccountService.resumeFromCookie()
+  processing.value = false
+  if (outcome !== 'ok') {
+    error.value = outcome === 'rejected' ? t('account.oauth.success.incomplete') : t('account.oauth.success.failed')
     return
   }
 
-  try {
-    // 登录用的 state 由后端签发和核对，出站时存下的这一份用不上，清掉。
-    localStorage.removeItem('oauth_state')
+  // 根据是否为绑定操作显示不同的成功消息
+  toast.success(
+    linked === 'true'
+      ? t('account.oauth.success.linked', { provider: providerName.value })
+      : t('account.oauth.success.signedIn', { provider: providerName.value })
+  )
 
-    // 直接使用 token 登录，login 方法会自动获取完整的用户信息
-    await AccountService.login(token)
-
-    processing.value = false
-
-    // 根据是否为绑定操作显示不同的成功消息
-    toast.success(
-      linked === 'true'
-        ? t('account.oauth.success.linked', { provider: providerName.value })
-        : t('account.oauth.success.signedIn', { provider: providerName.value })
-    )
-
-    // 延迟跳转到主页
-    setTimeout(() => {
-      router.replace(takeOAuthRedirect())
-    }, 1500)
-  } catch (err) {
-    processing.value = false
-    error.value = t('account.oauth.success.failed')
-    console.error('OAuth 登录成功处理失败:', err)
-  }
+  if (linked !== 'true' && provider) rememberSignIn(`oauth:${provider}`)
+  router.replace(takeOAuthRedirect())
 })
 </script>

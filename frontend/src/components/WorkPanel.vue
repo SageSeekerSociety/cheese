@@ -21,7 +21,7 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
-import type { PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -43,6 +43,8 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
+    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    agentControl?: AgentControlState | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -64,6 +66,7 @@ const props = withDefaults(
   }>(),
   {
     working: false,
+    agentControl: null,
     topicList: () => [],
     openCardId: null,
     memberNames: () => ({}),
@@ -172,12 +175,11 @@ function setTab(key: string) {
 // again unless another topic is opened.
 const settled = ref(false)
 
-// 只能选 `tabIsOffered` 真的会给出来的那几格 —— 选了一个不在 tab 栏上的，界面就
-// 切到一片空白。支线上「改动」那一格不存在（见 `tabIsOffered`），所以支线在
-// reviewing/delivering 时留在默认格；「现场」是支线自己的，照常可以选。
+// 只挑有东西可看的那一格：挑中一格空的，人一进房间看到的就是一句「暂无」——
+// 待验收的房间没有改动文件（比如项目还没接仓库）时，原来就落在一块报错上。
 function tabForPhase(phase: TopicPhase): TabKey {
   if (phase === 'working') return 'site'
-  if (phase === 'reviewing' || phase === 'delivering') return 'changes'
+  if ((phase === 'reviewing' || phase === 'delivering') && hasContent('changes')) return 'changes'
   return defaultTab.value
 }
 
@@ -264,14 +266,13 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   else previewLatest.value = id
 }
 
-// ---- 能力: a tab exists only where the thing it shows exists ----
-// 文档 is every topic's — it is the topic's state, and a topic always has one.
-// The other three are about a workspace 芝士 worked in, and asking for one of
-// them on a topic that never ran used to yield a tab whose whole content was a
-// sentence explaining there was nothing there. The kind of the topic does NOT
-// decide this: the backend gives every topic a worktree and a branch, so 房间型
-// vs 任务型 would have been a guess about capability rather than a reading of it.
+// ---- 这一格此刻有没有东西 ----
+// 四格永远都在、位置不变：人记得住「改动在第三格」，一格时有时无的 tab 栏两次打开
+// 可能不一样长。没东西的那一格字变浅，点进去是它自己的「暂无」。这里只回答有没有，
+// 给字的深浅用，也给「开在哪一格」用——那一刻不该挑一格空的。
 const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles: [], hasRun: false })
+// 这个房间的 summary 回来过没有。没回来之前「没有改动」还不是事实。
+const summaryLoaded = ref(false)
 
 async function pollWorkSummary(opts: { seen?: boolean } = {}) {
   const tid = props.topic?.id
@@ -281,12 +282,15 @@ async function pollWorkSummary(opts: { seen?: boolean } = {}) {
   try {
     next = await getTopicWorkSummary(pid, tid)
   } catch {
-    // A failed poll is not a state. Leaving the tab bar as it was beats making
-    // tabs disappear because one request lost a race with a redeploy.
+    // A failed poll is not a state: what the tabs show stays as it was. It still
+    // counts as an answer for 「开在哪一格」, which then stays on the default tab
+    // rather than waiting on a summary that may never come.
+    if (props.topic?.id === tid) summaryLoaded.value = true
     return
   }
   if (props.topic?.id !== tid) return
   summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
+  summaryLoaded.value = true
   // Arriving at a topic that already had changes is not news, exactly as it is
   // not news for the preview — the hint means 「这一轮干出来的」.
   if (opts.seen || active.value === 'changes') markChangesSeen()
@@ -323,24 +327,18 @@ async function pollThreads() {
   }
 }
 
-function tabIsOffered(key: TabKey): boolean {
-  // (自由区的页签不经过这里：开着就在，关掉就没——那是读者自己的动作。)
-  // The tab you are ON never disappears from under you. A topic whose changes
-  // just merged, or whose preview 芝士 retracted, would otherwise close the
-  // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
-  if (key === active.value) return true
-  if (key === 'chat') return props.withChat
-  if (key === 'overview') return true
+function hasContent(key: TabKey): boolean {
+  if (key === 'chat' || key === 'overview') return true
   // 改动属于**树**：一棵树 = 一个分支 = 一个 PR = 一批活，所以这份 diff 是这个
   // 房间当前这一批一起写出来的。
   if (key === 'changes') return summary.value.changedFiles.length > 0
-  // 现场 is where 芝士 works: it is there once the room has run, and from the
+  // 现场 is where 芝士 works: it has something once the room has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
   return !!previewLatest.value
 }
 
-const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
+const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.withChat))
 
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
@@ -356,9 +354,6 @@ function tabTitle(t: TabDef): string {
   }
   return t.label
 }
-// 房间型话题（谁也没在里面干过活）就只剩文档一个 tab —— 一条只有一个选项的
-// tab 栏教不了任何东西，只是一条占着 33px 的横线。
-const showTabBar = computed(() => tabs.value.length + openFiles.value.length > 1)
 
 // Topic switch: the address decides, 文档 when it says nothing. Baseline the dot
 // against whatever this topic already had, so opening a topic — including
@@ -377,6 +372,7 @@ watch(
     markPreviewSeen(null)
     previewPath.value = null
     summary.value = { changedFiles: [], hasRun: false }
+    summaryLoaded.value = false
     changesSeen.value = ''
     threads.value = { total: 0, open: 0 }
     if (id) {
@@ -390,14 +386,15 @@ watch(
 
 // Declared after the topic watcher on purpose: both fire immediately on mount,
 // in declaration order, and this one must see the `settled` that watcher sets.
+//
+// 待验收 / 交付中要等 summary 回来才挑：开在「改动」的前提是真有改动，而两个请求
+// 同时发出，谁先到说不准。等到的是一个事实，不是一场赛跑。
 watch(
-  () => props.phase,
-  (phase) => {
+  [() => props.phase, summaryLoaded],
+  ([phase, loaded]) => {
     if (settled.value || !phase) return
+    if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
     const want = tabForPhase(phase)
-    // No capability check: a topic reporting 待验收 has a card, and a card is a
-    // diff. Requiring the summary to have landed first would make the choice a
-    // race between two requests fired at the same moment.
     if (want === active.value) settled.value = true
     else setTab(want)
   },
@@ -511,14 +508,14 @@ defineExpose({ pulse, highlightTurn, openFile })
     </div>
 
     <template v-else>
-      <div v-if="showTabBar" ref="tabbarRef" class="tabbar" role="tablist">
+      <div ref="tabbarRef" class="tabbar" role="tablist">
         <button
           v-for="t in tabs"
           :key="t.key"
           type="button"
           role="tab"
           class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === t.key }"
+          :class="{ 'tabbar__tab--on': active === t.key, 'tabbar__tab--empty': !hasContent(t.key) }"
           :aria-selected="active === t.key"
           :title="tabTitle(t)"
           @click="setTab(t.key)"
@@ -608,6 +605,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           :active="active === 'site'"
           :member-names="memberNames"
           :working="working"
+          :agent-control="agentControl"
         />
         <PanelChanges
           v-if="mounted.has('changes')"
@@ -699,6 +697,10 @@ defineExpose({ pulse, highlightTurn, openFile })
 }
 .tabbar__tab:hover {
   color: var(--ink);
+}
+/* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */
+.tabbar__tab--empty:not(.tabbar__tab--on) {
+  color: var(--faint);
 }
 /* 固定区和自由区之间的那一道：前面几格永远在，后面几格是你自己开的。 */
 .tabbar__sep {

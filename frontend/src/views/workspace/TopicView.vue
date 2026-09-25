@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Topic } from '@/cx_types'
+import type { AgentControlState, Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
@@ -12,7 +12,7 @@ import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { topicPhase } from '@/lib/topicState'
+import { topicPhase, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -77,7 +77,7 @@ const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
   selectedTopic,
   (topic) => {
-    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
   },
   { immediate: true }
@@ -150,6 +150,7 @@ function onLocate(message: string) {
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
+  'agent-control': (state: AgentControlState) => (agentControl.value = state),
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
@@ -162,6 +163,8 @@ const chatEvents = {
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
+// 会话控制状态的最近一帧，对话栏从 socket 上收到，现场那格的控制条读它。
+const agentControl = ref<AgentControlState | null>(null)
 
 // ---- 话题此刻处在哪一段 (规则 3/4) ----
 // The accept card owns its own data, but not the one word that summarises it:
@@ -284,6 +287,7 @@ watch(
   () => props.topicId,
   async (id) => {
     working.value = false
+    agentControl.value = null
     if (!id) return
     unreadOnOpen.value = store.unreadMap[id] ?? 0
     // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
@@ -294,93 +298,102 @@ watch(
   },
   { immediate: true }
 )
+
+// 整个应用给每一颗没写颜色的按钮默认 `primary`（MyApp 的 v-defaults-provider），于是
+// 房间里每一颗「取消」「下载」「重新加载」、页头那颗退出专注都是琥珀的——而这一屏的
+// 主操作只有发送（和递上来的那张卡的「去验收」）。在房间这一层把默认换成中性色，
+// 真要琥珀的那几颗自己写着 `color="primary"`，不受影响。
+const ROOM_DEFAULTS = { VBtn: { color: 'on-surface-variant' } } as const
 </script>
 
 <template>
-  <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
-    <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
-      <v-progress-circular v-if="resolving" indeterminate color="primary" />
-      <div v-else class="text-center">
-        <div class="t-body c-muted">这个话题不存在</div>
-        <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+  <v-defaults-provider :defaults="ROOM_DEFAULTS">
+    <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
+      <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
+        <v-progress-circular v-if="resolving" indeterminate color="primary" />
+        <div v-else class="text-center">
+          <div class="t-body c-muted">这个话题不存在</div>
+          <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+        </div>
       </div>
-    </div>
 
-    <template v-else>
-      <!-- 一条话题头部，横跨对话和工作面板 -->
-      <TopicHeader
-        :topic="selectedTopic"
-        :phase="phase"
-        :members="store.members"
-        :me="AUTHOR"
-        :connected="composerReady"
-        :focus="focusMode"
-        @toggle-focus="focusMode = !focusMode"
-        @open-topic="openTopic"
-      />
+      <template v-else>
+        <!-- 一条话题头部，横跨对话和工作面板 -->
+        <TopicHeader
+          :topic="selectedTopic"
+          :phase="phase"
+          :members="store.members"
+          :me="AUTHOR"
+          :connected="composerReady"
+          :focus="focusMode"
+          @toggle-focus="focusMode = !focusMode"
+          @open-topic="openTopic"
+        />
 
-      <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
+        <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
            什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
            画。放在这里而不是首屏：见组件自己的说明。 -->
-      <PushPermissionPrompt :working="working" />
+        <PushPermissionPrompt :working="working" />
 
-      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
-        <TopicChatColumn
-          v-if="mdAndUp"
-          v-show="!focusMode"
-          ref="chatColumn"
-          class="col col-chat"
-          :style="{ flex: `0 0 ${store.chatPct}%` }"
-          :topic="selectedTopic"
-          :members="store.members"
-          :topic-list="store.topics"
-          :unread-on-open="unreadOnOpen"
-          v-on="chatEvents"
-        />
-        <div
-          v-if="mdAndUp && !focusMode"
-          class="pane-resizer"
-          title="拖动调整宽度，双击复位"
-          @mousedown.prevent="startPaneDrag"
-          @dblclick="store.setChatPct(50)"
-        />
-        <WorkPanel
-          ref="panelRef"
-          class="col col-doc"
-          :style="{ flex: '1 1 0', minWidth: 0 }"
-          :topic="selectedTopic"
-          :activity-tick="activityTick"
-          :working="working"
-          :topic-list="store.topics"
-          :tab="panelTab"
-          :phase="phase"
-          :with-chat="!mdAndUp"
-          :open-card-id="openCardId"
-          :member-names="memberNames"
-          @open-topic="openTopic"
-          @open-card="onOpenCard"
-          @review="onReview"
-          @mention-click="handleMentionClick"
-          @update:tab="onPanelTab"
-          @locate="onLocate"
-        >
-          <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
-          <template #chat>
-            <TopicChatColumn
-              ref="chatColumn"
-              class="col col-chat flex-grow-1"
-              :topic="selectedTopic"
-              :members="store.members"
-              :topic-list="store.topics"
-              :unread-on-open="unreadOnOpen"
-              v-on="chatEvents"
-            />
-          </template>
-        </WorkPanel>
-      </div>
-    </template>
-  </div>
+        <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
+          <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
+          <TopicChatColumn
+            v-if="mdAndUp"
+            v-show="!focusMode"
+            ref="chatColumn"
+            class="col col-chat"
+            :style="{ flex: `0 0 ${store.chatPct}%` }"
+            :topic="selectedTopic"
+            :members="store.members"
+            :topic-list="store.topics"
+            :unread-on-open="unreadOnOpen"
+            v-on="chatEvents"
+          />
+          <div
+            v-if="mdAndUp && !focusMode"
+            class="pane-resizer"
+            title="拖动调整宽度，双击复位"
+            @mousedown.prevent="startPaneDrag"
+            @dblclick="store.setChatPct(50)"
+          />
+          <WorkPanel
+            ref="panelRef"
+            class="col col-doc"
+            :style="{ flex: '1 1 0', minWidth: 0 }"
+            :topic="selectedTopic"
+            :activity-tick="activityTick"
+            :working="working"
+            :agent-control="agentControl"
+            :topic-list="store.topics"
+            :tab="panelTab"
+            :phase="phase"
+            :with-chat="!mdAndUp"
+            :open-card-id="openCardId"
+            :member-names="memberNames"
+            @open-topic="openTopic"
+            @open-card="onOpenCard"
+            @review="onReview"
+            @mention-click="handleMentionClick"
+            @update:tab="onPanelTab"
+            @locate="onLocate"
+          >
+            <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+            <template #chat>
+              <TopicChatColumn
+                ref="chatColumn"
+                class="col col-chat flex-grow-1"
+                :topic="selectedTopic"
+                :members="store.members"
+                :topic-list="store.topics"
+                :unread-on-open="unreadOnOpen"
+                v-on="chatEvents"
+              />
+            </template>
+          </WorkPanel>
+        </div>
+      </template>
+    </div>
+  </v-defaults-provider>
 </template>
 
 <style scoped>
@@ -397,14 +410,23 @@ watch(
 .col {
   min-width: 0;
 }
-/* Draggable splitter between chat and panel (replaces the static divider). */
+/* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
+   的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，
+   比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
 .pane-resizer {
-  flex: 0 0 5px;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 1px;
   cursor: col-resize;
   background: var(--line);
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
 }
 .pane-resizer:hover {
-  background: var(--accent);
+  background: var(--faint);
 }
 </style>

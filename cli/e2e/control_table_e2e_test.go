@@ -132,9 +132,6 @@ func installControlTable(t *testing.T, base string, table controlTable) {
 			body := string(row.Body)
 			body = strings.ReplaceAll(body, `"{project}"`, `"`+tableProject+`"`)
 			body = strings.ReplaceAll(body, `"{topic}"`, `"`+tableTopic+`"`)
-			// No RC claim in this shape, which is the empty answer the proxy
-			// gives an unflagged session.
-			body = strings.ReplaceAll(body, `"{rc_flags}"`, `{}`)
 			encoded, err := json.Marshal(body)
 			if err != nil {
 				t.Fatalf("encode the table body for %s: %v", match, err)
@@ -156,17 +153,13 @@ func installControlTable(t *testing.T, base string, table controlTable) {
 // made accounted for by the table and answered 2xx.
 func TestTheAnswerTableCoversWhatARealBootAsksFor(t *testing.T) {
 	table := loadControlTable(t)
-	f := startRendezvousClaude(t)
-
 	// A real turn, not just a boot: the tool call is what proves the process
-	// came all the way up under these answers rather than merely drawing a
-	// prompt. The mark file is written by the scripted Bash call.
-	if err := f.client.Reply("【平台】请运行那个工具。"); err != nil {
-		t.Fatalf("reply: %v", err)
-	}
+	// came all the way up under these answers. The mark file is written by the
+	// scripted Bash call.
+	f := startHeadlessClaude(t, "【平台】请运行那个工具。")
 	waitFor(t, "the tool call to land", 150*time.Second,
 		func() bool { return f.marks() >= 1 },
-		func() { t.Logf("--- pane ---\n%s", f.pane()) })
+		func() { t.Logf("--- claude stderr ---\n%s", f.stderr.String()) })
 
 	exchanges, err := f.recordedExchanges()
 	if err != nil {
@@ -215,7 +208,7 @@ func TestTheAnswerTableCoversWhatARealBootAsksFor(t *testing.T) {
 // bet is checked against a real request instead of against a reading of the
 // code. A body that named its model too late is refused, not quietly run on
 // whatever the CLI picked, so the cost of being wrong here is a dead turn.
-func assertModelArrivesInsideTheProxysHead(t *testing.T, f *rvFixture, table controlTable) {
+func assertModelArrivesInsideTheProxysHead(t *testing.T, f *bootFixture, table controlTable) {
 	t.Helper()
 	body, err := f.lastConversationBody()
 	if err != nil {

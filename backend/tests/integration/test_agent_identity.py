@@ -19,7 +19,7 @@ from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
 def _own_agent(client, topic_id: str) -> str:
@@ -62,8 +62,8 @@ def _seed_agent(handle: str) -> None:
 
 
 def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
-    project_id = client.post(
-        "/projects", json={"name": "P", "owner_handle": created_by}
+    project_id = post_project(
+        client, json={"name": "P", "owner_handle": created_by}
     ).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
@@ -138,7 +138,7 @@ def test_the_summon_receipt_carries_the_same_agent(client):
 
 
 def _acting(project_id: str, topic_id: str, seat: str | None) -> dict[str, str]:
-    """`cheese remember` runs on the acting agent's own token; without one the
+    """`cheese_remember` runs on the acting agent's own token; without one the
     write lands as the room's default."""
     if seat is None:
         return {}
@@ -195,7 +195,7 @@ def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
     所以项目默认那位在自己房间里查得到，而另一位队友在它的房间里查不到——写入
     分给谁，决定的是谁读得到，不存在一个谁都能写、谁都能读的中间地带。
     """
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
 
     def _topic(title: str) -> str:
         return client.post(
@@ -249,8 +249,8 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     # member before the room can name it.
     client.post(
         f"/projects/{project_id}/members",
-        json={"user_handle": "ops", "role": "member"},
-        headers=bearer("alice"),  # the project owner — roster writes are guarded
+        json={"user_handle": "ops"},
+        headers=bearer("alice"),  # the project owner — seating a teammate is guarded
     )
     client.post(
         f"/topics/{topic_id}/members",
@@ -283,7 +283,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
 def _remember_about(client, project_id: str, person: str, fact: str) -> None:
     """项目默认芝士对某个人的一条记忆。
 
-    直接按键写库：写的那一侧（私聊里的 `cheese remember`）有自己的测试，这一组
+    直接按键写库：写的那一侧（私聊里的 `cheese_remember`）有自己的测试，这一组
     问的是列出来的时候都带回了什么。"""
 
     async def _seed() -> None:
@@ -307,10 +307,10 @@ def _list_memory(client, project_id: str, **params) -> list[dict]:
 
 
 def test_listing_a_project_shows_what_its_agents_remembered(client):
-    """`cheese remember` always carries a topic, so every agent write lands in
+    """`cheese_remember` always carries a topic, so every agent write lands in
     an agent pool. If listing skipped those, the memory panel showed an empty
     project while the live pool kept growing — unauditable by construction."""
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "T", "created_by": "alice"},
@@ -330,7 +330,7 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
 def test_listing_covers_every_agent_pool_in_the_project(client):
     """Two 芝士 keep separate pools; the project view must still see both, and
     `agent_handle` narrows to one."""
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
 
     def _topic(title: str) -> str:
         return client.post(
@@ -362,7 +362,7 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
     """The prefix scan is keyed on this project — a sibling project's identical
     agent handle must not come along."""
     ids = [
-        client.post("/projects", json={"name": n}).json()["data"]["id"]
+        post_project(client, json={"name": n}).json()["data"]["id"]
         for n in ("P1", "P2")
     ]
     for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
@@ -380,7 +380,7 @@ def test_listing_answers_what_was_remembered_about_me(client):
     """问「关于我记了什么」的人在请求里写了 `user_handle`，那是另一个问题。
 
     它和「这个项目的芝士都记了什么」一起答：两条各自成立，谁也不挡谁。"""
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "T", "created_by": "alice"},

@@ -2,14 +2,12 @@
 
 import asyncio
 import base64
-import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,9 +19,6 @@ from app.domain.agent import cli_worker, execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
-from app.domain.agent.harness.claude_code.remote_execution.client import (
-    _local_chat_send_argv,
-)
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
 from tests.support import wire
@@ -68,76 +63,35 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     assert seen == ["first", "rotated"]
 
 
-def test_chat_publication_fast_path_accepts_only_standalone_cli_invocations():
-    assert _local_chat_send_argv("cheese chat send 'hello world'") == [
-        "cheese",
-        "chat",
-        "send",
-        "hello world",
-    ]
-    assert _local_chat_send_argv("cheese chat send --file ./update.txt")[-1] == (
-        "./update.txt"
-    )
-    assert _local_chat_send_argv("cheese chat send '$(touch escaped)'") == [
-        "cheese",
-        "chat",
-        "send",
-        "$(touch escaped)",
-    ]
-    assert _local_chat_send_argv("cheese chat send hello; touch escaped") is None
-    assert _local_chat_send_argv("cheese chat send $(touch escaped)") is None
-    assert _local_chat_send_argv("printf x; cheese chat send hello") is None
+def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
+    token = tmp_path / "execution.token"
+    token.write_text("first")
+    client = executor_transport.RemoteClient({"token_file": str(token)})
+    seen = []
 
+    class Connection:
+        def request(self, method, path, *, body, headers):
+            seen.append(headers["X-Cheese-Token"])
 
-def test_chat_publication_fast_path_posts_with_session_credentials(monkeypatch, capsys):
-    from app.domain.agent.harness.claude_code.remote_execution import client
-
-    class Response(io.BytesIO):
-        def __init__(self):
-            super().__init__(b'{"data":{"id":"published"}}')
-
-        def __enter__(self):
+        def getresponse(self):
             return self
 
-        def __exit__(self, *_):
-            return False
+        status = 200
 
-    seen = {}
+        def read(self):
+            return b"{}"
 
-    def urlopen(request, timeout):
-        seen.update(
-            {
-                "url": request.full_url,
-                "timeout": timeout,
-                "headers": dict(request.headers),
-                "body": json.loads(request.data),
-            }
-        )
-        return Response()
+    def connection(self):
+        self.transport.headers = {}
+        return Connection(), ""
 
-    monkeypatch.setattr(
-        client.os,
-        "environ",
-        {
-            "CHEESE_API": "http://cheese.test/api",
-            "CHEESE_TOKEN": "scoped-token",
-            "CHEESE_TOPIC": "room",
-            "CHEESE_TURN": "turn",
-        },
-    )
-    import urllib.request
-
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    status = client._publish_chat_locally(
-        ["cheese", "chat", "send", "published", "--reply-to", "parent"]
-    )
-    assert status == 0
-    assert seen["url"] == "http://cheese.test/api/topics/room/messages"
-    assert seen["headers"]["X-cheese-token"] == "scoped-token"
-    assert seen["headers"]["X-cheese-turn"] == "turn"
-    assert seen["body"]["content"] == "published"
-    assert seen["body"]["reply_to"] == "parent"
-    assert json.loads(capsys.readouterr().out) == {"id": "published"}
+    monkeypatch.setattr(executor_transport.RemoteClient, "connection", connection)
+    monkeypatch.setenv("CHEESE_API", "http://platform.test")
+    monkeypatch.setenv("CHEESE_TOKEN", "stale")
+    client.platform_request({"path": "/topics/room"})
+    token.write_text("rotated")
+    client.platform_request({"path": "/topics/room"})
+    assert seen == ["first", "rotated"]
 
 
 @pytest.fixture
@@ -282,7 +236,7 @@ async def test_repeated_mutation_id_does_not_repeat_shell_write(executor):
 
 
 @pytest.fixture
-def central_transport(executor, tmp_path, request):
+def central_transport(executor, tmp_path):
     target, work, state = executor
     clients = []
     drop = []
@@ -341,7 +295,7 @@ def central_transport(executor, tmp_path, request):
                 "kind": "device",
                 "url": f"http://127.0.0.1:{server.server_port}/execution",
                 "workspace": str(work),
-                "central_hooks": getattr(request, "param", {}),
+                "central_hooks": {},
             }
         )
     )
@@ -401,6 +355,28 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
     assert not (work / "escaped").exists()
+
+
+def test_large_platform_response_keeps_its_json_receipt(central_transport):
+    process, _, _, _ = central_transport
+    body = {"payload": "x" * 180_000}
+    response = process.call(
+        "tools/call",
+        {
+            "name": "platform_request",
+            "arguments": {
+                "id": "large-platform-response",
+                "session_id": "fixture",
+                "method": "POST",
+                "path": "/platform-fixture",
+                "body": body,
+            },
+        },
+    )
+    encoded = response["content"][0]["text"]
+    assert len(encoded) < 32_000
+    receipt = json.loads(Path(json.loads(encoded)["receipt_path"]).read_text())
+    assert json.loads(receipt["result"]["stdout"]) == {"data": body}
 
 
 @pytest.mark.parametrize(
@@ -614,26 +590,50 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
     the connection directly reintroduces the timeout storm the breaker exists
     to stop: every SendUserFile on a sandbox session takes this path.
     """
-    commands = []
+    tools = []
 
     def invoke(payload, args):
-        commands.append((payload["id"], payload["tool"], args["command"]))
+        tools.append(payload["tool"])
         if args["command"].startswith("wc"):
             return {"value": {"stdout": "2\n"}}
         return {"value": {"stdout": base64.b64encode(b"hi").decode("ascii")}}
 
     assert central.stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
     assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
-    assert [(tool, command.split()[0]) for _, tool, command in commands] == [
-        ("Bash", "wc"),
-        ("Bash", "base64"),
-    ]
+    assert set(tools) == {"Bash"}
 
     def refuse_invoke(payload, args):
         return {"error": "machine is out of reach"}
 
     with pytest.raises(RuntimeError, match="machine is out of reach"):
         central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+
+
+def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
+    """The build hands back at most 30000 characters of a command's stdout and
+    cuts the rest. A living doc or a SendUserFile of a few tens of kilobytes is
+    ordinary, and it must come back byte for byte, not as a truncated base64
+    that fails to decode."""
+    import os
+    import subprocess
+
+    original = os.urandom(100_000) + "尾巴".encode()
+    path = tmp_path / "doc.md"
+    path.write_bytes(original)
+    ids = []
+
+    def invoke(payload, args):
+        ids.append(payload["id"])
+        out = subprocess.run(
+            ["sh", "-c", args["command"]], capture_output=True, text=True, check=True
+        ).stdout
+        return {"value": {"stdout": out[:30000]}}
+
+    assert central.read_file_on_the_machine(invoke, str(path), "id-big") == original
+    assert len(ids) == len(set(ids)), "each command needs its own request id"
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    assert central.read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
 
 
 def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
@@ -702,57 +702,15 @@ def test_send_user_file_names_the_object_form_it_cannot_take(central_transport):
         )
 
 
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "mcp__native__platform_request",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":"
-                                '{"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"custom policy"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_platform_mcp_respects_custom_policy_before_http(central_transport):
-    process, clients, _, _ = central_transport
-    result = process.call(
-        "tools/call",
-        {
-            "name": "platform_request",
-            "arguments": {
-                "id": "denied",
-                "session_id": "fixture",
-                "method": "POST",
-                "path": "/platform-fixture",
-                "body": {},
-            },
-        },
-    )
-    assert json.loads(result["content"][0]["text"])["deny"] == "custom policy"
-    assert clients == []
-
-
-def native_call(process, identifier, command):
+def native_call(process, identifier, tool, args):
     result = process.call(
         "tools/call",
         {
             "name": "invoke",
             "arguments": {
                 "id": identifier,
-                "tool": "Bash",
-                "args": {"command": command},
+                "tool": tool,
+                "args": args,
                 "session_id": "fixture",
             },
         },
@@ -895,53 +853,6 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == "second receipt"
 
 
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            event: [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "cat >> publication-hooks.jsonl; "
-                            "printf '\\n' >> publication-hooks.jsonl",
-                        }
-                    ],
-                }
-            ]
-            for event in ("PreToolUse", "PostToolUse")
-        }
-    ],
-    indirect=True,
-)
-def test_chat_publication_uses_resident_connection_and_stable_request_id(
-    central_transport,
-    tmp_path,
-):
-    process, clients, _, _ = central_transport
-    for _ in range(2):
-        result = native_call(process, "publication", "cheese chat send 'hello 世界'")
-        assert json.loads(result["result"]["stdout"]) == {"content": "hello 世界"}
-    assert len(process.publications) == 2
-    assert (
-        process.publications[0]["request_id"] == process.publications[1]["request_id"]
-    )
-    assert clients[0] == clients[1]
-    events = [
-        json.loads(line)
-        for line in (tmp_path / "publication-hooks.jsonl").read_text().splitlines()
-    ]
-    assert [event["hook_event_name"] for event in events] == [
-        "PreToolUse",
-        "PostToolUse",
-        "PreToolUse",
-        "PostToolUse",
-    ]
-    assert events[1]["tool_response"]["stdout"] == result["result"]["stdout"]
-
-
 def test_publication_connection_survives_worker_thread_exit(
     central_transport, tmp_path, monkeypatch
 ):
@@ -970,16 +881,6 @@ def test_publication_connection_survives_worker_thread_exit(
             publisher.publication.transport.connection.close()
 
 
-def test_chat_lost_response_is_not_replayed_or_sent_to_device(central_transport):
-    process, _, drop, _ = central_transport
-    drop.append(True)
-    with pytest.raises(RuntimeError):
-        native_call(process, "lost-publication", "cheese chat send 'hello'")
-    assert len(process.publications) == 1
-    native_call(process, "lost-publication", "cheese chat send 'hello'")
-    assert process.publications[0] == process.publications[1]
-
-
 def test_structured_chat_publishes_literal_content_without_executor(central_transport):
     process, clients, _, work = central_transport
     content = "hello 'world'\n$(touch forbidden); --literal"
@@ -1003,8 +904,9 @@ def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
     for index in range(40):
-        assert "result" in native_call(process, str(index), "printf x >> count")
-    assert (work / "count").read_text() == "x" * 40
+        written = {"file_path": str(work / f"file-{index}"), "content": "x"}
+        assert "result" in native_call(process, str(index), "Write", written)
+    assert all((work / f"file-{index}").read_text() == "x" for index in range(40))
     # Each worker owns a connection; sequential replies may use different workers.
     assert len(set(clients)) < len(clients)
     assert process.process.pid == pid and process.process.poll() is None
@@ -1028,111 +930,16 @@ def test_structured_chat_retry_retains_request_id(central_transport):
 
 def test_lost_http_response_is_not_replayed_and_original_id_recovers(central_transport):
     process, clients, drop, work = central_transport
+    written = {"file_path": str(work / "count"), "content": "once"}
     drop.append(True)
     with pytest.raises(RuntimeError):
-        native_call(process, "same", "printf once >> count")
+        native_call(process, "same", "Write", written)
     assert (work / "count").read_text() == "once"
     assert len(clients) == 1
-    assert "result" in native_call(process, "same", "printf once >> count")
-    assert (work / "count").read_text() == "once"
+    (work / "count").unlink()
+    assert "result" in native_call(process, "same", "Write", written)
+    assert not (work / "count").exists()
     assert len(clients) == 2 and clients[0] != clients[1]
-
-
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":{"
-                                '"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"blocked by policy"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ],
-        }
-    ],
-    indirect=True,
-)
-def test_resident_transport_keeps_policy_denials(central_transport):
-    process, clients, _, work = central_transport
-    assert native_call(process, "denied", "touch forbidden") == {
-        "deny": "blocked by policy"
-    }
-    assert not clients and not (work / "forbidden").exists()
-    assert native_call(process, "denied-chat", "cheese chat send 'forbidden'") == {
-        "deny": "blocked by policy"
-    }
-    assert not process.publications and not clients
-
-
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "mcp__native__chat_send",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":"
-                                '{"permissionDecision":"deny",'
-                                '"permissionDecisionReason":"publication denied"}}\''
-                            ),
-                        }
-                    ],
-                }
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_structured_chat_preserves_policy_denial(central_transport):
-    process, clients, _, _ = central_transport
-    result = process.call(
-        "tools/call",
-        {
-            "name": "chat_send",
-            "arguments": {
-                "content": "not published",
-                "id": "denied",
-                "session_id": "fixture",
-            },
-        },
-    )
-    assert json.loads(result["content"][0]["text"]) == {"deny": "publication denied"}
-    assert not process.publications and not clients
-
-
-def test_resident_transport_cancels_a_running_shell(central_transport):
-    process, _, _, work = central_transport
-    with ThreadPoolExecutor() as pool:
-        pending = pool.submit(
-            native_call, process, "cancelled", "touch started; sleep 30; touch finished"
-        )
-        deadline = time.monotonic() + 5
-        while not (work / "started").exists():
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        process.send(
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/cancelled",
-                "params": {"requestId": process.sequence},
-            }
-        )
-        outcome = pending.result(timeout=5)
-    assert outcome["result"]["interrupted"]
-    assert not (work / "finished").exists()
 
 
 def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):

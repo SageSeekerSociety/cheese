@@ -19,7 +19,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
@@ -29,8 +29,8 @@ pytestmark = pytest.mark.anyio
 async def test_first_tool_acquires_the_addressed_sessions_device(
     client, monkeypatch, old_online, background_state
 ):
-    project = client.post(
-        "/projects", json={"name": "Session hands", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -158,6 +158,17 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         assert response.status_code == 200, response.text
         assert response.json()["device"] == device
     assert hub.exec.await_count == 2
+    # A session from before the address fix still has the wrong URL in its
+    # persisted lease. Reacquiring work must repair it before the first ping.
+    async with client.test_factory() as db:
+        old_session = await AgentSessionService(db).by_id(identities[0][0])
+        expected_url = old_session.work_lease["url"]
+        old_session.work_lease = {
+            **old_session.work_lease,
+            "url": "http://172.17.0.1/topics/stale/execution/session-stale",
+        }
+        await db.commit()
+    remote.reset_mock()
     for session_id, _device, token in identities:
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
@@ -166,6 +177,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         )
         assert response.status_code == 200, response.text
     assert hub.exec.await_count == 2, "A subsequent tool must reuse its session lease"
+    assert remote.await_args_list[0].args[0]["url"] == expected_url
     assert any(call.args[1] == "prepare" for call in remote.await_args_list)
     # A deployment changes executor source files. The next tool updates the
     # existing resource; it does not leave an old executor running forever.
@@ -472,8 +484,8 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
 async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     client, monkeypatch, scenario, tmp_path
 ):
-    project = client.post(
-        "/projects", json={"name": "Session hands", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -677,14 +689,14 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         assert current.work_lease["resource_id"] == resource_id
 
 
-async def test_agent_cloud_choice_requires_its_own_team_membership(client, monkeypatch):
+async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
+    """Being on the project is enough; the agent need not sit on the team itself."""
     from app.domain.agent import compute_configs
     from app.domain.project.models import Project
-    from app.domain.team.models import Team, TeamMemberRole
-    from app.domain.team.repositories import TeamRepository
+    from app.domain.team.models import Team
 
-    project = client.post(
-        "/projects", json={"name": "Cloud authority", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Cloud authority", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -730,11 +742,6 @@ async def test_agent_cloud_choice_requires_its_own_team_membership(client, monke
     path = f"/topics/{topic_id}/sessions/{session_id}/work-choice"
     body = {"choice": {"name": "Cloud", "profile": "cloud"}}
     headers = {"X-Cheese-Token": token}
-    denied = client.put(path, headers=headers, json=body)
-    assert denied.status_code == 403, denied.text
-    async with client.test_factory() as db:
-        await TeamRepository(db).add_member(team_id, actor_id, TeamMemberRole.MEMBER)
-        await db.commit()
     selected = client.put(path, headers=headers, json=body)
     assert selected.status_code == 200, selected.text
     assert selected.json()["data"]["session"]["choice"]["profile"] == "cloud"
@@ -852,8 +859,8 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     monkeypatch.setattr(
         settings, "connector_public_base", "https://cheese.example.test/api"
     )
-    project = client.post(
-        "/projects", json={"name": "Dialers", "owner_handle": "alice"}
+    project = post_project(
+        client, json={"name": "Dialers", "owner_handle": "alice"}
     ).json()["data"]
     room = client.post(
         "/topics",
@@ -939,9 +946,6 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
         f"http://172.17.0.1:8081/topics/{topic_id}/execution/session-{resource}"
     )
     assert launch_env["CHEESE_API"] == "https://cheese.example.test/api"
-    assert launch_env["CHEESE_HOOK_URL"] == (
-        f"https://cheese.example.test/api/sandbox/hooks/{topic_id}"
-    )
     assert launch_env["CHEESE_PREVIEW_URL"] == (
         "wss://cheese.example.test/api/preview/tunnel"
     )

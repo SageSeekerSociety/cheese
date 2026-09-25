@@ -16,6 +16,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.integration.conftest import (
+    post_project,
     room_agent_seat,
     session_auth_headers,
     session_token,
@@ -23,7 +24,7 @@ from tests.integration.conftest import (
 
 
 def _project(client, name: str = "Mailbox") -> str:
-    r = client.post("/projects", json={"name": name})
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -721,11 +722,12 @@ def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
     """展开成零行的广播报错，不静默回 200。
 
     广播现在是「名册上一人一行」，而一间只坐着芝士的房间展开出来是空的 —— 回 200
-    的话 `cheese notify` 把返回值整个丢掉，写的人和该收的人都不会知道这条通知掉在
+    的话 `cheese_notify` 把返回值整个丢掉，写的人和该收的人都不会知道这条通知掉在
     了地上。并表之前它是一行 `target_handle IS NULL`，谁读都看得见，丢不掉。
     """
     pid = _project(client)
     tid = _topic(client, pid, "只有芝士在")
+    _leave_only_the_agent(client, tid)
 
     r = client.post(
         f"/projects/{pid}/alerts",
@@ -747,3 +749,25 @@ def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
         )["target_handle"]
         == "alice"
     )
+
+
+def _leave_only_the_agent(client, topic_id: str) -> None:
+    """Take every person's seat out of the room, so only 芝士 sits in it (a new
+    room seats the project's owner, and every project has one)."""
+    import uuid as _uuid
+
+    from sqlalchemy import delete
+
+    from app.domain.topic.models import TopicMembership
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                delete(TopicMembership).where(
+                    TopicMembership.topic_id == _uuid.UUID(topic_id),
+                    ~TopicMembership.member_handle.startswith("cheese"),
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_run())

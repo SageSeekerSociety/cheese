@@ -25,10 +25,10 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from tests.integration.conftest import registered
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -105,8 +105,9 @@ def test_an_old_rooms_seat_and_lines_move_to_the_projects_cheese(
 
     async def run() -> None:
         members = TopicMemberService(db_session)
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Old room", forge_kind="github_app"
+            owner_handle="owner", name="Old room", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(
             project_id=project.id, title="老房间", created_by="alice"
@@ -150,8 +151,9 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(
 
     async def run() -> None:
         members = TopicMemberService(db_session)
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Crowded old room", forge_kind="github_app"
+            owner_handle="owner", name="Crowded old room", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(
             project_id=project.id, title="老房间", created_by="alice"
@@ -193,8 +195,9 @@ def test_the_project_roster_row_follows_the_credentials_new_name(
     """
 
     async def run() -> None:
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Off-platform 芝士", forge_kind="github_app"
+            owner_handle="owner", name="Off-platform 芝士", forge_kind="github_app"
         )
         assert project.root_topic_id is not None
         own = agent_instance_handle(project.default_agent_instance_id)
@@ -202,7 +205,6 @@ def test_the_project_roster_row_follows_the_credentials_new_name(
         await members.add(
             project_id=project.id,
             user_handle=_stand_in(project.root_topic_id),
-            role=ProjectRole.member,
         )
         await db_session.flush()
 

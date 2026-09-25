@@ -9,13 +9,15 @@ from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
+    post_project,
     room_agent_seat,
     session_auth_headers,
 )
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
-    pr = client.post("/projects", json={"name": "Demo", "owner_handle": owner})
+    pr = post_project(client, json={"name": "Demo", "owner_handle": owner})
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
@@ -43,7 +45,7 @@ def test_create_and_list_project(client):
     # their token lapsed). Creating anonymously would leave the project with no
     # owner and no roster, so nobody would have a claim on it either.
     headers = session_auth_headers("alice")
-    client.post("/projects", json={"name": "P1"}, headers=headers)
+    post_project(client, json={"name": "P1"}, headers=headers)
     r = client.get("/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
@@ -206,7 +208,7 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
     assert "你是芝士，回答先给结论" in prompt
     assert "项目用 FastAPI 写后端" not in prompt
     assert "记忆池里另有 **1 条**" in prompt
-    assert "cheese recall" in prompt
+    assert "cheese_recall" in prompt
 
 
 def test_empty_content_rejected(client):
@@ -236,7 +238,8 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     # each tagged with who said it (§8.4 multi-person disambiguation).
     # Two speakers means two sockets: authorship is pinned to the connection's
     # token, so one socket can only ever speak as one person.
-    _, topic_id = _create_project_and_topic(client, owner="alice")
+    project_id, topic_id = _create_project_and_topic(client, owner="alice")
+    join_project_team(client, project_id, "bob")
     client.post(
         f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},

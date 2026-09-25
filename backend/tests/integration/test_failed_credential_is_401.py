@@ -13,7 +13,7 @@ not.a.jwt` 回 12 个，含四个别人的）。修法是「认不出人就回�
 这批测试钉的是那条线本身——**递了但验不过** ≠ **什么都没递**：
 """
 
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import post_project, session_auth_headers, session_token
 
 
 def _projects(client, headers: dict | None = None):
@@ -48,8 +48,8 @@ def test_presenting_nothing_at_all_still_answers_an_empty_list(client):
 
 def test_a_good_token_still_gets_its_own_projects(client):
     """正常路径不能被这条规则碰到。"""
-    made = client.post(
-        "/projects", json={"name": "P"}, headers=session_auth_headers("alice")
+    made = post_project(
+        client, json={"name": "P"}, headers=session_auth_headers("alice")
     )
     assert made.status_code == 200, made.text
 

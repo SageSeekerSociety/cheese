@@ -182,7 +182,7 @@ describe('走进一个项目之后，← 回得去', () => {
   // 的时候再去取，那一页早就卸载了。
   it('说得出自己去哪儿', async () => {
     const view = await walk(TEAM, PROJECT + '/running')
-    expect(back(view)?.getAttribute('title')).toBe('返回小队')
+    expect(back(view)?.getAttribute('title')).toBe('返回团队')
   })
 
   // 左栏切项目是同一层上的平移。少了这一条，B 项目的 ← 会指向 A 项目。

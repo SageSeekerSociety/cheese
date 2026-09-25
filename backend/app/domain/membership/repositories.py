@@ -10,7 +10,6 @@ from app.domain.project.models import (
     InvitationStatus,
     ProjectInvitation,
     ProjectMember,
-    ProjectRole,
 )
 
 
@@ -18,12 +17,8 @@ class MemberRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def add(
-        self, *, project_id: uuid.UUID, user_handle: str, role: ProjectRole
-    ) -> ProjectMember:
-        member = ProjectMember(
-            project_id=project_id, user_handle=user_handle, role=role
-        )
+    async def add(self, *, project_id: uuid.UUID, user_handle: str) -> ProjectMember:
+        member = ProjectMember(project_id=project_id, user_handle=user_handle)
         self._session.add(member)
         await self._session.flush()
         await self._session.refresh(member)
@@ -54,14 +49,6 @@ class MemberRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def update_role(
-        self, member: ProjectMember, *, role: ProjectRole
-    ) -> ProjectMember:
-        member.role = role
-        await self._session.flush()
-        await self._session.refresh(member)
-        return member
-
     async def delete(self, member: ProjectMember) -> None:
         await self._session.delete(member)
         await self._session.flush()
@@ -82,13 +69,11 @@ class InvitationRepository:
         project_id: uuid.UUID,
         invitee_handle: str,
         inviter_handle: str,
-        role: ProjectRole,
     ) -> ProjectInvitation:
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=inviter_handle,
-            role=role,
             status=InvitationStatus.pending,
         )
         self._session.add(invitation)

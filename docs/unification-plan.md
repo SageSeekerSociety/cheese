@@ -53,8 +53,8 @@ story; one frontend token/API; no fallbacks.
       (migration c9f2a3b40e15). cheesex uuid `projects` is the only project.
 - [x] **P3 unify** (mostly): one auth token (main JWT carries a `handle` claim;
       cheesex reads it — verified one token authenticates both `/spaces` and
-      `/api/projects`); one backend (frontend `.env.local` → :8799, avatars load,
-      no fallback); dropped the `/cx` URL prefix (`/project/:id`). The workspace
+      `/api/projects`); one backend (the frontend reaches it through the `/api`
+      proxy, avatars load, no fallback); dropped the `/cx` URL prefix (`/project/:id`). The workspace
       is reachable natively from the shell via the rail project tiles.
 - [ ] **P4 native Task/Team → Project** (needs a product decision — see below).
 - [x] **P5 kill fallbacks**: avatars load from the backend `/avatars` (fixed the

@@ -37,8 +37,11 @@ const props = withDefaults(
     modelValue: boolean
     /** 定向重授权的旧订阅 id；空 = 新导入。 */
     targetSubscriptionId?: string | null
+    /** 定向重授权时上游模型的现值：重授权换凭据不换配置，输入框从这里起填，
+     *  否则一次换号会把行上的显式选择静默换成部署默认。 */
+    initialUpstreamModel?: string | null
   }>(),
-  { targetSubscriptionId: null }
+  { targetSubscriptionId: null, initialUpstreamModel: null }
 )
 
 const emit = defineEmits<{
@@ -52,6 +55,8 @@ const { t } = useI18n()
 
 const phase = ref<Phase>('start')
 const label = ref('')
+/** 上游模型输入框的原样值；空 = 跟随部署默认（提交时发 null）。 */
+const upstreamModel = ref('')
 const starting = ref(false)
 const flow = ref<DeviceFlowStartResponse | null>(null)
 const subscription = ref<LlmSubscription | null>(null)
@@ -70,6 +75,12 @@ let closed = true
 
 const minutesLeft = computed(() => Math.max(1, Math.ceil(remainingS.value / 60)))
 
+/** 上游模型只拒「输入了但全是空白」：留空合法（跟随部署默认）。 */
+const upstreamOk = computed(() => {
+  const v = upstreamModel.value
+  return v === '' || v.trim() !== ''
+})
+
 const isReauth = computed(() => !!props.targetSubscriptionId)
 
 function stopTimers() {
@@ -85,6 +96,7 @@ function reset() {
   copyTimer = null
   phase.value = 'start'
   label.value = ''
+  upstreamModel.value = props.initialUpstreamModel ?? ''
   flow.value = null
   subscription.value = null
   errorText.value = null
@@ -122,6 +134,7 @@ async function begin() {
       provider: 'openai_codex',
       label: label.value.trim() || null,
       target_subscription_id: props.targetSubscriptionId ?? null,
+      upstream_model: upstreamModel.value.trim() || null,
     })
     if (closed) return
     flow.value = started
@@ -252,11 +265,27 @@ function close() {
             autocomplete="off"
             hide-details="auto"
           />
+          <v-text-field
+            v-model="upstreamModel"
+            :label="t('models.subscription.upstreamModel')"
+            :hint="t('models.subscription.upstreamModelHint')"
+            :error="!upstreamOk"
+            :error-messages="upstreamOk ? [] : [t('models.subscription.upstreamModelInvalid')]"
+            density="comfortable"
+            variant="outlined"
+            maxlength="200"
+            autocomplete="off"
+            hide-details="auto"
+            class="mt-3"
+            data-testid="upstream-model-input"
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" :disabled="starting" @click="close">{{ t('models.dialog.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="starting" @click="begin">{{ t('models.subscription.start') }}</v-btn>
+          <v-btn color="primary" :loading="starting" :disabled="!upstreamOk" @click="begin">{{
+            t('models.subscription.start')
+          }}</v-btn>
         </v-card-actions>
       </template>
 

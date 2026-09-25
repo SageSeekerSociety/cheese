@@ -1,15 +1,29 @@
 {
   "verb": "backlog",
   "why": "A tool call reaches the room as it starts, carrying the harness's own id for it — which is the id its failure will name. Without the pair, a failure has no step to mark.",
-  "readers": ["python"],
+  "readers": [
+    "python"
+  ],
   "harnesses": {
     "claude-code": {
       "records": [
         {
-          "hook_event_name": "PreToolUse",
-          "tool_name": "Bash",
-          "tool_use_id": "toolu_1",
-          "tool_input": { "command": "pytest -q" }
+          "type": "assistant",
+          "uuid": "rec_1",
+          "session_id": "session-1",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "Bash",
+                "input": {
+                  "command": "pytest -q"
+                }
+              }
+            ]
+          }
         }
       ]
     },
@@ -25,7 +39,9 @@
                 "type": "toolCall",
                 "id": "toolu_1",
                 "name": "Bash",
-                "arguments": { "command": "pytest -q" }
+                "arguments": {
+                  "command": "pytest -q"
+                }
               }
             ],
             "stopReason": "toolUse",
@@ -34,13 +50,17 @@
         }
       ]
     },
-    "codex": { "difference": "no-call-id-on-tool-use" }
+    "codex": {
+      "difference": "no-call-id-on-tool-use"
+    }
   },
   "events": [
     {
       "kind": "tool_use",
       "name": "Bash",
-      "input": { "command": "pytest -q" },
+      "input": {
+        "command": "pytest -q"
+      },
       "call_id": "toolu_1"
     }
   ]

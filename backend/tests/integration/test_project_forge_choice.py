@@ -12,7 +12,7 @@ from app.domain.project import forge
 from app.domain.project.models import Project, ProjectForge
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from scripts import migrate_forge
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 @pytest.mark.parametrize("choice", [None, "forgejo", "github_app"])
@@ -22,7 +22,7 @@ def test_creation_honors_repository_choice(client, monkeypatch, choice):
     body = {"name": "Repository choice", "owner_handle": "alice"}
     if choice:
         body["forge_kind"] = choice
-    response = client.post("/projects", json=body)
+    response = post_project(client, json=body)
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
     expected = choice or "forgejo"
@@ -37,8 +37,8 @@ def test_creation_honors_repository_choice(client, monkeypatch, choice):
 
 
 def test_github_choice_can_connect_without_cross_forge_migration(client):
-    response = client.post(
-        "/projects",
+    response = post_project(
+        client,
         json={
             "name": "Existing GitHub work",
             "owner_handle": "alice",
@@ -71,8 +71,8 @@ def test_github_choice_can_connect_without_cross_forge_migration(client):
 def test_migration_leaves_pending_github_choice_unprovisioned(
     client, monkeypatch, tmp_path
 ):
-    response = client.post(
-        "/projects", json={"name": "Awaiting GitHub", "forge_kind": "github_app"}
+    response = post_project(
+        client, json={"name": "Awaiting GitHub", "forge_kind": "github_app"}
     )
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
@@ -93,8 +93,8 @@ def test_migration_leaves_pending_github_choice_unprovisioned(
 
 @pytest.mark.parametrize("kind", ["forgejo", "github_app"])
 def test_forge_status_uses_binding_and_excludes_credentials(client, kind):
-    response = client.post(
-        "/projects",
+    response = post_project(
+        client,
         json={
             "name": "Repository status",
             "owner_handle": "alice",
@@ -152,8 +152,8 @@ def test_requester_credit_setting_can_override_and_restore_deployment_default(
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "forge_attribution_default", True)
-    response = client.post(
-        "/projects",
+    response = post_project(
+        client,
         json={
             "name": "Credit policy",
             "owner_handle": "alice",
@@ -191,8 +191,8 @@ def test_requester_credit_setting_can_override_and_restore_deployment_default(
 def test_github_repository_selection_uses_project_settings_without_local_git(client):
     from app.api.routes.github_install import _upstream_repo
 
-    response = client.post(
-        "/projects",
+    response = post_project(
+        client,
         json={
             "name": "Select repository",
             "owner_handle": "alice",

@@ -134,8 +134,8 @@ def test_proxy_basic_password_extracts_the_connect_credential():
 
 
 def test_the_served_hosts_are_exactly_the_anthropic_names():
-    """The proxy injects the REAL credential per request, so the allowlist is
-    what keeps an attacker-chosen SNI from receiving the subscription token."""
+    """The proxy relays each session's own Claude credential, so the allowlist
+    is what keeps an attacker-chosen SNI from receiving it."""
     assert core.ANTHROPIC_HOSTS == {
         "api.anthropic.com",
         "console.anthropic.com",
@@ -261,32 +261,6 @@ def test_unknown_or_absent_supply_falls_back_to_the_subscription():
     assert ok.pool == core.GATEWAY and ok.key == "sk-virt-9"
 
 
-def test_a_half_upstream_identity_is_read_as_none(monkeypatch):
-    """`user:password` is what the ccproxy hop authenticates with. Half of one
-    authenticates as nobody, and the failure would surface as an upstream 407
-    several hops from the control plane that sent it — so it is rejected at the
-    parse, where the source is still obvious. None then means what it always
-    means: fall back to the deployment-wide identity."""
-
-    def answer(supply: dict) -> core.Verdict:
-        captured = json.dumps({"data": {"allow": True, "supply": supply}}).encode()
-
-        class _Resp:
-            def __enter__(self):
-                return io.BytesIO(captured)
-
-            def __exit__(self, *a):
-                return False
-
-        with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
-            return core._post_admission("http://backend/llm/admission", "tok", 3.0)
-
-    assert answer({"pool": "subscription", "upstream": "m516:pw"}).upstream == "m516:pw"
-    for junk in ("m516:", ":pw", "m516", "", None, 5, ["m516:pw"]):
-        assert answer({"pool": "subscription", "upstream": junk}).upstream is None
-    assert answer({"pool": "subscription"}).upstream is None
-
-
 def test_admission_gate_caches_and_fails_open():
     calls: list[str] = []
 
@@ -326,35 +300,31 @@ def test_relaunched_agent_does_not_reuse_its_previous_model_supply():
     assert gate.check("project", "room", "new-session").pool == core.GATEWAY
 
 
-def test_one_topics_machine_identity_is_never_served_to_another():
-    """Two topics of ONE project, on two different machines — the ordinary shape
-    of a project that leased more than one box.
+def test_one_topics_bound_model_is_never_served_to_another():
+    """Two topics of ONE project, asking with the same token — the shape of two
+    sessions sharing one tunnel helper, whose CONNECT token names whichever
+    launched last.
 
-    The budget half of an admission answer is the project's, but the identity
-    half names a single machine, and ccproxy only honours a machine's ticket
-    over that machine's own connection. So a verdict cached per project hands
-    the second topic the first one's identity for the rest of the window: the
-    turn is authenticated as a machine it is not, which the far edge answers
-    with a 401 that names nothing, and whatever does get through is billed to
-    the wrong machine.
+    The budget half of an admission answer is the project's, but the model it
+    binds comes from the topic's card. A verdict cached per project would hand
+    the second topic the first one's model for the rest of the window.
     """
-    identities = {"t-alpha": "m516:pw516", "t-beta": "m784:pw784"}
+    answers = iter(["claude-opus-5", "glm-4.6"])
     asked: list[str] = []
 
     def post(url, bearer, timeout_s):
         asked.append(bearer)
-        return core.Verdict(True, "ok", upstream=identities[bearer])
+        return core.Verdict(True, "ok", model=next(answers))
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=post)
 
-    # The bearer is the per-topic scoped token, so it stands in for the topic.
-    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
-    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
-    assert asked == ["t-alpha", "t-beta"]
+    assert gate.check("p1", "t-alpha", "tok").model == "claude-opus-5"
+    assert gate.check("p1", "t-beta", "tok").model == "glm-4.6"
+    assert len(asked) == 2
 
     # Still cached — per topic, which is the point. Neither answer moved.
-    assert gate.check("p1", "t-alpha", "t-alpha").upstream == "m516:pw516"
-    assert gate.check("p1", "t-beta", "t-beta").upstream == "m784:pw784"
+    assert gate.check("p1", "t-alpha", "tok").model == "claude-opus-5"
+    assert gate.check("p1", "t-beta", "tok").model == "glm-4.6"
     assert len(asked) == 2
 
 
@@ -451,3 +421,343 @@ def test_requested_model_of_refuses_names_that_would_break_the_admission_header(
     assert core.requested_model_of(b'{"model":"openai/gpt-5","messages":[]}') == (
         "openai/gpt-5"
     )
+
+
+# --- the platform's Claude credential ----------------------------------------
+
+import threading as _threading  # noqa: E402
+
+
+class _Clock:
+    def __init__(self, t: float) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _pair_file(tmp_path, *, expires_in_s, now, **extra):
+    path = tmp_path / "credential"
+    oauth = {
+        "accessToken": "sk-ant-oat01-OLD",
+        "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((now + expires_in_s) * 1000),
+        "refreshTokenExpiresAt": int((now + 20 * 86400) * 1000),
+        "scopes": ["user:inference", "user:profile"],
+        "subscriptionType": "max",
+        **extra,
+    }
+    path.write_text(json.dumps({"claudeAiOauth": oauth, "mcpOAuth": {"kept": 1}}))
+    return path
+
+
+def _granting(calls, **answer):
+    def post(url, body, timeout):
+        calls.append((url, body))
+        return 200, {
+            "access_token": "sk-ant-oat01-NEW",
+            "refresh_token": "sk-ant-ort01-NEW",
+            "expires_in": 28800,
+            "scope": "user:inference user:profile",
+            **answer,
+        }
+
+    return post
+
+
+def test_a_setup_token_is_used_as_it_is_and_never_refreshed(tmp_path):
+    path = tmp_path / "credential"
+    path.write_text("sk-ant-oat01-SETUP\n")
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls))
+
+    assert cred.token() == ("sk-ant-oat01-SETUP", "")
+    assert cred.refresh_due() is False
+    cred.refresh_if_due()
+    assert calls == []
+    assert path.read_text() == "sk-ant-oat01-SETUP\n"
+
+
+def test_a_fresh_pair_serves_its_access_token_without_asking_anyone(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=3600, now=clock.t)
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls), now=clock)
+
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+    assert cred.refresh_due() is False
+    cred.refresh_if_due()
+    assert calls == []
+
+
+def test_a_pair_near_expiry_is_refreshed_the_way_claude_code_does_it(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=120, now=clock.t)
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls), now=clock)
+
+    assert cred.refresh_due() is True
+    cred.refresh_if_due()
+
+    assert calls == [
+        (
+            "https://platform.claude.com/v1/oauth/token",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": "sk-ant-ort01-OLD",
+                "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                "scope": "user:profile user:inference user:sessions:claude_code "
+                "user:mcp_servers user:file_upload user:plugins",
+            },
+        )
+    ]
+    assert cred.token() == ("sk-ant-oat01-NEW", "")
+    written = json.loads(path.read_text())
+    oauth = written["claudeAiOauth"]
+    assert oauth["refreshToken"] == "sk-ant-ort01-NEW"
+    assert oauth["expiresAt"] == int(clock.t * 1000) + 28800 * 1000
+    # The server did not move the login deadline, so it stays where it was.
+    assert oauth["refreshTokenExpiresAt"] == int((clock.t + 20 * 86400) * 1000)
+    assert oauth["subscriptionType"] == "max"
+    assert written["mcpOAuth"] == {"kept": 1}
+    assert (path.stat().st_mode & 0o777) == 0o600
+    assert cred.refresh_due() is False
+
+
+def test_concurrent_requests_that_find_it_due_refresh_it_once(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+    granted = _granting(calls)
+    gate = _threading.Event()
+
+    def slow_post(url, body, timeout):
+        gate.wait(5)
+        return granted(url, body, timeout)
+
+    cred = core.PlatformCredential(path, post=slow_post, now=clock)
+    workers = [_threading.Thread(target=cred.refresh_if_due) for _ in range(8)]
+    for w in workers:
+        w.start()
+    gate.set()
+    for w in workers:
+        w.join(5)
+
+    assert len(calls) == 1
+    assert cred.token() == ("sk-ant-oat01-NEW", "")
+
+
+def test_a_refused_refresh_token_asks_for_a_new_login_and_stops_trying(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+
+    def refuse(url, body, timeout):
+        calls.append(body)
+        return 400, {"error": "invalid_grant"}
+
+    cred = core.PlatformCredential(path, post=refuse, now=clock)
+    cred.refresh_if_due()
+    clock.t += 3600
+    cred.refresh_if_due()
+
+    assert len(calls) == 1
+    assert cred.token() == ("", "login_required")
+
+
+def test_a_new_login_replaces_a_refused_one_without_a_restart(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    cred = core.PlatformCredential(
+        path,
+        post=lambda url, body, timeout: (400, {"error": "invalid_grant"}),
+        now=clock,
+    )
+    cred.refresh_if_due()
+    assert cred.token() == ("", "login_required")
+
+    _pair_file(tmp_path, expires_in_s=3600, now=clock.t, refreshToken="sk-ant-ort01-2")
+
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+
+
+def test_a_transient_failure_keeps_serving_the_valid_token_and_backs_off(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=200, now=clock.t)
+    calls = []
+
+    def unreachable(url, body, timeout):
+        calls.append(body)
+        raise OSError("connection reset")
+
+    cred = core.PlatformCredential(path, post=unreachable, now=clock)
+    cred.refresh_if_due()
+    clock.t += 10
+    cred.refresh_if_due()
+
+    assert len(calls) == 1
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+
+    clock.t += 60
+    cred.refresh_if_due()
+    assert len(calls) == 2
+
+
+def test_an_access_token_past_expiry_is_not_used(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=-1, now=clock.t)
+
+    def unreachable(url, body, timeout):
+        raise OSError("down")
+
+    cred = core.PlatformCredential(path, post=unreachable, now=clock)
+    cred.refresh_if_due()
+
+    assert cred.token() == ("", "expired")
+
+
+def test_no_file_or_an_unreadable_one_is_being_logged_out(tmp_path):
+    assert core.PlatformCredential(tmp_path / "nope").token() == ("", "none")
+    broken = tmp_path / "broken"
+    broken.write_text("{not json")
+    assert core.PlatformCredential(broken).token() == ("", "none")
+
+
+def test_the_refresh_goes_on_the_wire_exactly_as_laid_out():
+    """The transport must not add, re-case or reorder anything: what reaches
+    the socket is the request `refresh_request` describes, byte for byte, and
+    that is what the contract compares with the pinned Claude Code's own."""
+    import http.client
+    import socket
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received or not received.endswith(b"}"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-X",
+        "client_id": core.OAUTH_CLIENT_ID,
+        "scope": "user:profile user:inference",
+    }
+
+    status, answer = core._post_refresh(
+        f"http://127.0.0.1:{port}/v1/oauth/token",
+        body,
+        5,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    headers, raw = core.refresh_request(body)
+    expected = (
+        b"POST /v1/oauth/token HTTP/1.1\r\n"
+        + b"".join(f"{n}: {v}\r\n".encode() for n, v in headers)
+        + b"\r\n"
+        + raw
+    )
+    assert bytes(received) == expected
+    assert (status, answer) == (200, {"access_token": "new"})
+    assert raw == (
+        b'{"grant_type":"refresh_token","refresh_token":"sk-ant-ort01-X",'
+        b'"client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e",'
+        b'"scope":"user:profile user:inference"}'
+    )
+
+
+def test_an_egress_is_an_http_proxy_with_optional_credentials():
+    plain = core.Egress.parse("http://10.0.0.5:3128\n")
+    assert (plain.host, plain.port, plain.authorization) == ("10.0.0.5", 3128, "")
+    authed = core.Egress.parse("http://me:p%40ss@proxy.example:8080")
+    assert authed.authorization == "Basic " + base64.b64encode(b"me:p@ss").decode()
+    for invalid in ("", "https://proxy:1", "http://proxy", "socks5://proxy:1"):
+        assert core.Egress.parse(invalid) is None
+
+
+def test_a_credential_reads_its_egress_from_beside_it(tmp_path):
+    cred = core.PlatformCredential(tmp_path / "credential")
+    assert cred.egress() is None
+    (tmp_path / "egress").write_text("http://proxy.example:3128\n")
+    assert cred.egress() == core.Egress("proxy.example", 3128, "")
+
+
+def test_the_refresh_goes_through_the_egress_unchanged_inside_the_tunnel():
+    """Through an egress, the proxy is asked for a tunnel to the token endpoint
+    with its credentials, and what goes through the tunnel is the same request
+    byte for byte."""
+    import http.client
+    import socket
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received:
+                received.extend(conn.recv(65536))
+            conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            while not received.endswith(b"}"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-X",
+        "client_id": core.OAUTH_CLIENT_ID,
+        "scope": "user:inference",
+    }
+    egress = core.Egress.parse(f"http://me:pw@127.0.0.1:{port}")
+
+    status, answer = core._post_refresh(
+        core.OAUTH_TOKEN_URL,
+        body,
+        5,
+        egress=egress,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    tunnel, _, inside = bytes(received).partition(b"\r\n\r\n")
+    assert tunnel.startswith(b"CONNECT platform.claude.com:443 HTTP/")
+    assert b"Proxy-Authorization: Basic " + base64.b64encode(b"me:pw") in tunnel
+    headers, raw = core.refresh_request(body)
+    assert inside == (
+        b"POST /v1/oauth/token HTTP/1.1\r\n"
+        + b"".join(f"{n}: {v}\r\n".encode() for n, v in headers)
+        + b"\r\n"
+        + raw
+    )
+    assert (status, answer) == (200, {"access_token": "new"})

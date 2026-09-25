@@ -2,19 +2,25 @@
 
 Issuance: a project created FROM a 赛题 whose 项目集 carries a compute_credits
 资源包 gets a ComputeGrant (#370 — this used to be a separate "link a cheesex
-task" step). Deduction: a finished turn folds its token usage into credits
-(1 credit = settings.compute_credit_tokens tokens) and deducts oldest grant
-first. Exhaustion: a project whose grants are spent gets its turn refused with
-the platform's structured event; a project belonging to no 赛题 is unlimited.
+task" step). Deduction: the tokens a turn spent, as the metering proxy logs
+them, fold into credits (1 credit = settings.compute_credit_tokens tokens) and
+deduct oldest grant first. Exhaustion: a project whose grants are spent gets
+its turn refused with the platform's structured event; a project belonging to
+no 赛题 is unlimited.
 """
+
+import json
+import time
 
 import pytest
 
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
-# The stub agent reports usage of 10 input + 5 output tokens per turn; at the
-# default rate (1 credit = 10k tokens) one turn costs 0.0015 credits.
+# A Claude Code session reports no usage of its own: the metering proxy logs
+# each model response it carried, and that log is what burns credits. Each
+# turn here is metered at 10 input + 5 output tokens; at the default rate
+# (1 credit = 10k tokens) one turn costs 0.0015 credits.
 STUB_TURN_TOKENS = 15
 CREDITS_PER_TURN = STUB_TURN_TOKENS / 10_000
 
@@ -26,7 +32,7 @@ def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> 
     body: dict = {"name": name}
     if from_task is not None:
         body["external_task_id"] = from_task
-    r = client.post("/projects", json=body)
+    r = post_project(client, json=body)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -78,8 +84,39 @@ def _mk_topic(client, project_id: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _run_turn(client, topic_id: str) -> list[dict]:
-    """One summoned turn over the WS; returns all frames up to done/error."""
+def _metered(client, project_id: str, topic_id: str, log) -> None:
+    """The proxy's log line for the turn's traffic, and the ingest that reads it."""
+    import asyncio as _asyncio
+
+    from app.domain.usage.subscription_ingest import ingest_once
+
+    with log.open("a") as out:
+        out.write(
+            json.dumps(
+                {
+                    # Logged as the turn ran, so it counts toward that turn.
+                    "ts": time.time(),
+                    "project_id": project_id,
+                    "topic_id": topic_id,
+                    "model": "claude-opus-5",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "total_tokens": STUB_TURN_TOKENS,
+                    "provider": "subscription",
+                }
+            )
+            + "\n"
+        )
+    _asyncio.run(ingest_once(client.test_factory, log))  # type: ignore[attr-defined]
+
+
+def _run_turn(client, topic_id: str, meter=None) -> list[dict]:
+    """One summoned turn over the WS; returns all frames up to done/error.
+
+    ``meter`` is called once the turn has run, as the proxy would have logged
+    it; a refused turn never reached the model, so it is not metered."""
     frames: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "u1")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 你好"})
@@ -89,6 +126,8 @@ def _run_turn(client, topic_id: str) -> list[dict]:
             if frame["type"] in ("done", "error"):
                 break
     wait_work_idle()
+    if meter is not None and frames[-1]["type"] == "done":
+        meter()
     return frames
 
 
@@ -120,12 +159,15 @@ def test_a_赛题_with_no_credits_pack_grants_nothing(client):
     assert data["unlimited"] is True  # no grant issued → still自治/unlimited
 
 
-def test_turn_deducts_credits_from_grant(client):
+def test_turn_deducts_credits_from_grant(client, tmp_path):
     task_id = _mk_task(client, compute_credits=1)
     project_id = _mk_project(client, from_task=task_id)
 
     topic_id = _mk_topic(client, project_id)
-    frames = _run_turn(client, topic_id)
+    log = tmp_path / "usage.jsonl"
+    frames = _run_turn(
+        client, topic_id, lambda: _metered(client, project_id, topic_id, log)
+    )
     assert frames[-1]["type"] == "done"
 
     data = _credits(client, project_id)
@@ -133,7 +175,7 @@ def test_turn_deducts_credits_from_grant(client):
     assert data["credits_remaining"] == pytest.approx(1 - CREDITS_PER_TURN)
 
 
-def test_deduction_drains_oldest_grant_first(client):
+def test_deduction_drains_oldest_grant_first(client, tmp_path):
     # Grant 1 (older) is smaller than one turn's cost → it must be drained
     # fully, with the overflow charged to grant 2.
     task_a = _mk_task(client, compute_credits=0.001)
@@ -142,7 +184,8 @@ def test_deduction_drains_oldest_grant_first(client):
     _add_grant(client, project_id, 1, task_b)
 
     topic_id = _mk_topic(client, project_id)
-    _run_turn(client, topic_id)
+    log = tmp_path / "usage.jsonl"
+    _run_turn(client, topic_id, lambda: _metered(client, project_id, topic_id, log))
 
     data = _credits(client, project_id)
     by_task = {g["source_task_id"]: g for g in data["grants"]}
@@ -151,19 +194,24 @@ def test_deduction_drains_oldest_grant_first(client):
     assert data["credits_used"] == pytest.approx(CREDITS_PER_TURN)
 
 
-def test_exhausted_credits_refuse_next_turn(client):
+def test_exhausted_credits_refuse_next_turn(client, tmp_path):
     # One turn more than exhausts this grant (0.0001 < 0.0015).
     task_id = _mk_task(client, compute_credits=0.0001)
     project_id = _mk_project(client, from_task=task_id)
 
     topic_id = _mk_topic(client, project_id)
-    first = _run_turn(client, topic_id)
+    log = tmp_path / "usage.jsonl"
+
+    def meter() -> None:
+        _metered(client, project_id, topic_id, log)
+
+    first = _run_turn(client, topic_id, meter)
     assert first[-1]["type"] == "done"  # had remaining balance → allowed to run
 
     data = _credits(client, project_id)
     assert data["credits_remaining"] < 0  # overdrawn, recorded truthfully
 
-    second = _run_turn(client, topic_id)
+    second = _run_turn(client, topic_id, meter)
     types = [f["type"] for f in second]
     # The human's message still lands; the agent never replies — instead the
     # platform's structured exhaustion event closes the turn.

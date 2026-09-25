@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, appOriginOf, isEnvironmentNoise, login } from './helpers';
+import { api, appOriginOf, isEnvironmentNoise, apiLogin } from './helpers';
 
 // 反馈的两条全流程，真的从界面走一遍：提交者提一条，管理员把它办完。
 //
@@ -56,7 +56,7 @@ test.afterEach(() => {
 const supportButton = (page: Page) => page.locator('.fb-page button', { hasText: /支持这个反馈|已支持/ });
 
 test('用户提一条反馈，能看见、能支持、能评论', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const title = uniqueTitle('提交者这一条');
   const comment = `补充一句：${title}`;
 
@@ -184,7 +184,7 @@ test('用户提一条反馈，能看见、能支持、能评论', async ({ page 
 });
 
 test('管理员把一条反馈走完四级，指派、优先级、内部备注都留得下', async ({ page }) => {
-  await login(page);
+  await apiLogin(page);
   const title = uniqueTitle('管理员这一条');
   const note = `内部备注：${title}`;
 
@@ -250,6 +250,9 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   // 选完框里留的是 handle（`item-title="handle"`），不是昵称——旧版抽屉真出过
   // 「把昵称当 handle 发出去」这一类错。
   await expect(assignee).toHaveValue('alice');
+  // 输入框会先更新自己的 model；详情摘要只在 PATCH 返回、store 收下服务端详情后更新。
+  // 等这份服务端状态，再继续下一次管理写。
+  await expect(detail.locator('.qdet__main-who')).toContainText(/指派\s+alice/);
 
   // 内部备注：空草稿时那颗提交按钮是禁用的，写完才点得动。
   const submitNote = detail.locator('.qdet__submit');

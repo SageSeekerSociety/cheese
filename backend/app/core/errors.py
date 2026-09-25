@@ -157,8 +157,12 @@ class QuotaExceededError(BaseError):
 
 
 class SystemBusyError(BaseError):
-    def __init__(self, message: str = "System is busy, please try again later") -> None:
-        super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, None)
+    def __init__(
+        self,
+        message: str = "System is busy, please try again later",
+        data: Any | None = None,
+    ) -> None:
+        super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
 
 
 class GatewayTimeoutError(BaseError):

@@ -6,7 +6,12 @@ Project.owner_handle 上），名册以前也不把他补进去，于是 <@他> 
 人，所以这等于「这个项目里 @ 谁都通知不到」。
 """
 
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _post(client, topic_id: str, content: str, author: str) -> None:
@@ -26,13 +31,14 @@ def _notifs(client, project_id: str, handle: str) -> list[dict]:
 
 
 def test_mentioning_the_owner_notifies_them(client):
-    project = client.post(
-        "/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "T", "created_by": "alice"},
     ).json()["data"]
+    join_project_team(client, project["id"], "bob")
     client.post(
         f"/topics/{topic['id']}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},

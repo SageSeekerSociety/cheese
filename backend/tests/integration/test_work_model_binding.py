@@ -33,7 +33,8 @@ from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
-from tests.unit.test_device_provider import ReuseGateHub
+from tests.integration.conftest import registered
+from tests.unit.test_device_provider import FakeHub
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +53,7 @@ def _on_a_machine() -> ClaudeCodeRuntime:
 async def _room(factory) -> dict[str, uuid.UUID]:
     """一个房间，里面一条活。项目按正常路子建，所以它自带它的芝士。"""
     async with factory() as session:
+        await registered(session, "alice")
         project = await ProjectService(session).create(name="P", owner_handle="alice")
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
@@ -172,7 +174,7 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
     ids = client.portal.call(lambda: _room(client.test_request_factory))
     client.portal.call(lambda: _use_the_pool(client.test_request_factory, ids))
     chat = _chat(client.test_request_factory, tmp_path)
-    hub = ReuseGateHub()
+    hub = FakeHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
     async def screen_for(kwargs):

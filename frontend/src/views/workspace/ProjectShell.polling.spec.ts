@@ -1,4 +1,5 @@
 import { cleanup, render } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const store = vi.hoisted(() => ({ openProject: vi.fn(), refreshUnread: vi.fn(), refreshTopics: vi.fn(), error: null }))
@@ -16,7 +17,7 @@ it('pauses hidden tab polling and refreshes when the reader returns', async () =
   const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
   const view = render(ProjectShell, {
     props: { projectId: 'p' },
-    global: { stubs: { RouterView: true, VSnackbar: true } },
+    global: { plugins: [createPinia()], stubs: { RouterView: true, VSnackbar: true } },
   })
   await vi.advanceTimersByTimeAsync(90_000)
   expect(store.refreshTopics).not.toHaveBeenCalled()

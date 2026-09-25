@@ -17,13 +17,14 @@ room — a room does not have an agent of its own.
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project_topic(client, owner: str = "alice") -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
@@ -155,8 +156,9 @@ def test_the_project_roster_marks_an_agent_without_matching_its_handle(client):
     handle = _seat(client, tid)
     # The project-member write routes take the actor from the credential only —
     # a handle in the body is the forgery they exist to refuse — so act as the
-    # project's owner rather than posting bare.
-    for who in (handle, "alice"):
+    # project's owner rather than posting bare. alice owns it, so she is on the
+    # roster already; the teammate's seat is written.
+    for who in (handle,):
         assert (
             client.post(
                 f"/projects/{pid}/members",

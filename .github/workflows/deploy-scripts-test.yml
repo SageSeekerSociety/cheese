@@ -69,6 +69,7 @@ jobs:
       - name: Gateway release and image planning
         run: |
           python3 deploy/tests/test_metering_release.py
+          python3 deploy/tests/test_claude_login.py
           python3 deploy/tests/test_metering_health.py
           python3 deploy/tests/test_gateway_release.py
           python3 deploy/tests/test_gateway_health_workflow.py

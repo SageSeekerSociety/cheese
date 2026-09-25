@@ -53,7 +53,7 @@ async function confirmLeave() {
     <v-card>
       <v-card-title class="t-title pt-4">退出项目？</v-card-title>
       <v-card-text class="t-body c-muted">
-        退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来得由项目的组长再邀请你一次
+        退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来需要再被邀请一次
         <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
           {{ error }}
         </v-alert>

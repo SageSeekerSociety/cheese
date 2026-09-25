@@ -1,11 +1,10 @@
 <script setup lang="ts">
-// 现场 tab: 芝士 干活的实况 —— 优先接真实终端（跑这一轮的机器上的
-// screen 通道），接不上就渲染重建出来的 transcript 时间线。
-import type { Block, Topic } from '../../cx_types'
+// 现场 tab: 芝士 干活的实况 —— 会话的控制条，加上重建出来的 transcript 时间线。
+import type { AgentControlState, Block, Topic } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { isAgentBlock } from '../../lib/authorship'
 import {
   countLines,
@@ -23,7 +22,6 @@ import { isPlatformEvent } from '../../lib/toolLabels'
 import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
-import DeviceLiveViewer from '../DeviceLiveViewer.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -37,8 +35,10 @@ const props = withDefaults(
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
+    // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
+    agentControl?: AgentControlState | null
   }>(),
-  { active: false, memberNames: () => ({}), working: false }
+  { active: false, memberNames: () => ({}), working: false, agentControl: null }
 )
 
 const loading = ref(false)
@@ -118,35 +118,19 @@ function scrollSiteToTail(): void {
   nextTick(() => requestAnimationFrame(pin))
 }
 
-// 现场实时终端: when a machine has this topic's screen open, 现场 embeds the real
-// pane instead of the rebuilt timeline. The probe hands back the screen
-// WebSocket path, and 现场 embeds DeviceLiveViewer on it.
-const screenSid = ref<string | null>(null)
-
 async function load() {
   const tid = props.topic?.id
   if (!tid) return
   loading.value = true
   errorMsg.value = null
   try {
-    // Prefer the real pane on the machine running the turn; fall back to the
-    // rebuilt timeline. The terminal probe must never break 现场 — on any error
-    // it just stays null and the timeline renders.
-    const [tx, term] = await Promise.all([
-      getTranscript(tid, { limit: SITE_PAGE_SIZE }),
-      getTerminal(tid).catch(() => null),
-    ])
+    const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
     if (props.topic?.id !== tid) return
     transcript.value = tx.data
     hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means.
     scrollSiteToTail()
-    // `available` is the backend's own probe (credential + an open screen), so
-    // a false here means the timeline below is the honest thing to show. The
-    // sid out of the ws path ("/connector/session/{sid}/screen") is all
-    // DeviceLiveViewer needs — it builds the socket URL itself.
-    screenSid.value = (term?.available && term.ws?.match(/\/session\/([^/]+)\/screen/)?.[1]) || null
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -163,13 +147,12 @@ watch(
   { immediate: true }
 )
 
-// Topic switch: drop the previous topic's terminal so it can't flash in the new
-// 现场, and its transcript with it.
+// Topic switch: drop the previous topic's transcript so it can't flash in the new
+// 现场.
 watch(
   () => props.topic?.id,
   () => {
     transcript.value = []
-    screenSid.value = null
     expandedSite.value = new Set()
     errorMsg.value = null
     if (props.active) void load()
@@ -186,6 +169,13 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，
+// 落在等宽字体上会掉到别的字体、字距被拉开。路径和命令照旧等宽。
+const CJK = /[\u3400-\u9fff\uf900-\ufaff]/
+function argIsProse(b: Block): boolean {
+  return CJK.test(eventArg(b))
+}
+
 // 摊开这一行之后显示的那一份：参数原文，一个字都没剪。没有第二份时摊开的仍是
 // 这一行本身 —— 面板窄到把它省略掉时，展开是唯一能看全的办法。
 function eventDetail(b: Block): string {
@@ -194,7 +184,7 @@ function eventDetail(b: Block): string {
 function eventError(b: Block): string {
   return b.meta?.error ?? ''
 }
-// 圆点分级: amber = platform action, neutral = plain work (structured fields
+// 圆点分级: solid = platform action, faint = plain work (structured fields
 // only — never guessed from the content text).
 function eventPlatform(b: Block): boolean {
   return isPlatformEvent(b.meta, b.refs)
@@ -223,20 +213,9 @@ function isLive(index: number): boolean {
       {{ errorMsg }}
     </v-alert>
 
-    <!-- 设备上的话题: the machine screen's REAL terminal, byte-for-byte over the
-         screen WebSocket, and INTERACTIVE — typing here reaches the pane (the
-         backend gates input by the same authorization as watching). -->
-    <div v-else-if="screenSid" class="term-wrap">
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" />
-      <div class="term-bar text-caption px-3 py-1">
-        <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
-        实时终端 · 机器上的 Claude Code，可直接输入
-      </div>
-      <DeviceLiveViewer :sid="screenSid" />
-    </div>
-
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
+      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
@@ -269,7 +248,10 @@ function isLive(index: number): boolean {
                 v-if="eventArg(b)"
                 type="button"
                 class="site-act__argtext"
-                :class="{ 'site-act__argtext--full': expandedSite.has(b.id) }"
+                :class="{
+                  'site-act__argtext--full': expandedSite.has(b.id),
+                  'site-act__argtext--prose': argIsProse(b),
+                }"
                 data-testid="site-act-arg"
                 :title="eventArg(b)"
                 @click="toggleSiteEntry(b.id)"
@@ -371,9 +353,10 @@ function isLive(index: number): boolean {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+/* 「3 步 · 2 分钟」里有中文，不走等宽：中文没有等宽字形，会掉到别的字体上。数字
+   靠 tabular-nums 对齐就够了。 */
 .turn__meta {
   margin-left: auto;
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .turn__live {
@@ -450,10 +433,7 @@ function isLive(index: number): boolean {
   opacity: 1;
 }
 /* 平台动作是这一轮的产出（交出一份成果、写文档、递验收卡），不该和 ls 长得
-   一样。 */
-.site-act--platform {
-  background: var(--accent-wash);
-}
+   一样——靠墨色和字重拉开，不靠琥珀：这一栏里没有主操作。 */
 /* 挂了的一步：圆点换成危险色。动词和参数照旧 —— 这一行说的还是它做了什么，
    变的只是它有没有做成。 */
 .site-act--failed .site-act__dot {
@@ -477,8 +457,7 @@ function isLive(index: number): boolean {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* 圆点分级: neutral = plain work (read/search/run), amber = platform action
-   (cheese tool / cheese CLI / doc edit). */
+/* 圆点分级：淡 = 普通的读、搜、跑；实 = 平台动作（cheese 工具、写文档）。 */
 .site-act__dot {
   flex: 0 0 auto;
   width: 5px;
@@ -489,7 +468,7 @@ function isLive(index: number): boolean {
   transform: translateY(-3px);
 }
 .site-act__dot--platform {
-  background: var(--accent);
+  background: var(--ink);
 }
 /* 4em = 四个汉字，绝大多数动词正好这么宽，参数因此对齐成一列。更长的那几个
    （平台动作）自己把这一行的参数推开，而它们本来就该显眼。 */
@@ -502,13 +481,16 @@ function isLive(index: number): boolean {
   white-space: nowrap;
 }
 .site-act--platform .site-act__verb {
-  color: var(--accent-ink);
+  color: var(--ink);
+  font-weight: 600;
 }
 /* 截断而不是折行：一条几百字符的命令折下来能占掉半屏，而这一列的用处是扫。
    点开这一行换成参数原文，整条摊开，不再截第二次。
    是个 button 而不是带 click 的 span：摊开是一个真的操作，键盘要够得着它。 */
+/* 起始宽度是 0，不是内容宽：这一行是可折行的 flex，按内容宽起算的话，一条长参数
+   量出来比剩下的空间宽，就整段掉到动词下面一行去，而不是在这一行里截断。 */
 .site-act__argtext {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -531,7 +513,10 @@ function isLive(index: number): boolean {
   word-break: break-word;
 }
 .site-act--platform .site-act__argtext {
-  color: var(--accent-ink);
+  color: var(--ink);
+}
+.site-act__argtext--prose {
+  font-family: var(--font-sans);
 }
 /* 时间悬停才出现：二十个同样的 20:28 占着最右边的强位置，却不说明任何事，这一
    轮的时间写在组头上。位置照留，不然一行会在鼠标划过时改变宽度。 */
@@ -548,7 +533,7 @@ function isLive(index: number): boolean {
    source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
 .site-msg__raw {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -577,31 +562,5 @@ function isLive(index: number): boolean {
 .site-msg__more:hover {
   color: var(--text);
   text-decoration: underline;
-}
-/* 实时终端: the embedded pane fills the tab height. */
-.term-wrap {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.term-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-}
-.term-bar__dot {
-  color: var(--ok);
-}
-.term-frame {
-  flex: 1 1 auto;
-  width: 100%;
-  border: none;
-  /* Theme-invariant on purpose: this is the backing behind the pane, whose
-     terminal paints its own black ground in both themes. A token here would
-     flash a light slab under a black terminal during load. */
-  /* stylelint-disable-next-line color-no-hex -- see the reason above */
-  background: #000;
 }
 </style>

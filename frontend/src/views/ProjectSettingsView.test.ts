@@ -1,13 +1,9 @@
-import type { Pinia } from 'pinia'
-
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
-import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
-import { SudoRequiredError } from '../network/types/error'
-import { useSudoStore } from '../stores/sudo'
+import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
@@ -19,6 +15,10 @@ const router = vi.hoisted(() => ({
 }))
 
 vi.mock('../api')
+vi.mock('../utils/sudo', () => ({
+  SudoCancelledError: class SudoCancelledError extends Error {},
+  withSudo: vi.fn(),
+}))
 vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
@@ -28,14 +28,9 @@ vi.mock('vue-router', () => ({
   useRouter: () => router,
 }))
 
-let pinia: Pinia
-
 beforeEach(() => {
   vi.resetAllMocks()
   me.id = null
-  pinia = createPinia()
-  setActivePinia(pinia)
-  vi.mocked(api.getProject).mockResolvedValue({ name: 'Example' } as Awaited<ReturnType<typeof api.getProject>>)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
@@ -52,9 +47,9 @@ async function openSettings() {
   const element = document.createElement('div')
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
-  app.use(pinia)
   app.mount(element)
-  await vi.waitFor(() => expect(element.querySelector('.t-eyebrow')?.textContent).toContain('Example'))
+  // 设置读完之后才画出各组；「运行环境」那一组标题出现，就是这一页可以操作了。
+  await vi.waitFor(() => expect(element.textContent).toContain('运行环境'))
   return { element, unmount: () => app.unmount() }
 }
 
@@ -147,40 +142,41 @@ describe('project settings', () => {
       vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [connection] })
     })
 
-    it('asks the user to re-authenticate when the server requires it', async () => {
-      vi.mocked(api.deleteOAuthConnection).mockRejectedValue(new SudoRequiredError())
+    const disconnect = (element: HTMLElement) =>
+      Array.from(element.querySelectorAll('button'))
+        .find((b) => b.textContent?.trim() === '断开')!
+        .click()
+
+    it('confirms identity for the unlink, then disconnects with the ticket', async () => {
+      vi.mocked(withSudo).mockImplementation(async (_purpose, operation) => operation('ticket-1'))
+      vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
       const wrapper = await openSettings()
       try {
         await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
-        const button = Array.from(wrapper.element.querySelectorAll('button')).find(
-          (b) => b.textContent?.trim() === '断开'
-        )
-        button!.click()
+        disconnect(wrapper.element)
 
-        await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith('/account/sudo-verify'))
-        expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, '')
+        await vi.waitFor(() => expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, 'ticket-1'))
+        expect(withSudo).toHaveBeenCalledWith('oauth:unbind', expect.any(Function))
+        await vi.waitFor(() => expect(wrapper.element.textContent).not.toContain('octocat'))
       } finally {
         wrapper.unmount()
       }
     })
 
-    it('finishes the disconnect with the ticket once the user has re-authenticated', async () => {
-      const sudo = useSudoStore()
-      sudo.setRetryOperation({
-        opKey: 'unbindOAuthConnection',
-        opData: { connectionId: 5 },
-        returnPath: '/projects/project/settings',
-      })
-      sudo.setVerified('ticket-1')
-      vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
-      vi.mocked(api.listOAuthConnections).mockResolvedValue({ connections: [] })
-
+    it('keeps the connection and says nothing when the confirmation is cancelled', async () => {
+      vi.mocked(withSudo).mockRejectedValue(new SudoCancelledError())
       const wrapper = await openSettings()
       try {
-        await vi.waitFor(() => expect(api.deleteOAuthConnection).toHaveBeenCalledWith('7', 5, 'ticket-1'))
-        expect(api.deleteOAuthConnection).toHaveBeenCalledTimes(1)
-        expect(sudo.retryOperation).toBeNull()
-        expect(router.push).not.toHaveBeenCalled()
+        await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
+        const alerts = () => Array.from(wrapper.element.querySelectorAll('[role="alert"]'), (a) => a.textContent)
+        const before = alerts()
+        disconnect(wrapper.element)
+
+        await vi.waitFor(() => expect(withSudo).toHaveBeenCalled())
+        await new Promise((resolve) => setTimeout(resolve))
+        expect(api.deleteOAuthConnection).not.toHaveBeenCalled()
+        expect(wrapper.element.textContent).toContain('octocat')
+        expect(alerts()).toEqual(before)
       } finally {
         wrapper.unmount()
       }

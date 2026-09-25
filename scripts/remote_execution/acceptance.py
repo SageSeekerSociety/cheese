@@ -1,13 +1,12 @@
-"""Run the actual interactive Claude Code against a separate executor.
+"""Run Claude Code, held by the runner as a room holds it, against a separate executor.
 
-Each run retains model requests, terminal output and assertions under tmp/.
+Each run retains model requests, the session's journal and assertions under tmp/.
 Use --ssh and --remote-root to repeat the same cases on another physical host.
 """
 
 import argparse
 import asyncio
 import base64
-import hashlib
 import importlib.util
 import json
 import os
@@ -22,7 +21,6 @@ import uuid
 from pathlib import Path
 
 from model_fixture import Handler, Server, dump, log
-from rc_fixture import RemoteControlFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
@@ -133,7 +131,10 @@ def task_action(name, index):
             for block in tool_results(body)
             if block["tool_use_id"] == f"toolu_acceptance_{index}"
         )
-        task_id = re.search(r"cheese-task-[0-9a-f]{16}", json.dumps(content)).group()
+        # The build's own background task: it names the id it gave the command.
+        task_id = re.search(
+            r"background with ID: ([A-Za-z0-9_-]+)\.", json.dumps(content)
+        ).group(1)
         return {
             "name": name,
             "input": {"task_id": task_id},
@@ -152,10 +153,8 @@ def read_background_output(body):
     return {"name": "Read", "input": {"file_path": path}}
 
 
-def execution_handler(rc):
-    base = rc.handler(Handler) if rc else Handler
-
-    class DeviceExecutionHandler(base):
+def execution_handler():
+    class DeviceExecutionHandler(Handler):
         def do_POST(self):
             if self.path != "/execution":
                 return super().do_POST()
@@ -176,30 +175,17 @@ def execution_handler(rc):
     return DeviceExecutionHandler
 
 
-def tmux_server(folder):
-    # Separate CI runs reuse case names on the same host and Unix account.
-    key = hashlib.sha256(str(folder.resolve()).encode()).hexdigest()[:16]
-    return ["tmux", "-L", "cheese-acceptance-" + key]
+def before_turn(session, home):
+    """What happens between the session starting and its first turn: nothing.
+
+    `resident_release.py` puts a helper release in here.
+    """
 
 
 def case(folder, options):
-    tmux = tmux_server(folder)
-    rc = (
-        RemoteControlFixture(
-            folder,
-            lambda event, **fields: log(
-                folder / "rc.jsonl", {"event": event, **fields}
-            ),
-        )
-        if options.rc
-        else None
-    )
-    server = Server(
-        ("127.0.0.1", 0),
-        execution_handler(rc),
-    )
-    if rc:
-        rc.base = f"http://127.0.0.1:{server.server_port}"
+    import runner_fixture
+
+    server = Server(("127.0.0.1", 0), execution_handler())
     server.state = {
         "dir": folder,
         "actions": [],
@@ -209,42 +195,21 @@ def case(folder, options):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     executor = None
     wire = None
+    session = None
     center_fd = None
     try:
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
         )
-        center = folder / "central/forwarded-project"
+        # The session home, laid out as a room's is: the helpers and the target
+        # under `.cheese`, and `bootstrap` preparing `.cheese/remote-session`.
+        home = folder / ("device-home" if options.launcher == "device" else "home")
+        center = home / ".cheese/remote-session/forwarded-project"
         center.mkdir(parents=True)
+        # Held open from before the mount, so the directory beneath it can be
+        # checked for writes that went there instead of to the executor.
         center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
-        launch = client.prepare(
-            folder / "central",
-            target,
-            claude=options.claude,
-            extra_args=[
-                "--model",
-                "claude-sonnet-4-6",
-                "--tools",
-                "Read,Edit,Write,Bash,TaskStop,Skill,Agent",
-                "--allowedTools",
-                "Read,Edit,Write,Bash,TaskStop,Skill,Agent,mcp__custom__echo,"
-                "mcp__native__chat_send,mcp__native__platform_request",
-                "--debug-file",
-                str(folder / "claude-debug.log"),
-            ],
-        )
-        execution_file = folder / "central/execution.json"
-        if options.launcher == "device":
-            os.close(center_fd)
-            center_fd = None
-            center = folder / "device-home/.cheese/remote-session/forwarded-project"
-            center.mkdir(parents=True)
-            center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
-            launch = {"cwd": str(center), "env": {}}
-            execution_file = (
-                folder / "device-home/.cheese/remote-session/execution.json"
-            )
-        center = Path(launch["cwd"])
+        execution_file = home / ".cheese/remote-session/execution.json"
         actions = [
             {"name": "Read", "input": {"file_path": str(center / "target.txt")}},
             {
@@ -295,10 +260,8 @@ def case(folder, options):
                     "content": "Published 'literally'\n$(touch forbidden-publication)"
                 },
             },
-            # 平台那一侧只有 `platform_request` 这一个原始入口了：`cheese_api`
-            # 不在 MCP 表上，它是机器上 `cheese` 的一条子命令（结论 21、22），
-            # 跟文件和命令一起活在那台机器上。这一步问的是「会话直接够得到平台
-            # 吗」，`platform_request` 答的就是它。
+            # 这一步问的是「会话直接够得到平台吗」：`platform_request` 是会话侧
+            # 的原始入口，不经过那台机器（结论 63）。
             {
                 "name": "mcp__native__platform_request",
                 "input": {"method": "GET", "path": "/platform-fixture"},
@@ -321,11 +284,9 @@ def case(folder, options):
         env = {
             k: v
             for k, v in os.environ.items()
-            if k in ("PATH", "TERM", "LANG", "TMPDIR", "SHELL")
+            if k in ("PATH", "LANG", "TMPDIR", "SHELL")
         }
         env.update(
-            launch["env"],
-            TERM="xterm-256color",
             ANTHROPIC_BASE_URL=f"http://127.0.0.1:{server.server_port}",
             ANTHROPIC_AUTH_TOKEN="fixture-no-real-credential",
             DISABLE_TELEMETRY="1",
@@ -334,41 +295,7 @@ def case(folder, options):
             CHEESE_TOPIC="fixture",
             CHEESE_TOKEN="fixture-place-token",
         )
-        if rc:
-            for key in (
-                "ANTHROPIC_BASE_URL",
-                "ANTHROPIC_AUTH_TOKEN",
-                "DISABLE_TELEMETRY",
-                "DISABLE_ERROR_REPORTING",
-            ):
-                env.pop(key, None)
-            env.update(
-                HTTPS_PROXY=rc.base,
-                NODE_EXTRA_CA_CERTS=str(rc.cert),
-                CLAUDE_CODE_OAUTH_TOKEN="fake-rc-oauth-token",
-                CLAUDE_CODE_OAUTH_SCOPES="user:inference user:profile user:sessions:claude_code",
-                CLAUDE_CODE_SUBSCRIPTION_TYPE="max",
-                NO_PROXY="127.0.0.1,localhost",
-                no_proxy="127.0.0.1,localhost",
-            )
-            if options.launcher == "plugin":
-                gate = Path(launch["env"]["CLAUDE_CONFIG_DIR"]) / ".claude.json"
-                gates = json.loads(gate.read_text())
-                gates.update(
-                    cachedGrowthBookFeatures=rc.flags,
-                    cachedGrowthBookFeaturesAt=int(time.time() * 1000),
-                    oauthAccount={
-                        "accountUuid": "00000000-0000-4000-8000-000000000001",
-                        "emailAddress": "fixture@example.invalid",
-                        "organizationUuid": "00000000-0000-4000-8000-000000000002",
-                    },
-                )
-                dump(gate, gates)
-                launch["command"].extend(
-                    ["--remote-control", "Cheese isolated acceptance"]
-                )
         if options.launcher == "device":
-            sys.path.insert(0, str(ROOT / "backend"))
             from app.domain.agent import machine_launcher
             from app.domain.agent.device_provider import DeviceChannel
             from app.domain.agent.harness.claude_code.session_launch import (
@@ -390,125 +317,107 @@ def case(folder, options):
                     "url": f"http://127.0.0.1:{server.server_port}/execution",
                     "mcp_servers": target["mcp_servers"],
                 }
-            if rc:
-                env["CHEESE_REMOTE_CONTROL"] = "1"
+            state = folder / "device-state"
             place = MachinePlace(
-                home=str(folder / "device-home"),
+                home=str(home),
                 workdir=str(folder / "device-work"),
                 store="",
-                state="",
+                state=str(state),
                 api_base="",
                 project_id="",
                 topic_id="",
                 agent_handle="",
                 execution_target=target,
-                remote_control=bool(rc),
             )
-            launch["command"], screen_env = machine_launcher.screen_launch(
+            command, screen_env = machine_launcher.screen_launch(
                 place,
                 ClaudeLaunch(
                     system_prompt=system_prompt(), model="claude-sonnet-4-6"
                 ).on(place),
-                hook_url=f"http://127.0.0.1:{server.server_port}/hook",
                 token="fixture-place-token",
             )
             env.update(screen_env)
             channel = object.__new__(DeviceChannel)
             channel._hub = wire
-            launch["command"] = asyncio.run(
+            command = asyncio.run(
                 channel._ship_launcher(
                     "acceptance-machine",
                     uuid.uuid4(),
-                    launch["command"],
-                    str(folder / "device-home"),
+                    command,
+                    str(home),
                     execution_token=env["CHEESE_TOKEN"],
                 )
             )
-        if options.mode == "disabled":
-            env["CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"] = "0"
-        elif options.mode == "throw":
-            (folder / "central/plugin/hooks/proxy.js").write_text(
-                'export function register(on) { on("tool.call", () => {throw new Error("fixture failure")}); }'
+            dump(folder / "launch.json", {"command": command, "env": env})
+            # The launcher starts the runner itself, as a screen's does.
+            launcher_log = folder / "launcher.log"
+            launcher = subprocess.Popen(
+                command,
+                cwd=home,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=launcher_log.open("ab"),
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
-        elif options.mode == "timeout":
-            (folder / "central/plugin/hooks/proxy.js").write_text(
-                'export function register(on) { on("tool.call", async () => {await new Promise(() => {})}); }'
-            )
-        elif options.mode == "disconnect":
-            run(executor.command("stop"))
-        launch["env"] = env
-        dump(folder / "central/launch.json", launch)
-        command = shlex.join(
-            [
-                sys.executable,
-                str(SOURCE / "client.py"),
-                "launch",
-                str(folder / "central/launch.json"),
-            ]
-        )
-        run(
-            tmux
-            + [
-                "new-session",
-                "-d",
-                "-s",
-                "agent",
-                "-x",
-                "120",
-                "-y",
-                "40",
-                "-c",
-                str(center),
-                "sleep 300",
-            ]
-        )
-        run(tmux + ["set-option", "-w", "-t", "agent", "remain-on-exit", "on"])
-        run(tmux + ["respawn-pane", "-k", "-t", "agent", command])
-        time.sleep(4)
-        if rc:
-            assert rc.connected.wait(25), run(
-                tmux + ["capture-pane", "-p", "-t", "agent", "-S", "-100"]
-            )
-            rc.send(
-                {
-                    "type": "control_request",
-                    "request_id": "initialize",
-                    "request": {"subtype": "initialize"},
-                }
-            )
-            rc.send(
-                {
-                    "type": "user",
-                    "client_platform": "web_claude_ai",
-                    "message": {
-                        "role": "user",
-                        "content": "Run the prescribed remote execution checks.",
-                    },
-                }
-            )
+            session = runner_fixture.Session(state, launcher, launcher_log)
         else:
-            run(
-                tmux
-                + [
-                    "send-keys",
-                    "-t",
-                    "agent",
-                    "-l",
-                    "Run the prescribed remote execution checks.",
-                ]
+            env.update(runner_fixture.room_home(home, target))
+            claude = options.claude
+            if options.mode == "disabled":
+                # `bootstrap` switches function hooks on for the session; the
+                # fault is a build that starts with them off regardless.
+                claude = folder / "claude-without-function-hooks"
+                claude.write_text(
+                    "#!/bin/sh\nCLAUDE_CODE_ENABLE_FUNCTION_HOOKS=0 exec "
+                    + shlex.quote(options.claude)
+                    + ' "$@"\n'
+                )
+                claude.chmod(0o755)
+            elif options.mode in ("throw", "timeout"):
+                # The helper `bootstrap` copies into the session's plugin.
+                (home / ".cheese/remote-execution/proxy.js").write_text(
+                    'export function register(on) { on("tool.call", () => {throw new Error("fixture failure")}); }'
+                    if options.mode == "throw"
+                    else 'export function register(on) { on("tool.call", async () => {await new Promise(() => {})}); }'
+                )
+            command = runner_fixture.room_command(
+                home,
+                str(claude),
+                [
+                    "--model",
+                    "claude-sonnet-4-6",
+                    "--tools",
+                    "Read,Edit,Write,Bash,TaskStop,Skill,Agent",
+                    "--allowedTools",
+                    "Read,Edit,Write,Bash,TaskStop,Skill,Agent,mcp__custom__echo,"
+                    "mcp__native__chat_send,mcp__native__platform_request",
+                    "--debug-file",
+                    str(folder / "claude-debug.log"),
+                ],
             )
-            run(tmux + ["send-keys", "-t", "agent", "Enter"])
-        deadline = time.monotonic() + 90
-        while (
-            len(server.state["requests"]) < len(actions) + 1
-            and not server.state.get("error")
-            and time.monotonic() < deadline
-        ):
-            time.sleep(0.2)
-        time.sleep(0.5)
-        terminal = run(tmux + ["capture-pane", "-p", "-t", "agent", "-S", "-300"])
-        (folder / "terminal.txt").write_text(terminal)
-        assert len(server.state["requests"]) == len(actions) + 1, terminal
+            dump(folder / "launch.json", {"command": command, "env": env})
+            session = runner_fixture.Session.start(folder, command, env, home)
+            if options.mode == "disconnect":
+                # Once `bootstrap` has prepared the session against it.
+                prepared = home / ".cheese/remote-session/launch.json"
+                deadline = time.monotonic() + 60
+                while not prepared.exists():
+                    assert time.monotonic() < deadline, "bootstrap never prepared"
+                    time.sleep(0.1)
+                run(executor.command("stop"))
+        before_turn(session, home)
+        ended = session.turn("Run the prescribed remote execution checks.", 120)
+        assert len(server.state["requests"]) == len(actions) + 1, ended
+        # The journal is what the room reads: every scripted call has its
+        # tool_result there, on the session's own thread.
+        ran = session.tool_results()
+        missing = [
+            index
+            for index in range(len(actions))
+            if f"toolu_acceptance_{index}" not in ran
+        ]
+        assert not missing, (missing, sorted(ran))
         for name in ("target.txt", "new.txt"):
             try:
                 descriptor = os.open(name, os.O_RDONLY, dir_fd=center_fd)
@@ -522,7 +431,7 @@ def case(folder, options):
         if options.mode == "normal":
             isolated = results[-2]
             assert isolated.get("is_error"), isolated
-            assert "cheese split" in json.dumps(isolated), isolated
+            assert "cheese_task" in json.dumps(isolated), isolated
             # `.claude/` itself is the project's mirrored assets; an isolated
             # spawn would have added its worktree beneath it.
             assert not (center / ".claude/worktrees").exists()
@@ -562,7 +471,8 @@ def case(folder, options):
             assert "Environment: REMOTE_COMMAND_ENV" in json.dumps(
                 server.state["requests"][-1]
             )
-            assert "ACCEPTANCE_DONE" in terminal, terminal
+            assert ended.get("is_error") is False, ended
+            assert "ACCEPTANCE_DONE" in (ended.get("result") or ""), ended
             bound = client.RemoteClient(json.loads(execution_file.read_text()))
             preview = bound.control(
                 {"subtype": "read_file", "path": str(center / "target.txt")}
@@ -570,7 +480,10 @@ def case(folder, options):
             assert preview["contents"] == "AFTER_EDIT\n", preview
             diff = bound.control({"subtype": "get_workspace_diff"})
             assert "+AFTER_EDIT" in diff["diff"]
-            dump(folder / "rc-file-controls.json", {"preview": preview, "diff": diff})
+            dump(folder / "file-controls.json", {"preview": preview, "diff": diff})
+            # The stopped command would have written this after two seconds:
+            # its absence is the command gone from the executor, not only the
+            # build's task marked stopped.
             time.sleep(2.1)
             result = executor.call(
                 "invoke",
@@ -589,32 +502,6 @@ def case(folder, options):
                         block.get("text", "") for block in request["system"]
                     )
                     assert text.count(system_prompt()) == 1, text
-                deadline = time.monotonic() + 10
-                hooks_file = folder / "hooks.jsonl"
-                while not hooks_file.exists() and time.monotonic() < deadline:
-                    time.sleep(0.1)
-                hooks = [
-                    json.loads(line)["payload"]
-                    for line in hooks_file.read_text().splitlines()
-                ]
-                for event in ("PreToolUse", "PostToolUse"):
-                    seen = [
-                        h.get("tool_use_id")
-                        for h in hooks
-                        if h.get("hook_event_name") == event
-                    ]
-                    # The native tool calls the script opens with — Read, Edit,
-                    # Write, Bash, two background Bash, TaskStop — each reach
-                    # the hook exactly once under their own tool_use_id. The
-                    # MCP call after them is receipted under a plugin id.
-                    for index in range(7):
-                        assert seen.count(f"toolu_acceptance_{index}") == 1, (
-                            event,
-                            seen,
-                        )
-                assert not [
-                    h for h in hooks if h.get("tool_name") == "mcp__native__invoke"
-                ], hooks
         else:
             assert results[0].get("is_error"), results
             if options.mode != "disconnect":
@@ -634,16 +521,16 @@ def case(folder, options):
             "request_count": len(server.state["requests"]),
             "ssh": options.ssh,
             "launcher": options.launcher,
-            "rc": options.rc,
             "central_unchanged": True,
             "passed": True,
         }
     finally:
         if center_fd is not None:
             os.close(center_fd)
-        subprocess.run(tmux + ["kill-server"], capture_output=True, timeout=10)
+        if session is not None:
+            session.stop(folder / "journal.jsonl")
         for mountpoint in (
-            folder / "central/forwarded-project",
+            folder / "home/.cheese/remote-session/forwarded-project",
             folder / "device-home/.cheese/remote-session/forwarded-project",
         ):
             # `release_mount` rather than a local ismount-then-unmount: this runs
@@ -670,7 +557,6 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--claude", default=shutil.which("claude"))
     parser.add_argument("--launcher", choices=["plugin", "device"], default="plugin")
-    parser.add_argument("--rc", action="store_true")
     parser.add_argument(
         "--mode",
         choices=["normal", "disabled", "throw", "timeout", "disconnect"],

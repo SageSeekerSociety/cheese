@@ -41,8 +41,8 @@ from datetime import UTC, datetime
 import websockets
 from sqlalchemy import text
 
+from app.common.auth import create_access_token
 from app.core.db import async_session_factory
-from app.core.tokens import mint_session_token
 
 
 def _stamp() -> str:
@@ -151,7 +151,7 @@ async def send() -> int:
         topic_id = str(newest[0]["id"])
     uuid.UUID(topic_id)
 
-    token = mint_session_token(handle=handle, user_id=user_id)
+    token = create_access_token(user_id, handle=handle)
     base = os.environ.get("WS_BASE", "ws://127.0.0.1:8000")
     url = f"{base}/topics/{topic_id}/chat?token={token}"
     content = os.environ.get("CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上")

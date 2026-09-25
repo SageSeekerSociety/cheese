@@ -42,6 +42,7 @@
     "@editorjs/underline": "^1.2.1",
     "@editorjs/warning": "^1.4.1",
     "@mdi/font": "^7.4.47",
+    "@paper-design/shaders": "0.0.81",
     "@simplewebauthn/browser": "^13.1.2",
     "@tiptap/core": "^3.26.1",
     "@tiptap/extension-bullet-list": "^3.26.1",

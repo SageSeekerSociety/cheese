@@ -10,7 +10,7 @@ roster, and the bug users hit was a 分身-initiated split seeding that roster f
 thread answers with `owner_handle` and has no roster at all — 唯一的主 is the
 whole difference — so that is what these assert on now."""
 
-from tests.integration.conftest import session_token
+from tests.integration.conftest import join_project_team, post_project, session_token
 
 
 def _login(handle: str) -> str:
@@ -22,9 +22,7 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -105,7 +103,7 @@ def test_split_ignores_forged_created_by_in_body(client):
 
 def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     """The bug users actually hit: a 分身-initiated split (no human token, the
-    `cheese` agent as `created_by` — same shape `cheese split` sends) used to
+    `cheese` agent as `created_by` — same shape `cheese_task` sends) used to
     seed the child roster from `owner_handle="cheese"` alone. `seed()` skips
     "cheese" as owner, so the child ended up belonging to NOBODY — and the
     accept card it ends in had no one to land on. It must default to the room's
@@ -139,28 +137,9 @@ def test_split_with_no_identified_human_still_gets_parent_owner(client):
 def test_project_member_can_split_even_if_not_on_topic_roster(client):
     """权限属于项目: a project member may split the project's topics even
     without being on that specific topic's roster (same rule as doc edits)."""
-    import asyncio
-    import uuid
-
-    from app.domain.identity.actor import Actor
-    from app.domain.membership.services import MemberService
-    from app.domain.project.models import ProjectRole
-
     pid, tid = _project_topic(client, owner="alice")
     token = _login("bob")
-
-    async def _add_member() -> None:
-        async with client.test_factory() as s:  # type: ignore[attr-defined]
-            await MemberService(s).add(
-                project_id=uuid.UUID(pid),
-                user_handle="bob",
-                role=ProjectRole.member,
-                # Roster writes are authorized — seed as the project owner.
-                actor=Actor(handle="alice", user_id=None, via="token"),
-            )
-            await s.commit()
-
-    asyncio.run(_add_member())
+    join_project_team(client, pid, "bob")
 
     r = client.post(
         f"/topics/{tid}/split",

@@ -1,77 +1,72 @@
+import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
+import jwt
 import pytest
 
-from app.common.auth import create_access_token, create_refresh_token, decode_token
+from app.common.auth import (
+    create_access_token,
+    get_current_user_id,
+    verify_access_token,
+)
+from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError
 
 
-class TestJWTService:
-    def test_create_access_token(self) -> None:
-        user_id = 123
-        token = create_access_token(user_id)
-        assert token is not None
-        assert len(token) > 0
+class TestAccessToken:
+    def test_a_token_names_its_user_handle_and_session(self) -> None:
+        sid = uuid.uuid4()
+        claims = verify_access_token(create_access_token(123, "alice", sid=sid))
 
-    def test_create_refresh_token(self) -> None:
-        user_id = 123
-        token = create_refresh_token(user_id)
-        assert token is not None
-        assert len(token) > 0
+        assert claims is not None
+        assert (claims.user_id, claims.handle, claims.sid) == (123, "alice", sid)
 
-    def test_decode_access_token(self) -> None:
-        user_id = 123
-        token = create_access_token(user_id)
-        payload = decode_token(token)
+    def test_a_token_can_name_a_handle_alone(self) -> None:
+        claims = verify_access_token(create_access_token(None, handle="alice"))
 
-        assert payload is not None
-        assert payload.get("sub") == str(user_id)
-        assert payload.get("type") == "access"
+        assert claims is not None
+        assert (claims.user_id, claims.handle) == (None, "alice")
 
-    def test_decode_refresh_token(self) -> None:
-        user_id = 123
-        token = create_refresh_token(user_id)
-        payload = decode_token(token)
+    @pytest.mark.anyio
+    async def test_a_handle_alone_does_not_pass_as_a_user(self) -> None:
+        token = create_access_token(None, handle="alice")
 
-        assert payload is not None
-        assert payload.get("sub") == str(user_id)
-        assert payload.get("type") == "refresh"
-
-    def test_invalid_token_raises_error(self) -> None:
         with pytest.raises(AuthenticationRequiredError):
-            decode_token("invalid.token.here")
+            await get_current_user_id(authorization=f"Bearer {token}")
 
-    def test_expired_token_raises_error(self) -> None:
-        with patch("app.common.auth.settings") as mock_settings:
-            mock_settings.jwt_secret = "test-secret"
-            mock_settings.access_token_expires_seconds = -1
+    def test_garbage_is_not_a_token(self) -> None:
+        assert verify_access_token("invalid.token.here") is None
+        assert verify_access_token("") is None
 
-            import jwt
-
-            from app.core.config import settings
-
-            payload = {
+    def test_an_expired_token_is_refused(self) -> None:
+        expired = jwt.encode(
+            {
                 "sub": "123",
                 "type": "access",
                 "exp": datetime.now(UTC) - timedelta(hours=1),
-            }
-            expired_token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+            },
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
 
-            with pytest.raises(AuthenticationRequiredError):
-                decode_token(expired_token)
+        assert verify_access_token(expired) is None
 
-    def test_token_contains_user_id(self) -> None:
-        user_id = 456
-        token = create_access_token(user_id)
-        payload = decode_token(token)
+    def test_a_token_signed_elsewhere_is_refused(self) -> None:
+        forged = jwt.encode(
+            {"sub": "123", "type": "access"}, "not-our-secret", algorithm="HS256"
+        )
 
-        assert int(payload.get("sub")) == user_id
+        assert verify_access_token(forged) is None
 
-    def test_different_users_get_different_tokens(self) -> None:
-        token1 = create_access_token(123)
-        token2 = create_access_token(456)
-        assert token1 != token2
+    def test_a_token_of_another_type_is_not_an_access_token(self) -> None:
+        other = jwt.encode(
+            {"sub": "123", "type": "2fa_pending"},
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
+
+        assert verify_access_token(other) is None
 
 
 class TestUserAuthService:
