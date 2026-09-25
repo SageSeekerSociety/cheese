@@ -650,6 +650,9 @@ defineExpose({ pulse, highlightTurn, openFile })
           :member-names="memberNames"
           :working="working"
           :agent-control="agentControl"
+          @open-file="openFile"
+          @open-topic="emit('open-topic', $event)"
+          @mention-click="emit('mention-click', $event)"
         />
         <PanelChanges
           v-if="mounted.has('changes')"
