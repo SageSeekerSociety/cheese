@@ -61,7 +61,13 @@ DOCUMENTS: dict[str, LegalDocument] = {
     "privacy": LegalDocument(
         key="privacy",
         title="隐私政策",
-        versions=(LegalVersion("1.0", date(2026, 9, 23)),),
+        versions=(
+            LegalVersion("1.0", date(2026, 9, 23)),
+            # Where things live now that the privacy centre is gone, and that a
+            # person can delete their own real-name record: nothing agreed to
+            # changes, so nobody is asked again.
+            LegalVersion("1.1", date(2026, 9, 25), material=False),
+        ),
     ),
 }
 

@@ -17,7 +17,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
-import { buildEntityLink, getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
+import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import { TeamsApi } from '@/network/api/teams'
 

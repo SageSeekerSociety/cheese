@@ -1,38 +1,15 @@
 const execution = __EXECUTION_CONFIG__;
 const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
+// The session sees the project at the executor's own path (`client.py`
+// `enter`), so paths need no respelling. Its skills are the exception: the
+// build reads them from this host's config directory, and they are the
+// project's, on the executor.
+const skills = execution.central_config + "/skills/";
+const projectSkills = execution.session_workspace + "/.claude/skills/";
+
 function remotePath(path) {
-  if (path.startsWith(execution.central_config + "/skills/")) {
-    return execution.workspace + "/.claude/skills/" + path.slice((execution.central_config + "/skills/").length);
-  }
-  const root = execution.central_workspace;
-  return path === root || path.startsWith(root + "/")
-    ? execution.workspace + path.slice(root.length)
-    : path;
-}
-
-// The model is told the executor's spelling of every path (prompt.section
-// rewrites them), while $.fs sees this host — where a forwarded workspace sits
-// at central_workspace. Try both so a SendUserFile path works whichever
-// spelling the model used, and whichever side of the mount the name resolves on.
-function localPaths(path) {
-  const seen = [path];
-  const root = execution.central_workspace;
-  const remote = execution.workspace;
-  if (path === remote || path.startsWith(remote + "/")) {
-    seen.push(root + path.slice(remote.length));
-  } else if (!path.startsWith("/") && root) {
-    seen.push(root + "/" + path);
-  }
-  return seen;
-}
-
-// What the build writes about a command it ran through the shell prefix names
-// this host's workspace; the model was told the executor's.
-function respell(text) {
-  return typeof text === "string"
-    ? text.split(execution.central_workspace).join(execution.workspace)
-    : text;
+  return path.startsWith(skills) ? projectSkills + path.slice(skills.length) : path;
 }
 
 // A Bash command's output is on this host, where the build wrote it: a
@@ -59,21 +36,16 @@ async function sendUserFile($, tool_use_id, args) {
     const name = path.replace(/\\/g, "/").split("/").pop() || "file";
     let data_b64;
     let upload_error;
-    for (const candidate of localPaths(path)) {
-      try {
-        const stat = await $.fs.stat(candidate, { resolve: false });
-        if (stat.kind !== "file") continue;
-        if (stat.size > SEND_USER_FILE_MAX_BYTES) {
-          upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
-          break;
-        }
-        data_b64 = (await $.fs.read(candidate, { as: "bytes" })).base64;
-        break;
-      } catch (error) {
-        // $.fs.read refuses anything over its own transfer cap; the transport
-        // still reads that file from the executor and applies the real limit.
-        if (String(error).includes("byte limit")) break;
+    try {
+      const stat = await $.fs.stat(path, { resolve: false });
+      if (stat.kind === "file" && stat.size > SEND_USER_FILE_MAX_BYTES) {
+        upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
+      } else if (stat.kind === "file") {
+        data_b64 = (await $.fs.read(path, { as: "bytes" })).base64;
       }
+    } catch {
+      // Not readable here (or over $.fs.read's own transfer cap): the
+      // transport reads it from the executor and applies the real limit.
     }
     files.push({
       path,
@@ -135,26 +107,6 @@ export function register(on) {
         return { deny: "Cheese tool failed: " + String(error) };
       }
     }
-    if (tool === "Bash") {
-      const outcome = await next(e);
-      // The build's own refusal to run a command comes back as a string
-      // result. 2.1.277 renders an error from `result` alone and refuses any
-      // change to it, and a `deny` would wrap it in <tool_use_error>, so a
-      // refusal keeps the build's text, this host's workspace spelling
-      // included (scripts/remote_execution/equivalence.py KNOWN_DIFFERENCES).
-      if (!outcome || typeof outcome.result !== "object" || outcome.result === null) {
-        return outcome;
-      }
-      return {
-        ...outcome,
-        result: {
-          ...outcome.result,
-          stdout: respell(outcome.result.stdout),
-          stderr: respell(outcome.result.stderr),
-        },
-        text: respell(outcome.text),
-      };
-    }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
@@ -205,22 +157,8 @@ export function register(on) {
     return next(e);
   });
 
-  on("prompt.section", async ($, e, next) => {
-    const result = await next(e);
-    return { ...result, text: result.text === null ? null : result.text.split(execution.central_workspace).join(execution.workspace) };
-  });
-  // What the build attaches about the session — its working directory at
-  // start, and again each time a command changes it — names this host's
-  // workspace too.
-  on("prompt.attachment", async ($, e, next) => {
-    const result = await next(e);
-    return result && typeof result.text === "string"
-      ? { ...result, text: respell(result.text) }
-      : result;
-  });
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: result.text.split(execution.central_config + "/skills/").join(execution.workspace + "/.claude/skills/")
-      .split(execution.central_workspace).join(execution.workspace) };
+    return { text: result.text.split(skills).join(projectSkills) };
   });
 }

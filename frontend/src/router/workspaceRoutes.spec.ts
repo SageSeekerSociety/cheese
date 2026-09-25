@@ -141,7 +141,6 @@ describe('页面栈的末端', () => {
       `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
       `/projects/${PROJECT}/members`,
-      `/projects/${PROJECT}/members/alice`,
     ]
     for (const path of paths) {
       const leaf = leafOf(path)
@@ -162,6 +161,13 @@ describe('页面栈的末端', () => {
 
   it('私聊回的是成员页，不是话题列表', () => {
     const leaf = leafOf(`/projects/${PROJECT}/dm/agent:cheese`)
+    expect(leaf.meta.hideTabs).toBe(true)
+    expect(leaf.meta.backTo).toBe('project-members')
+  })
+
+  // 项目里的个人主页是名册里的一项，页头写的也是「成员 / 名字」。
+  it('项目里的个人主页回的是成员页', () => {
+    const leaf = leafOf(`/projects/${PROJECT}/members/alice`)
     expect(leaf.meta.hideTabs).toBe(true)
     expect(leaf.meta.backTo).toBe('project-members')
   })

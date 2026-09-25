@@ -55,6 +55,9 @@ jobs:
           - 6379/tcp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Let a session have its own namespace
+        # These jobs launch sessions the way a room does (`client.py enter`).
+        run: .github/scripts/allow-user-namespaces.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -95,7 +98,7 @@ jobs:
               maxUsedSpace = "3GB"
               minFreeSpace = "10GB"
       - name: Build private execution image
-        run: docker buildx build --builder "$PRIVATE_BUILDER" --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
+        run: docker buildx build --builder "$PRIVATE_BUILDER" --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.282 .
       - name: Keep the private image available during tests
         id: private-image
         # Cached images retain their creation date. A running container keeps
@@ -104,7 +107,7 @@ jobs:
         run: >-
           docker run --detach --network none --entrypoint sleep
           --name cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
-          cheese-private-executor:2.1.277 2700
+          cheese-private-executor:2.1.282 2700
       - name: Verify real scratch execution
         id: scratch
         run: >-
@@ -210,6 +213,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Let a session have its own namespace
+        # These jobs launch sessions the way a room does (`client.py enter`).
+        run: .github/scripts/allow-user-namespaces.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'

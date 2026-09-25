@@ -13,6 +13,7 @@ ever about Claude Code.
 """
 
 import base64
+import hashlib
 import json
 import shlex
 from dataclasses import dataclass
@@ -249,13 +250,6 @@ class PiLaunch:
             "notice": PLATFORM_NOTICE,
         }
 
-    def contract(self) -> str:
-        """What the connector compares to decide a live session still matches."""
-        return json.dumps(
-            {"harness": "pi", "version": VERSION, "args": self.arguments()},
-            sort_keys=True,
-        )
-
     def on(self, place: MachinePlace) -> MachineLaunch:
         """pi, now that a machine has said where.
 
@@ -263,11 +257,23 @@ class PiLaunch:
         subscription CA to trust, and no executor to hand its tools
         to — on this machine the tools ARE local. What it takes is where the
         session lives and how to reach the model.
+
+        The contract is the launch written without the opening, which is the
+        room's system prompt and conversation. Everything else — the pin, the
+        argv, the skills, the extension, the runner — pi and its runner read
+        once and keep.
         """
+        configure = _configure(provider(place.api_base, self.model))
+        configuration = self.configuration()
+        contract = hashlib.sha256(
+            json.dumps(
+                [configure, _prepare(place.state, {**configuration, "opening": None})]
+            ).encode()
+        ).hexdigest()
         return MachineLaunch(
-            configure=_configure(provider(place.api_base, self.model)),
-            prepare=_prepare(place.state, self.configuration()),
-            contract=self.contract(),
+            configure=configure,
+            prepare=_prepare(place.state, configuration),
+            contract=contract,
             command='"$PI_RUNNER"',
         )
 

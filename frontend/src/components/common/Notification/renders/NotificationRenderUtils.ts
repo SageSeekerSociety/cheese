@@ -60,35 +60,3 @@ export function getStringMetadata(notification: Notification, key: string, defau
   const value = notification.contextMetadata[key]
   return value !== undefined ? String(value) : defaultValue
 }
-
-/**
- * 根据实体ID和类型构建路由链接
- * @param entityType 实体类型
- * @param entityId 实体ID
- * @param query 可选的查询参数
- * @returns 路由链接对象
- */
-export function buildEntityLink(entityType: string, entityId: string, query?: Record<string, any>) {
-  switch (entityType) {
-    case 'user':
-      return {
-        name: 'UserDetail',
-        params: { id: entityId },
-        query,
-      }
-    case 'team':
-      return {
-        name: 'TeamDetail',
-        params: { id: entityId },
-        query,
-      }
-    case 'discussion':
-      return {
-        name: 'DiscussionDetail',
-        params: { id: entityId },
-        query,
-      }
-    default:
-      return undefined
-  }
-}

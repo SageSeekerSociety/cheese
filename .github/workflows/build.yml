@@ -40,6 +40,7 @@ jobs:
       browser_render: ${{ steps.plan.outputs.browser_render }}
       gateway: ${{ steps.plan.outputs.gateway }}
       metering_proxy: ${{ steps.plan.outputs.metering_proxy }}
+      private_executor: ${{ steps.plan.outputs.private_executor }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -78,7 +79,8 @@ jobs:
           steps.plan.outputs.office_render == 'false' ||
           steps.plan.outputs.browser_render == 'false' ||
           steps.plan.outputs.gateway == 'false' ||
-          steps.plan.outputs.metering_proxy == 'false'
+          steps.plan.outputs.metering_proxy == 'false' ||
+          steps.plan.outputs.private_executor == 'false'
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
@@ -96,7 +98,8 @@ jobs:
           steps.plan.outputs.office_render == 'false' ||
           steps.plan.outputs.browser_render == 'false' ||
           steps.plan.outputs.gateway == 'false' ||
-          steps.plan.outputs.metering_proxy == 'false'
+          steps.plan.outputs.metering_proxy == 'false' ||
+          steps.plan.outputs.private_executor == 'false'
         env:
           BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
           BUILD_SANDBOX: ${{ steps.plan.outputs.sandbox }}
@@ -105,6 +108,7 @@ jobs:
           BUILD_BROWSER_RENDER: ${{ steps.plan.outputs.browser_render }}
           BUILD_GATEWAY: ${{ steps.plan.outputs.gateway }}
           BUILD_METERING_PROXY: ${{ steps.plan.outputs.metering_proxy }}
+          BUILD_PRIVATE_EXECUTOR: ${{ steps.plan.outputs.private_executor }}
           BASE_SHA: ${{ steps.plan.outputs.base_sha }}
           CURRENT_SHA: ${{ github.sha }}
           BASE_TAG: ${{ steps.plan.outputs.base_tag }}
@@ -133,8 +137,9 @@ jobs:
           }
           # Promotion copies the PREVIOUS successful build's tag forward, so an
           # image added to this list has nothing to copy until it has been built
-          # once. Adding one means also touching its build context in the same
-          # commit, or this step fails on the merge that introduces it.
+          # once. plan-image-builds.sh forces a build while the baseline predates
+          # an image; add that check with the image, or this step fails on the
+          # merge that introduces it.
           [ "$BUILD_BACKEND" = true ] || promote backend
           if [ "$BUILD_SANDBOX" = false ]; then
             promote sandbox
@@ -144,6 +149,7 @@ jobs:
           [ "$BUILD_BROWSER_RENDER" = true ] || promote browser-render
           [ "$BUILD_GATEWAY" = true ] || promote gateway
           [ "$BUILD_METERING_PROXY" = true ] || promote metering-proxy "$BASE_SHA" "$CURRENT_SHA"
+          [ "$BUILD_PRIVATE_EXECUTOR" = true ] || promote private-executor
 
       - name: Remove registry credentials
         if: always()
@@ -548,3 +554,60 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,version=2,scope=office-render
           cache-to: type=gha,version=2,scope=office-render,mode=max
+
+
+  build-private-executor:
+    needs: plan
+    if: needs.plan.outputs.private_executor == 'true'
+    runs-on: ubuntu-24.04
+    # A slim Node base plus one npm install; nothing compiles.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/private-executor
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            # An unambiguous handle for THIS run: `type=sha` is the short sha, so
+            # ${{ github.sha }} would name a tag that does not exist.
+            type=raw,value=run-${{ github.run_id }}
+
+      # The recipe copies backend files, so its context is the repository root.
+      - name: Build and push private-executor image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ./backend/sandbox/Dockerfile.private
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=private-executor
+          cache-to: type=gha,version=2,scope=private-executor,mode=max

@@ -368,6 +368,13 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			}
 			fmt.Println("Downloading the latest cheese…")
 			tmp, err := update.Fetch(context.Background(), cfg.Base)
+			if errors.Is(err, update.ErrCurrent) {
+				ui.OK("cheesehost is already the published build.")
+				if restart {
+					return service.Control(*cfgPath, "start")
+				}
+				return nil
+			}
 			if err != nil {
 				return err
 			}

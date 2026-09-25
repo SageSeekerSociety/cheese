@@ -46,6 +46,12 @@ jobs:
       - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
       # The script and what it imports are standard library only, so this job
       # skips `uv sync` and its several minutes.
+      - name: Let a session have its own namespace, and install zsh
+        # The headless contract and the equivalence check launch sessions the
+        # way a room does; the MCP contract checks the build's zsh too.
+        run: |
+          .github/scripts/allow-user-namespaces.sh
+          command -v zsh || { sudo apt-get update -q && sudo apt-get install -yq zsh; }
       - run: >-
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -75,24 +81,31 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
           --output tmp/mcp-contract/pinned/refresh
-      - name: Install FUSE for the forwarded project view
+      - name: Install FUSE for the forwarded project view, and zsh
         # The equivalence check mounts the view a room's session works in.
         # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
-        # only `fusermount3`, which takes the same arguments.
+        # only `fusermount3`, which takes the same arguments. zsh is the
+        # executor shell the second equivalence run and the shell contract use.
         if: ${{ !cancelled() }}
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq fuse3 libfuse2t64
+          sudo apt-get install -yq fuse3 libfuse2t64 zsh
           command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
           python3 -m venv tmp/equivalence-venv
           tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
-      - name: Remote Bash is equivalent to Claude Code on the executor
+      - name: Remote Bash is equivalent to Claude Code on the executor (bash)
         # Runs even when an earlier check failed, so one run reports all.
         if: ${{ !cancelled() }}
         run: >-
           tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
-          --output tmp/mcp-contract/pinned/equivalence
+          --shell bash --output tmp/mcp-contract/pinned/equivalence-bash
+      - name: Remote Bash is equivalent to Claude Code on the executor (zsh)
+        if: ${{ !cancelled() }}
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --shell zsh --output tmp/mcp-contract/pinned/equivalence-zsh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
@@ -133,6 +146,12 @@ jobs:
         run: >-
           npm install --no-save --no-audit --no-fund
           --prefix scripts/remote_execution "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+      - name: Let a session have its own namespace, and install zsh
+        # The headless contract and the equivalence check launch sessions the
+        # way a room does; the MCP contract checks the build's zsh too.
+        run: |
+          .github/scripts/allow-user-namespaces.sh
+          command -v zsh || { sudo apt-get update -q && sudo apt-get install -yq zsh; }
       - run: >-
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -158,24 +177,31 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
           --output tmp/mcp-contract/latest/refresh
-      - name: Install FUSE for the forwarded project view
+      - name: Install FUSE for the forwarded project view, and zsh
         # The equivalence check mounts the view a room's session works in.
         # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
-        # only `fusermount3`, which takes the same arguments.
+        # only `fusermount3`, which takes the same arguments. zsh is the
+        # executor shell the second equivalence run and the shell contract use.
         if: ${{ !cancelled() }}
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq fuse3 libfuse2t64
+          sudo apt-get install -yq fuse3 libfuse2t64 zsh
           command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
           python3 -m venv tmp/equivalence-venv
           tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
-      - name: Remote Bash is equivalent to Claude Code on the executor
+      - name: Remote Bash is equivalent to Claude Code on the executor (bash)
         # Runs even when an earlier check failed, so one run reports all.
         if: ${{ !cancelled() }}
         run: >-
           tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
-          --output tmp/mcp-contract/latest/equivalence
+          --shell bash --output tmp/mcp-contract/latest/equivalence-bash
+      - name: Remote Bash is equivalent to Claude Code on the executor (zsh)
+        if: ${{ !cancelled() }}
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --shell zsh --output tmp/mcp-contract/latest/equivalence-zsh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job

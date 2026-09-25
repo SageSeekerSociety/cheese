@@ -51,6 +51,12 @@ function page(number: number) {
 
 const DOCUMENT = { numPages: 2, getPage: (n: number) => Promise.resolve(page(n)) }
 
+/** 第二页取不出来——一页坏掉不该让整份文档一声不响地留白。 */
+const ONE_BAD_PAGE = {
+  numPages: 2,
+  getPage: (n: number) => (n === 2 ? Promise.reject(new Error('页流损坏')) : Promise.resolve(page(n))),
+}
+
 /** 浏览器的 ResizeObserver 在 observe() 时会立刻回调一次 —— 这一条就是被它绊倒的。 */
 let resize: (() => void) | null = null
 
@@ -110,6 +116,17 @@ describe('分页文档的阅读视图', () => {
     pdf.resolveDoc?.(DOCUMENT)
 
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(2))
+  })
+
+  it('某一页画不出来时，就在那一页说清是第几页、为什么', async () => {
+    const { container } = mount()
+    await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+    pdf.resolveDoc?.(ONE_BAD_PAGE)
+
+    // 坏的那一页不许把好的那一页也带走。
+    await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(1))
+    expect(container.textContent).toContain('第 2 页无法显示')
+    expect(container.textContent).toContain('页流损坏')
   })
 
   it('文档画出来之后真正变了宽度，页还是重画', async () => {

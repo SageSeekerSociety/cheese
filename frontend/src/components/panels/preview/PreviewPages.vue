@@ -69,45 +69,62 @@ function scaleFor(page: PDFPageProxy): number {
 async function renderPage(slot: PageSlot, mine: number) {
   if (slot.rendered || !doc.value || !slot.el) return
   slot.rendered = true
-  const page = await doc.value.getPage(slot.number)
-  if (mine !== renderGeneration || !slot.el) return
+  try {
+    const page = await doc.value.getPage(slot.number)
+    if (mine !== renderGeneration || !slot.el) return
 
-  const ratio = window.devicePixelRatio || 1
-  const scale = scaleFor(page)
-  const viewport = page.getViewport({ scale })
+    const ratio = window.devicePixelRatio || 1
+    const scale = scaleFor(page)
+    const viewport = page.getViewport({ scale })
 
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.floor(viewport.width * ratio)
-  canvas.height = Math.floor(viewport.height * ratio)
-  canvas.style.width = `${Math.floor(viewport.width)}px`
-  canvas.style.height = `${Math.floor(viewport.height)}px`
-  slot.el.style.width = `${Math.floor(viewport.width)}px`
-  slot.el.style.height = `${Math.floor(viewport.height)}px`
-  slot.el.replaceChildren(canvas)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.floor(viewport.width * ratio)
+    canvas.height = Math.floor(viewport.height * ratio)
+    canvas.style.width = `${Math.floor(viewport.width)}px`
+    canvas.style.height = `${Math.floor(viewport.height)}px`
+    slot.el.style.width = `${Math.floor(viewport.width)}px`
+    slot.el.style.height = `${Math.floor(viewport.height)}px`
+    slot.el.replaceChildren(canvas)
 
-  // 交画布本身，不交 2D 上下文：v6 起 canvasContext 只为兼容保留，而两个同时给
-  // 是明确不允许的。
-  await page.render({
-    canvas,
-    viewport,
-    transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
-  }).promise
-  if (mine !== renderGeneration || !slot.el) return
+    // 交画布本身，不交 2D 上下文：v6 起 canvasContext 只为兼容保留，而两个同时给
+    // 是明确不允许的。
+    await page.render({
+      canvas,
+      viewport,
+      transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
+    }).promise
+    if (mine !== renderGeneration || !slot.el) return
 
-  const textLayer = document.createElement('div')
-  textLayer.className = 'pv-text'
-  // pdf.js 把每个 span 的 left/top 写成 `calc(… * var(--scale-factor))`，而它按
-  // 自己所在元素解析这个变量。放在外层那个 div 上继承看着也对，但 pdf.js 读的是
-  // 文字层本身——少了它整层会缩在左上角，而屏幕上看不出来：画布还是对的，只有
-  // 选中时高亮落在别处。
-  textLayer.style.setProperty('--scale-factor', String(scale))
-  slot.el.appendChild(textLayer)
-  const layer = new lib!.TextLayer({
-    textContentSource: page.streamTextContent(),
-    container: textLayer,
-    viewport,
-  })
-  await layer.render()
+    const textLayer = document.createElement('div')
+    textLayer.className = 'pv-text'
+    // pdf.js 把每个 span 的 left/top 写成 `calc(… * var(--scale-factor))`，而它按
+    // 自己所在元素解析这个变量。放在外层那个 div 上继承看着也对，但 pdf.js 读的是
+    // 文字层本身——少了它整层会缩在左上角，而屏幕上看不出来：画布还是对的，只有
+    // 选中时高亮落在别处。
+    textLayer.style.setProperty('--scale-factor', String(scale))
+    slot.el.appendChild(textLayer)
+    const layer = new lib!.TextLayer({
+      textContentSource: page.streamTextContent(),
+      container: textLayer,
+      viewport,
+    })
+    await layer.render()
+  } catch (e) {
+    if (mine !== renderGeneration || !slot.el) return
+    showPageFailure(slot, e)
+  }
+}
+
+/** 一页画不出来时，就在那一页的位置说清楚是哪一页、为什么。
+ *
+ *  不这么做的话，屏幕上是永远的空白——和这个组件最初那个 bug 是同一副样子：读者
+ *  分不出「还在画」「这一页没有内容」和「坏了」，也没有东西可点。别的页照旧画。 */
+function showPageFailure(slot: PageSlot, e: unknown) {
+  if (!slot.el) return
+  const box = document.createElement('div')
+  box.className = 'pv-error'
+  box.textContent = `第 ${slot.number} 页无法显示：${e instanceof Error ? e.message : '渲染失败'}`
+  slot.el.replaceChildren(box)
 }
 
 function observe() {
@@ -264,6 +281,13 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 .pv__state--text {
+  text-align: center;
+}
+
+/* 一页画不出来时占着那一页的位置，替掉那张纸。 */
+.pv-error {
+  padding: 32px 16px;
+  color: var(--muted);
   text-align: center;
 }
 

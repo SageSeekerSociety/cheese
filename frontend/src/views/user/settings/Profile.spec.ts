@@ -43,7 +43,7 @@ async function renderPage() {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: Profile },
-      { path: '/users/:id', name: 'UserDefault', component: { template: '<div />' } },
+      { path: '/users/:handle', name: 'UserPage', component: { template: '<div />' } },
     ],
   })
   await router.push('/')

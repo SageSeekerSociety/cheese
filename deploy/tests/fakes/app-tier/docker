@@ -131,6 +131,13 @@ if [ "${1:-}" = pull ]; then
   exit 0
 fi
 
+# The local name a pulled private-executor image carries as a label.
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ] && \
+  [[ "$*" == *com.cheese.local-image* ]]; then
+  printf '%s\n' "${APP_TIER_PRIVATE_EXECUTOR_NAME-cheese-private-executor:9.9.9}"
+  exit 0
+fi
+
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   if [ "$scenario" = local_image_missing ] && \
     [ "${3:-}" = repo/frontend:testsha ]; then

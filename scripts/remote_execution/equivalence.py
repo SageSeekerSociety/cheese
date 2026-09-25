@@ -10,39 +10,45 @@ It runs one scenario matrix twice against the same deterministic model
 (`model_fixture.py`, which answers each turn from a `DO:` directive):
 
   reference  the given build, headless with the room's stream-json flags, run
-             directly in a workspace of its own with no prefix and no plugin,
-             under a HOME of its own. It stands in for Claude Code running on
-             the executor.
+             directly in the machine's project, with no prefix and no plugin.
+             It stands in for Claude Code running on the executor.
   remote     the build launched the way a room's central session is
-             (`client.prepare`: plugin, shell prefix, guard, the forwarded
-             project view mounted over FUSE), with `runtime.py` serving an
-             identical copy of the project under an executor HOME of its own.
+             (`client.prepare`: its own namespace, plugin, shell prefix,
+             guard, the forwarded project view mounted over FUSE), with
+             `runtime.py` serving the machine's project, reached over the
+             device route (`kind: device`) through a relay standing in for
+             the platform's.
 
-The reference HOME and the executor HOME carry the same ~/.bashrc; the central
-session's HOME carries a different one, which nothing may see. Each step
-records what the model is sent, what stream-json reports, and what can be
-observed on the machine, and the two records must be equal after the
-replacements in NORMALIZATIONS: the complete list of values that differ only
-because these are two environments. Any other difference is a bug in the
-remote path, not something to add to that list.
+The two runs happen one after the other and use the same paths: the machine
+(its HOME, its project, its programs) and the session's own directories
+(config, temp) are rebuilt identically before each. The session host's view
+of the project lives somewhere else entirely, and its HOME carries a shell
+startup file of its own, which nothing may see. So the two records must be
+equal with no path rewritten: the only replacements are the values in
+NORMALIZATIONS, each drawn at random or naming the session host's own
+process. Any other difference is a bug in the remote path, not something to
+add to that list.
+
+`--shell zsh` gives the machine zsh as its user shell, with its own aliases,
+functions and options; the session host's shell stays bash.
+
+Needs Linux: the session's namespace, and FUSE for the view.
 
 Usage:
-    python3 equivalence.py --claude <binary> [--output <receipts dir>]
-        [--only <step> ...] [--no-mount]
-
-`--no-mount` skips the FUSE view for hosts without FUSE; the steps that `cd`
-into a directory only the executor has cannot pass without it.
+    python3 equivalence.py --claude <binary> [--shell bash|zsh]
+        [--output <receipts dir>] [--only <step> ...]
 """
 
 import argparse
 import contextlib
 import hashlib
+import http.server
 import importlib.util
 import json
 import os
 import re
-import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -68,30 +74,12 @@ client = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(client)
 
 # Every value the two runs may differ in, and why. `normalize` applies exactly
-# these; the receipt lists them.
+# these; the receipt lists them. No path is among them.
 NORMALIZATIONS = {
-    "<WS>": "The project directory: the reference's workspace and the "
-    "executor's copy are two directories with the same contents.",
-    "<HOME>": "The machine's HOME: the reference's and the executor's are two "
-    "directories carrying the same ~/.bashrc.",
-    "<CONFIG>": "The session's config directory (transcripts, persisted "
-    "results). It is on the session host in both runs, as two directories.",
-    "<TMP>": "The session's temp directory (background task output). It is on "
-    "the session host in both runs, as two directories.",
-    "<SLUG>": "The project key the build derives from its own working "
-    "directory's path, which differs with that path.",
     "<SESSION>": "The session id, which the build draws at random.",
     "<TASK n>": "Background task ids, which the build draws at random; "
     "numbered in order of appearance, so their order is still compared.",
     "<FILE>": "Names of persisted tool results, which the build draws at random.",
-    "<PORT>": "The port of each run's model fixture.",
-    "<PROGRAMS>": "The directory each machine keeps the platform's CLI in, "
-    "which its commands find first on PATH.",
-    "<HOOKLOG>": "The directory each machine's project hooks log to (HOOK_LOG): "
-    "the test's own instrument, one per machine.",
-    "realpath spellings": "Each directory above is also matched as its real "
-    "path, which the build and `pwd -P` report (macOS keeps /var under "
-    "/private/var), and as `printf %q` spells it.",
     "dropped fields": "uuid, prompt_id, timestamps, durations, cost and usage: "
     "drawn at random or read off a clock. cache_control: the build's prompt "
     "cache markers, placed by position among the blocks it sends.",
@@ -99,12 +87,6 @@ NORMALIZATIONS = {
     "user message (environment, git status, skill list, date) describe the "
     "session it runs in, which stays on the session host by design; they are "
     "not produced by any command, so this check leaves them out.",
-    "platform hook input": "A platform hook runs on the session host by design, "
-    "so its input names the central workspace and transcript; the central "
-    "workspace is read as <WS> there and nowhere else.",
-    "environment: macOS": "__CF_USER_TEXT_ENCODING is added by macOS to the "
-    "executor's Python service; it does not exist on Linux, and the reference "
-    "Claude Code is started without it.",
     "environment: session-host process": "CLAUDE_PID, "
     "CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN name the "
     "session host's Claude Code process: a pid, and a Unix socket with its "
@@ -112,31 +94,15 @@ NORMALIZATIONS = {
     "neither the pid nor the socket exists on the executor — so they are "
     "removed from the reference before comparing.",
 }
-# Lines of an environment listing the normalizations above remove.
-UNLISTED = re.compile(
-    r"^(CLAUDE_PID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN"
-    r"|__CF_USER_TEXT_ENCODING)=.*(\n|$)",
-    re.MULTILINE,
-)
-# Differences this check knows of and does not accept as equivalence: they
-# are reported, not normalized, and each names why the remote path cannot
-# remove it. Matched narrowly, in the remote run only.
-KNOWN_DIFFERENCES = {
-    "the build's refusal names the session host's workspace": (
-        re.compile(r"(Dangerous rmdir operation detected: ')([^']*)"),
-        "When the build itself refuses a Bash command before running it (here, "
-        "rmdir of its working directory), the refusal names the central "
-        "workspace. Claude Code 2.1.277 renders a tool error from the "
-        "tool.call result alone and rejects any change to it, and a plugin "
-        "`deny` would wrap the text in <tool_use_error>. The path still works "
-        "if the model uses it: the shell prefix maps it to the executor.",
-    ),
-}
 HOST_PROCESS_ENV = {
     "CLAUDE_PID",
     "CLAUDE_CODE_MESSAGING_SOCKET",
     "CLAUDE_CODE_MESSAGING_TOKEN",
 }
+# Lines of an environment listing the normalizations above remove.
+UNLISTED = re.compile(
+    r"^(" + "|".join(sorted(HOST_PROCESS_ENV)) + r")=.*(\n|$)", re.MULTILINE
+)
 DROPPED = {
     "uuid",
     "prompt_id",
@@ -152,11 +118,26 @@ DROPPED = {
     "cache_control",
     "end_time",
 }
-BASHRC = """\
+# The machine user's own shell setup. Each run reads it from the machine's
+# HOME; the session host's HOME has a different one.
+STARTUP = {
+    "bash": {
+        ".bashrc": """\
 alias exec_alias='echo EXEC_ALIAS'
 exec_fn() { echo EXEC_FN; }
 export PATH="$HOME/exec-bin:$PATH"
-"""
+""",
+        ".bash_profile": "[ -f ~/.bashrc ] && . ~/.bashrc\n",
+    },
+    "zsh": {
+        ".zshrc": """\
+alias exec_alias='echo EXEC_ALIAS'
+exec_fn() { echo EXEC_FN; }
+setopt SH_WORD_SPLIT
+export PATH="$HOME/exec-bin:$PATH"
+""",
+    },
+}
 CENTRAL_BASHRC = """\
 alias central_alias='echo CENTRAL_ALIAS'
 central_fn() { echo CENTRAL_FN; }
@@ -165,16 +146,72 @@ PROJECT_HOOK = (
     'cat >> "$HOOK_LOG/project-{event}.jsonl"; '
     'echo >> "$HOOK_LOG/project-{event}.jsonl"'
 )
+DEVICE_ID = "equivalence-device"
 
 
-def machine_home(home):
-    home.mkdir(parents=True, exist_ok=True)
-    (home / ".bashrc").write_text(BASHRC)
-    (home / ".bash_profile").write_text("[ -f ~/.bashrc ] && . ~/.bashrc\n")
-    tool = home / "exec-bin" / "exec-tool"
-    tool.parent.mkdir(exist_ok=True)
-    tool.write_text("#!/bin/sh\necho EXEC_TOOL\n")
-    tool.chmod(0o755)
+class Layout:
+    """The paths both runs use. `rebuild` lays them out afresh and identically:
+    the machine's HOME, project, programs and hook log, and the session's
+    config, temp and platform-hook log."""
+
+    def __init__(self, root, shell):
+        self.root = root
+        self.shell = shell
+        self.machine = root / "machine"
+        self.home = self.machine / "home"
+        # With a space, as a machine's path can have.
+        self.project = self.machine / "the project"
+        self.programs = self.machine / "programs"
+        self.hook_log = self.machine / "hook-log"
+        self.session = root / "session"
+        self.config = self.session / "config"
+        self.temporary = self.session / "tmp"
+        self.platform_log = self.session / "platform-log"
+        self.harness = root / "harness"
+        self.template = root / "template"
+        project(self.template)
+
+    def rebuild(self):
+        for path in (self.machine, self.session):
+            shutil.rmtree(path, ignore_errors=True)
+        (self.home / ".claude").mkdir(parents=True)
+        for name, text in STARTUP[self.shell].items():
+            (self.home / name).write_text(text)
+        tool = self.home / "exec-bin" / "exec-tool"
+        tool.parent.mkdir()
+        tool.write_text("#!/bin/sh\necho EXEC_TOOL\n")
+        tool.chmod(0o755)
+        # A copy, so both runs have the same commit ids.
+        shutil.copytree(self.template, self.project, symlinks=True)
+        bin_dir = self.programs / "remote-execution" / "bin"
+        bin_dir.mkdir(parents=True)
+        # What a device's session Stop checkpoint runs (`launch.py`).
+        sync = bin_dir / "cheese-sync"
+        sync.write_text("#!/bin/sh\nexit 0\n")
+        sync.chmod(0o755)
+        for path in (self.hook_log, self.config, self.temporary, self.platform_log):
+            path.mkdir(parents=True)
+
+    def env(self, port, platform_cli=True):
+        """The environment the machine's own processes start with — the
+        reference Claude Code, or the executor's service — before the build
+        adds anything. The same for both, so a command's whole environment
+        can be compared: the executor's service puts the platform CLI first
+        on PATH itself, and the reference is given it there."""
+        return {
+            **contract.fixture_env(self.home, self.session, port),
+            "CLAUDE_CONFIG_DIR": str(self.config),
+            "CLAUDE_CODE_TMPDIR": str(self.temporary),
+            "SHELL": shutil.which(self.shell),
+            "PATH": (
+                str(self.programs / "remote-execution/bin") + os.pathsep
+                if platform_cli
+                else ""
+            )
+            + os.environ["PATH"],
+            "HOOK_LOG": str(self.hook_log),
+            "EQ_MACHINE": "1",
+        }
 
 
 def project(path):
@@ -202,10 +239,21 @@ def project(path):
             }
         )
     )
-    git = ["git", "-c", "user.name=fixture", "-c", "user.email=f@example.invalid"]
-    subprocess.run([*git, "init", "-q"], cwd=path, check=True)
-    subprocess.run([*git, "add", "."], cwd=path, check=True)
-    subprocess.run([*git, "commit", "-qm", "base"], cwd=path, check=True)
+    git = [
+        "git",
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=f@example.invalid",
+    ]
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_DATE="2026-01-01T00:00:00Z",
+        GIT_COMMITTER_DATE="2026-01-01T00:00:00Z",
+    )
+    subprocess.run([*git, "init", "-q"], cwd=path, check=True, env=env)
+    subprocess.run([*git, "add", "."], cwd=path, check=True, env=env)
+    subprocess.run([*git, "commit", "-qm", "base"], cwd=path, check=True, env=env)
 
 
 def platform_hooks(log):
@@ -216,8 +264,8 @@ def platform_hooks(log):
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f"cat >> {shlex.quote(str(log / event))}.jsonl; "
-                        f"echo >> {shlex.quote(str(log / event))}.jsonl",
+                        "command": f"cat >> {log / event}.jsonl; "
+                        f"echo >> {log / event}.jsonl",
                     }
                 ],
             }
@@ -226,60 +274,99 @@ def platform_hooks(log):
     }
 
 
-def machine_env(home, temporary, extra, programs=None):
-    """The environment a machine's own processes start with — the reference
-    Claude Code, or the executor's service — before the build adds anything.
-    Both machines get the same one, so a command's whole environment can be
-    compared."""
-    return {
-        **contract.fixture_env(home, temporary.parent, 9),
-        "CLAUDE_CODE_TMPDIR": str(temporary),
-        # The executor's service puts its platform CLI first on PATH itself.
-        "PATH": (
-            str(programs / "remote-execution/bin") + os.pathsep if programs else ""
-        )
-        + os.environ["PATH"],
-        **extra,
-    }
+class Relay:
+    """The platform's device route, standing in: each executor call over HTTP,
+    passed to the executor's socket, answered as the route answers. A machine
+    whose socket is gone is offline (409 with `X-Device-Id`), and `fail` makes
+    the next starts and reads of a Bash command's shell answer so too, as a
+    device that drops and comes back does. Only a Bash command's: the project
+    hooks around it travel the same way, and would take the failures first."""
+
+    def __init__(self, state):
+        self.state = state
+        self.lock = threading.Lock()
+        self.failing = {}
+        self.bash_commands = set()
+        relay = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def answer(self, status, body, offline=False):
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                if offline:
+                    self.send_header("X-Device-Id", DEVICE_ID)
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_POST(self):
+                request = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                method, params = request["method"], request.get("params") or {}
+                operation = (
+                    params.get("operation")
+                    if method == "control" and params.get("subtype") == "shell"
+                    else None
+                )
+                offline = {"detail": f"DeviceOffline: 设备 {DEVICE_ID} 离线"}
+                with relay.lock:
+                    if operation == "start" and params.get("kind") == "bash":
+                        relay.bash_commands.add(params.get("command_id"))
+                    if (
+                        params.get("command_id") in relay.bash_commands
+                        and relay.failing.get(operation, 0) > 0
+                    ):
+                        relay.failing[operation] -= 1
+                        return self.answer(409, offline, offline=True)
+                try:
+                    result = execution_runtime.request(relay.state, method, params)
+                except (FileNotFoundError, ConnectionError):
+                    return self.answer(409, offline, offline=True)
+                except RuntimeError as exc:
+                    return self.answer(500, {"detail": str(exc)})
+                return self.answer(200, result)
+
+        class Server(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
+            def handle_error(self, request, client_address):
+                # A prefix the build stopped hangs up mid-answer, as it may
+                # on the platform's route; nothing to report.
+                if not isinstance(sys.exc_info()[1], ConnectionError):
+                    super().handle_error(request, client_address)
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/executor"
+
+    def fail(self, **counts):
+        with self.lock:
+            self.failing.update(counts)
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
 
 
 class Run:
     """One of the two sessions, and everything needed to read its record."""
 
-    def __init__(
-        self, name, session, *, workspace, home, config, temporary, env, also=()
-    ):
-        self.also = list(also)
+    def __init__(self, name, session, layout, env):
         self.name = name
         self.session = session
-        self.workspace = workspace
-        self.home = home
-        self.config = config
-        self.temporary = temporary
+        self.layout = layout
         self.env = env
-        self.central = None
-        self.hook_log = None
-        self.platform_log = None
         self.drop = None
+        self.fail = None
         self.close = session.stop
 
     def replacements(self):
         pairs = []
-        for directory in sorted(self.config.glob("projects/*")):
-            pairs.append((directory.name, "<SLUG>"))
-        for directory in sorted(self.temporary.glob("claude-*/*")):
-            if directory.is_dir():
-                pairs.append((directory.name, "<SLUG>"))
-        for path, token in [
-            (self.config, "<CONFIG>"),
-            (self.temporary, "<TMP>"),
-            (self.workspace, "<WS>"),
-            (self.home, "<HOME>"),
-            *self.also,
-        ]:
-            for spelled in (str(path), os.path.realpath(path)):
-                pairs.append((spelled, token))
-                pairs.append((spelled.replace(" ", "\\ "), token))
         _, init = self.session.wait(is_("system", "init"), 1)
         if init:
             pairs.append((init["session_id"], "<SESSION>"))
@@ -288,18 +375,15 @@ class Run:
             if is_("system", "task_started")(event) and event["task_id"] not in tasks:
                 tasks.append(event["task_id"])
         pairs += [(task, f"<TASK {n}>") for n, task in enumerate(tasks, 1)]
-        # Longest first, so a path is replaced before a path it contains.
-        return sorted(pairs, key=lambda pair: -len(pair[0]))
+        return pairs
 
-    def normalize(self, value, extra=()):
-        pairs = [*extra, *self.replacements()]
+    def normalize(self, value):
+        pairs = self.replacements()
 
         def text(string):
             for old, new in pairs:
-                if old:
-                    string = string.replace(old, new)
+                string = string.replace(old, new)
             string = UNLISTED.sub("", string)
-            string = re.sub(r"127\.0\.0\.1:\d+", "127.0.0.1:<PORT>", string)
             return re.sub(
                 r"tool-results/[A-Za-z0-9_-]+\.txt", "tool-results/<FILE>", string
             )
@@ -320,20 +404,12 @@ class Run:
         return walk(value)
 
 
-def reference(binary, root):
-    folder = root / "reference"
-    home = folder / "reference" / "home"
-    machine_home(home)
-    workspace = folder / "machine" / "the project"
-    project(workspace)
-    log = folder / "hook-log"
-    log.mkdir(parents=True)
-    platform = folder / "platform-log"
-    platform.mkdir()
-    extra = {"HOOK_LOG": str(log), "EQ_MACHINE": "1"}
-    programs = folder / "programs"
-    temporary = folder / "reference" / "tmp"
-    env = machine_env(home, temporary, extra, programs)
+def reference(binary, layout, port):
+    layout.rebuild()
+    env = layout.env(port)
+    (layout.config / "settings.json").write_text(
+        json.dumps({"hooks": platform_hooks(layout.platform_log)})
+    )
     launch = {
         "command": [
             binary,
@@ -348,88 +424,54 @@ def reference(binary, root):
         ],
         # The model's address is the fixture's, which the session sets.
         "env": {k: v for k, v in env.items() if k != "ANTHROPIC_BASE_URL"},
-        "cwd": str(workspace),
+        "cwd": str(layout.project),
     }
     session = Session(
         binary,
-        folder,
+        layout.harness,
         "reference",
         DRIVER,
-        settings={"hooks": platform_hooks(platform)},
         launch=launch,
-        home=home,
+        home=layout.home,
+        port=port,
     )
-    env = {
-        **env,
-        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{session.server.server_port}",
-    }
-    run = Run(
-        "reference",
-        session,
-        workspace=workspace,
-        home=home,
-        config=home / ".claude",
-        temporary=temporary,
-        env=env,
-        also=[(programs, "<PROGRAMS>"), (log, "<HOOKLOG>")],
-    )
-    run.hook_log, run.platform_log = log, platform
-    return run
+    return Run("reference", session, layout, env)
 
 
-def remote(binary, root, mount):
-    folder = root / "remote"
-    executor_home = folder / "executor-home"
-    machine_home(executor_home)
-    central_home = folder / "central-home"
-    central_home.mkdir(parents=True)
-    (central_home / ".bashrc").write_text(CENTRAL_BASHRC)
-    (central_home / ".bash_profile").write_text("[ -f ~/.bashrc ] && . ~/.bashrc\n")
-    (central_home / ".claude").mkdir()
-    workspace = folder / "machine" / "the project"
-    project(workspace)
-    log = folder / "hook-log"
-    log.mkdir(parents=True)
-    platform = folder / "platform-log"
-    platform.mkdir()
-    programs = folder / "execution"
-    (programs / "remote-execution").mkdir(parents=True)
+def remote(binary, layout, port):
+    layout.rebuild()
+    programs = layout.programs
     shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
     shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
-    extra = {"HOOK_LOG": str(log), "EQ_MACHINE": "1"}
-    config = {
-        "workspace": str(workspace),
-        "claude": binary,
-        "env": extra,
-        "mcp_servers": {},
-    }
-    target = {
-        "command": [sys.executable, str(programs / "runtime.py")],
-        "state": str(programs / "state"),
-        "mcp_servers": [],
-    }
-    executor = client.RemoteClient(target)
-    # The executor's own environment: its machine's, not this process's.
-    executor_temporary = folder / "executor-tmp"
-    executor_temporary.mkdir()
-    executor_env = machine_env(executor_home, executor_temporary, {})
+    state = programs / "state"
+    executor_env = layout.env(port, platform_cli=False)
     subprocess.run(
-        executor.command("start"),
-        input=json.dumps(config),
+        [sys.executable, str(programs / "runtime.py"), "start", "--state", str(state)],
+        input=json.dumps(
+            {
+                "workspace": str(layout.project),
+                "claude": binary,
+                "env": {},
+                "mcp_servers": {},
+            }
+        ),
         text=True,
         check=True,
         capture_output=True,
         env=executor_env,
         cwd=str(programs),
     )
-    if not mount:
-        execution_release.mount_state = lambda _path: execution_release.MOUNT_LIVE
+    relay = Relay(state)
     client.PINNED_VERSION = subprocess.run(
         [binary, "--version"], capture_output=True, text=True
     ).stdout.split()[0]
+    central_home = layout.session / "home"
+    central_home.mkdir()
+    (central_home / ".bashrc").write_text(CENTRAL_BASHRC)
+    (central_home / ".bash_profile").write_text("[ -f ~/.bashrc ] && . ~/.bashrc\n")
     base = {
         "hooks": {
-            **platform_hooks(platform),
+            **platform_hooks(layout.platform_log),
             "SessionStart": [
                 {
                     "hooks": [
@@ -446,58 +488,62 @@ def remote(binary, root, mount):
             ],
         }
     }
+    os.environ["CHEESE_TOKEN"] = "equivalence-execution-token"
     launch = client.prepare(
-        central_home / "session",
-        target,
+        layout.session,
+        {
+            "kind": "device",
+            "device_id": DEVICE_ID,
+            "url": relay.url,
+            "mcp_servers": [],
+        },
         claude=binary,
         base_settings=base,
         home_override=central_home,
-        config_override=central_home / ".claude",
+        config_override=layout.config,
     )
+    assert launch["workspace"] == str(layout.project), launch
+    assert Path(launch["cwd"]) != layout.project, launch
     session = Session(
         binary,
-        folder,
+        layout.harness,
         "central",
         DRIVER,
         launch=launch,
         home=central_home,
-        # A credential only the session host holds: the executor must never
-        # see it.
+        port=port,
+        # The session host's own shell, and a credential only it holds: the
+        # executor must see neither.
         env={"SHELL": "/bin/bash", "CENTRAL_SECRET": "central-only-secret"},
     )
-    run = Run(
-        "remote",
-        session,
-        workspace=workspace,
-        home=executor_home,
-        config=central_home / ".claude",
-        temporary=Path(launch["env"]["CLAUDE_CODE_TMPDIR"]),
-        env={**executor_env, **extra},
-        also=[
-            (executor_home / ".claude", "<CONFIG>"),
-            (executor_temporary, "<TMP>"),
-            (programs, "<PROGRAMS>"),
-            (log, "<HOOKLOG>"),
-        ],
-    )
-    run.central = Path(launch["cwd"])
-    run.hook_log, run.platform_log = log, platform
-    socket = Path(execution_runtime.socket_path(Path(target["state"])))
+    run = Run("remote", session, layout, layout.env(port))
+    listening = Path(execution_runtime.socket_path(state))
 
     def drop(seconds):
         """The link to the executor goes away, and comes back."""
-        hidden = socket.with_name(socket.name + ".dropped")
-        socket.rename(hidden)
+        hidden = listening.with_name(listening.name + ".dropped")
+        listening.rename(hidden)
         time.sleep(seconds)
-        hidden.rename(socket)
+        hidden.rename(listening)
 
     def close():
         session.stop()
-        subprocess.run(executor.command("stop"), capture_output=True, timeout=30)
-        if mount:
-            execution_release.release_mount(run.central)
+        subprocess.run(
+            [
+                sys.executable,
+                str(programs / "runtime.py"),
+                "stop",
+                "--state",
+                str(state),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        relay.close()
+        execution_release.release_mount(launch["cwd"])
 
     run.drop = drop
+    run.fail = relay.fail
     run.close = close
     return run
 
@@ -584,46 +630,39 @@ def step_cwd(run):
     turn(run, bash("cd /tmp && pwd"))
     turn(run, bash("pwd"))
     turn(run, bash("mkdir -p vanishing && cd vanishing && pwd"))
-    # Removes only the directory the shell is in; a run whose `cd` did not
-    # hold finds nothing to remove instead of removing the workspace.
+    # The build refuses this itself, naming its working directory. Removes
+    # only the directory the shell is in; a run whose `cd` did not hold finds
+    # nothing to remove instead of removing the workspace.
     turn(run, bash("rmdir ../vanishing && echo removed"))
     turn(run, bash("pwd"))
     return {}
 
 
+# Every exported variable as `NAME=<json value>`, one per line, whatever the
+# shell: the same listing from bash and zsh.
+LIST_ENV = (
+    "python3 -c 'import json, os; "
+    '[print(k + "=" + json.dumps(v, ensure_ascii=False)) '
+    "for k, v in sorted(os.environ.items())]'"
+)
+
+
 def step_environment(run):
     turn(run, bash('export EQ_EXPORTED=exported; echo "[$EQ_EXPORTED]"'))
     turn(run, bash('echo "[${EQ_EXPORTED:-unset}]"'))
-    mark = turn(
-        run,
-        bash(
-            "for name in $(compgen -e | LC_ALL=C sort); do "
-            'printf \'%s=%q\\n\' "$name" "${!name}"; done'
-        ),
-    )
+    mark = turn(run, bash(LIST_ENV))
     listed = {}
     for text in tool_texts(run, mark):
         for line in text.splitlines():
             name, _, value = line.partition("=")
-            listed[name] = value
-    machine = {
-        name: shlex.quote(value) if value else "''" for name, value in run.env.items()
-    }
-
-    def plain(value):
-        # %q and shlex quote differently; compare what they quote.
-        with contextlib.suppress(ValueError):
-            words = shlex.split(value)
-            return words[0] if words else ""
-        return value
-
+            with contextlib.suppress(ValueError):
+                listed[name] = json.loads(value)
     added = {
         name: value
         for name, value in listed.items()
         if name != "PATH"
         and name not in HOST_PROCESS_ENV
-        and name != "__CF_USER_TEXT_ENCODING"
-        and plain(machine.get(name, "\0")) != plain(value)
+        and run.env.get(name) != value
     }
     return {
         "variables the build set": added,
@@ -634,12 +673,17 @@ def step_environment(run):
 
 
 def step_shell(run):
+    login = "[[ -o login ]]" if run.layout.shell == "zsh" else "shopt -q login_shell"
     turn(
         run,
         bash(
             "type exec_alias; exec_fn; command -v exec-tool; exec-tool; "
             "type central_alias 2>&1 | head -1; type central_fn 2>&1 | head -1; "
-            'echo "$SHELL"; shopt -q login_shell && echo login || echo not-login'
+            'echo "$SHELL"; echo "${ZSH_VERSION:+zsh}${BASH_VERSION:+bash}"; '
+            f"{login} && echo login || echo not-login; "
+            # Word splitting of an unquoted variable: off in zsh, unless the
+            # machine's own options turn it on.
+            'words="one two"; for word in $words; do echo "[$word]"; done'
         ),
     )
     return {}
@@ -679,6 +723,31 @@ def step_background(run):
         follow, _ = run.session.wait(is_("result"), 60, index + 1)
         mark = turn(run, do("Read", file_path=note["output_file"]))
     return {"notified": note is not None, "follow-up turn": follow is not None}
+
+
+def step_transient(run):
+    """The device drops for a moment as a command starts, and again while it
+    is read, in the foreground and in the background. Nothing of that may
+    show in what the command printed."""
+    if run.fail:
+        run.fail(start=1, read=2)
+    turn(run, bash("echo before; sleep 1; echo done-fg"))
+    if run.fail:
+        run.fail(start=1, read=2)
+    mark = run.session.user(
+        do(
+            "Bash",
+            command="sleep 1; echo done-bg",
+            run_in_background=True,
+            description="bg",
+        )
+    )
+    _, note = run.session.wait(is_("system", "task_notification"), 60, mark)
+    if note:
+        index = run.session.events.index(note)
+        run.session.wait(is_("result"), 60, index + 1)
+        turn(run, do("Read", file_path=note["output_file"]))
+    return {"notified": note is not None}
 
 
 def step_move(run):
@@ -805,6 +874,7 @@ STEPS = {
     "stdin": step_stdin,
     "composition": step_composition,
     "background": step_background,
+    "transient": step_transient,
     "move": step_move,
     "stop_task": step_stop_task,
     "task_stop_tool": step_task_stop_tool,
@@ -814,6 +884,17 @@ STEPS = {
     # Last: it ends the session.
     "stdin_close": step_stdin_close,
 }
+LEFTOVERS = (
+    "sleep 301",
+    "sleep 302",
+    "sleep 303",
+    "sleep 304",
+    "sleep 305",
+    "sleep 306",
+    "sleep 307",
+    "sleep 309",
+    "sleep 4",
+)
 
 # --- the generic record ------------------------------------------------------
 
@@ -889,9 +970,12 @@ def record(run, mark, requests_mark):
     return {"stream": stream, "model": model}
 
 
-def hook_logs(run):
+def hook_logs(layout):
     logs = {}
-    for name, directory in (("project", run.hook_log), ("platform", run.platform_log)):
+    for name, directory in (
+        ("project", layout.hook_log),
+        ("platform", layout.platform_log),
+    ):
         for path in sorted(directory.glob("*.jsonl")):
             logs[f"{name} {path.stem}"] = [
                 json.loads(line)
@@ -922,44 +1006,6 @@ def play(run, names):
     return record_by_step
 
 
-def known(run, value):
-    """The remote run's record with KNOWN_DIFFERENCES spelled as the reference."""
-    if not run.central:
-        return value
-    central = str(run.central)
-
-    def walk(item):
-        if isinstance(item, str):
-            for pattern, _ in KNOWN_DIFFERENCES.values():
-                item = pattern.sub(
-                    lambda m: m.group(1)
-                    + m.group(2).replace(central, str(run.workspace)),
-                    item,
-                )
-            return item
-        if isinstance(item, list):
-            return [walk(element) for element in item]
-        if isinstance(item, dict):
-            return {key: walk(element) for key, element in item.items()}
-        return item
-
-    return walk(value)
-
-
-def normalized(run, raw, logs):
-    central = [(str(run.central), "<WS>")] if run.central else []
-    out = {name: run.normalize(known(run, value)) for name, value in raw.items()}
-    # Platform hooks alone may name the central workspace (NORMALIZATIONS).
-    out["hooks"] = {
-        name: [
-            run.normalize(entry, central if name.startswith("platform") else ())
-            for entry in entries
-        ]
-        for name, entries in logs.items()
-    }
-    return out
-
-
 def differences(left, right, path=""):
     if type(left) is not type(right):
         return [f"{path}: {json.dumps(left)[:400]} != {json.dumps(right)[:400]}"]
@@ -987,43 +1033,49 @@ def differences(left, right, path=""):
     )
 
 
+def free_port():
+    with contextlib.closing(socket.socket()) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", required=True, help="the claude binary to check")
+    parser.add_argument(
+        "--shell", choices=sorted(STARTUP), default="bash", help="the machine's shell"
+    )
     parser.add_argument("--output", type=Path, help="where to write the receipt")
     parser.add_argument("--only", nargs="*", choices=list(STEPS), help="run only these")
-    parser.add_argument(
-        "--no-mount", action="store_true", help="no FUSE view (see the docstring)"
-    )
     arguments = parser.parse_args()
     binary = str(Path(arguments.claude).resolve())
+    if not shutil.which(arguments.shell):
+        raise SystemExit(f"{arguments.shell} is not installed")
     version = subprocess.run(
         [binary, "--version"], capture_output=True, text=True
     ).stdout.strip()
     names = [name for name in STEPS if not arguments.only or name in arguments.only]
-    root = Path(tempfile.mkdtemp(prefix="equivalence-"))
+    root = Path(os.path.realpath(tempfile.mkdtemp(prefix="equivalence-")))
+    layout = Layout(root, arguments.shell)
+    port = free_port()
     records = {}
     try:
-        for build in (reference, lambda b, r: remote(b, r, not arguments.no_mount)):
-            run = build(binary, root)
+        for build in (reference, remote):
+            run = build(binary, layout, port)
             try:
                 run.session.control({"subtype": "initialize"})
                 raw = play(run, names)
             finally:
                 run.close()
-            records[run.name] = normalized(run, raw, hook_logs(run))
+            records[run.name] = {
+                **{name: run.normalize(value) for name, value in raw.items()},
+                "hooks": {
+                    name: [run.normalize(entry) for entry in entries]
+                    for name, entries in hook_logs(layout).items()
+                },
+            }
             # Nothing either run left behind may be taken for the other's.
-            for pattern in (
-                "sleep 301",
-                "sleep 302",
-                "sleep 303",
-                "sleep 304",
-                "sleep 305",
-                "sleep 306",
-                "sleep 307",
-                "sleep 309",
-                "sleep 4",
-            ):
+            for pattern in LEFTOVERS:
                 subprocess.run(["pkill", "-f", "-x", pattern], capture_output=True)
         results = []
         for name in [*names, "hooks"]:
@@ -1045,11 +1097,8 @@ def main():
         receipt = {
             "claude": binary,
             "version": version,
-            "mounted": not arguments.no_mount,
+            "machine shell": arguments.shell,
             "normalizations": NORMALIZATIONS,
-            "known differences": {
-                name: reason for name, (_, reason) in KNOWN_DIFFERENCES.items()
-            },
             "steps": results,
             "equal": all(result["equal"] for result in results),
         }
@@ -1061,17 +1110,22 @@ def main():
             (arguments.output / "records.json").write_text(
                 json.dumps(records, indent=1, ensure_ascii=False)
             )
-            for run_dir in root.iterdir():
+            for run_dir in layout.harness.iterdir():
                 for name in ("transcript.jsonl", "stderr.log"):
-                    for found_file in run_dir.rglob(name):
-                        target = (
-                            arguments.output / run_dir.name / found_file.parent.name
-                        )
+                    found_file = run_dir / name
+                    if found_file.exists():
+                        target = arguments.output / run_dir.name
                         target.mkdir(parents=True, exist_ok=True)
                         shutil.copy(found_file, target / name)
+            prefix_log = layout.session / "shell-prefix.log"
+            if prefix_log.exists():
+                shutil.copy(prefix_log, arguments.output / "shell-prefix.log")
     finally:
         shutil.rmtree(root, ignore_errors=True)
-    print(f"\n{version}: {sum(r['equal'] for r in results)}/{len(results)} steps equal")
+    print(
+        f"\n{version} ({arguments.shell}): "
+        f"{sum(r['equal'] for r in results)}/{len(results)} steps equal"
+    )
     return 0 if receipt["equal"] else 1
 
 
