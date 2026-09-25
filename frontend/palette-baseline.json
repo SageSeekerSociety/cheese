@@ -5,7 +5,6 @@
     "src/components/common/ColorSelector.vue": 1,
     "src/layouts/account/Account.vue": 1,
     "src/views/spaces/Index.vue": 1,
-    "src/views/teams/detail/Knowledge.vue": 1,
-    "src/views/user/settings/Profile.vue": 3
+    "src/views/teams/detail/Knowledge.vue": 1
   }
 }
