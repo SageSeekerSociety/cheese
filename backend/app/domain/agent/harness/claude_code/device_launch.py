@@ -52,8 +52,8 @@ from app.domain.agent.skills import SKILL_HEREDOC_MARKER, native_skill_files
 # ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
 # 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
 # 红得见。
-CLAUDE_PINNED_VERSION = "2.1.277"
-CLAUDE_MIN_VERSION = "2.1.277"
+CLAUDE_PINNED_VERSION = "2.1.282"
+CLAUDE_MIN_VERSION = "2.1.282"
 
 # What every session carries as its Claude login. It authenticates nothing; the
 # metering proxy replaces it with the platform's credential, or answers for it

@@ -206,7 +206,7 @@ class Settings(BaseSettings):
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
-    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.282"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也

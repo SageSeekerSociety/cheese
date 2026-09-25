@@ -50,7 +50,7 @@ else:
         stat_file_on_the_machine,
     )
 
-PINNED_VERSION = "2.1.277"
+PINNED_VERSION = "2.1.282"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.

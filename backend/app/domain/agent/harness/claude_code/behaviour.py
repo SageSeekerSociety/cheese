@@ -12,7 +12,7 @@ from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VER
 #: 这份声明是对着哪个 build 读出来的。**升级 pin 就要重新读一遍再改这里**——
 #: 它跟 ``CLAUDE_PINNED_VERSION`` 不等的时候 CI 就红，红的意思不是「改个数字」，
 #: 是「新 build 里这几格还成立吗」。
-VERIFIED_AGAINST = "2.1.277"
+VERIFIED_AGAINST = "2.1.282"
 
 
 def declaration() -> Declaration:
