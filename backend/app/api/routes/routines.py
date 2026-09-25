@@ -21,6 +21,7 @@ from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService, describe_trigger
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["routines"])
 
@@ -129,6 +130,13 @@ async def _routine_actor(
     return row, actor
 
 
+async def _speaker(db: AsyncSession, actor: Actor, room_id: uuid.UUID) -> str:
+    """The handle a caller acts under here: a person, or the room's teammate."""
+    if actor.authenticated:
+        return actor.handle
+    return await TopicMemberService(db).resolve_agent_handle(room_id)
+
+
 def _person(actor: Actor, what: str) -> None:
     if not _is_person(actor):
         raise ForbiddenError(f"{what}要由人来做，AI 队友只能起草和修改")
@@ -166,7 +174,7 @@ async def create_routine(
         raise NotFoundError("Topic not found")
     row = await RoutineService(db).create(
         topic=room,
-        by=actor.handle,
+        by=await _speaker(db, actor, room.id),
         by_agent=not _is_person(actor),
         title=body.title,
         instructions=body.instructions,
@@ -284,7 +292,7 @@ async def report_run(
     routine, actor = await _routine_actor(db, resolver, run.routine_id)
     run = await RoutineService(db).report(
         run,
-        by=actor.handle,
+        by=await _speaker(db, actor, routine.topic_id),
         status=body.status,
         summary=body.summary,
         outputs=body.outputs,

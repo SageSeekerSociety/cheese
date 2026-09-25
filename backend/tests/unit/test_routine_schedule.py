@@ -32,7 +32,7 @@ def test_monthly_31st_falls_on_the_last_day_of_a_short_month():
 def test_daily_keeps_local_time_across_a_dst_change():
     spec = normalize({"freq": "daily", "time": "09:00"}, "America/New_York")
     before = next_after(
-        spec, "America/New_York", datetime(2026, 10, 31, 20, tzinfo=UTC)
+        spec, "America/New_York", datetime(2026, 10, 30, 20, tzinfo=UTC)
     )
     after = next_after(spec, "America/New_York", datetime(2026, 11, 1, 20, tzinfo=UTC))
     assert before.hour == 13  # EDT, UTC-4
