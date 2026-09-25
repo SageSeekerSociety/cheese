@@ -3,23 +3,23 @@ layout: home
 title: 知是使用说明
 hero:
   name: 知是
-  text: 和 AI 队友一起做项目
-  tagline: 十分钟走完一整趟——组一个团队、建一个项目，然后开个话题跟 AI 队友说上第一句话。
+  text: 与芝士一起完成工作
+  tagline: 创建项目、进入话题、把任务交给芝士，并查看交付结果。
   actions:
     - theme: brand
       text: 快速开始
       link: /quickstart
     - theme: alt
-      text: 话题（房间）
-      link: /rooms
+      text: 查看项目
+      link: /projects
 features:
-  - title: 快速开始
-    details: 一条路走到底：组队、建项目、开话题说一句人话。不分叉。
+  - title: 第一次使用
+    details: 从个人项目开始，完成一次任务并查看结果。
     link: /quickstart
-  - title: 按功能查
-    details: 团队、项目、成员、话题、AI 队友、活与看板、验收与采纳、设备与算力。
-    link: /rooms
-  - title: 怎么和芝士一起干活
-    details: 界面几分钟就熟了，真正需要时间的是怎么把一件事交给一个 AI 队友。
+  - title: 与芝士协作
+    details: 描述目标、补充要求、查看进度并检查交付。
     link: /working-with-cheese
+  - title: 按功能查找
+    details: 查找小队、项目、话题、AI 队友、看板、验收、设备和额度的操作说明。
+    link: /projects
 ---
