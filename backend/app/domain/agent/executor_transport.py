@@ -85,6 +85,17 @@ class MachineOutOfReach(RuntimeError):
         super().__init__(MACHINE_OUT_OF_REACH)
 
 
+class NoHandsYet(RuntimeError):
+    """The platform cannot hand this session its machine now: it is still being
+    prepared, or it is not to be had (`RemoteClient.acquire`). The message is
+    the platform's, for the agent to read."""
+
+
+# Where a session started before its machine was rented sees the project: the
+# machine, and so the path it holds the project at, does not exist yet.
+DEFERRED_WORKSPACE = "/unavailable-project"
+
+
 def _retry_connect(attempt: int, deadline: float) -> bool:
     """Sleep before the next attempt, or say the window is over.
 
@@ -475,6 +486,64 @@ class RemoteClient:
             ]
         return command
 
+    def acquire(self, *, deadline, abandoned=None):
+        """Take this session's hands through the platform (`lease_path`): the
+        machine the lease names becomes where its calls go, and the credential
+        for it is kept (`token_file`) beside the target (`target_file`).
+
+        The platform waits a bounded while for a machine being prepared, and
+        this asks again until ``deadline``; the machine still being prepared
+        then, or not to be had at all, raises `NoHandsYet`. Returns whether
+        the hands are another lease than the ones this client held."""
+        while True:
+            response = self.platform_request(
+                {
+                    "method": "POST",
+                    "path": self.config["lease_path"],
+                    "body": {
+                        "env": self.config.get("setup_env", {}),
+                        "timeout": max(0.001, deadline - time.monotonic()),
+                    },
+                }
+            )
+            result = json.loads(response["value"]["stdout"])["data"]
+            if abandoned is not None and abandoned():
+                raise RuntimeError("Tool call was cancelled")
+            # The platform waited as long as one request may while the
+            # machine is prepared. Ask again until the deadline, which is what
+            # bounds the wait.
+            if not result.get("preparing") or time.monotonic() >= deadline:
+                break
+        if result.get("preparing"):
+            raise NoHandsYet(f"{result['unavailable']}（等到操作时限仍未就绪）")
+        if result.get("unavailable"):
+            raise NoHandsYet(result["unavailable"])
+        target = result["target"]
+        changed_lease = self.config.get("generation") != target.get("generation")
+        self.config.update(target)
+        token_file = self.config.get("token_file")
+        if token_file:
+            from pathlib import Path
+
+            Path(token_file).write_text(result["token"])
+            Path(token_file).chmod(0o600)
+        else:
+            self.config["execution_token"] = result["token"]
+        target_file = self.config.get("target_file")
+        if target_file:
+            from pathlib import Path
+
+            path = Path(target_file)
+            temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
+            temporary.write_text(json.dumps(self.config))
+            temporary.chmod(0o600)
+            temporary.replace(path)
+        previous = getattr(self.transport, "connection", None)
+        if previous is not None:
+            previous.close()
+            self.transport.connection = None
+        return changed_lease
+
     def call(self, method, params=None, *, abandoned=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
@@ -491,76 +560,35 @@ class RemoteClient:
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
-            while True:
-                response = self.platform_request(
-                    {
-                        "method": "POST",
-                        "path": self.config["lease_path"],
-                        "body": {
-                            "env": self.config.get("setup_env", {}),
-                            "timeout": max(
-                                0.001, operation_deadline - time.monotonic()
-                            ),
-                        },
-                    }
-                )
-                result = json.loads(response["value"]["stdout"])["data"]
-                if abandoned is not None and abandoned():
-                    raise RuntimeError("Tool call was cancelled")
-                # The platform waited as long as one request may while the
-                # machine is prepared. Ask again until this operation's own
-                # deadline, which is what bounds the wait.
-                if not result.get("preparing") or time.monotonic() >= (
-                    operation_deadline
-                ):
-                    break
-            if result.get("preparing"):
-                raise RuntimeError(f"{result['unavailable']}（等到操作时限仍未就绪）")
-            if result.get("unavailable"):
-                raise RuntimeError(result["unavailable"])
+            # A session started before its machine was rented sees the project
+            # at the placeholder until it is relaunched there (`client.prepare`);
+            # its paths are the machine's once they leave it.
             original_workspace = self.config.setdefault(
                 "virtual_workspace", self.config["workspace"]
             )
-            target = result["target"]
+            changed_lease = self.acquire(
+                deadline=operation_deadline, abandoned=abandoned
+            )
+            workspace = self.config["workspace"]
             if params and method == "invoke":
                 params = {**params, "args": dict(params.get("args", {}))}
                 for field in ("file_path", "path", "notebook_path", "command"):
                     value = params["args"].get(field)
                     if isinstance(value, str):
                         params["args"][field] = value.replace(
-                            original_workspace, target["workspace"]
+                            original_workspace, workspace
                         )
             if params and method == "control":
                 params = dict(params)
                 for field in ("body", "cwd"):
                     if isinstance(params.get(field), str):
                         params[field] = params[field].replace(
-                            original_workspace, target["workspace"]
+                            original_workspace, workspace
                         )
-            changed_lease = self.config.get("generation") != target.get("generation")
-            self.config.update(target)
-            token_file = self.config.get("token_file")
-            if token_file:
-                from pathlib import Path
-
-                Path(token_file).write_text(result["token"])
-                Path(token_file).chmod(0o600)
-            else:
-                self.config["execution_token"] = result["token"]
             target_file = self.config.get("target_file")
-            if target_file:
+            if target_file and changed_lease:
                 from pathlib import Path
 
-                path = Path(target_file)
-                temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
-                temporary.write_text(json.dumps(self.config))
-                temporary.chmod(0o600)
-                temporary.replace(path)
-            previous = getattr(self.transport, "connection", None)
-            if previous is not None:
-                previous.close()
-                self.transport.connection = None
-            if target_file and changed_lease:
                 tree = self.call("context_fs", {"operation": "tree"})
                 if tree.get("unsupported_imports") or tree.get("unsupported_paths"):
                     raise RuntimeError(

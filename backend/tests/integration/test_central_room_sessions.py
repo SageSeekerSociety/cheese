@@ -24,7 +24,7 @@ from app import device_connection_app
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
@@ -47,6 +47,7 @@ from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
 from tests.support import wire
+from tests.unit.test_device_provider import FakeHub
 
 AGENT = "agent"
 
@@ -770,6 +771,123 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     # Changing the URL must not let the old credential reach the replacement.
     new_endpoint = f"/topics/{topic}/execution/{new_resource}"
     assert client.post(new_endpoint, headers=headers, json=payload).status_code == 409
+
+
+class CenterHub(FakeHub):
+    """The session host: a connector whose screens run a Claude Code runner."""
+
+    def is_online(self, device_id: str) -> bool:
+        return device_id == "center"
+
+
+def center_room(client, monkeypatch):
+    """A room's central sessions opened on ``CenterHub``, and a call that
+    starts the room's next turn there, offering its conversation to resume."""
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    hub = CenterHub()
+    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
+    central: Any = CentralChannel(executor)
+    central._device_api_base = AsyncMock(return_value="http://central-api")
+
+    async def turn(project, topic):
+        session = ref(project, topic)
+        return await central.ensure_ready(
+            session=session,
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System", resume_session_id="conversation"),
+            precheck=await central.precheck(session, needs_place=True),
+        )
+
+    return hub, turn
+
+
+async def lease_machine(factory, topic, workspace):
+    """The session's first project tool rented its machine; the lease is ready."""
+    async with factory() as db:
+        row = await AgentSessionService(db).ensure(
+            topic, AGENT, harness=deployment_harness()
+        )
+        generation = str(uuid.uuid4())
+        row.work_lease = {
+            "kind": "device",
+            "device_id": "executor",
+            "generation": generation,
+            "status": "ready",
+            "workspace": workspace,
+            "url": "http://central-api/execution",
+        }
+        await db.commit()
+    return generation
+
+
+def launched(hub, screen):
+    """The execution target and the credential a screen was started with."""
+    # Every open gets the next sid (`FakeHub`), and its environment in order.
+    env = hub.envs[int(screen.sid.removeprefix("s")) - 1] or {}
+    target = json.loads(env["CHEESE_EXECUTION_TARGET"])
+    return target, scoped_token_claims(env["CHEESE_TOKEN"]), env
+
+
+@pytest.mark.anyio
+async def test_a_session_started_before_its_machine_moves_there_once_idle(
+    client, room, monkeypatch
+):
+    """A session started before its room's machine was rented sees the project
+    at a placeholder. Once the machine is leased, the first turn that finds the
+    session idle relaunches it where the machine holds the project, resuming the
+    same conversation; a turn or a task still running holds the relaunch off,
+    and it happens once."""
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        first = await turn(project, topic)
+        target, claims, _ = launched(hub, first)
+        assert target["workspace"] == "/unavailable-project"
+        generation = await lease_machine(
+            client.test_request_factory, topic, "/home/machine/the project"
+        )
+
+        for busy in (
+            {"working": True, "tasks": {}},
+            {"working": False, "tasks": {"b1": "local_bash"}},
+        ):
+            hub.ping = {"alive": True, **busy}
+            assert await turn(project, topic) is first
+        assert hub.closed == []
+
+        hub.ping = {"alive": True, "working": False, "tasks": {}}
+        moved = await turn(project, topic)
+        assert moved.sid != first.sid and hub.closed == [first.sid]
+        target, claims, env = launched(hub, moved)
+        assert target["workspace"] == "/home/machine/the project"
+        assert env["CHEESE_RESUME_SESSION"] == "conversation"
+        assert claims["lease"] == generation
+        assert await turn(project, topic) is moved
+        assert hub.closed == [first.sid]
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_session_started_on_its_leased_machine_stays(client, room, monkeypatch):
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        await turn(project, topic)
+        await lease_machine(client.test_request_factory, topic, "/home/machine/p")
+        hub.ping = {"alive": True, "working": False, "tasks": {}}
+        started = await turn(project, topic)
+        assert launched(hub, started)[0]["workspace"] == "/home/machine/p"
+        closed = list(hub.closed)
+
+        for _ in range(3):
+            assert await turn(project, topic) is started
+        assert hub.closed == closed
+
+    client.portal.call(exercise)
 
 
 class SaysDone(BaseHTTPRequestHandler):

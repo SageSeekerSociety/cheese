@@ -18,8 +18,21 @@ It runs one scenario matrix twice against the same deterministic model
              `runtime.py` serving the machine's project, reached over the
              device route (`kind: device`) through a relay standing in for
              the platform's.
+  relaunched a room's session as it is started before its machine is rented
+             (`kind: deferred`, at the placeholder `/unavailable-project`):
+             its first command takes the lease from the relay, and it is then
+             relaunched as the backend does once the lease is ready, at the
+             machine's path, resuming the same conversation (`--resume`).
 
-The two runs happen one after the other and use the same paths: the machine
+Every run first plays the deferred window (`window`), and only then the
+steps. For `relaunched` that window is the session at the placeholder; what it
+changes is recorded as the receipt's `deferred window`, and printed, but not
+held to equality, because the machine and the path it holds the project at do
+not exist when that session starts. Hooks the window fired are recorded with
+it and are not part of the steps' `hooks`. Every step after the relaunch is
+held to the same equality as `remote`.
+
+The runs happen one after the other and use the same paths: the machine
 (its HOME, its project, its programs) and the session's own directories
 (config, temp) are rebuilt identically before each. The session host's view
 of the project lives somewhere else entirely, and its HOME carries a shell
@@ -37,6 +50,7 @@ Needs Linux: the session's namespace, and FUSE for the view.
 Usage:
     python3 equivalence.py --claude <binary> [--shell bash|zsh]
         [--output <receipts dir>] [--only <step> ...]
+        [--runs remote|relaunched ...]
 """
 
 import argparse
@@ -147,6 +161,7 @@ PROJECT_HOOK = (
     'echo >> "$HOOK_LOG/project-{event}.jsonl"'
 )
 DEVICE_ID = "equivalence-device"
+LEASE_PATH = "/work-lease"
 
 
 class Layout:
@@ -280,10 +295,14 @@ class Relay:
     whose socket is gone is offline (409 with `X-Device-Id`), and `fail` makes
     the next starts and reads of a Bash command's shell answer so too, as a
     device that drops and comes back does. Only a Bash command's: the project
-    hooks around it travel the same way, and would take the failures first."""
+    hooks around it travel the same way, and would take the failures first.
 
-    def __init__(self, state):
+    It also answers a session's work-lease route (`LEASE_PATH`) with that
+    machine, as the platform does once the machine is ready (`session_work`)."""
+
+    def __init__(self, state, workspace):
         self.state = state
+        self.leases = 0
         self.lock = threading.Lock()
         self.failing = {}
         self.bash_commands = set()
@@ -307,6 +326,25 @@ class Relay:
                 request = json.loads(
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )
+                if self.path == LEASE_PATH:
+                    with relay.lock:
+                        relay.leases += 1
+                    return self.answer(
+                        200,
+                        {
+                            "data": {
+                                "target": {
+                                    "kind": "device",
+                                    "device_id": DEVICE_ID,
+                                    "url": relay.url,
+                                    "workspace": workspace,
+                                    "generation": "equivalence-lease",
+                                    "mcp_servers": [],
+                                },
+                                "token": "equivalence-execution-token",
+                            }
+                        },
+                    )
                 method, params = request["method"], request.get("params") or {}
                 operation = (
                     params.get("operation")
@@ -342,7 +380,9 @@ class Relay:
 
         self.server = Server(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_port}/executor"
+        # The platform's API, and the executor route on it.
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.url = self.base + "/executor"
 
     def fail(self, **counts):
         with self.lock:
@@ -363,6 +403,7 @@ class Run:
         self.env = env
         self.drop = None
         self.fail = None
+        self.relaunch = None
         self.close = session.stop
 
     def replacements(self):
@@ -438,113 +479,170 @@ def reference(binary, layout, port):
     return Run("reference", session, layout, env)
 
 
-def remote(binary, layout, port):
-    layout.rebuild()
-    programs = layout.programs
-    shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
-    shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
-    state = programs / "state"
-    executor_env = layout.env(port, platform_cli=False)
-    subprocess.run(
-        [sys.executable, str(programs / "runtime.py"), "start", "--state", str(state)],
-        input=json.dumps(
-            {
-                "workspace": str(layout.project),
-                "claude": binary,
-                "env": {},
-                "mcp_servers": {},
-            }
-        ),
-        text=True,
-        check=True,
-        capture_output=True,
-        env=executor_env,
-        cwd=str(programs),
-    )
-    relay = Relay(state)
-    client.PINNED_VERSION = subprocess.run(
-        [binary, "--version"], capture_output=True, text=True
-    ).stdout.split()[0]
-    central_home = layout.session / "home"
-    central_home.mkdir()
-    (central_home / ".bashrc").write_text(CENTRAL_BASHRC)
-    (central_home / ".bash_profile").write_text("[ -f ~/.bashrc ] && . ~/.bashrc\n")
-    base = {
-        "hooks": {
-            **platform_hooks(layout.platform_log),
-            "SessionStart": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": "cheese sync-agents || true"}
-                    ]
-                }
-            ],
-            "UserPromptSubmit": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": "cheese sync-agents || true"}
-                    ]
-                }
-            ],
-        }
-    }
-    os.environ["CHEESE_TOKEN"] = "equivalence-execution-token"
-    launch = client.prepare(
-        layout.session,
-        {
-            "kind": "device",
-            "device_id": DEVICE_ID,
-            "url": relay.url,
-            "mcp_servers": [],
-        },
-        claude=binary,
-        base_settings=base,
-        home_override=central_home,
-        config_override=layout.config,
-    )
-    assert launch["workspace"] == str(layout.project), launch
-    assert Path(launch["cwd"]) != layout.project, launch
-    session = Session(
-        binary,
-        layout.harness,
-        "central",
-        DRIVER,
-        launch=launch,
-        home=central_home,
-        port=port,
-        # The session host's own shell, and a credential only it holds: the
-        # executor must see neither.
-        env={"SHELL": "/bin/bash", "CENTRAL_SECRET": "central-only-secret"},
-    )
-    run = Run("remote", session, layout, layout.env(port))
-    listening = Path(execution_runtime.socket_path(state))
+class Room:
+    """What a room's session runs against: the executor serving the machine's
+    project, the relay standing in for the platform, and the session host's own
+    HOME and settings."""
 
-    def drop(seconds):
-        """The link to the executor goes away, and comes back."""
-        hidden = listening.with_name(listening.name + ".dropped")
-        listening.rename(hidden)
-        time.sleep(seconds)
-        hidden.rename(listening)
-
-    def close():
-        session.stop()
+    def __init__(self, binary, layout, port):
+        layout.rebuild()
+        self.binary, self.layout, self.port = binary, layout, port
+        programs = layout.programs
+        shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
+        shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
+        self.state = programs / "state"
         subprocess.run(
             [
                 sys.executable,
                 str(programs / "runtime.py"),
-                "stop",
+                "start",
                 "--state",
-                str(state),
+                str(self.state),
             ],
+            input=json.dumps(
+                {
+                    "workspace": str(layout.project),
+                    "claude": binary,
+                    "env": {},
+                    "mcp_servers": {},
+                }
+            ),
+            text=True,
+            check=True,
             capture_output=True,
-            timeout=30,
+            env=layout.env(port, platform_cli=False),
+            cwd=str(programs),
         )
-        relay.close()
-        execution_release.release_mount(launch["cwd"])
+        self.relay = Relay(self.state, str(layout.project))
+        client.PINNED_VERSION = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True
+        ).stdout.split()[0]
+        self.home = layout.session / "home"
+        self.home.mkdir()
+        (self.home / ".bashrc").write_text(CENTRAL_BASHRC)
+        (self.home / ".bash_profile").write_text("[ -f ~/.bashrc ] && . ~/.bashrc\n")
+        # The session's launch credential, and the platform its lease is asked of.
+        os.environ["CHEESE_TOKEN"] = "equivalence-execution-token"
+        os.environ["CHEESE_API"] = self.relay.base
+        self.launched = None
 
-    run.drop = drop
-    run.fail = relay.fail
-    run.close = close
+    def prepare(self, target):
+        sync = {"type": "command", "command": "cheese sync-agents || true"}
+        hooks = [{"hooks": [sync]}]
+        self.launched = client.prepare(
+            self.layout.session,
+            target,
+            claude=self.binary,
+            base_settings={
+                "hooks": {
+                    **platform_hooks(self.layout.platform_log),
+                    "SessionStart": hooks,
+                    "UserPromptSubmit": hooks,
+                }
+            },
+            home_override=self.home,
+            config_override=self.layout.config,
+        )
+        assert Path(self.launched["cwd"]) != self.layout.project, self.launched
+        return self.launched
+
+    def session(self, name, launch):
+        return Session(
+            self.binary,
+            self.layout.harness,
+            name,
+            DRIVER,
+            launch=launch,
+            home=self.home,
+            port=self.port,
+            # The session host's own shell, and a credential only it holds: the
+            # executor must see neither. The platform's address is the
+            # session's, for its lease.
+            env={
+                "SHELL": "/bin/bash",
+                "CENTRAL_SECRET": "central-only-secret",
+                "CHEESE_API": self.relay.base,
+            },
+        )
+
+    def run(self, name, session):
+        run = Run(name, session, self.layout, self.layout.env(self.port))
+        listening = Path(execution_runtime.socket_path(self.state))
+
+        def drop(seconds):
+            """The link to the executor goes away, and comes back."""
+            hidden = listening.with_name(listening.name + ".dropped")
+            listening.rename(hidden)
+            time.sleep(seconds)
+            hidden.rename(listening)
+
+        def close():
+            run.session.stop()
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(self.layout.programs / "runtime.py"),
+                    "stop",
+                    "--state",
+                    str(self.state),
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            self.relay.close()
+            execution_release.release_mount(self.launched["cwd"])
+
+        run.drop = drop
+        run.fail = self.relay.fail
+        run.close = close
+        return run
+
+
+def remote(binary, layout, port):
+    room = Room(binary, layout, port)
+    launch = room.prepare(
+        {
+            "kind": "device",
+            "device_id": DEVICE_ID,
+            "url": room.relay.url,
+            "mcp_servers": [],
+        }
+    )
+    assert launch["workspace"] == str(layout.project), launch
+    return room.run("remote", room.session("central", launch))
+
+
+def relaunched(binary, layout, port):
+    """Started before the machine is rented; relaunched once it is leased."""
+    room = Room(binary, layout, port)
+    placeholder = {
+        "kind": "deferred",
+        "workspace": client.DEFERRED_WORKSPACE,
+        "lease_path": LEASE_PATH,
+        "setup_env": {},
+        "mcp_servers": [],
+    }
+    launch = room.prepare(placeholder)
+    assert launch["workspace"] == client.DEFERRED_WORKSPACE, launch
+    run = room.run("relaunched", room.session("deferred", launch))
+
+    def relaunch():
+        """What the backend does at the first idle turn after the lease: the
+        target now names where the machine holds the project, and the session
+        is started again there, resuming the same conversation."""
+        assert room.relay.leases, "the deferred window never took the lease"
+        _, init = run.session.wait(is_("system", "init"), 1)
+        run.session.stop()
+        again = room.prepare(dict(placeholder, workspace=str(layout.project)))
+        assert again["workspace"] == str(layout.project), again
+        run.session = room.session(
+            "relaunched",
+            dict(again, command=[*again["command"], "--resume", init["session_id"]]),
+        )
+        run.session.control({"subtype": "initialize"})
+        return init["session_id"]
+
+    run.relaunch = relaunch
     return run
 
 
@@ -580,6 +678,17 @@ def settle(predicate, timeout=10.0):
 
 def bash(command, **arguments):
     return do("Bash", command=command, description="step", **arguments)
+
+
+def window(run):
+    """The first turn of a room's session. A session started before its machine
+    is rented spends it at the placeholder: its first command takes the lease,
+    and runs on the machine at the machine's path; the directory it ends in,
+    and the one the build resets to, are named at the placeholder."""
+    turn(run, bash('mkdir -p "window here" && cd "window here" && pwd'))
+    turn(run, bash("cd /tmp && pwd"))
+    turn(run, bash("pwd"))
+    return {}
 
 
 def step_output(run):
@@ -985,14 +1094,14 @@ def hook_logs(layout):
     return logs
 
 
-def play(run, names):
-    """Drive every step on one run; what it recorded, by step."""
+def play(run, steps):
+    """Drive every step, `(name, step)`, on one run; what it recorded, by step."""
     record_by_step = {}
-    for name in names:
+    for name, step in steps:
         mark = len(run.session.events)
         requests_mark = len(run.session.requests())
         try:
-            seen = STEPS[name](run)
+            seen = step(run)
             error = None
         except Exception:  # noqa: BLE001 — a failing step is a result
             seen, error = {}, traceback.format_exc()
@@ -1039,6 +1148,45 @@ def free_port():
         return probe.getsockname()[1]
 
 
+RUNS = {"remote": remote, "relaunched": relaunched}
+# What `relaunched` is not held to: its first turn is at the placeholder.
+WINDOW = ("window", "window hooks")
+
+
+def play_run(build, binary, layout, port, names):
+    """One run's normalized record: its window, the hooks the window fired,
+    and, after a relaunch if the run makes one, every step and its hooks."""
+    run = build(binary, layout, port)
+    try:
+        run.session.control({"subtype": "initialize"})
+        record = {"window": run.normalize(play(run, [("window", window)])["window"])}
+        record["window hooks"] = {
+            name: [run.normalize(entry) for entry in entries]
+            for name, entries in hook_logs(layout).items()
+        }
+        for directory in (layout.hook_log, layout.platform_log):
+            for path in directory.glob("*.jsonl"):
+                path.unlink()
+        conversation = run.relaunch() if run.relaunch else None
+        raw = play(run, [(name, STEPS[name]) for name in names])
+        if conversation:
+            _, init = run.session.wait(is_("system", "init"), 1)
+            record["resumed the conversation"] = bool(
+                init and init["session_id"] == conversation
+            )
+    finally:
+        run.close()
+    record.update({name: run.normalize(value) for name, value in raw.items()})
+    record["hooks"] = {
+        name: [run.normalize(entry) for entry in entries]
+        for name, entries in hook_logs(layout).items()
+    }
+    # Nothing a run left behind may be taken for the next one's.
+    for pattern in LEFTOVERS:
+        subprocess.run(["pkill", "-f", "-x", pattern], capture_output=True)
+    return record
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", required=True, help="the claude binary to check")
@@ -1047,6 +1195,9 @@ def main():
     )
     parser.add_argument("--output", type=Path, help="where to write the receipt")
     parser.add_argument("--only", nargs="*", choices=list(STEPS), help="run only these")
+    parser.add_argument(
+        "--runs", nargs="*", choices=list(RUNS), help="compare only these runs"
+    )
     arguments = parser.parse_args()
     binary = str(Path(arguments.claude).resolve())
     if not shutil.which(arguments.shell):
@@ -1055,53 +1206,67 @@ def main():
         [binary, "--version"], capture_output=True, text=True
     ).stdout.strip()
     names = [name for name in STEPS if not arguments.only or name in arguments.only]
+    compared = [name for name in RUNS if not arguments.runs or name in arguments.runs]
     root = Path(os.path.realpath(tempfile.mkdtemp(prefix="equivalence-")))
     layout = Layout(root, arguments.shell)
     port = free_port()
     records = {}
+    receipt = {
+        "claude": binary,
+        "version": version,
+        "machine shell": arguments.shell,
+        "normalizations": NORMALIZATIONS,
+        "runs": {},
+    }
     try:
-        for build in (reference, remote):
-            run = build(binary, layout, port)
-            try:
-                run.session.control({"subtype": "initialize"})
-                raw = play(run, names)
-            finally:
-                run.close()
-            records[run.name] = {
-                **{name: run.normalize(value) for name, value in raw.items()},
-                "hooks": {
-                    name: [run.normalize(entry) for entry in entries]
-                    for name, entries in hook_logs(layout).items()
-                },
-            }
-            # Nothing either run left behind may be taken for the other's.
-            for pattern in LEFTOVERS:
-                subprocess.run(["pkill", "-f", "-x", pattern], capture_output=True)
-        results = []
-        for name in [*names, "hooks"]:
-            left = records["reference"].get(name)
-            right = records["remote"].get(name)
-            found = differences(left, right)
-            for side in ("reference", "remote"):
-                error = (
-                    (records[side].get(name) or {}).get("error")
-                    if name != "hooks"
-                    else None
+        records["reference"] = play_run(reference, binary, layout, port, names)
+        for name in compared:
+            records[name] = play_run(RUNS[name], binary, layout, port, names)
+        for name in compared:
+            results = []
+            documented = WINDOW if name == "relaunched" else ()
+            for step in [*WINDOW, *names, "hooks"]:
+                left = records["reference"].get(step)
+                right = records[name].get(step)
+                found = differences(left, right)
+                failed = [
+                    f"{side} step failed:\n{error}"
+                    for side in ("reference", name)
+                    if step not in ("hooks", "window hooks")
+                    and (error := (records[side].get(step) or {}).get("error"))
+                ]
+                if step in documented:
+                    # Recorded and shown, not held to equality; a step that
+                    # failed outright still fails.
+                    receipt.setdefault("deferred window", {})[step] = found
+                    print(f"NOTE  {name} {step}: {len(found)} differences", flush=True)
+                    for line in found[:20]:
+                        print(f"      {line}", flush=True)
+                    found = []
+                found += failed
+                if found or step not in documented:
+                    results.append(
+                        {"step": step, "equal": not found, "differences": found}
+                    )
+                    print(f"{'PASS' if not found else 'FAIL'}  {name} {step}")
+                    for line in found[:20]:
+                        print(f"      {line}", flush=True)
+            if name == "relaunched":
+                resumed = records[name].get("resumed the conversation", False)
+                results.append(
+                    {
+                        "step": "resumed the conversation",
+                        "equal": resumed,
+                        "differences": [] if resumed else ["a new conversation"],
+                    }
                 )
-                if error:
-                    found.append(f"{side} step failed:\n{error}")
-            results.append({"step": name, "equal": not found, "differences": found})
-            print(f"{'PASS' if not found else 'FAIL'}  {name}", flush=True)
-            for line in found[:20]:
-                print(f"      {line}", flush=True)
-        receipt = {
-            "claude": binary,
-            "version": version,
-            "machine shell": arguments.shell,
-            "normalizations": NORMALIZATIONS,
-            "steps": results,
-            "equal": all(result["equal"] for result in results),
-        }
+                verdict = "PASS" if resumed else "FAIL"
+                print(f"{verdict}  {name} resumed the conversation")
+            receipt["runs"][name] = {
+                "steps": results,
+                "equal": all(result["equal"] for result in results),
+            }
+        receipt["equal"] = all(run["equal"] for run in receipt["runs"].values())
         if arguments.output:
             arguments.output.mkdir(parents=True, exist_ok=True)
             (arguments.output / "equivalence.json").write_text(
@@ -1122,10 +1287,11 @@ def main():
                 shutil.copy(prefix_log, arguments.output / "shell-prefix.log")
     finally:
         shutil.rmtree(root, ignore_errors=True)
-    print(
-        f"\n{version} ({arguments.shell}): "
-        f"{sum(r['equal'] for r in results)}/{len(results)} steps equal"
-    )
+    for name, run in receipt["runs"].items():
+        print(
+            f"\n{version} ({arguments.shell}) {name}: "
+            f"{sum(r['equal'] for r in run['steps'])}/{len(run['steps'])} steps equal"
+        )
     return 0 if receipt["equal"] else 1
 
 

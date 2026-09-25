@@ -1142,6 +1142,156 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
         thread.join()
 
 
+class LeasingPlatform:
+    """The platform's half of a session's hands: its work-lease route, which
+    answers with `lease` (a machine, or why there is none), and the executor
+    route to the machine it names, which admits only the lease's credential."""
+
+    def __init__(self, state, work):
+        self.seen = []
+        self.generation = str(uuid.uuid4())
+        self.lease = "ready"
+        platform = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/lease":
+                    platform.seen.append("lease")
+                    result = {
+                        "data": {
+                            "target": {
+                                "kind": "device",
+                                "workspace": str(work),
+                                "url": platform.base + "/execute",
+                                "generation": platform.generation,
+                                "mcp_servers": [],
+                            },
+                            "token": "execution-only",
+                        }
+                        if platform.lease == "ready"
+                        else {"unavailable": "工作机器未连接；对话和平台工具仍可用。"}
+                    }
+                else:
+                    platform.seen.append(body["method"])
+                    assert self.headers["X-Cheese-Token"] == "execution-only"
+                    result = runtime.request(state, body["method"], body["params"])
+                encoded = json.dumps(result).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+@pytest.fixture
+def leased_session(executor, tmp_path, monkeypatch):
+    """A room's session launched once its machine's lease is ready: the target
+    names where the machine holds the project (`central_provider`). The view of
+    the project is not mounted here; nothing below reads it."""
+    from app.domain.agent.harness.claude_code.remote_execution import release
+
+    _, work, state = executor
+    (work / "CLAUDE.md").write_text("Always preserve the protected file.")
+    (work / ".claude").mkdir()
+    hook = {"hooks": [{"type": "command", "command": ": project-hook"}]}
+    (work / ".claude/settings.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": [hook]}})
+    )
+    platform = LeasingPlatform(state, work)
+    monkeypatch.setenv("CHEESE_API", platform.base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
+
+    def launch():
+        return central.prepare(
+            tmp_path / "session",
+            {
+                "kind": "deferred",
+                "workspace": str(work),
+                "lease_path": "/lease",
+                "setup_env": {},
+                "mcp_servers": [],
+            },
+            claude=claude_binary(),
+        )
+
+    yield platform, work, launch
+    platform.close()
+
+
+def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
+    """It starts as one started on that machine would: at the machine's path,
+    with the project's instructions and hooks, and its first tool runs there
+    without being turned back to read those instructions."""
+    platform, work, launch = leased_session
+    started = launch()
+    target = json.loads(Path(started["execution"]).read_text())
+    assert started["workspace"] == str(work)
+    assert (target["kind"], target["generation"]) == ("device", platform.generation)
+    assert "execution_token" not in target
+    assert Path(target["token_file"]).read_text() == "execution-only"
+    config = Path(target["central_config"])
+    assert (config / "CLAUDE.md").read_text() == f"@{work}/CLAUDE.md\n"
+    hooks = json.loads((config / "settings.json").read_text())["hooks"]
+    assert {"command": ": project-hook", "type": "command"} in [
+        hook for group in hooks["PreToolUse"] for hook in group["hooks"]
+    ]
+
+    before = len(platform.seen)
+    result = executor_transport.RemoteClient(target).call(
+        "invoke",
+        {
+            "id": "first-write",
+            "tool": "Bash",
+            "args": {"command": f"printf remote > {work}/output.txt"},
+        },
+    )
+    assert "error" not in result, result
+    assert (work / "output.txt").read_text() == "remote"
+    assert platform.seen[before:] == ["lease", "invoke"]
+
+
+def test_a_leased_session_starts_without_its_machine_when_it_cannot_have_it(
+    leased_session,
+):
+    """The room's conversation does not wait for its machine: a session whose
+    machine the platform cannot hand out right now starts at the machine's
+    path without it, and its first tool takes the lease as a session started
+    before its machine existed does."""
+    platform, work, launch = leased_session
+    platform.lease = "unavailable"
+    started = launch()
+    target = json.loads(Path(started["execution"]).read_text())
+    assert started["workspace"] == str(work)
+    assert target["kind"] == "deferred"
+    assert platform.seen == ["lease"]
+
+    platform.lease = "ready"
+    client = executor_transport.RemoteClient(target)
+    request = {
+        "id": "first-write",
+        "tool": "Bash",
+        "args": {"command": f"printf remote > {work}/output.txt"},
+    }
+    with pytest.raises(RuntimeError, match="Always preserve the protected file"):
+        client.call("invoke", request)
+    assert "error" not in client.call("invoke", request)
+    assert (work / "output.txt").read_text() == "remote"
+
+
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
     executor, tmp_path, monkeypatch, cancelled

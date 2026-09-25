@@ -32,8 +32,10 @@ from typing import Any
 
 if __package__:
     from app.domain.agent.executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        NoHandsYet,
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
@@ -45,8 +47,10 @@ else:
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import (
+        DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
+        NoHandsYet,
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
@@ -164,6 +168,8 @@ def prepare(
             from private import ensure
 
         ensure(target, directory, os.environ)
+    if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
+        target = _take_leased_machine(target)
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
@@ -187,6 +193,9 @@ def prepare(
     temporary.mkdir(exist_ok=True, mode=0o700)
     client = RemoteClient(target)
     info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
+    # The credential the lease handed a session that took its machine here; it
+    # is kept beside the target, never in it, which the plugin is given.
+    execution_token = target.pop("execution_token", None)
     if target.get("kind") == "private":
         info["workspace"] = "/work"
     # Where the session sees the project: at the executor's own path, so that
@@ -215,7 +224,7 @@ def prepare(
     target_path.chmod(0o600)
     if device_forwarded:
         token_path = directory / "execution.token"
-        token_path.write_text(os.environ["CHEESE_TOKEN"])
+        token_path.write_text(execution_token or os.environ["CHEESE_TOKEN"])
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
@@ -475,6 +484,28 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+def _take_leased_machine(target):
+    """A session whose machine was leased before it started starts on it.
+
+    The platform names where the machine holds the project (`central_provider`),
+    so the session is relaunched there once its lease is ready, and here takes
+    the machine the way a placeholder session's first command does: through the
+    lease. It then starts as one started on that machine would, with the
+    project's instructions, hooks and MCP servers, and its commands go straight
+    there. A machine the platform cannot hand out right now leaves it as it
+    was: a session the lease reaches on its first command, as before its
+    machine existed, but seeing the project at the machine's path.
+    """
+    client = RemoteClient(dict(target))
+    try:
+        # Taken as it is, with no wait for a machine still being prepared: the
+        # room's conversation does not wait for its machine.
+        client.acquire(deadline=time.monotonic())
+    except (MachineOutOfReach, NoHandsYet):
+        return target
+    return client.config
 
 
 def sync_context(target_path, supplied_tree=None):
@@ -887,9 +918,10 @@ def _report_directory(target, client, final, spelled):
         or not re.fullmatch(r"claude-[0-9a-f]+-cwd", path.name)
     ):
         return
-    # A deferred session was started before its machine was rented, at a
-    # placeholder; the lease (`RemoteClient.call`) points it at the machine's
-    # workspace, which the session keeps seeing at the placeholder.
+    # A session started before its machine was rented sees the project at a
+    # placeholder until it is relaunched on the machine (`_take_leased_machine`);
+    # the lease (`RemoteClient.call`) points its commands at the machine's
+    # workspace meanwhile.
     machine = session_path(client.config["workspace"])
     seen = session_path(client.config.get("virtual_workspace", machine))
     final = final[:4096]
