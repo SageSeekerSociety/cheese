@@ -413,7 +413,9 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
     await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
-    await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
+    # The turn ends when it ends. A deadline here raced it and cancelled it
+    # mid-turn when a loaded runner was slower than the deadline.
+    await runner.drain(timeout_s=60)
     await finish_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
 
@@ -475,7 +477,9 @@ async def test_other_teammate_message_waits_for_live_turn(
     assert screen.delivered == []
     assert screen.runs == 1
     screen.release.set()
-    await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
+    # The turn ends when it ends. A deadline here raced it and cancelled it
+    # mid-turn when a loaded runner was slower than the deadline.
+    await runner.drain(timeout_s=60)
     await finish_turn(svc, topic_id)
     assert "Second task" in screen.last_prompt
     assert screen.runs == 2
