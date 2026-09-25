@@ -317,7 +317,7 @@ html.dark .sea .reflect{background:repeating-linear-gradient(180deg,rgba(255,190
 .chart .ticks text{font:9px var(--mono);fill:var(--faint);text-anchor:middle;letter-spacing:.05em}
 .chart .ticks{opacity:0;transition:opacity 1.2s .9s}
 .chart .mark{opacity:0;transform:scale(.6);transform-box:fill-box;transform-origin:center;transition:opacity .6s,transform .8s var(--spring)}
-.chart .mark:nth-of-type(1){transition-delay:1.2s}.chart .mark:nth-of-type(2){transition-delay:1.35s}.chart .mark:nth-of-type(3){transition-delay:1.5s}
+.chart .mark:nth-of-type(1){transition-delay:1.2s}.chart .mark:nth-of-type(2){transition-delay:1.35s}.chart .mark:nth-of-type(3){transition-delay:1.5s}.chart .mark:nth-of-type(4){transition-delay:1.65s}.chart .mark:nth-of-type(5){transition-delay:1.8s}.chart .mark:nth-of-type(6){transition-delay:1.95s}
 .chart .mark circle{fill:var(--accent);stroke:var(--bg);stroke-width:2}
 .chart .mark .ring-o{fill:none;stroke:color-mix(in srgb,var(--accent) 45%,transparent);stroke-width:1;transition:r .4s var(--spring)}
 .chart .mark:hover .ring-o{r:15}
@@ -616,6 +616,8 @@ html.dark .cheese-art svg{filter:drop-shadow(0 0 60px rgba(255,190,80,.35)) drop
 .all-changes li{padding:3px 0}
 .all-changes li small{margin-left:8px;font:11.5px var(--mono);color:var(--faint)}
 
+/* six sibling tabs: drop their icons before the header gets tight */
+@media (max-width:1520px){.tab>.ico{display:none}.tab{padding:0 11px}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   [data-reveal]{opacity:1;transform:none;filter:none}

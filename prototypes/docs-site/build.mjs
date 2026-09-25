@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 import { marked } from 'marked'
-import { USER, DEV, HIGHLIGHTS, WHO } from './src/outline.mjs'
+import { SECTIONS, DEV, HIGHLIGHTS, WHO } from './src/outline.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../..')
@@ -44,8 +44,12 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 // Prose calls the product 知是, as the app does; the lockup 知是 · Cheese is for the brand only.
 const fix = (s) => s.replace(/小队/g, '团队').replace(/(?<![\w-])Cheese(?![\w-])/g, '知是')
 const INFO = '<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>'
-const slugOf = {}
-USER.forEach(([, items]) => items.forEach(([slug, , src]) => { if (typeof src === 'string') slugOf[src.replace(/\.md$/, '')] = slug }))
+const slugOf = {}, WHERE = {}
+SECTIONS.forEach(([sec, , , groups]) => groups.forEach(([, items]) => items.forEach(([slug, , src]) => {
+  WHERE[slug] = sec
+  if (typeof src === 'string') slugOf[src.replace(/\.md$/, '')] = slug
+})))
+DEV.forEach(([, items]) => items.forEach(([slug]) => { WHERE[slug] = 'dev' }))
 
 function mdPage(file) {
   const raw = fix(readManual(file)).replace(/^---\n[\s\S]*?\n---\n/, '')
@@ -61,7 +65,7 @@ function mdPage(file) {
   renderer.link = function ({ href, tokens }) {
     const t = this.parser.parseInline(tokens)
     const m = /^\/([\w-]+)(?:\.md)?(?:#([\w-]+))?$/.exec(href)
-    if (m) return `<a class="link" href="#/guide/${slugOf[m[1]] || m[1]}${m[2] ? '#' + m[2] : ''}">${t}</a>`
+    if (m) { const slug = slugOf[m[1]] || m[1]; return `<a class="link" href="#/${WHERE[slug] || 'start'}/${slug}${m[2] ? '#' + m[2] : ''}">${t}</a>` }
     return `<a class="link" href="${href}" target="_blank" rel="noopener">${t}</a>`
   }
   renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
@@ -85,7 +89,7 @@ function addPages(sec, groups) {
   })])
 }
 const NAV = {
-  guide: { label: '使用文档', icon: 'book', first: 'quickstart', groups: addPages('guide', USER) },
+  ...Object.fromEntries(SECTIONS.map(([key, label, icon, groups]) => [key, { label, icon, first: groups[0][1][0][0], groups: addPages(key, groups) }])),
   dev: { label: '开发文档', icon: 'code', first: 'overview', lock: '仅管理员', groups: addPages('dev', DEV) },
   changelog: { label: '更新日志', icon: 'log', first: '', groups: [] },
 }
@@ -111,7 +115,7 @@ const RELEASES = [
 ]
 
 // ---------- bundle ----------
-const DATA = { NAV, P, FAQ, RELEASES, WHO, LOGO: LOGO_URI }
+const DATA = { NAV, P, WHERE, FAQ, RELEASES, WHO, LOGO: LOGO_URI }
 const virtual = {
   name: 'virtual',
   setup(b) {

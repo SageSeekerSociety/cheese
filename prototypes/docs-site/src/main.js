@@ -1,5 +1,8 @@
 import { ic, TAG, STEPS } from './content.js'
-import { NAV, P, FAQ, RELEASES, WHO, LOGO } from 'virtual:data'
+import { NAV, P, WHERE, FAQ, RELEASES, WHO, LOGO } from 'virtual:data'
+const hrefOf = (slug) => `#/${WHERE[slug]}/${slug}`
+const page = (slug) => P[WHERE[slug] + '/' + slug]
+const USER_SECS = Object.keys(NAV).filter((k) => k !== 'dev' && k !== 'changelog')
 import { build, stageFor, BUBBLE } from 'virtual:motion'
 
 const $ = (s, r = document) => r.querySelector(s)
@@ -29,7 +32,7 @@ function moveTabs(sec) {
 }
 
 function sideHtml(sec) {
-  return `<div class="side-inner"><span class="side-pill" id="sidePill"></span>${NAV[sec].groups.map(([g, items]) => `<div class="side-group"><h4>${g}</h4>${items.map(([s, t, draft]) => `<a href="#/${sec}/${s}" data-slug="${s}">${t}${draft && sec === 'guide' ? '<span class="soon">待写</span>' : ''}</a>`).join('')}</div>`).join('')}</div>`
+  return `<div class="side-inner"><span class="side-pill" id="sidePill"></span>${NAV[sec].groups.map(([g, items]) => `<div class="side-group"><h4>${g}</h4>${items.map(([s, t, draft]) => `<a href="#/${sec}/${s}" data-slug="${s}">${t}${draft && sec !== 'dev' ? '<span class="soon">待写</span>' : ''}</a>`).join('')}</div>`).join('')}</div>`
 }
 function moveSidePill(page) {
   const pill = $('#sidePill'); if (!pill) return
@@ -96,11 +99,11 @@ function changelogPage() {
   </article></main></div>`
 }
 
-const guideCount = flat('guide').length, devCount = flat('dev').length
-const written = Object.entries(P).filter(([k, d]) => k.startsWith('guide/') && !d.draft).length
+const guideCount = USER_SECS.reduce((n, k) => n + flat(k).length, 0), devCount = flat('dev').length
+const written = Object.entries(P).filter(([k, d]) => !k.startsWith('dev/') && !d.draft).length
 const unreleased = RELEASES[0]
 function homePage() {
-  const feats = NAV.guide.groups.find(([g]) => g === '使用知是')[1]
+  const feats = NAV.features.groups.flatMap(([, items]) => items)
   const who = Object.keys(WHO)
   return `<div class="home">
   <section class="stage">
@@ -110,7 +113,7 @@ function homePage() {
     <h1 class="hero-h1"><span class="line"><span>把一件事</span></span><span class="line"><span>交给<em>芝士</em></span></span></h1>
     <p class="hero-sub">知是 · Cheese 是你和 AI 队友一起做项目的地方。这里写着怎么开始、每个功能怎么用，以及遇到问题怎么办。</p>
     <div class="hero-in" style="--d:1"><button class="hero-search" data-open-search>${ic('search', 'width:18px;height:18px')}<span class="tw">搜索文档，或者直接问：怎么邀请同学进项目？</span><kbd>⌘K</kbd></button></div>
-    <div class="hero-cta hero-in" style="--d:2"><a class="pill lg magnetic" href="#/guide/quickstart">快速开始 ${ic('arrow')}</a><a class="pill lg alt magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a></div>
+    <div class="hero-cta hero-in" style="--d:2"><a class="pill lg magnetic" href="#/start/quickstart">快速开始 ${ic('arrow')}</a><a class="pill lg alt magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a></div>
     <div class="coords hero-in" style="--d:3"><span>知是 · CHEESE</span><span>文档 v2 · 2026.09</span><span>${guideCount + devCount} 篇 · 已写 ${written}</span></div>
    </div>
    <div class="moon-stage" id="moonStage">
@@ -128,22 +131,22 @@ function homePage() {
    <section class="flow">${STEPS.map(([t, d, mock], k) => `<div class="bx spot" data-reveal style="--d:${k}"><span class="flow-n">0${k + 1}</span><h3>${t}</h3><p>${d}</p><div class="mock">${mock}</div></div>`).join('')}</section>
 
    <div class="sec-head" data-reveal><span class="kick">按 功 能 查 找</span><h2>已经会用了，只想查一个功能</h2></div>
-   <section class="feat-grid" data-reveal>${feats.map(([s, t, draft]) => `<a href="#/guide/${s}"><span>${t}</span>${draft ? '<small>待写</small>' : ic('arrow')}</a>`).join('')}</section>
+   <section class="feat-grid" data-reveal>${feats.map(([s, t, draft]) => `<a href="${hrefOf(s)}"><span>${t}</span>${draft ? '<small>待写</small>' : ic('arrow')}</a>`).join('')}</section>
 
-   <div class="sec-head" data-reveal><span class="kick">常 见 问 题</span><h2>先看看是不是这几个</h2><p>来自<a class="link" href="#/guide/troubleshooting">常见问题与排障</a>。</p></div>
-   <section class="faq" data-reveal>${FAQ.map((f) => `<details class="qa"><summary>${esc(f.q)}${ic('down')}</summary><div>${f.a} <a class="link" href="#/guide/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</section>
+   <div class="sec-head" data-reveal><span class="kick">常 见 问 题</span><h2>先看看是不是这几个</h2><p>来自<a class="link" href="#/faq/troubleshooting">常见问题与排障</a>。</p></div>
+   <section class="faq" data-reveal>${FAQ.map((f) => `<details class="qa"><summary>${esc(f.q)}${ic('down')}</summary><div>${f.a} <a class="link" href="#/faq/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</section>
   </div>
 
   <section class="cta-band">
    <h2 data-reveal>不知道从哪开始？<br>问芝士。</h2>
    <p data-reveal style="--d:1">用你自己的话描述想做的事，芝士会告诉你从哪一页、哪一步开始。</p>
-   <div class="row" data-reveal style="--d:2"><a class="pill lg magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a><a class="pill lg alt magnetic" href="#/guide/quickstart">快速开始 ${ic('arrow')}</a></div>
+   <div class="row" data-reveal style="--d:2"><a class="pill lg magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a><a class="pill lg alt magnetic" href="#/start/quickstart">快速开始 ${ic('arrow')}</a></div>
    <div class="giant-wrap"><span class="giant">知是</span><img src="${LOGO}" alt=""></div>
   </section>
   </div>`
 }
 function renderWho(k) {
-  $('#whoCards').innerHTML = WHO[k].map(([t, d, s], i) => `<a class="tilt spot" href="#/guide/${s}"><span class="num">0${i + 1}</span><div class="who">${esc(P['guide/' + s].title)}</div><b>${t}</b><p>${d}</p><span class="go">去看看 ${ic('arrow')}</span></a>`).join('')
+  $('#whoCards').innerHTML = WHO[k].map(([t, d, s], i) => `<a class="tilt spot" href="${hrefOf(s)}"><span class="num">0${i + 1}</span><div class="who">${NAV[WHERE[s]].label} · ${esc(page(s).title)}</div><b>${t}</b><p>${d}</p><span class="go">去看看 ${ic('arrow')}</span></a>`).join('')
   $$('#whoTabs button').forEach((b) => b.classList.toggle('on', b.dataset.who === k))
   const on = $('#whoTabs button.on'), ind = $('#whoInd')
   if (on && ind) { ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px' }
@@ -166,7 +169,7 @@ function chartSvg() {
    <circle class="draw" r="${R}" style="--len:${(2 * Math.PI * R).toFixed(0)}"/><circle class="draw dash" r="232" style="--len:1458"/><circle class="draw" r="172" style="--len:1081"/>
    <line class="axis" x1="-330" y1="0" x2="330" y2="0"/><line class="axis" x1="0" y1="-330" x2="0" y2="330"/>
    <g class="ticks">${ticks.join('')}</g>
-   ${mark(-45, '使用文档', `${guideCount} 页`, '#/guide/quickstart')}${mark(45, '开发文档', `${devCount} 篇 · 仅管理员`, '#/dev/overview')}${mark(225, '更新日志', `${RELEASES.length} 个版本`, '#/changelog')}
+   ${mark(-62, '开始使用', `${flat('start').length} 篇`, '#/start/quickstart')}${mark(-22, '教程', `${flat('tutorials').length} 条`, '#/tutorials/' + NAV.tutorials.first)}${mark(18, '功能说明', `${flat('features').length} 篇`, '#/features/' + NAV.features.first)}${mark(58, '常见问题', '排障', '#/faq/troubleshooting')}${mark(140, '开发文档', `${devCount} 篇 · 仅管理员`, '#/dev/overview')}${mark(225, '更新日志', `${RELEASES.length} 个版本`, '#/changelog')}
   </svg>`
 }
 function drawChart() { requestAnimationFrame(() => $('#moonStage')?.classList.add('drawn')) }
@@ -198,7 +201,7 @@ function mountHero() {
 function footer() {
   return `<footer class="foot"><div class="foot-row">
  <div><a class="brand" href="#/"><span class="brand-mark sm"><img src="${LOGO}" alt=""></span><span class="brand-word">知是<i class="dot">·</i>Cheese</span></a><div class="fine">和 AI 队友一起做项目的地方。<br>© 2026 SageSeekerSociety</div></div>
- <div><h6>文档</h6><a href="#/guide/quickstart">使用文档</a><a href="#/dev/overview">开发文档</a><a href="#/changelog">更新日志</a></div>
+ <div><h6>文档</h6>${USER_SECS.map((k) => `<a href="#/${k}/${NAV[k].first}">${NAV[k].label}</a>`).join('')}<a href="#/dev/overview">开发文档</a><a href="#/changelog">更新日志</a></div>
  <div><h6>产品</h6><a href="#" data-toast="会打开 okcheese.com">进入知是</a><a href="#" data-toast="会打开桌面端下载">桌面端下载</a><a href="#" data-toast="会打开服务条款">服务条款</a><a href="#" data-toast="会打开隐私政策">隐私政策</a></div>
  <div><h6>给 AI</h6><a href="#" data-toast="会打开 /docs/llms.txt">llms.txt</a><a href="#" data-toast="会打开 GitHub">GitHub</a><a href="#" data-open-ask>问芝士</a></div>
 </div></footer>`
@@ -358,7 +361,7 @@ async function streamInto(el, text, speed = 24) {
   for (let k = 1; k <= text.length && el.isConnected; k += 2) { el.innerHTML = esc(text.slice(0, k)) + caret; await sleep(speed) }
   el.textContent = text
 }
-const citeHtml = (c) => `<a class="cite" href="${c.href}">${ic('doc')}<span>${c.label} · ${c.title}</span><small>${c.href.replace('#/', '/docs/').replace(/^\/docs\/(guide|dev)\//, '/docs/')}</small></a>`
+const citeHtml = (c) => `<a class="cite" href="${c.href}">${ic('doc')}<span>${c.label} · ${c.title}</span><small>${c.href.replace('#/', '/docs/').replace(/^\/docs\/(start|tutorials|features|faq|dev)\//, '/docs/')}</small></a>`
 
 /* ============================================================
    Theme: a circle of night spreading from where you clicked
