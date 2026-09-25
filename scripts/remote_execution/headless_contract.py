@@ -1257,6 +1257,55 @@ def resuming(binary, root):
     )
 
 
+def projectdirs(binary, root):
+    """Where the build keeps a session's transcript is named for its working
+    directory, and a room's session names that directory itself when it moves
+    its conversation to the path a relaunch starts it at
+    (`remote_execution/client.py` `project_dir`). A path long enough to be cut
+    and hashed, with a character outside the Basic Multilingual Plane in it."""
+    spec = importlib.util.spec_from_file_location(
+        "execution_client",
+        HERE.parents[1]
+        / "backend/app/domain/agent/harness/claude_code/remote_execution/client.py",
+    )
+    client = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(client)
+    home = root / "projectdirs-home"
+    (home / ".claude").mkdir(parents=True)
+    for name, cwd in (
+        ("short", root / "project dir"),
+        ("long", root / "长 ✓ 🧀 project" / ("a" * 120) / ("b" * 120)),
+    ):
+        cwd.mkdir(parents=True)
+        workspace(cwd)
+        session = Session(
+            binary,
+            root,
+            f"projectdirs-{name}",
+            STREAM,
+            home=home,
+            launch={"command": [binary], "env": {}, "cwd": str(cwd)},
+        )
+        try:
+            mark = session.user("PROJECT_DIR_MARKER")
+            _, init = session.wait(is_("system", "init"), 30, mark)
+            session.wait(is_("result"), 60, mark)
+        finally:
+            session.stop()
+        found = init and transcript_path(home, init["session_id"])
+        # The build names the directory it runs in as it resolves it.
+        resolved = str(cwd.resolve())
+        expected = init and client.project_dir(home / ".claude", resolved) / (
+            init["session_id"] + ".jsonl"
+        )
+        yield (
+            f"the transcript of a session started at a {name} path is where "
+            "project_dir says",
+            bool(found) and found == expected,
+            f"found {found}, project_dir says {expected}",
+        )
+
+
 def probe(session, mark):
     """The kinds of event on stdout since `mark`, for a receipt."""
     return [
@@ -1845,6 +1894,7 @@ SCENARIOS = {
     "lifetime": lifetime,
     "refused": refused,
     "resuming": resuming,
+    "projectdirs": projectdirs,
     "reloading": reloading,
     "nesting": nesting,
     "unattended": unattended,

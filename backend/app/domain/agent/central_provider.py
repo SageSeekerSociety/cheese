@@ -15,6 +15,7 @@ from app.domain.agent import private_chat
 from app.domain.agent.device_provider import (
     DeviceChannel,
 )
+from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
@@ -198,7 +199,28 @@ class CentralChannel(DeviceChannel):
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
-        token = bind_resource_token(token, str(resource), session_id=str(session_id))
+        # The machine this session already holds, once its lease is ready. A
+        # session started before then saw the project at a placeholder; one
+        # started now sees it where the machine holds it, and that path is part
+        # of what it was started with (`_launch_identity`): so the first turn
+        # that finds a placeholder session idle relaunches it here.
+        lease = (place.lease if place else None) if precheck.deferred else None
+        leased = (
+            lease
+            if lease
+            and lease.get("status", "ready") == "ready"
+            and lease.get("workspace")
+            else None
+        )
+        # Its credential names that lease, as the one the lease hands out does:
+        # the executor route admits nothing else, and this is the one the
+        # session's calls carry again after each turn rewrites it.
+        token = bind_resource_token(
+            token,
+            str(resource),
+            session_id=str(session_id),
+            lease_generation=(leased or {}).get("generation"),
+        )
         # 记忆算谁的，只决定记忆算谁的：它跟着 ``memory_scope`` 走，不跟着「这
         # 一轮租没租手」走。
         if memory_scope == "personal":
@@ -218,7 +240,7 @@ class CentralChannel(DeviceChannel):
                     for key, value in values.items()
                     if key.startswith(("CHEESE_", "GIT_"))
                 },
-                "workspace": "/unavailable-project",
+                "workspace": leased["workspace"] if leased else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
         else:
