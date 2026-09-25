@@ -144,6 +144,11 @@ EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
+#: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
+EVENT_ROUTINE_RUN: Final = "routine_run"
+EVENT_ROUTINE_RESULT: Final = "routine_result"
+#: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
+EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -196,6 +201,9 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
+        EVENT_ROUTINE_RUN,
+        EVENT_ROUTINE_RESULT,
+        EVENT_ROUTINE_PROPOSED,
     }
 )
 
