@@ -1410,76 +1410,6 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <!-- 文档自己的工具条。保存状态 / 只读 / 源码 只对这个 tab 有意义，所以住在
-           这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。 -->
-      <div class="doc-bar">
-        <v-spacer />
-        <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
-        <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
-        <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
-        <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
-          <v-icon size="13">mdi-pause-circle-outline</v-icon>
-          已暂停 · 改动未保存
-        </span>
-        <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
-          <span class="status-dot status-dot--ok" />已保存
-        </span>
-        <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
-
-        <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
-             就回去。平常用不上，进去的入口在 ⋯ 里。 -->
-        <v-btn
-          v-if="!editable && !editingBlocked"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
-          class="me-1"
-          title="回到编辑"
-          @click="toggleEditable"
-        >
-          只读
-        </v-btn>
-        <v-btn
-          v-if="sourceMode"
-          size="small"
-          variant="text"
-          class="me-1 tool-btn--active"
-          title="退出源码模式"
-          @click="toggleSourceMode"
-        >
-          源码
-        </v-btn>
-        <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
-          <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              icon="mdi-dots-horizontal"
-              size="small"
-              variant="text"
-              color="medium-emphasis"
-              title="更多"
-              aria-label="更多"
-            />
-          </template>
-          <v-list density="compact" aria-label="文档选项">
-            <v-list-item
-              v-if="!editingBlocked"
-              :title="editable ? '设为只读' : '回到编辑'"
-              :disabled="sourceMode"
-              @click="toggleEditable"
-            />
-            <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-                 syntax the visual editor can't fully represent (军规 1)。手机上不提供，
-                 见 editingBlocked。 -->
-            <v-list-item
-              v-if="mdAndUp"
-              :title="sourceMode ? '退出源码模式' : '源码模式'"
-              subtitle="直接编辑 markdown 原文"
-              @click="toggleSourceMode"
-            />
-          </v-list>
-        </v-menu>
-      </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
            source mode — the states they describe survive a mode switch. -->
       <!-- Edits a mode switch could not carry over: held, not dropped. -->
@@ -1502,6 +1432,78 @@ onBeforeUnmount(() => {
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
+        <!-- 文档自己的工具条。保存状态 / 只读 / 源码 只对这个 tab 有意义，所以住在
+             这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。
+             它浮在文档右上角、标题上方那片留白里，不单占一行：平时它只有一颗 ⋯，
+             单占一行就是一条什么都没说的横杠。源码模式下编辑器顶到最上面，浮着会压住
+             代码，才回到自己的一行。 -->
+        <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
+          <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
+          <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
+          <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
+          <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
+            <v-icon size="13">mdi-pause-circle-outline</v-icon>
+            已暂停 · 改动未保存
+          </span>
+          <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
+            <span class="status-dot status-dot--ok" />已保存
+          </span>
+          <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
+
+          <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+               就回去。平常用不上，进去的入口在 ⋯ 里。 -->
+          <v-btn
+            v-if="!editable && !editingBlocked"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            class="me-1"
+            title="回到编辑"
+            @click="toggleEditable"
+          >
+            只读
+          </v-btn>
+          <v-btn
+            v-if="sourceMode"
+            size="small"
+            variant="text"
+            class="me-1 tool-btn--active"
+            title="退出源码模式"
+            @click="toggleSourceMode"
+          >
+            源码
+          </v-btn>
+          <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                icon="mdi-dots-horizontal"
+                size="small"
+                variant="text"
+                color="medium-emphasis"
+                title="更多"
+                aria-label="更多"
+              />
+            </template>
+            <v-list density="compact" aria-label="文档选项">
+              <v-list-item
+                v-if="!editingBlocked"
+                :title="editable ? '设为只读' : '回到编辑'"
+                :disabled="sourceMode"
+                @click="toggleEditable"
+              />
+              <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+                   syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+                   见 editingBlocked。 -->
+              <v-list-item
+                v-if="mdAndUp"
+                :title="sourceMode ? '退出源码模式' : '源码模式'"
+                subtitle="直接编辑 markdown 原文"
+                @click="toggleSourceMode"
+              />
+            </v-list>
+          </v-menu>
+        </div>
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
         <div v-if="sourceMode" class="doc-source" @keydown="onDocKeydown">
@@ -1699,13 +1701,25 @@ onBeforeUnmount(() => {
    控件挂在 DocPanel 的 v-toolbar 上，那条 toolbar 同时还是「文档」标题、专注按钮
    和五个抽屉图标的家 —— 现在标题和专注归话题头部，抽屉图标变成了 tab。 */
 .doc-bar {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 2;
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
+  min-height: 28px;
+  padding: 0 2px 0 6px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.doc-bar--row {
+  position: static;
+  flex: 0 0 auto;
+  justify-content: flex-end;
   min-height: 34px;
   padding: 0 6px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: 0;
 }
 .doc {
   /* In the split workspace the doc is a full white surface that fills the pane —
@@ -1748,7 +1762,7 @@ onBeforeUnmount(() => {
 
 /* Tool icon when its drawer is open — neutral ink, not amber. */
 .tool-btn--active {
-  color: rgb(var(--v-theme-primary)) !important;
+  color: var(--ink) !important;
   background: transparent;
 }
 .doc-editor-wrap {
@@ -1852,15 +1866,18 @@ onBeforeUnmount(() => {
   }
 }
 /* Stage holds the editor and, when pinned, the docked tool panel beside it. */
+/* 竖着排：源码模式下工具条是压在编辑器上面的一行。平时它浮着，不占这一列。 */
 .doc-stage {
   position: relative;
   display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
 }
 .doc-body {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 .md-content :deep(p) {
   margin: 0 0 6px;
