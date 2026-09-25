@@ -360,6 +360,14 @@
   line-height: var(--lh-15);
   color: var(--ink);
 }
+/* 写在 .v-card-title 上时要压过它：两者特异度相同，而 VCard 的样式表在这份文件
+   之后注入，单写 .t-title 会被它的 20px / 500 / 字距盖掉。 */
+.v-card-title.t-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  letter-spacing: 0;
+}
 
 /* Dialog title: 18 / 26 / 600 / --ink. 弹窗标题那一档（§3.2 的 18px），此前没有
    类可用，弹窗各自拿 Vuetify 的 text-h6（20px，不在字号阶梯上）。

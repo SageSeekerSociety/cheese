@@ -444,7 +444,7 @@ async function submitInvite() {
 
     <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
       <v-card>
-        <v-card-title class="t-title pt-4">{{ t('work.members.inviteTitle') }}</v-card-title>
+        <v-card-title class="t-dialog-title pt-4">{{ t('work.members.inviteTitle') }}</v-card-title>
         <v-card-text>
           <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
           <v-text-field
@@ -496,7 +496,7 @@ async function submitInvite() {
 
     <v-dialog :model-value="removeTarget !== null" max-width="420" @update:model-value="removeTarget = null">
       <v-card>
-        <v-card-title class="t-title pt-4">{{
+        <v-card-title class="t-dialog-title pt-4">{{
           t('work.members.removeTitle', { name: removeTarget?.name || removeTarget?.user_handle || '' })
         }}</v-card-title>
         <v-card-text class="t-body c-muted">{{ t('work.members.removeBody') }}</v-card-text>
