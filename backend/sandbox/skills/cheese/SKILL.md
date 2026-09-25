@@ -152,6 +152,27 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 - **一版是一次交付，不是一次保存。**「第七版」指的是那次交付的那个提交，不是某个 PDF。
 - **是不是产物由声明决定，不由它在哪个目录决定。** 目录名会漂，声明不会。
 
+## 用户的邮箱和飞书文档
+
+项目成员可以在「我的连接」里接入自己的邮箱（IMAP/SMTP）或飞书，并勾选允许哪些项目的 AI 队友使用。你用的永远是**那个人的账号**，所以每一步都要说清楚动的是谁的邮箱、哪份文档。
+
+先看这个项目能用哪些：`platform_request(method="GET", path="/projects/<项目 id>/integrations?topic=<本话题 id>")`。没有就告诉用户去「我的连接」接入并授权这个项目，不要用别的办法绕。
+
+**邮件**（下面的路径都要带 `?topic=<本话题 id>`）：
+- 搜索：`POST /integrations/<连接>/mail/search`，body `{"query": …, "sender": …, "subject": …, "since": "2026-09-01", "folder": "INBOX"}`；中文关键词一次只能填一项。
+- 读一封：`GET /integrations/<连接>/mail/messages/<uid>`，返回正文、附件列表和 `source`。引用时写「<邮箱> 里 <日期> <发件人> 的《主题》」。
+- 附件：`cheese mail attachment <连接> <uid> <序号>` 取到 `~/attachments/mail/` 下，再按 documents 技能读。
+- 写草稿：`POST /integrations/<连接>/mail/drafts`，body `{"to": [...], "cc": [...], "subject": …, "body": …, "attachments": ["房间里的文件路径"], "in_reply_to": "<原邮件 message_id>"}`。附件要先 `cheese show` 放进房间。草稿会真的存进对方邮箱的草稿箱。
+- **你不能发送邮件。** 发送只能由邮箱主人在「我的连接 → 待发送」里核对收件人、主题、正文和附件后点确认。写完草稿就说「草稿已存进 X 的草稿箱，等他确认发送」，不要说「已发送」。
+
+**飞书文档**（同样带 `?topic=`）：
+- 搜索：`POST /integrations/<连接>/feishu/search` `{"query": …}`。只配了应用凭据时飞书不给搜，返回 403 就如实转告，请用户授权个人账号或直接给文档链接里的 id。
+- 读：`GET /integrations/<连接>/feishu/docs/<document_id>`，返回每段的 `block_id` 和文字。
+- 新建：`POST /integrations/<连接>/feishu/docs` `{"title": …, "content": "markdown"}`，返回真实链接，把链接给用户。
+- 修改：`PATCH /integrations/<连接>/feishu/docs/<document_id>`，`{"append": "追加的 markdown"}` 或 `{"block_id": …, "text": "这一段改成的内容"}`。改完用返回的内容核对一遍。
+
+报错照实说：`auth_failed` 是授权过期（请他到「我的连接」更新）、`forbidden` 是没有这份文档或这个项目的权限、`not_found` 是找不到、其余是服务出错。**没成功就不要说成功。**
+
 ## 别自己打"假按钮/假链接"
 
 平台会**自动**把你的平台动作渲染成可点的卡片/按钮/链接：记了决策→决策链接、设了实况文档→[打开话题] 按钮、递了验收卡→[去验收] 按钮。所以**不要**在消息或通知正文里手打 `[看实况文档]` `[采纳]` 这类方括号假按钮，也不用写"已记入决策记录"这种话——做完动作直接说结论即可，链接平台来加。
@@ -212,6 +233,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese push-fix [--task <活>] [--drop-dependency]` | 将该任务已提交的修订立即推送到现有 PR，并刷新卡；`--drop-dependency` 将 PR 改到项目默认分支并清除依赖和旧批准，先按上文整理和验证独立改动；CI 轮询只读提交，不替你提交工作文件 |
 | `cheese recover <任务 id>` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
 | `cheese library get <名字> [--out <路径>]` | 取一份资料到你自己 home 下的 `~/attachments/library/<名字>`——和随消息发来的那份同一个位置,不写进工作目录。用户提到一份你手上没有的就用它,别请他重传 |
+| `cheese mail attachment <连接> <uid> <序号> [--folder <文件夹>] [--out <路径>]` | 把用户邮箱里一封邮件的附件取到 `~/attachments/mail/<uid>/` 下，再按 documents 技能读。连接 id 和 uid 来自上面「用户的邮箱和飞书文档」那几个接口 |
 | `cheese show <路径> [--as <类型>]` | 把工作区里的一份东西摆到房间里给人看,渲染进右侧预览窗口；`--as` 指定渲染类型，默认按扩展名判断（网页、SVG、PDF、Office 文件、图片都能摆）。摆出来的东西留在这个房间里；人可以按「保存到资料库」把其中一份留下来供以后各房间取用 |
 | `cheese convert <路径> --to <格式> [--output <路径>]` | 把文档转成另一种格式。两个用途:**老格式升级**——`.doc` / `.ppt` / `.xls` 不是 zip,这台机器读不了也写不了,要改就先升级成 `.docx` / `.pptx` / `.xlsx`,**并且明确告诉用户这是格式升级**(转出来的和原件不是同一个文件,往后发哪一份由他决定);**自己看版面**——`--to pdf` 之后用 `uv run --with pymupdf` 把某页存成图片看看,排版错了不报错、文字提取也正确,只有看一眼才发现 |
 | `cheese recalc <路径> [--output <路径>]` | 重算一份 `.xlsx` 里的公式,并列出算不出来的格(按 `Sheet1!B7` 的形式)。**用程序改过表格就要调它**:写进文件的是公式本身,依赖被改单元格的那些公式存的还是旧结果,文件照样能打开、公式栏也对,只有数是错的,而且没有任何地方会报错。这台机器上没有会算公式的程序,平台那边有 |
