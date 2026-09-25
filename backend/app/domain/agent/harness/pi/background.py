@@ -283,9 +283,17 @@ def _hold(args: argparse.Namespace) -> None:
         Path(address).unlink(missing_ok=True)
     # Written last and once: its presence is what "finished" means to a reader,
     # so it must not appear before the output it belongs to is on disk.
-    (args.dir / "exit").write_text(
+    _record_exit(args.dir, status)
+
+
+def _record_exit(directory: Path, status: int) -> None:
+    """Put `exit` in place whole. A reader takes its presence to mean the job
+    is over and parses it at once, so it is never seen empty or half-written."""
+    partial = directory / f"exit.{os.getpid()}"
+    partial.write_text(
         json.dumps({"status": status, "at": time.time()}), encoding="utf-8"
     )
+    os.replace(partial, directory / "exit")
 
 
 #: 看守进程自己死掉时的退出码，和命令的退出码取自同一个字段，所以要能分得开。
@@ -312,12 +320,8 @@ def main(argv: list[str] | None = None) -> None:
         # forever, having printed nothing, for a reason nobody can recover —
         # which is the same silence as no failure at all.
         (args.dir / "error").write_text(traceback.format_exc(), encoding="utf-8")
-        exit_file = args.dir / "exit"
-        if not exit_file.exists():
-            exit_file.write_text(
-                json.dumps({"status": _GUARDIAN_FAILED, "at": time.time()}),
-                encoding="utf-8",
-            )
+        if not (args.dir / "exit").exists():
+            _record_exit(args.dir, _GUARDIAN_FAILED)
         raise
 
 
