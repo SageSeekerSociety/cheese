@@ -1,5 +1,5 @@
 <template>
-  <v-tabs v-model="model" show-arrows slider-color="primary" bg-color="transparent">
+  <v-tabs v-model="model" show-arrows color="on-surface" slider-color="primary" bg-color="transparent">
     <v-tab
       :value="'overview'"
       :to="{ name: 'TasksDetail', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"

@@ -146,7 +146,7 @@
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer></v-spacer>
-        <v-btn @click="handleCloseVerify">取消</v-btn>
+        <v-btn variant="text" @click="handleCloseVerify">取消</v-btn>
         <v-btn variant="flat" color="primary" @click="submitVerifyForm">确认参与</v-btn>
       </v-card-actions>
     </v-card>

@@ -517,7 +517,13 @@ function close() {
             </div>
 
             <div class="amdd__subactions">
-              <v-btn v-if="sub.status === 'reauth_required'" variant="outlined" size="small" @click="reauthOpen = true">
+              <v-btn
+                v-if="sub.status === 'reauth_required'"
+                color="primary"
+                variant="outlined"
+                size="small"
+                @click="reauthOpen = true"
+              >
                 {{ t('models.detail.subscription.reauth') }}
               </v-btn>
               <!-- 移除是危险动作：先确认，确认框说清连带后果（停用网关模型）。 -->

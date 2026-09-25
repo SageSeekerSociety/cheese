@@ -48,9 +48,10 @@ the parts no gate can see.
   the BACKGROUND. Using the mark colour for text is the single most common
   defect — in light theme `--warn` measures 2.34:1 on white, well under the
   4.5:1 needed to read. Same shape for `--ok` and `--accent`.
-- Amber (`--accent`) is reserved for the ONE primary action, the active nav
-  indicator, and the brand mark. Not avatars, not status chips, not ordinary
-  icons. ~95% of any screen is neutral.
+- Amber (`--accent`) is reserved for the main action of an area, unread
+  markers, the current nav position, and the brand mark. A page may have
+  several areas, but a group of sibling buttons has only one amber button. Not
+  avatars, not status chips, not ordinary icons. ~95% of any screen is neutral.
 - Cards get a `--line` border and **no shadow**. `--shadow-1`/`--shadow-2` are
   for menus, dialogs and drawers only — things floating above the page.
 

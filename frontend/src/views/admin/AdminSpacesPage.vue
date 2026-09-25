@@ -109,12 +109,16 @@ onMounted(load)
         <v-btn color="primary" variant="flat" :disabled="saving" @click="decide(item, true)">{{
           t('spaces.review.approve')
         }}</v-btn>
-        <v-btn :disabled="saving" @click="reject(item)">{{ t('spaces.review.reject') }}</v-btn>
+        <v-btn variant="text" :disabled="saving" @click="reject(item)">{{ t('spaces.review.reject') }}</v-btn>
       </v-card-actions>
     </v-card>
     <div class="d-flex justify-end">
-      <v-btn :disabled="!offset || loading || saving" @click="page(-50)">{{ t('spaces.review.previous') }}</v-btn>
-      <v-btn :disabled="items.length < 50 || loading || saving" @click="page(50)">{{ t('spaces.review.next') }}</v-btn>
+      <v-btn variant="text" :disabled="!offset || loading || saving" @click="page(-50)">{{
+        t('spaces.review.previous')
+      }}</v-btn>
+      <v-btn variant="text" :disabled="items.length < 50 || loading || saving" @click="page(50)">{{
+        t('spaces.review.next')
+      }}</v-btn>
     </div>
     <v-dialog
       :model-value="!!selected"
@@ -130,7 +134,7 @@ onMounted(load)
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</v-btn>
+          <v-btn variant="text" :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</v-btn>
           <v-btn
             color="primary"
             variant="flat"

@@ -495,6 +495,7 @@ watch(
                 />
                 <v-btn
                   size="small"
+                  color="primary"
                   variant="tonal"
                   :disabled="ghEnforced || !newCheckName.trim()"
                   :loading="bpSaving === 'required_checks'"
@@ -653,7 +654,9 @@ watch(
               style="flex: 1"
               @keydown.enter="saveUpstream"
             />
-            <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
+            <v-btn size="small" color="primary" variant="tonal" :loading="savingUpstream" @click="saveUpstream">
+              保存
+            </v-btn>
           </div>
           <p class="t-body c-faint mt-2 settings-hint">
             填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
@@ -832,7 +835,13 @@ watch(
           <div v-else class="d-flex align-center" style="gap: 8px">
             <span class="t-body c-muted">暂无关联账号</span>
             <v-spacer />
-            <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
+            <v-btn
+              size="small"
+              color="primary"
+              variant="tonal"
+              :loading="connectingGithubAccount"
+              @click="connectGithubAccount"
+            >
               连接 GitHub 账号
             </v-btn>
           </div>

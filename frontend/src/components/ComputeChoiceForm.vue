@@ -101,7 +101,7 @@ function submit() {
       class="mt-3"
       hide-details
     />
-    <v-btn class="mt-3" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
+    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
       named ? '保存到项目常用' : '使用此配置'
     }}</v-btn>
   </div>

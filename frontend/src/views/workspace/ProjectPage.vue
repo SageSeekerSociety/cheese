@@ -22,7 +22,7 @@ defineSlots<{
 
 const { mdAndUp } = useDisplay()
 
-const ACTION_DEFAULTS = { VBtn: { variant: 'text', color: 'on-surface-variant', size: 'small' } } as const
+const ACTION_DEFAULTS = { VBtn: { variant: 'text', size: 'small' } } as const
 </script>
 
 <template>
@@ -32,7 +32,7 @@ const ACTION_DEFAULTS = { VBtn: { variant: 'text', color: 'on-surface-variant', 
     <header v-if="mdAndUp || $slots.meta || $slots.actions" class="project-page__head">
       <h1 v-if="mdAndUp" class="project-page__title t-title">{{ title }}</h1>
       <div v-if="$slots.meta" class="project-page__meta"><slot name="meta" /></div>
-      <!-- 页头上的按钮默认是中性的文字按钮：一页只有一个主操作，那一颗自己写
+      <!-- 页头上的按钮默认是小号的文字按钮；页头的主操作自己写
            color="primary" variant="flat"。 -->
       <div v-if="$slots.actions" class="project-page__actions">
         <v-defaults-provider :defaults="ACTION_DEFAULTS"><slot name="actions" /></v-defaults-provider>
