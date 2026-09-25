@@ -33,6 +33,8 @@ const rawTasks = ref<Task[]>([])
 const rawCodes = ref<SpaceInviteCode[]>([])
 const loading = ref(false)
 const loadedOnce = ref(false)
+/** 空间读不到（不存在、没权限、板子没过审）。外壳拿它换掉整页，而不是留一张空表。 */
+const loadFailed = ref(false)
 
 // --- 映射 --------------------------------------------------------------------
 
@@ -82,6 +84,7 @@ export async function loadBoard(id: number, force = false) {
   if (!force && loadedOnce.value && spaceId.value === id) return
   spaceId.value = id
   loading.value = true
+  loadFailed.value = false
   try {
     const [spaceRes, taskRes] = await Promise.all([
       SpacesApi.detail(id),
@@ -97,6 +100,14 @@ export async function loadBoard(id: number, force = false) {
     spaceRaw.value = spaceRes.data.space
     rawTasks.value = taskRes.data.tasks
     loadedOnce.value = true
+  } catch {
+    // 读不到就是读不到：真接口对「不存在」和「没权限」都答 404（`require_reviewed_space`
+    // 就是这么做的），界面上没有区别可讲。**必须在这里接住** —— 上面那个 watch 不会
+    // 接 rejected promise，漏出去就是一条未处理的拒绝，而且页面看着像加载失败。
+    spaceRaw.value = null
+    rawTasks.value = []
+    loadedOnce.value = false
+    loadFailed.value = true
   } finally {
     loading.value = false
   }
@@ -156,6 +167,8 @@ export const me = computed<Person>(() => {
   if (mine) return toPerson(mine.user)
   return { handle: myHandle(), name: myHandle() }
 })
+
+export const failed = computed(() => loadFailed.value)
 
 export const tasks = computed<BoardTask[]>(() => rawTasks.value.map(toBoardTask))
 export const boardTasks = computed(() => tasks.value.filter((t) => t.state === 'PUBLISHED'))

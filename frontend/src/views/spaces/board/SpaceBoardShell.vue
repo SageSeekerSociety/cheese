@@ -14,7 +14,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ROLE_LABEL } from './model'
-import { isManager, isOwner, loadBoard, me, role, space } from './store'
+import { failed, isManager, isOwner, loadBoard, me, role, space } from './store'
 
 const props = defineProps<{ spaceId: number }>()
 
@@ -129,7 +129,15 @@ watch(
     </header>
 
     <main class="shell__main">
-      <router-view />
+      <!-- 空间读不到时把整页换掉：路由里那几页各自都假设空间已经装好，
+           让它们在半装状态下渲染只会得到一堆空表，读起来像「这块板是空的」。 -->
+      <v-empty-state
+        v-if="failed"
+        icon="mdi-lock-question"
+        title="打不开这个空间"
+        text="它不存在，或者你不在里面。请从空间列表重新进一次。"
+      />
+      <router-view v-else />
     </main>
   </div>
 </template>
