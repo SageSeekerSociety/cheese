@@ -126,8 +126,18 @@ function syncRoom() {
   const f = roomFrame(); if (!f?.contentWindow?.setStep) return
   f.contentWindow.setTheme(isDark() ? 'dark' : 'light'); f.contentWindow.setStep(Math.max(storyStep, 0))
 }
+// The room always renders at a desktop size and is scaled down to fit, so a
+// narrow window shows a small desktop, never the workbench's phone layout.
+const ROOM_W = 1200, ROOM_H = 740
+let roomRO
+function fitRoom() {
+  const box = $('#roomFit'), f = roomFrame(); if (!box || !f) return
+  const k = box.clientWidth / ROOM_W
+  f.style.transform = `scale(${k})`; box.style.height = ROOM_H * k + 'px'
+}
 function mountStory() {
   const f = roomFrame(); if (!f) return
+  roomRO?.disconnect(); roomRO = new ResizeObserver(fitRoom); roomRO.observe($('#roomFit')); fitRoom()
   storyStep = -1
   f.onload = () => { syncRoom(); onStoryScroll() }
   f.srcdoc = ROOM
@@ -169,7 +179,7 @@ function homePage() {
      <ol class="x-steps" id="storySteps">${STORY.map(([t, d], i) => `<li><span class="n">0${i + 1}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ol>
      <div class="x-story-bar" id="storyBar"><i></i></div>
     </div>
-    <div class="x-stage"><div class="x-blob b1"></div><div class="x-blob b2"></div><iframe id="roomFrame" title="话题演示：用工作台自己的组件拼成" loading="eager"></iframe></div>
+    <div class="x-stage"><div class="x-blob b1"></div><div class="x-blob b2"></div><div class="room-fit" id="roomFit"><iframe id="roomFrame" title="话题演示：用工作台自己的组件拼成" loading="eager"></iframe></div></div>
    </div>
   </section>
 
@@ -191,7 +201,7 @@ function homePage() {
   </section>
 
   <section class="x-sec x-say" data-reveal>
-   <p class="x-sentence">我是 <label class="x-pick"><select id="sayWho">${who.map((k) => `<option>${k}</option>`).join('')}</select>${ic('down')}</label>，<br>我要 <label class="x-pick"><select id="sayWhat"></select>${ic('down')}</label>。</p>
+   <p class="x-sentence">我是 <span class="x-pick" id="pickWho"></span>，<br>我要 <span class="x-pick" id="pickWhat"></span>。</p>
    <div class="x-say-out" id="sayOut"></div>
   </section>
 
@@ -217,10 +227,19 @@ function renderWork(i) {
    <div class="w-result"><div class="w-av"><img src="${LOGO}" alt=""></div><div><small>芝士交回来</small><p>${esc(result)}</p><div class="w-files">${files.map((f) => `<span>${ic(f.startsWith('PR') ? 'git' : 'doc', 'width:13px;height:13px')}${esc(f)}</span>`).join('')}</div>
     <a class="link" href="${hrefOf(to)}">${esc(role)}怎么做：${esc(page(to).title)} →</a></div></div>`
 }
+// 「我是…我要…」: two inline pickers that open a card of choices under the word.
+const ROLE_ICON = { 学生: 'book', '老师 / 助教': 'users', 办公: 'folder' }
+const say = { who: Object.keys(WHO)[0], what: 0, open: '' }
+function pickHtml(id, label, options) {
+  return `<button class="x-pick-btn" data-pick="${id}" aria-haspopup="listbox" aria-expanded="${say.open === id}">${esc(label)}${ic('down')}</button>
+   <div class="x-menu${say.open === id ? ' open' : ''}" role="listbox">${options.map(([v, t, d, icon], i) => `<button role="option" data-pick-opt="${id}" data-v="${v}" class="${String(v) === String(id === 'who' ? say.who : say.what) ? 'on' : ''}" style="--i:${i}"><span class="x-menu-ic">${ic(icon)}</span><span><b>${esc(t)}</b><small>${esc(d)}</small></span></button>`).join('')}</div>`
+}
 function renderSay() {
-  const who = WHO[$('#sayWho').value] ? $('#sayWho').value : Object.keys(WHO)[0], what = $('#sayWhat')
-  if (what.dataset.who !== who) { what.innerHTML = WHO[who].map(([t], i) => `<option value="${i}">${t}</option>`).join(''); what.dataset.who = who }
-  const [t, d, s] = WHO[who][+what.value || 0]
+  const roles = Object.keys(WHO).map((k) => [k, k, WHO[k].map((x) => x[0]).slice(0, 2).join('、') + '…', ROLE_ICON[k] || 'users'])
+  const jobs = WHO[say.who].map(([t, d, s], i) => [i, t, d, s.startsWith('tut-') ? 'bulb' : 'doc'])
+  $('#pickWho').innerHTML = pickHtml('who', say.who, roles)
+  $('#pickWhat').innerHTML = pickHtml('what', WHO[say.who][say.what][0], jobs)
+  const [t, d, s] = WHO[say.who][say.what]
   $('#sayOut').innerHTML = `<div class="x-say-card"><small>${esc(NAV[WHERE[s]].label)} · ${esc(page(s).title)}</small><b>${esc(t)}</b><p>${esc(d)}</p><a class="pill" href="${hrefOf(s)}">看看怎么做 ${ic('arrow')}</a></div>`
 }
 
@@ -541,7 +560,13 @@ document.addEventListener('keydown', (e) => {
   else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); toggleDock() }
   else if (e.key === 'Escape') closeAll()
 })
-document.addEventListener('change', (e) => { if (e.target.closest('#sayWho,#sayWhat')) renderSay() })
+document.addEventListener('click', (e) => {
+  const opt = e.target.closest('[data-pick-opt]'), btn = e.target.closest('[data-pick]')
+  if (opt) { if (opt.dataset.pickOpt === 'who') { say.who = opt.dataset.v; say.what = 0 } else say.what = +opt.dataset.v; say.open = ''; renderSay(); return }
+  if (btn) { say.open = say.open === btn.dataset.pick ? '' : btn.dataset.pick; renderSay(); return }
+  if (say.open && !e.target.closest('.x-menu')) { say.open = ''; if ($('#pickWho')) renderSay() }
+})
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && say.open) { say.open = ''; renderSay() } })
 addEventListener('resize', () => { const w = $('#workTabs button.on'); if (w) renderWork(+w.dataset.work); moveTabs(cur?.sec ?? ''); moveFilter(); if (cur?.page) moveSidePill(cur.page) })
 
 $('#dockResize').addEventListener('pointerdown', (e) => {
