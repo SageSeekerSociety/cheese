@@ -250,6 +250,11 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
   background: transparent;
   border: 0;
   border-radius: 0;
+  /* 整面板里值域要超出格子的内容盒 1px，才能盖住 `.ad__kpis` 画在格子边缘的
+     分隔线（负 margin 方案让第一行/列的线突出面板外被裁掉）。calculating
+     box + 负 margin：宽 = 内容盒 + 左右各 1px。 */
+  width: calc(100% + 1px);
+  margin-left: -0.5px;
 }
 
 :where(.ad__inner) .akpi--rich {

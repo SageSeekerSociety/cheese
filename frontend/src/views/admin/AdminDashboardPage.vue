@@ -2617,13 +2617,15 @@ onBeforeUnmount(() => {
 /* KPI 网格：N 张卡合成**一条整面板**（一个外框 + 内部分隔线，卡片自己的边框
    与写死高度在 `.ad__inner` 作用域内关掉，见 AdminKpiCard 的对应块）。边框数量
    从 N 个变 1 个，行高对齐是天生的 —— 不再需要 92/108px 那档妥协。
+   面板向左、向下各多伸 1px：第一列格子的左边线与末行格子的下边线（5 卡 tab
+   的第二行）被推出外边框、由 overflow 裁掉，留下的就全是「缝」。
    窄 2 列 → ≥560 4 列 → ≥1320 auto-fit（4–6 列，卡数不一也不留空轨）。
    断点是**容器查询**（挂 `.ad__inner`），理由见 `.ad__inner`。 */
 .ad__kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  margin-top: 16px;
+  margin: 16px 0 -1px -1px;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2647,11 +2649,10 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 格子换成「缝」：gap 0，分隔线用每格自己的上边线 + 左边线、外边框裁掉第一行/列
-   （overflow: hidden + 负 margin，第一行的上边框与第一列的左边框被推出面板外）。 */
+/* 格子换成「缝」：gap 0，分隔线用每格自己的上边线 + 左边线，面板负 margin 把
+   第一行/列的线推出外边框裁掉（overflow: hidden）。面板内的 hover 底色由卡片
+   自己加宽 1px 盖住左侧那条缝（见 AdminKpiCard 的整面板块）。 */
 .ad__kpis > :deep(*) {
-  margin-top: -1px;
-  margin-left: -1px;
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
 }
