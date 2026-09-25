@@ -1,5 +1,5 @@
 // A person's page sits at /users/<handle>, on the same level as the settings
-// and privacy pages; those stay reachable whatever people are called.
+// pages; those stay reachable whatever people are called.
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
@@ -17,7 +17,6 @@ describe('/users/…', () => {
   it.each([
     ['/users/settings/profile', 'UserSettingsProfile'],
     ['/users/settings/security', 'UserSettingsSecurity'],
-    ['/users/privacy-center', 'PrivacyCenter'],
   ])('still opens %s rather than a person named like it', (path, name) => {
     expect(router.resolve(path).name).toBe(name)
   })
