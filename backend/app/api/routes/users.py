@@ -1746,6 +1746,10 @@ async def register_user(
         profile=profile,
         viewer_id=user.id,
     )
+    # Dependency teardown commits after the response, and the client asks for
+    # its pending consents the moment it holds the token: uncommitted, the
+    # consent given here reads as missing and the rules are put to it again.
+    await session.commit()
     return {
         "code": 201,
         "message": "Register successfully.",
@@ -4715,7 +4719,7 @@ async def oauth_create_user(
                 return _oauth_error_redirect(
                     "INVALID_INVITE_CODE", str(_invite_code_error(exc))
                 )
-        return await _complete_oauth_binding(
+        response = await _complete_oauth_binding(
             request=request,
             session=session,
             auth_service=auth_service,
@@ -4726,6 +4730,10 @@ async def oauth_create_user(
             created="true",
             authMode=passwordMode,
         )
+        # The landing page signs in and asks for pending consents as soon as it
+        # follows this redirect, which dependency teardown would commit after.
+        await session.commit()
+        return response
     except Exception:
         await session.rollback()
         logger.exception("OAuth create: account creation failed")
