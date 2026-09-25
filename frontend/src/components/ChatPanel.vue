@@ -30,7 +30,7 @@ import {
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
-import { cachedWindow, setCachedWindow } from '../lib/blockCache'
+import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
@@ -741,6 +741,23 @@ async function loadTopic(topic: Topic, entering = false) {
     if (!stillHere()) return
     const parallelSocket = entering && outbox.value.length === 0
     if (parallelSocket) connectSocket(topic.id)
+    // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先
+    // 回来：先回来就先画出来。不等它——那条走的是后台预取的队列，可能排在别的话题
+    // 后面；下面这一条照常直接去取，谁先到用谁。
+    // 先画出来的那一页之后就当缓存看待：下面合并、判断「长了没有」、要不要复位滚动，
+    // 都和一开始就有缓存时一样。
+    let shownEarly: typeof cached = null
+    const warming = cached ? undefined : pendingBlockRefresh(topic.id)
+    void warming?.then(() => {
+      if (!stillHere() || !loadingHistory.value) return
+      const warmed = cachedWindow(topic.id)
+      if (!warmed) return
+      shownEarly = warmed
+      messages.value = warmed.blocks
+      hasMore.value = warmed.hasMore
+      loadingHistory.value = false
+      restoreScroll(topic.id)
+    })
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
@@ -751,11 +768,12 @@ async function loadTopic(topic: Topic, entering = false) {
     // without a manual scroll. Compared on the LAST id, not on length: the
     // cached window and this page can be different sizes (the user may have
     // paged back), so a length comparison says nothing about the tail.
-    const grew = cached !== null && cached.blocks.at(-1)?.id !== payload.data.at(-1)?.id
+    const shown = cached ?? shownEarly
+    const grew = shown !== null && shown.blocks.at(-1)?.id !== payload.data.at(-1)?.id
     // Merge rather than replace, so scrollback the user already loaded (and
     // that restoreScroll's saved offset refers to) does not vanish under them.
-    const merged = cached
-      ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
+    const merged = shown
+      ? mergeRefreshedTail(shown, { blocks: payload.data, hasMore: payload.has_more })
       : { blocks: payload.data, hasMore: payload.has_more }
     // Live frames can arrive while the HTTP snapshot is pending. Apply them
     // last, including retractions, so that snapshot cannot erase newer events.
@@ -777,7 +795,7 @@ async function loadTopic(topic: Topic, entering = false) {
     hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
-    if (!cached) restoreScroll(topic.id)
+    if (!shown) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     if (!parallelSocket && !connectRefused.value) connectSocket(topic.id)
     void fillViewportIfNeeded()

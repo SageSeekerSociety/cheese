@@ -101,8 +101,20 @@ function visible(container: Element, selector: string): boolean {
   return !!el && el.style.display !== 'none'
 }
 
+// 文档那一格是异步组件（编辑器不挡房间首屏），等它把 chip 画出来。
+async function docChips(container: Element): Promise<NodeListOf<HTMLElement>> {
+  return vi.waitFor(
+    () => {
+      const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+      expect(chips.length, '文档里没渲染出 chip').toBeGreaterThan(0)
+      return chips
+    },
+    { timeout: 5000 }
+  )
+}
+
 async function clickChip(container: Element, path: string) {
-  const chip = container.querySelector<HTMLElement>('.doc-editor .mention.file-ref')
+  const chip = (await docChips(container))[0]
   expect(chip, '文档里没渲染出 chip').toBeTruthy()
   expect(chip!.dataset.file).toBe(path)
   await fireEvent.click(chip!)
@@ -215,7 +227,7 @@ describe('自由区', () => {
     const { container } = mountPanel()
     await flush()
 
-    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    const chips = await docChips(container)
     await fireEvent.click(chips[0])
     await flush()
     expect(freeTabs(container)).toEqual(['~一.docx'])
@@ -230,7 +242,7 @@ describe('自由区', () => {
     getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
     const { container } = mountPanel()
     await flush()
-    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    const chips = await docChips(container)
     await fireEvent.click(chips[0])
     await flush()
 
@@ -245,7 +257,7 @@ describe('自由区', () => {
     getDoc.mockResolvedValue({ content: '见 <&一.docx> 和 <&二.docx>\n' })
     const { container } = mountPanel()
     await flush()
-    const chips = container.querySelectorAll<HTMLElement>('.doc-editor .mention.file-ref')
+    const chips = await docChips(container)
     await fireEvent.click(chips[0])
     await flush()
     await fireEvent.dblClick(container.querySelector('.tabbar__file [role="tab"]')!)

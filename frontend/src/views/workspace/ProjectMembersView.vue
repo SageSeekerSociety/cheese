@@ -25,6 +25,8 @@ import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { provideRevealGate } from '@/composables/useRevealGate'
+
 import {
   ApiError,
   getProject,
@@ -52,6 +54,16 @@ defineOptions({ name: 'ProjectMembersView' })
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
+const gate = provideRevealGate()
+const { revealed } = gate
+
+// 名册由 store 去取；一个项目至少有它的所有者，名册非空就是到货了。
+const releaseRoster = gate.hold()
+watch(
+  () => store.members.length,
+  (n) => n > 0 && releaseRoster(),
+  { immediate: true }
+)
 
 // 名册就是侧栏和 @ 补全读的那一份（store.members），不是这一页自己再拉一次的副本。
 const me = computed(() => myHandle())
@@ -79,6 +91,7 @@ function countLabel(n: number): string {
 // AI 队友这一段读的是队友列表，不是名册上那几行：私聊地址、未读键和「默认」那颗标
 // 问的都是队友本身，名册行给不出来。停用的队友不列。
 const teammates = ref<ProjectAgent[]>([])
+const releaseTeammates = gate.hold()
 watch(
   () => props.projectId,
   async (pid) => {
@@ -89,6 +102,8 @@ watch(
       teammates.value = rows.filter((a) => a.is_active)
     } catch {
       // 拿不到就不显示这一段，名册不该被一个可选接口拖垮。
+    } finally {
+      releaseTeammates()
     }
   },
   { immediate: true }
@@ -106,7 +121,12 @@ async function refreshInvitations() {
     // 同上：拿不到就不显示这一段。
   }
 }
-watch(() => props.projectId, refreshInvitations, { immediate: true })
+const releaseInvitations = gate.hold()
+watch(
+  () => props.projectId,
+  () => refreshInvitations().finally(releaseInvitations),
+  { immediate: true }
+)
 
 const query = ref('')
 const busyHandle = ref<string | null>(null)
@@ -295,151 +315,158 @@ async function submitInvite() {
       </v-btn>
     </template>
 
-    <v-text-field
-      v-if="store.members.length > 8"
-      v-model="query"
-      autocomplete="off"
-      density="compact"
-      variant="outlined"
-      hide-details
-      clearable
-      :placeholder="t('work.members.search')"
-      prepend-inner-icon="mdi-magnify"
-      class="mb-5"
-    />
+    <!-- 名册、队友、邀请三处各自到货；到齐之前整页藏在转圈后面，不然后到的名册会
+         把先画出来的队友那一段往下推一整屏。见 useRevealGate。 -->
+    <div class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
+      <v-text-field
+        v-if="store.members.length > 8"
+        v-model="query"
+        autocomplete="off"
+        density="compact"
+        variant="outlined"
+        hide-details
+        clearable
+        :placeholder="t('work.members.search')"
+        prepend-inner-icon="mdi-magnify"
+        class="mb-5"
+      />
 
-    <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
-      {{ error }}
-    </v-alert>
+      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+        {{ error }}
+      </v-alert>
 
-    <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
-      <div class="t-eyebrow mb-2">{{ s.title }} · {{ s.rows.length }}</div>
-      <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
-      <v-card v-for="m in s.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
-        <div class="d-flex align-center pa-3" @click="openProfile(m)">
-          <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
-          <div class="min-w-0">
-            <div class="d-flex align-center ga-2">
-              <span class="t-title text-truncate">{{ m.name || m.user_handle }}</span>
-              <ExternalTag v-if="s.key === 'external'" />
-              <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
+      <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
+        <div class="t-eyebrow mb-2">{{ s.title }} · {{ s.rows.length }}</div>
+        <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
+        <v-card v-for="m in s.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
+          <div class="d-flex align-center pa-3" @click="openProfile(m)">
+            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
+            <div class="min-w-0">
+              <div class="d-flex align-center ga-2">
+                <span class="t-title text-truncate">{{ m.name || m.user_handle }}</span>
+                <ExternalTag v-if="s.key === 'external'" />
+                <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
+              </div>
+              <div class="t-meta c-muted">@{{ m.user_handle }}</div>
+              <router-link
+                v-if="s.key === 'team' && m.team_handle"
+                :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
+                class="t-meta-read"
+                @click.stop
+                >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
+              >
             </div>
-            <div class="t-meta c-muted">@{{ m.user_handle }}</div>
-            <router-link
-              v-if="s.key === 'team' && m.team_handle"
-              :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
-              class="t-meta-read"
-              @click.stop
-              >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
-            >
-          </div>
-          <v-spacer />
-          <span v-if="m.user_handle !== me" class="dm-slot">
-            <v-btn
-              variant="text"
-              color="on-surface-variant"
-              size="small"
-              icon="mdi-message-outline"
-              :aria-label="t('work.members.dm')"
-              :title="t('work.members.dm')"
-              @click.stop="openDm(m)"
-            />
-            <span v-if="unreadWith(m.user_handle) > 0" class="dm-unread">
-              {{ countLabel(unreadWith(m.user_handle)) }}
-            </span>
-          </span>
-          <v-menu v-if="removable(m)" location="bottom end">
-            <template #activator="{ props: menuProps }">
+            <v-spacer />
+            <span v-if="m.user_handle !== me" class="dm-slot">
               <v-btn
-                v-bind="menuProps"
                 variant="text"
                 color="on-surface-variant"
                 size="small"
-                icon="mdi-dots-horizontal"
-                :aria-label="t('work.members.manage')"
-                :loading="busyHandle === m.user_handle"
-                @click.stop
+                icon="mdi-message-outline"
+                :aria-label="t('work.members.dm')"
+                :title="t('work.members.dm')"
+                @click.stop="openDm(m)"
               />
-            </template>
-            <v-list density="compact" nav>
-              <v-list-item @click="removeTarget = m">
-                <v-list-item-title class="t-body c-danger">{{ t('work.members.remove') }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
-        </div>
-      </v-card>
-    </div>
-
-    <div v-if="invitations.length" class="mb-6" data-section="pending">
-      <div class="t-eyebrow mb-2">{{ t('work.members.sectionPending') }} · {{ invitations.length }}</div>
-      <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
-        <div class="d-flex align-center pa-3">
-          <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
-          <div class="min-w-0">
-            <div class="d-flex align-center ga-2">
-              <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
-              <ExternalTag />
-            </div>
-            <div class="t-meta c-muted">{{ t('work.members.pendingBy', { inviter: inv.inviter_handle }) }}</div>
+              <span v-if="unreadWith(m.user_handle) > 0" class="dm-unread">
+                {{ countLabel(unreadWith(m.user_handle)) }}
+              </span>
+            </span>
+            <v-menu v-if="removable(m)" location="bottom end">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  variant="text"
+                  color="on-surface-variant"
+                  size="small"
+                  icon="mdi-dots-horizontal"
+                  :aria-label="t('work.members.manage')"
+                  :loading="busyHandle === m.user_handle"
+                  @click.stop
+                />
+              </template>
+              <v-list density="compact" nav>
+                <v-list-item @click="removeTarget = m">
+                  <v-list-item-title class="t-body c-danger">{{ t('work.members.remove') }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
           </div>
-          <v-spacer />
-          <v-btn
-            v-if="canManage"
-            variant="text"
-            color="on-surface-variant"
-            size="small"
-            :loading="revoking === inv.id"
-            @click="takeBack(inv)"
-          >
-            {{ t('work.members.revoke') }}
-          </v-btn>
-        </div>
-      </v-card>
-    </div>
+        </v-card>
+      </div>
 
-    <div v-if="agents.length" class="mb-6">
-      <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
-      <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
-        <div class="d-flex align-center pa-3">
-          <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
-          <div class="min-w-0">
-            <div class="t-title text-truncate">
-              {{ a.display_name || a.handle }}
-              <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
+      <div v-if="invitations.length" class="mb-6" data-section="pending">
+        <div class="t-eyebrow mb-2">{{ t('work.members.sectionPending') }} · {{ invitations.length }}</div>
+        <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
+          <div class="d-flex align-center pa-3">
+            <UserAvatar :name="inv.invitee_handle" :size="36" class="mr-3" />
+            <div class="min-w-0">
+              <div class="d-flex align-center ga-2">
+                <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
+                <ExternalTag />
+              </div>
+              <div class="t-meta c-muted">{{ t('work.members.pendingBy', { inviter: inv.inviter_handle }) }}</div>
             </div>
-            <div class="t-meta c-muted">@{{ a.handle }}</div>
+            <v-spacer />
+            <v-btn
+              v-if="canManage"
+              variant="text"
+              color="on-surface-variant"
+              size="small"
+              :loading="revoking === inv.id"
+              @click="takeBack(inv)"
+            >
+              {{ t('work.members.revoke') }}
+            </v-btn>
           </div>
-          <v-spacer />
-          <span class="dm-slot">
+        </v-card>
+      </div>
+
+      <div v-if="agents.length" class="mb-6">
+        <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
+        <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
+          <div class="d-flex align-center pa-3">
+            <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
+            <div class="min-w-0">
+              <div class="t-title text-truncate">
+                {{ a.display_name || a.handle }}
+                <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
+              </div>
+              <div class="t-meta c-muted">@{{ a.handle }}</div>
+            </div>
+            <v-spacer />
+            <span class="dm-slot">
+              <v-btn
+                variant="text"
+                color="on-surface-variant"
+                size="small"
+                icon="mdi-message-outline"
+                :aria-label="t('work.members.dm')"
+                :title="t('work.members.dm')"
+                @click.stop="openAgentDm(a)"
+              />
+              <span v-if="unreadWith(agentDmKey(a.handle)) > 0" class="dm-unread">
+                {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
+              </span>
+            </span>
             <v-btn
               variant="text"
               color="on-surface-variant"
               size="small"
-              icon="mdi-message-outline"
-              :aria-label="t('work.members.dm')"
-              :title="t('work.members.dm')"
-              @click.stop="openAgentDm(a)"
-            />
-            <span v-if="unreadWith(agentDmKey(a.handle)) > 0" class="dm-unread">
-              {{ countLabel(unreadWith(agentDmKey(a.handle))) }}
-            </span>
-          </span>
-          <v-btn
-            variant="text"
-            color="on-surface-variant"
-            size="small"
-            @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
-          >
-            {{ t('work.members.agentSettings') }}
-          </v-btn>
-        </div>
-      </v-card>
-    </div>
+              @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
+            >
+              {{ t('work.members.agentSettings') }}
+            </v-btn>
+          </div>
+        </v-card>
+      </div>
 
-    <div v-if="store.members.length === 0" class="text-center py-10">
-      <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
-      <div class="t-body c-muted">{{ t('work.members.empty') }}</div>
+      <div v-if="store.members.length === 0" class="text-center py-10">
+        <v-icon size="34" class="mb-3 c-muted">mdi-account-group-outline</v-icon>
+        <div class="t-body c-muted">{{ t('work.members.empty') }}</div>
+      </div>
+      <div v-if="!revealed" class="reveal-gate__wait">
+        <v-progress-circular indeterminate color="primary" />
+      </div>
     </div>
 
     <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
