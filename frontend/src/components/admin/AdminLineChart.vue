@@ -143,6 +143,21 @@ const y = (v: number): number => PAD_TOP + PLOT_H - (v / maxValue.value) * PLOT_
 
 const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)} ${y(v)}`).join('')
 
+/** 末点直标：不开 tooltip 也有结论（「今天走到哪」）。多系列只标**第一条**（主系列）：
+ *  每条线都标一个数，右缘就是一列数字墙。系列**全相等**时不标 —— 零流量周标一个
+ *  「0」像在说「没有数据」，而压着底的那条线本身就是答案；恒值线同理。
+ *  直标会占据最末刻度左边那一小块，它落在**最后一天**的 x 刻度上时那个刻度让位
+ *  （同一个位置两个数，留结论、不留坐标 —— 窗口长度在页头上已经写着）。 */
+const END_LABEL_GUARD = 24
+
+const endLabels = computed(() => {
+  const s = props.series[0]
+  if (!s || s.values.length === 0) return []
+  const v = s.values[s.values.length - 1]!
+  if (s.values.every((x) => x === v)) return []
+  return [{ text: fmtNum(v), x: x(s.values.length - 1) - 6, y: y(v) - 8 }]
+})
+
 /** x 轴抽稀：标 `ceil((n-1)/6)` 的倍数位与最后一天 —— 7 天全标（stride=1），
  *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
  *  走向，中间的交给 hover。 */
@@ -157,6 +172,13 @@ const xTicks = computed(() => {
   if (n - 1 > out[out.length - 1]!.i) out.push({ i: n - 1, anchor: 'end' })
   else out[out.length - 1]!.anchor = 'end'
   return out
+})
+
+/** 末点直标出现时让位的那个 x 刻度（见 `endLabels` 的守卫注）。 */
+const xTicksVisible = computed(() => {
+  if (endLabels.value.length === 0) return xTicks.value
+  const lastX = x(props.xLabels.length - 1)
+  return xTicks.value.filter((tick) => Math.abs(x(tick.i) - lastX) > END_LABEL_GUARD)
 })
 
 /** 点标记只在点数 ≤ 45 时画：90 个点在 1400px 宽下间距 ~15px，实心圆会糊成一条粗线
@@ -291,7 +313,7 @@ const tooltipLeft = computed(() => {
             :y2="PAD_TOP + PLOT_H"
           />
           <text
-            v-for="tick in xTicks"
+            v-for="tick in xTicksVisible"
             :key="`x-${tick.i}`"
             class="alc__ink"
             :x="x(tick.i)"
@@ -299,6 +321,17 @@ const tooltipLeft = computed(() => {
             :text-anchor="tick.anchor"
           >
             {{ xLabels[tick.i] }}
+          </text>
+          <!-- 末点直标（主系列）：不开 tooltip 也有结论。 -->
+          <text
+            v-for="(label, i) in endLabels"
+            :key="`end-${i}`"
+            class="alc__endlabel"
+            :x="label.x"
+            :y="label.y"
+            text-anchor="end"
+          >
+            {{ label.text }}
           </text>
           <text
             v-for="(tick, i) in yTicks"
@@ -465,8 +498,10 @@ const tooltipLeft = computed(() => {
   color: var(--ink);
 }
 
+/* 网格退到最淡：虚线 + `--fill`（比 `--line` 再浅一档）—— 它是参照物，不是内容。 */
 .alc__grid {
-  stroke: var(--line);
+  stroke: var(--fill);
+  stroke-dasharray: 2 4;
   stroke-width: 1;
 }
 
@@ -478,6 +513,13 @@ const tooltipLeft = computed(() => {
 .alc__line {
   fill: none;
   stroke-width: 2;
+}
+
+/* 末点直标：墨色、比轴字重一档 —— 它是结论，不是刻度。 */
+.alc__endlabel {
+  font-size: 12px;
+  font-weight: 650;
+  fill: var(--ink);
 }
 
 /* `.alc__point` 不在这里写 `stroke-width`：实心/空心就差这一个值，写在 CSS 里会把

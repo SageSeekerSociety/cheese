@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
-import type { StatsDays, StatsKind } from '@/api'
+import type { StatsKind } from '@/api'
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -184,10 +184,15 @@ const pulseByKey = computed<Record<string, PulseRow>>(() => {
  *  走 `fmtSI` 而不是手写阶梯：手写的那份止步于 M，`1e12` 会被打成 `1000000.0M`。 */
 const shortTokens = (n: number | null | undefined): string => (n === null || n === undefined ? '—' : fmtSI(n))
 
-/** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。 */
+/** 最慢那条路由的 p95 —— 「哪条慢」是性能那一块唯一要回答的问题。取**最大值**
+ *  而不是第一个元素：fixture 与旧响应都给出过未排序的数组。 */
 const slowestP95 = computed(() => {
-  const row = perf.value?.routes?.[0]
-  return row?.p95 === undefined || row.p95 === null ? '—' : fmtMs(row.p95)
+  const rows = perf.value?.routes ?? []
+  const best = rows.reduce<number | null>((acc, row) => {
+    if (row.p95 === null || row.p95 === undefined) return acc
+    return acc === null || row.p95 > acc ? row.p95 : acc
+  }, null)
+  return best === null ? '—' : fmtMs(best)
 })
 
 const kind = computed(() => store.statsKind)
@@ -1010,8 +1015,9 @@ const integrationsUnavailable = computed(
 const perf = computed(() => store.stats.performance)
 
 /** 一条路由的耗时。**`null` 画成「—」不是 0**：0 是一个读数（「真的很快」），
- *  `null` 是「这一格没有数据」。 */
-const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${v} ms`)
+ *  `null` 是「这一格没有数据」。走 `fmtMs` 阶梯（ms → s → min）：p95 上一秒之后
+ *  `1240 ms` 要自己心算，横幅上念不出来。 */
+const ms = fmtMs
 
 /** 进程跑了多久 —— 这一格回答的是「这份数据从什么时候开始算」。 */
 const uptimeText = computed(() => {
@@ -1025,6 +1031,64 @@ const uptimeText = computed(() => {
 })
 
 const perfRoutes = computed(() => perf.value?.routes ?? [])
+
+/** 路由表按 **p95 降序**（「哪条慢」的读法从上往下）。没样本的分位数（null）沉底，
+ *  跟在「真的很快」后面而不是排在最前 —— 后端排好的序这里不重信， fixture 与旧响应
+ *  都给出过未排序的数组。 */
+const sortedPerfRoutes = computed(() => [...perfRoutes.value].sort((a, b) => (b.p95 ?? -1) - (a.p95 ?? -1)))
+
+/** 「此刻最慢」横幅的那一条 —— 排序后的第一行，和导轨短值（`slowestP95`）同一个口径。 */
+const slowestRoute = computed(() => sortedPerfRoutes.value[0] ?? null)
+
+/** 路由表默认只摆最慢的前 N 条。这一屏的问题是「哪条慢」：快路由的长尾全铺开会把
+ *  下面的网络/投递挤出两屏，而它们 p95 最高也就折叠行上写的那点 —— 折叠行本身就是
+ *  结论。不用面板内滚动条：嵌套滚动在页面里手感很差。 */
+const PERF_TOP_N = 8
+
+const routeFilter = ref('')
+const perfFoldOpen = ref(false)
+
+/** 筛选作用于**全部**路由（不受 Top N 折叠限制）：找具体某条接口时，它可能正被折着。 */
+const filteredPerfRoutes = computed(() => {
+  const q = routeFilter.value.trim().toLowerCase()
+  if (!q) return sortedPerfRoutes.value
+  return sortedPerfRoutes.value.filter((row) => `${row.method} ${row.route}`.toLowerCase().includes(q))
+})
+
+const visiblePerfRoutes = computed(() =>
+  routeFilter.value.trim() || perfFoldOpen.value
+    ? filteredPerfRoutes.value
+    : filteredPerfRoutes.value.slice(0, PERF_TOP_N)
+)
+
+/** 折叠行的文案；不需要折叠（筛选中 / 总数不超 N）时是 null，按钮不渲染。 */
+const perfFold = computed(() => {
+  if (routeFilter.value.trim() || filteredPerfRoutes.value.length <= PERF_TOP_N) return null
+  if (perfFoldOpen.value) return t('feedback.dashboard.perf.foldLess')
+  const firstFolded = filteredPerfRoutes.value[PERF_TOP_N]
+  return t('feedback.dashboard.perf.foldMore', {
+    n: filteredPerfRoutes.value.length - PERF_TOP_N,
+    p95: firstFolded?.p95 === null || firstFolded?.p95 === undefined ? '—' : ms(firstFolded.p95),
+  })
+})
+
+/** p95 微型量级条的归一分母：**全表**最大值（不是可见行的 —— 折叠/筛选不该改变
+ *  同一根条的含义，否则「剩下来的看着都挺慢」）。 */
+const maxP95 = computed(() => Math.max(1, ...perfRoutes.value.map((row) => row.p95 ?? 0)))
+
+/** 条宽百分比。下限 4%：一个极小值不能让「这一条在榜上」从屏幕上消失。 */
+function p95BarWidth(v: number | null): string {
+  if (v === null || v === undefined) return '0%'
+  return `${Math.max(4, (v / maxP95.value) * 100)}%`
+}
+
+/** 「真的慢」的阈值：p95 ≥ 1s 的条点琥珀。全页唯一的警示色份额给它 —— 其余条保持
+ *  墨色，层级靠长短表达。 */
+const HOT_P95_MS = 1000
+
+function isHotP95(v: number | null): boolean {
+  return v !== null && v !== undefined && v >= HOT_P95_MS
+}
 
 /** 展开着的路由行（`${method} ${route}`）。行首 chevron 整行一个按钮；展开行内嵌
  *  这条路由的分钟级 spark（响应里一直回、此前没人读的 24 个点）。 */
@@ -1289,67 +1353,85 @@ onBeforeUnmount(() => {
   <div class="ad">
     <div class="ad__inner page-container--admin">
       <header class="ad__head">
-        <h1 class="t-console-title">{{ t('feedback.dashboard.title') }}</h1>
-        <div class="ad__head-side">
-          <!-- 统计窗口 7/30/90。只有窗口类（`WINDOWED_KINDS`）给这个切换器：
-               性能读进程内存、集成是存量，它们没有「过去 N 天」。切窗口由
-               `setStatsDays` 把已加载的窗口类全部重拉（缓存键=窗口）。 -->
-          <v-btn-toggle
-            v-if="WINDOWED_KINDS.includes(store.statsKind)"
-            :model-value="store.statsDays"
-            mandatory
-            density="compact"
-            variant="outlined"
-            divided
-            :aria-label="t('feedback.dashboard.window.switchAria')"
-            @update:model-value="store.setStatsDays($event as StatsDays)"
-          >
-            <v-btn :value="7" size="small">{{ t('feedback.dashboard.window.d7') }}</v-btn>
-            <v-btn :value="30" size="small">{{ t('feedback.dashboard.window.d30') }}</v-btn>
-            <v-btn :value="90" size="small">{{ t('feedback.dashboard.window.d90') }}</v-btn>
-          </v-btn-toggle>
-          <span class="ad__stamp t-meta-read">{{ stampText }}</span>
+        <div class="ad__head-row">
+          <h1 class="t-console-title">{{ t('feedback.dashboard.title') }}</h1>
+          <div class="ad__head-side">
+            <!-- 统计窗口 7/30/90。只有窗口类（`WINDOWED_KINDS`）给这个切换器：
+                 性能读进程内存、集成是存量，它们没有「过去 N 天」—— 摆着是个假开关。
+                 切窗口由 `setStatsDays` 把已加载的窗口类全部重拉（缓存键=窗口）。
+                 下划线小页签，和下面的分类页签同一种语言：整页没有框状切换钮。 -->
+            <div
+              v-if="WINDOWED_KINDS.includes(store.statsKind)"
+              class="ad__wintabs"
+              role="group"
+              :aria-label="t('feedback.dashboard.window.switchAria')"
+            >
+              <button
+                type="button"
+                class="ad__wintab"
+                :class="{ 'ad__wintab--on': store.statsDays === 7 }"
+                :aria-pressed="store.statsDays === 7"
+                @click="store.setStatsDays(7)"
+              >
+                {{ t('feedback.dashboard.window.d7') }}
+              </button>
+              <button
+                type="button"
+                class="ad__wintab"
+                :class="{ 'ad__wintab--on': store.statsDays === 30 }"
+                :aria-pressed="store.statsDays === 30"
+                @click="store.setStatsDays(30)"
+              >
+                {{ t('feedback.dashboard.window.d30') }}
+              </button>
+              <button
+                type="button"
+                class="ad__wintab"
+                :class="{ 'ad__wintab--on': store.statsDays === 90 }"
+                :aria-pressed="store.statsDays === 90"
+                @click="store.setStatsDays(90)"
+              >
+                {{ t('feedback.dashboard.window.d90') }}
+              </button>
+            </div>
+            <span class="ad__stamp t-meta-read">{{ stampText }}</span>
+          </div>
         </div>
-      </header>
 
-      <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
-           看哪一类，再看数字。原生按钮条的迷你摘要卡（标签 + 短值 + 状态点），不是
-           v-btn-toggle —— 7 颗挤按钮在宽档下读不出「哪块需要我」，卡条把每一块最该
-           被看见的那个数摆成第一信息层。
+        <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
+             看哪一类，再看数字。下划线页签（不是迷你卡）：七张卡片把「页面里又嵌了一个
+             仪表盘」，切换控件该安静地待在页首。每一块最该被看见的那个数（短值）与状态
+             点留在页签上 —— 第一信息层没丢，丢的只是框。
 
-           短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它和状态点，
-           按钮的 accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
-           `getByRole('button', { name: '反馈', exact: true })` 会因为名字变成
-           「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。
-           窄了横向滚动不换行 —— 换行会把 7 张卡堆成一面墙。 -->
-      <div class="ad__kinds" role="group" :aria-label="t('feedback.dashboard.kindsAria')">
-        <button
-          v-for="k in KINDS"
-          :key="k"
-          type="button"
-          class="ad__kind"
-          :class="{ 'ad__kind--on': k === store.statsKind }"
-          :aria-pressed="k === store.statsKind"
-          :title="kindTitle(k)"
-          @click="selectKind(k)"
-        >
-          <span class="ad__kind-label t-eyebrow-read">{{ t(TAB_KEY[k]) }}</span>
-          <span class="ad__kind-row">
+             短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它和状态点，
+             按钮的 accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
+             `getByRole('button', { name: '反馈', exact: true })` 会因为名字变成
+             「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。
+             窄了横向滚动不换行 —— 换行会把页签堆成一面墙。 -->
+        <div class="ad__kinds" role="group" :aria-label="t('feedback.dashboard.kindsAria')">
+          <button
+            v-for="k in KINDS"
+            :key="k"
+            type="button"
+            class="ad__kind"
+            :class="{ 'ad__kind--on': k === store.statsKind }"
+            :aria-pressed="k === store.statsKind"
+            :title="kindTitle(k)"
+            @click="selectKind(k)"
+          >
             <span
               v-if="pulseByKey[k] && pulseByKey[k]!.tone !== 'ink'"
               class="ad__kind-dot"
               :class="`ad__kind-dot--${pulseByKey[k]!.tone}`"
               aria-hidden="true"
             />
-            <span
-              class="ad__kind-val t-dense t-num"
-              :class="`ad__kind-val--${pulseByKey[k]!.tone}`"
-              aria-hidden="true"
-              >{{ pulseByKey[k]!.value }}</span
-            >
-          </span>
-        </button>
-      </div>
+            <span class="ad__kind-label">{{ t(TAB_KEY[k]) }}</span>
+            <span class="ad__kind-val t-num" :class="`ad__kind-val--${pulseByKey[k]!.tone}`" aria-hidden="true">{{
+              pulseByKey[k]!.value
+            }}</span>
+          </button>
+        </div>
+      </header>
 
       <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
            正文是**服务端原话**（不改写），重试是唯一主操作（琥珀份额归它），而且
@@ -1695,7 +1777,10 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- 性能：**这一刻**的接口耗时。它是四类里唯一读进程内存的，所以底下那句口径
-           不是装饰 —— 少了它，这些数会被读成「有历史的、整个平台的」。 -->
+           不是装饰 —— 少了它，这些数会被读成「有历史的、整个平台的」。
+           这一屏要回答的问题只有一个：**哪条慢**。所以最慢那条不在表里等人找，
+           直接一条横幅给结论；表按 p95 降序，默认只摆前 8 条（快路由的长尾是噪音），
+           找具体某条交给筛选框。 -->
       <template v-else-if="kind === 'performance'">
         <div class="ad__kpis">
           <AdminKpiCard
@@ -1716,11 +1801,36 @@ onBeforeUnmount(() => {
           />
         </div>
 
+        <!-- 最慢那条的横幅：左侧一道墨线，不是卡片 —— 它是这一屏的结论，不是又一块
+             内容。路由表默认按 p95 降序（见 `sortedPerfRoutes`），第一行就是它。 -->
+        <div v-if="slowestRoute" class="ad__slowest">
+          <span class="ad__slowest-label">{{ t('feedback.dashboard.perf.banner') }}</span>
+          <span class="ad__slowest-route">
+            <span class="ad__perf-method">{{ slowestRoute.method }}</span>
+            <span class="ad__perf-path num-leaf">{{ slowestRoute.route }}</span>
+          </span>
+          <span class="ad__slowest-val">
+            <b class="ad__slowest-num t-num">{{ ms(slowestRoute.p95) }}</b>
+            <span class="ad__slowest-meta t-meta-read">
+              {{ t('feedback.dashboard.perf.bannerMeta', { n: fmtNum(slowestRoute.count) }) }}
+            </span>
+          </span>
+        </div>
+
         <div class="ad__perf">
           <div class="ad__perf-head">
             <h2 class="ad__block-title">
               {{ t('feedback.dashboard.perf.tableTitle') }}<AdminNoteTip :text="perfTableNote" />
             </h2>
+            <!-- 找具体某条接口的入口。筛选时不受 Top 8 折叠限制（见 visiblePerfRoutes）。 -->
+            <input
+              v-model="routeFilter"
+              class="ad__perf-filter"
+              type="text"
+              autocomplete="off"
+              :placeholder="t('feedback.dashboard.perf.filterPlaceholder')"
+              :aria-label="t('feedback.dashboard.perf.filterPlaceholder')"
+            />
           </div>
           <table class="ad__perf-table">
             <thead>
@@ -1734,7 +1844,7 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <template v-for="row in perfRoutes" :key="`${row.method} ${row.route}`">
+              <template v-for="row in visiblePerfRoutes" :key="`${row.method} ${row.route}`">
                 <tr>
                   <!-- 方法 + 路由**模板**。模板里那个 `{id}` 要看得见：读者说「这条慢」
                        时，指的正是这个模板。状态码是**属性**不是身份，收在 errors 一列。
@@ -1762,7 +1872,20 @@ onBeforeUnmount(() => {
                   </td>
                   <td class="t-num ad__perf-num">{{ row.count ? fmtNum(row.count) : '—' }}</td>
                   <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
-                  <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
+                  <!-- p95 内嵌一根微型量级条（按全表最大值归一）：竖着扫一眼就知道谁慢、
+                       慢多少；超过 1s 的条点琥珀 —— 全页唯一的警示色份额用在「真的慢」上。 -->
+                  <td class="t-num ad__perf-num ad__perf-p95">
+                    <span class="ad__perf-p95cell">
+                      <span class="ad__perf-p95bar" aria-hidden="true">
+                        <span
+                          class="ad__perf-p95fill"
+                          :class="{ 'ad__perf-p95fill--hot': isHotP95(row.p95) }"
+                          :style="{ width: p95BarWidth(row.p95) }"
+                        />
+                      </span>
+                      {{ ms(row.p95) }}
+                    </span>
+                  </td>
                   <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
                   <td class="t-num ad__perf-num">{{ row.error_count ? fmtNum(row.error_count) : '—' }}</td>
                 </tr>
@@ -1773,65 +1896,77 @@ onBeforeUnmount(() => {
                   </td>
                 </tr>
               </template>
+              <tr v-if="filteredPerfRoutes.length === 0">
+                <td colspan="6" class="ad__perf-empty t-meta-read">
+                  {{ t('feedback.dashboard.perf.filterEmpty', { q: routeFilter.trim() }) }}
+                </td>
+              </tr>
             </tbody>
           </table>
+          <!-- 折叠行本身就是结论：被折掉的那些 p95 最高也就这么多，不看也罢。
+               路由再多（42 条、100 条）这一屏的高度都不再跟着长。 -->
+          <button v-if="perfFold" type="button" class="ad__perf-fold" @click="perfFoldOpen = !perfFoldOpen">
+            {{ perfFold }}
+          </button>
           <!-- 常驻注（每屏至多一条的额度给了它）：进程内存、重启清零、只覆盖业务 API。 -->
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
         </div>
 
-        <!-- 网络吞吐：两面都给，各有口径（见 `core/net_io.py`）。上行是**这台机器的
-             网卡**（含计量代理到 LLM 的出向流量），api 是本进程的 HTTP 载荷。
-             读不到画「—」—— 0 会把「看不见」说成「网是闲的」。读数下面的迷你线是
-             逐分钟样本的形状（响应里一直回、此前没人画）。 -->
-        <section v-if="netUplink || netApi" class="ad__split">
-          <h2 class="ad__block-title">{{ t('feedback.dashboard.perf.network.title') }}</h2>
-          <div class="ad__split-grid">
-            <div v-if="netUplink" class="ad__split-cell">
-              <span class="ad__cell-head">
-                <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
-                <AdminNoteTip
-                  :text="t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' })"
-                />
-              </span>
-              <span class="t-dense num-leaf" :title="netUplink.note_key">
-                ↓ {{ bps(netUplink.rx_bps) }} · ↑ {{ bps(netUplink.tx_bps) }}
-              </span>
-              <AdminSparkline :values="netUplink.samples.map((s) => s.rx_bps)" :height="32" />
+        <!-- 网络吞吐 + 投递积压两联。网络：两面都给，各有口径（见 `core/net_io.py`）。
+             上行是**这台机器的网卡**（含计量代理到 LLM 的出向流量），api 是本进程的
+             HTTP 载荷。读不到画「—」—— 0 会把「看不见」说成「网是闲的」。读数下面的
+             迷你线是逐分钟样本的形状（响应里一直回、此前没人画）。投递：接口很快而
+             投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
+        <div v-if="netUplink || netApi || reliability" class="ad__perf-duo">
+          <section v-if="netUplink || netApi" class="ad__panel">
+            <h2 class="ad__block-title">{{ t('feedback.dashboard.perf.network.title') }}</h2>
+            <div class="ad__panel-grid">
+              <div v-if="netUplink" class="ad__netcell">
+                <span class="ad__cell-head">
+                  <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.uplink') }}</span>
+                  <AdminNoteTip
+                    :text="t('feedback.dashboard.perf.network.uplinkNote', { iface: netUplink.iface ?? '—' })"
+                  />
+                </span>
+                <span class="t-dense num-leaf" :title="netUplink.note_key">
+                  ↓ {{ bps(netUplink.rx_bps) }} · ↑ {{ bps(netUplink.tx_bps) }}
+                </span>
+                <AdminSparkline :values="netUplink.samples.map((s) => s.rx_bps)" :height="32" />
+              </div>
+              <div v-if="netApi" class="ad__netcell">
+                <span class="ad__cell-head">
+                  <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
+                  <AdminNoteTip :text="t('feedback.dashboard.perf.network.apiNote')" />
+                </span>
+                <span class="t-dense num-leaf" :title="netApi.note_key">
+                  ↓ {{ bps(netApi.rx_bps) }} · ↑ {{ bps(netApi.tx_bps) }}
+                </span>
+                <AdminSparkline :values="netApi.samples.map((s) => s.rx_bps)" :height="32" />
+              </div>
             </div>
-            <div v-if="netApi" class="ad__split-cell">
-              <span class="ad__cell-head">
-                <span class="t-eyebrow-read">{{ t('feedback.dashboard.perf.network.api') }}</span>
-                <AdminNoteTip :text="t('feedback.dashboard.perf.network.apiNote')" />
-              </span>
-              <span class="t-dense num-leaf" :title="netApi.note_key">
-                ↓ {{ bps(netApi.rx_bps) }} · ↑ {{ bps(netApi.tx_bps) }}
-              </span>
-              <AdminSparkline :values="netApi.samples.map((s) => s.rx_bps)" :height="32" />
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
-        <section v-if="reliability" class="ad__split">
-          <h2 class="ad__block-title">
-            {{ t('feedback.dashboard.reliability.title')
-            }}<AdminNoteTip :text="t('feedback.dashboard.reliability.note')" />
-          </h2>
-          <div class="ad__split-grid">
-            <div class="ad__split-cell">
-              <span class="ad__split-label t-eyebrow-read">{{
-                t('feedback.dashboard.integrations.delivery.unsent')
-              }}</span>
-              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_unsent) }}</span>
+          <section v-if="reliability" class="ad__panel">
+            <h2 class="ad__block-title">
+              {{ t('feedback.dashboard.reliability.title')
+              }}<AdminNoteTip :text="t('feedback.dashboard.reliability.note')" />
+            </h2>
+            <div class="ad__mini-grid">
+              <div class="ad__mini">
+                <span class="ad__mini-label t-eyebrow-read">{{
+                  t('feedback.dashboard.integrations.delivery.unsent')
+                }}</span>
+                <span class="ad__mini-value t-num">{{ num(reliability.delivery_unsent) }}</span>
+              </div>
+              <div class="ad__mini">
+                <span class="ad__mini-label t-eyebrow-read">{{
+                  t('feedback.dashboard.integrations.delivery.dead')
+                }}</span>
+                <span class="ad__mini-value t-num">{{ num(reliability.delivery_dead_letters) }}</span>
+              </div>
             </div>
-            <div class="ad__split-cell">
-              <span class="ad__split-label t-eyebrow-read">{{
-                t('feedback.dashboard.integrations.delivery.dead')
-              }}</span>
-              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_dead_letters) }}</span>
-            </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </template>
 
       <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
@@ -1946,22 +2081,26 @@ onBeforeUnmount(() => {
   container-type: inline-size;
 }
 
-/* 页头 56px，下沿用 `--line-2`（§4.2）。 */
+/* 页首块：第一行「标题 + 窗口切换 + 时间戳」，第二行分类页签。 */
 .ad__head {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+.ad__head-row {
+  display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  height: 56px;
-  border-bottom: 1px solid var(--line-2);
 }
 
 .ad__head-side {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
+  align-items: baseline;
+  gap: 16px;
 }
 
 /* 页头三件套（标题 / 窗口切换 / 时间戳）里最不重要的一个：窄屏让位（截断），
@@ -1970,53 +2109,114 @@ onBeforeUnmount(() => {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 分类导轨：7 张迷你摘要卡等宽铺开，窄了横向滚动（不换行 —— 换行会把 7 张卡
-   堆成一面墙）。 */
+/* 切换控件只有一种语言：下划线小页签。窗口切换是小号版（12.5px），分类页签是
+   正文版（13.5px）；激活 = 墨色 + 2px 下划线，未激活 = 灰。整页没有框状切换钮。 */
+.ad__wintabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 16px;
+}
+
+.ad__wintab {
+  position: relative;
+  padding: 2px 1px 4px;
+  background: none;
+  border: 0;
+  color: var(--faint);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  cursor: pointer;
+}
+
+.ad__wintab::after {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 2px;
+  background: var(--ink);
+  opacity: 0;
+  content: '';
+}
+
+.ad__wintab--on {
+  color: var(--ink);
+}
+
+.ad__wintab--on::after {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ad__wintab:not(.ad__wintab--on):hover {
+    color: var(--text);
+  }
+}
+
+.ad__wintab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 分类页签：贴着标题（14px），下沿用 `--line` 分隔内容与导航。窄了横向滚动
+   （不换行 —— 换行会把页签堆成一面墙）。 */
 .ad__kinds {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
-  margin: 16px 0 0;
+  gap: 28px;
+  margin: 14px 0 0;
   overflow-x: auto;
+  border-bottom: 1px solid var(--line);
 }
 
-/* 一张迷你摘要卡：标签（12px eyebrow）+ 一行「状态点 + 短值（13px dense）」，约 54px
-   高。它是**按钮**（切分类）不是卡片，圆角用 `--radius-md`。 */
+/* 一颗页签：状态点 + 标签 + 短值一行。它是**按钮**（切分类），可访问名字保持
+   裸标签（短值与点 `aria-hidden`，见模板注释）。 */
 .ad__kind {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 112px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-md);
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 2px 11px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: var(--lh-13);
   cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
 }
 
-/* 选中态 = 「选中行」的底色（`--line-2` 在设计系统里就是选中行的 fill）。
-   **不用琥珀** —— 后台的琥珀份额已给侧栏选中条，一屏一处。 */
+.ad__kind::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--ink);
+  opacity: 0;
+  content: '';
+}
+
+/* 选中态 = 墨色 + 下划线。**不用琥珀** —— 后台的琥珀份额已给侧栏选中条，一屏一处。 */
 .ad__kind--on {
-  background: var(--line-2);
-  border-color: var(--line-2);
+  color: var(--ink);
 }
 
-/* hover 只改底色、不改位置；选中卡不变。包在 (hover:hover) 里：触屏点过之后
-   `:hover` 会粘着，那张卡看起来像被选中了。 */
+.ad__kind--on::after {
+  opacity: 1;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .ad__kind:not(.ad__kind--on):hover {
-    background: var(--fill);
+    color: var(--text);
   }
 }
 
@@ -2029,21 +2229,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: left;
 }
 
-.ad__kind-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* 状态点：8px 圆点，状态色 mark 档（真实状态，不是装饰）。 */
+/* 状态点：6px 圆点，状态色 mark 档（真实状态，不是装饰）。 */
 .ad__kind-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: var(--radius-pill);
 }
 
@@ -2059,10 +2251,13 @@ onBeforeUnmount(() => {
   background: var(--danger);
 }
 
-/* 短值是附属读数：字色压一档、不跟标签抢；只有警示/健康/危险三档改色。 */
+/* 短值是附属读数：小两档（11.5px）、字色压一档，不跟标签抢；警示/健康/危险
+   三档改色 —— 「这块需要我」的信号。 */
 .ad__kind-val {
   overflow: hidden;
   color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2077,6 +2272,58 @@ onBeforeUnmount(() => {
 
 .ad__kind-val--danger {
   color: var(--danger-ink);
+}
+
+/* 「此刻最慢」横幅：左侧一道墨线，不是卡片 —— 它是性能屏的结论，不是又一块内容。 */
+.ad__slowest {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+
+.ad__slowest-label {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.ad__slowest-route {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__slowest-val {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+}
+
+.ad__slowest-num {
+  display: block;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: var(--lh-15);
+}
+
+.ad__slowest-meta {
+  display: block;
+  color: var(--faint);
+  font-size: 11.5px;
 }
 
 /* 性能那一类的路由表。它是一整块表而不是卡片：这一类的读法是竖着扫「哪一条 p95
@@ -2098,6 +2345,31 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* 「筛路由…」：找具体某条接口的入口，收在表头行右侧。 */
+.ad__perf-filter {
+  width: 160px;
+  margin-left: auto;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.ad__perf-filter::placeholder {
+  color: var(--faint);
+}
+
+.ad__perf-filter:focus-visible {
+  border-color: var(--focus-ring);
 }
 
 .ad__perf-table {
@@ -2200,18 +2472,167 @@ onBeforeUnmount(() => {
   margin: 0 0 6px;
 }
 
+/* p95 列：数值右侧、微型量级条在左（先形后数）。格子给一点宽度下限，条才站得开。 */
+.ad__perf-p95 {
+  min-width: 120px;
+}
+
+.ad__perf-p95cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.ad__perf-p95bar {
+  display: block;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--fill);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.ad__perf-p95fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+/* 「真的慢」（p95 ≥ 1s）点琥珀 —— 全页唯一的警示色份额给它。 */
+.ad__perf-p95fill--hot {
+  background: var(--warn);
+}
+
+/* 折叠行：整宽一个安静的按钮，文案本身就是结论（被折掉的 p95 上限）。 */
+.ad__perf-fold {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 10px;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ad__perf-fold:hover {
+    color: var(--text);
+  }
+}
+
+.ad__perf-fold:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ad__perf-empty {
+  padding: 20px 8px;
+  text-align: center;
+}
+
 .ad__perf-note {
   margin: 12px 0 0;
   line-height: var(--lh-12);
 }
 
-/* KPI 网格：窄 2 列 → ≥560 4 列 → ≥1320 auto-fit（4–6 列，卡数不一也不留空轨）。
+/* 性能屏底部两联：网络吞吐 + 投递积压，各是一块安静的面板。 */
+.ad__perf-duo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+
+@container (min-width: 720px) {
+  .ad__perf-duo {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.ad__panel {
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ad__netcell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 投递积压的两格小数字：label 在上、20px 数在下，格子间不画框。 */
+.ad__mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ad__mini {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ad__mini-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__mini-value {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: var(--lh-15);
+}
+
+/* KPI 网格：N 张卡合成**一条整面板**（一个外框 + 内部分隔线，卡片自己的边框
+   与写死高度在 `.ad__inner` 作用域内关掉，见 AdminKpiCard 的对应块）。边框数量
+   从 N 个变 1 个，行高对齐是天生的 —— 不再需要 92/108px 那档妥协。
+   面板向左、向下各多伸 1px：第一列格子的左边线与末行格子的下边线（5 卡 tab
+   的第二行）被推出外边框、由 overflow 裁掉，留下的就全是「缝」。
+   窄 2 列 → ≥560 4 列 → ≥1320 auto-fit（4–6 列，卡数不一也不留空轨）。
    断点是**容器查询**（挂 `.ad__inner`），理由见 `.ad__inner`。 */
 .ad__kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  gap: 0;
+  margin: 16px 0 -1px -1px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
 }
 
 @container (min-width: 560px) {
@@ -2226,6 +2647,14 @@ onBeforeUnmount(() => {
   .ad__kpis {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
+}
+
+/* 格子换成「缝」：gap 0，分隔线用每格自己的上边线 + 左边线，面板负 margin 把
+   第一行/列的线推出外边框裁掉（overflow: hidden）。面板内的 hover 底色由卡片
+   自己加宽 1px 盖住左侧那条缝（见 AdminKpiCard 的整面板块）。 */
+.ad__kpis > :deep(*) {
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 
 .ad__row {

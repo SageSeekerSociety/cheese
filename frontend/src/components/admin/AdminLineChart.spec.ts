@@ -88,10 +88,12 @@ const SEVEN = {
 }
 
 /** 轴上某个刻字出现了几次（按精确文本匹配，x 轴与 y 轴都算；模板插值自带换行
- *  缩进，所以比之前先 trim）。 */
+ *  缩进，所以比之前先 trim）。**只数轴字**（`.alc__ink`）：末点直标（`.alc__endlabel`）
+ *  是结论不是刻度，混进来会把「最后一天」数成两个。 */
 function tickCount(container: Element, text: string): number {
-  return Array.from(container.querySelectorAll('.alc__plot text')).filter((el) => el.textContent?.trim() === text)
-    .length
+  return Array.from(container.querySelectorAll('.alc__plot text.alc__ink')).filter(
+    (el) => el.textContent?.trim() === text
+  ).length
 }
 
 describe('AdminLineChart', () => {
@@ -134,18 +136,39 @@ describe('AdminLineChart', () => {
     expect(tickCount(container, '0')).toBe(1)
   })
 
-  it('x 轴抽稀：7 点全标，30 点标 7 个', () => {
+  it('x 轴抽稀：7 点全标，30 点标 7 个（末点直标出现时让位）', () => {
+    // 末点直标落在最后一天的刻度位上：那个刻度让位（同一个位置两个数，留结论）。
+    // 所以 7 天窗口标的是前 6 个，d7 由直标接管；30 天同理 —— x29 让位，剩 6 个刻度。
     const { container } = mountChart(SEVEN)
-    for (const label of SEVEN.xLabels) expect(tickCount(container, label)).toBe(1)
+    for (const label of SEVEN.xLabels.slice(0, -1)) expect(tickCount(container, label)).toBe(1)
+    expect(tickCount(container, 'd7')).toBe(0)
+    // 直标是主系列的最后一天值（fmtNum 全值），不开 tooltip 也有结论。
+    const endLabel = container.querySelector('.alc__endlabel')
+    expect(endLabel).toBeTruthy()
+    expect(endLabel!.textContent?.trim()).toBe('7')
 
     const thirty = {
       xLabels: Array.from({ length: 30 }, (_, i) => `x${i}`),
       series: [{ name: '新增', values: Array.from({ length: 30 }, (_, i) => i), style: 'solid' as const }],
     }
     const again = mountChart(thirty)
-    // stride = ceil(30/6) = 5：0/5/10/15/20/25 六个 + 最后一天（x29），共 7 个。
+    // stride = ceil(30/6) = 5：0/5/10/15/20/25 六个 + 最后一天（x29）共 7 个刻度，
+    // 其中 x29 让位给直标 —— 轴上剩 6 个，直标是「29」。
     const shown = thirty.xLabels.filter((label) => tickCount(again.container, label) > 0)
-    expect(shown).toEqual(['x0', 'x5', 'x10', 'x15', 'x20', 'x25', 'x29'])
+    expect(shown).toEqual(['x0', 'x5', 'x10', 'x15', 'x20', 'x25'])
+    expect(again.container.querySelector('.alc__endlabel')!.textContent?.trim()).toBe('29')
+  })
+
+  it('主系列恒值（含全 0）时不画末点直标', () => {
+    // 零流量周标一个「0」像在说「没有数据」，压着底的那条线本身就是答案 —— 恒值线
+    // 同理，直标只在「走到哪」有信息量时出现。
+    const { container } = mountChart({
+      xLabels: SEVEN.xLabels,
+      series: [{ name: '新增', values: [0, 0, 0, 0, 0, 0, 0], style: 'solid' }],
+    })
+    expect(container.querySelector('.alc__endlabel')).toBeNull()
+    // 直标不出现时，最后一天的刻度照常 —— 7 天全标。
+    for (const label of SEVEN.xLabels) expect(tickCount(container, label)).toBe(1)
   })
 
   it('点数 ≤ 45 画点，> 45 只画线', () => {

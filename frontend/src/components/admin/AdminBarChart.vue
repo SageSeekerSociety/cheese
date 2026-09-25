@@ -182,14 +182,15 @@ function widthOf(value: number): string {
   overflow: hidden;
 }
 
+/* 条：基线侧直角、数据端圆角（`--radius-sm`）—— 「从哪里开始、走到哪里」一眼分得出来。 */
 .abr__bar {
   display: block;
   height: 100%;
   background: var(--text);
-  border-top-left-radius: var(--radius-sm);
+  border-top-left-radius: 0;
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-left-radius: 0;
 }
 
 /* 数值右对齐、等宽字：一列数字竖着看要对得上位。 */
