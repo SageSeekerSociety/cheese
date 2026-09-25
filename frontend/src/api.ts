@@ -3298,3 +3298,26 @@ export interface RoomFileEditorSession {
 export function openRoomFileEditor(topicId: string, path: string): Promise<RoomFileEditorSession> {
   return request(`/topics/${encodeURIComponent(topicId)}/files/editor?path=${encodeURIComponent(path)}`)
 }
+
+/** 平台的一份标准模板：从它新建的是一份带样式和【占位】的 Office 文件。 */
+export interface DocumentTemplate {
+  id: string
+  name: string
+  suffix: 'docx' | 'pptx' | 'xlsx'
+  about: string
+}
+
+export function listDocumentTemplates(topicId: string): Promise<{ data: DocumentTemplate[]; total: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files/templates`)
+}
+
+export function newFromTemplate(
+  topicId: string,
+  template: string,
+  path: string
+): Promise<{ path: string; version: string }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files/new`, {
+    method: 'POST',
+    body: JSON.stringify({ template, path }),
+  })
+}

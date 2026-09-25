@@ -2152,6 +2152,25 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
     )
 
+    ptpl = sub.add_parser(
+        "template",
+        help="平台的标准模板:列出来,或从一份模板在房间里新建一个文件",
+        description=(
+            "报告、方案、周报、项目汇报、调研汇报、数据统计分析,各有一份带样式和\n"
+            "【占位】的标准模板。new 在房间里建一份副本(用户马上就能在编辑器里打开),\n"
+            "同时取到这台机器上;再用 documents 技能的 template.py fill 填占位,\n"
+            "改完 cheese show。用户给了自己的文件当模板时不走这里,见 templates.md。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    tplsub = ptpl.add_subparsers(dest="tplcmd", required=True)
+    tplsub.add_parser("list", help="列出可用的模板")
+    ptplnew = tplsub.add_parser("new", help="从模板在房间里新建一份,并取到本地")
+    ptplnew.add_argument("template", help="模板 id,如 report、weekly、analysis")
+    ptplnew.add_argument(
+        "path", help="房间里的路径,扩展名要和模板一致,如 文档/周报.docx"
+    )
+
     pcv = sub.add_parser(
         "convert",
         help="把文档转成另一种格式(2007 以前的老格式升级、或者转 PDF 自己看版面)",
@@ -2412,6 +2431,39 @@ def main() -> None:
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
         print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
+    elif a.cmd == "template":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.tplcmd == "list":
+            rows = _call("GET", f"/topics/{topic}/files/templates").get("data") or {}
+            for row in rows.get("data") or []:
+                print(
+                    f"{row['id']:<14} {row['name']}（.{row['suffix']}）  {row['about']}"
+                )
+            return
+        rel = _worktree_relative(a.path)
+        made = _call(
+            "POST",
+            f"/topics/{topic}/files/new",
+            {"template": a.template, "path": rel},
+        )
+        version = (made.get("data") or {}).get("version") or ""
+        req = urllib.request.Request(
+            f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
+        )
+        if TOKEN:
+            req.add_header("X-Cheese-Token", TOKEN)
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = r.read()
+        parent = os.path.dirname(a.path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(a.path, "wb") as f:
+            f.write(body)
+        _remember_pulled(topic, rel, version)
+        print(
+            f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
+            "填好占位后 cheese show 它。"
+        )
     elif a.cmd == "pull":
         topic = _need("CHEESE_TOPIC", TOPIC)
         rel = _worktree_relative(a.path)

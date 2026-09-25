@@ -44,6 +44,7 @@ command -v typst && command -v pandoc
 | 读或改一份表格 | `openpyxl`，改完 `cheese recalc`，再用 `scripts/sheets.py` 核对 | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
+| 按模板做（标准模板，或「照这份的格式」） | `cheese template new`、`scripts/template.py inspect / fill` | `references/templates.md` |
 | `.doc` / `.ppt` / `.xls` | 先 `cheese convert` 升级格式，再改 | `references/reading.md` |
 
 参考文件在技能目录的 `references/` 下，和 `scripts/office.py` 在同一个地方（下一节有定位
