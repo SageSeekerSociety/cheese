@@ -16,7 +16,6 @@ import threading
 import time
 import unittest
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,20 +37,20 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
-def test_unknown_finished_task_does_not_hold_idle_upgrade(tmp_path):
+@pytest.mark.parametrize("running", [False, True])
+def test_only_a_running_command_holds_an_idle_upgrade(tmp_path, running):
     executor = runtime.Executor.__new__(runtime.Executor)
     executor.state = tmp_path
     executor.config = {"claude": "old"}
     executor.admission_lock = threading.Lock()
     executor.active_calls = 0
     executor.upgrading = False
-    executor.tasks = {"lost-exit-trap": {"status": "unknown"}}
-    executor.task = lambda marker: executor.tasks[marker]
+    executor.running = {"shell-1": {}} if running else {}
 
     result = executor.dispatch("begin_upgrade", {"release": "next"})
 
-    assert result["ready"] is True
-    assert executor.upgrading is True
+    assert result["ready"] is not running
+    assert executor.upgrading is not running
 
 
 def _proxy_source() -> str:
@@ -269,46 +268,67 @@ def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
     """)
 
 
-def test_a_task_stop_the_executor_does_not_own_goes_back_to_the_harness():
-    """父线程停掉一条子线程，那一手是 harness 自己的（结论 43）。
-
-    `TaskStop` 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话里起着的
-    一条子线程。转给执行器的那条路只认前者，所以在房间里一律转过去，等于父线程
-    停不掉任何一条子线程——拿回来的是执行器的「不认识这条任务」。
-
-    负向对照在同一条测试里：执行器认得的那个 id 照旧转过去，不许一起放手。
-    """
-    _run_proxy("""
+def test_the_build_runs_bash_and_its_own_tasks_and_hears_the_executors_paths():
+    """Bash, TaskStop and a read of the build's own output files are the
+    build's to run (the shell prefix carries Bash to the executor); only the
+    file tools go to the executor. What the build writes about the central
+    workspace reaches the model spelled the way it was told the workspace."""
+    source = _proxy_source().replace(
+        '"workspace": "/work"', '"workspace": "/work", "central_tmp": "/session-tmp"'
+    )
+    subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
         import assert from 'node:assert/strict';
         const url = 'data:text/javascript;base64,' + process.argv[1];
         const {register} = await import(url);
         const handlers = {};
         register((event, handler) => {handlers[event] = handler});
-        const known = 'cheese-task-00112233445566aa';
+        const forwarded = [];
         const api = {
           session: {id: async () => 'session'},
           mcp: {call: async (server, tool, args) => {
-            const outcome = args.args.task_id === known
-              ? {result: {message: 'Remote process group stopped'}}
-              : {deny: 'Unknown remote task'};
-            return {content: [{type: 'text', text: JSON.stringify(outcome)}]};
+            forwarded.push(args.tool);
+            const text = JSON.stringify({result: {ok: true}});
+            return {content: [{type: 'text', text}]};
           }},
         };
-        let handed_back = false;
-        const next = async () => {handed_back = true; return 'next'};
-
-        const mine = await handlers['tool.call'](api, {
-          tool: 'TaskStop', tool_use_id: 'a', task_id: known,
-        }, next);
-        assert.equal(handed_back, false);
-        assert.deepEqual(mine, {result: {message: 'Remote process group stopped'}});
-
-        const worker = await handlers['tool.call'](api, {
-          tool: 'TaskStop', tool_use_id: 'b', task_id: 'reviewer',
-        }, next);
-        assert.equal(handed_back, true);
-        assert.equal(worker, 'next');
-    """)
+        const reset = 'Shell cwd was reset to /center';
+        const bash = await handlers['tool.call'](api, {
+          tool: 'Bash', tool_use_id: 'b', command: 'cd /tmp',
+        }, async () => ({
+          ref: 1, result: {stdout: 'x', stderr: reset}, text: 'x\\n' + reset,
+        }));
+        assert.equal(bash.result.stderr, 'Shell cwd was reset to /work');
+        assert.equal(bash.text, 'x\\nShell cwd was reset to /work');
+        const stop = await handlers['tool.call'](api, {
+          tool: 'TaskStop', tool_use_id: 's', task_id: 'b123',
+        }, async () => 'harness');
+        assert.equal(stop, 'harness');
+        for (const path of ['/session-tmp/claude-1/x/s/tasks/b1.output',
+                            '/config/projects/-w/s/tool-results/r.txt']) {
+          const own = await handlers['tool.call'](api, {
+            tool: 'Read', tool_use_id: 'r', file_path: path,
+          }, async () => 'local');
+          assert.equal(own, 'local');
+        }
+        for (const path of ['/session-tmp/../etc/passwd', '/center/a.txt',
+                            '/config/projects/-w/s.jsonl']) {
+          await handlers['tool.call'](api, {
+            tool: 'Read', tool_use_id: 'r', file_path: path,
+          }, async () => { throw new Error('read on the session host: ' + path) });
+        }
+        assert.deepEqual(forwarded, ['Read', 'Read', 'Read']);
+    """,
+            base64.b64encode(source.encode()).decode(),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_send_user_file_is_delivered_to_the_room_never_to_the_anthropic_upload():
@@ -536,144 +556,6 @@ def test_send_user_file_names_the_object_form_it_cannot_take():
         assert.match(outcome.deny, /file_uuid/);
         assert.match(outcome.deny, /path/);
     """)
-
-
-@pytest.mark.parametrize("exit_contents", ["", "0", "7"])
-def test_exit_written_during_process_scan_is_not_reported_as_unknown(
-    tmp_path, monkeypatch, exit_contents
-):
-    state = tmp_path / "state"
-    state.mkdir()
-    (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
-    )
-    executor = runtime.Executor(state)
-    marker = "settlement-race"
-    record = state / "tasks" / marker
-    record.mkdir(parents=True)
-    executor.tasks[marker] = {
-        "marker": marker,
-        "status": "running",
-        "started_ts": time.time() - 3,
-        "exit_code": None,
-    }
-
-    def just_exited(_marker):
-        (record / "exit").write_text(exit_contents)
-        return []
-
-    monkeypatch.setattr(executor, "_pids", just_exited)
-    try:
-        assert (
-            executor.task(marker)["status"]
-            == {"": "running", "0": "completed", "7": "failed"}[exit_contents]
-        )
-    finally:
-        executor.close()
-
-
-def test_task_output_waits_for_the_complete_reply(tmp_path, monkeypatch):
-    state = tmp_path / "state"
-    state.mkdir()
-    (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
-    )
-    executor = runtime.Executor(state)
-    writing, release = threading.Event(), threading.Event()
-    original_write = Path.write_text
-
-    def slow_output_write(path, data, *args, **kwargs):
-        if path.parent.parent == state / "tasks" and path.name.startswith("output"):
-            # Reproduce a reader arriving between file creation and its write.
-            with path.open("w"):
-                writing.set()
-                assert release.wait(10)
-        return original_write(path, data, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", slow_output_write)
-    try:
-        result = executor.invoke(
-            {
-                "id": "slow-reply",
-                "tool": "Bash",
-                "args": {"command": "sleep 0.5; printf done", "timeout": 1},
-            }
-        )
-        task_id = result["value"]["backgroundTaskId"]
-        assert writing.wait(10)
-        unfinished = executor.task_output({"task_id": task_id, "timeout": 0})
-        assert unfinished["retrieval_status"] == "timeout"
-        with ThreadPoolExecutor() as pool:
-            pending = pool.submit(
-                executor.task_output, {"task_id": task_id, "timeout": 5000}
-            )
-            try:
-                time.sleep(0.1)
-                assert not pending.done(), "A partial reply was reported as complete"
-            finally:
-                release.set()
-            report = pending.result(timeout=5)
-        assert report["task"]["output"] == "done"
-        assert report["task"]["exitCode"] == 0
-    finally:
-        release.set()
-        executor.close()
-
-
-def test_a_background_command_that_finishes_at_once_still_has_an_id_and_an_exit(
-    tmp_path,
-):
-    state = tmp_path / "state"
-    state.mkdir()
-    (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
-    )
-    executor = runtime.Executor(state)
-    try:
-        for code in (0, 7):
-            result = executor.invoke(
-                {
-                    "id": str(uuid.uuid4()),
-                    "tool": "Bash",
-                    "args": {
-                        "command": f"printf completed; exit {code}",
-                        "run_in_background": True,
-                    },
-                }
-            )
-            task_id = result["value"]["backgroundTaskId"]
-            report = executor.task_output({"task_id": task_id, "timeout": 10000})
-            assert report["task"]["output"] == "completed"
-            assert report["task"]["exitCode"] == code
-            assert report["task"]["status"] == ("completed" if code == 0 else "failed")
-    finally:
-        executor.close()
-
-
-def test_a_native_background_command_can_finish_without_output(tmp_path, monkeypatch):
-    state = tmp_path / "state"
-    state.mkdir()
-    (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
-    )
-    monkeypatch.setattr(runtime, "OUTPUT_AFTER_EXIT_S", 0.01)
-    executor = runtime.Executor(state)
-    try:
-        result = executor.invoke(
-            {
-                "id": "silent",
-                "tool": "Bash",
-                "args": {"command": "sleep 0.2", "run_in_background": True},
-            }
-        )
-        report = executor.task_output(
-            {"task_id": result["value"]["backgroundTaskId"], "timeout": 5000}
-        )
-        assert report["retrieval_status"] == "success"
-        assert report["task"]["status"] == "completed"
-        assert report["task"]["output"] == ""
-    finally:
-        executor.close()
 
 
 def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
@@ -1178,22 +1060,22 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         bootstrap.configure(payload)
         capsys.readouterr()
         original = ready()
-        started = runtime.request(
+        task = "retained-output"
+        runtime.request(
             state,
-            "invoke",
+            "control",
             {
-                "id": "retained-output",
-                "tool": "Bash",
-                "args": {
-                    "command": (
-                        "while [ ! -f release ]; do sleep 0.05; done; printf kept"
-                    ),
-                    "run_in_background": True,
-                },
+                "subtype": "shell",
+                "operation": "start",
+                "command_id": task,
+                "kind": "sh",
+                "body": "while [ ! -f release ]; do sleep 0.05; done; printf kept",
+                "cwd": original["workspace"],
+                "env": {},
+                "merge": True,
+                "stdin": None,
             },
         )
-        assert "value" in started, started
-        task = started["value"]["backgroundTaskId"]
         changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
         if update_kind == "runtime":
             changed += b"\n# release fixture\n"
@@ -1229,16 +1111,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         assert source.read_bytes() == before
         assert ready()["pid"] == original["pid"]
         (home / "room/release").touch()
-        deadline = time.monotonic() + 10
-        while True:
-            result = runtime.request(
-                state, "control", {"subtype": "task_output", "task_id": task}
-            )
-            if result["status"] != "running":
-                break
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        assert result["stdout"] == "kept"
+        assert _collect(state, task) == ("kept", 0)
         try:
             bootstrap.configure(payload)
         except RuntimeError as error:
@@ -1251,12 +1124,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         updated = ready()
         assert updated["pid"] != original["pid"]
         assert updated["runtime_sha256"] == hashlib.sha256(changed).hexdigest()
-        assert (
-            runtime.request(
-                state, "control", {"subtype": "task_output", "task_id": task}
-            )["stdout"]
-            == "kept"
-        )
+        assert _collect(state, task) == ("kept", 0)
         bootstrap.configure(payload)
         capsys.readouterr()
         assert ready()["pid"] == updated["pid"]
@@ -1266,6 +1134,28 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             capture_output=True,
             timeout=15,
         )
+
+
+def _collect(state, command_id, timeout=30):
+    """A command's whole output and exit status, read the way its reader does."""
+    output, deadline = b"", time.monotonic() + timeout
+    while True:
+        answer = runtime.request(
+            state,
+            "control",
+            {
+                "subtype": "shell",
+                "operation": "read",
+                "command_id": command_id,
+                "out": len(output),
+                "err": 0,
+                "wait": 1,
+            },
+        )
+        output += base64.b64decode(answer["out"])
+        if "exit" in answer:
+            return output.decode(), answer["exit"]
+        assert time.monotonic() < deadline, output
 
 
 def test_running_executor_prepares_updated_room_without_restart(
@@ -1581,44 +1471,10 @@ class RemoteExecutionTests(unittest.TestCase):
                 "Bash", {"command": "printf y >> count.txt"}, key="same-request"
             )
 
-    def finished_task(self, task_id, timeout=30000):
-        """A task's output once it has finished, or a failure that says why.
-
-        `'' != 'done'` has been failing this file on CI since at least
-        2026-09-19 and says nothing about the cause. `TaskOutput` reports
-        `retrieval_status: "timeout"` when its wait runs out, and `status:
-        "unknown"` for a task this executor no longer holds — both of which
-        come back with the output so far. Checking them here turns the next
-        failure into its own diagnosis instead of a bare string mismatch.
-        """
-        result = self.invoke(
-            "TaskOutput", {"task_id": task_id, "block": True, "timeout": timeout}
-        )
-        self.assertEqual(
-            result["retrieval_status"],
-            "success",
-            f"task did not finish within {timeout} ms: {result}",
-        )
-        self.assertEqual(
-            result["task"]["status"],
-            "completed",
-            f"task did not complete: {result}{self.task_on_disk(task_id)}",
-        )
-        return result
-
-    def task_on_disk(self, task_id):
-        """What the executor's own state directory holds for this task.
-
-        The API's answer and the files it is built from can disagree — and
-        which of the two is empty is the whole question when a completed task
-        reports no output.
-        """
-        directory = self.state / "tasks" / task_id
-        return "".join(
-            f"\n  {name}={(directory / name).read_text(errors='replace')!r}"
-            for name in ("task.json", "output", "exit")
-            if (directory / name).exists()
-        )
+    def finished_task(self, task_id):
+        """A task's whole output and exit status once it has ended."""
+        output, code = _collect(self.state, task_id)
+        return {"output": output, "exit": code}
 
     def test_reconnect_retains_background_task(self):
         task = self.invoke(
@@ -1628,13 +1484,10 @@ class RemoteExecutionTests(unittest.TestCase):
         previous_pid = self.pid
         self.start()
         self.assertEqual(self.pid, previous_pid)
-        result = self.finished_task(task["backgroundTaskId"])
         self.assertEqual(
-            result["task"]["output"],
-            "background-done",
-            f"{result}{self.task_on_disk(task['backgroundTaskId'])}",
+            self.finished_task(task["backgroundTaskId"]),
+            {"output": "background-done", "exit": 0},
         )
-        self.assertEqual(result["task"]["status"], "completed")
 
     def test_stop_kills_descendant_ignoring_term(self):
         task = self.invoke(
@@ -1653,8 +1506,7 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(stopped["task_id"], task["backgroundTaskId"])
         time.sleep(2.2)
         self.assertFalse((self.workspace / "forbidden.txt").exists())
-        output = self.invoke("TaskOutput", {"task_id": task["backgroundTaskId"]})
-        self.assertEqual(output["task"]["status"], "stopped")
+        self.assertNotEqual(self.finished_task(task["backgroundTaskId"])["exit"], 0)
 
     def test_restart_preserves_completed_request_receipt(self):
         self.invoke("Bash", {"command": "printf x >> count.txt"}, key="persisted")
@@ -1875,66 +1727,21 @@ class RemoteExecutionTests(unittest.TestCase):
             )
         self.assertFalse((self.workspace / "forbidden.txt").exists())
 
-    def test_rc_can_background_a_running_foreground_command(self):
-        # The command cannot finish until the test lets it, so an answer that
-        # arrives at all arrived while the command was still running. A wall
-        # clock stood in for that before, and a stalled CI runner outlasted it.
-        with ThreadPoolExecutor() as pool:
-            pending = pool.submit(
-                self.invoke,
-                "Bash",
-                {
-                    "command": "touch started; "
-                    "while [ ! -e finish ]; do sleep 0.05; done; printf done"
-                },
-                "foreground",
-            )
-            try:
-                deadline = time.monotonic() + 30
-                while (
-                    not (self.workspace / "started").exists()
-                    and time.monotonic() < deadline
-                ):
-                    time.sleep(0.02)
-                self.assertTrue((self.workspace / "started").exists())
-                runtime.request(
-                    self.state,
-                    "control",
-                    {"subtype": "background_tasks", "tool_use_id": "foreground"},
-                )
-                result = pending.result(timeout=30)
-            finally:
-                (self.workspace / "finish").touch()
-            task = self.finished_task(result["backgroundTaskId"])
-            self.assertEqual(
-                task["task"]["output"],
-                "done",
-                f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
-            )
-
     def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
         self,
     ):
-        # The agent's timeout is enforced here, not by the serve process: at
-        # the deadline the command is left running and handed back as a task.
+        # At the caller's deadline the command is left running and handed
+        # back as a task, which goes on to finish.
         result = self.invoke(
             "Bash",
             {"command": "touch started; sleep 2; printf done", "timeout": 500},
             "foreground",
         )
         self.assertIn("backgroundTaskId", result)
-        listed = runtime.request(
-            self.state, "control", {"subtype": "background_tasks"}
-        )["tasks"]
-        self.assertIn(
-            result["backgroundTaskId"],
-            [task["task_id"] for task in listed if task["status"] == "running"],
-        )
-        task = self.finished_task(result["backgroundTaskId"])
+        self.assertFalse((self.workspace / "done").exists())
         self.assertEqual(
-            task["task"]["output"],
-            "done",
-            f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
+            self.finished_task(result["backgroundTaskId"]),
+            {"output": "done", "exit": 0},
         )
 
     def test_remote_command_hook_can_prevent_a_write(self):
@@ -1991,70 +1798,6 @@ class RemoteExecutionTests(unittest.TestCase):
             {"command": "rg REMOTE_SEARCH_MARKER ."},
         )
         self.assertIn("REMOTE_SEARCH_MARKER", json.dumps(grep))
-
-    def test_interrupting_transport_stops_remote_foreground_command(self):
-        target = self.root / "client.json"
-        target.write_text(
-            json.dumps(
-                {
-                    "command": [sys.executable, str(RUNTIME)],
-                    "state": str(self.state),
-                    "workspace": str(self.workspace),
-                }
-            )
-        )
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                str(RUNTIME.with_name("client.py")),
-                "transport",
-                str(target),
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-
-        def cleanup():
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=5)
-            process.stdin.close()
-            process.stdout.close()
-            process.stderr.close()
-
-        self.addCleanup(cleanup)
-        process.stdin.write(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "invoke",
-                        "arguments": {
-                            "id": "interrupted",
-                            "session_id": "test",
-                            "tool": "Bash",
-                            "args": {
-                                "command": "touch started; sleep 2; touch forbidden.txt"
-                            },
-                        },
-                    },
-                }
-            )
-            + "\n"
-        )
-        process.stdin.flush()
-        deadline = time.monotonic() + 3
-        while not (self.workspace / "started").exists() and time.monotonic() < deadline:
-            time.sleep(0.02)
-        self.assertTrue((self.workspace / "started").exists())
-        process.terminate()
-        self.assertEqual(process.wait(timeout=5), 143)
-        time.sleep(2.1)
-        self.assertFalse((self.workspace / "forbidden.txt").exists())
 
 
 def test_prepare_adds_the_teammate_sync_hook_exactly_once():

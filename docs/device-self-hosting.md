@@ -101,7 +101,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 ## 2. 设备需要装什么
 
-Ordinary execution devices run a persistent Python service and the pinned `claude mcp serve` process for native file tools. They do not require Docker. Central hosts also run the session launcher and need Docker for private chat containers. The connector and launch helpers use these dependencies:
+Ordinary execution devices run a persistent Python service, which runs a room's shell commands as its own processes, and the pinned `claude mcp serve` process for native file tools and the shell snapshot those commands start from. They do not require Docker. Central hosts also run the session launcher and need Docker for private chat containers. The connector and launch helpers use these dependencies:
 
 | 依赖 | 用途 | 是否必须 |
 |---|---|---|

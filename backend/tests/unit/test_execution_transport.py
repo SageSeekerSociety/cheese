@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -703,15 +702,15 @@ def test_send_user_file_names_the_object_form_it_cannot_take(central_transport):
         )
 
 
-def native_call(process, identifier, command):
+def native_call(process, identifier, tool, args):
     result = process.call(
         "tools/call",
         {
             "name": "invoke",
             "arguments": {
                 "id": identifier,
-                "tool": "Bash",
-                "args": {"command": command},
+                "tool": tool,
+                "args": args,
                 "session_id": "fixture",
             },
         },
@@ -905,8 +904,9 @@ def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
     for index in range(40):
-        assert "result" in native_call(process, str(index), "printf x >> count")
-    assert (work / "count").read_text() == "x" * 40
+        written = {"file_path": str(work / f"file-{index}"), "content": "x"}
+        assert "result" in native_call(process, str(index), "Write", written)
+    assert all((work / f"file-{index}").read_text() == "x" for index in range(40))
     # Each worker owns a connection; sequential replies may use different workers.
     assert len(set(clients)) < len(clients)
     assert process.process.pid == pid and process.process.poll() is None
@@ -930,36 +930,16 @@ def test_structured_chat_retry_retains_request_id(central_transport):
 
 def test_lost_http_response_is_not_replayed_and_original_id_recovers(central_transport):
     process, clients, drop, work = central_transport
+    written = {"file_path": str(work / "count"), "content": "once"}
     drop.append(True)
     with pytest.raises(RuntimeError):
-        native_call(process, "same", "printf once >> count")
+        native_call(process, "same", "Write", written)
     assert (work / "count").read_text() == "once"
     assert len(clients) == 1
-    assert "result" in native_call(process, "same", "printf once >> count")
-    assert (work / "count").read_text() == "once"
+    (work / "count").unlink()
+    assert "result" in native_call(process, "same", "Write", written)
+    assert not (work / "count").exists()
     assert len(clients) == 2 and clients[0] != clients[1]
-
-
-def test_resident_transport_cancels_a_running_shell(central_transport):
-    process, _, _, work = central_transport
-    with ThreadPoolExecutor() as pool:
-        pending = pool.submit(
-            native_call, process, "cancelled", "touch started; sleep 30; touch finished"
-        )
-        deadline = time.monotonic() + 5
-        while not (work / "started").exists():
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        process.send(
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/cancelled",
-                "params": {"requestId": process.sequence},
-            }
-        )
-        outcome = pending.result(timeout=5)
-    assert outcome["result"]["interrupted"]
-    assert not (work / "finished").exists()
 
 
 def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):
