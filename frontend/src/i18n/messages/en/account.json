@@ -365,6 +365,10 @@
     "saved": "Saved",
     "saveFailed": "Could not save. Try again."
   },
+  "settings": {
+    "realName": "Real-name information",
+    "install": "Install on your phone"
+  },
   "emailCode": {
     "title": "Sign in with an email code",
     "send": "Send code",
