@@ -55,7 +55,18 @@ html.dark .ambient .grain{opacity:.1}
 body:not(.page-home) .ambient .grid,body:not(.page-home) .ambient .stars,body:not(.page-home) .ambient .grain{display:none}
 body:not(.page-home) .ambient .glow{background:linear-gradient(180deg,rgba(249,178,51,.07),transparent 280px)}
 html.dark body:not(.page-home) .ambient .glow{background:linear-gradient(180deg,rgba(140,110,220,.07),transparent 280px)}
-body.page-home .ambient{display:none}
+/* home: the hero scene sits on top; the faint grid and a drifting glow carry on down the page */
+body.page-home .ambient .grid{-webkit-mask-image:linear-gradient(transparent 0,#000 90vh);mask-image:linear-gradient(transparent 0,#000 90vh);opacity:.8}
+body.page-home .ambient .glow{animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:none}50%{transform:translate(-8vw,6vh) scale(1.08)}100%{transform:translate(4vw,-4vh) scale(.96)}}
+.x-hero .scene{bottom:-120px;background:
+   radial-gradient(34vw 26vw at 50% 22%,rgba(255,196,110,.38),transparent 70%),
+   radial-gradient(90vw 60vh at 20% -10%,rgba(255,255,255,.9),transparent 70%),
+   linear-gradient(180deg,#fcf9f3 0%,#faf1e2 52%,#f6e3c6 78%,#faf7f0 100%)}
+html.dark .x-hero .scene{background:
+   radial-gradient(30vw 24vw at 50% 22%,rgba(255,170,60,.22),transparent 70%),
+   radial-gradient(70vw 50vh at 30% 0%,rgba(80,60,150,.28),transparent 70%),
+   linear-gradient(180deg,#07060b 0%,#0f0c1a 45%,#1a1326 78%,#0e0d12 100%)}
 
 /* ---------- progress + header ---------- */
 .progress{position:fixed;left:0;top:0;height:2px;width:100%;z-index:60;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,var(--accent-2),var(--accent),var(--accent-3));box-shadow:0 0 12px var(--glow)}

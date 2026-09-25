@@ -63,7 +63,18 @@ html.dark .ambient .grain{opacity:.1}
 body:not(.page-home) .ambient .grid,body:not(.page-home) .ambient .stars,body:not(.page-home) .ambient .grain{display:none}
 body:not(.page-home) .ambient .glow{background:linear-gradient(180deg,rgba(249,178,51,.07),transparent 280px)}
 html.dark body:not(.page-home) .ambient .glow{background:linear-gradient(180deg,rgba(140,110,220,.07),transparent 280px)}
-body.page-home .ambient{display:none}
+/* home: the hero scene sits on top; the faint grid and a drifting glow carry on down the page */
+body.page-home .ambient .grid{-webkit-mask-image:linear-gradient(transparent 0,#000 90vh);mask-image:linear-gradient(transparent 0,#000 90vh);opacity:.8}
+body.page-home .ambient .glow{animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:none}50%{transform:translate(-8vw,6vh) scale(1.08)}100%{transform:translate(4vw,-4vh) scale(.96)}}
+.x-hero .scene{bottom:-120px;background:
+   radial-gradient(34vw 26vw at 50% 22%,rgba(255,196,110,.38),transparent 70%),
+   radial-gradient(90vw 60vh at 20% -10%,rgba(255,255,255,.9),transparent 70%),
+   linear-gradient(180deg,#fcf9f3 0%,#faf1e2 52%,#f6e3c6 78%,#faf7f0 100%)}
+html.dark .x-hero .scene{background:
+   radial-gradient(30vw 24vw at 50% 22%,rgba(255,170,60,.22),transparent 70%),
+   radial-gradient(70vw 50vh at 30% 0%,rgba(80,60,150,.28),transparent 70%),
+   linear-gradient(180deg,#07060b 0%,#0f0c1a 45%,#1a1326 78%,#0e0d12 100%)}
 
 /* ---------- progress + header ---------- */
 .progress{position:fixed;left:0;top:0;height:2px;width:100%;z-index:60;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,var(--accent-2),var(--accent),var(--accent-3));box-shadow:0 0 12px var(--glow)}
@@ -1209,6 +1220,7 @@ body.page-home .foot .fine{color:#8d8577}
    </div>
   </div>`}var K=0,_;function at(){let e=n("#demo");if(!e)return;clearInterval(K);let t=0,i=!0;_?.disconnect(),_=new IntersectionObserver(a=>{i=a[0].isIntersecting}),_.observe(e);let s=()=>{if(!e.isConnected){clearInterval(K);return}i&&(t=t>=10?0:t+1,e.dataset.step=Math.min(t,8))};if(V){e.dataset.step=8;return}K=setInterval(s,1100),s()}function nt(){let e=[...Object.keys(g).filter(i=>i!=="changelog").flatMap(i=>g[i].groups.map(([s,a])=>[i==="dev"?`\u5F00\u53D1\u8005 \xB7 ${s}`:g[i].groups.length>1?s:g[i].label,i,a]))],t=Object.keys(S);return`<div class="home x">
   <section class="x-hero">
+   <div class="scene" aria-hidden="true"></div>
    <div class="x-mark" id="heroLogo" role="img" aria-label="\u77E5\u662F\u7684\u6807\u5FD7\uFF1A\u4E00\u8F6E\u5E26\u5B54\u7684\u829D\u58EB\uFF0C\u524D\u9762\u7AD9\u7740\u4E00\u53EA\u5C0F\u8001\u9F20" title="\u70B9\u4E00\u4E0B\u91CD\u64AD"></div>
    <a class="badge-row" href="#/changelog"><b>${T[0].ver}</b>${T[0].list.length} \u9879\u6539\u52A8\u5DF2\u5728\u6D4B\u8BD5\u73AF\u5883 ${c("arrow")}</a>
    <h1 class="x-title"><span class="line"><span>\u4EA4\u7ED9\u829D\u58EB\u4E00\u4EF6\u4E8B\uFF0C</span></span><span class="line"><span>\u4E0D\u53EA\u662F\u95EE\u4E00\u53E5\u3002</span></span></h1>

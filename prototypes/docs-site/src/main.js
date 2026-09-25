@@ -152,6 +152,7 @@ function homePage() {
   const who = Object.keys(WHO)
   return `<div class="home x">
   <section class="x-hero">
+   <div class="scene" aria-hidden="true"></div>
    <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div>
    <a class="badge-row" href="#/changelog"><b>${RELEASES[0].ver}</b>${RELEASES[0].list.length} 项改动已在测试环境 ${ic('arrow')}</a>
    <h1 class="x-title"><span class="line"><span>交给芝士一件事，</span></span><span class="line"><span>不只是问一句。</span></span></h1>
