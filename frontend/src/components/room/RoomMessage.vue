@@ -9,6 +9,8 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
 
+import { computed, onBeforeUnmount, ref } from 'vue'
+
 import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
@@ -16,6 +18,8 @@ import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+
+import { t } from '@/i18n'
 
 /** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
 const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
@@ -27,6 +31,8 @@ const props = defineProps<{
   parentName: string | null
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
+  /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
+  regroup?: boolean
   /** 这条是我自己说的（名字加重）。 */
   mine: boolean
   topicId: string | null
@@ -51,6 +57,7 @@ const props = defineProps<{
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
+   * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
    */
   outgoing?: { error?: string; failed: boolean } | null
 }>()
@@ -69,7 +76,7 @@ const emit = defineEmits<{
   (e: 'summon'): void
   (e: 'avatar-error', handle: string): void
   (e: 'retry'): void
-  (e: 'drop'): void
+  (e: 'edit'): void
 }>()
 
 function renderMarkdown(text: string): string {
@@ -79,12 +86,62 @@ function renderMarkdown(text: string): string {
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
 }
+
+// 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
+// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。
+const agentHtml = computed(() =>
+  renderMarkdown(props.block.content)
+    .replaceAll(
+      '<pre>',
+      `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
+    )
+    .replaceAll('</pre>', '</pre></div>')
+)
+
+// 复制之后原地说一声「已复制」，一会儿再换回来。
+const COPIED_MS = 1500
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => clearTimeout(copiedTimer))
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// 整条消息复制成什么：芝士的回复复制 markdown 原文（代码块、列表贴到别处还是那个
+// 样子）；人说的话复制屏幕上读到的字（@ 的是名字，不是 handle）。
+const textEl = ref<HTMLElement | null>(null)
+async function copyMessage() {
+  const text = props.isAgent ? props.block.content : textEl.value?.textContent ?? props.block.content
+  if (!(await copyText(text))) return
+  copied.value = true
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
+}
+
+async function onAgentTextClick(e: MouseEvent) {
+  const btn = (e.target as HTMLElement | null)?.closest('.md-copy') as HTMLButtonElement | null
+  const code = btn?.parentElement?.querySelector('pre')
+  if (!btn || !code || !(await copyText(code.textContent ?? ''))) return
+  btn.textContent = t('work.room.message.copied')
+  setTimeout(() => (btn.textContent = t('work.room.message.copy')), COPIED_MS)
+}
 </script>
 
 <template>
   <div
     class="im-row"
-    :class="{ 'im-row--cont': !runStart, 'im-row--self': mine, 'im-row--pending': !!outgoing }"
+    :class="{
+      'im-row--cont': !runStart,
+      'im-row--regroup': runStart && regroup,
+      'im-row--self': mine,
+      'im-row--pending': !!outgoing,
+    }"
     :data-mid="block.id"
   >
     <!-- avatar gutter: only on the first of a run -->
@@ -105,7 +162,12 @@ function renderPlain(text: string): string {
           {{ avatarInitial(authorName) }}
         </div>
       </template>
+      <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
+      <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>
     </div>
+    <!-- 还没送出去的续话同样没有名字那一行，送达状态（发送中 / 等待连接）就挂在
+       行尾，一直在，不等悬停：断网时人要知道这几句为什么是淡的。 -->
+    <span v-if="outgoing && !runStart && time" class="im-pending-state">{{ time }}</span>
 
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
@@ -154,14 +216,18 @@ function renderPlain(text: string): string {
         </span>
         <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
       </button>
-      <div v-else-if="isAgent" class="im-text md-content" v-html="renderMarkdown(block.content)" />
+      <div v-else-if="isAgent" class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
       <!-- 现场尊重原文: human text renders verbatim — newlines and
          spacing preserved (pre-wrap), no markdown reflow. -->
-      <div v-else class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
-      <p v-if="outgoing?.error" class="outbox-error" role="alert">{{ outgoing.error }}</p>
-      <div v-if="outgoing?.failed" class="outbox-actions">
-        <button type="button" class="outbox-act" @click="emit('retry')">重试</button>
-        <button type="button" class="outbox-act" @click="emit('drop')">删除</button>
+      <div v-else ref="textEl" class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
+      <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
+        <span class="outbox-fail__text">{{
+          outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')
+        }}</span>
+        <button type="button" class="outbox-btn" @click="emit('retry')">{{ t('work.room.retry.action') }}</button>
+        <button type="button" class="outbox-btn" :title="t('work.room.outbox.editHint')" @click="emit('edit')">
+          {{ t('work.room.outbox.edit') }}
+        </button>
       </div>
       <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
          state shows the pick + who made it (everyone sees it). -->
@@ -237,6 +303,14 @@ function renderPlain(text: string): string {
       <button type="button" class="im-act" title="回复" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
       </button>
+      <button
+        type="button"
+        class="im-act"
+        :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
+        @click="copyMessage"
+      >
+        <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+      </button>
       <button type="button" class="im-act" title="转为话题" @click="emit('upgrade', block.id)">
         <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
       </button>
@@ -299,33 +373,51 @@ function renderPlain(text: string): string {
 .im-replied:hover {
   color: var(--ink);
 }
+.im-pending-state {
+  position: absolute;
+  top: 4px;
+  right: 16px;
+  font-size: 12px;
+  line-height: var(--lh-14-loose);
+  color: var(--faint);
+}
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
 .im-row--pending .im-name {
   opacity: 0.62;
 }
-.outbox-error {
-  margin: 6px 0;
+/* 没送出去：一句为什么，后面两颗和事件行同一种中性小按钮。 */
+.outbox-fail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
   font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--danger-ink);
+}
+.outbox-fail__text {
   overflow-wrap: anywhere;
 }
-.outbox-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 2px;
-}
-.outbox-act {
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 12px;
-  color: var(--accent-ink);
+.outbox-btn {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
   cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
-.outbox-act:hover {
-  text-decoration: underline;
+.outbox-btn:hover {
+  background: var(--fill);
+  border-color: var(--faint);
 }
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
@@ -638,6 +730,40 @@ function renderPlain(text: string): string {
   padding: 0.5px 5px;
   border-radius: var(--radius-sm);
   font-size: 0.88em;
+}
+/* 代码块和它右上角的「复制」。按钮悬停时才出现；没有悬停的设备上一直在。 */
+.md-content :deep(.md-pre) {
+  position: relative;
+}
+.md-content :deep(.md-copy) {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.md-content :deep(.md-pre:hover .md-copy),
+.md-content :deep(.md-copy:focus-visible) {
+  opacity: 1;
+}
+.md-content :deep(.md-copy:hover) {
+  color: var(--ink);
+}
+@media (hover: none) {
+  .md-content :deep(.md-copy) {
+    opacity: 1;
+  }
 }
 .md-content :deep(pre) {
   background: var(--surface);

@@ -851,9 +851,21 @@ function pendingBlock(item: Outgoing): Block {
   return { id: item.clientId, author: AUTHOR, content: item.content, kind: 'message' } as Block
 }
 
+// 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return item.error ? '发送失败' : '未送达'
+  if (item.state === 'failed') return ''
   return connected.value ? '发送中…' : '等待连接'
+}
+
+// 发送失败之后的「编辑」：这一条从发件箱里拿掉，原文、回复对象和附件放回输入框，
+// 改完再发就是一条新的。输入框里已经有字的话，原文放在前面，一个字都不覆盖。
+function editSend(item: Outgoing) {
+  dropSend(item.clientId)
+  draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
+  const parent = item.replyTo ? messages.value.find((m) => m.id === item.replyTo) : undefined
+  if (parent) replyTarget.value = parent
+  if (item.atts?.length) pendingAtts.value = [...item.atts, ...pendingAtts.value]
+  composerRef.value?.focus()
 }
 
 function fmtTime(iso: string): string {
@@ -875,18 +887,35 @@ function isMine(m: Block): boolean {
   return isPersonBlock(m) && m.author === AUTHOR
 }
 
-// Group consecutive messages from the same author into runs: only the first of
-// a run shows the avatar + name + time; the rest indent under the text column.
-// An event block always breaks a run so the next message keeps its header.
-function isRunStart(i: number): boolean {
-  if (i === 0) return true
+// 同一个人连着说的话合并成一段：只有第一条带头像、名字和时间，其余贴在它下面。
+// 断开只有三种情况，断开之后下一条重新带上名字和时间：
+// - 中间隔了别的行（事件、「已派出」标记、新消息线）—— 否则它看上去像挂在那一行
+//   上的续话；
+// - 换了一天 —— 日期线已经横在中间；
+// - 同一天里隔了一小时以上 —— 下午接着上午说的，不该读成一口气说完的。这一种
+//   只空一小档（`regroup`），还是同一个人。
+const REGROUP_GAP_MS = 60 * 60 * 1000
+type RunEdge = 'start' | 'regroup' | 'cont'
+function sameSpeaker(a: Block, b: Block): boolean {
+  return a.author === b.author && a.author_type === b.author_type
+}
+function runEdge(i: number): RunEdge {
+  if (i === 0) return 'start'
   const prev = visible.value[i - 1]
   const cur = visible.value[i]
-  if (prev.kind === 'event' || cur.kind === 'event') return true
-  // 一条「已派出」标记横在中间时，下面这条必须重新带头像和名字 —— 否则它看上去
-  // 像是挂在标记上的续话。同 event 的道理：中间隔了东西，run 就断了。
-  if (splitMarkers.value.before.has(cur.id)) return true
-  return prev.author !== cur.author || prev.author_type !== cur.author_type
+  if (prev.kind === 'event' || cur.kind === 'event') return 'start'
+  if (splitMarkers.value.before.has(cur.id) || cur.id === unreadAnchorId.value) return 'start'
+  if (!sameSpeaker(prev, cur) || dayKey(prev.created_at) !== dayKey(cur.created_at)) return 'start'
+  return Date.parse(cur.created_at) - Date.parse(prev.created_at) >= REGROUP_GAP_MS ? 'regroup' : 'cont'
+}
+// 发件箱里的那几条还没有落库时间，按「现在」算：接在自己刚说的那段后面就贴上去。
+function outboxEdge(index: number): RunEdge {
+  if (index > 0) return 'cont'
+  const last = visible.value.at(-1)
+  if (!last || last.kind === 'event' || !isMine(last) || splitMarkers.value.tail.length) return 'start'
+  const now = new Date().toISOString()
+  if (dayKey(last.created_at) !== dayKey(now)) return 'start'
+  return Date.now() - Date.parse(last.created_at) >= REGROUP_GAP_MS ? 'regroup' : 'cont'
 }
 
 // ---- Topic header state. The labels live in lib/topicState.ts because the
@@ -1300,7 +1329,8 @@ onBeforeUnmount(() => {
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
-              :run-start="isRunStart(i)"
+              :run-start="runEdge(i) !== 'cont'"
+              :regroup="runEdge(i) === 'regroup'"
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
@@ -1341,12 +1371,13 @@ onBeforeUnmount(() => {
              只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
              第二位的。 -->
           <RoomMessage
-            v-for="item in outbox"
+            v-for="(item, oi) in outbox"
             :key="item.clientId"
             :block="pendingBlock(item)"
             :parent="null"
             :parent-name="null"
-            :run-start="true"
+            :run-start="outboxEdge(oi) !== 'cont'"
+            :regroup="outboxEdge(oi) === 'regroup'"
             :mine="true"
             :topic-id="topic?.id ?? null"
             :author-name="myName"
@@ -1362,7 +1393,7 @@ onBeforeUnmount(() => {
             :summon-busy="false"
             :outgoing="{ error: item.error, failed: item.state === 'failed' }"
             @retry="retrySend(item.clientId)"
-            @drop="dropSend(item.clientId)"
+            @edit="editSend(item)"
             @avatar-error="onAvatarError"
           />
 
