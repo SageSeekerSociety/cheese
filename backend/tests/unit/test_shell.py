@@ -173,7 +173,7 @@ def test_default_is_todays_interface_verbatim() -> None:
         "project-routines",
         "project-members",
     )
-    assert default.hidden == ("calendar",)
+    assert default.hidden == ("calendar", "project-routines")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("spaces", "workspace", "inbox")

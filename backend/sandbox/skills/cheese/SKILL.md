@@ -154,11 +154,11 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 ## 用户要「每周/每天做一次」或「某件事发生时就做」
 
-这是一条**定时与触发规则**，不是 `cheese_deliver_at` 闹钟：规则到点会真的让这个房间的 AI 队友开工一轮，做完交回结果并通知设规则的人，执行记录在项目的「定时与触发」页上。
+这是一条**定时与触发规则**，不是 `cheese_deliver_at` 闹钟：规则到点会真的让这个房间的 AI 队友开工一轮，做完交回结果并通知设规则的人，执行记录在项目的「定时与触发」页上（项目名旁 ⋯ 菜单）。
 
 1. 从对话里整理出：做什么（`instructions`）、用哪些资料（`context_scope`）、多久一次或哪种事件、几点、哪个时区、结果放房间哪个目录（`output_dir`）。**时间或范围有歧义就用 `cheese_ask` 问**，不要自己挑一个。
 2. 起草：`platform_request(method="POST", path="/topics/<本话题 id>/routines", body={...})`。body 字段：`title`、`instructions`、`context_scope`、`output_dir`、`trigger`（`schedule` / `library_file_added` / `task_closed` / `card_accepted`）、`spec`、`timezone`（默认 `Asia/Shanghai`）、`owner_handle`（替谁设的，结果通知给他）。`spec`：定时写 `{"freq": "weekly", "weekdays": [0], "time": "09:00"}`（0=周一），也可以是 `daily` + `time`、`monthly` + `day` + `time`、`hourly` + `minute`；事件写 `{"scope": "room"}` 或 `{"scope": "project"}`。
-3. 你起草的规则是**草稿，不会执行**。把配置用一两句话说给用户，请他到项目侧栏「定时与触发」里点「确认启用」。你没有确认、恢复、立即执行、删除的权限，也不要声称已经设好了。你修改一条已启用的规则，它会退回草稿，等人再次确认。
+3. 你起草的规则是**草稿，不会执行**。把配置用一两句话说给用户，请他打开项目名旁 ⋯ 菜单里的「定时与触发」（办公类项目在侧栏上）点「确认启用」。你没有确认、恢复、立即执行、删除的权限，也不要声称已经设好了。你修改一条已启用的规则，它会退回草稿，等人再次确认。
 4. 查看：`GET /projects/<项目 id>/routines?topic=<本话题 id>`；某条规则和它的执行记录：`GET /routines/<id>`；暂停：`POST /routines/<id>/pause`；修改：`PATCH /routines/<id>`。
 
 **被一条规则唤起时**（那一轮开头写着「【定时工作】」这类标题和执行 id）：按里面的工作内容和资料范围做，结果用 `cheese show` 放进指定目录。**做完必须交回结果**，成功失败都要交：`platform_request(method="POST", path="/routine-runs/<执行 id>/report", body={"status": "succeeded" 或 "failed", "summary": "…", "outputs": ["房间里的结果路径"]})`。失败要写清原因。没交回结果的一轮会被记为失败。
