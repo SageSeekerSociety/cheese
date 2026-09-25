@@ -1,44 +1,29 @@
 """进度层 (#187): 芝士's checklist outlives the turn, the machine and the session.
 
-Before this, TaskCreate/TaskUpdate only ever existed as WS frames — the room saw
-a live checklist while a turn ran and nothing at all afterwards. So a topic
-picked up on a new machine (or after a crash) had no way to answer "做到哪了",
-which is the failure #187 is about. These tests pin the three properties that
-make the layer real: it survives the turn, it survives a turn that DIES, and the
-next turn is actually told about it.
+The agent writes it with the platform tool `todo_write`, which lands on
+``PUT /topics/{id}/progress``. These tests pin what makes the layer real: the
+room sees each write live, the write survives the turn, and the next turn is
+actually told about it.
 """
-
-import time
-import uuid
 
 import pytest
 
-from tests.conftest import StubChannel, retire_topic
-from tests.integration.conftest import chat_ws_url, post_project
+from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    session_auth_headers,
+)
+
+PLAN = [
+    {"content": "核实 issue 论断", "status": "completed"},
+    {"content": "写实现", "status": "in_progress"},
+    {"content": "补测试", "status": "pending"},
+]
 
 
-class ChecklistScreen(StubChannel):
-    """Builds a 3-item checklist, finishes one, starts the next, then stops."""
-
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
-        del reply
-        self.starts(topic_id)
-        self.acknowledges(topic_id, prompt)
-        self.uses(topic_id, "TaskCreate", subject="核实 issue 论断")
-        self.uses(topic_id, "TaskCreate", subject="写实现")
-        self.uses(topic_id, "TaskCreate", subject="补测试")
-        self.uses(topic_id, "TaskUpdate", taskId="1", status="completed")
-        self.uses(topic_id, "TaskUpdate", taskId="2", status="in_progress")
-        self.stops(topic_id, "干到一半")
-
-
-@pytest.fixture
-def stub_hooks() -> ChecklistScreen:
-    # Overrides conftest's stub_hooks for this module; `client` picks it up.
-    return ChecklistScreen()
-
-
-def _topic(client) -> str:
+def _room(client) -> tuple[str, dict]:
+    """A room, and the credentials its agent's session writes with."""
     p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
@@ -46,14 +31,24 @@ def _topic(client) -> str:
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
-    return t["id"]
+    token = mint_scoped_token(project_id=p["id"], topic_id=t["id"])
+    return t["id"], {"X-Cheese-Token": token}
+
+
+def _write(client, topic_id: str, headers: dict, todos: list[dict]):
+    return client.put(
+        f"/topics/{topic_id}/progress", json={"todos": todos}, headers=headers
+    )
+
+
+def _progress(client, topic_id: str) -> list[tuple[str, str]]:
+    data = client.get(f"/topics/{topic_id}/progress").json()["data"]
+    return [(i["subject"], i["status"]) for i in data["items"]]
 
 
 def _chat(client, topic_id: str) -> list[dict]:
     """Run one turn, returning every frame it produced."""
     frames: list[dict] = []
-    # The chat socket requires a session token; take the same path the browser
-    # does via the shared helper (see .claude/rules/backend-tests.md).
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 hi"})
         while True:
@@ -63,48 +58,54 @@ def _chat(client, topic_id: str) -> list[dict]:
                 return frames
 
 
-def test_topic_without_a_turn_has_empty_progress(client):
-    body = client.get(f"/topics/{_topic(client)}/progress").json()
+def test_topic_without_a_checklist_has_empty_progress(client):
+    topic, _ = _room(client)
+    body = client.get(f"/topics/{topic}/progress").json()
     assert body["code"] == 200
     assert body["data"] == {"items": [], "updated_at": None}
 
 
-def test_checklist_outlives_the_turn(client):
-    tid = _topic(client)
-    _chat(client, tid)
-
-    data = client.get(f"/topics/{tid}/progress").json()["data"]
-    assert [(i["subject"], i["status"]) for i in data["items"]] == [
-        ("核实 issue 论断", "completed"),
-        ("写实现", "in_progress"),
-        ("补测试", "pending"),
-    ]
+def test_a_write_reaches_the_room_live_and_is_stored(client):
+    topic, headers = _room(client)
+    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+        response = _write(client, topic, headers, PLAN)
+        assert response.status_code == 200, response.text
+        frame = ws.receive_json()
+        while frame["type"] != "todo":
+            frame = ws.receive_json()
+    shown = [(i["subject"], i["status"]) for i in frame["items"]]
+    assert shown == [(t["content"], t["status"]) for t in PLAN]
+    assert not frame.get("restored"), "a write is this turn's list, not a leftover"
+    assert _progress(client, topic) == shown
+    data = client.get(f"/topics/{topic}/progress").json()["data"]
     # Stamped, so a reader can tell fresh progress from something ancient.
     assert data["updated_at"] is not None
 
 
+def test_each_write_replaces_the_whole_list(client):
+    topic, headers = _room(client)
+    _write(client, topic, headers, PLAN)
+    _write(client, topic, headers, [{"content": "只剩这一项", "status": "pending"}])
+    assert _progress(client, topic) == [("只剩这一项", "pending")]
+
+
 def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
-    tid = _topic(client)
-    _chat(client, tid)
+    topic, headers = _room(client)
+    _chat(client, topic)
+    assert "上次的任务清单" not in (stub_hooks.last_system_prompt or "")
 
-    first_turn_prompt = stub_hooks.last_system_prompt or ""
-    assert "上次的任务清单" not in first_turn_prompt  # nothing to carry yet
-
-    frames = _chat(client, tid)
+    _write(client, topic, headers, PLAN)
+    frames = _chat(client, topic)
 
     prompt = stub_hooks.last_system_prompt or ""
-    assert "上次的任务清单" in prompt
     # Status is carried as a mark, not just the text: "已完成" vs "在做" is the
     # whole reason to hand the list over rather than re-plan from scratch.
     assert "- [x] 核实 issue 论断" in prompt
     assert "- [~] 写实现" in prompt
     assert "- [ ] 补测试" in prompt
-    # And the agent is told to re-list finished items — the stored row is
-    # overwritten by this turn's first TaskCreate, so a plan that dropped them
-    # would erase the progress it was just handed.
-    assert "completed" in prompt
 
-    # The room sees it too, before the turn produces anything of its own.
+    # The room sees it too, before the turn produces anything of its own, and
+    # marked as the last turn's rather than this one's.
     restored = [f for f in frames if f["type"] == "todo" and f.get("restored")]
     assert restored, "turn start must replay the stored checklist to the room"
     assert [i["subject"] for i in restored[0]["items"]] == [
@@ -114,58 +115,41 @@ def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
     ]
 
 
-def test_progress_survives_a_turn_that_dies(client, stub_hooks, monkeypatch):
-    """The case the whole layer exists for: the turn does NOT get to finish.
+@pytest.mark.parametrize(
+    "todos",
+    [
+        [],
+        [{"content": "x", "status": "done"}],
+        [{"content": "   ", "status": "pending"}],
+        [{"content": "长" * 201, "status": "pending"}],
+        [{"content": f"第 {n} 步", "status": "pending"} for n in range(31)],
+    ],
+    ids=["empty", "unknown-status", "blank", "too-long", "too-many"],
+)
+def test_a_malformed_checklist_changes_nothing(client, todos):
+    topic, headers = _room(client)
+    _write(client, topic, headers, PLAN)
+    assert _write(client, topic, headers, todos).status_code == 400
+    assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
 
-    Progress is written the moment each Task tool streams in, not batched to
-    turn end — batching would lose exactly this."""
-    tid = _topic(client)
 
-    def reports_then_goes_quiet(topic_id, prompt, reply):
-        del prompt, reply
-        stub_hooks.starts(topic_id)
-        stub_hooks.uses(topic_id, "TaskCreate", subject="跑到一半就没了")
-        stub_hooks.uses(topic_id, "TaskUpdate", taskId="1", status="in_progress")
-        # ...and then the host is gone. No Stop, ever — so nothing about this
-        # turn's END can be what wrote the progress down.
-
-    monkeypatch.setattr(stub_hooks, "emit_turn", reports_then_goes_quiet)
-
-    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 hi"})
-        ws.receive_json()  # the turn is under way; it will never report done
-
-    # NOT `wait_work_idle()`: this turn is built never to finish, so waiting for
-    # it to could only ever run out the clock — which it did, twice, thirty
-    # seconds each. What the test is waiting for is the write, so it waits for
-    # the write.
-    #
-    # The condition is the assertion itself, deliberately. Waiting for "an item
-    # exists" would let this pass on the TaskCreate and read the status before
-    # the TaskUpdate that follows it — which is not a slower machine finding a
-    # different answer, it is the test asking a question one write too early.
-    expected = [("跑到一半就没了", "in_progress")]
-
-    def progress():
-        data = client.get(f"/topics/{tid}/progress").json()["data"]
-        return [(i["subject"], i["status"]) for i in data["items"]]
-
-    for _ in range(500):
-        if progress() == expected:
-            break
-        time.sleep(0.01)
-
-    assert progress() == expected
-    # The host is gone for good; nothing is coming. Say so, rather than leaving
-    # the fixture to discover it by waiting out its own ceiling on the way out.
-    retire_topic(client, tid)
+def test_only_the_rooms_agent_writes_the_checklist(client):
+    topic, headers = _room(client)
+    other, _ = _room(client)
+    assert _write(client, topic, {}, PLAN).status_code in (401, 403)
+    assert (
+        _write(client, topic, session_auth_headers("user-1"), PLAN).status_code == 403
+    )
+    assert _write(client, other, headers, PLAN).status_code == 403
+    assert _progress(client, topic) == []
+    assert _progress(client, other) == []
 
 
 def test_progress_is_per_topic(client):
-    a, b = _topic(client), _topic(client)
-    _chat(client, a)
-
-    assert client.get(f"/topics/{b}/progress").json()["data"]["items"] == []
+    a, headers = _room(client)
+    b, _ = _room(client)
+    _write(client, a, headers, PLAN)
+    assert _progress(client, b) == []
 
 
 def test_progress_404s_for_an_unknown_topic(client):

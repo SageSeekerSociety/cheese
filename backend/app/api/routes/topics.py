@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -115,7 +115,11 @@ from app.domain.room_task.services import (
 from app.domain.textfile import content_version
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
-from app.domain.topic.repositories import SortOrder, TopicSortField
+from app.domain.topic.repositories import (
+    SortOrder,
+    TopicProgressRepository,
+    TopicSortField,
+)
 from app.domain.topic.schemas import (
     CheckResultIn,
     ConclusionIn,
@@ -1215,6 +1219,61 @@ async def get_topic_progress(
             "updated_at": updated_at.isoformat() if updated_at else None,
         }
     )
+
+
+class TodoIn(BaseModel):
+    # 200 / 30: the limits `todo_write` states to the model (`sandbox/cheese`,
+    # TODO_MAX_CHARS / TODO_MAX_ITEMS). The CLI ships to machines on its own and
+    # cannot import them, so they are written twice.
+    content: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    ]
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class ProgressIn(BaseModel):
+    todos: list[TodoIn] = Field(min_length=1, max_length=30)
+
+
+@router.put("/{topic_id}/progress")
+async def write_topic_progress(
+    topic_id: uuid.UUID,
+    body: ProgressIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """`todo_write`: the agent's whole checklist for the running turn (进度层).
+
+    Whole-list replace, so what the room shows is exactly what the agent last
+    said, never a merge of two plans. Stored first, then pushed as the `todo`
+    frame the room's working message renders in place. A platform tool, so it
+    reaches here the same way from every harness — the checklist is not
+    captured from any harness's own tool events.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated:
+        raise ForbiddenError("An authenticated agent must write this checklist")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+        raise ForbiddenError("An authenticated agent must write this checklist")
+    items = [
+        {"id": str(number), "subject": todo.content, "status": todo.status}
+        for number, todo in enumerate(body.todos, start=1)
+    ]
+    work = get_work_runner().live_work_for_topic(place.room_id)
+    await TopicProgressRepository(db).save(
+        place.room_id,
+        items,
+        turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
+    )
+    await db.commit()
+    await get_broker().publish(str(topic_id), {"type": "todo", "items": items})
+    return ok({"items": items})
 
 
 @router.get("/{topic_id}/doc")

@@ -212,7 +212,7 @@ const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
+// Working-log todo (the agent's `todo_write`). Live during a turn (§3.1.1); between
 // turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
 // "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
@@ -1564,7 +1564,7 @@ onBeforeUnmount(() => {
                   <span class="im-name">{{ agentName }}</span>
                 </div>
 
-                <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                <!-- Working-log checklist (`todo_write`, §3.1.1), only while a turn is
                    live. Between turns the stored 进度层 (#187) lives in the panel's
                    总览: parked at the end of the conversation it sat under every new
                    message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地

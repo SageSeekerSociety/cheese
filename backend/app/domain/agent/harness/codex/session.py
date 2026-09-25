@@ -37,10 +37,12 @@ class Session:
                 "environments": [],
                 "config": {
                     # File/shell operations belong to the room executor. The
-                    # platform question tool is `cheese_ask`, as on Claude Code.
+                    # platform question tool is `cheese_ask`, and the step
+                    # checklist is `todo_write`, as on Claude Code.
                     "features.shell_tool": False,
                     "features.view_image": False,
                     "tools.experimental_request_user_input.enabled": False,
+                    "tools.update_plan.enabled": False,
                 },
             }
             if opening.model:

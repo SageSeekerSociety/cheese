@@ -27,7 +27,7 @@ _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
 
 #: One row may document a pair of tools (`cheese_lock(…)` / `cheese_unlock(…)`).
-_TOOL = re.compile(r"`(cheese_[a-z_]+|chat_send|platform_request)\(")
+_TOOL = re.compile(r"`(cheese_[a-z_]+|chat_send|todo_write|platform_request)\(")
 _COMMAND_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
 
 
