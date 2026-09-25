@@ -51,6 +51,7 @@ def _running(monkeypatch, name: str, **bits: bool) -> None:
     [
         ("sonnet", "claude-sonnet-5"),
         ("opus", "claude-opus-5"),
+        ("opus-5.5", "claude-opus-5-5"),
         ("opus-4.8", "claude-opus-4-8"),
         ("fable", "claude-fable-5"),
     ],

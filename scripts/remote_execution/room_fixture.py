@@ -93,7 +93,7 @@ class RoomExecutor:
             ],
         ):
             subprocess.run(["git", "-C", str(original), *arguments], check=True)
-        pin = self.owner / ".cheese/claude/versions/2.1.277"
+        pin = self.owner / ".cheese/claude/versions/2.1.282"
         pin.parent.mkdir(parents=True)
         pin.symlink_to(Path(claude).resolve())
         env = {
