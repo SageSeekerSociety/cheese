@@ -632,13 +632,17 @@ def relaunched(binary, layout, port):
         is started again there, resuming the same conversation."""
         assert room.relay.leases, "the deferred window never took the lease"
         _, init = run.session.wait(is_("system", "init"), 1)
-        run.session.stop()
+        before = run.session
+        before.stop()
         again = room.prepare(dict(placeholder, workspace=str(layout.project)))
         assert again["workspace"] == str(layout.project), again
         run.session = room.session(
             "relaunched",
             dict(again, command=[*again["command"], "--resume", init["session_id"]]),
         )
+        # The same model on the other side: it goes on from the requests it
+        # has answered, as it does for a session that was never relaunched.
+        run.session.server.state["requests"] = before.server.state["requests"]
         run.session.control({"subtype": "initialize"})
         return init["session_id"]
 

@@ -1237,13 +1237,22 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     with the project's instructions and hooks, and its first tool runs there
     without being turned back to read those instructions."""
     platform, work, launch = leased_session
+    # The conversation it had at the placeholder, before the relaunch.
+    config = work.parent / "session" / "config"
+    before = central.project_dir(config, "/unavailable-project") / "s.jsonl"
+    before.parent.mkdir(parents=True)
+    before.write_text("{}\n")
     started = launch()
     target = json.loads(Path(started["execution"]).read_text())
     assert started["workspace"] == str(work)
     assert (target["kind"], target["generation"]) == ("device", platform.generation)
+    # Where the build keeps a session started at the machine's path, which is
+    # where the resumed one goes on writing.
+    assert (central.project_dir(config, str(work)) / "s.jsonl").read_text() == "{}\n"
+    assert not before.parent.exists()
     assert "execution_token" not in target
     assert Path(target["token_file"]).read_text() == "execution-only"
-    config = Path(target["central_config"])
+    assert Path(target["central_config"]) == config
     assert (config / "CLAUDE.md").read_text() == f"@{work}/CLAUDE.md\n"
     hooks = json.loads((config / "settings.json").read_text())["hooks"]
     assert {"command": ": project-hook", "type": "command"} in [

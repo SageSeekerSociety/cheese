@@ -202,6 +202,8 @@ def prepare(
     # every path the build prints is the one it prints running there (`enter`).
     # `central_workspace` is where this host holds the view of it.
     seen = session_path(info["workspace"])
+    if seen != DEFERRED_WORKSPACE:
+        _carry_transcripts(config, DEFERRED_WORKSPACE, seen)
     target = dict(
         target,
         workspace=info["workspace"],
@@ -484,6 +486,47 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+def project_dir(config, path):
+    """Where the pinned build keeps the transcripts of sessions started at
+    `path`: under its config dir, named for the path with every UTF-16 unit
+    other than an ASCII letter or digit spelled `-`, and a name longer than
+    200 cut there and followed by a hash of the path. `headless_contract.py`
+    holds this to the build."""
+    units = memoryview(path.encode("utf-16-le")).cast("H")
+    name = "".join(
+        chr(unit) if chr(unit).isascii() and chr(unit).isalnum() else "-"
+        for unit in units
+    )
+    if len(name) > 200:
+        digest = 0
+        for unit in units:
+            digest = (digest * 31 + unit) & 0xFFFFFFFF
+        digest = abs(digest - (1 << 32) if digest >= 1 << 31 else digest)
+        spelled = ""
+        while True:
+            digest, digit = divmod(digest, 36)
+            spelled = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + spelled
+            if not digest:
+                break
+        name = f"{name[:200]}-{spelled}"
+    return Path(config) / "projects" / name
+
+
+def _carry_transcripts(config, before, after):
+    """A session resumed at another path keeps writing the transcript where it
+    found it, and a session started there writes it where the build keeps that
+    path's. So the conversations begun at `before` move to `after`'s, before a
+    session relaunched there resumes one."""
+    source = project_dir(config, before)
+    if not source.is_dir():
+        return
+    destination = project_dir(config, after)
+    destination.mkdir(parents=True, exist_ok=True)
+    for entry in source.iterdir():
+        entry.replace(destination / entry.name)
+    source.rmdir()
 
 
 def _take_leased_machine(target):
